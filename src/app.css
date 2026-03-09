@@ -1,7 +1,70 @@
 @import "tailwindcss";
+@import "@milkdown/crepe/theme/common/style.css";
+@import "@milkdown/crepe/theme/frame.css";
 
 html,
 body {
   height: 100%;
   margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: #f8f9fa;
+}
+
+/* Constrain editor so only ProseMirror scrolls; avoids caret misalignment when scrolling */
+.notepad-editor-shell {
+  min-height: 0;
+  overflow: hidden;
+  transform: translateZ(0); /* isolate coordinate system for caret positioning */
+}
+
+.notepad-editor-shell .milkdown {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.notepad-editor-shell .milkdown .ProseMirror {
+  height: 100%;
+  min-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-top: 6rem;
+  padding-bottom: 100%;
+  overflow-anchor: auto;
+  position: relative; /* containing block for virtual cursor when we keep it */
+}
+
+/*
+ * Virtual cursor (prosemirror-virtual-cursor) doesn't update on scroll, so it
+ * drifts. Use the native caret instead so it stays aligned when the editor scrolls.
+ */
+.notepad-editor-shell .ProseMirror.virtual-cursor-enabled {
+  caret-color: var(--crepe-color-on-background, #000);
+}
+.notepad-editor-shell .ProseMirror .prosemirror-virtual-cursor {
+  display: none !important;
+}
+
+/* Prevent ghost/double text when typing in the search bar (WebKit rendering) */
+.search-bar-input-wrap {
+  background: transparent;
+  contain: layout style paint;
+}
+
+.search-bar .search-bar-input {
+  -webkit-appearance: none;
+  appearance: none;
+  text-shadow: none;
+  -webkit-text-stroke: 0 transparent;
+  background: transparent;
+  border: 1px solid transparent;
+  display: block;
+  /* Force single compositor layer to avoid double/offset text in WebKit */
+  transform: translateZ(0);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  box-sizing: border-box;
 }
