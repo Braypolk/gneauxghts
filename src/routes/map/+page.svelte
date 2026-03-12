@@ -1,4 +1,9 @@
-<div class="h-full w-full bg-[#f8f9fa] flex flex-col font-sans overflow-hidden items-center justify-center">
-  <h1 class="text-4xl font-medium text-gray-900 mb-4">Map</h1>
-  <a href="/" class="text-blue-500 hover:underline">Back to Gneauxght</a>
+<div class="h-full w-full bg-background text-foreground flex flex-col overflow-hidden items-center justify-center">
+  <h1 class="text-4xl font-medium mb-4">Map</h1>
+  <a
+    href="/"
+    class="text-muted-foreground underline decoration-border underline-offset-4 transition-colors hover:text-foreground"
+  >
+    Back to Gneauxght
+  </a>
 </div>

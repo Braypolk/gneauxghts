@@ -9,7 +9,7 @@
   }
 </script>
 
-<div class="h-full w-full bg-[#f8f9fa] flex flex-col font-sans overflow-hidden">
+<div class="h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
   <main class="flex-1 relative flex flex-col min-[950px]:flex-row overflow-hidden pb-4 transition-all duration-300 ease-in-out justify-center max-w-[1600px] mx-auto w-full">
     <!-- Notepad Container -->
     <div

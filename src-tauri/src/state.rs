@@ -1,7 +1,7 @@
 use crate::index::is_note_file;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env,
     ffi::OsString,
     fs,
@@ -13,6 +13,13 @@ const STATE_FILE_NAME: &str = ".gneauxghts-state.json";
 const DEFAULT_NOTE_NAME: &str = "Untitled Note";
 const MAX_FILE_STEM_LENGTH: usize = 80;
 const MAX_RECENT_NOTES: usize = 20;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PersistedTaskTimestamps {
+    pub(crate) created_at_millis: u64,
+    pub(crate) updated_at_millis: u64,
+}
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +35,8 @@ pub(crate) struct PersistedState {
     pub(crate) note_order: Vec<String>,
     #[serde(default)]
     pub(crate) collapsed_note_paths: Vec<String>,
+    #[serde(default)]
+    pub(crate) task_timestamps: HashMap<String, PersistedTaskTimestamps>,
 }
 
 pub(crate) fn notes_root() -> Result<PathBuf, String> {
@@ -60,6 +69,7 @@ pub(crate) fn write_state(notes_dir: &Path, state: &PersistedState) -> Result<()
         hidden_note_paths: state.hidden_note_paths.clone(),
         note_order: state.note_order.clone(),
         collapsed_note_paths: state.collapsed_note_paths.clone(),
+        task_timestamps: state.task_timestamps.clone(),
     };
     prune_recent_paths(&mut state, notes_dir);
     dedupe_hidden_task_keys(&mut state);

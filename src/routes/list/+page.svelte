@@ -14,7 +14,6 @@
     ExternalLink,
     RefreshCw
   } from 'lucide-svelte';
-  import { onMount } from 'svelte';
   import { storePendingTaskTarget } from '$lib/taskNavigation';
 
   interface TaskItem {
@@ -30,6 +29,8 @@
     noteCollapsed: boolean;
     depth: number;
     lineNumber: number;
+    createdAtMillis: number;
+    updatedAtMillis: number;
   }
 
   interface TaskGroup {
@@ -47,18 +48,20 @@
   type TaskFilter = 'open' | 'completed' | 'all';
 
   const filterOptions = [
+    { id: 'all', label: 'All tasks' },
     { id: 'open', label: 'Open' },
-    { id: 'completed', label: 'Completed' },
-    { id: 'all', label: 'All tasks' }
+    { id: 'completed', label: 'Completed' }
   ] as const satisfies ReadonlyArray<{ id: TaskFilter; label: string }>;
+  const TASK_FILTER_STORAGE_KEY = 'gneauxghts.master-task-filter';
 
-  let filter = $state<TaskFilter>('open');
+  let filter = $state<TaskFilter>('all');
   let showHidden = $state(false);
   let tasks = $state<TaskItem[]>([]);
   let togglingTaskKeys = $state<Record<string, boolean>>({});
   let isLoading = $state(true);
   let errorMessage = $state('');
   let activeRequest = 0;
+  let didInitialize = false;
 
   const groupedTasks = $derived.by(() => {
     const groups = new Map<string, TaskGroup>();
@@ -136,6 +139,7 @@
   function setFilter(nextFilter: TaskFilter) {
     if (filter === nextFilter) return;
     filter = nextFilter;
+    persistTaskFilter(nextFilter);
     void loadTasks({ background: tasks.length > 0 });
   }
 
@@ -145,6 +149,32 @@
 
   function toggleShowHidden() {
     showHidden = !showHidden;
+  }
+
+  function persistTaskFilter(nextFilter: TaskFilter) {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(TASK_FILTER_STORAGE_KEY, nextFilter);
+  }
+
+  function readStoredTaskFilter(): TaskFilter | null {
+    if (typeof window === 'undefined') return null;
+
+    const storedFilter = window.localStorage.getItem(TASK_FILTER_STORAGE_KEY);
+    if (storedFilter === 'open' || storedFilter === 'completed' || storedFilter === 'all') {
+      return storedFilter;
+    }
+
+    return null;
+  }
+
+  function handleWindowFocus() {
+    void loadTasks({ background: true });
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'visible') {
+      void loadTasks({ background: true });
+    }
   }
 
   async function toggleNoteCollapsed(group: TaskGroup) {
@@ -288,45 +318,40 @@
     }
   }
 
-  onMount(() => {
+  $effect(() => {
+    if (didInitialize) {
+      return;
+    }
+
+    didInitialize = true;
+    const storedFilter = readStoredTaskFilter();
+    if (storedFilter) {
+      filter = storedFilter;
+    }
+
     void loadTasks();
-
-    const handleWindowFocus = () => {
-      void loadTasks({ background: true });
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void loadTasks({ background: true });
-      }
-    };
-
-    window.addEventListener('focus', handleWindowFocus);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      window.removeEventListener('focus', handleWindowFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
   });
 </script>
 
-<div class="h-full w-full bg-[#f8f9fa] flex flex-col overflow-hidden">
+<svelte:window onfocus={handleWindowFocus} />
+<svelte:document onvisibilitychange={handleVisibilityChange} />
+
+<div class="h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
   <main class="flex-1 min-h-0 overflow-hidden py-4">
-    <section class="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-[2rem] border border-gray-200 bg-white shadow-sm">
-      <div class="border-b border-gray-200 px-8 py-6">
+    <section class="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-[2rem] border border-border bg-card shadow-sm">
+      <div class="border-b border-border px-8 py-6">
         <div class="flex flex-col gap-5">
           <div class="space-y-2">
-            <p class="text-sm text-gray-500">{taskCountLabel}</p>
+            <p class="text-sm text-muted-foreground">{taskCountLabel}</p>
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
-            <div class="flex items-center gap-2 rounded-full bg-gray-100 p-1">
+            <div class="flex items-center gap-2 rounded-full bg-muted p-1">
               {#each filterOptions as option}
                 <button
                   type="button"
                   class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                    filter === option.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'
+                    filter === option.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                   }`}
                   onclick={() => setFilter(option.id)}
                 >
@@ -339,8 +364,8 @@
               type="button"
               class={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
                 showHidden
-                  ? 'border-gray-300 bg-white text-gray-900'
-                  : 'border-transparent bg-gray-100 text-gray-500 hover:text-gray-900'
+                  ? 'border-border bg-card text-foreground'
+                  : 'border-transparent bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
               }`}
               onclick={toggleShowHidden}
             >
@@ -355,7 +380,7 @@
 
             <button
               type="button"
-              class="inline-flex items-center gap-2 rounded-full bg-gray-100 px-4 py-2 text-sm font-medium text-gray-500 transition-colors hover:text-gray-900"
+              class="inline-flex items-center gap-2 rounded-full bg-muted px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               onclick={refreshTasks}
             >
               <RefreshCw class="h-4 w-4" />
@@ -367,19 +392,19 @@
 
       <div class="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-6">
         {#if isLoading}
-          <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-gray-200 bg-gray-50 px-6 text-sm font-medium text-gray-500">
+          <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-sm font-medium text-muted-foreground">
             Building the task list
           </div>
         {:else if errorMessage}
-          <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-red-200 bg-red-50 px-6 text-sm font-medium text-red-600">
+          <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-destructive/25 bg-destructive/10 px-6 text-sm font-medium text-destructive">
             {errorMessage}
           </div>
         {:else if groupedTasks.length === 0}
-          <div class="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-gray-200 bg-gray-50 px-6 text-center">
-            <p class="text-lg font-medium text-gray-900">No matching tasks yet</p>
-            <p class="mt-2 max-w-md text-sm text-gray-500">
-              Add markdown checkboxes like <code class="rounded bg-white px-1.5 py-0.5 text-xs text-gray-700">- [ ]</code>
-              or <code class="rounded bg-white px-1.5 py-0.5 text-xs text-gray-700">* [x]</code> inside any note.
+          <div class="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-center">
+            <p class="text-lg font-medium text-foreground">No matching tasks yet</p>
+            <p class="mt-2 max-w-md text-sm text-muted-foreground">
+              Add markdown checkboxes like <code class="rounded border border-border/70 bg-card px-1.5 py-0.5 text-xs text-foreground">- [ ]</code>
+              or <code class="rounded border border-border/70 bg-card px-1.5 py-0.5 text-xs text-foreground">* [x]</code> inside any note.
             </p>
           </div>
         {:else}
@@ -387,16 +412,16 @@
             {#each groupedTasks as group, index}
               <section
                 class={`overflow-hidden rounded-[1.35rem] border ${
-                  group.noteHidden ? 'border-gray-200 bg-gray-50' : 'border-gray-200 bg-white'
+                  group.noteHidden ? 'border-border bg-muted' : 'border-border bg-card'
                 }`}
               >
-                <div class={`flex items-center gap-3 px-4 py-3 ${group.noteHidden ? 'bg-gray-50' : 'bg-white'}`}>
+                <div class={`flex items-center gap-3 px-4 py-3 ${group.noteHidden ? 'bg-muted' : 'bg-card'}`}>
                   <button
                     type="button"
-                    class="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-gray-700"
+                    class="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-foreground"
                     onclick={() => void toggleNoteCollapsed(group)}
                   >
-                    <span class="shrink-0 text-gray-400">
+                    <span class="shrink-0 text-muted-foreground">
                       {#if group.noteCollapsed}
                         <ChevronRight class="h-4 w-4" />
                       {:else}
@@ -406,12 +431,12 @@
 
                     <span class="min-w-0 flex-1">
                       <span
-                        class={`block truncate text-sm font-semibold ${group.noteHidden ? 'text-gray-500' : 'text-gray-900'}`}
+                        class={`block truncate text-sm font-semibold ${group.noteHidden ? 'text-muted-foreground' : 'text-foreground'}`}
                         title={group.noteTitle}
                       >
                         {group.noteTitle}
                       </span>
-                      <span class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium uppercase tracking-[0.18em] text-gray-400">
+                      <span class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                         <span>{group.displayCount} shown</span>
                         {#if group.hiddenCount > 0}
                           <span>{group.hiddenCount} hidden</span>
@@ -430,7 +455,7 @@
                     <div class="flex items-center gap-1">
                       <button
                         type="button"
-                        class="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-35"
+                        class="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-35"
                         onclick={() => void moveNote(group, 'up')}
                         disabled={index === 0}
                         aria-label={`Move ${group.noteTitle} up`}
@@ -440,7 +465,7 @@
 
                       <button
                         type="button"
-                        class="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-35"
+                        class="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-35"
                         onclick={() => void moveNote(group, 'down')}
                         disabled={index === groupedTasks.length - 1}
                         aria-label={`Move ${group.noteTitle} down`}
@@ -450,7 +475,7 @@
 
                       <button
                         type="button"
-                        class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                        class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                         onclick={() => void setNoteHidden(group, !group.noteHidden)}
                       >
                         {#if group.noteHidden}
@@ -466,24 +491,24 @@
                 </div>
 
                 {#if !group.noteCollapsed}
-                  <div class="border-t border-gray-100 px-3 py-3">
+                  <div class="border-t border-border/70 px-3 py-3">
                     <div class="space-y-2">
                       {#each group.displayTasks as task}
                         <div
                           class={`flex items-center gap-3 rounded-[1rem] border px-3 py-2 ${
-                            task.hidden ? 'border-gray-100 bg-gray-50' : 'border-gray-200 bg-white'
+                            task.hidden ? 'border-border/60 bg-muted/70' : 'border-border bg-card'
                           }`}
                           style={taskIndentStyle(task.depth)}
                         >
                           {#if task.depth > 0}
-                            <span class="shrink-0 text-gray-300">
+                            <span class="shrink-0 text-muted-foreground/55">
                               <CornerDownRight class="h-3.5 w-3.5" />
                             </span>
                           {/if}
 
                           <button
                             type="button"
-                            class="shrink-0 text-gray-400 transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-45"
+                            class="shrink-0 text-muted-foreground transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-45"
                             onclick={() => void toggleTask(task)}
                             disabled={!!togglingTaskKeys[task.taskKey]}
                             aria-label={task.completed ? `Mark ${task.text} incomplete` : `Mark ${task.text} complete`}
@@ -491,31 +516,30 @@
                             {#if task.completed}
                               <CheckCircle2 class="h-4.5 w-4.5 text-emerald-500" />
                             {:else}
-                              <Circle class="h-4.5 w-4.5 text-gray-400" />
+                              <Circle class="h-4.5 w-4.5 text-muted-foreground" />
                             {/if}
                           </button>
 
                           <span class="min-w-0 flex-1">
                             <span
                               class={`block truncate text-sm leading-5 ${
-                                task.completed ? 'text-gray-400 line-through' : task.hidden ? 'text-gray-400' : 'text-gray-900'
+                                task.completed ? 'text-muted-foreground line-through' : task.hidden ? 'text-muted-foreground' : 'text-foreground'
                               }`}
                               title={task.text}
                             >
                               {task.text}
                             </span>
-                          </span>
-
-                          <span class="hidden shrink-0 items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-gray-400 md:inline-flex">
-                            {#if task.sectionLabel}
-                              <span class="max-w-32 truncate" title={task.sectionLabel}>{task.sectionLabel}</span>
-                            {/if}
+                            <span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
+                              {#if task.sectionLabel}
+                                <span class="max-w-40 truncate" title={task.sectionLabel}>{task.sectionLabel}</span>
+                              {/if}
+                            </span>
                           </span>
 
                           <div class="flex shrink-0 items-center gap-1">
                             <button
                               type="button"
-                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                               onclick={() => openTask(task)}
                             >
                               <ExternalLink class="h-3.5 w-3.5" />
@@ -524,7 +548,7 @@
 
                             <button
                               type="button"
-                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                               onclick={() => void setTaskHidden(task, !task.hidden)}
                             >
                               {#if task.hidden}

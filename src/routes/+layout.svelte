@@ -1,10 +1,17 @@
 <script lang="ts">
-  let { children } = $props();
+  import { onMount } from 'svelte';
   import "../app.css";
+  import { initializeTheme } from '$lib/theme';
   import NavBar from "$lib/components/NavBar.svelte";
+
+  let { children } = $props();
+
+  onMount(() => {
+    void initializeTheme();
+  });
 </script>
 
-<div class="min-h-full h-full flex flex-col overflow-hidden">
+<div class="min-h-full h-full flex flex-col overflow-hidden bg-background text-foreground">
   <NavBar />
   <div class="flex-1 min-h-0 overflow-hidden px-4">
     {@render children()}

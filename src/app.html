@@ -4,6 +4,29 @@
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script>
+      (() => {
+        const storageKey = 'gneauxghts.theme-preference';
+
+        try {
+          const storedPreference = window.localStorage.getItem(storageKey);
+          const preference =
+            storedPreference === 'auto' || storedPreference === 'light' || storedPreference === 'dark'
+              ? storedPreference
+              : 'auto';
+          const resolvedTheme =
+            preference === 'auto'
+              ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+              : preference;
+
+          document.documentElement.classList.toggle('dark', resolvedTheme === 'dark');
+          document.documentElement.style.colorScheme = resolvedTheme;
+          document.documentElement.dataset.theme = resolvedTheme;
+        } catch (error) {
+          console.error('Failed to prime theme before app startup:', error);
+        }
+      })();
+    </script>
     <title>Tauri + SvelteKit + Typescript App</title>
     %sveltekit.head%
   </head>

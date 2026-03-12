@@ -17,6 +17,7 @@ pub fn run() {
             commands::remember_note,
             commands::forget_note,
             commands::list_recent_notes,
+            commands::list_recent_tasks,
             commands::list_tasks,
             commands::set_note_collapsed,
             commands::set_note_hidden,

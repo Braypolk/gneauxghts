@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { Settings } from 'lucide-svelte';
 
@@ -8,6 +9,7 @@
     { href: '/map', label: 'Map' },
     { href: '/list', label: 'List' }
   ] as const;
+  const settingsHref = '/settings';
 
   function isActive(href: string, pathname: string): boolean {
     if (href === '/') return pathname === '/';
@@ -15,10 +17,17 @@
   }
 
   const linkClass = (href: string) =>
-    `inline-flex w-[105px] items-center justify-center text-sm font-medium transition-colors px-2 rounded-full ${
+    `inline-flex w-[105px] items-center justify-center rounded-full border px-2 py-2 text-sm font-medium transition-colors ${
       isActive(href, $page.url.pathname)
-        ? 'text-gray-900 bg-white py-2 shadow-sm'
-        : 'text-gray-500 hover:text-gray-900'
+        ? 'border-foreground/15 bg-card text-foreground shadow-sm'
+        : 'border-transparent text-muted-foreground hover:border-border/80 hover:text-foreground'
+    }`;
+
+  const settingsButtonClass = () =>
+    `rounded-full border border-border/80 p-2 shadow-sm transition-colors ${
+      isActive(settingsHref, $page.url.pathname)
+        ? 'bg-accent text-accent-foreground'
+        : 'bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground'
     }`;
 
   function isInteractiveTarget(target: EventTarget | null): boolean {
@@ -34,7 +43,35 @@
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
     await getCurrentWindow().startDragging();
   }
+
+  function handleGlobalShortcut(event: KeyboardEvent) {
+    if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+      return;
+    }
+
+    if (event.code === 'Comma') {
+      event.preventDefault();
+      void goto(settingsHref);
+      return;
+    }
+
+    const shortcutMatch = event.code.match(/^Digit(\d)$/);
+    if (!shortcutMatch) {
+      return;
+    }
+
+    const shortcutIndex = Number(shortcutMatch[1]) - 1;
+    const targetLink = navLinks[shortcutIndex];
+    if (!targetLink) {
+      return;
+    }
+
+    event.preventDefault();
+    void goto(targetLink.href);
+  }
 </script>
+
+<svelte:window onkeydown={handleGlobalShortcut} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <header
@@ -48,7 +85,7 @@
   </div>
 
   <div class="relative z-10 flex justify-center">
-    <nav class="flex items-center gap-0 bg-white/50 backdrop-blur-md rounded-full shadow-sm ">
+    <nav class="flex items-center gap-0 rounded-full border border-border/80 bg-card/70 shadow-sm backdrop-blur-md">
       {#each navLinks as { href, label }}
         <a href={href} class={linkClass(href)}>{label}</a>
       {/each}
@@ -56,8 +93,12 @@
   </div>
 
   <div class="relative z-10 flex justify-end min-w-0">
-    <button class="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-200 bg-white rounded-full transition-colors shadow-sm" type="button" aria-label="Settings">
+    <a
+      href={settingsHref}
+      class={settingsButtonClass()}
+      aria-label="Settings"
+    >
       <Settings class="w-5 h-5" />
-    </button>
+    </a>
   </div>
 </header>

@@ -19,7 +19,7 @@ pub(crate) struct NotesIndex {
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct FileSignature {
-    modified_millis: u128,
+    modified_millis: u64,
     len: u64,
 }
 
@@ -43,6 +43,7 @@ pub(crate) struct IndexedTask {
 #[derive(Clone)]
 pub(crate) struct IndexedNote {
     signature: FileSignature,
+    pub(crate) modified_millis: u64,
     pub(crate) title: String,
     pub(crate) title_lower: String,
     pub(crate) file_name: String,
@@ -174,6 +175,7 @@ fn read_file_signature(path: &Path) -> Result<FileSignature, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|err| err.to_string())?
         .as_millis();
+    let modified = modified.min(u128::from(u64::MAX)) as u64;
 
     Ok(FileSignature {
         modified_millis: modified,
@@ -195,6 +197,7 @@ fn build_indexed_note_with_signature(
     markdown: &str,
     signature: FileSignature,
 ) -> IndexedNote {
+    let modified_millis = signature.modified_millis;
     let fallback_file_name = path
         .and_then(|path| path.file_stem())
         .and_then(|file_name| file_name.to_str())
@@ -207,6 +210,7 @@ fn build_indexed_note_with_signature(
 
     IndexedNote {
         signature,
+        modified_millis,
         title: title.clone(),
         title_lower: title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),

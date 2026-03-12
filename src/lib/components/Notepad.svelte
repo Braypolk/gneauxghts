@@ -24,6 +24,15 @@
     matchText: string;
   }
 
+  interface RecentTaskItem {
+    taskKey: string;
+    notePath: string;
+    noteTitle: string;
+    text: string;
+    lineNumber: number;
+    updatedAtMillis: number;
+  }
+
   interface ForgottenNote {
     title: string;
     bodyMarkdown: string;
@@ -48,10 +57,12 @@
   let searchQuery = $state('');
   let searchResults = $state<SearchItem[]>([]);
   let recentNotes = $state<SearchItem[]>([]);
+  let recentTasks = $state<RecentTaskItem[]>([]);
   let isSearching = $state(false);
   let searchTimer: ReturnType<typeof window.setTimeout> | null = null;
   let activeSearchRequest = 0;
-  let activeRecentRequest = 0;
+  let activeRecentNotesRequest = 0;
+  let activeRecentTasksRequest = 0;
   let searchFocusRequest = $state(0);
 
   async function initEditor(initialValue: string) {
@@ -332,21 +343,38 @@
   }
 
   async function loadRecentNotes() {
-    const requestId = ++activeRecentRequest;
+    const requestId = ++activeRecentNotesRequest;
 
     try {
       const notes = await invoke<SearchItem[]>('list_recent_notes', {
-        limit: 3,
+        limit: 12,
         currentPath: currentNotePath,
         currentMarkdown: getCurrentMarkdown()
       });
 
-      if (requestId !== activeRecentRequest) return;
+      if (requestId !== activeRecentNotesRequest) return;
       recentNotes = notes;
     } catch (error) {
-      if (requestId !== activeRecentRequest) return;
+      if (requestId !== activeRecentNotesRequest) return;
       console.error('Failed to load recent notes:', error);
       recentNotes = [];
+    }
+  }
+
+  async function loadRecentTasks() {
+    const requestId = ++activeRecentTasksRequest;
+
+    try {
+      const tasks = await invoke<RecentTaskItem[]>('list_recent_tasks', {
+        limit: 12
+      });
+
+      if (requestId !== activeRecentTasksRequest) return;
+      recentTasks = tasks;
+    } catch (error) {
+      if (requestId !== activeRecentTasksRequest) return;
+      console.error('Failed to load recent tasks:', error);
+      recentTasks = [];
     }
   }
 
@@ -369,6 +397,7 @@
 
   function handleSearchFocus() {
     void loadRecentNotes();
+    void loadRecentTasks();
   }
 
   function requestSearchFocus(mode: 'current' | 'all') {
@@ -522,9 +551,48 @@
     }
   }
 
+  async function openRecentTask(task: RecentTaskItem) {
+    const shouldOpenDifferentNote = task.notePath !== currentNotePath;
+
+    if (saveTimer) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    if (shouldOpenDifferentNote) {
+      await enqueueSave('autosave');
+    }
+
+    try {
+      if (shouldOpenDifferentNote) {
+        const session = await invoke<NoteSession>('open_note', { path: task.notePath });
+        const parsed = parseStoredMarkdown(session.markdown);
+
+        title = parsed.title;
+        currentNotePath = session.path;
+        lastSavedMarkdown = session.markdown;
+        lastSavedPath = session.path;
+        canUnforget = false;
+        forgottenNote = null;
+        clearSearch();
+        await replaceEditorContent(parsed.bodyMarkdown);
+      } else {
+        clearSearch();
+      }
+
+      await navigateToPendingTaskTarget({
+        notePath: task.notePath,
+        text: task.text,
+        lineNumber: task.lineNumber,
+        sectionLabel: null
+      });
+    } catch (error) {
+      console.error('Failed to open recent task:', error);
+    }
+  }
+
   onMount(() => {
     let mounted = true;
-    window.addEventListener('keydown', handleGlobalKeydown);
 
     (async () => {
       await tick();
@@ -545,7 +613,6 @@
     return () => {
       mounted = false;
       isEditorReady = false;
-      window.removeEventListener('keydown', handleGlobalKeydown);
       flushPendingAutosave();
       if (searchTimer) window.clearTimeout(searchTimer);
       void destroyEditor();
@@ -553,26 +620,28 @@
   });
 </script>
 
-<div class="w-full h-full min-h-0 bg-white rounded-[2rem] shadow-sm border border-gray-200 flex flex-col overflow-hidden transition-all duration-300 relative">
+<svelte:window onkeydown={handleGlobalKeydown} />
+
+<div class="w-full h-full min-h-0 bg-card text-card-foreground rounded-[2rem] shadow-sm border border-border flex flex-col overflow-hidden transition-all duration-300 relative">
   <div class="absolute top-0 left-0 right-0 z-20">
     <div class="relative">
       <div
-        class="pointer-events-none absolute inset-0 bg-white/70 backdrop-blur-md"
+        class="pointer-events-none absolute inset-0 bg-card/70 backdrop-blur-md"
         style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
       ></div>
       <div class="relative z-10 px-8 pt-3 pb-4">
         <div bind:this={titleShell} class="mx-auto flex w-full max-w-3xl flex-col items-center gap-2 rounded-[1.4rem] px-4 py-2 transition-all duration-300">
-          <div class="flex w-full items-center justify-center gap-3 text-3xl font-semibold tracking-tight text-gray-900">
+          <div class="flex w-full items-center justify-center gap-3 text-3xl font-semibold tracking-tight text-foreground">
             <input
               bind:this={titleInput}
               type="text"
-              class="w-full max-w-2xl bg-transparent text-center outline-none placeholder:text-gray-300"
+              class="w-full max-w-2xl bg-transparent text-center outline-none placeholder:text-muted-foreground/55"
               placeholder="Title"
               value={title}
               oninput={handleTitleInput}
             />
           </div>
-          <div class="h-px w-40 rounded-full bg-gray-300"></div>
+          <div class="h-px w-40 rounded-full bg-border"></div>
         </div>
       </div>
     </div>
@@ -581,7 +650,7 @@
     <div class="notepad-editor-shell relative h-full">
       {#if !isEditorReady}
         <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-          <span class="rounded-full border border-gray-200 px-4 py-2 text-sm font-medium text-gray-500 shadow-sm">
+          <span class="rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
             Loading editor
           </span>
         </div>
@@ -597,6 +666,7 @@
       {searchQuery}
       {searchResults}
       {recentNotes}
+      {recentTasks}
       {isSearching}
       focusRequest={searchFocusRequest}
       onForget={() => void clearNotepad()}
@@ -605,6 +675,7 @@
       onSearchInput={handleSearchInput}
       onSearchModeChange={handleSearchModeChange}
       onSearchSelect={(result) => void openSearchResult(result)}
+      onRecentTaskSelect={(task) => void openRecentTask(task)}
       onSearchFocus={handleSearchFocus}
     />
   </div>
