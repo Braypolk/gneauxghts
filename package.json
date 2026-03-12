@@ -15,12 +15,12 @@
   "dependencies": {
     "@milkdown/crepe": "^7.19.0",
     "@milkdown/kit": "^7.19.0",
-    "prosemirror-history": "^1.5.0",
-    "prosemirror-model": "^1.25.4",
     "@tailwindcss/vite": "^4.2.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "lucide-svelte": "^0.577.0",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-model": "^1.25.4",
     "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
