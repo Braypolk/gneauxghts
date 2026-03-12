@@ -8,8 +8,8 @@ const MAX_EXCERPT_LENGTH: usize = 180;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextRange {
-    start: usize,
-    end: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -18,9 +18,19 @@ pub(crate) struct NoteSearchResult {
     pub(crate) note_path: Option<String>,
     pub(crate) file_name: String,
     pub(crate) section_label: String,
-    excerpt: String,
-    highlight_ranges: Vec<TextRange>,
-    match_text: String,
+    pub(crate) excerpt: String,
+    pub(crate) highlight_ranges: Vec<TextRange>,
+    pub(crate) match_text: String,
+    #[serde(default)]
+    pub(crate) reason_labels: Vec<String>,
+    #[serde(default)]
+    pub(crate) lexical_score: Option<f32>,
+    #[serde(default)]
+    pub(crate) semantic_score: Option<f32>,
+    #[serde(default)]
+    pub(crate) start_line: Option<usize>,
+    #[serde(default)]
+    pub(crate) end_line: Option<usize>,
 }
 
 pub(crate) struct ScoredSearchResult {
@@ -85,6 +95,11 @@ pub(crate) fn build_recent_result(
         excerpt,
         highlight_ranges: Vec::new(),
         match_text: String::new(),
+        reason_labels: Vec::new(),
+        lexical_score: None,
+        semantic_score: None,
+        start_line: None,
+        end_line: None,
     }
 }
 
@@ -156,6 +171,11 @@ fn score_search_candidate(
             excerpt,
             highlight_ranges,
             match_text: search_match.match_text,
+            reason_labels: Vec::new(),
+            lexical_score: Some(score as f32),
+            semantic_score: None,
+            start_line: None,
+            end_line: None,
         },
     })
 }

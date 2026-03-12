@@ -1,0 +1,635 @@
+use super::{
+    chunking::SemanticChunk,
+    embed::mean_pool,
+    current_time_millis, MapEdge, MapGraph, MapNode, SemanticIndexJob, SemanticSettings,
+};
+use blake3::hash;
+use rusqlite::{params, Connection, OptionalExtension};
+use std::{collections::HashMap, fs, path::Path};
+
+const SETTINGS_KEY: &str = "semantic_settings";
+
+#[derive(Clone)]
+pub(crate) struct StoredChunkEmbedding {
+    pub(crate) text_hash: String,
+    pub(crate) embedding: Vec<f32>,
+}
+
+pub(crate) struct StoredChunkRow {
+    pub(crate) note_path: String,
+    pub(crate) note_title: String,
+    pub(crate) section_label: String,
+    pub(crate) text: String,
+    pub(crate) start_line: usize,
+    pub(crate) end_line: usize,
+    pub(crate) embedding: Vec<f32>,
+}
+
+pub(crate) struct StoredNoteEmbedding {
+    pub(crate) note_path: String,
+    pub(crate) embedding: Vec<f32>,
+}
+
+#[derive(Clone)]
+pub(crate) struct StoredNoteRecord {
+    pub(crate) modified_millis: u64,
+    pub(crate) content_hash: String,
+}
+
+pub(crate) fn open_database(path: &Path) -> Result<Connection, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+
+    let connection = Connection::open(path).map_err(|err| err.to_string())?;
+    connection
+        .pragma_update(None, "journal_mode", "WAL")
+        .map_err(|err| err.to_string())?;
+    connection
+        .pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|err| err.to_string())?;
+    Ok(connection)
+}
+
+pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS notes (
+                path TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                modified_millis INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                chunk_count INTEGER NOT NULL,
+                indexed_at_millis INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                note_path TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                section_label TEXT NOT NULL,
+                text TEXT NOT NULL,
+                text_hash TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                embedding_blob BLOB NOT NULL,
+                embedding_dim INTEGER NOT NULL,
+                indexed_at_millis INTEGER NOT NULL,
+                UNIQUE(note_path, ordinal)
+            );
+
+            CREATE TABLE IF NOT EXISTS note_embeddings (
+                note_path TEXT PRIMARY KEY,
+                embedding_blob BLOB NOT NULL,
+                embedding_dim INTEGER NOT NULL,
+                indexed_at_millis INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS edges (
+                source_note_path TEXT NOT NULL,
+                target_note_path TEXT NOT NULL,
+                score REAL NOT NULL,
+                updated_at_millis INTEGER NOT NULL,
+                PRIMARY KEY(source_note_path, target_note_path)
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS index_jobs (
+                id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL,
+                scanned_count INTEGER NOT NULL,
+                embedded_count INTEGER NOT NULL,
+                error_text TEXT,
+                started_at_millis INTEGER NOT NULL,
+                updated_at_millis INTEGER NOT NULL
+            );
+            ",
+        )
+        .map_err(|err| err.to_string())
+}
+
+pub(crate) fn load_semantic_settings(
+    connection: &Connection,
+) -> Result<Option<SemanticSettings>, String> {
+    connection
+        .query_row(
+            "SELECT value_json FROM settings WHERE key = ?1",
+            params![SETTINGS_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?
+        .map(|value_json| serde_json::from_str(&value_json).map_err(|err| err.to_string()))
+        .transpose()
+}
+
+pub(crate) fn save_semantic_settings(
+    connection: &Connection,
+    settings: &SemanticSettings,
+) -> Result<(), String> {
+    let value_json = serde_json::to_string(settings).map_err(|err| err.to_string())?;
+    connection
+        .execute(
+            "
+            INSERT INTO settings (key, value_json)
+            VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
+            ",
+            params![SETTINGS_KEY, value_json],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn load_stored_note_records(
+    connection: &Connection,
+) -> Result<HashMap<String, StoredNoteRecord>, String> {
+    let mut statement = connection
+        .prepare("SELECT path, modified_millis, content_hash FROM notes")
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+    let mut notes = HashMap::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        notes.insert(
+            row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            StoredNoteRecord {
+                modified_millis: row.get::<_, u64>(1).map_err(|err| err.to_string())?,
+                content_hash: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+            },
+        );
+    }
+
+    Ok(notes)
+}
+
+pub(crate) fn load_existing_chunk_embeddings(
+    connection: &Connection,
+    note_path: &str,
+) -> Result<HashMap<usize, StoredChunkEmbedding>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT ordinal, text_hash, embedding_blob
+            FROM chunks
+            WHERE note_path = ?1
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement
+        .query(params![note_path])
+        .map_err(|err| err.to_string())?;
+    let mut chunks = HashMap::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        let ordinal = row.get::<_, usize>(0).map_err(|err| err.to_string())?;
+        let text_hash = row.get::<_, String>(1).map_err(|err| err.to_string())?;
+        let embedding_blob = row.get::<_, Vec<u8>>(2).map_err(|err| err.to_string())?;
+        chunks.insert(
+            ordinal,
+            StoredChunkEmbedding {
+                text_hash,
+                embedding: deserialize_embedding(&embedding_blob),
+            },
+        );
+    }
+
+    Ok(chunks)
+}
+
+pub(crate) fn upsert_note_chunks(
+    connection: &mut Connection,
+    note_path: &str,
+    title: &str,
+    modified_millis: u64,
+    content_hash: &str,
+    chunks: &[SemanticChunk],
+    embeddings: &[Vec<f32>],
+) -> Result<(), String> {
+    let indexed_at_millis = current_time_millis()?;
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+    transaction
+        .execute("DELETE FROM chunks WHERE note_path = ?1", params![note_path])
+        .map_err(|err| err.to_string())?;
+
+    for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
+        transaction
+            .execute(
+                "
+                INSERT INTO chunks (
+                    note_path,
+                    ordinal,
+                    section_label,
+                    text,
+                    text_hash,
+                    start_line,
+                    end_line,
+                    embedding_blob,
+                    embedding_dim,
+                    indexed_at_millis
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                ",
+                params![
+                    note_path,
+                    chunk.ordinal,
+                    chunk.section_label,
+                    chunk.text,
+                    chunk.text_hash,
+                    chunk.start_line,
+                    chunk.end_line,
+                    serialize_embedding(embedding),
+                    embedding.len(),
+                    indexed_at_millis,
+                ],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+
+    transaction
+        .execute(
+            "
+            INSERT INTO notes (path, title, modified_millis, content_hash, chunk_count, indexed_at_millis)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(path) DO UPDATE SET
+                title = excluded.title,
+                modified_millis = excluded.modified_millis,
+                content_hash = excluded.content_hash,
+                chunk_count = excluded.chunk_count,
+                indexed_at_millis = excluded.indexed_at_millis
+            ",
+            params![
+                note_path,
+                title,
+                modified_millis,
+                content_hash,
+                chunks.len(),
+                indexed_at_millis,
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+
+    let note_embedding = mean_pool(embeddings);
+    transaction
+        .execute(
+            "
+            INSERT INTO note_embeddings (note_path, embedding_blob, embedding_dim, indexed_at_millis)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(note_path) DO UPDATE SET
+                embedding_blob = excluded.embedding_blob,
+                embedding_dim = excluded.embedding_dim,
+                indexed_at_millis = excluded.indexed_at_millis
+            ",
+            params![
+                note_path,
+                serialize_embedding(&note_embedding),
+                note_embedding.len(),
+                indexed_at_millis,
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+    transaction.commit().map_err(|err| err.to_string())
+}
+
+pub(crate) fn delete_note(connection: &mut Connection, note_path: &str) -> Result<(), String> {
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+    transaction
+        .execute("DELETE FROM chunks WHERE note_path = ?1", params![note_path])
+        .map_err(|err| err.to_string())?;
+    transaction
+        .execute(
+            "DELETE FROM note_embeddings WHERE note_path = ?1",
+            params![note_path],
+        )
+        .map_err(|err| err.to_string())?;
+    transaction
+        .execute("DELETE FROM notes WHERE path = ?1", params![note_path])
+        .map_err(|err| err.to_string())?;
+    transaction
+        .execute(
+            "DELETE FROM edges WHERE source_note_path = ?1 OR target_note_path = ?1",
+            params![note_path],
+        )
+        .map_err(|err| err.to_string())?;
+    transaction.commit().map_err(|err| err.to_string())
+}
+
+pub(crate) fn load_chunks_with_embeddings(
+    connection: &Connection,
+    exclude_note_path: Option<&str>,
+) -> Result<Vec<StoredChunkRow>, String> {
+    let sql = if exclude_note_path.is_some() {
+        "
+        SELECT c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line, c.embedding_blob
+        FROM chunks c
+        INNER JOIN notes n ON n.path = c.note_path
+        WHERE c.note_path != ?1
+        "
+    } else {
+        "
+        SELECT c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line, c.embedding_blob
+        FROM chunks c
+        INNER JOIN notes n ON n.path = c.note_path
+        "
+    };
+    let mut statement = connection.prepare(sql).map_err(|err| err.to_string())?;
+    let mut rows = if let Some(excluded) = exclude_note_path {
+        statement
+            .query(params![excluded])
+            .map_err(|err| err.to_string())?
+    } else {
+        statement.query([]).map_err(|err| err.to_string())?
+    };
+    let mut chunks = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        chunks.push(StoredChunkRow {
+            note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            note_title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            section_label: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+            text: row.get::<_, String>(3).map_err(|err| err.to_string())?,
+            start_line: row.get::<_, usize>(4).map_err(|err| err.to_string())?,
+            end_line: row.get::<_, usize>(5).map_err(|err| err.to_string())?,
+            embedding: deserialize_embedding(
+                &row.get::<_, Vec<u8>>(6).map_err(|err| err.to_string())?,
+            ),
+        });
+    }
+
+    Ok(chunks)
+}
+
+pub(crate) fn load_note_embeddings(
+    connection: &Connection,
+) -> Result<Vec<StoredNoteEmbedding>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT n.path, e.embedding_blob
+            FROM note_embeddings e
+            INNER JOIN notes n ON n.path = e.note_path
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+    let mut notes = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        notes.push(StoredNoteEmbedding {
+            note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            embedding: deserialize_embedding(
+                &row.get::<_, Vec<u8>>(1).map_err(|err| err.to_string())?,
+            ),
+        });
+    }
+
+    Ok(notes)
+}
+
+pub(crate) fn rebuild_edges(
+    connection: &mut Connection,
+    neighbors_per_note: usize,
+    min_score: f32,
+) -> Result<(), String> {
+    let notes = load_note_embeddings(connection)?;
+    let updated_at_millis = current_time_millis()?;
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+    transaction
+        .execute("DELETE FROM edges", [])
+        .map_err(|err| err.to_string())?;
+
+    for source in &notes {
+        let mut candidates = notes
+            .iter()
+            .filter(|target| target.note_path != source.note_path)
+            .filter_map(|target| {
+                let score = super::similarity::cosine_similarity(&source.embedding, &target.embedding);
+                if score < min_score {
+                    return None;
+                }
+
+                Some((target.note_path.clone(), score))
+            })
+            .collect::<Vec<_>>();
+
+        candidates.sort_by(|left, right| right.1.total_cmp(&left.1));
+        candidates.truncate(neighbors_per_note);
+
+        for (target_note_path, score) in candidates {
+            let (source_note_path, target_note_path) = if source.note_path <= target_note_path {
+                (source.note_path.as_str(), target_note_path.as_str())
+            } else {
+                (target_note_path.as_str(), source.note_path.as_str())
+            };
+            transaction
+                .execute(
+                    "
+                    INSERT INTO edges (source_note_path, target_note_path, score, updated_at_millis)
+                    VALUES (?1, ?2, ?3, ?4)
+                    ON CONFLICT(source_note_path, target_note_path) DO UPDATE SET
+                        score = max(edges.score, excluded.score),
+                        updated_at_millis = excluded.updated_at_millis
+                    ",
+                    params![source_note_path, target_note_path, score, updated_at_millis],
+                )
+                .map_err(|err| err.to_string())?;
+        }
+    }
+
+    transaction.commit().map_err(|err| err.to_string())
+}
+
+pub(crate) fn count_indexed_items(
+    connection: &Connection,
+) -> Result<(usize, usize, Option<u64>), String> {
+    let indexed_notes = connection
+        .query_row("SELECT COUNT(*) FROM notes", [], |row| row.get::<_, usize>(0))
+        .map_err(|err| err.to_string())?;
+    let indexed_chunks = connection
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get::<_, usize>(0))
+        .map_err(|err| err.to_string())?;
+    let last_indexed_at_millis = connection
+        .query_row("SELECT MAX(indexed_at_millis) FROM notes", [], |row| {
+            row.get::<_, Option<u64>>(0)
+        })
+        .map_err(|err| err.to_string())?;
+    Ok((indexed_notes, indexed_chunks, last_indexed_at_millis))
+}
+
+pub(crate) fn insert_job(
+    connection: &Connection,
+    status: &str,
+    scanned_count: usize,
+    embedded_count: usize,
+    error_text: Option<&str>,
+) -> Result<i64, String> {
+    let now = current_time_millis()?;
+    let job_id = now as i64;
+    connection
+        .execute(
+            "
+            INSERT INTO index_jobs (
+                id,
+                status,
+                scanned_count,
+                embedded_count,
+                error_text,
+                started_at_millis,
+                updated_at_millis
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+            ",
+            params![job_id, status, scanned_count, embedded_count, error_text, now],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(job_id)
+}
+
+pub(crate) fn update_job(
+    connection: &Connection,
+    job_id: i64,
+    status: &str,
+    scanned_count: usize,
+    embedded_count: usize,
+    error_text: Option<&str>,
+) -> Result<(), String> {
+    let now = current_time_millis()?;
+    connection
+        .execute(
+            "
+            UPDATE index_jobs
+            SET status = ?2,
+                scanned_count = ?3,
+                embedded_count = ?4,
+                error_text = ?5,
+                updated_at_millis = ?6
+            WHERE id = ?1
+            ",
+            params![job_id, status, scanned_count, embedded_count, error_text, now],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn load_latest_job(
+    connection: &Connection,
+) -> Result<Option<SemanticIndexJob>, String> {
+    connection
+        .query_row(
+            "
+            SELECT id, status, scanned_count, embedded_count, error_text, started_at_millis, updated_at_millis
+            FROM index_jobs
+            ORDER BY updated_at_millis DESC
+            LIMIT 1
+            ",
+            [],
+            |row| {
+                Ok(SemanticIndexJob {
+                    id: row.get(0)?,
+                    status: row.get(1)?,
+                    scanned_count: row.get(2)?,
+                    embedded_count: row.get(3)?,
+                    error_text: row.get(4)?,
+                    started_at_millis: row.get(5)?,
+                    updated_at_millis: row.get(6)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|err| err.to_string())
+}
+
+pub(crate) fn load_graph_data(
+    connection: &Connection,
+    limit: usize,
+    min_score: f32,
+) -> Result<MapGraph, String> {
+    let mut edge_statement = connection
+        .prepare(
+            "
+            SELECT source_note_path, target_note_path, score
+            FROM edges
+            WHERE score >= ?1
+            ORDER BY score DESC
+            LIMIT ?2
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut edge_rows = edge_statement
+        .query(params![min_score, limit])
+        .map_err(|err| err.to_string())?;
+    let mut edges = Vec::new();
+    let mut degrees = HashMap::<String, usize>::new();
+
+    while let Some(row) = edge_rows.next().map_err(|err| err.to_string())? {
+        let source_note_path = row.get::<_, String>(0).map_err(|err| err.to_string())?;
+        let target_note_path = row.get::<_, String>(1).map_err(|err| err.to_string())?;
+        edges.push(MapEdge {
+            source_note_path: source_note_path.clone(),
+            target_note_path: target_note_path.clone(),
+            score: row.get::<_, f32>(2).map_err(|err| err.to_string())?,
+        });
+        *degrees.entry(source_note_path).or_default() += 1;
+        *degrees.entry(target_note_path).or_default() += 1;
+    }
+
+    let mut node_statement = connection
+        .prepare("SELECT path, title FROM notes")
+        .map_err(|err| err.to_string())?;
+    let mut node_rows = node_statement.query([]).map_err(|err| err.to_string())?;
+    let mut nodes = Vec::new();
+
+    while let Some(row) = node_rows.next().map_err(|err| err.to_string())? {
+        let note_path = row.get::<_, String>(0).map_err(|err| err.to_string())?;
+        let title = row.get::<_, String>(1).map_err(|err| err.to_string())?;
+        let (x, y) = seed_position(&note_path);
+        nodes.push(MapNode {
+            note_path: note_path.clone(),
+            title,
+            degree: degrees.get(&note_path).copied().unwrap_or_default(),
+            x,
+            y,
+        });
+    }
+
+    Ok(MapGraph {
+        nodes,
+        edges,
+        min_score,
+    })
+}
+
+pub(crate) fn content_hash(markdown: &str) -> String {
+    hash(markdown.as_bytes()).to_hex().to_string()
+}
+
+fn serialize_embedding(values: &[f32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>()
+}
+
+fn deserialize_embedding(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
+fn seed_position(note_path: &str) -> (f32, f32) {
+    let bytes = hash(note_path.as_bytes()).as_bytes().to_vec();
+    let x = (u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32
+        / u32::MAX as f32)
+        * 2.0
+        - 1.0;
+    let y = (u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as f32
+        / u32::MAX as f32)
+        * 2.0
+        - 1.0;
+    (x, y)
+}

@@ -1,4 +1,4 @@
-use crate::state::derive_file_stem;
+use crate::{semantic::SemanticState, state::derive_file_stem};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -7,9 +7,18 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-#[derive(Default)]
 pub(crate) struct AppState {
     pub(crate) notes_index: Mutex<NotesIndex>,
+    pub(crate) semantic: SemanticState,
+}
+
+impl AppState {
+    pub(crate) fn new(semantic: SemanticState) -> Self {
+        Self {
+            notes_index: Mutex::new(NotesIndex::default()),
+            semantic,
+        }
+    }
 }
 
 #[derive(Default)]

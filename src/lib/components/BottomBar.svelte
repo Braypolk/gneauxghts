@@ -1,19 +1,11 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
   import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle } from 'lucide-svelte';
+  import type { SearchItem } from '$lib/types/semantic';
 
   interface TextRange {
     start: number;
     end: number;
-  }
-
-  interface SearchItem {
-    notePath: string | null;
-    fileName: string;
-    sectionLabel: string;
-    excerpt: string;
-    highlightRanges: TextRange[];
-    matchText: string;
   }
 
   interface RecentTaskItem {
@@ -530,13 +522,24 @@
                   onclick={() => selectItem({ kind: 'search', item })}
                 >
                   <div class={getSearchResultHeaderClass()}>
-                    <span class={getSearchResultTitleClass()}>
-                      {#if searchMode === 'all'}
-                        {item.fileName}
-                      {:else}
-                        {item.sectionLabel}
+                    <div class="min-w-0">
+                      <span class={getSearchResultTitleClass()}>
+                        {#if searchMode === 'all'}
+                          {item.fileName}
+                        {:else}
+                          {item.sectionLabel}
+                        {/if}
+                      </span>
+                      {#if item.reasonLabels && item.reasonLabels.length > 0}
+                        <div class="mt-1 flex flex-wrap gap-1.5">
+                          {#each item.reasonLabels as label}
+                            <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                              {label}
+                            </span>
+                          {/each}
+                        </div>
                       {/if}
-                    </span>
+                    </div>
                     {#if item.sectionLabel !== 'Title'}
                       <span class="shrink-0 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                         {item.sectionLabel}

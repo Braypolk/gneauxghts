@@ -3,6 +3,7 @@ use crate::{
         build_current_override, normalize_search_text, refresh_notes_index, task_key,
         toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
     },
+    semantic::{MapGraph, RelatedNote, SemanticChunkMatch, SemanticSettings, SemanticStatus},
     search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
     state::{
         is_valid_note_path, notes_root, persist_note, prune_recent_paths, push_unique, read_state,
@@ -69,6 +70,14 @@ pub(crate) struct RecentTaskItem {
     text: String,
     line_number: usize,
     updated_at_millis: u64,
+}
+
+#[derive(Clone)]
+struct HybridCandidate {
+    lexical_score: f32,
+    semantic_score: f32,
+    structural_boost: f32,
+    result: NoteSearchResult,
 }
 
 #[tauri::command]
@@ -154,6 +163,17 @@ pub(crate) fn save_note(
     );
     write_state(&notes_dir, &persisted_state)?;
     refresh_notes_index(&state, &notes_dir)?;
+    if let Some(saved_path) = saved_path.as_deref() {
+        state
+            .semantic
+            .queue_note_update(Path::new(saved_path), markdown.clone(), timestamp_millis)?;
+    }
+    if let Some(previous_path) = current_path.as_deref() {
+        let previous_raw_path = previous_path.to_string_lossy().into_owned();
+        if saved_path.as_deref() != Some(previous_raw_path.as_str()) {
+            state.semantic.queue_delete_note(previous_path)?;
+        }
+    }
 
     Ok(NoteSession {
         markdown,
@@ -203,7 +223,21 @@ pub(crate) fn remember_note(
         timestamp_millis,
     );
     write_state(&notes_dir, &persisted_state)?;
-    refresh_notes_index(&state, &notes_dir)
+    refresh_notes_index(&state, &notes_dir)?;
+    if let Some(remembered_path) = remembered_path.as_deref() {
+        state.semantic.queue_note_update(
+            Path::new(remembered_path),
+            markdown,
+            timestamp_millis,
+        )?;
+    }
+    if let Some(previous_path) = current_path.as_deref() {
+        let previous_raw_path = previous_path.to_string_lossy().into_owned();
+        if remembered_path.as_deref() != Some(previous_raw_path.as_str()) {
+            state.semantic.queue_delete_note(previous_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -238,6 +272,7 @@ pub(crate) fn forget_note(
         persisted_state
             .recent_paths
             .retain(|path| path != &raw_path);
+        state.semantic.queue_delete_note(note_path)?;
     }
 
     write_state(&notes_dir, &persisted_state)?;
@@ -594,7 +629,11 @@ pub(crate) fn toggle_task(
         });
     timestamps.updated_at_millis = timestamp_millis;
     write_state(&notes_dir, &persisted_state)?;
-    refresh_notes_index(&state, &notes_dir)
+    refresh_notes_index(&state, &notes_dir)?;
+    state
+        .semantic
+        .queue_note_update(&note_path, updated_markdown, timestamp_millis)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -622,51 +661,8 @@ pub(crate) fn search_notes(
     }
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_override = build_current_override(current_path.as_deref(), &current_markdown);
-
-    let mut index = state
-        .notes_index
-        .lock()
-        .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh(&notes_dir)?;
-
-    let mut candidates = Vec::new();
-
-    match mode {
-        SearchMode::Current => {
-            if let Some(current_note) = current_override.as_ref() {
-                candidates.extend(search_note(
-                    current_path.as_deref(),
-                    current_note,
-                    &normalized_query,
-                    &query_terms,
-                ));
-            }
-        }
-        SearchMode::All => {
-            if let Some(current_note) = current_override.as_ref() {
-                candidates.extend(search_note(
-                    current_path.as_deref(),
-                    current_note,
-                    &normalized_query,
-                    &query_terms,
-                ));
-            }
-
-            for (path, note) in &index.entries {
-                if current_path.as_deref() == Some(path.as_path()) {
-                    continue;
-                }
-
-                candidates.extend(search_note(
-                    Some(path.as_path()),
-                    note,
-                    &normalized_query,
-                    &query_terms,
-                ));
-            }
-        }
-    }
+    let mut candidates =
+        collect_lexical_candidates(&state, &notes_dir, mode, current_path.as_deref(), &current_markdown, &normalized_query, &query_terms)?;
 
     candidates.sort_by(|left, right| {
         right
@@ -682,6 +678,379 @@ pub(crate) fn search_notes(
         .into_iter()
         .map(|candidate| candidate.result)
         .collect())
+}
+
+#[tauri::command]
+pub(crate) fn search_notes_hybrid(
+    state: State<'_, AppState>,
+    query: String,
+    mode: SearchMode,
+    current_path: Option<String>,
+    current_markdown: String,
+    limit: usize,
+    semantic_weight: Option<f32>,
+    lexical_weight: Option<f32>,
+) -> Result<Vec<NoteSearchResult>, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+
+    let normalized_query = normalize_search_text(&query);
+    if normalized_query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let query_terms = normalized_query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    if query_terms.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let current_path = validate_current_path(current_path, &notes_dir)?;
+    let lexical_candidates = collect_lexical_candidates(
+        &state,
+        &notes_dir,
+        mode.clone(),
+        current_path.as_deref(),
+        &current_markdown,
+        &normalized_query,
+        &query_terms,
+    )?;
+    let settings = state.semantic.get_settings()?;
+    let lexical_weight = lexical_weight.unwrap_or(settings.lexical_weight).max(0.0);
+    let semantic_weight = semantic_weight.unwrap_or(settings.semantic_weight).max(0.0);
+    let current_path_raw = current_path
+        .as_deref()
+        .map(|path| path.to_string_lossy().into_owned());
+
+    if !settings.semantic_search_enabled || matches!(mode, SearchMode::Current) {
+        return Ok(finalize_lexical_results(lexical_candidates, limit));
+    }
+
+    let semantic_matches = state.semantic.semantic_matches_for_text(
+        &query,
+        current_path_raw.as_deref(),
+        limit.saturating_mul(3).max(limit),
+    )?;
+
+    let max_lexical = lexical_candidates
+        .iter()
+        .map(|candidate| candidate.score as f32)
+        .fold(0.0, f32::max);
+    let max_semantic = semantic_matches
+        .iter()
+        .map(|candidate| candidate.score)
+        .fold(0.0, f32::max);
+    let mut merged = HashMap::<String, HybridCandidate>::new();
+
+    for lexical_candidate in lexical_candidates {
+        let mut result = lexical_candidate.result;
+        let lexical_score = if max_lexical > 0.0 {
+            lexical_candidate.score as f32 / max_lexical
+        } else {
+            0.0
+        };
+        result.reason_labels.push("keyword".to_string());
+        result.lexical_score = Some(lexical_score);
+        let structural_boost = structural_boost(&result, &normalized_query, current_path.as_deref());
+        merged.insert(
+            hybrid_candidate_key(&result),
+            HybridCandidate {
+                lexical_score,
+                semantic_score: 0.0,
+                structural_boost,
+                result,
+            },
+        );
+    }
+
+    for semantic_match in semantic_matches {
+        let semantic_score = if max_semantic > 0.0 {
+            semantic_match.score / max_semantic
+        } else {
+            0.0
+        };
+        let key = format!(
+            "{}::{}::{}::{}",
+            semantic_match.note_path,
+            semantic_match.section_label,
+            semantic_match.start_line,
+            semantic_match.end_line
+        );
+        let file_name = Path::new(&semantic_match.note_path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(&semantic_match.note_title)
+            .to_string();
+        let structural_boost = structural_boost_from_semantic(
+            &semantic_match,
+            &normalized_query,
+            current_path.as_deref(),
+        );
+
+        let entry = merged.entry(key).or_insert_with(|| HybridCandidate {
+            lexical_score: 0.0,
+            semantic_score: 0.0,
+            structural_boost,
+            result: NoteSearchResult {
+                note_path: Some(semantic_match.note_path.clone()),
+                file_name,
+                section_label: semantic_match.section_label.clone(),
+                excerpt: semantic_match.excerpt.clone(),
+                highlight_ranges: Vec::new(),
+                match_text: semantic_match.match_text.clone(),
+                reason_labels: vec!["semantic".to_string()],
+                lexical_score: None,
+                semantic_score: Some(semantic_score),
+                start_line: Some(semantic_match.start_line),
+                end_line: Some(semantic_match.end_line),
+            },
+        });
+
+        entry.semantic_score = entry.semantic_score.max(semantic_score);
+        entry.result.semantic_score = Some(entry.semantic_score);
+        if !entry
+            .result
+            .reason_labels
+            .iter()
+            .any(|label| label == "semantic")
+        {
+            entry.result.reason_labels.push("semantic".to_string());
+        }
+        entry.structural_boost = entry.structural_boost.max(structural_boost);
+    }
+
+    let mut ranked = merged.into_values().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        let left_score = lexical_weight * left.lexical_score
+            + semantic_weight * left.semantic_score
+            + 0.10 * left.structural_boost;
+        let right_score = lexical_weight * right.lexical_score
+            + semantic_weight * right.semantic_score
+            + 0.10 * right.structural_boost;
+        right_score
+            .total_cmp(&left_score)
+            .then_with(|| left.result.file_name.cmp(&right.result.file_name))
+            .then_with(|| left.result.section_label.cmp(&right.result.section_label))
+    });
+
+    ranked.truncate(limit.max(1));
+    Ok(ranked
+        .into_iter()
+        .map(|mut candidate| {
+            candidate.result.lexical_score = Some(candidate.lexical_score);
+            candidate.result.semantic_score = Some(candidate.semantic_score);
+            candidate.result
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub(crate) fn get_related_notes(
+    state: State<'_, AppState>,
+    current_path: Option<String>,
+    current_markdown: String,
+    limit: usize,
+) -> Result<Vec<RelatedNote>, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let current_path = validate_current_path(current_path, &notes_dir)?;
+    let current_path_raw = current_path
+        .as_deref()
+        .map(|path| path.to_string_lossy().into_owned());
+    state
+        .semantic
+        .related_notes(current_path_raw.as_deref(), &current_markdown, limit.max(1))
+}
+
+#[tauri::command]
+pub(crate) fn get_semantic_settings(
+    state: State<'_, AppState>,
+) -> Result<SemanticSettings, String> {
+    state.semantic.get_settings()
+}
+
+#[tauri::command]
+pub(crate) fn set_semantic_settings(
+    state: State<'_, AppState>,
+    settings: SemanticSettings,
+) -> Result<SemanticSettings, String> {
+    state.semantic.set_settings(settings)
+}
+
+#[tauri::command]
+pub(crate) fn get_semantic_status(
+    state: State<'_, AppState>,
+) -> Result<SemanticStatus, String> {
+    state.semantic.get_status()
+}
+
+#[tauri::command]
+pub(crate) fn rebuild_semantic_index(state: State<'_, AppState>) -> Result<(), String> {
+    state.semantic.rebuild_index()
+}
+
+#[tauri::command]
+pub(crate) fn pause_semantic_indexing(state: State<'_, AppState>) -> Result<(), String> {
+    state.semantic.pause_indexing()
+}
+
+#[tauri::command]
+pub(crate) fn resume_semantic_indexing(state: State<'_, AppState>) -> Result<(), String> {
+    state.semantic.resume_indexing()
+}
+
+#[tauri::command]
+pub(crate) fn get_map_graph(
+    state: State<'_, AppState>,
+    _view: Option<String>,
+    limit: usize,
+    min_score: f32,
+) -> Result<MapGraph, String> {
+    state.semantic.map_graph(limit.max(24), min_score.max(0.0))
+}
+
+fn collect_lexical_candidates(
+    state: &State<'_, AppState>,
+    notes_dir: &Path,
+    mode: SearchMode,
+    current_path: Option<&Path>,
+    current_markdown: &str,
+    normalized_query: &str,
+    query_terms: &[&str],
+) -> Result<Vec<crate::search::ScoredSearchResult>, String> {
+    let current_override = build_current_override(current_path, current_markdown);
+    let mut index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Search index lock poisoned".to_string())?;
+    index.refresh(notes_dir)?;
+
+    let mut candidates = Vec::new();
+    match mode {
+        SearchMode::Current => {
+            if let Some(current_note) = current_override.as_ref() {
+                candidates.extend(search_note(
+                    current_path,
+                    current_note,
+                    normalized_query,
+                    query_terms,
+                ));
+            }
+        }
+        SearchMode::All => {
+            if let Some(current_note) = current_override.as_ref() {
+                candidates.extend(search_note(
+                    current_path,
+                    current_note,
+                    normalized_query,
+                    query_terms,
+                ));
+            }
+
+            for (path, note) in &index.entries {
+                if current_path == Some(path.as_path()) {
+                    continue;
+                }
+
+                candidates.extend(search_note(
+                    Some(path.as_path()),
+                    note,
+                    normalized_query,
+                    query_terms,
+                ));
+            }
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn finalize_lexical_results(
+    mut candidates: Vec<crate::search::ScoredSearchResult>,
+    limit: usize,
+) -> Vec<NoteSearchResult> {
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.result.file_name.cmp(&right.result.file_name))
+            .then_with(|| left.result.section_label.cmp(&right.result.section_label))
+            .then_with(|| left.result.note_path.cmp(&right.result.note_path))
+    });
+    candidates.truncate(limit.max(1));
+    candidates
+        .into_iter()
+        .map(|mut candidate| {
+            candidate.result.lexical_score = Some(candidate.score as f32);
+            candidate.result.reason_labels = vec!["keyword".to_string()];
+            candidate.result
+        })
+        .collect()
+}
+
+fn hybrid_candidate_key(result: &NoteSearchResult) -> String {
+    format!(
+        "{}::{}::{}",
+        result.note_path.as_deref().unwrap_or("draft"),
+        result.section_label,
+        result.match_text
+    )
+}
+
+fn structural_boost(
+    result: &NoteSearchResult,
+    normalized_query: &str,
+    current_path: Option<&Path>,
+) -> f32 {
+    let mut boost = 0.0;
+    let excerpt = normalize_search_text(&result.excerpt);
+    let file_name = normalize_search_text(&result.file_name);
+    let section_label = normalize_search_text(&result.section_label);
+
+    if file_name.contains(normalized_query) {
+        boost += 1.0;
+    }
+    if section_label.contains(normalized_query) {
+        boost += 0.7;
+    }
+    if excerpt.contains(normalized_query) {
+        boost += 0.9;
+    }
+    if current_path
+        .and_then(|path| path.to_str())
+        .zip(result.note_path.as_deref())
+        .is_some_and(|(current, result_path)| current == result_path)
+    {
+        boost -= 0.2;
+    }
+
+    boost
+}
+
+fn structural_boost_from_semantic(
+    result: &SemanticChunkMatch,
+    normalized_query: &str,
+    current_path: Option<&Path>,
+) -> f32 {
+    let mut boost = 0.0;
+    let title = normalize_search_text(&result.note_title);
+    let excerpt = normalize_search_text(&result.excerpt);
+
+    if title.contains(normalized_query) {
+        boost += 1.0;
+    }
+    if excerpt.contains(normalized_query) {
+        boost += 0.8;
+    }
+    if current_path
+        .and_then(|path| path.to_str())
+        .is_some_and(|current| current == result.note_path)
+    {
+        boost -= 0.2;
+    }
+    boost
 }
 
 fn read_note_session_from_path(note_path: &Path) -> Result<NoteSession, String> {
