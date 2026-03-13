@@ -1,14 +1,19 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { Monitor, Moon, RefreshCcw, Sun } from 'lucide-svelte';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import {
     setThemePreference,
     themeOptions,
     themePreference,
     type ThemePreference
   } from '$lib/theme';
-  import type { SemanticSettings, SemanticStatus } from '$lib/types/semantic';
+  import type {
+    SemanticDebugMetrics,
+    SemanticDebugSnapshot,
+    SemanticSettings,
+    SemanticStatus
+  } from '$lib/types/semantic';
 
   const themeIcons: Record<ThemePreference, typeof Monitor> = {
     auto: Monitor,
@@ -18,17 +23,21 @@
 
   let semanticStatus = $state<SemanticStatus | null>(null);
   let semanticSettings = $state<SemanticSettings | null>(null);
+  let semanticDebug = $state<SemanticDebugSnapshot | null>(null);
   let isSaving = $state(false);
   let isRunningAction = $state(false);
+  let debugPollTimer: ReturnType<typeof window.setInterval> | null = null;
 
   async function loadSemanticState() {
     try {
-      const [status, settings] = await Promise.all([
+      const [status, settings, debug] = await Promise.all([
         invoke<SemanticStatus>('get_semantic_status'),
-        invoke<SemanticSettings>('get_semantic_settings')
+        invoke<SemanticSettings>('get_semantic_settings'),
+        invoke<SemanticDebugSnapshot>('get_semantic_debug_metrics')
       ]);
       semanticStatus = status;
       semanticSettings = settings;
+      semanticDebug = debug;
     } catch (error) {
       console.error('Failed to load semantic settings:', error);
     }
@@ -82,8 +91,38 @@
     return new Date(value).toLocaleString();
   }
 
+  function formatMillis(value: number | null) {
+    if (value === null || Number.isNaN(value)) return '0 ms';
+    if (value >= 1000) return `${(value / 1000).toFixed(2)} s`;
+    return `${Math.round(value)} ms`;
+  }
+
+  function averageDuration(total: number, count: number) {
+    if (!count) return 0;
+    return total / count;
+  }
+
+  async function clearDebugMetrics() {
+    try {
+      await invoke('clear_semantic_debug_metrics');
+      await loadSemanticState();
+    } catch (error) {
+      console.error('Failed to clear semantic debug metrics:', error);
+    }
+  }
+
   onMount(() => {
     void loadSemanticState();
+    debugPollTimer = window.setInterval(() => {
+      void loadSemanticState();
+    }, 2500);
+  });
+
+  onDestroy(() => {
+    if (debugPollTimer) {
+      window.clearInterval(debugPollTimer);
+      debugPollTimer = null;
+    }
   });
 </script>
 
@@ -161,20 +200,6 @@
                   type="checkbox"
                   checked={semanticSettings.semanticSearchEnabled}
                   onchange={(event) => updateSetting('semanticSearchEnabled', (event.currentTarget as HTMLInputElement).checked)}
-                />
-              </div>
-            </label>
-
-            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <p class="text-sm font-medium">Related Sidebar</p>
-                  <p class="mt-1 text-xs text-muted-foreground">Show live semantic neighbors while you edit.</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={semanticSettings.relatedSidebarEnabled}
-                  onchange={(event) => updateSetting('relatedSidebarEnabled', (event.currentTarget as HTMLInputElement).checked)}
                 />
               </div>
             </label>
@@ -295,6 +320,129 @@
           {#if semanticStatus.lastError || semanticStatus.latestJob?.errorText}
             <div class="mt-6 rounded-3xl border border-rose-300/60 bg-rose-50 px-5 py-4 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
               {semanticStatus.lastError ?? semanticStatus.model.error ?? semanticStatus.latestJob?.errorText}
+            </div>
+          {/if}
+
+          {#if semanticDebug}
+            {@const metrics = semanticDebug.metrics}
+            <div class="mt-6 rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Diagnostics</p>
+                  <p class="mt-2 text-sm font-medium">Live semantic telemetry</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    Captured {formatTimestamp(semanticDebug.capturedAtMillis)}
+                  </p>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
+                    type="button"
+                    onclick={() => void loadSemanticState()}
+                  >
+                    Refresh diagnostics
+                  </button>
+                  <button
+                    class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
+                    type="button"
+                    onclick={() => void clearDebugMetrics()}
+                  >
+                    Clear diagnostics
+                  </button>
+                </div>
+              </div>
+
+              <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Embeddings</p>
+                  <p class="mt-2 text-sm font-medium">{metrics.embeddingRequestCount} requests</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    avg {formatMillis(averageDuration(metrics.embeddingDurationTotalMillis, metrics.embeddingRequestCount))}
+                    · max {formatMillis(metrics.embeddingDurationMaxMillis)}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    texts {metrics.embeddingTextCountTotal} · chars {metrics.embeddingCharCountTotal}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Runtime</p>
+                  <p class="mt-2 text-sm font-medium">
+                    spawns {metrics.runtimeSpawnCount} · restarts {metrics.runtimeRestartCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    ready {metrics.runtimeReadyCount} · shutdowns {metrics.runtimeShutdownCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    warmup {formatMillis(metrics.modelWarmupLastMillis)} · prepare {formatMillis(metrics.modelPrepareLastMillis)}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Requests</p>
+                  <p class="mt-2 text-sm font-medium">
+                    search {metrics.searchRequestCount} · map {metrics.mapRequestCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    search semantic used {metrics.searchSemanticUsedCount} · skipped {metrics.searchSemanticSkippedCount}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Index</p>
+                  <p class="mt-2 text-sm font-medium">
+                    jobs {metrics.indexJobStartedCount} · zero-work {metrics.indexZeroWorkCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    scanned {metrics.indexScannedTotal} · embedded {metrics.indexEmbeddedTotal}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    avg {formatMillis(averageDuration(metrics.indexDurationTotalMillis, metrics.indexJobCompletedCount + metrics.indexJobFailedCount))}
+                    · max {formatMillis(metrics.indexDurationMaxMillis)}
+                  </p>
+                </div>
+              </div>
+
+              <div class="mt-4 grid gap-4 md:grid-cols-2">
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Failures</p>
+                  <p class="mt-2 text-sm font-medium">
+                    embedding {metrics.embeddingRequestFailureCount} · index {metrics.indexJobFailedCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    prepare {metrics.modelPrepareFailureCount} · warmup {metrics.modelWarmupFailureCount} · timeouts {metrics.runtimeTimeoutCount}
+                  </p>
+                </div>
+              </div>
+
+              <div class="mt-4 rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Recent Events</p>
+                <div class="mt-3 max-h-72 overflow-y-auto space-y-2">
+                  {#if semanticDebug.recentEvents.length === 0}
+                    <p class="text-sm text-muted-foreground">No events captured yet.</p>
+                  {:else}
+                    {#each semanticDebug.recentEvents as event}
+                      <div class="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
+                        <div class="flex items-center justify-between gap-3">
+                          <p class="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                            {event.category} · {event.action}
+                          </p>
+                          <p class="text-[11px] text-muted-foreground">
+                            {formatTimestamp(event.timestampMillis)}
+                          </p>
+                        </div>
+                        {#if event.detail}
+                          <p class="mt-1 text-sm text-foreground break-words">{event.detail}</p>
+                        {/if}
+                        {#if event.durationMillis !== null}
+                          <p class="mt-1 text-xs text-muted-foreground">Duration {formatMillis(event.durationMillis)}</p>
+                        {/if}
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
+              </div>
             </div>
           {/if}
         {/if}

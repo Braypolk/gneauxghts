@@ -1,6 +1,5 @@
 export interface SemanticSettings {
   semanticSearchEnabled: boolean;
-  relatedSidebarEnabled: boolean;
   localOnlyMode: boolean;
   autoDownloadModel: boolean;
   lexicalWeight: number;
@@ -47,6 +46,60 @@ export interface SemanticStatus {
   latestJob: SemanticIndexJob | null;
 }
 
+export interface SemanticDebugMetrics {
+  runtimeSpawnCount: number;
+  runtimeRestartCount: number;
+  runtimeShutdownCount: number;
+  runtimeReadyCount: number;
+  runtimeTimeoutCount: number;
+  modelPrepareCount: number;
+  modelPrepareSuccessCount: number;
+  modelPrepareFailureCount: number;
+  modelPrepareLastMillis: number | null;
+  modelWarmupCount: number;
+  modelWarmupSuccessCount: number;
+  modelWarmupFailureCount: number;
+  modelWarmupLastMillis: number | null;
+  embeddingRequestCount: number;
+  embeddingRequestSuccessCount: number;
+  embeddingRequestFailureCount: number;
+  embeddingTextCountTotal: number;
+  embeddingCharCountTotal: number;
+  embeddingDurationTotalMillis: number;
+  embeddingDurationMaxMillis: number;
+  searchRequestCount: number;
+  searchSemanticUsedCount: number;
+  searchSemanticSkippedCount: number;
+  searchDurationTotalMillis: number;
+  searchDurationMaxMillis: number;
+  mapRequestCount: number;
+  mapDurationTotalMillis: number;
+  mapDurationMaxMillis: number;
+  indexJobEnqueuedCount: number;
+  indexJobStartedCount: number;
+  indexJobCompletedCount: number;
+  indexJobFailedCount: number;
+  indexZeroWorkCount: number;
+  indexScannedTotal: number;
+  indexEmbeddedTotal: number;
+  indexDurationTotalMillis: number;
+  indexDurationMaxMillis: number;
+}
+
+export interface SemanticDebugEvent {
+  timestampMillis: number;
+  category: string;
+  action: string;
+  detail: string | null;
+  durationMillis: number | null;
+}
+
+export interface SemanticDebugSnapshot {
+  capturedAtMillis: number;
+  metrics: SemanticDebugMetrics;
+  recentEvents: SemanticDebugEvent[];
+}
+
 export interface SearchItem {
   notePath: string | null;
   fileName: string;
@@ -59,18 +112,6 @@ export interface SearchItem {
   semanticScore: number | null;
   startLine: number | null;
   endLine: number | null;
-}
-
-export interface RelatedItem {
-  notePath: string;
-  noteTitle: string;
-  excerpt: string;
-  matchText: string;
-  sectionLabel: string | null;
-  score: number;
-  reasonLabel: string;
-  startLine: number;
-  endLine: number;
 }
 
 export interface MapNode {

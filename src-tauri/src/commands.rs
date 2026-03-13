@@ -3,7 +3,10 @@ use crate::{
         build_current_override, normalize_search_text, refresh_notes_index, task_key,
         toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
     },
-    semantic::{MapGraph, RelatedNote, SemanticChunkMatch, SemanticSettings, SemanticStatus},
+    semantic::{
+        debug::SemanticDebugSnapshot, MapGraph, SemanticChunkMatch, SemanticSettings,
+        SemanticStatus,
+    },
     search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
     state::{
         is_valid_note_path, notes_root, persist_note, prune_recent_paths, push_unique, read_state,
@@ -16,7 +19,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::State;
 
@@ -691,6 +694,7 @@ pub(crate) async fn search_notes_hybrid(
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
 ) -> Result<Vec<NoteSearchResult>, String> {
+    let started_at = Instant::now();
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
 
@@ -728,6 +732,21 @@ pub(crate) async fn search_notes_hybrid(
         && (normalized_query.len() >= 6 || query_terms.len() >= 2);
 
     if !should_use_semantic {
+        let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let debug = state.semantic.debug_state();
+        debug.record_timing(
+            "search",
+            "search_completed",
+            Some("semantic_skipped".to_string()),
+            elapsed,
+            |metrics| {
+                metrics.search_request_count += 1;
+                metrics.search_semantic_skipped_count += 1;
+                metrics.search_duration_total_millis += elapsed;
+                metrics.search_duration_max_millis =
+                    metrics.search_duration_max_millis.max(elapsed);
+            },
+        );
         return Ok(finalize_lexical_results(lexical_candidates, limit));
     }
 
@@ -845,6 +864,20 @@ pub(crate) async fn search_notes_hybrid(
     });
 
     ranked.truncate(limit.max(1));
+    let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    state.semantic.debug_state().record_timing(
+        "search",
+        "search_completed",
+        Some(format!("semantic_used results={}", ranked.len())),
+        elapsed,
+        |metrics| {
+            metrics.search_request_count += 1;
+            metrics.search_semantic_used_count += 1;
+            metrics.search_duration_total_millis += elapsed;
+            metrics.search_duration_max_millis =
+                metrics.search_duration_max_millis.max(elapsed);
+        },
+    );
     Ok(ranked
         .into_iter()
         .map(|mut candidate| {
@@ -853,27 +886,6 @@ pub(crate) async fn search_notes_hybrid(
             candidate.result
         })
         .collect())
-}
-
-#[tauri::command]
-pub(crate) async fn get_related_notes(
-    state: State<'_, AppState>,
-    current_path: Option<String>,
-    current_markdown: String,
-    limit: usize,
-) -> Result<Vec<RelatedNote>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_path_raw = current_path
-        .as_deref()
-        .map(|path| path.to_string_lossy().into_owned());
-    let semantic = state.semantic.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        semantic.related_notes(current_path_raw.as_deref(), &current_markdown, limit.max(1))
-    })
-    .await
-    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
@@ -930,10 +942,51 @@ pub(crate) async fn get_map_graph(
     limit: usize,
     min_score: f32,
 ) -> Result<MapGraph, String> {
+    let started_at = Instant::now();
     let semantic = state.semantic.clone();
-    tauri::async_runtime::spawn_blocking(move || semantic.map_graph(limit.max(24), min_score.max(0.0)))
+    let graph = tauri::async_runtime::spawn_blocking(move || semantic.map_graph(limit.max(24), min_score.max(0.0)))
         .await
-        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())?;
+    let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    match &graph {
+        Ok(graph_data) => state.semantic.debug_state().record_timing(
+            "map",
+            "map_completed",
+            Some(format!("nodes={} edges={}", graph_data.nodes.len(), graph_data.edges.len())),
+            elapsed,
+            |metrics| {
+                metrics.map_request_count += 1;
+                metrics.map_duration_total_millis += elapsed;
+                metrics.map_duration_max_millis =
+                    metrics.map_duration_max_millis.max(elapsed);
+            },
+        ),
+        Err(error) => state.semantic.debug_state().record_timing(
+            "map",
+            "map_failed",
+            Some(error.clone()),
+            elapsed,
+            |metrics| {
+                metrics.map_request_count += 1;
+                metrics.map_duration_total_millis += elapsed;
+                metrics.map_duration_max_millis =
+                    metrics.map_duration_max_millis.max(elapsed);
+            },
+        ),
+    }
+    graph
+}
+
+#[tauri::command]
+pub(crate) fn get_semantic_debug_metrics(
+    state: State<'_, AppState>,
+) -> Result<SemanticDebugSnapshot, String> {
+    state.semantic.debug_snapshot()
+}
+
+#[tauri::command]
+pub(crate) fn clear_semantic_debug_metrics(state: State<'_, AppState>) -> Result<(), String> {
+    state.semantic.clear_debug_metrics()
 }
 
 fn collect_lexical_candidates(

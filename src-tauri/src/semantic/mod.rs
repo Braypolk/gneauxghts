@@ -1,15 +1,16 @@
 pub(crate) mod chunking;
 pub(crate) mod db;
+pub(crate) mod debug;
 pub(crate) mod embed;
 pub(crate) mod indexer;
 pub(crate) mod similarity;
 
 use self::{
-    chunking::chunk_markdown,
     db::{
         count_indexed_items, ensure_schema, load_chunks_with_embeddings, load_graph_data,
         load_latest_job, load_semantic_settings, open_database, save_semantic_settings,
     },
+    debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
     indexer::{spawn_indexing_worker, IndexWork},
     similarity::cosine_similarity,
@@ -26,13 +27,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const MAX_RELATED_QUERY_CHUNKS: usize = 6;
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SemanticSettings {
     pub(crate) semantic_search_enabled: bool,
-    pub(crate) related_sidebar_enabled: bool,
     pub(crate) local_only_mode: bool,
     pub(crate) auto_download_model: bool,
     pub(crate) lexical_weight: f32,
@@ -45,7 +43,6 @@ impl Default for SemanticSettings {
     fn default() -> Self {
         Self {
             semantic_search_enabled: true,
-            related_sidebar_enabled: true,
             local_only_mode: true,
             auto_download_model: false,
             lexical_weight: 0.5,
@@ -99,20 +96,6 @@ pub(crate) struct SemanticChunkMatch {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RelatedNote {
-    pub(crate) note_path: String,
-    pub(crate) note_title: String,
-    pub(crate) excerpt: String,
-    pub(crate) match_text: String,
-    pub(crate) section_label: Option<String>,
-    pub(crate) score: f32,
-    pub(crate) reason_label: String,
-    pub(crate) start_line: usize,
-    pub(crate) end_line: usize,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct MapNode {
     pub(crate) note_path: String,
     pub(crate) title: String,
@@ -152,6 +135,7 @@ pub(crate) struct SemanticState {
     settings: Arc<Mutex<SemanticSettings>>,
     provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     runtime: Arc<Mutex<RuntimeState>>,
+    debug: Arc<SemanticDebugState>,
     work_tx: Sender<IndexWork>,
 }
 
@@ -172,8 +156,14 @@ impl SemanticState {
         }
         drop(connection);
         let settings = Arc::new(Mutex::new(initial_settings));
+        let debug = Arc::new(SemanticDebugState::new());
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(
-            JinaLlamaEmbeddingProvider::new(app_data_dir, settings.clone(), bundled_runtime_path)?,
+            JinaLlamaEmbeddingProvider::new(
+                app_data_dir,
+                settings.clone(),
+                bundled_runtime_path,
+                debug.clone(),
+            )?,
         );
 
         let runtime = Arc::new(Mutex::new(RuntimeState::default()));
@@ -184,6 +174,7 @@ impl SemanticState {
             provider.clone(),
             work_rx,
             &runtime,
+            debug.clone(),
         )?;
 
         let state = Self {
@@ -191,6 +182,7 @@ impl SemanticState {
             settings,
             provider,
             runtime,
+            debug,
             work_tx,
         };
         state.enqueue_scan(false)?;
@@ -204,6 +196,13 @@ impl SemanticState {
         markdown: String,
         modified_millis: u64,
     ) -> Result<(), String> {
+        self.debug.record_with_metrics(
+            "index",
+            "enqueue_upsert_note",
+            Some(note_path.to_string_lossy().into_owned()),
+            None,
+            |metrics| metrics.index_job_enqueued_count += 1,
+        );
         self.work_tx
             .send(IndexWork::UpsertNote {
                 note_path: note_path.to_path_buf(),
@@ -214,6 +213,13 @@ impl SemanticState {
     }
 
     pub(crate) fn queue_delete_note(&self, note_path: &Path) -> Result<(), String> {
+        self.debug.record_with_metrics(
+            "index",
+            "enqueue_delete_note",
+            Some(note_path.to_string_lossy().into_owned()),
+            None,
+            |metrics| metrics.index_job_enqueued_count += 1,
+        );
         self.work_tx
             .send(IndexWork::DeleteNote {
                 note_path: note_path.to_path_buf(),
@@ -230,12 +236,30 @@ impl SemanticState {
                 .map_err(|_| "Semantic runtime lock poisoned".to_string())?;
             runtime.last_scan_requested_at_millis = Some(now);
         }
+        self.debug.record_with_metrics(
+            "index",
+            if force {
+                "enqueue_full_scan_force"
+            } else {
+                "enqueue_full_scan"
+            },
+            None,
+            None,
+            |metrics| metrics.index_job_enqueued_count += 1,
+        );
         self.work_tx
             .send(IndexWork::FullScan { force })
             .map_err(|err| err.to_string())
     }
 
     pub(crate) fn rebuild_index(&self) -> Result<(), String> {
+        self.debug.record_with_metrics(
+            "index",
+            "enqueue_rebuild",
+            None,
+            None,
+            |metrics| metrics.index_job_enqueued_count += 1,
+        );
         self.work_tx
             .send(IndexWork::Rebuild)
             .map_err(|err| err.to_string())
@@ -251,11 +275,57 @@ impl SemanticState {
 
     pub(crate) fn warmup_model_in_background(&self) {
         let provider = Arc::clone(&self.provider);
+        let debug = Arc::clone(&self.debug);
         let _ = thread::Builder::new()
             .name("semantic-model-warmup".to_string())
             .spawn(move || {
-                let _ = provider.prepare();
+                let started_at = std::time::Instant::now();
+                debug.record_with_metrics("runtime", "warmup_started", None, None, |metrics| {
+                    metrics.model_warmup_count += 1;
+                });
+                match provider.prepare() {
+                    Ok(()) => {
+                        let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX))
+                            as u64;
+                        debug.record_timing(
+                            "runtime",
+                            "warmup_completed",
+                            None,
+                            elapsed,
+                            |metrics| {
+                                metrics.model_warmup_success_count += 1;
+                                metrics.model_warmup_last_millis = Some(elapsed);
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX))
+                            as u64;
+                        debug.record_timing(
+                            "runtime",
+                            "warmup_failed",
+                            Some(error),
+                            elapsed,
+                            |metrics| {
+                                metrics.model_warmup_failure_count += 1;
+                                metrics.model_warmup_last_millis = Some(elapsed);
+                            },
+                        );
+                    }
+                }
             });
+    }
+
+    pub(crate) fn debug_snapshot(&self) -> Result<SemanticDebugSnapshot, String> {
+        self.debug.snapshot()
+    }
+
+    pub(crate) fn clear_debug_metrics(&self) -> Result<(), String> {
+        self.debug.clear()
+    }
+
+    pub(crate) fn debug_state(&self) -> Arc<SemanticDebugState> {
+        Arc::clone(&self.debug)
     }
 
     pub(crate) fn pause_indexing(&self) -> Result<(), String> {
@@ -370,86 +440,6 @@ impl SemanticState {
         Ok(matches)
     }
 
-    pub(crate) fn related_notes(
-        &self,
-        current_path: Option<&str>,
-        current_markdown: &str,
-        limit: usize,
-    ) -> Result<Vec<RelatedNote>, String> {
-        let settings = self.get_settings()?;
-        if !settings.related_sidebar_enabled {
-            return Ok(Vec::new());
-        }
-
-        let draft = chunk_markdown(current_markdown, "Untitled");
-        if draft.chunks.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let draft_chunk_texts = limited_related_query_chunks(
-            &draft
-                .chunks
-                .iter()
-                .map(|chunk| (chunk.section_label.clone(), chunk.text.clone()))
-                .collect::<Vec<_>>(),
-        );
-
-        let draft_embeddings = self
-            .provider
-            .embed_texts(
-                &draft_chunk_texts,
-                EmbeddingInputKind::Query,
-            )?;
-        let connection = open_database(&self.db_path)?;
-        ensure_schema(&connection)?;
-        let stored_chunks = load_chunks_with_embeddings(&connection, current_path)?;
-
-        let mut grouped = std::collections::HashMap::<String, RelatedNote>::new();
-
-        for chunk in stored_chunks {
-            let best_score = draft_embeddings
-                .iter()
-                .map(|draft_embedding| cosine_similarity(draft_embedding, &chunk.embedding))
-                .fold(f32::MIN, f32::max);
-            if best_score < 0.32 {
-                continue;
-            }
-
-            let reason_label = if chunk.section_label.eq_ignore_ascii_case("title") {
-                "title + concept".to_string()
-            } else {
-                "concept match".to_string()
-            };
-
-            let candidate = RelatedNote {
-                note_path: chunk.note_path.clone(),
-                note_title: chunk.note_title.clone(),
-                excerpt: build_excerpt(&chunk.text, 180),
-                match_text: chunk.text.clone(),
-                section_label: Some(chunk.section_label.clone()),
-                score: best_score,
-                reason_label,
-                start_line: chunk.start_line,
-                end_line: chunk.end_line,
-            };
-
-            let entry = grouped.entry(chunk.note_path.clone()).or_insert(candidate.clone());
-            if candidate.score > entry.score {
-                *entry = candidate;
-            }
-        }
-
-        let mut related = grouped.into_values().collect::<Vec<_>>();
-        related.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| left.note_title.cmp(&right.note_title))
-        });
-        related.truncate(limit);
-        Ok(related)
-    }
-
     pub(crate) fn map_graph(
         &self,
         limit: usize,
@@ -460,7 +450,6 @@ impl SemanticState {
         let graph = load_graph_data(&connection, limit, min_score)?;
         Ok(graph)
     }
-
 }
 
 fn build_excerpt(text: &str, max_chars: usize) -> String {
@@ -471,33 +460,6 @@ fn build_excerpt(text: &str, max_chars: usize) -> String {
 
     let excerpt = trimmed.chars().take(max_chars).collect::<String>();
     format!("{}…", excerpt.trim_end())
-}
-
-fn limited_related_query_chunks(chunks: &[(String, String)]) -> Vec<String> {
-    if chunks.len() <= MAX_RELATED_QUERY_CHUNKS {
-        return chunks.iter().map(|(_, text)| text.clone()).collect();
-    }
-
-    let mut selected = Vec::new();
-    if let Some((_, title_chunk)) = chunks
-        .iter()
-        .find(|(section_label, _)| section_label.eq_ignore_ascii_case("title"))
-    {
-        selected.push(title_chunk.clone());
-    }
-
-    for (_, text) in chunks.iter().rev() {
-        if selected.len() >= MAX_RELATED_QUERY_CHUNKS {
-            break;
-        }
-        if selected.iter().any(|existing| existing == text) {
-            continue;
-        }
-        selected.push(text.clone());
-    }
-
-    selected.reverse();
-    selected
 }
 
 pub(crate) fn current_time_millis() -> Result<u64, String> {

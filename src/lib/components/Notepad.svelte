@@ -2,7 +2,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import type { Crepe } from '@milkdown/crepe';
   import { onMount, tick } from 'svelte';
-  import { activeNoteDraft, noteOpenRequest, type NoteOpenRequest } from '$lib/stores/semantic';
   import { consumePendingTaskTarget, type PendingTaskTarget } from '$lib/taskNavigation';
   import type { SearchItem } from '$lib/types/semantic';
   import BottomBar from './BottomBar.svelte';
@@ -52,7 +51,6 @@
   let activeRecentNotesRequest = 0;
   let activeRecentTasksRequest = 0;
   let searchFocusRequest = $state(0);
-  let lastHandledOpenRequestId = 0;
 
   async function initEditor(initialValue: string) {
     if (!editorRoot) return;
@@ -541,23 +539,6 @@
     }
   }
 
-  async function openNoteRequest(request: NoteOpenRequest) {
-    const result: SearchItem = {
-      notePath: request.notePath,
-      fileName: request.notePath.split('/').pop()?.replace(/\.md$/i, '') ?? 'Note',
-      sectionLabel: request.sectionLabel ?? 'Related',
-      excerpt: '',
-      highlightRanges: [],
-      matchText: request.matchText ?? '',
-      reasonLabels: [],
-      lexicalScore: null,
-      semanticScore: null,
-      startLine: request.startLine ?? null,
-      endLine: request.endLine ?? null
-    };
-    await openSearchResult(result);
-  }
-
   async function openRecentTask(task: RecentTaskItem) {
     const shouldOpenDifferentNote = task.notePath !== currentNotePath;
 
@@ -624,24 +605,6 @@
       if (searchTimer) window.clearTimeout(searchTimer);
       void destroyEditor();
     };
-  });
-
-  $effect(() => {
-    activeNoteDraft.set({
-      path: currentNotePath,
-      markdown: getCurrentMarkdown()
-    });
-  });
-
-  $effect(() => {
-    const request = $noteOpenRequest;
-    if (!request || request.id === lastHandledOpenRequestId) {
-      return;
-    }
-
-    lastHandledOpenRequestId = request.id;
-    void openNoteRequest(request);
-    noteOpenRequest.set(null);
   });
 </script>
 

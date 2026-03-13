@@ -4,6 +4,7 @@ use super::{
         content_hash, delete_note, ensure_schema, insert_job, load_existing_chunk_embeddings,
         load_stored_note_records, open_database, rebuild_edges, update_job, upsert_note_chunks,
     },
+    debug::SemanticDebugState,
     embed::{EmbeddingInputKind, EmbeddingProvider},
     current_time_millis, RuntimeState,
 };
@@ -14,6 +15,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{mpsc::Receiver, Arc, Mutex},
     thread,
+    time::Instant,
     time::UNIX_EPOCH,
 };
 
@@ -39,12 +41,13 @@ pub(crate) fn spawn_indexing_worker(
     provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     work_rx: Receiver<IndexWork>,
     runtime: &Arc<Mutex<RuntimeState>>,
+    debug: Arc<SemanticDebugState>,
 ) -> Result<(), String> {
     let runtime = Arc::clone(runtime);
     thread::Builder::new()
         .name("semantic-indexer".to_string())
         .spawn(move || {
-            run_worker(db_path, notes_dir, provider, work_rx, runtime);
+            run_worker(db_path, notes_dir, provider, work_rx, runtime, debug);
         })
         .map(|_| ())
         .map_err(|err| err.to_string())
@@ -56,6 +59,7 @@ fn run_worker(
     provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     work_rx: Receiver<IndexWork>,
     runtime: Arc<Mutex<RuntimeState>>,
+    debug: Arc<SemanticDebugState>,
 ) {
     let mut paused = false;
     let mut backlog = VecDeque::new();
@@ -95,9 +99,11 @@ fn run_worker(
             IndexWork::FullScan { force } => {
                 let job_notes_dir = notes_dir.clone();
                 let job_provider = provider.clone();
+                let job_debug = debug.clone();
                 run_job(
                     &db_path,
                     &runtime,
+                    &job_debug,
                     "Scanning notes",
                     move |connection| process_full_scan(connection, &job_notes_dir, &job_provider, force),
                 );
@@ -108,9 +114,11 @@ fn run_worker(
                 modified_millis,
             } => {
                 let job_provider = provider.clone();
+                let job_debug = debug.clone();
                 run_job(
                     &db_path,
                     &runtime,
+                    &job_debug,
                     "Indexing note",
                     move |connection| {
                         let embedded_count = index_note_content(
@@ -129,9 +137,11 @@ fn run_worker(
                 );
             }
             IndexWork::DeleteNote { note_path } => {
+                let job_debug = debug.clone();
                 run_job(
                     &db_path,
                     &runtime,
+                    &job_debug,
                     "Removing note from semantic index",
                     move |connection| {
                         delete_note(connection, &note_path.to_string_lossy())?;
@@ -146,9 +156,11 @@ fn run_worker(
             IndexWork::Rebuild => {
                 let job_notes_dir = notes_dir.clone();
                 let job_provider = provider.clone();
+                let job_debug = debug.clone();
                 run_job(
                     &db_path,
                     &runtime,
+                    &job_debug,
                     "Rebuilding semantic index",
                     move |connection| process_rebuild(connection, &job_notes_dir, &job_provider),
                 );
@@ -160,15 +172,20 @@ fn run_worker(
 fn run_job<F>(
     db_path: &Path,
     runtime: &Arc<Mutex<RuntimeState>>,
+    debug: &Arc<SemanticDebugState>,
     label: &str,
     job: F,
 ) where
     F: FnOnce(&mut rusqlite::Connection) -> Result<JobOutcome, String>,
 {
+    let started_at = Instant::now();
     update_runtime(runtime, |state| {
         state.indexing_in_progress = true;
         state.current_job_label = Some(label.to_string());
         state.last_error = None;
+    });
+    debug.record_with_metrics("index", "job_started", Some(label.to_string()), None, |metrics| {
+        metrics.index_job_started_count += 1;
     });
 
     let result = (|| -> Result<(), String> {
@@ -185,9 +202,45 @@ fn run_job<F>(
                     outcome.embedded_count,
                     None,
                 )?;
+                let elapsed =
+                    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                debug.record_timing(
+                    "index",
+                    "job_completed",
+                    Some(format!(
+                        "{label} scanned={} embedded={}",
+                        outcome.scanned_count, outcome.embedded_count
+                    )),
+                    elapsed,
+                    |metrics| {
+                        metrics.index_job_completed_count += 1;
+                        metrics.index_scanned_total += outcome.scanned_count as u64;
+                        metrics.index_embedded_total += outcome.embedded_count as u64;
+                        metrics.index_duration_total_millis += elapsed;
+                        metrics.index_duration_max_millis =
+                            metrics.index_duration_max_millis.max(elapsed);
+                        if outcome.scanned_count == 0 && outcome.embedded_count == 0 {
+                            metrics.index_zero_work_count += 1;
+                        }
+                    },
+                );
             }
             Err(error) => {
                 update_job(&connection, job_id, "failed", 0, 0, Some(&error))?;
+                let elapsed =
+                    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                debug.record_timing(
+                    "index",
+                    "job_failed",
+                    Some(format!("{label}: {error}")),
+                    elapsed,
+                    |metrics| {
+                        metrics.index_job_failed_count += 1;
+                        metrics.index_duration_total_millis += elapsed;
+                        metrics.index_duration_max_millis =
+                            metrics.index_duration_max_millis.max(elapsed);
+                    },
+                );
                 return Err(error);
             }
         }

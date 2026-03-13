@@ -1,4 +1,4 @@
-use super::SemanticSettings;
+use super::{debug::SemanticDebugState, SemanticSettings};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -9,7 +9,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const MODEL_REPO_ID: &str = "jinaai/jina-embeddings-v5-text-nano-retrieval";
@@ -57,6 +57,7 @@ pub(crate) struct JinaLlamaEmbeddingProvider {
     client: Client,
     model_dir: PathBuf,
     bundled_runtime_path: Option<PathBuf>,
+    debug: Arc<SemanticDebugState>,
     runtime: Mutex<ProviderRuntimeState>,
     dimensions: usize,
 }
@@ -100,6 +101,7 @@ impl JinaLlamaEmbeddingProvider {
         app_data_dir: PathBuf,
         settings: Arc<Mutex<SemanticSettings>>,
         bundled_runtime_path: Option<PathBuf>,
+        debug: Arc<SemanticDebugState>,
     ) -> Result<Self, String> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10))
@@ -111,6 +113,7 @@ impl JinaLlamaEmbeddingProvider {
             client,
             model_dir: app_data_dir.join("semantic").join("models"),
             bundled_runtime_path,
+            debug,
             runtime: Mutex::new(ProviderRuntimeState {
                 status: "waiting for local runtime".to_string(),
                 ..ProviderRuntimeState::default()
@@ -143,8 +146,22 @@ impl JinaLlamaEmbeddingProvider {
                         Some(port)
                     } else if self.server_ready(port) {
                         runtime.status = "ready".to_string();
+                        self.debug.record_with_metrics(
+                            "runtime",
+                            "runtime_ready",
+                            Some(format!("port={port}")),
+                            None,
+                            |metrics| metrics.runtime_ready_count += 1,
+                        );
                         return Ok(port);
                     } else {
+                        self.debug.record_with_metrics(
+                            "runtime",
+                            "runtime_restart",
+                            Some(format!("port={port}")),
+                            None,
+                            |metrics| metrics.runtime_restart_count += 1,
+                        );
                         terminate_child(&mut runtime.server);
                         runtime.port = None;
                         runtime.starting = false;
@@ -220,6 +237,13 @@ impl JinaLlamaEmbeddingProvider {
             runtime.starting = false;
             runtime.status = format!("starting local Jina runtime on port {port}");
         }
+        self.debug.record_with_metrics(
+            "runtime",
+            "runtime_spawned",
+            Some(format!("port={port}")),
+            None,
+            |metrics| metrics.runtime_spawn_count += 1,
+        );
 
         for _ in 0..60 {
             if self.server_ready(port) {
@@ -229,6 +253,13 @@ impl JinaLlamaEmbeddingProvider {
                     .map_err(|_| "Embedding runtime lock poisoned".to_string())?;
                 runtime.starting = false;
                 runtime.status = "ready".to_string();
+                self.debug.record_with_metrics(
+                    "runtime",
+                    "runtime_ready",
+                    Some(format!("port={port}")),
+                    None,
+                    |metrics| metrics.runtime_ready_count += 1,
+                );
                 return Ok(port);
             }
             thread::sleep(Duration::from_millis(500));
@@ -238,17 +269,35 @@ impl JinaLlamaEmbeddingProvider {
             "Timed out waiting for llama-server. Check {}",
             stderr_path.display()
         ));
+        self.debug.record_with_metrics(
+            "runtime",
+            "runtime_timeout",
+            Some(stderr_path.display().to_string()),
+            None,
+            |metrics| metrics.runtime_timeout_count += 1,
+        );
         self.shutdown_server();
         Err("Timed out waiting for local Jina embedding runtime".to_string())
     }
 
     fn shutdown_server(&self) {
         if let Ok(mut runtime) = self.runtime.lock() {
+            let had_runtime = runtime.server.is_some() || runtime.port.is_some();
+            let detail = runtime.port.map(|port| format!("port={port}"));
             terminate_child(&mut runtime.server);
             runtime.port = None;
             runtime.starting = false;
             if runtime.last_error.is_none() {
                 runtime.status = "stopped".to_string();
+            }
+            if had_runtime {
+                self.debug.record_with_metrics(
+                    "runtime",
+                    "runtime_shutdown",
+                    detail,
+                    None,
+                    |metrics| metrics.runtime_shutdown_count += 1,
+                );
             }
         }
     }
@@ -376,6 +425,9 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             return Ok(Vec::new());
         }
 
+        let started_at = Instant::now();
+        let text_count = texts.len() as u64;
+        let char_count = texts.iter().map(|text| text.chars().count() as u64).sum::<u64>();
         let port = self.ensure_server_ready()?;
         let input = texts
             .iter()
@@ -391,11 +443,64 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             .json(&serde_json::json!({ "input": input }))
             .send()
             .and_then(|response| response.error_for_status())
-            .map_err(|err| err.to_string())?
+            .map_err(|err| {
+                let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                self.debug.record_timing(
+                    "embedding",
+                    "request_failed",
+                    Some(err.to_string()),
+                    elapsed,
+                    |metrics| {
+                        metrics.embedding_request_count += 1;
+                        metrics.embedding_request_failure_count += 1;
+                        metrics.embedding_text_count_total += text_count;
+                        metrics.embedding_char_count_total += char_count;
+                        metrics.embedding_duration_total_millis += elapsed;
+                        metrics.embedding_duration_max_millis =
+                            metrics.embedding_duration_max_millis.max(elapsed);
+                    },
+                );
+                err.to_string()
+            })?
             .text()
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| {
+                let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                self.debug.record_timing(
+                    "embedding",
+                    "request_failed",
+                    Some(err.to_string()),
+                    elapsed,
+                    |metrics| {
+                        metrics.embedding_request_count += 1;
+                        metrics.embedding_request_failure_count += 1;
+                        metrics.embedding_text_count_total += text_count;
+                        metrics.embedding_char_count_total += char_count;
+                        metrics.embedding_duration_total_millis += elapsed;
+                        metrics.embedding_duration_max_millis =
+                            metrics.embedding_duration_max_millis.max(elapsed);
+                    },
+                );
+                err.to_string()
+            })?;
+
+        let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
 
         if let Ok(response) = serde_json::from_str::<OpenAiEmbeddingsResponse>(&response_text) {
+            self.debug.record_timing(
+                "embedding",
+                "request_completed",
+                Some(format!("kind={}", kind.label())),
+                elapsed,
+                |metrics| {
+                    metrics.embedding_request_count += 1;
+                    metrics.embedding_request_success_count += 1;
+                    metrics.embedding_text_count_total += text_count;
+                    metrics.embedding_char_count_total += char_count;
+                    metrics.embedding_duration_total_millis += elapsed;
+                    metrics.embedding_duration_max_millis =
+                        metrics.embedding_duration_max_millis.max(elapsed);
+                },
+            );
             return Ok(response
                 .data
                 .into_iter()
@@ -404,17 +509,77 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
         }
 
         if let Ok(response) = serde_json::from_str::<SingleEmbeddingResponse>(&response_text) {
+            self.debug.record_timing(
+                "embedding",
+                "request_completed",
+                Some(format!("kind={}", kind.label())),
+                elapsed,
+                |metrics| {
+                    metrics.embedding_request_count += 1;
+                    metrics.embedding_request_success_count += 1;
+                    metrics.embedding_text_count_total += text_count;
+                    metrics.embedding_char_count_total += char_count;
+                    metrics.embedding_duration_total_millis += elapsed;
+                    metrics.embedding_duration_max_millis =
+                        metrics.embedding_duration_max_millis.max(elapsed);
+                },
+            );
             return Ok(vec![response.embedding]);
         }
 
         if let Ok(response) = serde_json::from_str::<Vec<SingleEmbeddingResponse>>(&response_text) {
+            self.debug.record_timing(
+                "embedding",
+                "request_completed",
+                Some(format!("kind={}", kind.label())),
+                elapsed,
+                |metrics| {
+                    metrics.embedding_request_count += 1;
+                    metrics.embedding_request_success_count += 1;
+                    metrics.embedding_text_count_total += text_count;
+                    metrics.embedding_char_count_total += char_count;
+                    metrics.embedding_duration_total_millis += elapsed;
+                    metrics.embedding_duration_max_millis =
+                        metrics.embedding_duration_max_millis.max(elapsed);
+                },
+            );
             return Ok(response.into_iter().map(|item| item.embedding).collect());
         }
 
         if let Ok(response) = serde_json::from_str::<MultiEmbeddingResponse>(&response_text) {
+            self.debug.record_timing(
+                "embedding",
+                "request_completed",
+                Some(format!("kind={}", kind.label())),
+                elapsed,
+                |metrics| {
+                    metrics.embedding_request_count += 1;
+                    metrics.embedding_request_success_count += 1;
+                    metrics.embedding_text_count_total += text_count;
+                    metrics.embedding_char_count_total += char_count;
+                    metrics.embedding_duration_total_millis += elapsed;
+                    metrics.embedding_duration_max_millis =
+                        metrics.embedding_duration_max_millis.max(elapsed);
+                },
+            );
             return Ok(response.embedding);
         }
 
+        self.debug.record_timing(
+            "embedding",
+            "request_failed",
+            Some("unexpected_response".to_string()),
+            elapsed,
+            |metrics| {
+                metrics.embedding_request_count += 1;
+                metrics.embedding_request_failure_count += 1;
+                metrics.embedding_text_count_total += text_count;
+                metrics.embedding_char_count_total += char_count;
+                metrics.embedding_duration_total_millis += elapsed;
+                metrics.embedding_duration_max_millis =
+                    metrics.embedding_duration_max_millis.max(elapsed);
+            },
+        );
         Err(format!("Unexpected embedding response from local runtime: {response_text}"))
     }
 
@@ -477,7 +642,40 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
     }
 
     fn prepare(&self) -> Result<(), String> {
-        self.ensure_server_ready().map(|_| ())
+        let started_at = Instant::now();
+        self.debug.record_with_metrics("runtime", "prepare_started", None, None, |metrics| {
+            metrics.model_prepare_count += 1;
+        });
+        match self.ensure_server_ready() {
+            Ok(_) => {
+                let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                self.debug.record_timing(
+                    "runtime",
+                    "prepare_completed",
+                    None,
+                    elapsed,
+                    |metrics| {
+                        metrics.model_prepare_success_count += 1;
+                        metrics.model_prepare_last_millis = Some(elapsed);
+                    },
+                );
+                Ok(())
+            }
+            Err(error) => {
+                let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                self.debug.record_timing(
+                    "runtime",
+                    "prepare_failed",
+                    Some(error.clone()),
+                    elapsed,
+                    |metrics| {
+                        metrics.model_prepare_failure_count += 1;
+                        metrics.model_prepare_last_millis = Some(elapsed);
+                    },
+                );
+                Err(error)
+            }
+        }
     }
 
     fn shutdown(&self) {
@@ -488,6 +686,15 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
 impl Drop for JinaLlamaEmbeddingProvider {
     fn drop(&mut self) {
         self.shutdown_server();
+    }
+}
+
+impl EmbeddingInputKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Query => "query",
+        }
     }
 }
 
