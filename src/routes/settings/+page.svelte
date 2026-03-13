@@ -59,7 +59,13 @@
     void saveSettings();
   }
 
-  async function runAction(command: 'rebuild_semantic_index' | 'pause_semantic_indexing' | 'resume_semantic_indexing') {
+  async function runAction(
+    command:
+      | 'rebuild_semantic_index'
+      | 'pause_semantic_indexing'
+      | 'resume_semantic_indexing'
+      | 'prepare_semantic_model'
+  ) {
     isRunningAction = true;
     try {
       await invoke(command);
@@ -206,7 +212,15 @@
             <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
               <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Model</p>
               <p class="mt-2 text-sm font-medium">{semanticStatus.model.label}</p>
-              <p class="mt-1 text-xs text-muted-foreground">{semanticStatus.model.dimensions} dimensions · local embedder</p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                {semanticStatus.model.dimensions} dimensions · {semanticStatus.model.status}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Runtime: {semanticStatus.model.runtimeBinaryPath ?? 'not installed'}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Model: {semanticStatus.model.modelPath ?? semanticStatus.model.modelRepoId}
+              </p>
             </div>
 
             <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
@@ -231,6 +245,15 @@
           </div>
 
           <div class="mt-6 flex flex-wrap items-center gap-3">
+            <button
+              class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+              type="button"
+              disabled={isRunningAction}
+              onclick={() => void runAction('prepare_semantic_model')}
+            >
+              Prepare local model
+            </button>
+
             <button
               class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
               type="button"
@@ -271,7 +294,7 @@
 
           {#if semanticStatus.lastError || semanticStatus.latestJob?.errorText}
             <div class="mt-6 rounded-3xl border border-rose-300/60 bg-rose-50 px-5 py-4 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
-              {semanticStatus.lastError ?? semanticStatus.latestJob?.errorText}
+              {semanticStatus.lastError ?? semanticStatus.model.error ?? semanticStatus.latestJob?.errorText}
             </div>
           {/if}
         {/if}

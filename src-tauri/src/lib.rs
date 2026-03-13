@@ -7,18 +7,21 @@ mod state;
 use index::AppState;
 use semantic::SemanticState;
 use state::notes_root;
-use tauri::Manager;
+use tauri::{Manager, RunEvent};
+use std::path::PathBuf;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             let app_data_dir = app
                 .path()
                 .app_data_dir()
                 .map_err(|err| err.to_string())?;
             let notes_dir = notes_root()?;
-            let semantic = SemanticState::new(app_data_dir, notes_dir)?;
+            let bundled_runtime_path = bundled_llama_server_path(app.handle());
+            let semantic =
+                SemanticState::new_with_runtime(app_data_dir, notes_dir, bundled_runtime_path)?;
             app.manage(AppState::new(semantic));
             Ok(())
         })
@@ -46,8 +49,32 @@ pub fn run() {
             commands::rebuild_semantic_index,
             commands::pause_semantic_indexing,
             commands::resume_semantic_indexing,
+            commands::prepare_semantic_model,
             commands::get_map_graph
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                state.semantic.shutdown();
+            }
+        }
+    });
+}
+
+fn bundled_llama_server_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if cfg!(debug_assertions) {
+        return None;
+    }
+
+    let resource_dir = app.path().resource_dir().ok()?;
+    let binary_name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
+    let candidate = resource_dir.join("bin").join(binary_name);
+    candidate.is_file().then_some(candidate)
 }

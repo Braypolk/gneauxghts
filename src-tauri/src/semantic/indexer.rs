@@ -4,7 +4,7 @@ use super::{
         content_hash, delete_note, ensure_schema, insert_job, load_existing_chunk_embeddings,
         load_stored_note_records, open_database, rebuild_edges, update_job, upsert_note_chunks,
     },
-    embed::EmbeddingProvider,
+    embed::{EmbeddingInputKind, EmbeddingProvider},
     current_time_millis, RuntimeState,
 };
 use crate::{index::is_note_file, state::derive_file_stem};
@@ -120,7 +120,7 @@ fn run_worker(
                             &markdown,
                             modified_millis,
                         )?;
-                        rebuild_edges(connection, 6, 0.24)?;
+                        rebuild_edges(connection, 6, 0.42)?;
                         Ok(JobOutcome {
                             scanned_count: 1,
                             embedded_count,
@@ -135,7 +135,7 @@ fn run_worker(
                     "Removing note from semantic index",
                     move |connection| {
                         delete_note(connection, &note_path.to_string_lossy())?;
-                        rebuild_edges(connection, 6, 0.24)?;
+                        rebuild_edges(connection, 6, 0.42)?;
                         Ok(JobOutcome {
                             scanned_count: 1,
                             embedded_count: 0,
@@ -261,7 +261,7 @@ fn process_full_scan(
         delete_note(connection, stale_path)?;
     }
 
-    rebuild_edges(connection, 6, 0.24)?;
+    rebuild_edges(connection, 6, 0.42)?;
     Ok(JobOutcome {
         scanned_count,
         embedded_count,
@@ -319,7 +319,7 @@ fn index_note_content(
         embed_indexes.push(index);
     }
 
-    let new_embeddings = provider.embed_texts(&texts_to_embed)?;
+    let new_embeddings = provider.embed_texts(&texts_to_embed, EmbeddingInputKind::Document)?;
     for (embedding, index) in new_embeddings.into_iter().zip(embed_indexes.into_iter()) {
         embeddings[index] = embedding;
     }

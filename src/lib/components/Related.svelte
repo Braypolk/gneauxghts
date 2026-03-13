@@ -19,8 +19,15 @@
   let isLoading = $state(false);
   let activeRequest = 0;
   let refreshTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let statusTimer: ReturnType<typeof window.setTimeout> | null = null;
+  const MIN_RELATED_QUERY_CHARS = 48;
+  let lastLoadedDraftKey = '';
+  let lastLoadedIndexSnapshot = '';
+  let inFlightRelatedKey = '';
+  let hasLoadedRelatedOnce = $state(false);
 
   function scheduleRefresh() {
+    if (!open) return;
     if (refreshTimer) window.clearTimeout(refreshTimer);
     refreshTimer = window.setTimeout(() => {
       refreshTimer = null;
@@ -28,22 +35,110 @@
     }, 220);
   }
 
-  async function loadStatus() {
+  function normalizedDraftKey() {
+    const draft = $activeNoteDraft;
+    return JSON.stringify({
+      path: draft.path,
+      markdown: draft.markdown.replace(/\s+/g, ' ').trim()
+    });
+  }
+
+  function indexSnapshot(status: SemanticStatus | null) {
+    if (!status) return 'none';
+    return JSON.stringify({
+      lastIndexedAtMillis: status.lastIndexedAtMillis,
+      indexedNotes: status.indexedNotes,
+      indexedChunks: status.indexedChunks,
+      latestJobUpdatedAtMillis: status.latestJob?.updatedAtMillis ?? null,
+      indexingInProgress: status.indexingInProgress
+    });
+  }
+
+  function clearStatusTimer() {
+    if (!statusTimer) return;
+    window.clearTimeout(statusTimer);
+    statusTimer = null;
+  }
+
+  function scheduleStatusRefresh() {
+    clearStatusTimer();
+    if (!open || !semanticStatus?.indexingInProgress) {
+      return;
+    }
+
+    statusTimer = window.setTimeout(() => {
+      statusTimer = null;
+      void loadStatus({ refreshRelated: true });
+    }, 3000);
+  }
+
+  async function loadStatus({ refreshRelated = false }: { refreshRelated?: boolean } = {}) {
+    const wasIndexing = semanticStatus?.indexingInProgress ?? false;
+    const previousSnapshot = indexSnapshot(semanticStatus);
+
     try {
-      semanticStatus = await invoke<SemanticStatus>('get_semantic_status');
+      const nextStatus = await invoke<SemanticStatus>('get_semantic_status');
+      semanticStatus = nextStatus;
+
+      if (
+        refreshRelated &&
+        open &&
+        wasIndexing &&
+        !nextStatus.indexingInProgress &&
+        indexSnapshot(nextStatus) !== previousSnapshot
+      ) {
+        scheduleRefresh();
+      }
+
+      scheduleStatusRefresh();
     } catch (error) {
       console.error('Failed to load semantic status:', error);
+      scheduleStatusRefresh();
     }
   }
 
-  async function loadRelated() {
+  async function loadRelated({ force = false }: { force?: boolean } = {}) {
+    if (!open) return;
+
     const draft = $activeNoteDraft;
+    const draftKey = normalizedDraftKey();
+    const currentIndexSnapshot = indexSnapshot(semanticStatus);
+    const requestKey = `${draftKey}::${currentIndexSnapshot}`;
+
+    if (!force && draftKey === lastLoadedDraftKey && currentIndexSnapshot === lastLoadedIndexSnapshot) {
+      return;
+    }
+
+    if (requestKey === inFlightRelatedKey) {
+      return;
+    }
+
     if (draft.markdown.trim() === '' && draft.path === null) {
       relatedItems = [];
+      isLoading = false;
+      hasLoadedRelatedOnce = true;
+      lastLoadedDraftKey = draftKey;
+      lastLoadedIndexSnapshot = currentIndexSnapshot;
+      return;
+    }
+
+    const normalizedDraft = draft.markdown.replace(/\s+/g, ' ').trim();
+    if (!draft.path && normalizedDraft.length < MIN_RELATED_QUERY_CHARS) {
+      relatedItems = [];
+      isLoading = false;
+      hasLoadedRelatedOnce = true;
+      lastLoadedDraftKey = draftKey;
+      lastLoadedIndexSnapshot = currentIndexSnapshot;
+      return;
+    }
+
+    if (semanticStatus?.indexingInProgress) {
+      isLoading = false;
       return;
     }
 
     const requestId = ++activeRequest;
+    inFlightRelatedKey = requestKey;
     isLoading = true;
 
     try {
@@ -55,12 +150,17 @@
 
       if (requestId !== activeRequest) return;
       relatedItems = items;
+      hasLoadedRelatedOnce = true;
+      lastLoadedDraftKey = draftKey;
+      lastLoadedIndexSnapshot = currentIndexSnapshot;
     } catch (error) {
       if (requestId !== activeRequest) return;
       console.error('Failed to load related notes:', error);
       relatedItems = [];
+      hasLoadedRelatedOnce = true;
     } finally {
       if (requestId === activeRequest) {
+        inFlightRelatedKey = '';
         isLoading = false;
       }
     }
@@ -82,28 +182,36 @@
 
   onMount(() => {
     void loadStatus();
-    const interval = window.setInterval(() => {
-      void loadStatus();
-      if (open) {
-        void loadRelated();
-      }
-    }, 4000);
 
     return () => {
-      window.clearInterval(interval);
+      clearStatusTimer();
       if (refreshTimer) window.clearTimeout(refreshTimer);
     };
   });
 
   $effect(() => {
     $activeNoteDraft;
+    if (!open) return;
     scheduleRefresh();
   });
 
   $effect(() => {
     if (open) {
-      void loadStatus();
-      scheduleRefresh();
+      void loadStatus({ refreshRelated: true });
+      void loadRelated({ force: true });
+      return;
+    }
+
+    relatedItems = [];
+    isLoading = false;
+    lastLoadedDraftKey = '';
+    lastLoadedIndexSnapshot = '';
+    inFlightRelatedKey = '';
+    hasLoadedRelatedOnce = false;
+    clearStatusTimer();
+    if (refreshTimer) {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = null;
     }
   });
 </script>
@@ -121,13 +229,13 @@
     <div class="rounded-3xl border border-rose-300/60 bg-rose-50 px-5 py-6 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
       {semanticStatus.lastError}
     </div>
-  {:else if isLoading}
+  {:else if isLoading && !hasLoadedRelatedOnce}
     <div class="rounded-3xl border border-border/70 bg-background px-5 py-6 text-sm text-muted-foreground">
       Looking for neighboring notes…
     </div>
   {:else if relatedItems.length === 0}
     <div class="rounded-3xl border border-dashed border-border bg-background px-5 py-6 text-sm text-muted-foreground">
-      No strong related notes yet. Save or keep writing to give the index more context.
+      Save or keep writing a bit more to get related notes.
     </div>
   {:else}
     {#each relatedItems as item}

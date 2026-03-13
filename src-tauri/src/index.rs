@@ -3,20 +3,20 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::UNIX_EPOCH,
 };
 
 pub(crate) struct AppState {
     pub(crate) notes_index: Mutex<NotesIndex>,
-    pub(crate) semantic: SemanticState,
+    pub(crate) semantic: Arc<SemanticState>,
 }
 
 impl AppState {
     pub(crate) fn new(semantic: SemanticState) -> Self {
         Self {
             notes_index: Mutex::new(NotesIndex::default()),
-            semantic,
+            semantic: Arc::new(semantic),
         }
     }
 }

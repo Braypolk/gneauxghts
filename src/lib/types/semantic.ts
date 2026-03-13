@@ -15,6 +15,12 @@ export interface SemanticModelInfo {
   dimensions: number;
   localOnly: boolean;
   autoDownloadSupported: boolean;
+  runtimeBinaryPath: string | null;
+  modelPath: string | null;
+  modelRepoId: string;
+  available: boolean;
+  status: string;
+  error: string | null;
 }
 
 export interface SemanticIndexJob {

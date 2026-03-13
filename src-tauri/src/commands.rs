@@ -681,7 +681,7 @@ pub(crate) fn search_notes(
 }
 
 #[tauri::command]
-pub(crate) fn search_notes_hybrid(
+pub(crate) async fn search_notes_hybrid(
     state: State<'_, AppState>,
     query: String,
     mode: SearchMode,
@@ -723,16 +723,25 @@ pub(crate) fn search_notes_hybrid(
     let current_path_raw = current_path
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
+    let should_use_semantic = settings.semantic_search_enabled
+        && matches!(mode, SearchMode::All)
+        && (normalized_query.len() >= 6 || query_terms.len() >= 2);
 
-    if !settings.semantic_search_enabled || matches!(mode, SearchMode::Current) {
+    if !should_use_semantic {
         return Ok(finalize_lexical_results(lexical_candidates, limit));
     }
 
-    let semantic_matches = state.semantic.semantic_matches_for_text(
-        &query,
-        current_path_raw.as_deref(),
-        limit.saturating_mul(3).max(limit),
-    )?;
+    let semantic = state.semantic.clone();
+    let semantic_query = query.clone();
+    let semantic_matches = tauri::async_runtime::spawn_blocking(move || {
+        semantic.semantic_matches_for_text(
+            &semantic_query,
+            current_path_raw.as_deref(),
+            limit.saturating_mul(3).max(limit),
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())??;
 
     let max_lexical = lexical_candidates
         .iter()
@@ -847,7 +856,7 @@ pub(crate) fn search_notes_hybrid(
 }
 
 #[tauri::command]
-pub(crate) fn get_related_notes(
+pub(crate) async fn get_related_notes(
     state: State<'_, AppState>,
     current_path: Option<String>,
     current_markdown: String,
@@ -859,9 +868,12 @@ pub(crate) fn get_related_notes(
     let current_path_raw = current_path
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
-    state
-        .semantic
-        .related_notes(current_path_raw.as_deref(), &current_markdown, limit.max(1))
+    let semantic = state.semantic.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        semantic.related_notes(current_path_raw.as_deref(), &current_markdown, limit.max(1))
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
@@ -876,7 +888,9 @@ pub(crate) fn set_semantic_settings(
     state: State<'_, AppState>,
     settings: SemanticSettings,
 ) -> Result<SemanticSettings, String> {
-    state.semantic.set_settings(settings)
+    let next_settings = state.semantic.set_settings(settings)?;
+    state.semantic.warmup_model_in_background();
+    Ok(next_settings)
 }
 
 #[tauri::command]
@@ -902,13 +916,24 @@ pub(crate) fn resume_semantic_indexing(state: State<'_, AppState>) -> Result<(),
 }
 
 #[tauri::command]
-pub(crate) fn get_map_graph(
+pub(crate) async fn prepare_semantic_model(state: State<'_, AppState>) -> Result<(), String> {
+    let semantic = state.semantic.clone();
+    tauri::async_runtime::spawn_blocking(move || semantic.prepare_model())
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn get_map_graph(
     state: State<'_, AppState>,
     _view: Option<String>,
     limit: usize,
     min_score: f32,
 ) -> Result<MapGraph, String> {
-    state.semantic.map_graph(limit.max(24), min_score.max(0.0))
+    let semantic = state.semantic.clone();
+    tauri::async_runtime::spawn_blocking(move || semantic.map_graph(limit.max(24), min_score.max(0.0)))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 fn collect_lexical_candidates(

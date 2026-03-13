@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/bin": "bin",
+      "resources/lib": "lib"
+    }
+  }
+}

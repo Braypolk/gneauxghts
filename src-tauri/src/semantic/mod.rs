@@ -10,7 +10,7 @@ use self::{
         count_indexed_items, ensure_schema, load_chunks_with_embeddings, load_graph_data,
         load_latest_job, load_semantic_settings, open_database, save_semantic_settings,
     },
-    embed::{EmbeddingProvider, LocalHashEmbeddingProvider, ModelInfo},
+    embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
     indexer::{spawn_indexing_worker, IndexWork},
     similarity::cosine_similarity,
 };
@@ -22,8 +22,11 @@ use std::{
         mpsc::{self, Sender},
         Arc, Mutex,
     },
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+const MAX_RELATED_QUERY_CHUNKS: usize = 6;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,9 +48,9 @@ impl Default for SemanticSettings {
             related_sidebar_enabled: true,
             local_only_mode: true,
             auto_download_model: false,
-            lexical_weight: 0.45,
-            semantic_weight: 0.45,
-            graph_min_score: 0.32,
+            lexical_weight: 0.5,
+            semantic_weight: 0.4,
+            graph_min_score: 0.46,
             strongest_links_only: false,
         }
     }
@@ -146,24 +149,32 @@ pub(super) struct RuntimeState {
 
 pub(crate) struct SemanticState {
     db_path: PathBuf,
+    settings: Arc<Mutex<SemanticSettings>>,
     provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     runtime: Arc<Mutex<RuntimeState>>,
     work_tx: Sender<IndexWork>,
 }
 
 impl SemanticState {
-    pub(crate) fn new(app_data_dir: PathBuf, notes_dir: PathBuf) -> Result<Self, String> {
+    pub(crate) fn new_with_runtime(
+        app_data_dir: PathBuf,
+        notes_dir: PathBuf,
+        bundled_runtime_path: Option<PathBuf>,
+    ) -> Result<Self, String> {
         fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
         let semantic_dir = app_data_dir.join("semantic");
         let db_path = semantic_dir.join("semantic.sqlite3");
-        let provider: Arc<dyn EmbeddingProvider + Send + Sync> =
-            Arc::new(LocalHashEmbeddingProvider::new(256));
         let connection = open_database(&db_path)?;
         ensure_schema(&connection)?;
+        let initial_settings = load_semantic_settings(&connection)?.unwrap_or_default();
         if load_semantic_settings(&connection)?.is_none() {
-            save_semantic_settings(&connection, &SemanticSettings::default())?;
+            save_semantic_settings(&connection, &initial_settings)?;
         }
         drop(connection);
+        let settings = Arc::new(Mutex::new(initial_settings));
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(
+            JinaLlamaEmbeddingProvider::new(app_data_dir, settings.clone(), bundled_runtime_path)?,
+        );
 
         let runtime = Arc::new(Mutex::new(RuntimeState::default()));
         let (work_tx, work_rx) = mpsc::channel();
@@ -177,11 +188,13 @@ impl SemanticState {
 
         let state = Self {
             db_path,
+            settings,
             provider,
             runtime,
             work_tx,
         };
         state.enqueue_scan(false)?;
+        state.warmup_model_in_background();
         Ok(state)
     }
 
@@ -208,25 +221,6 @@ impl SemanticState {
             .map_err(|err| err.to_string())
     }
 
-    pub(crate) fn enqueue_scan_if_stale(&self) -> Result<(), String> {
-        let now = current_time_millis()?;
-        let should_enqueue = {
-            let runtime = self
-                .runtime
-                .lock()
-                .map_err(|_| "Semantic runtime lock poisoned".to_string())?;
-            runtime
-                .last_scan_requested_at_millis
-                .map(|last_requested| now.saturating_sub(last_requested) > 5_000)
-                .unwrap_or(true)
-        };
-
-        if should_enqueue {
-            self.enqueue_scan(false)?;
-        }
-        Ok(())
-    }
-
     pub(crate) fn enqueue_scan(&self, force: bool) -> Result<(), String> {
         let now = current_time_millis()?;
         {
@@ -247,6 +241,23 @@ impl SemanticState {
             .map_err(|err| err.to_string())
     }
 
+    pub(crate) fn prepare_model(&self) -> Result<(), String> {
+        self.provider.prepare()
+    }
+
+    pub(crate) fn shutdown(&self) {
+        self.provider.shutdown();
+    }
+
+    pub(crate) fn warmup_model_in_background(&self) {
+        let provider = Arc::clone(&self.provider);
+        let _ = thread::Builder::new()
+            .name("semantic-model-warmup".to_string())
+            .spawn(move || {
+                let _ = provider.prepare();
+            });
+    }
+
     pub(crate) fn pause_indexing(&self) -> Result<(), String> {
         self.work_tx
             .send(IndexWork::SetPaused { paused: true })
@@ -260,9 +271,10 @@ impl SemanticState {
     }
 
     pub(crate) fn get_settings(&self) -> Result<SemanticSettings, String> {
-        let connection = open_database(&self.db_path)?;
-        ensure_schema(&connection)?;
-        Ok(load_semantic_settings(&connection)?.unwrap_or_default())
+        self.settings
+            .lock()
+            .map(|settings| settings.clone())
+            .map_err(|_| "Semantic settings lock poisoned".to_string())
     }
 
     pub(crate) fn set_settings(
@@ -272,16 +284,21 @@ impl SemanticState {
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
         save_semantic_settings(&connection, &next_settings)?;
+        *self
+            .settings
+            .lock()
+            .map_err(|_| "Semantic settings lock poisoned".to_string())? = next_settings.clone();
         Ok(next_settings)
     }
 
     pub(crate) fn get_status(&self) -> Result<SemanticStatus, String> {
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
-        let settings = load_semantic_settings(&connection)?.unwrap_or_default();
+        let settings = self.get_settings()?;
         let (indexed_notes, indexed_chunks, last_indexed_at_millis) =
             count_indexed_items(&connection)?;
         let latest_job = load_latest_job(&connection)?;
+        let model = self.provider.model_info();
         let runtime = self
             .runtime
             .lock()
@@ -289,14 +306,14 @@ impl SemanticState {
 
         Ok(SemanticStatus {
             settings,
-            model: self.provider.model_info(),
-            model_available: true,
+            model_available: model.available,
+            model: model.clone(),
             indexing_paused: runtime.indexing_paused,
             indexing_in_progress: runtime.indexing_in_progress,
             indexed_notes,
             indexed_chunks,
             last_indexed_at_millis: runtime.last_indexed_at_millis.or(last_indexed_at_millis),
-            last_error: runtime.last_error.clone(),
+            last_error: runtime.last_error.clone().or(model.error.clone()),
             current_job_label: runtime.current_job_label.clone(),
             latest_job,
         })
@@ -313,10 +330,9 @@ impl SemanticState {
             return Ok(Vec::new());
         }
 
-        self.enqueue_scan_if_stale()?;
         let query_embedding = self
             .provider
-            .embed_texts(&[text.to_string()])?
+            .embed_texts(&[text.to_string()], EmbeddingInputKind::Query)?
             .into_iter()
             .next()
             .ok_or_else(|| "Unable to embed semantic query".to_string())?;
@@ -326,7 +342,7 @@ impl SemanticState {
             .into_iter()
             .filter_map(|chunk| {
                 let score = cosine_similarity(&query_embedding, &chunk.embedding);
-                if score <= 0.0 {
+                if score < 0.18 {
                     return None;
                 }
 
@@ -365,20 +381,24 @@ impl SemanticState {
             return Ok(Vec::new());
         }
 
-        self.enqueue_scan_if_stale()?;
         let draft = chunk_markdown(current_markdown, "Untitled");
         if draft.chunks.is_empty() {
             return Ok(Vec::new());
         }
 
+        let draft_chunk_texts = limited_related_query_chunks(
+            &draft
+                .chunks
+                .iter()
+                .map(|chunk| (chunk.section_label.clone(), chunk.text.clone()))
+                .collect::<Vec<_>>(),
+        );
+
         let draft_embeddings = self
             .provider
             .embed_texts(
-                &draft
-                    .chunks
-                    .iter()
-                    .map(|chunk| chunk.text.clone())
-                    .collect::<Vec<_>>(),
+                &draft_chunk_texts,
+                EmbeddingInputKind::Query,
             )?;
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
@@ -391,7 +411,7 @@ impl SemanticState {
                 .iter()
                 .map(|draft_embedding| cosine_similarity(draft_embedding, &chunk.embedding))
                 .fold(f32::MIN, f32::max);
-            if best_score < 0.2 {
+            if best_score < 0.32 {
                 continue;
             }
 
@@ -435,7 +455,6 @@ impl SemanticState {
         limit: usize,
         min_score: f32,
     ) -> Result<MapGraph, String> {
-        self.enqueue_scan_if_stale()?;
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
         let graph = load_graph_data(&connection, limit, min_score)?;
@@ -452,6 +471,33 @@ fn build_excerpt(text: &str, max_chars: usize) -> String {
 
     let excerpt = trimmed.chars().take(max_chars).collect::<String>();
     format!("{}…", excerpt.trim_end())
+}
+
+fn limited_related_query_chunks(chunks: &[(String, String)]) -> Vec<String> {
+    if chunks.len() <= MAX_RELATED_QUERY_CHUNKS {
+        return chunks.iter().map(|(_, text)| text.clone()).collect();
+    }
+
+    let mut selected = Vec::new();
+    if let Some((_, title_chunk)) = chunks
+        .iter()
+        .find(|(section_label, _)| section_label.eq_ignore_ascii_case("title"))
+    {
+        selected.push(title_chunk.clone());
+    }
+
+    for (_, text) in chunks.iter().rev() {
+        if selected.len() >= MAX_RELATED_QUERY_CHUNKS {
+            break;
+        }
+        if selected.iter().any(|existing| existing == text) {
+            continue;
+        }
+        selected.push(text.clone());
+    }
+
+    selected.reverse();
+    selected
 }
 
 pub(crate) fn current_time_millis() -> Result<u64, String> {
