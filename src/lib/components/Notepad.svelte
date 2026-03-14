@@ -286,6 +286,56 @@
     scheduleSearch();
   }
 
+  function findLastSelectionPoint(node: Node): { node: Node; offset: number } | null {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return { node, offset: node.textContent?.length ?? 0 };
+    }
+
+    for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
+      const child = node.childNodes[index];
+      const point = findLastSelectionPoint(child);
+      if (point) return point;
+    }
+
+    if (node instanceof HTMLElement) {
+      return { node, offset: node.childNodes.length };
+    }
+
+    return null;
+  }
+
+  async function focusEditorAtEnd() {
+    await tick();
+
+    const proseMirror = editorRoot?.querySelector('.ProseMirror');
+    if (!(proseMirror instanceof HTMLElement)) return;
+
+    proseMirror.focus();
+
+    const point = findLastSelectionPoint(proseMirror);
+    const selection = window.getSelection();
+    if (!point || !selection) return;
+
+    const range = document.createRange();
+    range.setStart(point.node, point.offset);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const selectionTarget =
+      point.node instanceof HTMLElement ? point.node : point.node.parentElement ?? proseMirror;
+    selectionTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function handleTitleKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+
+    event.preventDefault();
+    void focusEditorAtEnd();
+  }
+
   function clearSearch() {
     searchQuery = '';
     searchResults = [];
@@ -627,6 +677,7 @@
               placeholder="Title"
               value={title}
               oninput={handleTitleInput}
+              onkeydown={handleTitleKeydown}
             />
           </div>
           <div class="h-px w-40 rounded-full bg-border"></div>

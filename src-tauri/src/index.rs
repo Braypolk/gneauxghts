@@ -497,3 +497,57 @@ fn toggle_task_line(line: &mut String) -> Option<()> {
     *line = format!("{indentation}{bullet}{toggled_rest}");
     Some(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{build_indexed_note, toggle_task_in_markdown};
+    use crate::test_support::{fixture_path, load_fixture, load_json_fixture};
+    use serde_json::json;
+
+    #[test]
+    fn build_indexed_note_matches_project_atlas_fixture() {
+        let markdown = load_fixture("project-atlas.md");
+        let note = build_indexed_note(&fixture_path("project-atlas.md"), &markdown, 42);
+
+        let actual = json!({
+            "title": note.title,
+            "fileName": note.file_name,
+            "paragraphs": note.paragraphs.iter().map(|paragraph| json!({
+                "sectionLabel": paragraph.section_label,
+                "text": paragraph.text,
+            })).collect::<Vec<_>>(),
+            "tasks": note.tasks.iter().map(|task| json!({
+                "sectionLabel": task.section_label,
+                "text": task.text,
+                "completed": task.completed,
+                "depth": task.depth,
+                "lineNumber": task.line_number,
+            })).collect::<Vec<_>>(),
+        });
+
+        assert_eq!(actual, load_json_fixture("project-atlas.index.json"));
+    }
+
+    #[test]
+    fn toggle_task_in_markdown_uses_exact_line_then_nearest_match() {
+        let markdown = "\
+# Duplicate Tasks
+
+- [ ] Review search ranking
+- [ ] Another task
+- [ ] Review search ranking
+";
+
+        let exact_toggle = toggle_task_in_markdown(markdown, 5, "Review search ranking")
+            .expect("toggle exact line");
+        let exact_lines = exact_toggle.lines().collect::<Vec<_>>();
+        assert_eq!(exact_lines[2], "- [ ] Review search ranking");
+        assert_eq!(exact_lines[4], "- [x] Review search ranking");
+
+        let fallback_toggle = toggle_task_in_markdown(markdown, 99, "Review search ranking")
+            .expect("toggle nearest line");
+        let fallback_lines = fallback_toggle.lines().collect::<Vec<_>>();
+        assert_eq!(fallback_lines[2], "- [ ] Review search ranking");
+        assert_eq!(fallback_lines[4], "- [x] Review search ranking");
+    }
+}

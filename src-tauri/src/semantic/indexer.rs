@@ -332,6 +332,7 @@ fn process_full_scan(
     let mut seen_paths = HashSet::new();
     let mut scanned_count = 0usize;
     let mut embedded_count = 0usize;
+    let mut deleted_count = 0usize;
 
     for entry in fs::read_dir(notes_dir).map_err(|err| err.to_string())? {
         let entry = entry.map_err(|err| err.to_string())?;
@@ -373,14 +374,15 @@ fn process_full_scan(
         .filter(|stored_path| !seen_paths.contains(*stored_path))
     {
         delete_note(connection, stale_path)?;
+        deleted_count += 1;
     }
 
     rebuild_edges(connection, 6, 0.42)?;
-    if scanned_count > 0 || force || ann.needs_rebuild() {
+    if scanned_count > 0 || deleted_count > 0 || force || ann.needs_rebuild() {
         ann.rebuild_from_connection(connection)?;
     }
     Ok(JobOutcome {
-        scanned_count,
+        scanned_count: scanned_count + deleted_count,
         embedded_count,
     })
 }
@@ -545,4 +547,138 @@ struct IndexedNoteContent {
     embedded_count: usize,
     chunks: Vec<super::chunking::SemanticChunk>,
     embeddings: Vec<Vec<f32>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::process_full_scan;
+    use crate::semantic::{
+        ann::AnnIndexState,
+        db::{ensure_schema, load_ann_index_signature, open_database},
+        debug::SemanticDebugState,
+        embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo},
+    };
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn full_scan_rebuilds_ann_when_notes_are_deleted_outside_the_app() {
+        let temp = TestDir::new("indexer-delete");
+        let semantic_dir = temp.path().join("semantic");
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).expect("create notes dir");
+        let db_path = semantic_dir.join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
+        let ann = Arc::new(
+            AnnIndexState::new(semantic_dir, 3, Arc::new(SemanticDebugState::new()))
+                .expect("create ann"),
+        );
+
+        let note_path = notes_dir.join("external-delete.md");
+        fs::write(
+            &note_path,
+            "# External Delete\n\nFirst paragraph for indexing.\n\nSecond paragraph for indexing.",
+        )
+        .expect("write note");
+
+        process_full_scan(&mut connection, &notes_dir, &provider, &ann, true)
+            .expect("initial full scan");
+        assert_eq!(
+            load_ann_index_signature(&connection)
+                .expect("load ann signature")
+                .chunk_count,
+            ann.status_snapshot().indexed_chunks
+        );
+        assert!(ann.status_snapshot().indexed_chunks > 0);
+
+        fs::remove_file(&note_path).expect("remove note");
+        process_full_scan(&mut connection, &notes_dir, &provider, &ann, false)
+            .expect("scan after external delete");
+
+        let signature = load_ann_index_signature(&connection).expect("load ann signature");
+        assert_eq!(signature.chunk_count, 0);
+
+        let status = ann.status_snapshot();
+        assert!(status.loaded);
+        assert_eq!(status.indexed_chunks, 0);
+        assert!(ann
+            .search(&[1.0, 0.0, 0.0], 8)
+            .expect("ann search")
+            .is_empty());
+    }
+
+    struct MockEmbeddingProvider;
+
+    impl EmbeddingProvider for MockEmbeddingProvider {
+        fn embed_texts(
+            &self,
+            texts: &[String],
+            _kind: EmbeddingInputKind,
+        ) -> Result<Vec<Vec<f32>>, String> {
+            Ok(texts
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    let mut vector = vec![0.0, 0.0, 0.0];
+                    let bucket = index % vector.len();
+                    vector[bucket] = text.len() as f32 + 1.0;
+                    vector
+                })
+                .collect())
+        }
+
+        fn prepare(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn model_info(&self) -> ModelInfo {
+            ModelInfo {
+                id: "mock".to_string(),
+                label: "Mock".to_string(),
+                dimensions: 3,
+                local_only: true,
+                auto_download_supported: false,
+                runtime_binary_path: None,
+                model_path: None,
+                model_repo_id: "mock".to_string(),
+                available: true,
+                status: "ready".to_string(),
+                error: None,
+            }
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("gneauxghts-{label}-{unique}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 }

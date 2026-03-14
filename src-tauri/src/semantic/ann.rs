@@ -25,6 +25,8 @@ const ANN_M: usize = 16;
 const ANN_EF_CONSTRUCTION: usize = 200;
 const ANN_EF_SEARCH: usize = 64;
 const ANN_MIN_CAPACITY: usize = 1024;
+const ANN_TOMBSTONE_REBUILD_MIN: usize = 64;
+const ANN_TOMBSTONE_REBUILD_MAX: usize = 256;
 
 type AnnGraph = Hnsw<u64, Cosine<f32>>;
 type AnnVectors = InMemoryVectorStore<f32>;
@@ -203,6 +205,11 @@ impl AnnIndexState {
                 .map_err(|err| err.to_string())?;
         }
 
+        if should_rebuild_for_tombstones(&snapshot.graph) {
+            self.mark_rebuild_pending("ann_tombstone_compaction_needed");
+            return Ok(false);
+        }
+
         let mut touched = previous_labels.len() != next_labels.len();
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
             let label = ann_label_for(&raw_note_path, chunk.ordinal);
@@ -256,6 +263,11 @@ impl AnnIndexState {
                 .graph
                 .delete(label)
                 .map_err(|err| err.to_string())?;
+        }
+
+        if should_rebuild_for_tombstones(&snapshot.graph) {
+            self.mark_rebuild_pending("ann_tombstone_compaction_needed");
+            return Ok(false);
         }
 
         self.set_status(
@@ -510,6 +522,17 @@ fn desired_capacity(chunk_count: usize) -> usize {
     baseline.next_power_of_two()
 }
 
+fn should_rebuild_for_tombstones(graph: &AnnGraph) -> bool {
+    let deleted = graph.deleted_len();
+    if deleted == 0 {
+        return false;
+    }
+
+    let live = graph.live_len().max(1);
+    deleted >= ANN_TOMBSTONE_REBUILD_MAX
+        || (deleted >= ANN_TOMBSTONE_REBUILD_MIN && deleted.saturating_mul(4) >= live)
+}
+
 fn write_atomic<F>(path: &Path, write: F) -> Result<(), String>
 where
     F: FnOnce(&mut BufWriter<File>) -> Result<(), String>,
@@ -531,4 +554,142 @@ fn file_timestamp_millis(path: &Path) -> Result<u64, String> {
         .map_err(|err| err.to_string())?
         .as_millis();
     Ok(modified.min(u128::from(u64::MAX)) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AnnIndexState, ANN_TOMBSTONE_REBUILD_MIN};
+    use crate::semantic::{
+        chunking::SemanticChunk,
+        db::{ensure_schema, load_note_chunk_labels, open_database, upsert_note_chunks},
+        debug::SemanticDebugState,
+    };
+    use blake3::hash;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn initialize_loads_matching_persisted_ann_snapshot() {
+        let temp = TestDir::new("ann-load");
+        let semantic_dir = temp.path().join("semantic");
+        let db_path = semantic_dir.join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        seed_chunks(&mut connection, "notes/reload.md", 6, 3).expect("seed chunks");
+
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = AnnIndexState::new(semantic_dir.clone(), 3, debug.clone()).expect("create ann");
+        ann.rebuild_from_connection(&connection)
+            .expect("rebuild ann from db");
+
+        let reloaded =
+            AnnIndexState::new(semantic_dir, 3, debug).expect("create reloaded ann state");
+        reloaded.initialize(&connection).expect("initialize ann");
+        let status = reloaded.status_snapshot();
+        assert!(status.loaded);
+        assert_eq!(status.indexed_chunks, 6);
+        assert!(!reloaded
+            .search(&[1.0, 0.0, 0.0], 8)
+            .expect("ann search")
+            .is_empty());
+    }
+
+    #[test]
+    fn incremental_deletes_request_rebuild_once_tombstones_accumulate() {
+        let temp = TestDir::new("ann-tombstones");
+        let semantic_dir = temp.path().join("semantic");
+        let db_path = semantic_dir.join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        seed_chunks(
+            &mut connection,
+            "notes/churn.md",
+            ANN_TOMBSTONE_REBUILD_MIN + 4,
+            3,
+        )
+        .expect("seed chunks");
+
+        let ann = AnnIndexState::new(semantic_dir, 3, Arc::new(SemanticDebugState::new()))
+            .expect("create ann");
+        ann.rebuild_from_connection(&connection)
+            .expect("rebuild ann from db");
+
+        let labels = load_note_chunk_labels(&connection, "notes/churn.md").expect("load labels");
+        let deleted_labels = labels.into_iter().take(ANN_TOMBSTONE_REBUILD_MIN).collect();
+
+        let should_continue_incrementally = ann
+            .apply_note_delete(&deleted_labels)
+            .expect("apply note delete");
+        assert!(!should_continue_incrementally);
+
+        let status = ann.status_snapshot();
+        assert!(status.rebuild_pending);
+        assert!(ann.needs_rebuild());
+    }
+
+    fn seed_chunks(
+        connection: &mut rusqlite::Connection,
+        note_path: &str,
+        chunk_count: usize,
+        dimensions: usize,
+    ) -> Result<(), String> {
+        let chunks = (0..chunk_count)
+            .map(|ordinal| SemanticChunk {
+                ordinal,
+                section_label: format!("Section {}", ordinal + 1),
+                text: format!("chunk {ordinal}"),
+                text_hash: hash(format!("chunk {ordinal}").as_bytes())
+                    .to_hex()
+                    .to_string(),
+                start_line: ordinal + 1,
+                end_line: ordinal + 1,
+            })
+            .collect::<Vec<_>>();
+        let embeddings = (0..chunk_count)
+            .map(|ordinal| {
+                let mut vector = vec![0.0; dimensions];
+                vector[ordinal % dimensions] = ordinal as f32 + 1.0;
+                vector
+            })
+            .collect::<Vec<_>>();
+        upsert_note_chunks(
+            connection,
+            note_path,
+            "Seed Note",
+            1,
+            "seed-hash",
+            &chunks,
+            &embeddings,
+        )
+    }
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("gneauxghts-{label}-{unique}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
 }

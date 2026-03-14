@@ -1,0 +1,29 @@
+{
+  "title": "Project Atlas",
+  "chunks": [
+    {
+      "sectionLabel": "Title",
+      "text": "Project Atlas",
+      "startLine": 1,
+      "endLine": 1
+    },
+    {
+      "sectionLabel": "Overview",
+      "text": "This note tracks the roadmap for semantic retrieval in local markdown tools.",
+      "startLine": 3,
+      "endLine": 3
+    },
+    {
+      "sectionLabel": "Tasks",
+      "text": "- [ ] Draft roadmap - [x] Audit parser - [ ] Write regression tests",
+      "startLine": 6,
+      "endLine": 8
+    },
+    {
+      "sectionLabel": "Research",
+      "text": "Semantic search finds related ideas even when the wording changes. Longer reflections on hybrid ranking and semantic recall for note discovery.",
+      "startLine": 11,
+      "endLine": 13
+    }
+  ]
+}

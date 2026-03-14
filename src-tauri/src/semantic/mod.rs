@@ -476,6 +476,14 @@ impl SemanticState {
         if !settings.semantic_search_enabled {
             return Ok(Vec::new());
         }
+        let ann_status = self.ann.status_snapshot();
+        if !ann_status.loaded || ann_status.indexed_chunks == 0 {
+            self.debug
+                .record_timing("ann", "query_skipped_unavailable", None, 0, |metrics| {
+                    metrics.ann_query_skipped_count += 1;
+                });
+            return Ok(Vec::new());
+        }
 
         let query_embedding = self
             .provider

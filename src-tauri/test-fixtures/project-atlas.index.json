@@ -1,0 +1,49 @@
+{
+  "title": "Project Atlas",
+  "fileName": "project-atlas",
+  "paragraphs": [
+    {
+      "sectionLabel": "Title",
+      "text": "Project Atlas"
+    },
+    {
+      "sectionLabel": "Paragraph 1",
+      "text": "This note tracks the roadmap for semantic retrieval in local markdown tools."
+    },
+    {
+      "sectionLabel": "Paragraph 2",
+      "text": "## Tasks - [ ] Draft roadmap - [x] Audit parser - [ ] Write regression tests"
+    },
+    {
+      "sectionLabel": "Paragraph 3",
+      "text": "## Research Semantic search finds related ideas even when the wording changes."
+    },
+    {
+      "sectionLabel": "Paragraph 4",
+      "text": "Longer reflections on hybrid ranking and semantic recall for note discovery."
+    }
+  ],
+  "tasks": [
+    {
+      "sectionLabel": "Tasks",
+      "text": "Draft roadmap",
+      "completed": false,
+      "depth": 0,
+      "lineNumber": 6
+    },
+    {
+      "sectionLabel": "Tasks",
+      "text": "Audit parser",
+      "completed": true,
+      "depth": 1,
+      "lineNumber": 7
+    },
+    {
+      "sectionLabel": "Tasks",
+      "text": "Write regression tests",
+      "completed": false,
+      "depth": 2,
+      "lineNumber": 8
+    }
+  ]
+}

@@ -26,23 +26,46 @@
   let semanticDebug = $state<SemanticDebugSnapshot | null>(null);
   let isSaving = $state(false);
   let isRunningAction = $state(false);
-  let debugPollTimer: ReturnType<typeof window.setInterval> | null = null;
+  let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
 
-  function stopDebugPolling() {
-    if (debugPollTimer) {
-      window.clearInterval(debugPollTimer);
-      debugPollTimer = null;
+  function stopSemanticPolling() {
+    if (semanticPollTimer) {
+      window.clearInterval(semanticPollTimer);
+      semanticPollTimer = null;
     }
   }
 
-  function startDebugPolling() {
-    if (typeof document === 'undefined' || document.visibilityState !== 'visible' || debugPollTimer) {
+  function shouldPollSemanticState() {
+    return Boolean(semanticStatus?.indexingInProgress || isRunningAction || isSaving);
+  }
+
+  function syncSemanticPolling() {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+      stopSemanticPolling();
       return;
     }
 
-    debugPollTimer = window.setInterval(() => {
-      void loadSemanticState();
+    if (!shouldPollSemanticState()) {
+      stopSemanticPolling();
+      return;
+    }
+
+    if (semanticPollTimer) {
+      return;
+    }
+
+    semanticPollTimer = window.setInterval(() => {
+      void loadSemanticStatus();
     }, 5000);
+  }
+
+  async function loadSemanticStatus() {
+    try {
+      semanticStatus = await invoke<SemanticStatus>('get_semantic_status');
+      syncSemanticPolling();
+    } catch (error) {
+      console.error('Failed to load semantic status:', error);
+    }
   }
 
   async function loadSemanticState() {
@@ -55,6 +78,7 @@
       semanticStatus = status;
       semanticSettings = settings;
       semanticDebug = debug;
+      syncSemanticPolling();
     } catch (error) {
       console.error('Failed to load semantic settings:', error);
     }
@@ -130,21 +154,20 @@
 
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
-      void loadSemanticState();
-      startDebugPolling();
+      void loadSemanticStatus();
+      syncSemanticPolling();
       return;
     }
 
-    stopDebugPolling();
+    stopSemanticPolling();
   }
 
   onMount(() => {
     void loadSemanticState();
-    startDebugPolling();
   });
 
   onDestroy(() => {
-    stopDebugPolling();
+    stopSemanticPolling();
   });
 </script>
 

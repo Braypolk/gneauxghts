@@ -288,3 +288,38 @@ fn parse_heading(line: &str) -> Option<String> {
 
     Some(heading.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::chunk_markdown;
+    use crate::test_support::{load_fixture, load_json_fixture};
+    use serde_json::json;
+
+    #[test]
+    fn chunk_markdown_matches_project_atlas_fixture() {
+        let markdown = load_fixture("project-atlas.md");
+        let chunked = chunk_markdown(&markdown, "project-atlas");
+
+        let actual = json!({
+            "title": chunked.title,
+            "chunks": chunked.chunks.iter().map(|chunk| json!({
+                "sectionLabel": chunk.section_label,
+                "text": chunk.text,
+                "startLine": chunk.start_line,
+                "endLine": chunk.end_line,
+            })).collect::<Vec<_>>(),
+        });
+
+        assert_eq!(actual, load_json_fixture("project-atlas.chunks.json"));
+    }
+
+    #[test]
+    fn chunk_markdown_produces_stable_content_hash_for_same_markdown() {
+        let markdown = load_fixture("project-atlas.md");
+        let first = chunk_markdown(&markdown, "project-atlas");
+        let second = chunk_markdown(&markdown, "project-atlas");
+
+        assert_eq!(first.content_hash, second.content_hash);
+        assert_eq!(first.content_hash.len(), 64);
+    }
+}

@@ -308,3 +308,63 @@ fn char_index_to_byte_index(text: &str, char_index: usize) -> usize {
         .map(|(byte_index, _)| byte_index)
         .unwrap_or(text.len())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{build_recent_result, search_note};
+    use crate::{
+        index::{build_indexed_note, normalize_search_text},
+        test_support::{fixture_path, load_fixture, load_json_fixture},
+    };
+    use serde_json::json;
+
+    #[test]
+    fn search_note_matches_project_atlas_fixture() {
+        let markdown = load_fixture("project-atlas.md");
+        let note_path = fixture_path("project-atlas.md");
+        let note = build_indexed_note(&note_path, &markdown, 42);
+        let normalized_query = normalize_search_text("wording changes");
+        let query_terms = normalized_query.split_whitespace().collect::<Vec<_>>();
+
+        let results = search_note(
+            Some(note_path.as_path()),
+            &note,
+            &normalized_query,
+            &query_terms,
+        );
+
+        let actual = results
+            .into_iter()
+            .map(|candidate| {
+                json!({
+                    "fileName": candidate.result.file_name,
+                    "sectionLabel": candidate.result.section_label,
+                    "excerpt": candidate.result.excerpt,
+                    "matchText": candidate.result.match_text,
+                    "lexicalScore": candidate.result.lexical_score,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            serde_json::Value::Array(actual),
+            load_json_fixture("project-atlas.search-wording-changes.json")
+        );
+    }
+
+    #[test]
+    fn build_recent_result_prefers_first_body_paragraph() {
+        let markdown = load_fixture("project-atlas.md");
+        let note_path = fixture_path("project-atlas.md");
+        let note = build_indexed_note(&note_path, &markdown, 42);
+
+        let recent = build_recent_result(Some(note_path.as_path()), &note);
+
+        assert_eq!(recent.section_label, "Paragraph 1");
+        assert_eq!(
+            recent.excerpt,
+            "This note tracks the roadmap for semantic retrieval in local markdown tools."
+        );
+        assert_eq!(recent.file_name, "project-atlas");
+    }
+}

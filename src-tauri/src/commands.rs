@@ -89,46 +89,14 @@ struct HybridCandidate {
 pub(crate) fn load_note_session() -> Result<NoteSession, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-
-    let mut state = read_state(&notes_dir)?;
-    let Some(last_opened_path) = state.last_opened_path.clone() else {
-        return Ok(NoteSession {
-            markdown: String::new(),
-            path: None,
-        });
-    };
-
-    let note_path = PathBuf::from(last_opened_path);
-    if !is_valid_note_path(&note_path, &notes_dir) {
-        state.last_opened_path = None;
-        state
-            .recent_paths
-            .retain(|path| PathBuf::from(path) != note_path);
-        write_state(&notes_dir, &state)?;
-        return Ok(NoteSession {
-            markdown: String::new(),
-            path: None,
-        });
-    }
-
-    touch_recent_path(&mut state, &note_path);
-    write_state(&notes_dir, &state)?;
-    read_note_session_from_path(&note_path)
+    load_note_session_from_notes_dir(&notes_dir)
 }
 
 #[tauri::command]
 pub(crate) fn open_note(path: String) -> Result<NoteSession, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    let note_path = validate_current_path(Some(path), &notes_dir)?
-        .ok_or_else(|| "Missing note path".to_string())?;
-
-    let mut state = read_state(&notes_dir)?;
-    state.last_opened_path = Some(note_path.to_string_lossy().into_owned());
-    touch_recent_path(&mut state, &note_path);
-    write_state(&notes_dir, &state)?;
-
-    read_note_session_from_path(&note_path)
+    open_note_from_notes_dir(&notes_dir, path)
 }
 
 #[tauri::command]
@@ -792,109 +760,15 @@ pub(crate) async fn search_notes_hybrid(
     .await
     .map_err(|err| err.to_string())??;
 
-    let max_lexical = lexical_candidates
-        .iter()
-        .map(|candidate| candidate.score as f32)
-        .fold(0.0, f32::max);
-    let max_semantic = semantic_matches
-        .iter()
-        .map(|candidate| candidate.score)
-        .fold(0.0, f32::max);
-    let mut merged = HashMap::<String, HybridCandidate>::new();
-
-    for lexical_candidate in lexical_candidates {
-        let mut result = lexical_candidate.result;
-        let lexical_score = if max_lexical > 0.0 {
-            lexical_candidate.score as f32 / max_lexical
-        } else {
-            0.0
-        };
-        result.reason_labels.push("keyword".to_string());
-        result.lexical_score = Some(lexical_score);
-        let structural_boost =
-            structural_boost(&result, &normalized_query, current_path.as_deref());
-        merged.insert(
-            hybrid_candidate_key(&result),
-            HybridCandidate {
-                lexical_score,
-                semantic_score: 0.0,
-                structural_boost,
-                result,
-            },
-        );
-    }
-
-    for semantic_match in semantic_matches {
-        let semantic_score = if max_semantic > 0.0 {
-            semantic_match.score / max_semantic
-        } else {
-            0.0
-        };
-        let key = format!(
-            "{}::{}::{}::{}",
-            semantic_match.note_path,
-            semantic_match.section_label,
-            semantic_match.start_line,
-            semantic_match.end_line
-        );
-        let file_name = Path::new(&semantic_match.note_path)
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or(&semantic_match.note_title)
-            .to_string();
-        let structural_boost = structural_boost_from_semantic(
-            &semantic_match,
-            &normalized_query,
-            current_path.as_deref(),
-        );
-
-        let entry = merged.entry(key).or_insert_with(|| HybridCandidate {
-            lexical_score: 0.0,
-            semantic_score: 0.0,
-            structural_boost,
-            result: NoteSearchResult {
-                note_path: Some(semantic_match.note_path.clone()),
-                file_name,
-                section_label: semantic_match.section_label.clone(),
-                excerpt: semantic_match.excerpt.clone(),
-                highlight_ranges: Vec::new(),
-                match_text: semantic_match.match_text.clone(),
-                reason_labels: vec!["semantic".to_string()],
-                lexical_score: None,
-                semantic_score: Some(semantic_score),
-                start_line: Some(semantic_match.start_line),
-                end_line: Some(semantic_match.end_line),
-            },
-        });
-
-        entry.semantic_score = entry.semantic_score.max(semantic_score);
-        entry.result.semantic_score = Some(entry.semantic_score);
-        if !entry
-            .result
-            .reason_labels
-            .iter()
-            .any(|label| label == "semantic")
-        {
-            entry.result.reason_labels.push("semantic".to_string());
-        }
-        entry.structural_boost = entry.structural_boost.max(structural_boost);
-    }
-
-    let mut ranked = merged.into_values().collect::<Vec<_>>();
-    ranked.sort_by(|left, right| {
-        let left_score = lexical_weight * left.lexical_score
-            + semantic_weight * left.semantic_score
-            + 0.10 * left.structural_boost;
-        let right_score = lexical_weight * right.lexical_score
-            + semantic_weight * right.semantic_score
-            + 0.10 * right.structural_boost;
-        right_score
-            .total_cmp(&left_score)
-            .then_with(|| left.result.file_name.cmp(&right.result.file_name))
-            .then_with(|| left.result.section_label.cmp(&right.result.section_label))
-    });
-
-    ranked.truncate(limit.max(1));
+    let ranked = merge_hybrid_candidates(
+        lexical_candidates,
+        semantic_matches,
+        &normalized_query,
+        current_path.as_deref(),
+        limit,
+        lexical_weight,
+        semantic_weight,
+    );
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     state.semantic.debug_state().record_timing(
         "search",
@@ -908,14 +782,7 @@ pub(crate) async fn search_notes_hybrid(
             metrics.search_duration_max_millis = metrics.search_duration_max_millis.max(elapsed);
         },
     );
-    Ok(ranked
-        .into_iter()
-        .map(|mut candidate| {
-            candidate.result.lexical_score = Some(candidate.lexical_score);
-            candidate.result.semantic_score = Some(candidate.semantic_score);
-            candidate.result
-        })
-        .collect())
+    Ok(ranked)
 }
 
 #[tauri::command]
@@ -1077,6 +944,45 @@ fn collect_lexical_candidates(
     Ok(candidates)
 }
 
+fn load_note_session_from_notes_dir(notes_dir: &Path) -> Result<NoteSession, String> {
+    let mut state = read_state(notes_dir)?;
+    let Some(last_opened_path) = state.last_opened_path.clone() else {
+        return Ok(NoteSession {
+            markdown: String::new(),
+            path: None,
+        });
+    };
+
+    let note_path = PathBuf::from(last_opened_path);
+    if !is_valid_note_path(&note_path, notes_dir) {
+        state.last_opened_path = None;
+        state
+            .recent_paths
+            .retain(|path| PathBuf::from(path) != note_path);
+        write_state(notes_dir, &state)?;
+        return Ok(NoteSession {
+            markdown: String::new(),
+            path: None,
+        });
+    }
+
+    touch_recent_path(&mut state, &note_path);
+    write_state(notes_dir, &state)?;
+    read_note_session_from_path(&note_path)
+}
+
+fn open_note_from_notes_dir(notes_dir: &Path, path: String) -> Result<NoteSession, String> {
+    let note_path = validate_current_path(Some(path), notes_dir)?
+        .ok_or_else(|| "Missing note path".to_string())?;
+
+    let mut state = read_state(notes_dir)?;
+    state.last_opened_path = Some(note_path.to_string_lossy().into_owned());
+    touch_recent_path(&mut state, &note_path);
+    write_state(notes_dir, &state)?;
+
+    read_note_session_from_path(&note_path)
+}
+
 fn finalize_lexical_results(
     mut candidates: Vec<crate::search::ScoredSearchResult>,
     limit: usize,
@@ -1095,6 +1001,124 @@ fn finalize_lexical_results(
         .map(|mut candidate| {
             candidate.result.lexical_score = Some(candidate.score as f32);
             candidate.result.reason_labels = vec!["keyword".to_string()];
+            candidate.result
+        })
+        .collect()
+}
+
+fn merge_hybrid_candidates(
+    lexical_candidates: Vec<crate::search::ScoredSearchResult>,
+    semantic_matches: Vec<SemanticChunkMatch>,
+    normalized_query: &str,
+    current_path: Option<&Path>,
+    limit: usize,
+    lexical_weight: f32,
+    semantic_weight: f32,
+) -> Vec<NoteSearchResult> {
+    let max_lexical = lexical_candidates
+        .iter()
+        .map(|candidate| candidate.score as f32)
+        .fold(0.0, f32::max);
+    let max_semantic = semantic_matches
+        .iter()
+        .map(|candidate| candidate.score)
+        .fold(0.0, f32::max);
+    let mut merged = HashMap::<String, HybridCandidate>::new();
+
+    for lexical_candidate in lexical_candidates {
+        let mut result = lexical_candidate.result;
+        let lexical_score = if max_lexical > 0.0 {
+            lexical_candidate.score as f32 / max_lexical
+        } else {
+            0.0
+        };
+        result.reason_labels.push("keyword".to_string());
+        result.lexical_score = Some(lexical_score);
+        let structural_boost = structural_boost(&result, normalized_query, current_path);
+        merged.insert(
+            hybrid_candidate_key(&result),
+            HybridCandidate {
+                lexical_score,
+                semantic_score: 0.0,
+                structural_boost,
+                result,
+            },
+        );
+    }
+
+    for semantic_match in semantic_matches {
+        let semantic_score = if max_semantic > 0.0 {
+            semantic_match.score / max_semantic
+        } else {
+            0.0
+        };
+        let key = format!(
+            "{}::{}::{}::{}",
+            semantic_match.note_path,
+            semantic_match.section_label,
+            semantic_match.start_line,
+            semantic_match.end_line
+        );
+        let file_name = Path::new(&semantic_match.note_path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(&semantic_match.note_title)
+            .to_string();
+        let structural_boost =
+            structural_boost_from_semantic(&semantic_match, normalized_query, current_path);
+
+        let entry = merged.entry(key).or_insert_with(|| HybridCandidate {
+            lexical_score: 0.0,
+            semantic_score: 0.0,
+            structural_boost,
+            result: NoteSearchResult {
+                note_path: Some(semantic_match.note_path.clone()),
+                file_name,
+                section_label: semantic_match.section_label.clone(),
+                excerpt: semantic_match.excerpt.clone(),
+                highlight_ranges: Vec::new(),
+                match_text: semantic_match.match_text.clone(),
+                reason_labels: vec!["semantic".to_string()],
+                lexical_score: None,
+                semantic_score: Some(semantic_score),
+                start_line: Some(semantic_match.start_line),
+                end_line: Some(semantic_match.end_line),
+            },
+        });
+
+        entry.semantic_score = entry.semantic_score.max(semantic_score);
+        entry.result.semantic_score = Some(entry.semantic_score);
+        if !entry
+            .result
+            .reason_labels
+            .iter()
+            .any(|label| label == "semantic")
+        {
+            entry.result.reason_labels.push("semantic".to_string());
+        }
+        entry.structural_boost = entry.structural_boost.max(structural_boost);
+    }
+
+    let mut ranked = merged.into_values().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        let left_score = lexical_weight * left.lexical_score
+            + semantic_weight * left.semantic_score
+            + 0.10 * left.structural_boost;
+        let right_score = lexical_weight * right.lexical_score
+            + semantic_weight * right.semantic_score
+            + 0.10 * right.structural_boost;
+        right_score
+            .total_cmp(&left_score)
+            .then_with(|| left.result.file_name.cmp(&right.result.file_name))
+            .then_with(|| left.result.section_label.cmp(&right.result.section_label))
+    });
+
+    ranked.truncate(limit.max(1));
+    ranked
+        .into_iter()
+        .map(|mut candidate| {
+            candidate.result.lexical_score = Some(candidate.lexical_score);
+            candidate.result.semantic_score = Some(candidate.semantic_score);
             candidate.result
         })
         .collect()
@@ -1396,4 +1420,300 @@ fn find_task_key_for_line(
                 .min_by_key(|task| task.line_number.abs_diff(line_number))
         })
         .map(|task| task_key(note_path, task))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        find_task_key_for_line, load_note_session_from_notes_dir, merge_hybrid_candidates,
+        open_note_from_notes_dir, reconcile_note_task_timestamps, NoteSession, RecentTaskItem,
+        TaskListItem,
+    };
+    use crate::{
+        index::{build_indexed_note, task_key},
+        search::{NoteSearchResult, ScoredSearchResult},
+        state::{read_state, write_state, PersistedState, PersistedTaskTimestamps},
+        test_support::TestDir,
+    };
+    use serde_json::json;
+    use std::{collections::HashMap, fs, path::PathBuf};
+
+    #[test]
+    fn load_note_session_from_notes_dir_clears_stale_last_opened_path() {
+        let temp = TestDir::new("commands-load-session");
+        let notes_dir = temp.path();
+        let stale_path = notes_dir.join("Missing.md");
+        write_state(
+            notes_dir,
+            &PersistedState {
+                last_opened_path: Some(stale_path.to_string_lossy().into_owned()),
+                recent_paths: vec![stale_path.to_string_lossy().into_owned()],
+                ..PersistedState::default()
+            },
+        )
+        .expect("write state");
+
+        let session = load_note_session_from_notes_dir(notes_dir).expect("load note session");
+        let state = read_state(notes_dir).expect("read state");
+
+        assert_eq!(session.markdown, "");
+        assert_eq!(session.path, None);
+        assert_eq!(state.last_opened_path, None);
+        assert!(state.recent_paths.is_empty());
+    }
+
+    #[test]
+    fn open_note_from_notes_dir_updates_last_opened_and_recents() {
+        let temp = TestDir::new("commands-open-note");
+        let notes_dir = temp.path();
+        let note_path = notes_dir.join("Open Me.md");
+        fs::write(&note_path, "# Open Me\n\nBody").expect("write note");
+
+        let session = open_note_from_notes_dir(notes_dir, note_path.to_string_lossy().into_owned())
+            .expect("open note");
+        let state = read_state(notes_dir).expect("read state");
+
+        assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
+        assert_eq!(session.markdown, "# Open Me\n\nBody");
+        assert_eq!(
+            state.last_opened_path,
+            Some(note_path.to_string_lossy().into_owned())
+        );
+        assert_eq!(state.recent_paths, vec![note_path.to_string_lossy().into_owned()]);
+    }
+
+    #[test]
+    fn reconcile_note_task_timestamps_preserves_identity_across_reordering() {
+        let note_path = PathBuf::from("/tmp/project.md");
+        let previous_markdown = "# Project\n\n- [ ] Alpha\n- [ ] Beta\n";
+        let next_markdown = "# Project\n\n- [ ] Beta\n- [ ] Alpha\n";
+        let previous_note = build_indexed_note(&note_path, previous_markdown, 10);
+        let next_note = build_indexed_note(&note_path, next_markdown, 20);
+        let previous_alpha = task_key(&note_path, &previous_note.tasks[0]);
+        let previous_beta = task_key(&note_path, &previous_note.tasks[1]);
+        let next_beta = task_key(&note_path, &next_note.tasks[0]);
+        let next_alpha = task_key(&note_path, &next_note.tasks[1]);
+
+        let mut state = PersistedState {
+            task_timestamps: HashMap::from([
+                (
+                    previous_alpha,
+                    PersistedTaskTimestamps {
+                        created_at_millis: 101,
+                        updated_at_millis: 111,
+                    },
+                ),
+                (
+                    previous_beta,
+                    PersistedTaskTimestamps {
+                        created_at_millis: 202,
+                        updated_at_millis: 222,
+                    },
+                ),
+            ]),
+            ..PersistedState::default()
+        };
+
+        reconcile_note_task_timestamps(
+            &mut state,
+            Some(note_path.as_path()),
+            Some(&previous_note),
+            Some(note_path.as_path()),
+            Some(&next_note),
+            999,
+        );
+
+        assert_eq!(state.task_timestamps[&next_alpha].created_at_millis, 101);
+        assert_eq!(state.task_timestamps[&next_alpha].updated_at_millis, 111);
+        assert_eq!(state.task_timestamps[&next_beta].created_at_millis, 202);
+        assert_eq!(state.task_timestamps[&next_beta].updated_at_millis, 222);
+    }
+
+    #[test]
+    fn reconcile_note_task_timestamps_updates_timestamp_when_completion_changes() {
+        let note_path = PathBuf::from("/tmp/project.md");
+        let previous_note = build_indexed_note(&note_path, "# Project\n\n- [ ] Ship beta\n", 10);
+        let next_note = build_indexed_note(&note_path, "# Project\n\n- [x] Ship beta\n", 20);
+        let previous_key = task_key(&note_path, &previous_note.tasks[0]);
+        let next_key = task_key(&note_path, &next_note.tasks[0]);
+
+        let mut state = PersistedState {
+            task_timestamps: HashMap::from([(
+                previous_key,
+                PersistedTaskTimestamps {
+                    created_at_millis: 123,
+                    updated_at_millis: 456,
+                },
+            )]),
+            ..PersistedState::default()
+        };
+
+        reconcile_note_task_timestamps(
+            &mut state,
+            Some(note_path.as_path()),
+            Some(&previous_note),
+            Some(note_path.as_path()),
+            Some(&next_note),
+            999,
+        );
+
+        assert_eq!(state.task_timestamps[&next_key].created_at_millis, 123);
+        assert_eq!(state.task_timestamps[&next_key].updated_at_millis, 999);
+    }
+
+    #[test]
+    fn find_task_key_for_line_prefers_exact_line_then_nearest_match() {
+        let note_path = PathBuf::from("/tmp/project.md");
+        let note = build_indexed_note(
+            &note_path,
+            "# Project\n\n- [ ] Duplicate\n- [ ] Another\n- [ ] Duplicate\n",
+            10,
+        );
+
+        let exact = find_task_key_for_line(&note_path, &note, 5, "Duplicate").expect("exact key");
+        let nearest =
+            find_task_key_for_line(&note_path, &note, 99, "Duplicate").expect("nearest key");
+
+        assert_eq!(exact, task_key(&note_path, &note.tasks[2]));
+        assert_eq!(nearest, task_key(&note_path, &note.tasks[2]));
+    }
+
+    #[test]
+    fn merge_hybrid_candidates_applies_labels_scores_and_limit() {
+        let lexical = vec![
+            ScoredSearchResult {
+                score: 100,
+                result: NoteSearchResult {
+                    note_path: Some("/notes/a.md".to_string()),
+                    file_name: "a".to_string(),
+                    section_label: "Paragraph 1".to_string(),
+                    excerpt: "hybrid search ranking".to_string(),
+                    highlight_ranges: Vec::new(),
+                    match_text: "hybrid search".to_string(),
+                    reason_labels: Vec::new(),
+                    lexical_score: None,
+                    semantic_score: None,
+                    start_line: None,
+                    end_line: None,
+                },
+            },
+            ScoredSearchResult {
+                score: 40,
+                result: NoteSearchResult {
+                    note_path: Some("/notes/b.md".to_string()),
+                    file_name: "b".to_string(),
+                    section_label: "Paragraph 1".to_string(),
+                    excerpt: "keyword only".to_string(),
+                    highlight_ranges: Vec::new(),
+                    match_text: "keyword".to_string(),
+                    reason_labels: Vec::new(),
+                    lexical_score: None,
+                    semantic_score: None,
+                    start_line: None,
+                    end_line: None,
+                },
+            },
+        ];
+        let semantic = vec![crate::semantic::SemanticChunkMatch {
+            note_path: "/notes/c.md".to_string(),
+            note_title: "c".to_string(),
+            section_label: "Research".to_string(),
+            excerpt: "conceptual match".to_string(),
+            match_text: "conceptual match".to_string(),
+            score: 0.9,
+            start_line: 7,
+            end_line: 8,
+        }];
+
+        let results = merge_hybrid_candidates(
+            lexical,
+            semantic,
+            "hybrid search",
+            Some(PathBuf::from("/notes/current.md").as_path()),
+            2,
+            0.5,
+            0.4,
+        );
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].file_name, "a");
+        assert_eq!(results[0].reason_labels, vec!["keyword".to_string()]);
+        assert_eq!(results[0].lexical_score, Some(1.0));
+        assert_eq!(results[0].semantic_score, Some(0.0));
+
+        assert_eq!(results[1].file_name, "c");
+        assert_eq!(results[1].reason_labels, vec!["semantic".to_string()]);
+        assert_eq!(results[1].lexical_score, Some(0.0));
+        assert_eq!(results[1].semantic_score, Some(1.0));
+    }
+
+    #[test]
+    fn command_payload_json_contracts_remain_stable() {
+        let session = NoteSession {
+            markdown: "# Title".to_string(),
+            path: Some("/notes/title.md".to_string()),
+        };
+        let task = TaskListItem {
+            task_key: "task-key".to_string(),
+            note_path: "/notes/title.md".to_string(),
+            file_name: "title".to_string(),
+            note_title: "Title".to_string(),
+            section_label: Some("Tasks".to_string()),
+            text: "Ship beta".to_string(),
+            completed: false,
+            hidden: true,
+            note_hidden: false,
+            note_collapsed: true,
+            depth: 2,
+            line_number: 14,
+            created_at_millis: 111,
+            updated_at_millis: 222,
+        };
+        let recent_task = RecentTaskItem {
+            task_key: "recent-task".to_string(),
+            note_path: "/notes/title.md".to_string(),
+            note_title: "Title".to_string(),
+            text: "Ship beta".to_string(),
+            line_number: 14,
+            updated_at_millis: 222,
+        };
+
+        assert_eq!(
+            serde_json::to_value(session).expect("serialize note session"),
+            json!({
+                "markdown": "# Title",
+                "path": "/notes/title.md",
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(task).expect("serialize task item"),
+            json!({
+                "taskKey": "task-key",
+                "notePath": "/notes/title.md",
+                "fileName": "title",
+                "noteTitle": "Title",
+                "sectionLabel": "Tasks",
+                "text": "Ship beta",
+                "completed": false,
+                "hidden": true,
+                "noteHidden": false,
+                "noteCollapsed": true,
+                "depth": 2,
+                "lineNumber": 14,
+                "createdAtMillis": 111,
+                "updatedAtMillis": 222,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(recent_task).expect("serialize recent task"),
+            json!({
+                "taskKey": "recent-task",
+                "notePath": "/notes/title.md",
+                "noteTitle": "Title",
+                "text": "Ship beta",
+                "lineNumber": 14,
+                "updatedAtMillis": 222,
+            })
+        );
+    }
 }

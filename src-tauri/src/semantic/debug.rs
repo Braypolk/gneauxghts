@@ -36,6 +36,7 @@ pub(crate) struct SemanticDebugMetrics {
     pub(crate) search_duration_total_millis: u64,
     pub(crate) search_duration_max_millis: u64,
     pub(crate) ann_query_count: u64,
+    pub(crate) ann_query_skipped_count: u64,
     pub(crate) ann_query_candidate_total: u64,
     pub(crate) ann_query_rerank_total: u64,
     pub(crate) ann_query_duration_total_millis: u64,

@@ -3,6 +3,8 @@ mod index;
 mod search;
 mod semantic;
 mod state;
+#[cfg(test)]
+mod test_support;
 
 use index::AppState;
 use semantic::SemanticState;
