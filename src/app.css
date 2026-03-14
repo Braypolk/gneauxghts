@@ -192,18 +192,11 @@ body {
   padding-top: 6.5rem;
   padding-bottom: 100%;
   overflow-anchor: auto;
-  position: relative; /* containing block for virtual cursor when we keep it */
+  position: relative;
 }
 
-/*
- * Virtual cursor (prosemirror-virtual-cursor) doesn't update on scroll, so it
- * drifts. Use the native caret instead so it stays aligned when the editor scrolls.
- */
 .notepad-editor-shell .ProseMirror.virtual-cursor-enabled {
-  caret-color: var(--crepe-color-on-background, var(--foreground));
-}
-.notepad-editor-shell .ProseMirror .prosemirror-virtual-cursor {
-  display: none !important;
+  caret-color: transparent;
 }
 
 /* Prevent ghost/double text when typing in the search bar (WebKit rendering) */
