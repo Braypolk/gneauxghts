@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { editorViewCtx } from '@milkdown/kit/core';
-  import type { EditorView } from '@milkdown/kit/prose/view';
   import { invoke } from '@tauri-apps/api/core';
   import type { Crepe } from '@milkdown/crepe';
   import { onMount, tick } from 'svelte';
@@ -53,7 +51,6 @@
   let activeRecentNotesRequest = 0;
   let activeRecentTasksRequest = 0;
   let searchFocusRequest = $state(0);
-  let releaseCursorScrollSync: (() => void) | null = null;
 
   async function initEditor(initialValue: string) {
     if (!editorRoot) return;
@@ -123,79 +120,9 @@
   }
 
   async function destroyEditor() {
-    releaseCursorScrollSync?.();
-    releaseCursorScrollSync = null;
     if (!crepe) return;
     await crepe.destroy();
     crepe = null;
-  }
-
-  function getSelectionCursorRect(view: EditorView) {
-    const selection = window.getSelection();
-    if (!selection || !selection.rangeCount || !selection.isCollapsed) {
-      return null;
-    }
-
-    const range = selection.getRangeAt(0).cloneRange();
-    range.collapse(true);
-    const rects = range.getClientRects();
-    const rect = rects.length > 0 ? rects[rects.length - 1] : null;
-    if (rect && rect.height > 0) {
-      return rect;
-    }
-
-    return view.coordsAtPos(view.state.selection.head);
-  }
-
-  function correctVirtualCursorPosition(view: EditorView) {
-    const cursor = view.dom.querySelector('.prosemirror-virtual-cursor');
-    if (!(cursor instanceof HTMLElement)) return;
-
-    const selection = window.getSelection();
-    if (!selection?.anchorNode || !view.dom.contains(selection.anchorNode) || !selection.isCollapsed) {
-      return;
-    }
-
-    const cursorRect = getSelectionCursorRect(view);
-    if (!cursorRect) return;
-
-    const editorRect = view.dom.getBoundingClientRect();
-    cursor.style.height = `${cursorRect.bottom - cursorRect.top}px`;
-    cursor.style.left = `${cursorRect.left - editorRect.left + view.dom.scrollLeft}px`;
-    cursor.style.top = `${cursorRect.top - editorRect.top + view.dom.scrollTop}px`;
-  }
-
-  function setupCursorScrollSync() {
-    releaseCursorScrollSync?.();
-    releaseCursorScrollSync = null;
-    if (!crepe) return;
-
-    crepe.editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      const doc = view.dom.ownerDocument;
-      let frame = 0;
-
-      const scheduleCursorSync = () => {
-        if (frame !== 0) return;
-        frame = window.requestAnimationFrame(() => {
-          frame = 0;
-          correctVirtualCursorPosition(view);
-        });
-      };
-
-      doc.addEventListener('selectionchange', scheduleCursorSync);
-      view.dom.addEventListener('scroll', scheduleCursorSync, { passive: true });
-      scheduleCursorSync();
-
-      releaseCursorScrollSync = () => {
-        doc.removeEventListener('selectionchange', scheduleCursorSync);
-        view.dom.removeEventListener('scroll', scheduleCursorSync);
-        if (frame !== 0) {
-          window.cancelAnimationFrame(frame);
-          frame = 0;
-        }
-      };
-    });
   }
 
   async function createEditor(initialValue: string) {
@@ -204,7 +131,6 @@
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     if (!editorRoot) return;
     await initEditor(initialValue);
-    setupCursorScrollSync();
     isEditorReady = true;
   }
 
@@ -769,7 +695,7 @@
         </div>
       {/if}
 
-      <div bind:this={editorRoot} class="h-full min-h-0"></div>
+      <div bind:this={editorRoot} class="min-h-full"></div>
     </div>
   </div>
   <div class="absolute bottom-0 left-0 right-0 z-10">
