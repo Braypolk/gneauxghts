@@ -28,6 +28,23 @@
   let isRunningAction = $state(false);
   let debugPollTimer: ReturnType<typeof window.setInterval> | null = null;
 
+  function stopDebugPolling() {
+    if (debugPollTimer) {
+      window.clearInterval(debugPollTimer);
+      debugPollTimer = null;
+    }
+  }
+
+  function startDebugPolling() {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible' || debugPollTimer) {
+      return;
+    }
+
+    debugPollTimer = window.setInterval(() => {
+      void loadSemanticState();
+    }, 5000);
+  }
+
   async function loadSemanticState() {
     try {
       const [status, settings, debug] = await Promise.all([
@@ -111,20 +128,27 @@
     }
   }
 
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'visible') {
+      void loadSemanticState();
+      startDebugPolling();
+      return;
+    }
+
+    stopDebugPolling();
+  }
+
   onMount(() => {
     void loadSemanticState();
-    debugPollTimer = window.setInterval(() => {
-      void loadSemanticState();
-    }, 2500);
+    startDebugPolling();
   });
 
   onDestroy(() => {
-    if (debugPollTimer) {
-      window.clearInterval(debugPollTimer);
-      debugPollTimer = null;
-    }
+    stopDebugPolling();
   });
 </script>
+
+<svelte:document onvisibilitychange={handleVisibilityChange} />
 
 <div class="h-full w-full overflow-auto bg-background text-foreground">
   <main class="mx-auto flex min-h-full w-full max-w-4xl items-start justify-center px-2 pb-10">
@@ -252,6 +276,19 @@
               <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Index</p>
               <p class="mt-2 text-sm font-medium">{semanticStatus.indexedNotes} notes</p>
               <p class="mt-1 text-xs text-muted-foreground">{semanticStatus.indexedChunks} chunks · last run {formatTimestamp(semanticStatus.lastIndexedAtMillis)}</p>
+            </div>
+
+            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">ANN</p>
+              <p class="mt-2 text-sm font-medium">
+                {semanticStatus.annIndexLoaded ? 'Loaded' : 'Pending rebuild'}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                {semanticStatus.annIndexedChunks} indexed chunks · dirty {semanticStatus.annIndexDirty ? 'yes' : 'no'}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                rebuild pending {semanticStatus.annRebuildPending ? 'yes' : 'no'} · dump {formatTimestamp(semanticStatus.annLastDumpedAtMillis)}
+              </p>
             </div>
 
             <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
@@ -390,6 +427,18 @@
                 </div>
 
                 <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">ANN Queries</p>
+                  <p class="mt-2 text-sm font-medium">{metrics.annQueryCount} queries</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    candidates {metrics.annQueryCandidateTotal} · reranked {metrics.annQueryRerankTotal}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    avg {formatMillis(averageDuration(metrics.annQueryDurationTotalMillis, metrics.annQueryCount))}
+                    · max {formatMillis(metrics.annQueryDurationMaxMillis)}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
                   <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Index</p>
                   <p class="mt-2 text-sm font-medium">
                     jobs {metrics.indexJobStartedCount} · zero-work {metrics.indexZeroWorkCount}
@@ -408,10 +457,24 @@
                 <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
                   <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Failures</p>
                   <p class="mt-2 text-sm font-medium">
-                    embedding {metrics.embeddingRequestFailureCount} · index {metrics.indexJobFailedCount}
+                    embedding {metrics.embeddingRequestFailureCount} · index {metrics.indexJobFailedCount} · ann {metrics.annLoadFailureCount + metrics.annUpdateFailureCount}
                   </p>
                   <p class="mt-1 text-xs text-muted-foreground">
                     prepare {metrics.modelPrepareFailureCount} · warmup {metrics.modelWarmupFailureCount} · timeouts {metrics.runtimeTimeoutCount}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">ANN Lifecycle</p>
+                  <p class="mt-2 text-sm font-medium">
+                    loads {metrics.annLoadSuccessCount} · rebuilds {metrics.annRebuildCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    pending {metrics.annRebuildPendingCount} · update failures {metrics.annUpdateFailureCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    avg {formatMillis(averageDuration(metrics.annRebuildDurationTotalMillis, metrics.annRebuildCount))}
+                    · max {formatMillis(metrics.annRebuildDurationMaxMillis)}
                   </p>
                 </div>
               </div>

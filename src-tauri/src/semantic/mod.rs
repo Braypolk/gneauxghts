@@ -1,3 +1,4 @@
+pub(crate) mod ann;
 pub(crate) mod chunking;
 pub(crate) mod db;
 pub(crate) mod debug;
@@ -6,13 +7,14 @@ pub(crate) mod indexer;
 pub(crate) mod similarity;
 
 use self::{
+    ann::AnnIndexState,
     db::{
-        count_indexed_items, ensure_schema, load_chunks_with_embeddings, load_graph_data,
+        count_indexed_items, ensure_schema, load_chunks_by_ann_labels, load_graph_data,
         load_latest_job, load_semantic_settings, open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
-    indexer::{spawn_indexing_worker, IndexWork},
+    indexer::{spawn_indexing_worker, PendingIndexState, PendingNoteUpdate, WorkerSignal},
     similarity::cosine_similarity,
 };
 use serde::{Deserialize, Serialize};
@@ -20,11 +22,12 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Sender},
         Arc, Mutex,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -75,6 +78,11 @@ pub(crate) struct SemanticStatus {
     pub(crate) indexing_in_progress: bool,
     pub(crate) indexed_notes: usize,
     pub(crate) indexed_chunks: usize,
+    pub(crate) ann_index_loaded: bool,
+    pub(crate) ann_index_dirty: bool,
+    pub(crate) ann_rebuild_pending: bool,
+    pub(crate) ann_last_dumped_at_millis: Option<u64>,
+    pub(crate) ann_indexed_chunks: usize,
     pub(crate) last_indexed_at_millis: Option<u64>,
     pub(crate) last_error: Option<String>,
     pub(crate) current_job_label: Option<String>,
@@ -136,7 +144,10 @@ pub(crate) struct SemanticState {
     provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     runtime: Arc<Mutex<RuntimeState>>,
     debug: Arc<SemanticDebugState>,
-    work_tx: Sender<IndexWork>,
+    ann: Arc<AnnIndexState>,
+    signal_tx: Sender<WorkerSignal>,
+    pending: Arc<Mutex<PendingIndexState>>,
+    wake_pending: Arc<AtomicBool>,
 }
 
 impl SemanticState {
@@ -150,29 +161,42 @@ impl SemanticState {
         let db_path = semantic_dir.join("semantic.sqlite3");
         let connection = open_database(&db_path)?;
         ensure_schema(&connection)?;
-        let initial_settings = load_semantic_settings(&connection)?.unwrap_or_default();
-        if load_semantic_settings(&connection)?.is_none() {
+        let stored_settings = load_semantic_settings(&connection)?;
+        let initial_settings = stored_settings.clone().unwrap_or_default();
+        if stored_settings.is_none() {
             save_semantic_settings(&connection, &initial_settings)?;
         }
-        drop(connection);
         let settings = Arc::new(Mutex::new(initial_settings));
         let debug = Arc::new(SemanticDebugState::new());
-        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(
-            JinaLlamaEmbeddingProvider::new(
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> =
+            Arc::new(JinaLlamaEmbeddingProvider::new(
                 app_data_dir,
                 settings.clone(),
                 bundled_runtime_path,
                 debug.clone(),
-            )?,
-        );
+            )?);
+        let ann = Arc::new(AnnIndexState::new(
+            semantic_dir.clone(),
+            provider.model_info().dimensions,
+            debug.clone(),
+        )?);
+        ann.initialize(&connection)?;
+        drop(connection);
 
         let runtime = Arc::new(Mutex::new(RuntimeState::default()));
-        let (work_tx, work_rx) = mpsc::channel();
+        let pending = Arc::new(Mutex::new(PendingIndexState::default()));
+        let wake_pending = Arc::new(AtomicBool::new(false));
+        let index_revision = Arc::new(AtomicU64::new(0));
+        let (signal_tx, signal_rx) = mpsc::channel();
         spawn_indexing_worker(
             db_path.clone(),
             notes_dir.clone(),
             provider.clone(),
-            work_rx,
+            ann.clone(),
+            signal_rx,
+            pending.clone(),
+            wake_pending.clone(),
+            index_revision.clone(),
             &runtime,
             debug.clone(),
         )?;
@@ -183,7 +207,10 @@ impl SemanticState {
             provider,
             runtime,
             debug,
-            work_tx,
+            ann,
+            signal_tx,
+            pending,
+            wake_pending,
         };
         state.enqueue_scan(false)?;
         state.warmup_model_in_background();
@@ -203,13 +230,24 @@ impl SemanticState {
             None,
             |metrics| metrics.index_job_enqueued_count += 1,
         );
-        self.work_tx
-            .send(IndexWork::UpsertNote {
-                note_path: note_path.to_path_buf(),
-                markdown,
-                modified_millis,
-            })
-            .map_err(|err| err.to_string())
+        {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+            if pending.rebuild_requested || pending.full_scan_requested {
+                return Ok(());
+            }
+            pending.deleted_notes.remove(note_path);
+            pending.note_updates.insert(
+                note_path.to_path_buf(),
+                PendingNoteUpdate {
+                    markdown,
+                    modified_millis,
+                },
+            );
+        }
+        self.request_wake()
     }
 
     pub(crate) fn queue_delete_note(&self, note_path: &Path) -> Result<(), String> {
@@ -220,11 +258,18 @@ impl SemanticState {
             None,
             |metrics| metrics.index_job_enqueued_count += 1,
         );
-        self.work_tx
-            .send(IndexWork::DeleteNote {
-                note_path: note_path.to_path_buf(),
-            })
-            .map_err(|err| err.to_string())
+        {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+            if pending.rebuild_requested || pending.full_scan_requested {
+                return Ok(());
+            }
+            pending.note_updates.remove(note_path);
+            pending.deleted_notes.insert(note_path.to_path_buf());
+        }
+        self.request_wake()
     }
 
     pub(crate) fn enqueue_scan(&self, force: bool) -> Result<(), String> {
@@ -247,22 +292,38 @@ impl SemanticState {
             None,
             |metrics| metrics.index_job_enqueued_count += 1,
         );
-        self.work_tx
-            .send(IndexWork::FullScan { force })
-            .map_err(|err| err.to_string())
+        {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+            if !pending.rebuild_requested {
+                pending.full_scan_requested = true;
+                pending.force_full_scan |= force;
+                pending.note_updates.clear();
+                pending.deleted_notes.clear();
+            }
+        }
+        self.request_wake()
     }
 
     pub(crate) fn rebuild_index(&self) -> Result<(), String> {
-        self.debug.record_with_metrics(
-            "index",
-            "enqueue_rebuild",
-            None,
-            None,
-            |metrics| metrics.index_job_enqueued_count += 1,
-        );
-        self.work_tx
-            .send(IndexWork::Rebuild)
-            .map_err(|err| err.to_string())
+        self.debug
+            .record_with_metrics("index", "enqueue_rebuild", None, None, |metrics| {
+                metrics.index_job_enqueued_count += 1
+            });
+        {
+            let mut pending = self
+                .pending
+                .lock()
+                .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+            pending.rebuild_requested = true;
+            pending.full_scan_requested = false;
+            pending.force_full_scan = false;
+            pending.note_updates.clear();
+            pending.deleted_notes.clear();
+        }
+        self.request_wake()
     }
 
     pub(crate) fn prepare_model(&self) -> Result<(), String> {
@@ -285,8 +346,8 @@ impl SemanticState {
                 });
                 match provider.prepare() {
                     Ok(()) => {
-                        let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX))
-                            as u64;
+                        let elapsed =
+                            started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
                         debug.record_timing(
                             "runtime",
                             "warmup_completed",
@@ -299,8 +360,8 @@ impl SemanticState {
                         );
                     }
                     Err(error) => {
-                        let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX))
-                            as u64;
+                        let elapsed =
+                            started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
                         debug.record_timing(
                             "runtime",
                             "warmup_failed",
@@ -316,6 +377,15 @@ impl SemanticState {
             });
     }
 
+    fn request_wake(&self) -> Result<(), String> {
+        if !self.wake_pending.swap(true, Ordering::AcqRel) {
+            self.signal_tx
+                .send(WorkerSignal::Wake)
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn debug_snapshot(&self) -> Result<SemanticDebugSnapshot, String> {
         self.debug.snapshot()
     }
@@ -329,14 +399,14 @@ impl SemanticState {
     }
 
     pub(crate) fn pause_indexing(&self) -> Result<(), String> {
-        self.work_tx
-            .send(IndexWork::SetPaused { paused: true })
+        self.signal_tx
+            .send(WorkerSignal::SetPaused { paused: true })
             .map_err(|err| err.to_string())
     }
 
     pub(crate) fn resume_indexing(&self) -> Result<(), String> {
-        self.work_tx
-            .send(IndexWork::SetPaused { paused: false })
+        self.signal_tx
+            .send(WorkerSignal::SetPaused { paused: false })
             .map_err(|err| err.to_string())
     }
 
@@ -369,6 +439,7 @@ impl SemanticState {
             count_indexed_items(&connection)?;
         let latest_job = load_latest_job(&connection)?;
         let model = self.provider.model_info();
+        let ann_status = self.ann.status_snapshot();
         let runtime = self
             .runtime
             .lock()
@@ -382,6 +453,11 @@ impl SemanticState {
             indexing_in_progress: runtime.indexing_in_progress,
             indexed_notes,
             indexed_chunks,
+            ann_index_loaded: ann_status.loaded,
+            ann_index_dirty: ann_status.dirty,
+            ann_rebuild_pending: ann_status.rebuild_pending,
+            ann_last_dumped_at_millis: ann_status.last_dumped_at_millis,
+            ann_indexed_chunks: ann_status.indexed_chunks,
             last_indexed_at_millis: runtime.last_indexed_at_millis.or(last_indexed_at_millis),
             last_error: runtime.last_error.clone().or(model.error.clone()),
             current_job_label: runtime.current_job_label.clone(),
@@ -395,6 +471,7 @@ impl SemanticState {
         exclude_note_path: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SemanticChunkMatch>, String> {
+        let started_at = Instant::now();
         let settings = self.get_settings()?;
         if !settings.semantic_search_enabled {
             return Ok(Vec::new());
@@ -406,10 +483,15 @@ impl SemanticState {
             .into_iter()
             .next()
             .ok_or_else(|| "Unable to embed semantic query".to_string())?;
+        let candidate_labels = self
+            .ann
+            .search(&query_embedding, limit.saturating_mul(8).max(64))?;
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
-        let mut matches = load_chunks_with_embeddings(&connection, exclude_note_path)?
+        let reranked_count = candidate_labels.len();
+        let mut matches = load_chunks_by_ann_labels(&connection, &candidate_labels)?
             .into_iter()
+            .filter(|chunk| exclude_note_path != Some(chunk.note_path.as_str()))
             .filter_map(|chunk| {
                 let score = cosine_similarity(&query_embedding, &chunk.embedding);
                 if score < 0.18 {
@@ -417,11 +499,11 @@ impl SemanticState {
                 }
 
                 Some(SemanticChunkMatch {
-                    note_path: chunk.note_path,
-                    note_title: chunk.note_title,
-                    section_label: chunk.section_label,
+                    note_path: chunk.note_path.clone(),
+                    note_title: chunk.note_title.clone(),
+                    section_label: chunk.section_label.clone(),
                     excerpt: build_excerpt(&chunk.text, 180),
-                    match_text: chunk.text,
+                    match_text: chunk.text.clone(),
                     score,
                     start_line: chunk.start_line,
                     end_line: chunk.end_line,
@@ -437,14 +519,20 @@ impl SemanticState {
                 .then_with(|| left.note_path.cmp(&right.note_path))
         });
         matches.truncate(limit);
+        let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        self.debug
+            .record_timing("ann", "query_completed", None, elapsed, |metrics| {
+                metrics.ann_query_count += 1;
+                metrics.ann_query_candidate_total += candidate_labels.len() as u64;
+                metrics.ann_query_rerank_total += reranked_count as u64;
+                metrics.ann_query_duration_total_millis += elapsed;
+                metrics.ann_query_duration_max_millis =
+                    metrics.ann_query_duration_max_millis.max(elapsed);
+            });
         Ok(matches)
     }
 
-    pub(crate) fn map_graph(
-        &self,
-        limit: usize,
-        min_score: f32,
-    ) -> Result<MapGraph, String> {
+    pub(crate) fn map_graph(&self, limit: usize, min_score: f32) -> Result<MapGraph, String> {
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
         let graph = load_graph_data(&connection, limit, min_score)?;

@@ -1,7 +1,4 @@
-use std::{
-    env, fs,
-    path::PathBuf,
-};
+use std::{env, fs, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=GNEAUXGHTS_LLAMA_SERVER_BIN");
@@ -25,7 +22,8 @@ fn bundle_llama_server() -> Result<(), String> {
         return Ok(());
     };
 
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").map_err(|err| err.to_string())?);
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").map_err(|err| err.to_string())?);
     let resources_bin_dir = manifest_dir.join("resources").join("bin");
     let resources_lib_dir = manifest_dir.join("resources").join("lib");
     fs::create_dir_all(&resources_bin_dir).map_err(|err| err.to_string())?;
@@ -56,9 +54,7 @@ fn cleanup_staged_runtime_artifacts() {
         return;
     };
 
-    let bundled_binary = profile_dir
-        .join("bin")
-        .join(executable_name_for_target());
+    let bundled_binary = profile_dir.join("bin").join(executable_name_for_target());
     let _ = fs::remove_file(&bundled_binary);
 
     for file_name in runtime_library_file_names() {
@@ -171,7 +167,12 @@ fn cargo_profile_dir() -> Result<PathBuf, String> {
         .ancestors()
         .nth(3)
         .map(PathBuf::from)
-        .ok_or_else(|| format!("unable to determine cargo profile directory from {}", out_dir.display()))
+        .ok_or_else(|| {
+            format!(
+                "unable to determine cargo profile directory from {}",
+                out_dir.display()
+            )
+        })
 }
 
 fn executable_name_for_target() -> &'static str {

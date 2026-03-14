@@ -1,23 +1,20 @@
 mod commands;
 mod index;
-mod semantic;
 mod search;
+mod semantic;
 mod state;
 
 use index::AppState;
 use semantic::SemanticState;
 use state::notes_root;
-use tauri::{Manager, RunEvent};
 use std::path::PathBuf;
+use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|err| err.to_string())?;
+            let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
             let notes_dir = notes_root()?;
             let bundled_runtime_path = bundled_llama_server_path(app.handle());
             let semantic =

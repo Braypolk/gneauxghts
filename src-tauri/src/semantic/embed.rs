@@ -195,8 +195,10 @@ impl JinaLlamaEmbeddingProvider {
         fs::create_dir_all(&self.model_dir).map_err(|err| startup_error(err.to_string()))?;
         let stdout_path = self.model_dir.join("llama-server.stdout.log");
         let stderr_path = self.model_dir.join("llama-server.stderr.log");
-        let stdout = fs::File::create(&stdout_path).map_err(|err| startup_error(err.to_string()))?;
-        let stderr = fs::File::create(&stderr_path).map_err(|err| startup_error(err.to_string()))?;
+        let stdout =
+            fs::File::create(&stdout_path).map_err(|err| startup_error(err.to_string()))?;
+        let stderr =
+            fs::File::create(&stderr_path).map_err(|err| startup_error(err.to_string()))?;
 
         let mut command = Command::new(&runtime_binary);
         command.env("LLAMA_CACHE", &self.model_dir);
@@ -381,10 +383,13 @@ impl JinaLlamaEmbeddingProvider {
             return path_candidate;
         }
 
-        ["/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"]
-            .iter()
-            .map(PathBuf::from)
-            .find(|candidate| candidate.is_file())
+        [
+            "/opt/homebrew/bin/llama-server",
+            "/usr/local/bin/llama-server",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .find(|candidate| candidate.is_file())
     }
 
     fn model_path(&self) -> PathBuf {
@@ -427,7 +432,10 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
 
         let started_at = Instant::now();
         let text_count = texts.len() as u64;
-        let char_count = texts.iter().map(|text| text.chars().count() as u64).sum::<u64>();
+        let char_count = texts
+            .iter()
+            .map(|text| text.chars().count() as u64)
+            .sum::<u64>();
         let port = self.ensure_server_ready()?;
         let input = texts
             .iter()
@@ -580,7 +588,9 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
                     metrics.embedding_duration_max_millis.max(elapsed);
             },
         );
-        Err(format!("Unexpected embedding response from local runtime: {response_text}"))
+        Err(format!(
+            "Unexpected embedding response from local runtime: {response_text}"
+        ))
     }
 
     fn model_info(&self) -> ModelInfo {
@@ -605,8 +615,7 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
                         "model missing from llama.cpp cache and local-only mode blocks download"
                             .to_string()
                     } else if settings.auto_download_model {
-                        "model will download into llama.cpp cache on first semantic use"
-                            .to_string()
+                        "model will download into llama.cpp cache on first semantic use".to_string()
                     } else {
                         "model missing from llama.cpp cache".to_string()
                     }
@@ -643,9 +652,10 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
 
     fn prepare(&self) -> Result<(), String> {
         let started_at = Instant::now();
-        self.debug.record_with_metrics("runtime", "prepare_started", None, None, |metrics| {
-            metrics.model_prepare_count += 1;
-        });
+        self.debug
+            .record_with_metrics("runtime", "prepare_started", None, None, |metrics| {
+                metrics.model_prepare_count += 1;
+            });
         match self.ensure_server_ready() {
             Ok(_) => {
                 let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;

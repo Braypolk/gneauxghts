@@ -1,13 +1,13 @@
 use crate::{
     index::{
-        build_current_override, normalize_search_text, refresh_notes_index, task_key,
+        build_current_override, build_indexed_note, normalize_search_text, task_key,
         toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
     },
+    search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
     semantic::{
         debug::SemanticDebugSnapshot, MapGraph, SemanticChunkMatch, SemanticSettings,
         SemanticStatus,
     },
-    search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
     state::{
         is_valid_note_path, notes_root, persist_note, prune_recent_paths, push_unique, read_state,
         touch_recent_path, validate_current_path, write_state, PersistedState,
@@ -19,9 +19,11 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::State;
+
+const INTERACTIVE_INDEX_REFRESH_MAX_AGE: Duration = Duration::from_millis(750);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,8 +150,7 @@ pub(crate) fn save_note(
     let timestamp_millis = current_time_millis()?;
     let next_note = saved_path
         .as_deref()
-        .map(|saved_path| build_indexed_note(Path::new(saved_path), &markdown, timestamp_millis))
-        .transpose()?;
+        .map(|saved_path| build_indexed_note(Path::new(saved_path), &markdown, timestamp_millis));
 
     let mut persisted_state = read_state(&notes_dir)?;
     persisted_state.last_opened_path = saved_path.clone();
@@ -165,11 +166,21 @@ pub(crate) fn save_note(
         timestamp_millis,
     );
     write_state(&notes_dir, &persisted_state)?;
-    refresh_notes_index(&state, &notes_dir)?;
+    if let (Some(saved_path), Some(next_note)) = (saved_path.as_deref(), next_note.as_ref()) {
+        upsert_notes_index_entry(&state, PathBuf::from(saved_path), next_note.clone())?;
+    }
+    if let Some(previous_path) = current_path.as_deref() {
+        let previous_raw_path = previous_path.to_string_lossy().into_owned();
+        if saved_path.as_deref() != Some(previous_raw_path.as_str()) {
+            remove_notes_index_entry(&state, previous_path)?;
+        }
+    }
     if let Some(saved_path) = saved_path.as_deref() {
-        state
-            .semantic
-            .queue_note_update(Path::new(saved_path), markdown.clone(), timestamp_millis)?;
+        state.semantic.queue_note_update(
+            Path::new(saved_path),
+            markdown.clone(),
+            timestamp_millis,
+        )?;
     }
     if let Some(previous_path) = current_path.as_deref() {
         let previous_raw_path = previous_path.to_string_lossy().into_owned();
@@ -205,12 +216,9 @@ pub(crate) fn remember_note(
         None
     };
     let timestamp_millis = current_time_millis()?;
-    let next_note = remembered_path
-        .as_deref()
-        .map(|remembered_path| {
-            build_indexed_note(Path::new(remembered_path), &markdown, timestamp_millis)
-        })
-        .transpose()?;
+    let next_note = remembered_path.as_deref().map(|remembered_path| {
+        build_indexed_note(Path::new(remembered_path), &markdown, timestamp_millis)
+    });
 
     let mut persisted_state = read_state(&notes_dir)?;
     persisted_state.last_opened_path = None;
@@ -226,13 +234,21 @@ pub(crate) fn remember_note(
         timestamp_millis,
     );
     write_state(&notes_dir, &persisted_state)?;
-    refresh_notes_index(&state, &notes_dir)?;
+    if let (Some(remembered_path), Some(next_note)) =
+        (remembered_path.as_deref(), next_note.as_ref())
+    {
+        upsert_notes_index_entry(&state, PathBuf::from(remembered_path), next_note.clone())?;
+    }
+    if let Some(previous_path) = current_path.as_deref() {
+        let previous_raw_path = previous_path.to_string_lossy().into_owned();
+        if remembered_path.as_deref() != Some(previous_raw_path.as_str()) {
+            remove_notes_index_entry(&state, previous_path)?;
+        }
+    }
     if let Some(remembered_path) = remembered_path.as_deref() {
-        state.semantic.queue_note_update(
-            Path::new(remembered_path),
-            markdown,
-            timestamp_millis,
-        )?;
+        state
+            .semantic
+            .queue_note_update(Path::new(remembered_path), markdown, timestamp_millis)?;
     }
     if let Some(previous_path) = current_path.as_deref() {
         let previous_raw_path = previous_path.to_string_lossy().into_owned();
@@ -279,7 +295,10 @@ pub(crate) fn forget_note(
     }
 
     write_state(&notes_dir, &persisted_state)?;
-    refresh_notes_index(&state, &notes_dir)
+    if let Some(note_path) = current_path.as_deref() {
+        remove_notes_index_entry(&state, note_path)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -302,7 +321,7 @@ pub(crate) fn list_recent_notes(
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh(&notes_dir)?;
+    index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
 
     let recent_results = persisted_state
         .recent_paths
@@ -349,7 +368,7 @@ pub(crate) fn list_recent_tasks(
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh(&notes_dir)?;
+    index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
     let did_sync_task_timestamps = sync_task_timestamps_from_index(&mut persisted_state, &index);
 
     let mut tasks = Vec::new();
@@ -396,7 +415,11 @@ pub(crate) fn list_recent_tasks(
         right
             .updated_at_millis
             .cmp(&left.updated_at_millis)
-            .then_with(|| left.note_title.to_lowercase().cmp(&right.note_title.to_lowercase()))
+            .then_with(|| {
+                left.note_title
+                    .to_lowercase()
+                    .cmp(&right.note_title.to_lowercase())
+            })
             .then_with(|| left.line_number.cmp(&right.line_number))
             .then_with(|| left.text.to_lowercase().cmp(&right.text.to_lowercase()))
     });
@@ -434,7 +457,7 @@ pub(crate) fn list_tasks(
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh(&notes_dir)?;
+    index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
     let did_sync_task_timestamps = sync_task_timestamps_from_index(&mut persisted_state, &index);
 
     let mut tasks = Vec::new();
@@ -613,11 +636,11 @@ pub(crate) fn toggle_task(
     let updated_markdown = toggle_task_in_markdown(&markdown, line_number, &task_text)?;
     fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
     let timestamp_millis = current_time_millis()?;
-    let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis)?;
+    let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
     let Some(toggled_task_key) =
         find_task_key_for_line(&note_path, &updated_note, line_number, &task_text)
     else {
-        refresh_notes_index(&state, &notes_dir)?;
+        upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
         return Ok(());
     };
 
@@ -632,7 +655,7 @@ pub(crate) fn toggle_task(
         });
     timestamps.updated_at_millis = timestamp_millis;
     write_state(&notes_dir, &persisted_state)?;
-    refresh_notes_index(&state, &notes_dir)?;
+    upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
     state
         .semantic
         .queue_note_update(&note_path, updated_markdown, timestamp_millis)?;
@@ -664,8 +687,15 @@ pub(crate) fn search_notes(
     }
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let mut candidates =
-        collect_lexical_candidates(&state, &notes_dir, mode, current_path.as_deref(), &current_markdown, &normalized_query, &query_terms)?;
+    let mut candidates = collect_lexical_candidates(
+        &state,
+        &notes_dir,
+        mode,
+        current_path.as_deref(),
+        &current_markdown,
+        &normalized_query,
+        &query_terms,
+    )?;
 
     candidates.sort_by(|left, right| {
         right
@@ -781,7 +811,8 @@ pub(crate) async fn search_notes_hybrid(
         };
         result.reason_labels.push("keyword".to_string());
         result.lexical_score = Some(lexical_score);
-        let structural_boost = structural_boost(&result, &normalized_query, current_path.as_deref());
+        let structural_boost =
+            structural_boost(&result, &normalized_query, current_path.as_deref());
         merged.insert(
             hybrid_candidate_key(&result),
             HybridCandidate {
@@ -874,8 +905,7 @@ pub(crate) async fn search_notes_hybrid(
             metrics.search_request_count += 1;
             metrics.search_semantic_used_count += 1;
             metrics.search_duration_total_millis += elapsed;
-            metrics.search_duration_max_millis =
-                metrics.search_duration_max_millis.max(elapsed);
+            metrics.search_duration_max_millis = metrics.search_duration_max_millis.max(elapsed);
         },
     );
     Ok(ranked
@@ -906,9 +936,7 @@ pub(crate) fn set_semantic_settings(
 }
 
 #[tauri::command]
-pub(crate) fn get_semantic_status(
-    state: State<'_, AppState>,
-) -> Result<SemanticStatus, String> {
+pub(crate) fn get_semantic_status(state: State<'_, AppState>) -> Result<SemanticStatus, String> {
     state.semantic.get_status()
 }
 
@@ -944,21 +972,26 @@ pub(crate) async fn get_map_graph(
 ) -> Result<MapGraph, String> {
     let started_at = Instant::now();
     let semantic = state.semantic.clone();
-    let graph = tauri::async_runtime::spawn_blocking(move || semantic.map_graph(limit.max(24), min_score.max(0.0)))
-        .await
-        .map_err(|err| err.to_string())?;
+    let graph = tauri::async_runtime::spawn_blocking(move || {
+        semantic.map_graph(limit.max(24), min_score.max(0.0))
+    })
+    .await
+    .map_err(|err| err.to_string())?;
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     match &graph {
         Ok(graph_data) => state.semantic.debug_state().record_timing(
             "map",
             "map_completed",
-            Some(format!("nodes={} edges={}", graph_data.nodes.len(), graph_data.edges.len())),
+            Some(format!(
+                "nodes={} edges={}",
+                graph_data.nodes.len(),
+                graph_data.edges.len()
+            )),
             elapsed,
             |metrics| {
                 metrics.map_request_count += 1;
                 metrics.map_duration_total_millis += elapsed;
-                metrics.map_duration_max_millis =
-                    metrics.map_duration_max_millis.max(elapsed);
+                metrics.map_duration_max_millis = metrics.map_duration_max_millis.max(elapsed);
             },
         ),
         Err(error) => state.semantic.debug_state().record_timing(
@@ -969,8 +1002,7 @@ pub(crate) async fn get_map_graph(
             |metrics| {
                 metrics.map_request_count += 1;
                 metrics.map_duration_total_millis += elapsed;
-                metrics.map_duration_max_millis =
-                    metrics.map_duration_max_millis.max(elapsed);
+                metrics.map_duration_max_millis = metrics.map_duration_max_millis.max(elapsed);
             },
         ),
     }
@@ -1003,7 +1035,7 @@ fn collect_lexical_candidates(
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh(notes_dir)?;
+    index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
 
     let mut candidates = Vec::new();
     match mode {
@@ -1170,15 +1202,26 @@ fn read_modified_millis(path: &Path) -> Result<u64, String> {
     Ok(modified.min(u128::from(u64::MAX)) as u64)
 }
 
-fn build_indexed_note(
-    path: &Path,
-    markdown: &str,
-    modified_millis: u64,
-) -> Result<IndexedNote, String> {
-    let mut note = build_current_override(Some(path), markdown)
-        .ok_or_else(|| "Unable to index note".to_string())?;
-    note.modified_millis = modified_millis;
-    Ok(note)
+fn upsert_notes_index_entry(
+    state: &State<'_, AppState>,
+    path: PathBuf,
+    note: IndexedNote,
+) -> Result<(), String> {
+    let mut index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Search index lock poisoned".to_string())?;
+    index.upsert_note(path, note);
+    Ok(())
+}
+
+fn remove_notes_index_entry(state: &State<'_, AppState>, path: &Path) -> Result<(), String> {
+    let mut index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Search index lock poisoned".to_string())?;
+    index.remove_note(path);
+    Ok(())
 }
 
 fn read_indexed_note_from_path(path: &Path) -> Result<Option<IndexedNote>, String> {
@@ -1188,7 +1231,7 @@ fn read_indexed_note_from_path(path: &Path) -> Result<Option<IndexedNote>, Strin
 
     let markdown = fs::read_to_string(path).map_err(|err| err.to_string())?;
     let modified_millis = read_modified_millis(path)?;
-    Ok(Some(build_indexed_note(path, &markdown, modified_millis)?))
+    Ok(Some(build_indexed_note(path, &markdown, modified_millis)))
 }
 
 fn collect_task_timestamp_candidates(

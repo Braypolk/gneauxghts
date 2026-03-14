@@ -1,11 +1,14 @@
 use super::{
-    chunking::SemanticChunk,
-    embed::mean_pool,
-    current_time_millis, MapEdge, MapGraph, MapNode, SemanticIndexJob, SemanticSettings,
+    chunking::SemanticChunk, current_time_millis, embed::mean_pool, MapEdge, MapGraph, MapNode,
+    SemanticIndexJob, SemanticSettings,
 };
 use blake3::hash;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 
 const SETTINGS_KEY: &str = "semantic_settings";
 
@@ -15,7 +18,9 @@ pub(crate) struct StoredChunkEmbedding {
     pub(crate) embedding: Vec<f32>,
 }
 
+#[derive(Clone)]
 pub(crate) struct StoredChunkRow {
+    pub(crate) ann_label: u64,
     pub(crate) note_path: String,
     pub(crate) note_title: String,
     pub(crate) section_label: String,
@@ -28,6 +33,12 @@ pub(crate) struct StoredChunkRow {
 pub(crate) struct StoredNoteEmbedding {
     pub(crate) note_path: String,
     pub(crate) embedding: Vec<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AnnIndexSignature {
+    pub(crate) chunk_count: usize,
+    pub(crate) max_indexed_at_millis: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -68,6 +79,7 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 note_path TEXT NOT NULL,
                 ordinal INTEGER NOT NULL,
+                ann_label INTEGER,
                 section_label TEXT NOT NULL,
                 text TEXT NOT NULL,
                 text_hash TEXT NOT NULL,
@@ -110,7 +122,9 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
             );
             ",
         )
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+
+    migrate_chunk_ann_labels(connection)
 }
 
 pub(crate) fn load_semantic_settings(
@@ -214,16 +228,21 @@ pub(crate) fn upsert_note_chunks(
     let indexed_at_millis = current_time_millis()?;
     let transaction = connection.transaction().map_err(|err| err.to_string())?;
     transaction
-        .execute("DELETE FROM chunks WHERE note_path = ?1", params![note_path])
+        .execute(
+            "DELETE FROM chunks WHERE note_path = ?1",
+            params![note_path],
+        )
         .map_err(|err| err.to_string())?;
 
     for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
+        let ann_label = ann_label_for(note_path, chunk.ordinal);
         transaction
             .execute(
                 "
                 INSERT INTO chunks (
                     note_path,
                     ordinal,
+                    ann_label,
                     section_label,
                     text,
                     text_hash,
@@ -233,11 +252,12 @@ pub(crate) fn upsert_note_chunks(
                     embedding_dim,
                     indexed_at_millis
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                 ",
                 params![
                     note_path,
                     chunk.ordinal,
+                    ann_label,
                     chunk.section_label,
                     chunk.text,
                     chunk.text_hash,
@@ -299,7 +319,10 @@ pub(crate) fn upsert_note_chunks(
 pub(crate) fn delete_note(connection: &mut Connection, note_path: &str) -> Result<(), String> {
     let transaction = connection.transaction().map_err(|err| err.to_string())?;
     transaction
-        .execute("DELETE FROM chunks WHERE note_path = ?1", params![note_path])
+        .execute(
+            "DELETE FROM chunks WHERE note_path = ?1",
+            params![note_path],
+        )
         .map_err(|err| err.to_string())?;
     transaction
         .execute(
@@ -325,14 +348,14 @@ pub(crate) fn load_chunks_with_embeddings(
 ) -> Result<Vec<StoredChunkRow>, String> {
     let sql = if exclude_note_path.is_some() {
         "
-        SELECT c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line, c.embedding_blob
+        SELECT c.ann_label, c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line, c.embedding_blob
         FROM chunks c
         INNER JOIN notes n ON n.path = c.note_path
         WHERE c.note_path != ?1
         "
     } else {
         "
-        SELECT c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line, c.embedding_blob
+        SELECT c.ann_label, c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line, c.embedding_blob
         FROM chunks c
         INNER JOIN notes n ON n.path = c.note_path
         "
@@ -349,19 +372,107 @@ pub(crate) fn load_chunks_with_embeddings(
 
     while let Some(row) = rows.next().map_err(|err| err.to_string())? {
         chunks.push(StoredChunkRow {
-            note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
-            note_title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
-            section_label: row.get::<_, String>(2).map_err(|err| err.to_string())?,
-            text: row.get::<_, String>(3).map_err(|err| err.to_string())?,
-            start_line: row.get::<_, usize>(4).map_err(|err| err.to_string())?,
-            end_line: row.get::<_, usize>(5).map_err(|err| err.to_string())?,
+            ann_label: row.get::<_, u64>(0).map_err(|err| err.to_string())?,
+            note_path: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            note_title: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+            section_label: row.get::<_, String>(3).map_err(|err| err.to_string())?,
+            text: row.get::<_, String>(4).map_err(|err| err.to_string())?,
+            start_line: row.get::<_, usize>(5).map_err(|err| err.to_string())?,
+            end_line: row.get::<_, usize>(6).map_err(|err| err.to_string())?,
             embedding: deserialize_embedding(
-                &row.get::<_, Vec<u8>>(6).map_err(|err| err.to_string())?,
+                &row.get::<_, Vec<u8>>(7).map_err(|err| err.to_string())?,
             ),
         });
     }
 
     Ok(chunks)
+}
+
+pub(crate) fn load_chunks_by_ann_labels(
+    connection: &Connection,
+    labels: &[u64],
+) -> Result<Vec<StoredChunkRow>, String> {
+    if labels.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut seen = HashSet::new();
+    let filtered_labels = labels
+        .iter()
+        .copied()
+        .filter(|label| seen.insert(*label))
+        .collect::<Vec<_>>();
+    let placeholders = std::iter::repeat_n("?", filtered_labels.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "
+        SELECT c.ann_label, c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line, c.embedding_blob
+        FROM chunks c
+        INNER JOIN notes n ON n.path = c.note_path
+        WHERE c.ann_label IN ({placeholders})
+        "
+    );
+    let mut statement = connection.prepare(&sql).map_err(|err| err.to_string())?;
+    let params = rusqlite::params_from_iter(filtered_labels.iter());
+    let mut rows = statement.query(params).map_err(|err| err.to_string())?;
+    let mut chunks = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        chunks.push(StoredChunkRow {
+            ann_label: row.get::<_, u64>(0).map_err(|err| err.to_string())?,
+            note_path: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            note_title: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+            section_label: row.get::<_, String>(3).map_err(|err| err.to_string())?,
+            text: row.get::<_, String>(4).map_err(|err| err.to_string())?,
+            start_line: row.get::<_, usize>(5).map_err(|err| err.to_string())?,
+            end_line: row.get::<_, usize>(6).map_err(|err| err.to_string())?,
+            embedding: deserialize_embedding(
+                &row.get::<_, Vec<u8>>(7).map_err(|err| err.to_string())?,
+            ),
+        });
+    }
+
+    Ok(chunks)
+}
+
+pub(crate) fn load_note_chunk_labels(
+    connection: &Connection,
+    note_path: &str,
+) -> Result<HashSet<u64>, String> {
+    let mut statement = connection
+        .prepare("SELECT ann_label FROM chunks WHERE note_path = ?1")
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement
+        .query(params![note_path])
+        .map_err(|err| err.to_string())?;
+    let mut labels = HashSet::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        labels.insert(row.get::<_, u64>(0).map_err(|err| err.to_string())?);
+    }
+
+    Ok(labels)
+}
+
+pub(crate) fn load_ann_index_signature(
+    connection: &Connection,
+) -> Result<AnnIndexSignature, String> {
+    let chunk_count = connection
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| {
+            row.get::<_, usize>(0)
+        })
+        .map_err(|err| err.to_string())?;
+    let max_indexed_at_millis = connection
+        .query_row("SELECT MAX(indexed_at_millis) FROM chunks", [], |row| {
+            row.get::<_, Option<u64>>(0)
+        })
+        .map_err(|err| err.to_string())?;
+
+    Ok(AnnIndexSignature {
+        chunk_count,
+        max_indexed_at_millis,
+    })
 }
 
 pub(crate) fn load_note_embeddings(
@@ -408,7 +519,8 @@ pub(crate) fn rebuild_edges(
             .iter()
             .filter(|target| target.note_path != source.note_path)
             .filter_map(|target| {
-                let score = super::similarity::cosine_similarity(&source.embedding, &target.embedding);
+                let score =
+                    super::similarity::cosine_similarity(&source.embedding, &target.embedding);
                 if score < min_score {
                     return None;
                 }
@@ -448,10 +560,14 @@ pub(crate) fn count_indexed_items(
     connection: &Connection,
 ) -> Result<(usize, usize, Option<u64>), String> {
     let indexed_notes = connection
-        .query_row("SELECT COUNT(*) FROM notes", [], |row| row.get::<_, usize>(0))
+        .query_row("SELECT COUNT(*) FROM notes", [], |row| {
+            row.get::<_, usize>(0)
+        })
         .map_err(|err| err.to_string())?;
     let indexed_chunks = connection
-        .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get::<_, usize>(0))
+        .query_row("SELECT COUNT(*) FROM chunks", [], |row| {
+            row.get::<_, usize>(0)
+        })
         .map_err(|err| err.to_string())?;
     let last_indexed_at_millis = connection
         .query_row("SELECT MAX(indexed_at_millis) FROM notes", [], |row| {
@@ -484,7 +600,14 @@ pub(crate) fn insert_job(
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
             ",
-            params![job_id, status, scanned_count, embedded_count, error_text, now],
+            params![
+                job_id,
+                status,
+                scanned_count,
+                embedded_count,
+                error_text,
+                now
+            ],
         )
         .map_err(|err| err.to_string())?;
     Ok(job_id)
@@ -510,15 +633,20 @@ pub(crate) fn update_job(
                 updated_at_millis = ?6
             WHERE id = ?1
             ",
-            params![job_id, status, scanned_count, embedded_count, error_text, now],
+            params![
+                job_id,
+                status,
+                scanned_count,
+                embedded_count,
+                error_text,
+                now
+            ],
         )
         .map_err(|err| err.to_string())?;
     Ok(())
 }
 
-pub(crate) fn load_latest_job(
-    connection: &Connection,
-) -> Result<Option<SemanticIndexJob>, String> {
+pub(crate) fn load_latest_job(connection: &Connection) -> Result<Option<SemanticIndexJob>, String> {
     connection
         .query_row(
             "
@@ -608,6 +736,15 @@ pub(crate) fn content_hash(markdown: &str) -> String {
     hash(markdown.as_bytes()).to_hex().to_string()
 }
 
+pub(crate) fn ann_label_for(note_path: &str, ordinal: usize) -> u64 {
+    let raw = hash(format!("{note_path}::{ordinal}").as_bytes())
+        .as_bytes()
+        .to_owned();
+    u64::from_le_bytes([
+        raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+    ]) & i64::MAX as u64
+}
+
 fn serialize_embedding(values: &[f32]) -> Vec<u8> {
     values
         .iter()
@@ -623,13 +760,95 @@ fn deserialize_embedding(blob: &[u8]) -> Vec<f32> {
 
 fn seed_position(note_path: &str) -> (f32, f32) {
     let bytes = hash(note_path.as_bytes()).as_bytes().to_vec();
-    let x = (u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32
-        / u32::MAX as f32)
+    let x = (u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32 / u32::MAX as f32)
         * 2.0
         - 1.0;
-    let y = (u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as f32
-        / u32::MAX as f32)
+    let y = (u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as f32 / u32::MAX as f32)
         * 2.0
         - 1.0;
     (x, y)
+}
+
+fn migrate_chunk_ann_labels(connection: &Connection) -> Result<(), String> {
+    if !has_column(connection, "chunks", "ann_label")? {
+        connection
+            .execute("ALTER TABLE chunks ADD COLUMN ann_label INTEGER", [])
+            .map_err(|err| err.to_string())?;
+    }
+
+    let mut statement = connection
+        .prepare("SELECT id, note_path, ordinal FROM chunks WHERE ann_label IS NULL")
+        .map_err(|err| err.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, usize>(2)?,
+            ))
+        })
+        .map_err(|err| err.to_string())?;
+
+    for row in rows {
+        let (id, note_path, ordinal) = row.map_err(|err| err.to_string())?;
+        let ann_label = ann_label_for(&note_path, ordinal);
+        connection
+            .execute(
+                "UPDATE chunks SET ann_label = ?1 WHERE id = ?2",
+                params![ann_label, id],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+
+    connection
+        .execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_ann_label ON chunks(ann_label)",
+            [],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn has_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, String> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut statement = connection.prepare(&pragma).map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        let existing_name = row.get::<_, String>(1).map_err(|err| err.to_string())?;
+        if existing_name == column_name {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ann_label_for;
+
+    #[test]
+    fn ann_labels_are_stable_for_same_chunk_identity() {
+        let first = ann_label_for("notes/project.md", 3);
+        let second = ann_label_for("notes/project.md", 3);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn ann_labels_change_when_path_or_ordinal_changes() {
+        let baseline = ann_label_for("notes/project.md", 3);
+        assert_ne!(baseline, ann_label_for("notes/project.md", 4));
+        assert_ne!(baseline, ann_label_for("notes/other.md", 3));
+    }
+
+    #[test]
+    fn ann_labels_fit_in_sqlite_integer_range() {
+        let label = ann_label_for("notes/project.md", 3);
+        assert!(label <= i64::MAX as u64);
+    }
 }

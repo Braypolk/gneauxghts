@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::UNIX_EPOCH,
+    time::{Duration, Instant},
 };
 
 pub(crate) struct AppState {
@@ -21,9 +22,18 @@ impl AppState {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
+    last_refresh_at: Option<Instant>,
+}
+
+impl Default for NotesIndex {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            last_refresh_at: None,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -61,14 +71,6 @@ pub(crate) struct IndexedNote {
     pub(crate) tasks: Vec<IndexedTask>,
 }
 
-pub(crate) fn refresh_notes_index(state: &AppState, notes_dir: &Path) -> Result<(), String> {
-    let mut index = state
-        .notes_index
-        .lock()
-        .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh(notes_dir)
-}
-
 impl NotesIndex {
     pub(crate) fn refresh(&mut self, notes_dir: &Path) -> Result<(), String> {
         let mut seen_paths = HashSet::new();
@@ -95,7 +97,33 @@ impl NotesIndex {
         }
 
         self.entries.retain(|path, _| seen_paths.contains(path));
+        self.last_refresh_at = Some(Instant::now());
         Ok(())
+    }
+
+    pub(crate) fn refresh_if_stale(
+        &mut self,
+        notes_dir: &Path,
+        max_age: Duration,
+    ) -> Result<(), String> {
+        if self
+            .last_refresh_at
+            .is_some_and(|last_refresh_at| last_refresh_at.elapsed() < max_age)
+        {
+            return Ok(());
+        }
+
+        self.refresh(notes_dir)
+    }
+
+    pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) {
+        self.entries.insert(path, note);
+        self.last_refresh_at = Some(Instant::now());
+    }
+
+    pub(crate) fn remove_note(&mut self, path: &Path) {
+        self.entries.remove(path);
+        self.last_refresh_at = Some(Instant::now());
     }
 }
 
@@ -122,6 +150,17 @@ pub(crate) fn build_current_override(
             len: markdown.len() as u64,
         },
     ))
+}
+
+pub(crate) fn build_indexed_note(path: &Path, markdown: &str, modified_millis: u64) -> IndexedNote {
+    build_indexed_note_with_signature(
+        Some(path),
+        markdown,
+        FileSignature {
+            modified_millis,
+            len: markdown.len() as u64,
+        },
+    )
 }
 
 pub(crate) fn task_key(note_path: &Path, task: &IndexedTask) -> String {

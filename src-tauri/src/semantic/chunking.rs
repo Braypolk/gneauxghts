@@ -207,13 +207,21 @@ fn push_section_chunks(chunks: &mut Vec<SemanticChunk>, section: &Section) {
     }
 }
 
-fn push_long_text_chunks(chunks: &mut Vec<SemanticChunk>, section_label: &str, paragraph: &Paragraph) {
+fn push_long_text_chunks(
+    chunks: &mut Vec<SemanticChunk>,
+    section_label: &str,
+    paragraph: &Paragraph,
+) {
     let chars = paragraph.text.chars().collect::<Vec<_>>();
     let mut start = 0usize;
 
     while start < chars.len() {
         let end = (start + LONG_TEXT_WINDOW).min(chars.len());
-        let text = chars[start..end].iter().collect::<String>().trim().to_string();
+        let text = chars[start..end]
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_string();
         if !text.is_empty() {
             chunks.push(SemanticChunk {
                 ordinal: chunks.len(),
@@ -248,8 +256,14 @@ fn push_chunk(chunks: &mut Vec<SemanticChunk>, section_label: &str, paragraphs: 
         section_label: section_label.to_string(),
         text_hash: hash_string(&text),
         text,
-        start_line: paragraphs.first().map(|paragraph| paragraph.start_line).unwrap_or(1),
-        end_line: paragraphs.last().map(|paragraph| paragraph.end_line).unwrap_or(1),
+        start_line: paragraphs
+            .first()
+            .map(|paragraph| paragraph.start_line)
+            .unwrap_or(1),
+        end_line: paragraphs
+            .last()
+            .map(|paragraph| paragraph.end_line)
+            .unwrap_or(1),
     });
 }
 
