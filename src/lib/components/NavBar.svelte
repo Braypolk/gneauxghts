@@ -17,7 +17,7 @@
   }
 
   const linkClass = (href: string) =>
-    `inline-flex w-[105px] items-center justify-center rounded-full border px-2 py-2 text-sm font-medium transition-colors ${
+    `inline-flex min-w-[105px] items-center justify-center rounded-full border px-3 py-2 text-sm font-medium transition-colors ${
       isActive(href, $page.url.pathname)
         ? 'border-foreground/15 bg-card text-foreground shadow-sm'
         : 'border-transparent text-muted-foreground hover:border-border/80 hover:text-foreground'
@@ -87,7 +87,9 @@
   <div class="relative z-10 flex justify-center">
     <nav class="flex items-center gap-0 rounded-full border border-border/80 bg-card/70 shadow-sm backdrop-blur-md">
       {#each navLinks as { href, label }}
-        <a href={href} class={linkClass(href)}>{label}</a>
+        <a href={href} class={linkClass(href)}>
+          {label}
+        </a>
       {/each}
     </nav>
   </div>
