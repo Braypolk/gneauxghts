@@ -304,6 +304,45 @@
     return null;
   }
 
+  function isKeywordResult(result: SearchItem) {
+    return result.reasonLabels.includes('keyword');
+  }
+
+  function isSemanticOnlyResult(result: SearchItem) {
+    return result.reasonLabels.includes('semantic') && !isKeywordResult(result);
+  }
+
+  function focusTitleAtEnd() {
+    if (!titleInput) return;
+    titleInput.focus();
+    const end = titleInput.value.length;
+    titleInput.setSelectionRange(end, end);
+  }
+
+  function focusEditorTarget(target: HTMLElement) {
+    const proseMirror = editorRoot?.querySelector('.ProseMirror');
+    if (!(proseMirror instanceof HTMLElement)) return;
+
+    const point = findLastSelectionPoint(target);
+    proseMirror.focus({ preventScroll: true });
+
+    if (!point) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection) return;
+
+    const range = document.createRange();
+    range.setStart(point.node, point.offset);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   async function focusEditorAtEnd() {
     await tick();
 
@@ -527,7 +566,10 @@
 
     if (result.sectionLabel === 'Title') {
       titleShell?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      titleInput?.focus();
+      if (isSemanticOnlyResult(result)) {
+        return;
+      }
+      focusTitleAtEnd();
       return;
     }
 
@@ -536,7 +578,11 @@
     const targetBlock = findBestEditorTarget(result.matchText, paragraphIndex);
 
     if (targetBlock) {
-      targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (isSemanticOnlyResult(result)) {
+        targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      focusEditorTarget(targetBlock);
     }
   }
 

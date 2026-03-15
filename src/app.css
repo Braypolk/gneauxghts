@@ -193,6 +193,18 @@ body {
   caret-color: transparent;
 }
 
+.dark .notepad-editor-shell .milkdown .ProseMirror-focused {
+  --prosemirror-virtual-cursor-color: color-mix(
+    in oklab,
+    var(--foreground) 88%,
+    var(--accent) 12%
+  );
+}
+
+.notepad-editor-shell .milkdown .milkdown-slash-menu {
+  z-index: 30;
+}
+
 /* Prevent ghost/double text when typing in the search bar (WebKit rendering) */
 .search-bar-input-wrap {
   /* background: transparent; */
