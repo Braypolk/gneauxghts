@@ -4,6 +4,7 @@
   import { onMount, tick } from 'svelte';
   import { consumePendingTaskTarget, type PendingTaskTarget } from '$lib/taskNavigation';
   import type { SearchItem } from '$lib/types/semantic';
+  import { setupNotepadSlashMenuPortal } from './notepadSlashMenuPortal';
   import BottomBar from './BottomBar.svelte';
 
   interface NoteSession {
@@ -27,7 +28,9 @@
   }
 
   let crepe: Crepe | null = null;
+  let notepadShell: HTMLDivElement | null = null;
   let editorRoot: HTMLDivElement | null = null;
+  let slashMenuPortal: HTMLDivElement | null = null;
   let titleInput: HTMLInputElement | null = null;
   let titleShell: HTMLDivElement | null = null;
   let isEditorReady = $state(false);
@@ -51,6 +54,7 @@
   let activeRecentNotesRequest = 0;
   let activeRecentTasksRequest = 0;
   let searchFocusRequest = $state(0);
+  let slashMenuPortalCleanup: (() => void) | null = null;
 
   async function initEditor(initialValue: string) {
     if (!editorRoot) return;
@@ -78,6 +82,7 @@
     });
 
     await crepe.create();
+    setupSlashMenuPortal();
   }
 
   function parseStoredMarkdown(markdown: string) {
@@ -120,9 +125,30 @@
   }
 
   async function destroyEditor() {
+    if (slashMenuPortalCleanup) {
+      slashMenuPortalCleanup();
+      slashMenuPortalCleanup = null;
+    }
+
     if (!crepe) return;
     await crepe.destroy();
     crepe = null;
+  }
+
+  function setupSlashMenuPortal() {
+    if (!notepadShell || !editorRoot || !slashMenuPortal) return;
+
+    if (slashMenuPortalCleanup) {
+      slashMenuPortalCleanup();
+      slashMenuPortalCleanup = null;
+    }
+
+    // Crepe mounts the slash menu inside the clipped editor tree, so we reparent and clamp it here.
+    slashMenuPortalCleanup = setupNotepadSlashMenuPortal({
+      boundsElement: notepadShell,
+      editorRoot,
+      portalRoot: slashMenuPortal
+    });
   }
 
   async function createEditor(initialValue: string) {
@@ -706,62 +732,68 @@
 
 <svelte:window onkeydown={handleGlobalKeydown} />
 
-<div class="w-full h-full min-h-0 bg-card text-card-foreground rounded-[2rem] shadow-sm border border-border flex flex-col overflow-hidden transition-all duration-300 relative">
-  <div class="absolute top-0 left-0 right-0 z-20">
-    <div class="relative">
-      <div
-        class="pointer-events-none absolute inset-0 bg-card/70 backdrop-blur-md"
-        style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
-      ></div>
-      <div class="relative z-10 px-8 pt-3 pb-4">
-        <div bind:this={titleShell} class="mx-auto flex w-full max-w-3xl flex-col items-center gap-2 rounded-[1.4rem] px-4 py-2 transition-all duration-300">
-          <div class="flex w-full items-center justify-center gap-3 text-3xl font-semibold tracking-tight text-foreground">
-            <input
-              bind:this={titleInput}
-              type="text"
-              class="w-full max-w-2xl bg-transparent text-center outline-none placeholder:text-muted-foreground/55"
-              placeholder="Title"
-              value={title}
-              oninput={handleTitleInput}
-              onkeydown={handleTitleKeydown}
-            />
+<div bind:this={notepadShell} class="notepad-shell relative w-full h-full min-h-0 overflow-visible">
+  <div class="w-full h-full min-h-0 text-card-foreground rounded-[2rem] shadow-sm border border-border flex flex-col overflow-hidden transition-all duration-300 relative">
+    <!-- Title bar -->
+    <div class="absolute top-0 left-0 right-0 z-20">
+      <div class="relative">
+        <div
+          class="pointer-events-none absolute inset-0 bg-card/70 backdrop-blur-md"
+          style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
+        ></div>
+        <div class="relative z-10 px-8 pt-3 pb-4">
+          <div bind:this={titleShell} class="mx-auto flex w-full max-w-3xl flex-col items-center gap-2 rounded-[1.4rem] px-4 py-2 transition-all duration-300">
+            <div class="flex w-full items-center justify-center gap-3 text-3xl font-semibold tracking-tight text-foreground">
+              <input
+                bind:this={titleInput}
+                type="text"
+                class="w-full max-w-2xl bg-transparent text-center outline-none placeholder:text-muted-foreground/55"
+                placeholder="Title"
+                value={title}
+                oninput={handleTitleInput}
+                onkeydown={handleTitleKeydown}
+              />
+            </div>
+            <div class="h-px w-40 rounded-full bg-border"></div>
           </div>
-          <div class="h-px w-40 rounded-full bg-border"></div>
         </div>
       </div>
     </div>
-  </div>
-  <div class="flex-1 min-h-0">
-    <div class="notepad-editor-shell relative h-full">
-      {#if !isEditorReady}
-        <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-          <span class="rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
-            Loading editor
-          </span>
-        </div>
-      {/if}
+    <!-- Editor Area -->
+    <div class="flex-1 min-h-0">
+      <div class="notepad-editor-shell relative h-full">
+        {#if !isEditorReady}
+          <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+            <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
+              Loading editor
+            </span>
+          </div>
+        {/if}
 
-      <div bind:this={editorRoot} class="min-h-full"></div>
+        <div bind:this={editorRoot} class="min-h-full"></div>
+      </div>
+    </div>
+    <!-- Bottom Bar -->
+    <div class="absolute bottom-0 left-0 right-0 z-10">
+      <BottomBar
+        {canUnforget}
+        {searchMode}
+        {searchQuery}
+        {searchResults}
+        {recentNotes}
+        {recentTasks}
+        {isSearching}
+        focusRequest={searchFocusRequest}
+        onForget={() => void clearNotepad()}
+        onUnforget={() => void unforgetNotepad()}
+        onRemember={() => void rememberCurrentNote()}
+        onSearchInput={handleSearchInput}
+        onSearchModeChange={handleSearchModeChange}
+        onSearchSelect={(result) => void openSearchResult(result)}
+        onRecentTaskSelect={(task) => void openRecentTask(task)}
+        onSearchFocus={handleSearchFocus}
+      />
     </div>
   </div>
-  <div class="absolute bottom-0 left-0 right-0 z-10">
-    <BottomBar
-      {canUnforget}
-      {searchMode}
-      {searchQuery}
-      {searchResults}
-      {recentNotes}
-      {recentTasks}
-      {isSearching}
-      focusRequest={searchFocusRequest}
-      onForget={() => void clearNotepad()}
-      onUnforget={() => void unforgetNotepad()}
-      onRemember={() => void rememberCurrentNote()}
-      onSearchInput={handleSearchInput}
-      onSearchModeChange={handleSearchModeChange}
-      onSearchSelect={(result) => void openSearchResult(result)}
-      onRecentTaskSelect={(task) => void openRecentTask(task)}
-      onSearchFocus={handleSearchFocus}
-    />
-  </div>
+  <div bind:this={slashMenuPortal} class="notepad-slash-portal milkdown fixed inset-0 z-40 pointer-events-none"></div>
 </div>

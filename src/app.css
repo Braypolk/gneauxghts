@@ -91,7 +91,7 @@
 .dark {
   --background: oklch(0 0 0);
   --foreground: oklch(1 0 0);
-  --card: oklch(0.1400 0 0);
+  --card: oklch(0.1800 0 0);
   --card-foreground: oklch(1 0 0);
   --popover: oklch(0.1800 0 0);
   --popover-foreground: oklch(1 0 0);
@@ -105,7 +105,7 @@
   --accent-foreground: oklch(1 0 0);
   --destructive: oklch(0.6900 0.2000 23.9100);
   --destructive-foreground: oklch(0 0 0);
-  --border: oklch(0.2600 0 0);
+  --border: oklch(0.3500 0 0);
   --input: oklch(0.3200 0 0);
   --ring: oklch(0.7200 0 0);
   --chart-1: oklch(0.8100 0.1700 75.3500);
@@ -160,7 +160,9 @@ body {
   overflow-x: hidden;
 }
 
-.notepad-editor-shell .milkdown {
+.notepad-shell,
+.notepad-editor-shell .milkdown,
+.notepad-slash-portal.milkdown {
   --crepe-color-background: var(--card);
   --crepe-color-on-background: var(--foreground);
   --crepe-color-surface: color-mix(in oklab, var(--card) 92%, var(--background));
@@ -178,6 +180,9 @@ body {
   --crepe-color-hover: color-mix(in oklab, var(--accent) 82%, transparent);
   --crepe-color-selected: color-mix(in oklab, var(--accent) 92%, var(--background));
   --crepe-color-inline-area: color-mix(in oklab, var(--muted) 80%, var(--background));
+}
+
+.notepad-editor-shell .milkdown {
   min-height: 100%;
 }
 
@@ -201,8 +206,13 @@ body {
   );
 }
 
-.notepad-editor-shell .milkdown .milkdown-slash-menu {
-  z-index: 30;
+.notepad-slash-portal .milkdown-slash-menu {
+  pointer-events: auto;
+  z-index: 60;
+}
+
+.notepad-slash-portal .milkdown-slash-menu .menu-groups {
+  max-height: min(420px, var(--notepad-slash-menu-max-height, calc(100vh - 2rem)));
 }
 
 /* Prevent ghost/double text when typing in the search bar (WebKit rendering) */
