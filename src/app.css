@@ -194,6 +194,20 @@ body {
   position: relative;
 }
 
+.notepad-editor-shell .milkdown .ProseMirror .gn-wikilink {
+  border-radius: 0.35rem;
+  background: color-mix(in oklab, var(--accent) 54%, transparent);
+  color: color-mix(in oklab, var(--foreground) 88%, var(--accent-foreground) 12%);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.14em;
+}
+
+.notepad-editor-shell .milkdown .ProseMirror .gn-wikilink:hover {
+  background: color-mix(in oklab, var(--accent) 72%, transparent);
+}
+
 .notepad-editor-shell .ProseMirror.virtual-cursor-enabled {
   caret-color: transparent;
 }

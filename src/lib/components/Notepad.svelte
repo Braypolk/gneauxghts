@@ -1,9 +1,12 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import type { Crepe } from '@milkdown/crepe';
+  import { editorViewCtx } from '@milkdown/kit/core';
+  import { TextSelection } from '@milkdown/kit/prose/state';
   import { onMount, tick } from 'svelte';
   import { consumePendingTaskTarget, type PendingTaskTarget } from '$lib/taskNavigation';
   import type { SearchItem } from '$lib/types/semantic';
+  import { notepadWikilinks } from './notepadWikilinks';
   import { setupNotepadSlashMenuPortal } from './notepadSlashMenuPortal';
   import BottomBar from './BottomBar.svelte';
 
@@ -25,6 +28,12 @@
     title: string;
     bodyMarkdown: string;
     currentNotePath: string | null;
+  }
+
+  interface ResolvedNoteLink {
+    notePath: string;
+    sectionLabel: string;
+    matchText: string;
   }
 
   let crepe: Crepe | null = null;
@@ -56,6 +65,24 @@
   let searchFocusRequest = $state(0);
   let slashMenuPortalCleanup: (() => void) | null = null;
 
+  const wikilinkSlashIcon = `
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M10 9H6.75A3.75 3.75 0 1 0 6.75 16.5H10" />
+      <path d="M14 15H17.25A3.75 3.75 0 1 0 17.25 7.5H14" />
+      <path d="M8.5 12h7" />
+    </svg>
+  `;
+
   async function initEditor(initialValue: string) {
     if (!editorRoot) return;
 
@@ -68,7 +95,31 @@
         [Crepe.Feature.Placeholder]: {
           text: 'Start writing',
           mode: 'doc'
+        },
+        [Crepe.Feature.BlockEdit]: {
+          buildMenu: (builder) => {
+            builder.getGroup('text').addItem('wikilink', {
+              label: 'Wikilink',
+              icon: wikilinkSlashIcon,
+              onRun: (ctx) => {
+                const view = ctx.get(editorViewCtx);
+                const selectionFrom = view.state.selection.$from;
+                const from = selectionFrom.start();
+                const to = selectionFrom.end();
+                const transaction = view.state.tr.insertText('[[]]', from, to);
+                transaction.setSelection(TextSelection.create(transaction.doc, from + 2));
+                view.dispatch(transaction);
+                view.focus();
+              }
+            });
+          }
         }
+      }
+    });
+
+    crepe.addFeature(notepadWikilinks, {
+      onOpenLink: (rawTarget) => {
+        void openWikilink(rawTarget);
       }
     });
 
@@ -519,7 +570,19 @@
   }
 
   function normalizePlainText(value: string) {
-    return value.replace(/\s+/g, ' ').trim().toLowerCase();
+    return value
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
+      .replace(/\[\[([^\]]+)\]\]/g, '$1')
+      .replace(/^\s*[-*+]\s+\[(?: |x|X)\]\s+/gm, '')
+      .replace(/^\s*#{1,6}\s+/gm, '')
+      .replace(/^\s*>\s+/gm, '')
+      .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, '')
+      .replace(/[`*_~]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
   }
 
   function getEditorBlocks() {
@@ -587,29 +650,48 @@
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }
 
-  async function navigateToSearchResult(result: SearchItem) {
+  async function openNotePath(notePath: string) {
+    const session = await invoke<NoteSession>('open_note', { path: notePath });
+    const parsed = parseStoredMarkdown(session.markdown);
+
+    title = parsed.title;
+    currentNotePath = session.path;
+    lastSavedMarkdown = session.markdown;
+    lastSavedPath = session.path;
+    canUnforget = false;
+    forgottenNote = null;
+    await replaceEditorContent(parsed.bodyMarkdown);
+  }
+
+  async function navigateToSectionTarget(sectionLabel: string, matchText: string, shouldFocus = true) {
     await waitForEditorPaint();
 
-    if (result.sectionLabel === 'Title') {
+    if (sectionLabel === 'Title') {
       titleShell?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      if (isSemanticOnlyResult(result)) {
-        return;
+      if (shouldFocus) {
+        focusTitleAtEnd();
       }
-      focusTitleAtEnd();
       return;
     }
 
-    const paragraphMatch = result.sectionLabel.match(/^Paragraph (\d+)$/);
+    const paragraphMatch = sectionLabel.match(/^Paragraph (\d+)$/);
     const paragraphIndex = paragraphMatch ? Number(paragraphMatch[1]) - 1 : undefined;
-    const targetBlock = findBestEditorTarget(result.matchText, paragraphIndex);
+    const targetBlock = findBestEditorTarget(matchText || sectionLabel, paragraphIndex);
 
-    if (targetBlock) {
-      if (isSemanticOnlyResult(result)) {
-        targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        return;
-      }
-      focusEditorTarget(targetBlock);
+    if (!targetBlock) {
+      return;
     }
+
+    if (!shouldFocus) {
+      targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    focusEditorTarget(targetBlock);
+  }
+
+  async function navigateToSearchResult(result: SearchItem) {
+    await navigateToSectionTarget(result.sectionLabel, result.matchText, !isSemanticOnlyResult(result));
   }
 
   async function navigateToPendingTaskTarget(target: PendingTaskTarget) {
@@ -639,17 +721,8 @@
 
     try {
       if (shouldOpenDifferentNote && result.notePath) {
-        const session = await invoke<NoteSession>('open_note', { path: result.notePath });
-        const parsed = parseStoredMarkdown(session.markdown);
-
-        title = parsed.title;
-        currentNotePath = session.path;
-        lastSavedMarkdown = session.markdown;
-        lastSavedPath = session.path;
-        canUnforget = false;
-        forgottenNote = null;
+        await openNotePath(result.notePath);
         clearSearch();
-        await replaceEditorContent(parsed.bodyMarkdown);
         await navigateToSearchResult(result);
         return;
       }
@@ -675,17 +748,8 @@
 
     try {
       if (shouldOpenDifferentNote) {
-        const session = await invoke<NoteSession>('open_note', { path: task.notePath });
-        const parsed = parseStoredMarkdown(session.markdown);
-
-        title = parsed.title;
-        currentNotePath = session.path;
-        lastSavedMarkdown = session.markdown;
-        lastSavedPath = session.path;
-        canUnforget = false;
-        forgottenNote = null;
+        await openNotePath(task.notePath);
         clearSearch();
-        await replaceEditorContent(parsed.bodyMarkdown);
       } else {
         clearSearch();
       }
@@ -698,6 +762,47 @@
       });
     } catch (error) {
       console.error('Failed to open recent task:', error);
+    }
+  }
+
+  async function openResolvedNoteLink(target: ResolvedNoteLink) {
+    const shouldOpenDifferentNote = target.notePath !== currentNotePath;
+
+    if (saveTimer) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    if (shouldOpenDifferentNote) {
+      await enqueueSave('autosave');
+    }
+
+    try {
+      if (shouldOpenDifferentNote) {
+        await openNotePath(target.notePath);
+      }
+
+      await navigateToSectionTarget(target.sectionLabel, target.matchText);
+    } catch (error) {
+      console.error('Failed to open wikilink target:', error);
+    }
+  }
+
+  async function openWikilink(rawTarget: string) {
+    try {
+      const resolved = await invoke<ResolvedNoteLink | null>('resolve_note_link', {
+        rawTarget,
+        currentPath: currentNotePath,
+        currentMarkdown: getCurrentMarkdown()
+      });
+
+      if (!resolved) {
+        return;
+      }
+
+      await openResolvedNoteLink(resolved);
+    } catch (error) {
+      console.error('Failed to resolve wikilink:', error);
     }
   }
 

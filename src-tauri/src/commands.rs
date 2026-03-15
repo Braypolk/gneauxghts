@@ -32,6 +32,14 @@ pub(crate) struct NoteSession {
     path: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResolvedNoteLink {
+    note_path: String,
+    section_label: String,
+    match_text: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum SearchMode {
@@ -97,6 +105,49 @@ pub(crate) fn open_note(path: String) -> Result<NoteSession, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
     open_note_from_notes_dir(&notes_dir, path)
+}
+
+#[tauri::command]
+pub(crate) fn resolve_note_link(
+    state: State<'_, AppState>,
+    raw_target: String,
+    current_path: Option<String>,
+    current_markdown: String,
+) -> Result<Option<ResolvedNoteLink>, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+
+    let current_path = validate_current_path(current_path, &notes_dir)?;
+    let current_override = build_current_override(current_path.as_deref(), &current_markdown);
+    let target = parse_wikilink_target(&raw_target);
+    let Some(note_path) = resolve_wikilink_note_path(
+        &state,
+        &notes_dir,
+        current_path.as_deref(),
+        current_override.as_ref(),
+        target.note.as_deref(),
+    )?
+    else {
+        return Ok(None);
+    };
+
+    let note = if current_path.as_deref() == Some(note_path.as_path()) {
+        current_override
+            .as_ref()
+            .cloned()
+            .or_else(|| read_indexed_note_from_path(&note_path).ok().flatten())
+    } else {
+        read_indexed_note_from_path(&note_path)?
+    };
+    let Some(note) = note else {
+        return Ok(None);
+    };
+
+    Ok(Some(resolve_note_link_target(
+        &note_path,
+        &note,
+        target.section.as_deref(),
+    )))
 }
 
 #[tauri::command]
@@ -280,7 +331,7 @@ pub(crate) fn list_recent_notes(
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_override = build_current_override(current_path.as_deref(), &current_markdown);
+    let _ = current_markdown;
     let mut persisted_state = read_state(&notes_dir)?;
     prune_recent_paths(&mut persisted_state, &notes_dir);
     write_state(&notes_dir, &persisted_state)?;
@@ -291,25 +342,35 @@ pub(crate) fn list_recent_notes(
         .map_err(|_| "Search index lock poisoned".to_string())?;
     index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
 
-    let recent_results = persisted_state
-        .recent_paths
+    let recent_results = collect_recent_note_results(
+        &persisted_state.recent_paths,
+        current_path.as_deref(),
+        &index,
+        limit,
+    );
+
+    Ok(recent_results)
+}
+
+fn collect_recent_note_results(
+    recent_paths: &[String],
+    current_path: Option<&Path>,
+    index: &NotesIndex,
+    limit: usize,
+) -> Vec<NoteSearchResult> {
+    recent_paths
         .iter()
         .filter_map(|raw_path| {
             let path = PathBuf::from(raw_path);
-            let note = if current_path.as_deref() == Some(path.as_path()) {
-                current_override
-                    .as_ref()
-                    .or_else(|| index.entries.get(&path))
-            } else {
-                index.entries.get(&path)
-            }?;
+            if current_path == Some(path.as_path()) {
+                return None;
+            }
 
+            let note = index.entries.get(&path)?;
             Some(build_recent_result(Some(path.as_path()), note))
         })
         .take(limit)
-        .collect();
-
-    Ok(recent_results)
+        .collect()
 }
 
 #[tauri::command]
@@ -944,6 +1005,145 @@ fn collect_lexical_candidates(
     Ok(candidates)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedWikilinkTarget {
+    note: Option<String>,
+    section: Option<String>,
+}
+
+fn parse_wikilink_target(raw_target: &str) -> ParsedWikilinkTarget {
+    let target = raw_target
+        .split_once('|')
+        .map(|(target, _)| target)
+        .unwrap_or(raw_target)
+        .trim();
+    let (note, section) = target
+        .split_once('#')
+        .map(|(note, section)| (Some(note), Some(section)))
+        .unwrap_or((Some(target), None));
+
+    ParsedWikilinkTarget {
+        note: note
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        section: section
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    }
+}
+
+fn normalize_note_reference(value: &str) -> String {
+    let trimmed = value.trim();
+    let without_extension = trimmed
+        .strip_suffix(".md")
+        .or_else(|| trimmed.strip_suffix(".MD"))
+        .unwrap_or(trimmed);
+    normalize_search_text(without_extension)
+}
+
+fn note_matches_reference(reference: &str, note: &IndexedNote) -> bool {
+    let normalized_reference = normalize_note_reference(reference);
+    !normalized_reference.is_empty()
+        && (normalized_reference == note.title_lower
+            || normalized_reference == note.file_name_lower)
+}
+
+fn resolve_wikilink_note_path(
+    state: &State<'_, AppState>,
+    notes_dir: &Path,
+    current_path: Option<&Path>,
+    current_override: Option<&IndexedNote>,
+    note_reference: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let Some(note_reference) = note_reference else {
+        return Ok(current_path.map(Path::to_path_buf));
+    };
+
+    if let (Some(current_path), Some(current_override)) = (current_path, current_override) {
+        if note_matches_reference(note_reference, current_override) {
+            return Ok(Some(current_path.to_path_buf()));
+        }
+    }
+
+    let mut index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Search index lock poisoned".to_string())?;
+    index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
+
+    Ok(index
+        .entries
+        .iter()
+        .find(|(_, note)| note_matches_reference(note_reference, note))
+        .map(|(path, _)| path.clone()))
+}
+
+fn normalize_section_reference(value: &str) -> String {
+    normalize_search_text(value.trim().trim_start_matches('^'))
+}
+
+fn resolve_note_link_target(
+    note_path: &Path,
+    note: &IndexedNote,
+    section_reference: Option<&str>,
+) -> ResolvedNoteLink {
+    let fallback = ResolvedNoteLink {
+        note_path: note_path.to_string_lossy().into_owned(),
+        section_label: "Title".to_string(),
+        match_text: note.title.clone(),
+    };
+
+    let Some(section_reference) = section_reference else {
+        return fallback;
+    };
+
+    let normalized_reference = normalize_section_reference(section_reference);
+    if normalized_reference.is_empty() {
+        return fallback;
+    }
+
+    if normalized_reference == "title" {
+        return fallback;
+    }
+
+    let paragraph_number = normalized_reference
+        .strip_prefix("paragraph ")
+        .and_then(|value| value.parse::<usize>().ok());
+
+    let matched_paragraph = note
+        .paragraphs
+        .iter()
+        .find(|paragraph| {
+            paragraph_number.is_some_and(|paragraph_number| {
+                paragraph.paragraph_index == Some(paragraph_number.saturating_sub(1))
+            })
+        })
+        .or_else(|| {
+            note.paragraphs.iter().find(|paragraph| {
+                normalize_search_text(&paragraph.section_label) == normalized_reference
+            })
+        })
+        .or_else(|| {
+            note.paragraphs
+                .iter()
+                .find(|paragraph| paragraph.text_lower == normalized_reference)
+        })
+        .or_else(|| {
+            note.paragraphs.iter().find(|paragraph| {
+                paragraph.text_lower.starts_with(&normalized_reference)
+                    || paragraph.text_lower.contains(&normalized_reference)
+            })
+        });
+
+    matched_paragraph.map_or(fallback, |paragraph| ResolvedNoteLink {
+        note_path: note_path.to_string_lossy().into_owned(),
+        section_label: paragraph.section_label.clone(),
+        match_text: paragraph.text.clone(),
+    })
+}
+
 fn load_note_session_from_notes_dir(notes_dir: &Path) -> Result<NoteSession, String> {
     let mut state = read_state(notes_dir)?;
     let Some(last_opened_path) = state.last_opened_path.clone() else {
@@ -1425,12 +1625,13 @@ fn find_task_key_for_line(
 #[cfg(test)]
 mod tests {
     use super::{
-        find_task_key_for_line, load_note_session_from_notes_dir, merge_hybrid_candidates,
-        open_note_from_notes_dir, reconcile_note_task_timestamps, NoteSession, RecentTaskItem,
-        TaskListItem,
+        collect_recent_note_results, find_task_key_for_line, load_note_session_from_notes_dir,
+        merge_hybrid_candidates, open_note_from_notes_dir, parse_wikilink_target,
+        reconcile_note_task_timestamps, resolve_note_link_target, NoteSession,
+        ParsedWikilinkTarget, RecentTaskItem, ResolvedNoteLink, TaskListItem,
     };
     use crate::{
-        index::{build_indexed_note, task_key},
+        index::{build_indexed_note, task_key, NotesIndex},
         search::{NoteSearchResult, ScoredSearchResult},
         state::{read_state, write_state, PersistedState, PersistedTaskTimestamps},
         test_support::TestDir,
@@ -1480,6 +1681,38 @@ mod tests {
             Some(note_path.to_string_lossy().into_owned())
         );
         assert_eq!(state.recent_paths, vec![note_path.to_string_lossy().into_owned()]);
+    }
+
+    #[test]
+    fn collect_recent_note_results_skips_current_note() {
+        let current_path = PathBuf::from("/tmp/current.md");
+        let other_path = PathBuf::from("/tmp/other.md");
+        let mut index = NotesIndex::default();
+        index.entries.insert(
+            current_path.clone(),
+            build_indexed_note(&current_path, "# Current\n\nBody", 10),
+        );
+        index.entries.insert(
+            other_path.clone(),
+            build_indexed_note(&other_path, "# Other\n\nElsewhere", 20),
+        );
+
+        let results = collect_recent_note_results(
+            &[
+                current_path.to_string_lossy().into_owned(),
+                other_path.to_string_lossy().into_owned(),
+            ],
+            Some(current_path.as_path()),
+            &index,
+            12,
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].note_path.as_deref(),
+            Some(other_path.to_string_lossy().as_ref())
+        );
+        assert_eq!(results[0].file_name, "other");
     }
 
     #[test]
@@ -1648,10 +1881,57 @@ mod tests {
     }
 
     #[test]
+    fn parse_wikilink_target_supports_aliases_and_same_note_sections() {
+        assert_eq!(
+            parse_wikilink_target("Project Atlas#Paragraph 2|Atlas"),
+            ParsedWikilinkTarget {
+                note: Some("Project Atlas".to_string()),
+                section: Some("Paragraph 2".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_wikilink_target("#Ideas"),
+            ParsedWikilinkTarget {
+                note: None,
+                section: Some("Ideas".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_note_link_target_prefers_paragraph_numbers_and_falls_back_to_title() {
+        let note_path = PathBuf::from("/tmp/project.md");
+        let note = build_indexed_note(
+            &note_path,
+            "# Project Atlas\n\nFirst paragraph.\n\n## Ideas\n\nSecond paragraph with link target.\n",
+            10,
+        );
+
+        let paragraph_target = resolve_note_link_target(&note_path, &note, Some("Paragraph 2"));
+        let heading_target = resolve_note_link_target(&note_path, &note, Some("Ideas"));
+        let fallback_target = resolve_note_link_target(&note_path, &note, Some("Missing"));
+
+        assert_eq!(paragraph_target.note_path, "/tmp/project.md");
+        assert_eq!(paragraph_target.section_label, "Paragraph 2");
+        assert_eq!(paragraph_target.match_text, "## Ideas");
+
+        assert_eq!(heading_target.section_label, "Paragraph 2");
+        assert_eq!(heading_target.match_text, "## Ideas");
+
+        assert_eq!(fallback_target.section_label, "Title");
+        assert_eq!(fallback_target.match_text, "Project Atlas");
+    }
+
+    #[test]
     fn command_payload_json_contracts_remain_stable() {
         let session = NoteSession {
             markdown: "# Title".to_string(),
             path: Some("/notes/title.md".to_string()),
+        };
+        let resolved_note_link = ResolvedNoteLink {
+            note_path: "/notes/title.md".to_string(),
+            section_label: "Paragraph 2".to_string(),
+            match_text: "Ship beta".to_string(),
         };
         let task = TaskListItem {
             task_key: "task-key".to_string(),
@@ -1702,6 +1982,14 @@ mod tests {
                 "lineNumber": 14,
                 "createdAtMillis": 111,
                 "updatedAtMillis": 222,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(resolved_note_link).expect("serialize resolved note link"),
+            json!({
+                "notePath": "/notes/title.md",
+                "sectionLabel": "Paragraph 2",
+                "matchText": "Ship beta",
             })
         );
         assert_eq!(
