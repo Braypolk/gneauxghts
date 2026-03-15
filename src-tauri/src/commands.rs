@@ -1,6 +1,6 @@
 use crate::{
     index::{
-        build_current_override, build_indexed_note, normalize_search_text, task_key,
+        build_current_override, build_indexed_note, collapse_whitespace, normalize_search_text, task_key,
         toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
     },
     search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
@@ -38,6 +38,15 @@ pub(crate) struct ResolvedNoteLink {
     note_path: String,
     section_label: String,
     match_text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NoteLinkSuggestion {
+    kind: String,
+    value: String,
+    label: String,
+    detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -148,6 +157,56 @@ pub(crate) fn resolve_note_link(
         &note,
         target.section.as_deref(),
     )))
+}
+
+#[tauri::command]
+pub(crate) fn autocomplete_note_links(
+    state: State<'_, AppState>,
+    raw_target: String,
+    current_path: Option<String>,
+    current_markdown: String,
+    limit: usize,
+) -> Result<Vec<NoteLinkSuggestion>, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+
+    let current_path = validate_current_path(current_path, &notes_dir)?;
+    let current_override = build_current_override(current_path.as_deref(), &current_markdown);
+    let target = parse_wikilink_target(&raw_target);
+    let limit = limit.max(1);
+
+    if raw_target.contains('|') {
+        return Ok(Vec::new());
+    }
+
+    if raw_target.contains('#') {
+        let Some(note) = resolve_wikilink_note_for_sections(
+            &state,
+            &notes_dir,
+            current_path.as_deref(),
+            current_override.as_ref(),
+            target.note.as_deref(),
+        )?
+        else {
+            return Ok(Vec::new());
+        };
+
+        return Ok(build_section_suggestions(
+            target.note.as_deref(),
+            target.section.as_deref().unwrap_or_default(),
+            note,
+            limit,
+        ));
+    }
+
+    Ok(build_note_suggestions(
+        &state,
+        &notes_dir,
+        current_path.as_deref(),
+        current_override.as_ref(),
+        target.note.as_deref().unwrap_or_default(),
+        limit,
+    )?)
 }
 
 #[tauri::command]
@@ -1078,6 +1137,242 @@ fn resolve_wikilink_note_path(
         .iter()
         .find(|(_, note)| note_matches_reference(note_reference, note))
         .map(|(path, _)| path.clone()))
+}
+
+fn resolve_wikilink_note_for_sections(
+    state: &State<'_, AppState>,
+    notes_dir: &Path,
+    current_path: Option<&Path>,
+    current_override: Option<&IndexedNote>,
+    note_reference: Option<&str>,
+) -> Result<Option<IndexedNote>, String> {
+    let Some(note_reference) = note_reference else {
+        return Ok(current_override
+            .cloned()
+            .or_else(|| current_path.and_then(|path| read_indexed_note_from_path(path).ok().flatten())));
+    };
+
+    if let Some(current_override) = current_override {
+        if note_matches_reference(note_reference, current_override) {
+            return Ok(Some(current_override.clone()));
+        }
+    }
+
+    let Some(note_path) = resolve_wikilink_note_path(
+        state,
+        notes_dir,
+        current_path,
+        current_override,
+        Some(note_reference),
+    )?
+    else {
+        return Ok(None);
+    };
+
+    read_indexed_note_from_path(&note_path)
+}
+
+fn display_text_for_section(text: &str) -> String {
+    let normalized_lines = text
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim();
+            let trimmed = if trimmed.starts_with('#') {
+                trimmed.trim_start_matches('#').trim()
+            } else if let Some(rest) = trimmed.strip_prefix("> ") {
+                rest.trim()
+            } else if let Some(rest) = trimmed
+                .strip_prefix("- [ ] ")
+                .or_else(|| trimmed.strip_prefix("- [x] "))
+                .or_else(|| trimmed.strip_prefix("- [X] "))
+                .or_else(|| trimmed.strip_prefix("* [ ] "))
+                .or_else(|| trimmed.strip_prefix("* [x] "))
+                .or_else(|| trimmed.strip_prefix("* [X] "))
+            {
+                rest.trim()
+            } else if let Some(rest) = trimmed
+                .strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+            {
+                rest.trim()
+            } else {
+                trimmed
+            };
+
+            trimmed
+                .replace("[[", "")
+                .replace("]]", "")
+                .replace('`', "")
+                .replace('*', "")
+                .replace('_', "")
+                .replace('~', "")
+        })
+        .collect::<Vec<_>>();
+
+    collapse_whitespace(&normalized_lines.join(" "))
+}
+
+fn build_note_suggestions(
+    state: &State<'_, AppState>,
+    notes_dir: &Path,
+    current_path: Option<&Path>,
+    current_override: Option<&IndexedNote>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<NoteLinkSuggestion>, String> {
+    let normalized_query = normalize_note_reference(query);
+    let mut suggestions = Vec::<(u8, String, NoteLinkSuggestion)>::new();
+    let mut seen_values = HashSet::<String>::new();
+
+    if let (Some(_current_path), Some(current_override)) = (current_path, current_override) {
+        let label = current_override.title.clone();
+        let value = label.clone();
+        let note_label = current_override.title_lower.clone();
+        let file_label = current_override.file_name_lower.clone();
+        let matches_query = normalized_query.is_empty()
+            || note_label.contains(&normalized_query)
+            || file_label.contains(&normalized_query);
+
+        if matches_query && seen_values.insert(value.clone()) {
+            let rank = if note_label.starts_with(&normalized_query) || file_label.starts_with(&normalized_query) {
+                0
+            } else {
+                1
+            };
+
+            suggestions.push((
+                rank,
+                label.to_lowercase(),
+                NoteLinkSuggestion {
+                    kind: "note".to_string(),
+                    value,
+                    label: label.clone(),
+                    detail: "Current note".to_string(),
+                },
+            ));
+        }
+    }
+
+    let mut index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Search index lock poisoned".to_string())?;
+    index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
+
+    for (path, note) in &index.entries {
+        if current_path.is_some_and(|current_path| current_path == path.as_path()) {
+            continue;
+        }
+
+        let matches_query = normalized_query.is_empty()
+            || note.title_lower.contains(&normalized_query)
+            || note.file_name_lower.contains(&normalized_query);
+        if !matches_query {
+            continue;
+        }
+
+        let value = note.title.clone();
+        if !seen_values.insert(value.clone()) {
+            continue;
+        }
+
+        let rank = if note.title_lower.starts_with(&normalized_query)
+            || note.file_name_lower.starts_with(&normalized_query)
+        {
+            0
+        } else {
+            1
+        };
+        let detail = if note.file_name == note.title {
+            "Note".to_string()
+        } else {
+            note.file_name.clone()
+        };
+
+        suggestions.push((
+            rank,
+            note.title_lower.clone(),
+            NoteLinkSuggestion {
+                kind: "note".to_string(),
+                value,
+                label: note.title.clone(),
+                detail,
+            },
+        ));
+    }
+
+    suggestions.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    suggestions.truncate(limit);
+
+    Ok(suggestions
+        .into_iter()
+        .map(|(_, _, suggestion)| suggestion)
+        .collect())
+}
+
+fn build_section_suggestions(
+    note_reference: Option<&str>,
+    query: &str,
+    note: IndexedNote,
+    limit: usize,
+) -> Vec<NoteLinkSuggestion> {
+    let normalized_query = normalize_section_reference(query);
+    let prefix = note_reference
+        .map(|note_reference| format!("{}#", note_reference.trim()))
+        .unwrap_or_else(|| "#".to_string());
+    let mut suggestions = Vec::<(u8, String, NoteLinkSuggestion)>::new();
+    let mut seen_values = HashSet::<String>::new();
+
+    for paragraph in note
+        .paragraphs
+        .iter()
+        .filter(|paragraph| paragraph.section_label != "Title")
+    {
+        let label = display_text_for_section(&paragraph.text);
+        if label.is_empty() {
+            continue;
+        }
+
+        let normalized_label = normalize_search_text(&label);
+        if !normalized_query.is_empty() && !normalized_label.contains(&normalized_query) {
+            continue;
+        }
+
+        let value = format!("{prefix}{label}");
+        if !seen_values.insert(value.clone()) {
+            continue;
+        }
+
+        let rank = if normalized_label.starts_with(&normalized_query) {
+            0
+        } else {
+            1
+        };
+        let detail = if paragraph.text.trim_start().starts_with('#') {
+            format!("Header in {}", note.title)
+        } else {
+            format!("{} in {}", paragraph.section_label, note.title)
+        };
+
+        suggestions.push((
+            rank,
+            normalized_label.clone(),
+            NoteLinkSuggestion {
+                kind: "section".to_string(),
+                value,
+                label,
+                detail,
+            },
+        ));
+    }
+
+    suggestions.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    suggestions.truncate(limit);
+
+    suggestions
+        .into_iter()
+        .map(|(_, _, suggestion)| suggestion)
+        .collect()
 }
 
 fn normalize_section_reference(value: &str) -> String {

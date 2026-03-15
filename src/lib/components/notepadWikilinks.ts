@@ -8,11 +8,22 @@ const WIKILINK_PATTERN = /\[\[([^\[\]\n]+?)\]\]/g;
 
 interface NotepadWikilinkConfig {
   onOpenLink: (rawTarget: string) => void;
+  onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
+}
+
+export interface ActiveWikilink {
+  rawTarget: string;
+  targetFrom: number;
+  targetTo: number;
+  left: number;
+  top: number;
+  bottom: number;
 }
 
 const notepadWikilinkConfig = $ctx<NotepadWikilinkConfig, 'notepadWikilinkConfig'>(
   {
-    onOpenLink: () => {}
+    onOpenLink: () => {},
+    onActiveWikilinkChange: () => {}
   },
   'notepadWikilinkConfig'
 );
@@ -73,9 +84,66 @@ function findWikilinkElement(target: EventTarget | null) {
   return null;
 }
 
+function getActiveWikilink(view: EditorView): ActiveWikilink | null {
+  const { selection } = view.state;
+  if (!selection.empty || isInCodeContext(view)) {
+    return null;
+  }
+
+  const { $from } = selection;
+  const parent = $from.parent;
+  if (!parent.isTextblock) {
+    return null;
+  }
+
+  const parentText = parent.textBetween(0, parent.content.size, '\n', '\0');
+  const cursorOffset = $from.parentOffset;
+  const start = parentText.lastIndexOf('[[', cursorOffset);
+
+  if (start < 0 || cursorOffset < start + 2) {
+    return null;
+  }
+
+  const end = parentText.indexOf(']]', start + 2);
+  if (end < 0 || cursorOffset > end) {
+    return null;
+  }
+
+  const targetFrom = $from.start() + start + 2;
+  const targetTo = $from.start() + end;
+  const cursorCoords = view.coordsAtPos(selection.from);
+
+  return {
+    rawTarget: parentText.slice(start + 2, end),
+    targetFrom,
+    targetTo,
+    left: cursorCoords.left,
+    top: cursorCoords.top,
+    bottom: cursorCoords.bottom
+  };
+}
+
 export const notepadWikilinksPlugin = $prose((ctx) => {
+  const config = ctx.get(notepadWikilinkConfig.key);
+
   return new Plugin({
     key: new PluginKey('NOTEPAD_WIKILINKS'),
+    view: (view) => {
+      const report = () => {
+        config.onActiveWikilinkChange(getActiveWikilink(view));
+      };
+
+      report();
+
+      return {
+        update: () => {
+          report();
+        },
+        destroy: () => {
+          config.onActiveWikilinkChange(null);
+        }
+      };
+    },
     props: {
       decorations: (state) => buildWikilinkDecorations(state.doc),
       handleTextInput: (view, from, to, text) => {
@@ -107,7 +175,7 @@ export const notepadWikilinksPlugin = $prose((ctx) => {
         }
 
         event.preventDefault();
-        ctx.get(notepadWikilinkConfig.key).onOpenLink(rawTarget);
+        config.onOpenLink(rawTarget);
         return true;
       }
     }

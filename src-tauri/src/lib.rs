@@ -29,6 +29,7 @@ pub fn run() {
             commands::load_note_session,
             commands::open_note,
             commands::resolve_note_link,
+            commands::autocomplete_note_links,
             commands::save_note,
             commands::remember_note,
             commands::forget_note,

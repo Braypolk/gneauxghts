@@ -1,4 +1,13 @@
 <script lang="ts">
+  import {
+    autoUpdate,
+    computePosition,
+    flip,
+    offset,
+    shift,
+    size,
+    type VirtualElement
+  } from '@floating-ui/dom';
   import { invoke } from '@tauri-apps/api/core';
   import type { Crepe } from '@milkdown/crepe';
   import { editorViewCtx } from '@milkdown/kit/core';
@@ -6,7 +15,7 @@
   import { onMount, tick } from 'svelte';
   import { consumePendingTaskTarget, type PendingTaskTarget } from '$lib/taskNavigation';
   import type { SearchItem } from '$lib/types/semantic';
-  import { notepadWikilinks } from './notepadWikilinks';
+  import { notepadWikilinks, type ActiveWikilink } from './notepadWikilinks';
   import { setupNotepadSlashMenuPortal } from './notepadSlashMenuPortal';
   import BottomBar from './BottomBar.svelte';
 
@@ -36,10 +45,18 @@
     matchText: string;
   }
 
+  interface NoteLinkSuggestion {
+    kind: 'note' | 'section';
+    value: string;
+    label: string;
+    detail: string;
+  }
+
   let crepe: Crepe | null = null;
   let notepadShell: HTMLDivElement | null = null;
   let editorRoot: HTMLDivElement | null = null;
   let slashMenuPortal: HTMLDivElement | null = null;
+  let wikilinkAutocompleteElement = $state<HTMLDivElement | null>(null);
   let titleInput: HTMLInputElement | null = null;
   let titleShell: HTMLDivElement | null = null;
   let isEditorReady = $state(false);
@@ -64,6 +81,12 @@
   let activeRecentTasksRequest = 0;
   let searchFocusRequest = $state(0);
   let slashMenuPortalCleanup: (() => void) | null = null;
+  let activeWikilink = $state<ActiveWikilink | null>(null);
+  let wikilinkSuggestions = $state<NoteLinkSuggestion[]>([]);
+  let wikilinkAutocompleteActive = $state(false);
+  let wikilinkSelectedIndex = $state(0);
+  let activeWikilinkRequest = 0;
+  let wikilinkAutocompleteStyle = $state('position: fixed; left: 0; top: 0; visibility: hidden;');
 
   const wikilinkSlashIcon = `
     <svg
@@ -120,6 +143,9 @@
     crepe.addFeature(notepadWikilinks, {
       onOpenLink: (rawTarget) => {
         void openWikilink(rawTarget);
+      },
+      onActiveWikilinkChange: (nextActiveWikilink) => {
+        handleActiveWikilinkChange(nextActiveWikilink);
       }
     });
 
@@ -562,7 +588,121 @@
     searchFocusRequest += 1;
   }
 
+  function closeWikilinkAutocomplete() {
+    activeWikilinkRequest += 1;
+    wikilinkAutocompleteActive = false;
+    wikilinkSuggestions = [];
+    wikilinkSelectedIndex = 0;
+  }
+
+  function handleActiveWikilinkChange(nextActiveWikilink: ActiveWikilink | null) {
+    if (nextActiveWikilink?.rawTarget.includes('|')) {
+      activeWikilink = null;
+      closeWikilinkAutocomplete();
+      return;
+    }
+
+    activeWikilink = nextActiveWikilink;
+
+    if (!nextActiveWikilink) {
+      closeWikilinkAutocomplete();
+      return;
+    }
+
+    void loadWikilinkSuggestions(nextActiveWikilink);
+  }
+
+  async function loadWikilinkSuggestions(nextActiveWikilink: ActiveWikilink) {
+    const requestId = ++activeWikilinkRequest;
+
+    try {
+      const suggestions = await invoke<NoteLinkSuggestion[]>('autocomplete_note_links', {
+        rawTarget: nextActiveWikilink.rawTarget,
+        currentPath: currentNotePath,
+        currentMarkdown: getCurrentMarkdown(),
+        limit: 8
+      });
+
+      if (requestId !== activeWikilinkRequest) {
+        return;
+      }
+
+      wikilinkSuggestions = suggestions;
+      wikilinkSelectedIndex = 0;
+      wikilinkAutocompleteActive = true;
+    } catch (error) {
+      if (requestId !== activeWikilinkRequest) {
+        return;
+      }
+
+      console.error('Failed to load wikilink suggestions:', error);
+      wikilinkSuggestions = [];
+      wikilinkSelectedIndex = 0;
+      wikilinkAutocompleteActive = true;
+    }
+  }
+
+  function selectWikilinkSuggestion(suggestion: NoteLinkSuggestion) {
+    const currentActiveWikilink = activeWikilink;
+
+    if (!currentActiveWikilink || !crepe) {
+      return;
+    }
+
+    crepe.editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const transaction = view.state.tr.insertText(
+        suggestion.value,
+        currentActiveWikilink.targetFrom,
+        currentActiveWikilink.targetTo
+      );
+      const cursorPosition = currentActiveWikilink.targetFrom + suggestion.value.length;
+      transaction.setSelection(TextSelection.create(transaction.doc, cursorPosition));
+      view.dispatch(transaction);
+      view.focus();
+    });
+
+    closeWikilinkAutocomplete();
+  }
+
+  function moveWikilinkSelection(direction: -1 | 1) {
+    if (!wikilinkAutocompleteActive || wikilinkSuggestions.length === 0) {
+      return;
+    }
+
+    wikilinkSelectedIndex =
+      (wikilinkSelectedIndex + direction + wikilinkSuggestions.length) % wikilinkSuggestions.length;
+  }
+
   function handleGlobalKeydown(event: KeyboardEvent) {
+    if (wikilinkAutocompleteActive) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeWikilinkAutocomplete();
+        return;
+      }
+
+      if (wikilinkSuggestions.length > 0 && event.key === 'ArrowDown') {
+        event.preventDefault();
+        moveWikilinkSelection(1);
+        return;
+      }
+
+      if (wikilinkSuggestions.length > 0 && event.key === 'ArrowUp') {
+        event.preventDefault();
+        moveWikilinkSelection(-1);
+        return;
+      }
+
+      if (wikilinkSuggestions.length > 0 && (event.key === 'Enter' || event.key === 'Tab')) {
+        event.preventDefault();
+        selectWikilinkSuggestion(
+          wikilinkSuggestions[wikilinkSelectedIndex] ?? wikilinkSuggestions[0]
+        );
+        return;
+      }
+    }
+
     if (!event.metaKey || event.key.toLowerCase() !== 'f') return;
 
     event.preventDefault();
@@ -806,6 +946,101 @@
     }
   }
 
+  function buildWikilinkReference(activeWikilink: ActiveWikilink): VirtualElement {
+    return {
+      getBoundingClientRect() {
+        const width = Math.max(1, 0);
+        const height = Math.max(1, activeWikilink.bottom - activeWikilink.top);
+
+        return {
+          x: activeWikilink.left,
+          y: activeWikilink.top,
+          left: activeWikilink.left,
+          top: activeWikilink.top,
+          right: activeWikilink.left + width,
+          bottom: activeWikilink.top + height,
+          width,
+          height
+        };
+      }
+    };
+  }
+
+  async function updateWikilinkAutocompletePosition() {
+    if (!activeWikilink || !wikilinkAutocompleteElement) {
+      wikilinkAutocompleteStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
+      return;
+    }
+
+    const { x, y, middlewareData } = await computePosition(
+      buildWikilinkReference(activeWikilink),
+      wikilinkAutocompleteElement,
+      {
+        strategy: 'fixed',
+        placement: 'bottom-start',
+        middleware: [
+          offset(10),
+          flip({
+            fallbackPlacements: ['top-start', 'bottom-end', 'top-end'],
+            padding: 16
+          }),
+          shift({
+            padding: 16
+          }),
+          size({
+            padding: 16,
+            apply({ availableHeight, elements }) {
+              elements.floating.style.maxHeight = `${Math.max(120, Math.floor(availableHeight))}px`;
+            }
+          })
+        ]
+      }
+    );
+
+    const maxHeight = wikilinkAutocompleteElement.style.maxHeight || 'none';
+    const visibility =
+      middlewareData.hide?.referenceHidden || middlewareData.hide?.escaped ? 'hidden' : 'visible';
+
+    wikilinkAutocompleteStyle = `position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; max-height: ${maxHeight}; visibility: ${visibility};`;
+  }
+
+  $effect(() => {
+    const isActive = wikilinkAutocompleteActive;
+    const currentActiveWikilink = activeWikilink;
+    const popupElement = wikilinkAutocompleteElement;
+
+    if (!isActive || !currentActiveWikilink || !popupElement) {
+      wikilinkAutocompleteStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
+      return;
+    }
+
+    void updateWikilinkAutocompletePosition();
+
+    return autoUpdate(buildWikilinkReference(currentActiveWikilink), popupElement, () => {
+      void updateWikilinkAutocompletePosition();
+    });
+  });
+
+  $effect(() => {
+    const isActive = wikilinkAutocompleteActive;
+    const selectedIndex = wikilinkSelectedIndex;
+    const suggestions = wikilinkSuggestions;
+    const popupElement = wikilinkAutocompleteElement;
+
+    if (!isActive || suggestions.length === 0 || !popupElement) {
+      return;
+    }
+
+    void tick().then(() => {
+      requestAnimationFrame(() => {
+        const activeItem = popupElement.querySelector<HTMLElement>(
+          '[data-wikilink-suggestion-active="true"]'
+        );
+        activeItem?.scrollIntoView({ block: 'nearest' });
+      });
+    });
+  });
+
   onMount(() => {
     let mounted = true;
 
@@ -835,7 +1070,7 @@
   });
 </script>
 
-<svelte:window onkeydown={handleGlobalKeydown} />
+<svelte:window onkeydowncapture={handleGlobalKeydown} />
 
 <div bind:this={notepadShell} class="notepad-shell relative w-full h-full min-h-0 overflow-visible">
   <div class="w-full h-full min-h-0 text-card-foreground rounded-[2rem] shadow-sm border border-border flex flex-col overflow-hidden transition-all duration-300 relative">
@@ -901,4 +1136,42 @@
     </div>
   </div>
   <div bind:this={slashMenuPortal} class="notepad-slash-portal milkdown fixed inset-0 z-40 pointer-events-none"></div>
+  {#if wikilinkAutocompleteActive && activeWikilink}
+    <div
+      bind:this={wikilinkAutocompleteElement}
+      class="fixed z-30 flex min-w-72 max-w-md flex-col overflow-hidden rounded-[1.25rem] border border-border bg-popover/95 shadow-xl backdrop-blur-md pointer-events-auto"
+      style={wikilinkAutocompleteStyle}
+    >
+      {#if wikilinkSuggestions.length === 0}
+        <div class="px-4 py-3 text-sm text-muted-foreground">No matching notes or sections.</div>
+      {:else}
+        <div class="border-b border-border/70 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          Wikilinks
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto py-1.5">
+          {#each wikilinkSuggestions as suggestion, index (`${suggestion.kind}-${suggestion.value}-${index}`)}
+            <button
+              type="button"
+              data-wikilink-suggestion-active={index === wikilinkSelectedIndex ? 'true' : 'false'}
+              class={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors ${
+                index === wikilinkSelectedIndex ? 'bg-accent' : 'hover:bg-accent'
+              }`}
+              onmousedown={(event) => event.preventDefault()}
+              onclick={() => selectWikilinkSuggestion(suggestion)}
+            >
+              <span class="mt-0.5 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                {suggestion.kind}
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-sm font-semibold text-popover-foreground">
+                  {suggestion.label}
+                </span>
+                <span class="block truncate pt-0.5 text-xs text-muted-foreground">{suggestion.detail}</span>
+              </span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>

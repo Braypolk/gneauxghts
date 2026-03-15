@@ -13,6 +13,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@floating-ui/dom": "^1.7.6",
     "@milkdown/crepe": "^7.19.0",
     "@milkdown/kit": "^7.19.0",
     "@tailwindcss/vite": "^4.2.1",
