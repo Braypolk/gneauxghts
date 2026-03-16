@@ -1,62 +1,68 @@
 <script lang="ts">
-  import {
-    autoUpdate,
-    computePosition,
-    flip,
-    offset,
-    shift,
-    size,
-    type VirtualElement
-  } from '@floating-ui/dom';
-  import { invoke } from '@tauri-apps/api/core';
   import type { Crepe } from '@milkdown/crepe';
-  import { editorViewCtx } from '@milkdown/kit/core';
-  import { TextSelection } from '@milkdown/kit/prose/state';
   import { onMount, tick } from 'svelte';
-  import { consumePendingTaskTarget, type PendingTaskTarget } from '$lib/taskNavigation';
+  import { consumePendingTaskTarget } from '$lib/taskNavigation';
   import type { SearchItem } from '$lib/types/semantic';
-  import { notepadWikilinks, type ActiveWikilink } from './notepadWikilinks';
-  import { setupNotepadSlashMenuPortal } from './notepadSlashMenuPortal';
+  import type { ActiveWikilink } from './notepadWikilinks';
+  import { composeMarkdown } from './notepadDocument';
+  import {
+    createNotepadEditor,
+    destroyNotepadEditor,
+    insertWikilinkSuggestion,
+    prepareNotepadEditor,
+    resetNotepadSlashMenuPortal
+  } from './notepadEditor';
+  import { focusEditorAtEnd, focusInputAtEnd } from './notepadNavigation';
+  import {
+    navigateToPendingTaskTarget,
+    openRecentTask,
+    openResolvedNoteLink,
+    openSearchResult,
+    type NotepadNavigationContext,
+    type NotepadOpenContext
+  } from './notepadOpenFlow';
+  import {
+    listRecentNotes,
+    listRecentTasks,
+    searchNotes,
+    type NotepadSearchMode
+  } from './notepadSearch';
+  import {
+    createEmptySessionSnapshot,
+    createForgottenNote,
+    forgetNoteSession,
+    hasNotepadContent,
+    loadSavedNoteSession,
+    openNoteSession,
+    rememberNoteSession,
+    saveNoteSession,
+    shouldSkipAutosave,
+    type ForgottenNote,
+    type NotepadSessionSnapshot,
+    type NotepadSaveMode
+  } from './notepadSession';
+  import {
+    autocompleteNoteLinks,
+    beginWikilinkSuggestionRequest,
+    completeWikilinkSuggestionRequest,
+    createWikilinkAutocompleteState,
+    dismissWikilinkAutocomplete,
+    getSelectedWikilinkSuggestion,
+    hasWikilinkAlias,
+    moveWikilinkSelection as moveWikilinkSelectionState,
+    resetWikilinkAutocomplete,
+    resolveNoteLink,
+    setActiveWikilink,
+    type WikilinkAutocompleteState
+  } from './notepadWikilinkState';
+  import type { RecentTaskItem } from './notepadTypes';
   import BottomBar from './BottomBar.svelte';
-
-  interface NoteSession {
-    markdown: string;
-    path: string | null;
-  }
-
-  interface RecentTaskItem {
-    taskKey: string;
-    notePath: string;
-    noteTitle: string;
-    text: string;
-    lineNumber: number;
-    updatedAtMillis: number;
-  }
-
-  interface ForgottenNote {
-    title: string;
-    bodyMarkdown: string;
-    currentNotePath: string | null;
-  }
-
-  interface ResolvedNoteLink {
-    notePath: string;
-    sectionLabel: string;
-    matchText: string;
-  }
-
-  interface NoteLinkSuggestion {
-    kind: 'note' | 'section';
-    value: string;
-    label: string;
-    detail: string;
-  }
+  import NotepadWikilinkAutocomplete from './NotepadWikilinkAutocomplete.svelte';
 
   let crepe: Crepe | null = null;
   let notepadShell: HTMLDivElement | null = null;
   let editorRoot: HTMLDivElement | null = null;
   let slashMenuPortal: HTMLDivElement | null = null;
-  let wikilinkAutocompleteElement = $state<HTMLDivElement | null>(null);
   let titleInput: HTMLInputElement | null = null;
   let titleShell: HTMLDivElement | null = null;
   let isEditorReady = $state(false);
@@ -69,7 +75,7 @@
   let forgottenNote: ForgottenNote | null = null;
   let saveTimer: ReturnType<typeof window.setTimeout> | null = null;
   let saveQueue: Promise<void> = Promise.resolve();
-  let searchMode = $state<'current' | 'all'>('all');
+  let searchMode = $state<NotepadSearchMode>('all');
   let searchQuery = $state('');
   let searchResults = $state<SearchItem[]>([]);
   let recentNotes = $state<SearchItem[]>([]);
@@ -81,120 +87,14 @@
   let activeRecentTasksRequest = 0;
   let searchFocusRequest = $state(0);
   let slashMenuPortalCleanup: (() => void) | null = null;
-  let activeWikilink = $state<ActiveWikilink | null>(null);
-  let wikilinkSuggestions = $state<NoteLinkSuggestion[]>([]);
-  let wikilinkAutocompleteActive = $state(false);
-  let wikilinkSelectedIndex = $state(0);
-  let activeWikilinkRequest = 0;
-  let wikilinkAutocompleteStyle = $state('position: fixed; left: 0; top: 0; visibility: hidden;');
+  let wikilinkAutocomplete = $state<WikilinkAutocompleteState>(createWikilinkAutocompleteState());
 
-  const wikilinkSlashIcon = `
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.8"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    >
-      <path d="M10 9H6.75A3.75 3.75 0 1 0 6.75 16.5H10" />
-      <path d="M14 15H17.25A3.75 3.75 0 1 0 17.25 7.5H14" />
-      <path d="M8.5 12h7" />
-    </svg>
-  `;
-
-  async function initEditor(initialValue: string) {
-    if (!editorRoot) return;
-
-    const { Crepe } = await import('@milkdown/crepe');
-
-    crepe = new Crepe({
-      root: editorRoot,
-      defaultValue: initialValue,
-      featureConfigs: {
-        [Crepe.Feature.Placeholder]: {
-          text: 'Start writing',
-          mode: 'doc'
-        },
-        [Crepe.Feature.BlockEdit]: {
-          buildMenu: (builder) => {
-            builder.getGroup('text').addItem('wikilink', {
-              label: 'Wikilink',
-              icon: wikilinkSlashIcon,
-              onRun: (ctx) => {
-                const view = ctx.get(editorViewCtx);
-                const selectionFrom = view.state.selection.$from;
-                const from = selectionFrom.start();
-                const to = selectionFrom.end();
-                const transaction = view.state.tr.insertText('[[]]', from, to);
-                transaction.setSelection(TextSelection.create(transaction.doc, from + 2));
-                view.dispatch(transaction);
-                view.focus();
-              }
-            });
-          }
-        }
-      }
-    });
-
-    crepe.addFeature(notepadWikilinks, {
-      onOpenLink: (rawTarget) => {
-        void openWikilink(rawTarget);
-      },
-      onActiveWikilinkChange: (nextActiveWikilink) => {
-        handleActiveWikilinkChange(nextActiveWikilink);
-      }
-    });
-
-    crepe.on((listener) => {
-      listener.markdownUpdated((_ctx, nextMarkdown) => {
-        bodyMarkdown = nextMarkdown;
-        if (nextMarkdown.trim() !== '') canUnforget = false;
-        scheduleAutosave();
-        scheduleSearch();
-      });
-    });
-
-    await crepe.create();
-    setupSlashMenuPortal();
-  }
-
-  function parseStoredMarkdown(markdown: string) {
-    const normalized = markdown.replace(/\r\n/g, '\n');
-    const lines = normalized.split('\n');
-    const firstContentLineIndex = lines.findIndex((line) => line.trim() !== '');
-
-    if (firstContentLineIndex === -1) {
-      return { title: '', bodyMarkdown: '' };
-    }
-
-    const firstContentLine = lines[firstContentLineIndex];
-    const headingMatch = firstContentLine.match(/^#\s+(.*)$/);
-
-    if (!headingMatch) {
-      return { title: '', bodyMarkdown: normalized };
-    }
-
-    const remainingLines = lines.slice(firstContentLineIndex + 1);
-    if (remainingLines[0]?.trim() === '') remainingLines.shift();
-
-    return {
-      title: headingMatch[1].trim(),
-      bodyMarkdown: remainingLines.join('\n')
-    };
-  }
-
-  function composeMarkdown(noteTitle: string, noteBody: string) {
-    const normalizedBody = noteBody.replace(/\r\n/g, '\n');
-    const trimmedTitle = noteTitle.trim();
-
-    if (!trimmedTitle) return normalizedBody;
-
-    const bodyWithoutLeadingSpace = normalizedBody.replace(/^\n+/, '');
-    return bodyWithoutLeadingSpace ? `# ${trimmedTitle}\n\n${bodyWithoutLeadingSpace}` : `# ${trimmedTitle}`;
+  function applySessionSnapshot(snapshot: NotepadSessionSnapshot) {
+    title = snapshot.title;
+    bodyMarkdown = snapshot.bodyMarkdown;
+    currentNotePath = snapshot.currentNotePath;
+    lastSavedMarkdown = snapshot.lastSavedMarkdown;
+    lastSavedPath = snapshot.lastSavedPath;
   }
 
   function getCurrentMarkdown() {
@@ -202,38 +102,41 @@
   }
 
   async function destroyEditor() {
-    if (slashMenuPortalCleanup) {
-      slashMenuPortalCleanup();
-      slashMenuPortalCleanup = null;
-    }
-
-    if (!crepe) return;
-    await crepe.destroy();
-    crepe = null;
+    slashMenuPortalCleanup = resetNotepadSlashMenuPortal({
+      boundsElement: null,
+      editorRoot: null,
+      portalRoot: null,
+      currentCleanup: slashMenuPortalCleanup
+    });
+    crepe = await destroyNotepadEditor(crepe);
   }
 
   function setupSlashMenuPortal() {
-    if (!notepadShell || !editorRoot || !slashMenuPortal) return;
-
-    if (slashMenuPortalCleanup) {
-      slashMenuPortalCleanup();
-      slashMenuPortalCleanup = null;
-    }
-
-    // Crepe mounts the slash menu inside the clipped editor tree, so we reparent and clamp it here.
-    slashMenuPortalCleanup = setupNotepadSlashMenuPortal({
+    slashMenuPortalCleanup = resetNotepadSlashMenuPortal({
       boundsElement: notepadShell,
       editorRoot,
-      portalRoot: slashMenuPortal
+      portalRoot: slashMenuPortal,
+      currentCleanup: slashMenuPortalCleanup
     });
   }
 
   async function createEditor(initialValue: string) {
-    if (!editorRoot) return;
-    await tick();
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    if (!editorRoot) return;
-    await initEditor(initialValue);
+    if (!(await prepareNotepadEditor(editorRoot)) || !editorRoot) return;
+    crepe = await createNotepadEditor({
+      editorRoot,
+      initialValue,
+      onOpenLink: (rawTarget) => {
+        void openWikilink(rawTarget);
+      },
+      onActiveWikilinkChange: handleActiveWikilinkChange,
+      onMarkdownChange: (nextMarkdown) => {
+        bodyMarkdown = nextMarkdown;
+        if (nextMarkdown.trim() !== '') canUnforget = false;
+        scheduleAutosave();
+        scheduleSearch();
+      }
+    });
+    setupSlashMenuPortal();
     isEditorReady = true;
   }
 
@@ -245,19 +148,13 @@
   }
 
   async function clearNotepad({ canRestore = true }: { canRestore?: boolean } = {}) {
-    const hasContent = title.trim() !== '' || bodyMarkdown.trim() !== '' || currentNotePath !== null;
-    const noteToForget =
-      canRestore && hasContent
-        ? {
-            title,
-            bodyMarkdown,
-            currentNotePath
-          }
-        : null;
+    const draft = { title, bodyMarkdown, currentNotePath };
+    const hasContent = hasNotepadContent(draft);
+    const noteToForget = canRestore && hasContent ? createForgottenNote(draft) : null;
 
     if (currentNotePath) {
       try {
-        await invoke('forget_note', { currentPath: currentNotePath });
+        await forgetNoteSession(currentNotePath);
       } catch (error) {
         console.error('Failed to forget note:', error);
         return;
@@ -265,10 +162,7 @@
     }
 
     forgottenNote = noteToForget;
-    title = '';
-    currentNotePath = null;
-    lastSavedMarkdown = '';
-    lastSavedPath = null;
+    applySessionSnapshot(createEmptySessionSnapshot());
     canUnforget = canRestore && hasContent;
     await replaceEditorContent('');
     scheduleSearch();
@@ -277,10 +171,11 @@
 
   async function unforgetNotepad() {
     if (!forgottenNote) return;
-    title = forgottenNote.title;
-    currentNotePath = forgottenNote.currentNotePath;
-    lastSavedMarkdown = '';
-    lastSavedPath = null;
+    applySessionSnapshot({
+      ...forgottenNote,
+      lastSavedMarkdown: '',
+      lastSavedPath: null
+    });
     canUnforget = false;
     await replaceEditorContent(forgottenNote.bodyMarkdown);
     forgottenNote = null;
@@ -291,20 +186,10 @@
 
   async function loadSavedNote() {
     try {
-      const saved = await invoke<NoteSession>('load_note_session');
-      const parsed = parseStoredMarkdown(saved.markdown);
-      title = parsed.title;
-      bodyMarkdown = parsed.bodyMarkdown;
-      currentNotePath = saved.path;
-      lastSavedMarkdown = saved.markdown;
-      lastSavedPath = saved.path;
+      applySessionSnapshot(await loadSavedNoteSession());
     } catch (error) {
       console.error('Failed to load saved note:', error);
-      title = '';
-      bodyMarkdown = '';
-      currentNotePath = null;
-      lastSavedMarkdown = '';
-      lastSavedPath = null;
+      applySessionSnapshot(createEmptySessionSnapshot());
     }
   }
 
@@ -331,7 +216,7 @@
     }, 120);
   }
 
-  async function enqueueSave(mode: 'autosave' | 'remember') {
+  async function enqueueSave(mode: NotepadSaveMode) {
     saveQueue = saveQueue
       .then(() => persistNote(mode))
       .catch((error) => {
@@ -349,29 +234,26 @@
     void enqueueSave('autosave');
   }
 
-  async function persistNote(mode: 'autosave' | 'remember') {
+  async function persistNote(mode: NotepadSaveMode) {
     const markdown = getCurrentMarkdown();
 
-    if (mode === 'autosave' && markdown === lastSavedMarkdown && currentNotePath === lastSavedPath) {
+    if (
+      mode === 'autosave' &&
+      shouldSkipAutosave(markdown, currentNotePath, { lastSavedMarkdown, lastSavedPath })
+    ) {
       return;
     }
 
     if (mode === 'remember') {
-      await invoke('remember_note', { markdown, currentPath: currentNotePath });
+      await rememberNoteSession(markdown, currentNotePath);
       return;
     }
 
-    const saved = await invoke<NoteSession>('save_note', { markdown, currentPath: currentNotePath });
-    currentNotePath = saved.path;
-    lastSavedMarkdown = saved.markdown;
-    lastSavedPath = saved.path;
+    applySessionSnapshot(await saveNoteSession(markdown, currentNotePath));
   }
 
   async function rememberCurrentNote() {
-    if (saveTimer) {
-      window.clearTimeout(saveTimer);
-      saveTimer = null;
-    }
+    cancelPendingAutosave();
 
     await enqueueSave('remember');
     currentNotePath = null;
@@ -389,84 +271,36 @@
     scheduleSearch();
   }
 
-  function findLastSelectionPoint(node: Node): { node: Node; offset: number } | null {
-    if (node.nodeType === Node.TEXT_NODE) {
-      return { node, offset: node.textContent?.length ?? 0 };
-    }
-
-    for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
-      const child = node.childNodes[index];
-      const point = findLastSelectionPoint(child);
-      if (point) return point;
-    }
-
-    if (node instanceof HTMLElement) {
-      return { node, offset: node.childNodes.length };
-    }
-
-    return null;
-  }
-
-  function isKeywordResult(result: SearchItem) {
-    return result.reasonLabels.includes('keyword');
-  }
-
-  function isSemanticOnlyResult(result: SearchItem) {
-    return result.reasonLabels.includes('semantic') && !isKeywordResult(result);
-  }
-
   function focusTitleAtEnd() {
-    if (!titleInput) return;
-    titleInput.focus();
-    const end = titleInput.value.length;
-    titleInput.setSelectionRange(end, end);
+    focusInputAtEnd(titleInput);
   }
 
-  function focusEditorTarget(target: HTMLElement) {
-    const proseMirror = editorRoot?.querySelector('.ProseMirror');
-    if (!(proseMirror instanceof HTMLElement)) return;
-
-    const point = findLastSelectionPoint(target);
-    proseMirror.focus({ preventScroll: true });
-
-    if (!point) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  function cancelPendingAutosave() {
+    if (!saveTimer) {
       return;
     }
 
-    const selection = window.getSelection();
-    if (!selection) return;
-
-    const range = document.createRange();
-    range.setStart(point.node, point.offset);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    window.clearTimeout(saveTimer);
+    saveTimer = null;
   }
 
-  async function focusEditorAtEnd() {
-    await tick();
+  function getNavigationContext(): NotepadNavigationContext {
+    return {
+      editorRoot,
+      titleShell,
+      currentNotePath,
+      focusTitleAtEnd
+    };
+  }
 
-    const proseMirror = editorRoot?.querySelector('.ProseMirror');
-    if (!(proseMirror instanceof HTMLElement)) return;
-
-    proseMirror.focus();
-
-    const point = findLastSelectionPoint(proseMirror);
-    const selection = window.getSelection();
-    if (!point || !selection) return;
-
-    const range = document.createRange();
-    range.setStart(point.node, point.offset);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    const selectionTarget =
-      point.node instanceof HTMLElement ? point.node : point.node.parentElement ?? proseMirror;
-    selectionTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  function getOpenContext(): NotepadOpenContext {
+    return {
+      currentNotePath,
+      stopPendingAutosave: cancelPendingAutosave,
+      enqueueAutosave: () => enqueueSave('autosave'),
+      clearSearch,
+      openNotePath
+    };
   }
 
   function handleTitleKeydown(event: KeyboardEvent) {
@@ -475,7 +309,7 @@
     }
 
     event.preventDefault();
-    void focusEditorAtEnd();
+    void focusEditorAtEnd(editorRoot);
   }
 
   function clearSearch() {
@@ -501,12 +335,9 @@
     isSearching = true;
 
     try {
-      const results = await invoke<SearchItem[]>('search_notes_hybrid', {
-        query: trimmedQuery,
-        mode: searchMode,
+      const results = await searchNotes(trimmedQuery, searchMode, {
         currentPath: currentNotePath,
-        currentMarkdown: getCurrentMarkdown(),
-        limit: 12
+        currentMarkdown: getCurrentMarkdown()
       });
 
       if (requestId !== activeSearchRequest) return;
@@ -526,8 +357,7 @@
     const requestId = ++activeRecentNotesRequest;
 
     try {
-      const notes = await invoke<SearchItem[]>('list_recent_notes', {
-        limit: 12,
+      const notes = await listRecentNotes({
         currentPath: currentNotePath,
         currentMarkdown: getCurrentMarkdown()
       });
@@ -545,9 +375,7 @@
     const requestId = ++activeRecentTasksRequest;
 
     try {
-      const tasks = await invoke<RecentTaskItem[]>('list_recent_tasks', {
-        limit: 12
-      });
+      const tasks = await listRecentTasks();
 
       if (requestId !== activeRecentTasksRequest) return;
       recentTasks = tasks;
@@ -568,7 +396,7 @@
     scheduleSearch();
   }
 
-  async function handleSearchModeChange(mode: 'current' | 'all') {
+  async function handleSearchModeChange(mode: NotepadSearchMode) {
     searchMode = mode;
     if (searchQuery.trim() !== '') {
       await runSearch(searchQuery);
@@ -580,7 +408,7 @@
     void loadRecentTasks();
   }
 
-  function requestSearchFocus(mode: 'current' | 'all') {
+  function requestSearchFocus(mode: NotepadSearchMode) {
     searchMode = mode;
     if (searchQuery.trim() !== '') {
       void runSearch(searchQuery);
@@ -589,20 +417,16 @@
   }
 
   function closeWikilinkAutocomplete() {
-    activeWikilinkRequest += 1;
-    wikilinkAutocompleteActive = false;
-    wikilinkSuggestions = [];
-    wikilinkSelectedIndex = 0;
+    wikilinkAutocomplete = dismissWikilinkAutocomplete(wikilinkAutocomplete);
   }
 
   function handleActiveWikilinkChange(nextActiveWikilink: ActiveWikilink | null) {
-    if (nextActiveWikilink?.rawTarget.includes('|')) {
-      activeWikilink = null;
-      closeWikilinkAutocomplete();
+    if (hasWikilinkAlias(nextActiveWikilink)) {
+      wikilinkAutocomplete = resetWikilinkAutocomplete(wikilinkAutocomplete);
       return;
     }
 
-    activeWikilink = nextActiveWikilink;
+    wikilinkAutocomplete = setActiveWikilink(wikilinkAutocomplete, nextActiveWikilink);
 
     if (!nextActiveWikilink) {
       closeWikilinkAutocomplete();
@@ -613,92 +437,75 @@
   }
 
   async function loadWikilinkSuggestions(nextActiveWikilink: ActiveWikilink) {
-    const requestId = ++activeWikilinkRequest;
+    const pendingRequest = beginWikilinkSuggestionRequest(wikilinkAutocomplete, nextActiveWikilink);
+    wikilinkAutocomplete = pendingRequest.state;
 
     try {
-      const suggestions = await invoke<NoteLinkSuggestion[]>('autocomplete_note_links', {
-        rawTarget: nextActiveWikilink.rawTarget,
-        currentPath: currentNotePath,
-        currentMarkdown: getCurrentMarkdown(),
-        limit: 8
-      });
-
-      if (requestId !== activeWikilinkRequest) {
-        return;
-      }
-
-      wikilinkSuggestions = suggestions;
-      wikilinkSelectedIndex = 0;
-      wikilinkAutocompleteActive = true;
+      const suggestions = await autocompleteNoteLinks(
+        nextActiveWikilink.rawTarget,
+        currentNotePath,
+        getCurrentMarkdown()
+      );
+      wikilinkAutocomplete = completeWikilinkSuggestionRequest(
+        wikilinkAutocomplete,
+        pendingRequest.requestId,
+        suggestions
+      );
     } catch (error) {
-      if (requestId !== activeWikilinkRequest) {
-        return;
-      }
-
       console.error('Failed to load wikilink suggestions:', error);
-      wikilinkSuggestions = [];
-      wikilinkSelectedIndex = 0;
-      wikilinkAutocompleteActive = true;
+      wikilinkAutocomplete = completeWikilinkSuggestionRequest(
+        wikilinkAutocomplete,
+        pendingRequest.requestId,
+        []
+      );
     }
   }
 
-  function selectWikilinkSuggestion(suggestion: NoteLinkSuggestion) {
-    const currentActiveWikilink = activeWikilink;
-
-    if (!currentActiveWikilink || !crepe) {
+  function selectWikilinkSuggestion(suggestionValue: string) {
+    if (
+      !insertWikilinkSuggestion(crepe, wikilinkAutocomplete.activeWikilink, suggestionValue)
+    ) {
       return;
     }
-
-    crepe.editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      const transaction = view.state.tr.insertText(
-        suggestion.value,
-        currentActiveWikilink.targetFrom,
-        currentActiveWikilink.targetTo
-      );
-      const cursorPosition = currentActiveWikilink.targetFrom + suggestion.value.length;
-      transaction.setSelection(TextSelection.create(transaction.doc, cursorPosition));
-      view.dispatch(transaction);
-      view.focus();
-    });
 
     closeWikilinkAutocomplete();
   }
 
   function moveWikilinkSelection(direction: -1 | 1) {
-    if (!wikilinkAutocompleteActive || wikilinkSuggestions.length === 0) {
-      return;
-    }
-
-    wikilinkSelectedIndex =
-      (wikilinkSelectedIndex + direction + wikilinkSuggestions.length) % wikilinkSuggestions.length;
+    wikilinkAutocomplete = moveWikilinkSelectionState(wikilinkAutocomplete, direction);
   }
 
   function handleGlobalKeydown(event: KeyboardEvent) {
-    if (wikilinkAutocompleteActive) {
+    if (wikilinkAutocomplete.active) {
       if (event.key === 'Escape') {
         event.preventDefault();
         closeWikilinkAutocomplete();
         return;
       }
 
-      if (wikilinkSuggestions.length > 0 && event.key === 'ArrowDown') {
+      if (wikilinkAutocomplete.suggestions.length > 0 && event.key === 'ArrowDown') {
         event.preventDefault();
         moveWikilinkSelection(1);
         return;
       }
 
-      if (wikilinkSuggestions.length > 0 && event.key === 'ArrowUp') {
+      if (wikilinkAutocomplete.suggestions.length > 0 && event.key === 'ArrowUp') {
         event.preventDefault();
         moveWikilinkSelection(-1);
         return;
       }
 
-      if (wikilinkSuggestions.length > 0 && (event.key === 'Enter' || event.key === 'Tab')) {
+      if (
+        wikilinkAutocomplete.suggestions.length > 0 &&
+        (event.key === 'Enter' || event.key === 'Tab')
+      ) {
+        const suggestion = getSelectedWikilinkSuggestion(wikilinkAutocomplete);
+        if (!suggestion) {
+          return;
+        }
+
         event.preventDefault();
-        selectWikilinkSuggestion(
-          wikilinkSuggestions[wikilinkSelectedIndex] ?? wikilinkSuggestions[0]
-        );
+        selectWikilinkSuggestion(suggestion.value);
         return;
       }
     }
@@ -709,337 +516,36 @@
     requestSearchFocus(event.shiftKey ? 'all' : 'current');
   }
 
-  function normalizePlainText(value: string) {
-    return value
-      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
-      .replace(/\[\[([^\]]+)\]\]/g, '$1')
-      .replace(/^\s*[-*+]\s+\[(?: |x|X)\]\s+/gm, '')
-      .replace(/^\s*#{1,6}\s+/gm, '')
-      .replace(/^\s*>\s+/gm, '')
-      .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, '')
-      .replace(/[`*_~]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
-  }
-
-  function getEditorBlocks() {
-    const proseMirror = editorRoot?.querySelector('.ProseMirror');
-    if (!proseMirror) return [];
-
-    return Array.from(proseMirror.children).filter((child): child is HTMLElement => child instanceof HTMLElement);
-  }
-
-  function getEditorTargets() {
-    const proseMirror = editorRoot?.querySelector('.ProseMirror');
-    if (!proseMirror) return [];
-
-    const matches = Array.from(
-      proseMirror.querySelectorAll('li, p, h1, h2, h3, h4, h5, h6, blockquote, pre')
-    ).filter((node): node is HTMLElement => node instanceof HTMLElement);
-
-    const nonEmptyMatches = matches.filter((node) => normalizePlainText(node.textContent ?? '') !== '');
-    if (nonEmptyMatches.length > 0) {
-      return nonEmptyMatches;
-    }
-
-    return getEditorBlocks();
-  }
-
-  function findBestEditorTarget(matchText: string, preferredBlockIndex?: number) {
-    const normalizedNeedle = normalizePlainText(matchText);
-    if (!normalizedNeedle) return null;
-
-    if (preferredBlockIndex !== undefined) {
-      const blocks = getEditorBlocks();
-      const directMatch = blocks[preferredBlockIndex];
-      if (directMatch && normalizePlainText(directMatch.textContent ?? '').includes(normalizedNeedle)) {
-        return directMatch;
-      }
-    }
-
-    const targets = getEditorTargets();
-    const exactMatch =
-      targets.find((target) => normalizePlainText(target.textContent ?? '') === normalizedNeedle) ?? null;
-
-    if (exactMatch) {
-      return exactMatch;
-    }
-
-    const partialMatches = targets.filter((target) =>
-      normalizePlainText(target.textContent ?? '').includes(normalizedNeedle)
-    );
-
-    if (partialMatches.length === 0) {
-      return null;
-    }
-
-    partialMatches.sort((left, right) => {
-      const leftLength = normalizePlainText(left.textContent ?? '').length;
-      const rightLength = normalizePlainText(right.textContent ?? '').length;
-      return leftLength - rightLength;
-    });
-
-    return partialMatches[0] ?? null;
-  }
-
-  async function waitForEditorPaint() {
-    await tick();
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  }
-
   async function openNotePath(notePath: string) {
-    const session = await invoke<NoteSession>('open_note', { path: notePath });
-    const parsed = parseStoredMarkdown(session.markdown);
-
-    title = parsed.title;
-    currentNotePath = session.path;
-    lastSavedMarkdown = session.markdown;
-    lastSavedPath = session.path;
+    const session = await openNoteSession(notePath);
+    applySessionSnapshot(session);
     canUnforget = false;
     forgottenNote = null;
-    await replaceEditorContent(parsed.bodyMarkdown);
-  }
-
-  async function navigateToSectionTarget(sectionLabel: string, matchText: string, shouldFocus = true) {
-    await waitForEditorPaint();
-
-    if (sectionLabel === 'Title') {
-      titleShell?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      if (shouldFocus) {
-        focusTitleAtEnd();
-      }
-      return;
-    }
-
-    const paragraphMatch = sectionLabel.match(/^Paragraph (\d+)$/);
-    const paragraphIndex = paragraphMatch ? Number(paragraphMatch[1]) - 1 : undefined;
-    const targetBlock = findBestEditorTarget(matchText || sectionLabel, paragraphIndex);
-
-    if (!targetBlock) {
-      return;
-    }
-
-    if (!shouldFocus) {
-      targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      return;
-    }
-
-    focusEditorTarget(targetBlock);
-  }
-
-  async function navigateToSearchResult(result: SearchItem) {
-    await navigateToSectionTarget(result.sectionLabel, result.matchText, !isSemanticOnlyResult(result));
-  }
-
-  async function navigateToPendingTaskTarget(target: PendingTaskTarget) {
-    if (!currentNotePath || currentNotePath !== target.notePath) {
-      return;
-    }
-
-    await waitForEditorPaint();
-
-    const targetBlock = findBestEditorTarget(target.text);
-    if (targetBlock) {
-      targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  }
-
-  async function openSearchResult(result: SearchItem) {
-    const shouldOpenDifferentNote = !!result.notePath && result.notePath !== currentNotePath;
-
-    if (saveTimer) {
-      window.clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-
-    if (shouldOpenDifferentNote) {
-      await enqueueSave('autosave');
-    }
-
-    try {
-      if (shouldOpenDifferentNote && result.notePath) {
-        await openNotePath(result.notePath);
-        clearSearch();
-        await navigateToSearchResult(result);
-        return;
-      }
-
-      clearSearch();
-      await navigateToSearchResult(result);
-    } catch (error) {
-      console.error('Failed to open searched note:', error);
-    }
-  }
-
-  async function openRecentTask(task: RecentTaskItem) {
-    const shouldOpenDifferentNote = task.notePath !== currentNotePath;
-
-    if (saveTimer) {
-      window.clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-
-    if (shouldOpenDifferentNote) {
-      await enqueueSave('autosave');
-    }
-
-    try {
-      if (shouldOpenDifferentNote) {
-        await openNotePath(task.notePath);
-        clearSearch();
-      } else {
-        clearSearch();
-      }
-
-      await navigateToPendingTaskTarget({
-        notePath: task.notePath,
-        text: task.text,
-        lineNumber: task.lineNumber,
-        sectionLabel: null
-      });
-    } catch (error) {
-      console.error('Failed to open recent task:', error);
-    }
-  }
-
-  async function openResolvedNoteLink(target: ResolvedNoteLink) {
-    const shouldOpenDifferentNote = target.notePath !== currentNotePath;
-
-    if (saveTimer) {
-      window.clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-
-    if (shouldOpenDifferentNote) {
-      await enqueueSave('autosave');
-    }
-
-    try {
-      if (shouldOpenDifferentNote) {
-        await openNotePath(target.notePath);
-      }
-
-      await navigateToSectionTarget(target.sectionLabel, target.matchText);
-    } catch (error) {
-      console.error('Failed to open wikilink target:', error);
-    }
+    await replaceEditorContent(session.bodyMarkdown);
   }
 
   async function openWikilink(rawTarget: string) {
     try {
-      const resolved = await invoke<ResolvedNoteLink | null>('resolve_note_link', {
-        rawTarget,
-        currentPath: currentNotePath,
-        currentMarkdown: getCurrentMarkdown()
-      });
+      const resolved = await resolveNoteLink(rawTarget, currentNotePath, getCurrentMarkdown());
 
       if (!resolved) {
         return;
       }
 
-      await openResolvedNoteLink(resolved);
+      await openResolvedNoteLink(
+        {
+          currentNotePath,
+          stopPendingAutosave: cancelPendingAutosave,
+          enqueueAutosave: () => enqueueSave('autosave'),
+          openNotePath
+        },
+        getNavigationContext(),
+        resolved
+      );
     } catch (error) {
       console.error('Failed to resolve wikilink:', error);
     }
   }
-
-  function buildWikilinkReference(activeWikilink: ActiveWikilink): VirtualElement {
-    return {
-      getBoundingClientRect() {
-        const width = Math.max(1, 0);
-        const height = Math.max(1, activeWikilink.bottom - activeWikilink.top);
-
-        return {
-          x: activeWikilink.left,
-          y: activeWikilink.top,
-          left: activeWikilink.left,
-          top: activeWikilink.top,
-          right: activeWikilink.left + width,
-          bottom: activeWikilink.top + height,
-          width,
-          height
-        };
-      }
-    };
-  }
-
-  async function updateWikilinkAutocompletePosition() {
-    if (!activeWikilink || !wikilinkAutocompleteElement) {
-      wikilinkAutocompleteStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
-      return;
-    }
-
-    const { x, y, middlewareData } = await computePosition(
-      buildWikilinkReference(activeWikilink),
-      wikilinkAutocompleteElement,
-      {
-        strategy: 'fixed',
-        placement: 'bottom-start',
-        middleware: [
-          offset(10),
-          flip({
-            fallbackPlacements: ['top-start', 'bottom-end', 'top-end'],
-            padding: 16
-          }),
-          shift({
-            padding: 16
-          }),
-          size({
-            padding: 16,
-            apply({ availableHeight, elements }) {
-              elements.floating.style.maxHeight = `${Math.max(120, Math.floor(availableHeight))}px`;
-            }
-          })
-        ]
-      }
-    );
-
-    const maxHeight = wikilinkAutocompleteElement.style.maxHeight || 'none';
-    const visibility =
-      middlewareData.hide?.referenceHidden || middlewareData.hide?.escaped ? 'hidden' : 'visible';
-
-    wikilinkAutocompleteStyle = `position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; max-height: ${maxHeight}; visibility: ${visibility};`;
-  }
-
-  $effect(() => {
-    const isActive = wikilinkAutocompleteActive;
-    const currentActiveWikilink = activeWikilink;
-    const popupElement = wikilinkAutocompleteElement;
-
-    if (!isActive || !currentActiveWikilink || !popupElement) {
-      wikilinkAutocompleteStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
-      return;
-    }
-
-    void updateWikilinkAutocompletePosition();
-
-    return autoUpdate(buildWikilinkReference(currentActiveWikilink), popupElement, () => {
-      void updateWikilinkAutocompletePosition();
-    });
-  });
-
-  $effect(() => {
-    const isActive = wikilinkAutocompleteActive;
-    const selectedIndex = wikilinkSelectedIndex;
-    const suggestions = wikilinkSuggestions;
-    const popupElement = wikilinkAutocompleteElement;
-
-    if (!isActive || suggestions.length === 0 || !popupElement) {
-      return;
-    }
-
-    void tick().then(() => {
-      requestAnimationFrame(() => {
-        const activeItem = popupElement.querySelector<HTMLElement>(
-          '[data-wikilink-suggestion-active="true"]'
-        );
-        activeItem?.scrollIntoView({ block: 'nearest' });
-      });
-    });
-  });
 
   onMount(() => {
     let mounted = true;
@@ -1053,7 +559,7 @@
         await createEditor(bodyMarkdown);
         const pendingTaskTarget = consumePendingTaskTarget();
         if (pendingTaskTarget) {
-          await navigateToPendingTaskTarget(pendingTaskTarget);
+          await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
         }
       } catch (err) {
         console.error('Notepad init failed:', err);
@@ -1129,49 +635,24 @@
         onRemember={() => void rememberCurrentNote()}
         onSearchInput={handleSearchInput}
         onSearchModeChange={handleSearchModeChange}
-        onSearchSelect={(result) => void openSearchResult(result)}
-        onRecentTaskSelect={(task) => void openRecentTask(task)}
+        onSearchSelect={(result) =>
+          void openSearchResult(getOpenContext(), getNavigationContext(), result).catch((error) => {
+            console.error('Failed to open searched note:', error);
+          })}
+        onRecentTaskSelect={(task) =>
+          void openRecentTask(getOpenContext(), getNavigationContext(), task).catch((error) => {
+            console.error('Failed to open recent task:', error);
+          })}
         onSearchFocus={handleSearchFocus}
       />
     </div>
   </div>
   <div bind:this={slashMenuPortal} class="notepad-slash-portal milkdown fixed inset-0 z-40 pointer-events-none"></div>
-  {#if wikilinkAutocompleteActive && activeWikilink}
-    <div
-      bind:this={wikilinkAutocompleteElement}
-      class="fixed z-30 flex min-w-72 max-w-md flex-col overflow-hidden rounded-[1.25rem] border border-border bg-popover/95 shadow-xl backdrop-blur-md pointer-events-auto"
-      style={wikilinkAutocompleteStyle}
-    >
-      {#if wikilinkSuggestions.length === 0}
-        <div class="px-4 py-3 text-sm text-muted-foreground">No matching notes or sections.</div>
-      {:else}
-        <div class="border-b border-border/70 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          Wikilinks
-        </div>
-        <div class="min-h-0 flex-1 overflow-y-auto py-1.5">
-          {#each wikilinkSuggestions as suggestion, index (`${suggestion.kind}-${suggestion.value}-${index}`)}
-            <button
-              type="button"
-              data-wikilink-suggestion-active={index === wikilinkSelectedIndex ? 'true' : 'false'}
-              class={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors ${
-                index === wikilinkSelectedIndex ? 'bg-accent' : 'hover:bg-accent'
-              }`}
-              onmousedown={(event) => event.preventDefault()}
-              onclick={() => selectWikilinkSuggestion(suggestion)}
-            >
-              <span class="mt-0.5 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                {suggestion.kind}
-              </span>
-              <span class="min-w-0 flex-1">
-                <span class="block truncate text-sm font-semibold text-popover-foreground">
-                  {suggestion.label}
-                </span>
-                <span class="block truncate pt-0.5 text-xs text-muted-foreground">{suggestion.detail}</span>
-              </span>
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
+  <NotepadWikilinkAutocomplete
+    active={wikilinkAutocomplete.active}
+    activeWikilink={wikilinkAutocomplete.activeWikilink}
+    suggestions={wikilinkAutocomplete.suggestions}
+    selectedIndex={wikilinkAutocomplete.selectedIndex}
+    onSelect={(suggestion) => selectWikilinkSuggestion(suggestion.value)}
+  />
 </div>
