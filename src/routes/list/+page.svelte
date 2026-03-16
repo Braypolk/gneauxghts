@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { invoke } from '@tauri-apps/api/core';
+  import { onMount } from 'svelte';
   import {
     ArrowDown,
     ArrowUp,
@@ -61,7 +62,6 @@
   let isLoading = $state(true);
   let errorMessage = $state('');
   let activeRequest = 0;
-  let didInitialize = false;
 
   const groupedTasks = $derived.by(() => {
     const groups = new Map<string, TaskGroup>();
@@ -318,12 +318,7 @@
     }
   }
 
-  $effect(() => {
-    if (didInitialize) {
-      return;
-    }
-
-    didInitialize = true;
+  onMount(() => {
     const storedFilter = readStoredTaskFilter();
     if (storedFilter) {
       filter = storedFilter;

@@ -72,7 +72,7 @@
   let forgetHoldFrame: number | null = null;
   let forgetHoldTimeout: ReturnType<typeof window.setTimeout> | null = null;
 
-  function getVisibleItems(): VisibleItem[] {
+  const visibleItems = $derived.by<VisibleItem[]>(() => {
     if (searchQuery.trim() === '') {
       return [
         ...recentNotes.map((item) => ({ kind: 'note' as const, item })),
@@ -81,7 +81,7 @@
     }
 
     return searchResults.map((item) => ({ kind: 'search' as const, item }));
-  }
+  });
 
   function resetActiveIndex() {
     activeIndex = 0;
@@ -142,9 +142,7 @@
   }
 
   $effect(() => {
-    searchQuery;
-    searchResults;
-    recentNotes;
+    visibleItems;
     resetActiveIndex();
   });
 
@@ -170,9 +168,7 @@
   $effect(() => {
     isSearchFocused;
     activeIndex;
-    searchQuery;
-    searchResults;
-    recentNotes;
+    visibleItems;
 
     if (!isSearchFocused || !searchResultsViewport) return;
 
@@ -249,7 +245,7 @@
   }
 
   function handleSearchKeydown(event: KeyboardEvent) {
-    const items = getVisibleItems();
+    const items = visibleItems;
     const isPanelVisible = isSearchFocused && (searchQuery.trim() !== '' || recentNotes.length > 0 || recentTasks.length > 0);
 
     if (event.key === 'Escape') {
@@ -449,7 +445,7 @@
         <div class="search-results-panel absolute bottom-[calc(100%+0.85rem)] left-0 right-0 z-30 rounded-[1.5rem] border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md">
           {#if isSearching && searchQuery.trim() !== ''}
             <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
-          {:else if getVisibleItems().length === 0}
+          {:else if visibleItems.length === 0}
             <div class="px-4 py-3 text-sm text-muted-foreground">
               {#if searchQuery.trim() === ''}
                 No recent notes or tasks yet.
