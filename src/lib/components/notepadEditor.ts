@@ -12,6 +12,7 @@ import {
   wrapInBlockTypeCommand
 } from '@milkdown/kit/preset/commonmark';
 import { TextSelection } from '@milkdown/kit/prose/state';
+import { replaceAll } from '@milkdown/kit/utils';
 import { tick } from 'svelte';
 import { notepadWikilinks, type ActiveWikilink } from './notepadWikilinks';
 import { setupNotepadSlashMenuPortal } from './notepadSlashMenuPortal';
@@ -569,6 +570,15 @@ export async function destroyNotepadEditor(crepe: Crepe | null) {
 
   await crepe.destroy();
   return null;
+}
+
+export function replaceNotepadEditorContent(crepe: Crepe | null, markdown: string) {
+  if (!crepe) {
+    return false;
+  }
+
+  crepe.editor.action(replaceAll(markdown, false));
+  return true;
 }
 
 export function resetNotepadSlashMenuPortal({

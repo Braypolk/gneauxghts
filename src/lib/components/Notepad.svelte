@@ -11,6 +11,7 @@
     destroyNotepadEditor,
     insertWikilinkSuggestion,
     prepareNotepadEditor,
+    replaceNotepadEditorContent,
     resetNotepadSlashMenuPortal
   } from './notepadEditor';
   import { focusEditorAtEnd, focusInputAtEnd } from './notepadNavigation';
@@ -35,6 +36,7 @@
     hasNotepadContent,
     loadSavedNoteSession,
     openNoteSession,
+    readNoteSession,
     rememberNoteSession,
     restoreForgottenNotes,
     saveNoteSession,
@@ -63,6 +65,7 @@
 
   let crepe: Crepe | null = null;
   let notepadShell: HTMLDivElement | null = null;
+  let editorShell: HTMLDivElement | null = null;
   let editorRoot: HTMLDivElement | null = null;
   let slashMenuPortal: HTMLDivElement | null = null;
   let titleInput: HTMLInputElement | null = null;
@@ -90,6 +93,8 @@
   let searchFocusRequest = $state(0);
   let slashMenuPortalCleanup: (() => void) | null = null;
   let wikilinkAutocomplete = $state<WikilinkAutocompleteState>(createWikilinkAutocompleteState());
+  let isRefreshingFromDisk = false;
+  let isApplyingExternalContent = false;
 
   function applySessionSnapshot(snapshot: NotepadSessionSnapshot) {
     title = snapshot.title;
@@ -101,6 +106,13 @@
 
   function getCurrentMarkdown() {
     return composeMarkdown(title, bodyMarkdown);
+  }
+
+  function hasCleanBuffer() {
+    return shouldSkipAutosave(getCurrentMarkdown(), currentNotePath, {
+      lastSavedMarkdown,
+      lastSavedPath
+    });
   }
 
   async function destroyEditor() {
@@ -133,6 +145,7 @@
       onActiveWikilinkChange: handleActiveWikilinkChange,
       onMarkdownChange: (nextMarkdown) => {
         bodyMarkdown = nextMarkdown;
+        if (isApplyingExternalContent) return;
         if (nextMarkdown.trim() !== '') canUnforget = false;
         scheduleAutosave();
         scheduleSearch();
@@ -142,11 +155,37 @@
     isEditorReady = true;
   }
 
-  async function replaceEditorContent(nextMarkdown: string) {
+  async function replaceEditorContent(
+    nextMarkdown: string,
+    { preserveScroll = false }: { preserveScroll?: boolean } = {}
+  ) {
+    const scrollTop = preserveScroll ? (editorShell?.scrollTop ?? 0) : 0;
     isEditorReady = false;
     await destroyEditor();
     bodyMarkdown = nextMarkdown;
     await createEditor(nextMarkdown);
+
+    if (preserveScroll && editorShell) {
+      await tick();
+      editorShell.scrollTop = Math.min(scrollTop, editorShell.scrollHeight);
+    }
+  }
+
+  async function replaceEditorContentInPlace(nextMarkdown: string) {
+    isApplyingExternalContent = true;
+    try {
+      if (!replaceNotepadEditorContent(crepe, nextMarkdown)) {
+        isApplyingExternalContent = false;
+        await replaceEditorContent(nextMarkdown, { preserveScroll: true });
+        return;
+      }
+
+      bodyMarkdown = nextMarkdown;
+      closeWikilinkAutocomplete();
+      await tick();
+    } finally {
+      isApplyingExternalContent = false;
+    }
   }
 
   async function clearNotepad({ canRestore = true }: { canRestore?: boolean } = {}) {
@@ -228,12 +267,45 @@
     }
   }
 
+  async function refreshCurrentNoteIfChanged() {
+    if (!currentNotePath || !isEditorReady || isRefreshingFromDisk || !hasCleanBuffer()) {
+      return;
+    }
+
+    isRefreshingFromDisk = true;
+
+    try {
+      const session = await readNoteSession(currentNotePath);
+
+      if (!hasCleanBuffer() || session.currentNotePath !== currentNotePath) {
+        return;
+      }
+
+      if (
+        session.lastSavedMarkdown === lastSavedMarkdown &&
+        session.lastSavedPath === lastSavedPath
+      ) {
+        return;
+      }
+
+      applySessionSnapshot(session);
+      canUnforget = false;
+      forgottenNote = null;
+      await replaceEditorContentInPlace(session.bodyMarkdown);
+      scheduleSearch();
+    } catch (error) {
+      console.error('Failed to refresh note from disk:', error);
+    } finally {
+      isRefreshingFromDisk = false;
+    }
+  }
+
   function scheduleAutosave() {
     if (saveTimer) window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
       saveTimer = null;
       void enqueueSave('autosave');
-    }, 500);
+    }, 1000);
   }
 
   function scheduleSearch() {
@@ -582,6 +654,16 @@
     }
   }
 
+  function handleWindowFocus() {
+    void refreshCurrentNoteIfChanged();
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'visible') {
+      void refreshCurrentNoteIfChanged();
+    }
+  }
+
   onMount(() => {
     let mounted = true;
 
@@ -611,7 +693,8 @@
   });
 </script>
 
-<svelte:window onkeydowncapture={handleGlobalKeydown} />
+<svelte:window onkeydowncapture={handleGlobalKeydown} onfocus={handleWindowFocus} />
+<svelte:document onvisibilitychange={handleVisibilityChange} />
 
 <div bind:this={notepadShell} class="notepad-shell relative w-full h-full min-h-0 overflow-visible">
   <div class="w-full h-full min-h-0 text-card-foreground rounded-[2rem] shadow-sm border border-border flex flex-col overflow-hidden transition-all duration-300 relative">
@@ -642,7 +725,7 @@
     </div>
     <!-- Editor Area -->
     <div class="flex-1 min-h-0">
-      <div class="notepad-editor-shell relative h-full">
+      <div bind:this={editorShell} class="notepad-editor-shell relative h-full">
         {#if !isEditorReady}
           <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
             <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">

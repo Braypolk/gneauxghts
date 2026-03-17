@@ -141,6 +141,18 @@ pub(crate) fn open_note(path: String) -> Result<NoteSession, String> {
 }
 
 #[tauri::command]
+pub(crate) fn read_note(path: String) -> Result<NoteSession, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
+
+    let note_path = validate_current_path(Some(path), &notes_dir)?
+        .ok_or_else(|| "Missing note path".to_string())?;
+
+    read_note_session_from_path(&note_path)
+}
+
+#[tauri::command]
 pub(crate) fn resolve_note_link(
     state: State<'_, AppState>,
     raw_target: String,
@@ -2245,7 +2257,8 @@ mod tests {
     use super::{
         collect_recent_note_results, find_task_key_for_line, load_note_session_from_notes_dir,
         merge_hybrid_candidates, open_note_from_notes_dir, parse_wikilink_target,
-        reconcile_note_task_timestamps, resolve_note_link_target, NoteSession,
+        read_note_session_from_path, reconcile_note_task_timestamps, resolve_note_link_target,
+        NoteSession,
         ParsedWikilinkTarget, RecentTaskItem, ResolvedNoteLink, TaskListItem,
     };
     use crate::{
@@ -2301,6 +2314,39 @@ mod tests {
         assert_eq!(
             state.recent_paths,
             vec![note_path.to_string_lossy().into_owned()]
+        );
+    }
+
+    #[test]
+    fn read_note_session_from_path_does_not_update_last_opened_or_recents() {
+        let temp = TestDir::new("commands-read-note");
+        let notes_dir = temp.path();
+        let note_path = notes_dir.join("Read Me.md");
+        let existing_open_path = notes_dir.join("Already Open.md");
+        fs::write(&note_path, "# Read Me\n\nBody").expect("write note");
+        fs::write(&existing_open_path, "# Already Open\n\nBody").expect("write open note");
+        write_state(
+            notes_dir,
+            &PersistedState {
+                last_opened_path: Some(existing_open_path.to_string_lossy().into_owned()),
+                recent_paths: vec![existing_open_path.to_string_lossy().into_owned()],
+                ..PersistedState::default()
+            },
+        )
+        .expect("write state");
+
+        let session = read_note_session_from_path(&note_path).expect("read note");
+        let state = read_state(notes_dir).expect("read state");
+
+        assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
+        assert_eq!(session.markdown, "# Read Me\n\nBody");
+        assert_eq!(
+            state.last_opened_path,
+            Some(existing_open_path.to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            state.recent_paths,
+            vec![existing_open_path.to_string_lossy().into_owned()]
         );
     }
 

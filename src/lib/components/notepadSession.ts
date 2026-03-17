@@ -79,6 +79,11 @@ export async function openNoteSession(notePath: string) {
   return createSessionSnapshot(session);
 }
 
+export async function readNoteSession(notePath: string) {
+  const session = await invoke<NoteSession>('read_note', { path: notePath });
+  return createSessionSnapshot(session);
+}
+
 export async function saveNoteSession(markdown: string, currentPath: string | null) {
   const saved = await invoke<NoteSession>('save_note', { markdown, currentPath });
   return createSessionSnapshot(saved);

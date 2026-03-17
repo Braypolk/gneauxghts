@@ -28,6 +28,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::load_note_session,
             commands::open_note,
+            commands::read_note,
             commands::resolve_note_link,
             commands::autocomplete_note_links,
             commands::save_note,
