@@ -452,7 +452,7 @@
           type="button"
           class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           class:bg-primary={isSearchFocused && searchMode === 'current'}
-          class:text-primary-foreground={isSearchFocused && searchMode === 'current'}
+          class:text-primary={isSearchFocused && searchMode === 'current'}
           onmousedown={(event) => event.preventDefault()}
           onclick={() => handleSearchModeClick('current')}
           aria-label="Current notes"
@@ -463,7 +463,7 @@
           type="button"
           class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           class:bg-primary={isSearchFocused && searchMode === 'all'}
-          class:text-primary-foreground={isSearchFocused && searchMode === 'all'}
+          class:text-primary={isSearchFocused && searchMode === 'all'}
           onmousedown={(event) => event.preventDefault()}
           onclick={() => handleSearchModeClick('all')}
           aria-label="All notes"

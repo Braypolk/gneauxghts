@@ -658,6 +658,36 @@
 </div>
 
 <style>
+  .notepad-shell {
+    --editor-left-padding: 3.5rem;
+    --editor-right-padding: 1rem;
+    --editor-readable-width: 100%;
+  }
+
+  @media (min-width: 640px) {
+    .notepad-shell {
+      --editor-left-padding: 3.75rem;
+      --editor-right-padding: 1.5rem;
+      --editor-readable-width: 44rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .notepad-shell {
+      --editor-left-padding: 5.5rem;
+      --editor-right-padding: 2.5rem;
+      --editor-readable-width: 48rem;
+    }
+  }
+
+  @media (min-width: 1440px) {
+    .notepad-shell {
+      --editor-left-padding: 7.25rem;
+      --editor-right-padding: 3.5rem;
+      --editor-readable-width: 52rem;
+    }
+  }
+
   .notepad-editor-shell {
     min-height: 0;
     overflow-y: auto;
@@ -690,9 +720,22 @@
     min-height: 100%;
   }
 
+  /* Hide the + button that adds a new line in the block handle */
+  .notepad-editor-shell :global(.milkdown .milkdown-block-handle .operation-item:first-child) {
+    display: none;
+  }
+
   .notepad-editor-shell :global(.milkdown .ProseMirror) {
+    box-sizing: border-box;
     min-height: 100%;
+    width: min(
+      100%,
+      calc(var(--editor-readable-width) + var(--editor-left-padding) + var(--editor-right-padding))
+    );
+    margin-inline: auto;
     padding-top: 6.5rem;
+    padding-left: var(--editor-left-padding);
+    padding-right: var(--editor-right-padding);
     padding-bottom: 100%;
     overflow-anchor: auto;
     position: relative;
@@ -731,5 +774,127 @@
 
   .notepad-slash-portal :global(.milkdown-slash-menu .menu-groups) {
     max-height: min(420px, var(--notepad-slash-menu-max-height, calc(100vh - 2rem)));
+  }
+
+  :global(.notepad-block-type-menu) {
+    --crepe-color-surface: color-mix(in oklab, var(--card) 92%, var(--background));
+    --crepe-color-on-surface: var(--card-foreground);
+    --crepe-color-outline: color-mix(in oklab, var(--border) 82%, var(--foreground));
+    --crepe-color-hover: color-mix(in oklab, var(--accent) 82%, transparent);
+    --crepe-color-selected: color-mix(in oklab, var(--accent) 92%, var(--background));
+
+    position: fixed;
+    z-index: 50;
+    display: block;
+    font-family: var(--font-sans);
+    color: var(--crepe-color-on-surface);
+    background: var(--crepe-color-surface);
+    border-radius: 12px;
+    box-shadow:
+      0px 1px 3px 1px rgba(0, 0, 0, 0.15),
+      0px 1px 2px 0px rgba(0, 0, 0, 0.3);
+  }
+
+  :global(.notepad-block-type-menu[data-open='false']) {
+    display: none;
+  }
+
+  :global(.notepad-block-type-menu-tabs) {
+    border-bottom: 1px solid color-mix(in srgb, var(--crepe-color-outline), transparent 80%);
+    padding: 12px 12px 0;
+  }
+
+  :global(.notepad-block-type-menu-tabs ul) {
+    list-style-type: none;
+    margin: 0;
+    padding: 8px 10px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: nowrap;
+  }
+
+  :global(.notepad-block-type-menu-tabs ul li) {
+    padding: 6px 10px;
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  :global(.notepad-block-type-menu-tabs ul li:hover) {
+    background: var(--crepe-color-hover);
+  }
+
+  :global(.notepad-block-type-menu-tabs ul li.selected) {
+    background: var(--crepe-color-selected);
+  }
+
+  :global(.notepad-block-type-menu-groups) {
+    padding: 0 12px 12px;
+    max-height: min(420px, calc(100vh - 24px));
+    overflow: auto;
+    overscroll-behavior: contain;
+    scroll-behavior: smooth;
+  }
+
+  :global(.notepad-block-type-menu-group h6) {
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: 20px;
+    padding: 14px 10px;
+    text-transform: uppercase;
+    margin: 0;
+    color: color-mix(in srgb, var(--crepe-color-on-surface), transparent 40%);
+  }
+
+  :global(.notepad-block-type-menu-group + .notepad-block-type-menu-group)::before {
+    content: '';
+    display: block;
+    height: 1px;
+    background: color-mix(in srgb, var(--crepe-color-outline), transparent 80%);
+    margin: 0 10px;
+  }
+
+  :global(.notepad-block-type-menu-item) {
+    min-width: 220px;
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    width: 100%;
+  }
+
+  :global(.notepad-block-type-menu-item > span) {
+    font-size: 14px;
+    font-style: normal;
+    font-weight: 600;
+    line-height: 20px;
+  }
+
+  :global(.notepad-block-type-menu-item > svg) {
+    width: 24px;
+    height: 24px;
+    color: var(--crepe-color-outline);
+    fill: var(--crepe-color-outline);
+    flex-shrink: 0;
+  }
+
+  :global(.notepad-block-type-menu-item:hover) {
+    background: var(--crepe-color-hover);
+  }
+
+  :global(.notepad-block-type-menu-item[data-active='true']) {
+    background: var(--crepe-color-selected);
   }
 </style>

@@ -41,6 +41,7 @@ pub fn run() {
             commands::set_note_order,
             commands::set_task_hidden,
             commands::toggle_task,
+            commands::delete_task,
             commands::search_notes,
             commands::search_notes_hybrid,
             commands::get_semantic_settings,

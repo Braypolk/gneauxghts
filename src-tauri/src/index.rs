@@ -207,6 +207,53 @@ pub(crate) fn toggle_task_in_markdown(
     Ok(join_task_lines(lines, had_trailing_newline))
 }
 
+pub(crate) fn delete_task_in_markdown(
+    markdown: &str,
+    line_number: usize,
+    task_text: &str,
+) -> Result<String, String> {
+    let normalized = markdown.replace("\r\n", "\n");
+    let had_trailing_newline = normalized.ends_with('\n');
+    let mut lines = normalized.lines().map(str::to_string).collect::<Vec<_>>();
+    let normalized_task_text = normalize_search_text(task_text);
+
+    if lines.is_empty() {
+        return Err("Task not found".to_string());
+    }
+
+    let preferred_index = line_number.saturating_sub(1);
+    let remove_index = if preferred_index < lines.len()
+        && task_line_matches(&lines[preferred_index], &normalized_task_text)
+    {
+        preferred_index
+    } else {
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| task_line_matches(line, &normalized_task_text))
+            .min_by_key(|(index, _)| index.abs_diff(preferred_index))
+            .map(|(index, _)| index)
+            .ok_or_else(|| "Task not found".to_string())?
+    };
+
+    let parent_indent = indentation_width(&lines[remove_index]);
+    lines.remove(remove_index);
+
+    // Remove subtasks: any following lines that are task lines with deeper indentation
+    while remove_index < lines.len() {
+        let line = &lines[remove_index];
+        let is_task = parse_task_line(line).is_some();
+        let indent = indentation_width(line);
+        if is_task && indent > parent_indent {
+            lines.remove(remove_index);
+        } else {
+            break;
+        }
+    }
+
+    Ok(join_task_lines(lines, had_trailing_newline))
+}
+
 pub(crate) fn normalize_search_text(value: &str) -> String {
     collapse_whitespace(value).to_lowercase()
 }

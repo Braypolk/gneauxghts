@@ -8,12 +8,13 @@
     CheckCircle2,
     ChevronDown,
     ChevronRight,
-    CornerDownRight,
     Circle,
+    CornerDownRight,
     Eye,
     EyeOff,
     ExternalLink,
-    RefreshCw
+    RefreshCw,
+    Trash2
   } from 'lucide-svelte';
   import { storePendingTaskTarget } from '$lib/taskNavigation';
 
@@ -59,6 +60,7 @@
   let showHidden = $state(false);
   let tasks = $state<TaskItem[]>([]);
   let togglingTaskKeys = $state<Record<string, boolean>>({});
+  let deletingTaskKeys = $state<Record<string, boolean>>({});
   let isLoading = $state(true);
   let errorMessage = $state('');
   let activeRequest = 0;
@@ -318,6 +320,27 @@
     }
   }
 
+  async function deleteTask(task: TaskItem) {
+    deletingTaskKeys = { ...deletingTaskKeys, [task.taskKey]: true };
+    try {
+      await invoke('delete_task', {
+        notePath: task.notePath,
+        lineNumber: task.lineNumber,
+        taskText: task.text,
+        taskKey: task.taskKey
+      });
+      errorMessage = '';
+      await loadTasks({ background: true });
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+      errorMessage = 'Unable to delete task.';
+    } finally {
+      const next = { ...deletingTaskKeys };
+      delete next[task.taskKey];
+      deletingTaskKeys = next;
+    }
+  }
+
   onMount(() => {
     const storedFilter = readStoredTaskFilter();
     if (storedFilter) {
@@ -553,6 +576,17 @@
                                 <EyeOff class="h-3.5 w-3.5" />
                                 Hide
                               {/if}
+                            </button>
+
+                            <button
+                              type="button"
+                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-wait disabled:opacity-45"
+                              onclick={() => void deleteTask(task)}
+                              disabled={!!deletingTaskKeys[task.taskKey]}
+                              aria-label={`Delete task: ${task.text}`}
+                            >
+                              <Trash2 class="h-3.5 w-3.5" />
+                              Delete
                             </button>
                           </div>
                         </div>

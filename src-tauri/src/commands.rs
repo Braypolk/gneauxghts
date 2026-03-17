@@ -1,7 +1,7 @@
 use crate::{
     index::{
-        build_current_override, build_indexed_note, collapse_whitespace, normalize_search_text, task_key,
-        toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
+        build_current_override, build_indexed_note, collapse_whitespace, delete_task_in_markdown,
+        normalize_search_text, task_key, toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
     },
     search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
     semantic::{
@@ -744,6 +744,37 @@ pub(crate) fn toggle_task(
     timestamps.updated_at_millis = timestamp_millis;
     write_state(&notes_dir, &persisted_state)?;
     upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
+    state
+        .semantic
+        .queue_note_update(&note_path, updated_markdown, timestamp_millis)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn delete_task(
+    state: State<'_, AppState>,
+    note_path: String,
+    line_number: usize,
+    task_text: String,
+    task_key: String,
+) -> Result<(), String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+
+    let note_path = validate_current_path(Some(note_path), &notes_dir)?
+        .ok_or_else(|| "Missing note path".to_string())?;
+    let markdown = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
+    let updated_markdown = delete_task_in_markdown(&markdown, line_number, &task_text)?;
+    fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
+    let timestamp_millis = current_time_millis()?;
+    let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
+    upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
+
+    let mut persisted_state = read_state(&notes_dir)?;
+    persisted_state.hidden_task_keys.retain(|k| k != &task_key);
+    persisted_state.task_timestamps.remove(&task_key);
+    write_state(&notes_dir, &persisted_state)?;
+
     state
         .semantic
         .queue_note_update(&note_path, updated_markdown, timestamp_millis)?;
