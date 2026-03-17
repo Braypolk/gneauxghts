@@ -124,13 +124,13 @@ SEMANTIC_BENCHMARK.md
 - `/` main note editor
 - `/list` master task list
 - `/map` semantic note graph
-- `/settings` theme + semantic controls
+- `/settings` theme, forget button, and semantic controls
 - `/inbox` placeholder route
 
 ## Notes On Behavior
 
 - Autosave writes the current note after short idle periods.
-- "Forget" deletes the current saved note after a hold-to-confirm interaction.
+- "Forget" deletes the current saved note either immediately or after a configurable hold-to-confirm interaction.
 - "unForget" restores the most recently forgotten note from in-memory state.
 - "Remember" saves the current note and clears the editor so you can start another one.
 

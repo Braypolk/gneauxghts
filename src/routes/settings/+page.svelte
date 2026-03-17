@@ -3,6 +3,11 @@
   import { Monitor, Moon, RefreshCcw, Sun } from 'lucide-svelte';
   import { onDestroy, onMount } from 'svelte';
   import {
+    forgetButtonDurationOptions,
+    forgetButtonDurationPreference,
+    setForgetButtonDurationPreference
+  } from '$lib/appSettings';
+  import {
     setThemePreference,
     themeOptions,
     themePreference,
@@ -209,6 +214,42 @@
                   onchange={() => void setThemePreference(option.id)}
                 />
                 <Icon class="h-3.5 w-3.5" />
+                <span>{option.label}</span>
+              </label>
+            {/each}
+          </fieldset>
+        </div>
+      </div>
+
+      <div class="border-t border-border/70 px-6 py-5">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">Forget Button Duration</p>
+            <p class="mt-0.5 text-xs text-muted-foreground">
+              Choose whether forgetting happens instantly or after a hold.
+            </p>
+          </div>
+
+          <fieldset class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
+            <legend class="sr-only">Forget button duration</legend>
+
+            {#each forgetButtonDurationOptions as option}
+              <label
+                title={option.description}
+                class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                  $forgetButtonDurationPreference === option.id
+                    ? 'bg-foreground text-background shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <input
+                  class="sr-only"
+                  type="radio"
+                  name="forget-button-duration"
+                  value={option.id}
+                  checked={$forgetButtonDurationPreference === option.id}
+                  onchange={() => setForgetButtonDurationPreference(option.id)}
+                />
                 <span>{option.label}</span>
               </label>
             {/each}

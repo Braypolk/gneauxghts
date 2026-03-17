@@ -656,3 +656,80 @@
     onSelect={(suggestion) => selectWikilinkSuggestion(suggestion.value)}
   />
 </div>
+
+<style>
+  .notepad-editor-shell {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .notepad-shell,
+  .notepad-editor-shell :global(.milkdown),
+  .notepad-slash-portal {
+    --crepe-color-background: var(--card);
+    --crepe-color-on-background: var(--foreground);
+    --crepe-color-surface: color-mix(in oklab, var(--card) 92%, var(--background));
+    --crepe-color-surface-low: color-mix(in oklab, var(--muted) 74%, var(--card));
+    --crepe-color-on-surface: var(--card-foreground);
+    --crepe-color-on-surface-variant: var(--muted-foreground);
+    --crepe-color-outline: color-mix(in oklab, var(--border) 82%, var(--foreground));
+    --crepe-color-primary: var(--foreground);
+    --crepe-color-secondary: var(--accent);
+    --crepe-color-on-secondary: var(--accent-foreground);
+    --crepe-color-inverse: var(--foreground);
+    --crepe-color-on-inverse: var(--background);
+    --crepe-color-inline-code: var(--destructive);
+    --crepe-color-error: var(--destructive);
+    --crepe-color-hover: color-mix(in oklab, var(--accent) 82%, transparent);
+    --crepe-color-selected: color-mix(in oklab, var(--accent) 92%, var(--background));
+    --crepe-color-inline-area: color-mix(in oklab, var(--muted) 80%, var(--background));
+  }
+
+  .notepad-editor-shell :global(.milkdown) {
+    min-height: 100%;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror) {
+    min-height: 100%;
+    padding-top: 6.5rem;
+    padding-bottom: 100%;
+    overflow-anchor: auto;
+    position: relative;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-wikilink) {
+    border-radius: 0.35rem;
+    background: color-mix(in oklab, var(--accent) 54%, transparent);
+    color: color-mix(in oklab, var(--foreground) 88%, var(--accent-foreground) 12%);
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-thickness: 0.08em;
+    text-underline-offset: 0.14em;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-wikilink:hover) {
+    background: color-mix(in oklab, var(--accent) 72%, transparent);
+  }
+
+  .notepad-editor-shell :global(.ProseMirror.virtual-cursor-enabled) {
+    caret-color: transparent;
+  }
+
+  :global(.dark) .notepad-editor-shell :global(.milkdown .ProseMirror-focused) {
+    --prosemirror-virtual-cursor-color: color-mix(
+      in oklab,
+      var(--foreground) 88%,
+      var(--accent) 12%
+    );
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu) {
+    pointer-events: auto;
+    z-index: 60;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu .menu-groups) {
+    max-height: min(420px, var(--notepad-slash-menu-max-height, calc(100vh - 2rem)));
+  }
+</style>

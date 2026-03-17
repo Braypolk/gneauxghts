@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
   import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle } from 'lucide-svelte';
+  import {
+    forgetButtonDurationPreference,
+    resolveForgetButtonDurationMs
+  } from '$lib/appSettings';
   import type { SearchItem } from '$lib/types/semantic';
 
   interface TextRange {
@@ -65,12 +69,14 @@
   let isSearchFocused = $state(false);
   let activeIndex = $state(0);
   let lastHandledFocusRequest = 0;
-  const FORGET_HOLD_DURATION_MS = 1000;
+  const FORGET_HOLD_COMPLETION_DELAY_MS = 100;
   let isHoldingForget = $state(false);
   let forgetHoldProgress = $state(0);
   let forgetHoldStartedAt = 0;
   let forgetHoldFrame: number | null = null;
   let forgetHoldTimeout: ReturnType<typeof window.setTimeout> | null = null;
+  let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
+  let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
 
   const visibleItems = $derived.by<VisibleItem[]>(() => {
     if (searchQuery.trim() === '') {
@@ -108,10 +114,10 @@
   }
 
   function tickForgetHoldProgress() {
-    if (!isHoldingForget) return;
+    if (!isHoldingForget || !isForgetHoldEnabled) return;
 
     const elapsed = performance.now() - forgetHoldStartedAt;
-    forgetHoldProgress = Math.min(elapsed / FORGET_HOLD_DURATION_MS, 1);
+    forgetHoldProgress = Math.min(elapsed / forgetHoldDurationMs, 1);
 
     if (forgetHoldProgress >= 1) {
       forgetHoldFrame = null;
@@ -122,7 +128,7 @@
   }
 
   function beginForgetHold() {
-    if (isHoldingForget) return;
+    if (!isForgetHoldEnabled || isHoldingForget) return;
 
     clearForgetHoldFrame();
     clearForgetHoldTimeout();
@@ -131,9 +137,13 @@
     forgetHoldStartedAt = performance.now();
     tickForgetHoldProgress();
     forgetHoldTimeout = window.setTimeout(() => {
-      resetForgetHold();
-      onForget();
-    }, FORGET_HOLD_DURATION_MS);
+      clearForgetHoldFrame();
+      forgetHoldProgress = 1;
+      forgetHoldTimeout = window.setTimeout(() => {
+        resetForgetHold();
+        onForget();
+      }, FORGET_HOLD_COMPLETION_DELAY_MS);
+    }, forgetHoldDurationMs);
   }
 
   function cancelForgetHold() {
@@ -151,6 +161,11 @@
     if (canUnforget) {
       resetForgetHold();
     }
+  });
+
+  $effect(() => {
+    $forgetButtonDurationPreference;
+    resetForgetHold();
   });
 
   $effect(() => {
@@ -206,20 +221,29 @@
   }
 
   function handleForgetPointerDown(event: PointerEvent) {
-    if (event.button !== 0) return;
+    if (!isForgetHoldEnabled || event.button !== 0) return;
     beginForgetHold();
   }
 
   function handleForgetKeyDown(event: KeyboardEvent) {
-    if (event.repeat || (event.key !== ' ' && event.key !== 'Enter')) return;
+    if (!isForgetHoldEnabled || event.repeat || (event.key !== ' ' && event.key !== 'Enter')) return;
     event.preventDefault();
     beginForgetHold();
   }
 
   function handleForgetKeyUp(event: KeyboardEvent) {
-    if (event.key !== ' ' && event.key !== 'Enter') return;
+    if (!isForgetHoldEnabled || (event.key !== ' ' && event.key !== 'Enter')) return;
     event.preventDefault();
     cancelForgetHold();
+  }
+
+  function handleForgetClick() {
+    if (isForgetHoldEnabled) return;
+    onForget();
+  }
+
+  function getForgetButtonAriaLabel() {
+    return isForgetHoldEnabled ? 'Hold to forget' : 'Forget';
   }
 
   onDestroy(() => {
@@ -363,22 +387,24 @@
     {#if canUnforget}
       <button
         type="button"
-        class="bottom-bar-action-button min-[700px]:w-[134px] px-6 py-2.5 bg-secondary hover:bg-accent text-secondary-foreground rounded-full transition-colors shadow-sm cursor-pointer border border-border shrink-0"
+        class="inline-flex h-[2.9rem] w-[2.9rem] shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5"
         onclick={() => onUnforget()}
         aria-label="Unforget"
       >
-        <span class="bottom-bar-action-label">unForget</span>
-        <Undo2 class="bottom-bar-action-icon hidden h-5 w-5" />
+        <span class="hidden min-[700px]:inline">unForget</span>
+        <Undo2 class="h-5 w-5 min-[700px]:hidden" />
       </button>
     {:else}
       <button
         type="button"
-        class="bottom-bar-action-button relative isolate overflow-hidden min-[700px]:w-[134px] px-6 py-2.5 bg-background hover:bg-accent text-muted-foreground hover:text-accent-foreground font-medium rounded-full transition-colors shadow-sm cursor-pointer border border-border shrink-0"
-        class:forget-hold-button-active={isHoldingForget}
-        class:border-slate-300={isHoldingForget}
-        class:shadow-lg={isHoldingForget}
+        class={`relative isolate inline-flex h-[2.9rem] w-[2.9rem] shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-[color,background-color,border-color,box-shadow] duration-200 hover:border-destructive/40 hover:text-muted-foreground active:text-destructive min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5 ${
+          isHoldingForget
+            ? 'border-destructive/70 text-destructive animate-[forget-hold-pulse_0.95s_ease-in-out_infinite_alternate]'
+            : ''
+        }`}
         style={`--forget-progress: ${forgetHoldProgress};`}
-        aria-label="Hold to forget"
+        aria-label={getForgetButtonAriaLabel()}
+        onclick={handleForgetClick}
         onpointerdown={handleForgetPointerDown}
         onpointerup={cancelForgetHold}
         onpointerleave={cancelForgetHold}
@@ -387,25 +413,28 @@
         onkeyup={handleForgetKeyUp}
       >
         <span
-          class="absolute inset-0 z-0 origin-left rounded-[inherit] bg-[linear-gradient(120deg,rgba(241,245,249,0.92)_0%,rgba(226,232,240,0.96)_55%,rgba(203,213,225,0.98)_100%)] [transform:scaleX(var(--forget-progress,0))] transition-[transform,opacity] [transition-duration:120ms,160ms] [transition-timing-function:linear,ease] [opacity:calc(0.22+(var(--forget-progress,0)*0.56))]"
+          class="absolute inset-0 z-0 origin-left rounded-[inherit] bg-destructive/35 transition-[transform,opacity] duration-150 ease-linear"
+          style="transform: scaleX(var(--forget-progress, 0)); opacity: calc(0.14 + (var(--forget-progress, 0) * 0.58));"
           aria-hidden="true"
         ></span>
-        <span
-          class="absolute left-[calc(var(--forget-progress,0)*100%)] top-1/2 z-0 h-4 w-4 rounded-full pointer-events-none bg-[radial-gradient(circle,rgba(255,255,255,0.95)_0%,rgba(226,232,240,0.82)_42%,rgba(226,232,240,0)_72%)] [transform:translate(-50%,-50%)_scale(calc(0.72+(var(--forget-progress,0)*0.38)))] [opacity:calc(var(--forget-progress,0)*1.15)]"
-          aria-hidden="true"
-        ></span>
-        <span class="bottom-bar-action-label relative z-10">Forget</span>
-        <Eraser class="bottom-bar-action-icon relative z-10 hidden h-5 w-5" />
+        <span class="relative z-10 hidden transition duration-200 min-[700px]:inline">
+          Forget
+        </span>
+        <Eraser
+          class={`relative z-10 h-5 w-5 transition-transform duration-200 min-[700px]:hidden ${
+            isHoldingForget ? '-translate-y-px' : ''
+          }`}
+        />
       </button>
     {/if}
 
     <div
-      class="search-bar search-bar-shell relative flex-1 min-w-0 max-w-2xl flex items-center gap-3 rounded-full pl-5 border border-border/70 overflow-visible bg-background"
+      class="search-bar search-bar-shell relative flex flex-1 min-w-0 max-w-2xl items-center gap-3 overflow-visible rounded-full border border-border/70 bg-background pl-5"
       onfocusin={handleSearchFocus}
       onfocusout={handleSearchBlur}
     >
       <Search class="w-4 h-4 shrink-0 text-muted-foreground" />
-      <div class="search-bar-input-wrap flex-1 min-w-0">
+      <div class="flex-1 min-w-0">
         <input
           bind:this={searchInput}
           type="text"
@@ -421,8 +450,9 @@
       <div class="search-mode-toggle flex items-center gap-1 rounded-full bg-card/80 p-1 shrink-0">
         <button
           type="button"
-          class:search-mode-button-active={isSearchFocused && searchMode === 'current'}
-          class="search-mode-button inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-medium text-muted-foreground transition-colors"
+          class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          class:bg-primary={isSearchFocused && searchMode === 'current'}
+          class:text-primary-foreground={isSearchFocused && searchMode === 'current'}
           onmousedown={(event) => event.preventDefault()}
           onclick={() => handleSearchModeClick('current')}
           aria-label="Current notes"
@@ -431,8 +461,9 @@
         </button>
         <button
           type="button"
-          class:search-mode-button-active={isSearchFocused && searchMode === 'all'}
-          class="search-mode-button inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-medium text-muted-foreground transition-colors"
+          class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          class:bg-primary={isSearchFocused && searchMode === 'all'}
+          class:text-primary-foreground={isSearchFocused && searchMode === 'all'}
           onmousedown={(event) => event.preventDefault()}
           onclick={() => handleSearchModeClick('all')}
           aria-label="All notes"
@@ -465,8 +496,8 @@
                       <button
                         type="button"
                         data-search-result-active={index === activeIndex ? 'true' : 'false'}
-                        class:search-result-item-active={index === activeIndex}
                         class={getRecentNoteItemClass()}
+                        class:bg-accent={index === activeIndex}
                         onmousedown={(event) => event.preventDefault()}
                         onclick={() => selectItem({ kind: 'note', item })}
                       >
@@ -488,8 +519,8 @@
                       <button
                         type="button"
                         data-search-result-active={globalIndex === activeIndex ? 'true' : 'false'}
-                        class:search-result-item-active={globalIndex === activeIndex}
                         class={getRecentTaskItemClass()}
+                        class:bg-accent={globalIndex === activeIndex}
                         onmousedown={(event) => event.preventDefault()}
                         onclick={() => selectItem({ kind: 'task', item })}
                       >
@@ -512,8 +543,8 @@
                 <button
                   type="button"
                   data-search-result-active={index === activeIndex ? 'true' : 'false'}
-                  class:search-result-item-active={index === activeIndex}
                   class={getSearchResultItemClass()}
+                  class:bg-accent={index === activeIndex}
                   onmousedown={(event) => event.preventDefault()}
                   onclick={() => selectItem({ kind: 'search', item })}
                 >
@@ -545,7 +576,7 @@
                   <p class={getExcerptClass()}>
                     {#each buildHighlightedSegments(item.excerpt, item.highlightRanges) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
                       {#if segment.highlighted}
-                        <mark class="search-result-highlight">{segment.text}</mark>
+                        <mark class="rounded-[0.35rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
                       {:else}
                         <span>{segment.text}</span>
                       {/if}
@@ -560,13 +591,26 @@
     </div>
 
     <button
-      class="bottom-bar-action-button min-[700px]:w-[134px] px-6 py-2.5 bg-background hover:bg-accent text-muted-foreground hover:text-accent-foreground font-medium rounded-full transition-colors shadow-sm cursor-pointer border border-border shrink-0"
+      class="inline-flex h-[2.9rem] w-[2.9rem] shrink-0 items-center justify-center rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5"
       type="button"
       onclick={() => onRemember()}
       aria-label="Remember"
     >
-      <span class="bottom-bar-action-label">Remember</span>
-      <Brain class="bottom-bar-action-icon hidden h-5 w-5" />
+      <span class="hidden min-[700px]:inline">Remember</span>
+      <Brain class="h-5 w-5 min-[700px]:hidden" />
     </button>
   </div>
 </div>
+
+<style>
+  .search-bar-input {
+    text-shadow: none;
+    -webkit-text-stroke: 0 transparent;
+    border: 1px solid transparent;
+    display: block;
+    transform: translateZ(0);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    box-sizing: border-box;
+  }
+</style>
