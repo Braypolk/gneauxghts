@@ -1,7 +1,8 @@
 use crate::{
     index::{
         build_current_override, build_indexed_note, collapse_whitespace, delete_task_in_markdown,
-        normalize_search_text, task_key, toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
+        normalize_search_text, task_key, toggle_task_in_markdown, AppState, IndexedNote,
+        NotesIndex,
     },
     search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
     semantic::{
@@ -9,14 +10,15 @@ use crate::{
         SemanticStatus,
     },
     state::{
-        is_valid_note_path, notes_root, persist_note, prune_recent_paths, push_unique, read_state,
-        touch_recent_path, validate_current_path, write_state, PersistedState,
-        PersistedTaskTimestamps,
+        forgotten_notes_root, is_valid_note_path, notes_root, persist_note, prune_recent_paths,
+        push_unique, read_state, touch_recent_path, validate_current_path, write_state,
+        PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
     },
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -94,6 +96,26 @@ pub(crate) struct RecentTaskItem {
     updated_at_millis: u64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ForgottenNoteSummary {
+    forgotten_path: String,
+    original_path: String,
+    title: String,
+    file_name: String,
+    forgotten_at_millis: u64,
+    purge_after_days: u32,
+    purge_at_millis: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RestoredForgottenNote {
+    forgotten_path: String,
+    restored_path: String,
+    title: String,
+}
+
 #[derive(Clone)]
 struct HybridCandidate {
     lexical_score: f32,
@@ -106,6 +128,7 @@ struct HybridCandidate {
 pub(crate) fn load_note_session() -> Result<NoteSession, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
     load_note_session_from_notes_dir(&notes_dir)
 }
 
@@ -113,6 +136,7 @@ pub(crate) fn load_note_session() -> Result<NoteSession, String> {
 pub(crate) fn open_note(path: String) -> Result<NoteSession, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
     open_note_from_notes_dir(&notes_dir, path)
 }
 
@@ -217,6 +241,7 @@ pub(crate) fn save_note(
 ) -> Result<NoteSession, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let previous_note = current_path
@@ -281,6 +306,7 @@ pub(crate) fn remember_note(
 ) -> Result<(), String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let previous_note = current_path
@@ -341,17 +367,27 @@ pub(crate) fn remember_note(
 pub(crate) fn forget_note(
     state: State<'_, AppState>,
     current_path: Option<String>,
-) -> Result<(), String> {
+    retention_days: u32,
+) -> Result<Option<ForgottenNoteSummary>, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let mut persisted_state = read_state(&notes_dir)?;
 
     if let Some(note_path) = current_path.as_ref() {
+        validate_retention_days(retention_days)?;
         let previous_note = read_indexed_note_from_path(note_path)?;
+        let forgotten_dir = forgotten_notes_root(&notes_dir);
+        fs::create_dir_all(&forgotten_dir).map_err(|err| err.to_string())?;
+        let forgotten_path = resolve_forgotten_target_path(&notes_dir, note_path);
+        let forgotten_at_millis = current_time_millis()?;
+        let purge_at_millis = forgotten_at_millis
+            .saturating_add(u64::from(retention_days).saturating_mul(24 * 60 * 60 * 1000));
+
         if note_path.exists() {
-            fs::remove_file(note_path).map_err(|err| err.to_string())?;
+            fs::rename(note_path, &forgotten_path).map_err(|err| err.to_string())?;
         }
 
         reconcile_note_task_timestamps(
@@ -369,13 +405,143 @@ pub(crate) fn forget_note(
         persisted_state
             .recent_paths
             .retain(|path| path != &raw_path);
+        persisted_state
+            .forgotten_notes
+            .push(PersistedForgottenNote {
+                forgotten_path: forgotten_path.to_string_lossy().into_owned(),
+                original_path: raw_path.clone(),
+                title: previous_note
+                    .as_ref()
+                    .map(|note| note.title.clone())
+                    .unwrap_or_else(|| {
+                        note_path
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned()
+                    }),
+                forgotten_at_millis,
+                purge_after_days: retention_days,
+                purge_at_millis,
+            });
         state.semantic.queue_delete_note(note_path)?;
+        let summary = build_forgotten_note_summary(
+            persisted_state
+                .forgotten_notes
+                .last()
+                .expect("forgotten note just inserted"),
+        );
+        write_state(&notes_dir, &persisted_state)?;
+        remove_notes_index_entry(&state, note_path)?;
+        return Ok(Some(summary));
     }
 
     write_state(&notes_dir, &persisted_state)?;
-    if let Some(note_path) = current_path.as_deref() {
-        remove_notes_index_entry(&state, note_path)?;
+    Ok(None)
+}
+
+#[tauri::command]
+pub(crate) fn list_forgotten_notes() -> Result<Vec<ForgottenNoteSummary>, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
+
+    let mut forgotten_notes = read_state(&notes_dir)?.forgotten_notes;
+    forgotten_notes.sort_by(|left, right| {
+        right
+            .forgotten_at_millis
+            .cmp(&left.forgotten_at_millis)
+            .then_with(|| left.title.cmp(&right.title))
+    });
+
+    Ok(forgotten_notes
+        .iter()
+        .map(build_forgotten_note_summary)
+        .collect())
+}
+
+#[tauri::command]
+pub(crate) fn restore_forgotten_notes(
+    state: State<'_, AppState>,
+    forgotten_paths: Vec<String>,
+) -> Result<Vec<RestoredForgottenNote>, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
+
+    let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)?;
+    if selected_paths.is_empty() {
+        return Ok(Vec::new());
     }
+
+    let mut persisted_state = read_state(&notes_dir)?;
+    let mut restored_notes = Vec::new();
+    let mut index = 0usize;
+
+    while index < persisted_state.forgotten_notes.len() {
+        if !selected_paths.contains(&persisted_state.forgotten_notes[index].forgotten_path) {
+            index += 1;
+            continue;
+        }
+
+        let forgotten_note = persisted_state.forgotten_notes.remove(index);
+        let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
+        if !forgotten_path.is_file() {
+            write_state(&notes_dir, &persisted_state)?;
+            continue;
+        }
+
+        let restored_path =
+            resolve_restore_target_path(&notes_dir, Path::new(&forgotten_note.original_path));
+        let markdown = fs::read_to_string(&forgotten_path).map_err(|err| err.to_string())?;
+        let timestamp_millis = current_time_millis()?;
+        fs::rename(&forgotten_path, &restored_path).map_err(|err| err.to_string())?;
+
+        let note = build_indexed_note(&restored_path, &markdown, timestamp_millis);
+        upsert_notes_index_entry(&state, restored_path.clone(), note)?;
+        state
+            .semantic
+            .queue_note_update(&restored_path, markdown, timestamp_millis)?;
+
+        restored_notes.push(RestoredForgottenNote {
+            forgotten_path: forgotten_note.forgotten_path,
+            restored_path: restored_path.to_string_lossy().into_owned(),
+            title: forgotten_note.title,
+        });
+        write_state(&notes_dir, &persisted_state)?;
+    }
+
+    Ok(restored_notes)
+}
+
+#[tauri::command]
+pub(crate) fn delete_forgotten_notes(forgotten_paths: Vec<String>) -> Result<(), String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
+
+    let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)?;
+    if selected_paths.is_empty() {
+        return Ok(());
+    }
+
+    let mut persisted_state = read_state(&notes_dir)?;
+    let mut index = 0usize;
+
+    while index < persisted_state.forgotten_notes.len() {
+        if !selected_paths.contains(&persisted_state.forgotten_notes[index].forgotten_path) {
+            index += 1;
+            continue;
+        }
+
+        let forgotten_note = persisted_state.forgotten_notes.remove(index);
+        let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
+        if forgotten_path.exists() {
+            fs::remove_file(&forgotten_path).map_err(|err| err.to_string())?;
+        }
+        write_state(&notes_dir, &persisted_state)?;
+    }
+
     Ok(())
 }
 
@@ -388,6 +554,7 @@ pub(crate) fn list_recent_notes(
 ) -> Result<Vec<NoteSearchResult>, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    cleanup_expired_forgotten_notes(&notes_dir)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let _ = current_markdown;
@@ -1178,9 +1345,9 @@ fn resolve_wikilink_note_for_sections(
     note_reference: Option<&str>,
 ) -> Result<Option<IndexedNote>, String> {
     let Some(note_reference) = note_reference else {
-        return Ok(current_override
-            .cloned()
-            .or_else(|| current_path.and_then(|path| read_indexed_note_from_path(path).ok().flatten())));
+        return Ok(current_override.cloned().or_else(|| {
+            current_path.and_then(|path| read_indexed_note_from_path(path).ok().flatten())
+        }));
     };
 
     if let Some(current_override) = current_override {
@@ -1265,7 +1432,9 @@ fn build_note_suggestions(
             || file_label.contains(&normalized_query);
 
         if matches_query && seen_values.insert(value.clone()) {
-            let rank = if note_label.starts_with(&normalized_query) || file_label.starts_with(&normalized_query) {
+            let rank = if note_label.starts_with(&normalized_query)
+                || file_label.starts_with(&normalized_query)
+            {
                 0
             } else {
                 1
@@ -1732,6 +1901,29 @@ struct TaskTimestampCandidate {
     fallback_millis: u64,
 }
 
+fn validate_retention_days(retention_days: u32) -> Result<(), String> {
+    match retention_days {
+        1 | 7 | 30 => Ok(()),
+        _ => Err("Unsupported forgotten note retention window".to_string()),
+    }
+}
+
+fn build_forgotten_note_summary(forgotten_note: &PersistedForgottenNote) -> ForgottenNoteSummary {
+    ForgottenNoteSummary {
+        forgotten_path: forgotten_note.forgotten_path.clone(),
+        original_path: forgotten_note.original_path.clone(),
+        title: forgotten_note.title.clone(),
+        file_name: Path::new(&forgotten_note.original_path)
+            .file_stem()
+            .unwrap_or_else(|| OsStr::new("untitled"))
+            .to_string_lossy()
+            .into_owned(),
+        forgotten_at_millis: forgotten_note.forgotten_at_millis,
+        purge_after_days: forgotten_note.purge_after_days,
+        purge_at_millis: forgotten_note.purge_at_millis,
+    }
+}
+
 fn current_time_millis() -> Result<u64, String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1750,6 +1942,106 @@ fn read_modified_millis(path: &Path) -> Result<u64, String> {
         .as_millis();
 
     Ok(modified.min(u128::from(u64::MAX)) as u64)
+}
+
+fn validate_forgotten_path_inputs(
+    forgotten_paths: Vec<String>,
+    notes_dir: &Path,
+) -> Result<HashSet<String>, String> {
+    let forgotten_root = forgotten_notes_root(notes_dir);
+    let mut selected = HashSet::new();
+
+    for raw_path in forgotten_paths {
+        let path = PathBuf::from(&raw_path);
+        if !path.starts_with(&forgotten_root) {
+            return Err("Forgotten note path is outside the forgotten notes directory".to_string());
+        }
+        if !path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        {
+            return Err("Forgotten note path is not a markdown file".to_string());
+        }
+        selected.insert(raw_path);
+    }
+
+    Ok(selected)
+}
+
+fn resolve_forgotten_target_path(notes_dir: &Path, original_path: &Path) -> PathBuf {
+    unique_path_in_dir(
+        &forgotten_notes_root(notes_dir),
+        original_path
+            .file_name()
+            .unwrap_or_else(|| OsStr::new("Untitled Note.md")),
+    )
+}
+
+fn resolve_restore_target_path(notes_dir: &Path, original_path: &Path) -> PathBuf {
+    if original_path.parent() == Some(notes_dir) && !original_path.exists() {
+        return original_path.to_path_buf();
+    }
+
+    unique_path_in_dir(
+        notes_dir,
+        original_path
+            .file_name()
+            .unwrap_or_else(|| OsStr::new("Untitled Note.md")),
+    )
+}
+
+fn unique_path_in_dir(directory: &Path, preferred_file_name: &OsStr) -> PathBuf {
+    let preferred_path = directory.join(preferred_file_name);
+    if !preferred_path.exists() {
+        return preferred_path;
+    }
+
+    let preferred_path = Path::new(preferred_file_name);
+    let stem = preferred_path
+        .file_stem()
+        .unwrap_or_else(|| OsStr::new("Untitled Note"))
+        .to_string_lossy();
+    let extension = preferred_path
+        .extension()
+        .map(|value| value.to_string_lossy());
+
+    for suffix in 2.. {
+        let candidate_name = match extension.as_deref() {
+            Some(extension) if !extension.is_empty() => format!("{stem} {suffix}.{extension}"),
+            _ => format!("{stem} {suffix}"),
+        };
+        let candidate = directory.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    unreachable!("unbounded path search always returns")
+}
+
+fn cleanup_expired_forgotten_notes(notes_dir: &Path) -> Result<(), String> {
+    let now = current_time_millis()?;
+    let mut persisted_state = read_state(notes_dir)?;
+    let original_len = persisted_state.forgotten_notes.len();
+    let mut kept_notes = Vec::with_capacity(original_len);
+
+    for forgotten_note in persisted_state.forgotten_notes.drain(..) {
+        let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
+        if forgotten_note.purge_at_millis <= now {
+            if forgotten_path.exists() {
+                fs::remove_file(&forgotten_path).map_err(|err| err.to_string())?;
+            }
+            continue;
+        }
+        kept_notes.push(forgotten_note);
+    }
+
+    if kept_notes.len() != original_len {
+        persisted_state.forgotten_notes = kept_notes;
+        write_state(notes_dir, &persisted_state)?;
+    }
+
+    Ok(())
 }
 
 fn upsert_notes_index_entry(
@@ -2006,7 +2298,10 @@ mod tests {
             state.last_opened_path,
             Some(note_path.to_string_lossy().into_owned())
         );
-        assert_eq!(state.recent_paths, vec![note_path.to_string_lossy().into_owned()]);
+        assert_eq!(
+            state.recent_paths,
+            vec![note_path.to_string_lossy().into_owned()]
+        );
     }
 
     #[test]

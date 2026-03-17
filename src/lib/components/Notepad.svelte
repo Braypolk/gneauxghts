@@ -2,6 +2,7 @@
   import type { Crepe } from '@milkdown/crepe';
   import { onMount, tick } from 'svelte';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
+  import { forgottenNoteRetentionPreference } from '$lib/appSettings';
   import type { SearchItem } from '$lib/types/semantic';
   import type { ActiveWikilink } from './notepadWikilinks';
   import { composeMarkdown } from './notepadDocument';
@@ -35,6 +36,7 @@
     loadSavedNoteSession,
     openNoteSession,
     rememberNoteSession,
+    restoreForgottenNotes,
     saveNoteSession,
     shouldSkipAutosave,
     type ForgottenNote,
@@ -148,19 +150,30 @@
   }
 
   async function clearNotepad({ canRestore = true }: { canRestore?: boolean } = {}) {
+    if (currentNotePath) {
+      cancelPendingAutosave();
+      await enqueueSave('autosave');
+    }
+
     const draft = { title, bodyMarkdown, currentNotePath };
     const hasContent = hasNotepadContent(draft);
-    const noteToForget = canRestore && hasContent ? createForgottenNote(draft) : null;
+    let forgottenPath: string | null = null;
 
     if (currentNotePath) {
       try {
-        await forgetNoteSession(currentNotePath);
+        const forgottenNoteSummary = await forgetNoteSession(
+          currentNotePath,
+          $forgottenNoteRetentionPreference
+        );
+        forgottenPath = forgottenNoteSummary?.forgottenPath ?? null;
       } catch (error) {
         console.error('Failed to forget note:', error);
         return;
       }
     }
 
+    const noteToForget =
+      canRestore && hasContent ? createForgottenNote(draft, forgottenPath) : null;
     forgottenNote = noteToForget;
     applySessionSnapshot(createEmptySessionSnapshot());
     canUnforget = canRestore && hasContent;
@@ -171,6 +184,28 @@
 
   async function unforgetNotepad() {
     if (!forgottenNote) return;
+
+    if (forgottenNote.forgottenPath) {
+      try {
+        const restoredNotes = await restoreForgottenNotes([forgottenNote.forgottenPath]);
+        const restoredPath = restoredNotes[0]?.restoredPath;
+        if (!restoredPath) {
+          return;
+        }
+
+        applySessionSnapshot(await openNoteSession(restoredPath));
+        canUnforget = false;
+        forgottenNote = null;
+        await replaceEditorContent(bodyMarkdown);
+        scheduleSearch();
+        void loadRecentNotes();
+        return;
+      } catch (error) {
+        console.error('Failed to restore forgotten note:', error);
+        return;
+      }
+    }
+
     applySessionSnapshot({
       ...forgottenNote,
       lastSavedMarkdown: '',

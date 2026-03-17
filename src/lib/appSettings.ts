@@ -1,8 +1,10 @@
 import { writable } from 'svelte/store';
 
 export type ForgetButtonDurationPreference = 'none' | 'short' | 'medium' | 'long';
+export type ForgottenNoteRetentionPreference = 1 | 7 | 30;
 
 const FORGET_BUTTON_DURATION_STORAGE_KEY = 'gneauxghts.forget-button-duration';
+const FORGOTTEN_NOTE_RETENTION_STORAGE_KEY = 'gneauxghts.forgotten-note-retention-days';
 
 const FORGET_BUTTON_DURATION_MS: Record<ForgetButtonDurationPreference, number> = {
   none: 0,
@@ -42,6 +44,32 @@ export const forgetButtonDurationPreference = writable<ForgetButtonDurationPrefe
   readStoredForgetButtonDurationPreference()
 );
 
+export const forgottenNoteRetentionOptions = [
+  {
+    id: 1,
+    label: '1 day',
+    description: 'Delete forgotten notes after one day.'
+  },
+  {
+    id: 7,
+    label: '7 days',
+    description: 'Keep forgotten notes for one week.'
+  },
+  {
+    id: 30,
+    label: '30 days',
+    description: 'Keep forgotten notes for one month.'
+  }
+] as const satisfies ReadonlyArray<{
+  id: ForgottenNoteRetentionPreference;
+  label: string;
+  description: string;
+}>;
+
+export const forgottenNoteRetentionPreference = writable<ForgottenNoteRetentionPreference>(
+  readStoredForgottenNoteRetentionPreference()
+);
+
 export function setForgetButtonDurationPreference(
   nextPreference: ForgetButtonDurationPreference
 ): void {
@@ -53,6 +81,13 @@ export function resolveForgetButtonDurationMs(
   preference: ForgetButtonDurationPreference
 ): number {
   return FORGET_BUTTON_DURATION_MS[preference];
+}
+
+export function setForgottenNoteRetentionPreference(
+  nextPreference: ForgottenNoteRetentionPreference
+): void {
+  forgottenNoteRetentionPreference.set(nextPreference);
+  persistForgottenNoteRetentionPreference(nextPreference);
 }
 
 function readStoredForgetButtonDurationPreference(): ForgetButtonDurationPreference {
@@ -73,6 +108,19 @@ function readStoredForgetButtonDurationPreference(): ForgetButtonDurationPrefere
   return 'medium';
 }
 
+function readStoredForgottenNoteRetentionPreference(): ForgottenNoteRetentionPreference {
+  if (!isBrowser()) {
+    return 7;
+  }
+
+  const storedPreference = window.localStorage.getItem(FORGOTTEN_NOTE_RETENTION_STORAGE_KEY);
+  if (storedPreference === '1') return 1;
+  if (storedPreference === '7') return 7;
+  if (storedPreference === '30') return 30;
+
+  return 7;
+}
+
 function persistForgetButtonDurationPreference(
   preference: ForgetButtonDurationPreference
 ): void {
@@ -81,6 +129,16 @@ function persistForgetButtonDurationPreference(
   }
 
   window.localStorage.setItem(FORGET_BUTTON_DURATION_STORAGE_KEY, preference);
+}
+
+function persistForgottenNoteRetentionPreference(
+  preference: ForgottenNoteRetentionPreference
+): void {
+  if (!isBrowser()) {
+    return;
+  }
+
+  window.localStorage.setItem(FORGOTTEN_NOTE_RETENTION_STORAGE_KEY, String(preference));
 }
 
 function isBrowser(): boolean {

@@ -10,6 +10,7 @@ use std::{
 
 const NOTES_DIRECTORY_NAME: &str = "Gneauxghts";
 const STATE_FILE_NAME: &str = ".gneauxghts-state.json";
+const FORGOTTEN_DIRECTORY_NAME: &str = ".forgotten";
 const DEFAULT_NOTE_NAME: &str = "Untitled Note";
 const MAX_FILE_STEM_LENGTH: usize = 80;
 const MAX_RECENT_NOTES: usize = 20;
@@ -19,6 +20,17 @@ const MAX_RECENT_NOTES: usize = 20;
 pub(crate) struct PersistedTaskTimestamps {
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PersistedForgottenNote {
+    pub(crate) forgotten_path: String,
+    pub(crate) original_path: String,
+    pub(crate) title: String,
+    pub(crate) forgotten_at_millis: u64,
+    pub(crate) purge_after_days: u32,
+    pub(crate) purge_at_millis: u64,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -37,11 +49,17 @@ pub(crate) struct PersistedState {
     pub(crate) collapsed_note_paths: Vec<String>,
     #[serde(default)]
     pub(crate) task_timestamps: HashMap<String, PersistedTaskTimestamps>,
+    #[serde(default)]
+    pub(crate) forgotten_notes: Vec<PersistedForgottenNote>,
 }
 
 pub(crate) fn notes_root() -> Result<PathBuf, String> {
     let home = home_dir().ok_or_else(|| "Unable to determine the home directory".to_string())?;
     Ok(home.join("Documents").join(NOTES_DIRECTORY_NAME))
+}
+
+pub(crate) fn forgotten_notes_root(notes_dir: &Path) -> PathBuf {
+    notes_dir.join(FORGOTTEN_DIRECTORY_NAME)
 }
 
 pub(crate) fn read_state(notes_dir: &Path) -> Result<PersistedState, String> {
@@ -58,6 +76,7 @@ pub(crate) fn read_state(notes_dir: &Path) -> Result<PersistedState, String> {
     prune_hidden_note_paths(&mut state, notes_dir);
     prune_note_order(&mut state, notes_dir);
     prune_collapsed_note_paths(&mut state, notes_dir);
+    prune_forgotten_notes(&mut state, notes_dir);
     Ok(state)
 }
 
@@ -70,12 +89,14 @@ pub(crate) fn write_state(notes_dir: &Path, state: &PersistedState) -> Result<()
         note_order: state.note_order.clone(),
         collapsed_note_paths: state.collapsed_note_paths.clone(),
         task_timestamps: state.task_timestamps.clone(),
+        forgotten_notes: state.forgotten_notes.clone(),
     };
     prune_recent_paths(&mut state, notes_dir);
     dedupe_hidden_task_keys(&mut state);
     prune_hidden_note_paths(&mut state, notes_dir);
     prune_note_order(&mut state, notes_dir);
     prune_collapsed_note_paths(&mut state, notes_dir);
+    prune_forgotten_notes(&mut state, notes_dir);
     let serialized = serde_json::to_string_pretty(&state).map_err(|err| err.to_string())?;
     fs::write(state_path(notes_dir), serialized).map_err(|err| err.to_string())
 }
@@ -126,12 +147,21 @@ pub(crate) fn validate_current_path(
     if !is_path_in_notes_dir(&path, notes_dir) {
         return Err("Current note path is outside the notes directory".to_string());
     }
+    if is_forgotten_note_path(&path, notes_dir) {
+        return Err("Current note path is inside the forgotten notes directory".to_string());
+    }
 
     Ok(Some(path))
 }
 
 pub(crate) fn is_valid_note_path(path: &Path, notes_dir: &Path) -> bool {
-    is_path_in_notes_dir(path, notes_dir) && is_note_file(path)
+    is_path_in_notes_dir(path, notes_dir)
+        && !is_forgotten_note_path(path, notes_dir)
+        && is_note_file(path)
+}
+
+pub(crate) fn is_forgotten_note_path(path: &Path, notes_dir: &Path) -> bool {
+    path.starts_with(forgotten_notes_root(notes_dir))
 }
 
 pub(crate) fn persist_note(
@@ -244,6 +274,22 @@ fn prune_collapsed_note_paths(state: &mut PersistedState, notes_dir: &Path) {
     });
 }
 
+fn prune_forgotten_notes(state: &mut PersistedState, notes_dir: &Path) {
+    let mut seen = HashSet::new();
+    state.forgotten_notes.retain(|forgotten_note| {
+        let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
+        let original_path = PathBuf::from(&forgotten_note.original_path);
+        !forgotten_note.title.trim().is_empty()
+            && forgotten_note.purge_after_days > 0
+            && forgotten_note.purge_at_millis >= forgotten_note.forgotten_at_millis
+            && forgotten_path.is_file()
+            && is_forgotten_note_path(&forgotten_path, notes_dir)
+            && is_path_in_notes_dir(&original_path, notes_dir)
+            && !is_forgotten_note_path(&original_path, notes_dir)
+            && seen.insert(forgotten_note.forgotten_path.clone())
+    });
+}
+
 fn is_path_in_notes_dir(path: &Path, notes_dir: &Path) -> bool {
     path.starts_with(notes_dir)
 }
@@ -283,8 +329,8 @@ fn resolve_target_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_file_stem, persist_note, read_state, write_state, PersistedState,
-        PersistedTaskTimestamps,
+        derive_file_stem, forgotten_notes_root, persist_note, read_state, write_state,
+        PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
     };
     use crate::test_support::TestDir;
     use std::{collections::HashMap, fs};
@@ -334,6 +380,11 @@ mod tests {
         let live_note = notes_dir.join("Live Note.md");
         fs::write(&live_note, "# Live Note\n\nBody").expect("write live note");
         let stale_note = notes_dir.join("Missing Note.md");
+        let forgotten_dir = forgotten_notes_root(notes_dir);
+        fs::create_dir_all(&forgotten_dir).expect("create forgotten dir");
+        let live_forgotten_note = forgotten_dir.join("Live Note.md");
+        fs::write(&live_forgotten_note, "# Live Note\n\nBody").expect("write forgotten note");
+        let stale_forgotten_note = forgotten_dir.join("Missing Note.md");
 
         let mut task_timestamps = HashMap::new();
         task_timestamps.insert(
@@ -353,11 +404,7 @@ mod tests {
                     live_note.to_string_lossy().into_owned(),
                     live_note.to_string_lossy().into_owned(),
                 ],
-                hidden_task_keys: vec![
-                    String::new(),
-                    "task-1".to_string(),
-                    "task-1".to_string(),
-                ],
+                hidden_task_keys: vec![String::new(), "task-1".to_string(), "task-1".to_string()],
                 hidden_note_paths: vec![
                     stale_note.to_string_lossy().into_owned(),
                     live_note.to_string_lossy().into_owned(),
@@ -374,6 +421,32 @@ mod tests {
                     live_note.to_string_lossy().into_owned(),
                 ],
                 task_timestamps,
+                forgotten_notes: vec![
+                    PersistedForgottenNote {
+                        forgotten_path: stale_forgotten_note.to_string_lossy().into_owned(),
+                        original_path: live_note.to_string_lossy().into_owned(),
+                        title: "Missing forgotten".to_string(),
+                        forgotten_at_millis: 10,
+                        purge_after_days: 7,
+                        purge_at_millis: 20,
+                    },
+                    PersistedForgottenNote {
+                        forgotten_path: live_forgotten_note.to_string_lossy().into_owned(),
+                        original_path: live_note.to_string_lossy().into_owned(),
+                        title: "Live forgotten".to_string(),
+                        forgotten_at_millis: 30,
+                        purge_after_days: 7,
+                        purge_at_millis: 40,
+                    },
+                    PersistedForgottenNote {
+                        forgotten_path: live_forgotten_note.to_string_lossy().into_owned(),
+                        original_path: live_note.to_string_lossy().into_owned(),
+                        title: "Duplicate forgotten".to_string(),
+                        forgotten_at_millis: 50,
+                        purge_after_days: 7,
+                        purge_at_millis: 60,
+                    },
+                ],
             },
         )
         .expect("write state");
@@ -388,5 +461,10 @@ mod tests {
         assert_eq!(state.note_order, vec![live_raw_path.clone()]);
         assert_eq!(state.collapsed_note_paths, vec![live_raw_path]);
         assert_eq!(state.task_timestamps.len(), 1);
+        assert_eq!(state.forgotten_notes.len(), 1);
+        assert_eq!(
+            state.forgotten_notes[0].forgotten_path,
+            live_forgotten_note.to_string_lossy()
+        );
     }
 }

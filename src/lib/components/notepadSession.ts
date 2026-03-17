@@ -1,11 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { parseStoredMarkdown } from './notepadDocument';
 import type { NoteSession } from './notepadTypes';
+import type { ForgottenNoteSummary, RestoredForgottenNote } from '$lib/types/forgottenNotes';
 
 export interface ForgottenNote {
   title: string;
   bodyMarkdown: string;
   currentNotePath: string | null;
+  forgottenPath: string | null;
 }
 
 export interface NotepadDraft {
@@ -35,11 +37,15 @@ export function hasNotepadContent(draft: NotepadDraft) {
   return draft.title.trim() !== '' || draft.bodyMarkdown.trim() !== '' || draft.currentNotePath !== null;
 }
 
-export function createForgottenNote(draft: NotepadDraft): ForgottenNote {
+export function createForgottenNote(
+  draft: NotepadDraft,
+  forgottenPath: string | null = null
+): ForgottenNote {
   return {
     title: draft.title,
     bodyMarkdown: draft.bodyMarkdown,
-    currentNotePath: draft.currentNotePath
+    currentNotePath: draft.currentNotePath,
+    forgottenPath
   };
 }
 
@@ -82,6 +88,13 @@ export async function rememberNoteSession(markdown: string, currentPath: string 
   await invoke('remember_note', { markdown, currentPath });
 }
 
-export async function forgetNoteSession(currentPath: string) {
-  await invoke('forget_note', { currentPath });
+export async function forgetNoteSession(
+  currentPath: string,
+  retentionDays: 1 | 7 | 30
+) {
+  return invoke<ForgottenNoteSummary | null>('forget_note', { currentPath, retentionDays });
+}
+
+export async function restoreForgottenNotes(forgottenPaths: string[]) {
+  return invoke<RestoredForgottenNote[]>('restore_forgotten_notes', { forgottenPaths });
 }

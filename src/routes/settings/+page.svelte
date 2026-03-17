@@ -5,6 +5,9 @@
   import {
     forgetButtonDurationOptions,
     forgetButtonDurationPreference,
+    forgottenNoteRetentionOptions,
+    forgottenNoteRetentionPreference,
+    setForgottenNoteRetentionPreference,
     setForgetButtonDurationPreference
   } from '$lib/appSettings';
   import {
@@ -13,12 +16,15 @@
     themePreference,
     type ThemePreference
   } from '$lib/theme';
+  import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
   import type {
     SemanticDebugMetrics,
     SemanticDebugSnapshot,
     SemanticSettings,
     SemanticStatus
   } from '$lib/types/semantic';
+
+  type SettingsTab = 'general' | 'forgotten';
 
   const themeIcons: Record<ThemePreference, typeof Monitor> = {
     auto: Monitor,
@@ -29,9 +35,18 @@
   let semanticStatus = $state<SemanticStatus | null>(null);
   let semanticSettings = $state<SemanticSettings | null>(null);
   let semanticDebug = $state<SemanticDebugSnapshot | null>(null);
+  let activeTab = $state<SettingsTab>('general');
+  let forgottenNotes = $state<ForgottenNoteSummary[]>([]);
+  let selectedForgottenPaths = $state<string[]>([]);
+  let isLoadingForgottenNotes = $state(false);
+  let isUpdatingForgottenNotes = $state(false);
   let isSaving = $state(false);
   let isRunningAction = $state(false);
   let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
+  let allForgottenSelected = $derived(
+    forgottenNotes.length > 0 &&
+      forgottenNotes.every((note) => selectedForgottenPaths.includes(note.forgottenPath))
+  );
 
   function stopSemanticPolling() {
     if (semanticPollTimer) {
@@ -157,6 +172,58 @@
     }
   }
 
+  async function loadForgottenNotes() {
+    isLoadingForgottenNotes = true;
+
+    try {
+      forgottenNotes = await invoke<ForgottenNoteSummary[]>('list_forgotten_notes');
+      selectedForgottenPaths = selectedForgottenPaths.filter((path) =>
+        forgottenNotes.some((note) => note.forgottenPath === path)
+      );
+    } catch (error) {
+      console.error('Failed to load forgotten notes:', error);
+    } finally {
+      isLoadingForgottenNotes = false;
+    }
+  }
+
+  async function runForgottenAction(
+    command: 'restore_forgotten_notes' | 'delete_forgotten_notes',
+    forgottenPaths: string[]
+  ) {
+    if (forgottenPaths.length === 0) return;
+
+    isUpdatingForgottenNotes = true;
+    try {
+      await invoke(command, { forgottenPaths });
+      selectedForgottenPaths = selectedForgottenPaths.filter(
+        (path) => !forgottenPaths.includes(path)
+      );
+      await loadForgottenNotes();
+    } catch (error) {
+      console.error(`Failed to run ${command}:`, error);
+    } finally {
+      isUpdatingForgottenNotes = false;
+    }
+  }
+
+  function toggleForgottenSelection(forgottenPath: string, checked: boolean) {
+    if (checked) {
+      selectedForgottenPaths = Array.from(new Set([...selectedForgottenPaths, forgottenPath]));
+      return;
+    }
+
+    selectedForgottenPaths = selectedForgottenPaths.filter((path) => path !== forgottenPath);
+  }
+
+  function toggleAllForgottenSelections(checked: boolean) {
+    selectedForgottenPaths = checked ? forgottenNotes.map((note) => note.forgottenPath) : [];
+  }
+
+  function formatForgottenRetention(days: number) {
+    return `${days} day${days === 1 ? '' : 's'}`;
+  }
+
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
       void loadSemanticStatus();
@@ -169,6 +236,7 @@
 
   onMount(() => {
     void loadSemanticState();
+    void loadForgottenNotes();
   });
 
   onDestroy(() => {
@@ -185,6 +253,37 @@
         <p class="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">Settings</p>
       </div>
 
+      <div class="border-t border-border/70 px-6 py-4">
+        <div class="inline-flex items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
+          <button
+            class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === 'general'
+                ? 'bg-foreground text-background shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            type="button"
+            onclick={() => (activeTab = 'general')}
+          >
+            General
+          </button>
+          <button
+            class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+              activeTab === 'forgotten'
+                ? 'bg-foreground text-background shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            type="button"
+            onclick={() => {
+              activeTab = 'forgotten';
+              void loadForgottenNotes();
+            }}
+          >
+            Forgotten Notes
+          </button>
+        </div>
+      </div>
+
+      {#if activeTab === 'general'}
       <div class="border-t border-border/70 px-6 py-5">
         <div class="flex items-center justify-between gap-4">
           <div>
@@ -249,6 +348,42 @@
                   value={option.id}
                   checked={$forgetButtonDurationPreference === option.id}
                   onchange={() => setForgetButtonDurationPreference(option.id)}
+                />
+                <span>{option.label}</span>
+              </label>
+            {/each}
+          </fieldset>
+        </div>
+      </div>
+
+      <div class="border-t border-border/70 px-6 py-5">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">Forgotten Note Retention</p>
+            <p class="mt-0.5 text-xs text-muted-foreground">
+              Forgotten notes move into `.forgotten` before they are permanently deleted.
+            </p>
+          </div>
+
+          <fieldset class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
+            <legend class="sr-only">Forgotten note retention</legend>
+
+            {#each forgottenNoteRetentionOptions as option}
+              <label
+                title={option.description}
+                class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                  $forgottenNoteRetentionPreference === option.id
+                    ? 'bg-foreground text-background shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <input
+                  class="sr-only"
+                  type="radio"
+                  name="forgotten-note-retention"
+                  value={option.id}
+                  checked={$forgottenNoteRetentionPreference === option.id}
+                  onchange={() => setForgottenNoteRetentionPreference(option.id)}
                 />
                 <span>{option.label}</span>
               </label>
@@ -574,6 +709,124 @@
           {/if}
         {/if}
       </div>
+      {:else}
+        <div class="border-t border-border/70 px-6 py-5">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-sm font-medium">Forgotten Notes</p>
+              <p class="mt-0.5 text-xs text-muted-foreground">
+                Review notes in `.forgotten`, then restore or permanently delete them.
+              </p>
+            </div>
+
+            <button
+              class="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+              type="button"
+              disabled={isLoadingForgottenNotes || isUpdatingForgottenNotes}
+              onclick={() => void loadForgottenNotes()}
+            >
+              <RefreshCcw class="h-4 w-4" />
+              Refresh
+            </button>
+          </div>
+
+          <div class="mt-6 rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <label class="inline-flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={allForgottenSelected}
+                  onchange={(event) =>
+                    toggleAllForgottenSelections((event.currentTarget as HTMLInputElement).checked)}
+                />
+                <span>Select all</span>
+              </label>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  type="button"
+                  disabled={selectedForgottenPaths.length === 0 || isUpdatingForgottenNotes}
+                  onclick={() =>
+                    void runForgottenAction('restore_forgotten_notes', selectedForgottenPaths)}
+                >
+                  Restore selected
+                </button>
+                <button
+                  class="rounded-full border border-rose-300/70 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200"
+                  type="button"
+                  disabled={selectedForgottenPaths.length === 0 || isUpdatingForgottenNotes}
+                  onclick={() =>
+                    void runForgottenAction('delete_forgotten_notes', selectedForgottenPaths)}
+                >
+                  Delete selected
+                </button>
+              </div>
+            </div>
+
+            {#if isLoadingForgottenNotes}
+              <p class="mt-4 text-sm text-muted-foreground">Loading forgotten notes…</p>
+            {:else if forgottenNotes.length === 0}
+              <p class="mt-4 text-sm text-muted-foreground">No forgotten notes right now.</p>
+            {:else}
+              <div class="mt-4 space-y-3">
+                {#each forgottenNotes as note}
+                  <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-4">
+                    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div class="flex items-start gap-3">
+                        <input
+                          class="mt-1"
+                          type="checkbox"
+                          checked={selectedForgottenPaths.includes(note.forgottenPath)}
+                          onchange={(event) =>
+                            toggleForgottenSelection(
+                              note.forgottenPath,
+                              (event.currentTarget as HTMLInputElement).checked
+                            )}
+                        />
+
+                        <div>
+                          <p class="text-sm font-medium">{note.title}</p>
+                          <p class="mt-1 text-xs text-muted-foreground">
+                            {note.fileName} · forgotten {formatTimestamp(note.forgottenAtMillis)}
+                          </p>
+                          <p class="mt-1 text-xs text-muted-foreground">
+                            Purges {formatTimestamp(note.purgeAtMillis)} after {formatForgottenRetention(note.purgeAfterDays)}
+                          </p>
+                          <p class="mt-1 break-all text-xs text-muted-foreground">
+                            Original path: {note.originalPath}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div class="flex flex-wrap items-center gap-2">
+                        <button
+                          class="rounded-full border border-border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                          type="button"
+                          disabled={isUpdatingForgottenNotes}
+                          onclick={() =>
+                            void runForgottenAction('restore_forgotten_notes', [note.forgottenPath])}
+                        >
+                          Restore
+                        </button>
+                        <button
+                          class="rounded-full border border-rose-300/70 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200"
+                          type="button"
+                          disabled={isUpdatingForgottenNotes}
+                          onclick={() =>
+                            void runForgottenAction('delete_forgotten_notes', [note.forgottenPath])}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
     </section>
   </main>
 </div>
