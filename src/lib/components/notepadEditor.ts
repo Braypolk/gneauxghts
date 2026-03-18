@@ -5,13 +5,16 @@ import {
   bulletListSchema,
   codeBlockSchema,
   headingSchema,
-  listItemSchema,
   orderedListSchema,
   paragraphSchema,
   setBlockTypeCommand,
   wrapInBlockTypeCommand
 } from '@milkdown/kit/preset/commonmark';
+import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
+import { wrapInList } from '@milkdown/kit/prose/schema-list';
 import { TextSelection } from '@milkdown/kit/prose/state';
+import { liftTarget } from '@milkdown/kit/prose/transform';
+import type { EditorView } from '@milkdown/kit/prose/view';
 import { replaceAll } from '@milkdown/kit/utils';
 import { tick } from 'svelte';
 import { notepadWikilinks, type ActiveWikilink } from './notepadWikilinks';
@@ -127,6 +130,194 @@ interface BlockContext {
   currentTypeId: string | null;
 }
 
+interface SelectionAncestorInfo {
+  listPos: number | null;
+  listNode: ProseMirrorNode | null;
+}
+
+interface CommandRunner {
+  call: (command: unknown, payload?: unknown) => boolean;
+}
+
+function readBooleanAttr(value: unknown, fallback: boolean) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value === 'true';
+  return fallback;
+}
+
+function readNullableBooleanAttr(value: unknown) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value === 'true';
+  return null;
+}
+
+function readNumberAttr(value: unknown, fallback: number) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function getSelectionAncestorInfo(view: EditorView): SelectionAncestorInfo {
+  const { $from } = view.state.selection;
+  let listPos: number | null = null;
+  let listNode: ProseMirrorNode | null = null;
+
+  for (let depth = $from.depth; depth >= 1; depth--) {
+    const node = $from.node(depth);
+    if (node.type.name === 'bullet_list' || node.type.name === 'ordered_list') {
+      listPos = $from.before(depth);
+      listNode = node;
+      break;
+    }
+  }
+
+  return { listPos, listNode };
+}
+
+function liftSelectionOutOfBlockquote(view: EditorView) {
+  const { $from, $to } = view.state.selection;
+  const range = $from.blockRange($to, (node) => node.type.name === 'blockquote');
+  if (!range) return false;
+
+  const target = liftTarget(range);
+  if (target == null) return false;
+
+  view.dispatch(view.state.tr.lift(range, target).scrollIntoView());
+  return true;
+}
+
+function ensureParagraphSelection(
+  view: EditorView,
+  commands: CommandRunner,
+  paragraphType: ReturnType<typeof paragraphSchema.type>
+) {
+  if (view.state.selection.$from.parent.type.name === 'paragraph') {
+    return true;
+  }
+
+  return commands.call(setBlockTypeCommand.key, { nodeType: paragraphType });
+}
+
+function normalizeSelectionForList(
+  view: EditorView,
+  commands: CommandRunner,
+  paragraphType: ReturnType<typeof paragraphSchema.type>
+) {
+  let lifted = false;
+  while (liftSelectionOutOfBlockquote(view)) {
+    lifted = true;
+  }
+
+  const parentTypeName = view.state.selection.$from.parent.type.name;
+  if (parentTypeName !== 'paragraph') {
+    return ensureParagraphSelection(view, commands, paragraphType) || lifted;
+  }
+
+  return lifted;
+}
+
+function buildListAttrsForTarget(listNode: ProseMirrorNode, targetId: 'bulletList' | 'orderedList' | 'taskList') {
+  const spread = readBooleanAttr(listNode.attrs.spread, false);
+
+  if (targetId === 'orderedList') {
+    return {
+      order: readNumberAttr(listNode.attrs.order, 1),
+      spread
+    };
+  }
+
+  return { spread };
+}
+
+function buildListItemAttrsForTarget(
+  itemNode: ProseMirrorNode,
+  targetId: 'bulletList' | 'orderedList' | 'taskList',
+  itemIndex: number,
+  orderedStart: number
+) {
+  const spread = readBooleanAttr(itemNode.attrs.spread, true);
+  const checked = readNullableBooleanAttr(itemNode.attrs.checked);
+
+  if (targetId === 'orderedList') {
+    return {
+      ...itemNode.attrs,
+      label: `${orderedStart + itemIndex}.`,
+      listType: 'ordered',
+      spread,
+      checked: null
+    };
+  }
+
+  return {
+    ...itemNode.attrs,
+    label: '•',
+    listType: 'bullet',
+    spread,
+    checked: targetId === 'taskList' ? checked ?? false : null
+  };
+}
+
+function convertCurrentList(
+  view: EditorView,
+  bulletListType: ReturnType<typeof bulletListSchema.type>,
+  orderedListType: ReturnType<typeof orderedListSchema.type>,
+  targetId: 'bulletList' | 'orderedList' | 'taskList'
+) {
+  const { listNode, listPos } = getSelectionAncestorInfo(view);
+  if (!listNode || listPos === null) {
+    return false;
+  }
+
+  const targetListType = targetId === 'orderedList' ? orderedListType : bulletListType;
+  const orderedStart = readNumberAttr(listNode.attrs.order, 1);
+  const transaction = view.state.tr;
+
+  transaction.setNodeMarkup(listPos, targetListType, buildListAttrsForTarget(listNode, targetId));
+
+  let itemPos = listPos + 1;
+  let itemIndex = 0;
+  listNode.forEach((child) => {
+    if (child.type.name === 'list_item') {
+      transaction.setNodeMarkup(
+        itemPos,
+        child.type,
+        buildListItemAttrsForTarget(child, targetId, itemIndex, orderedStart)
+      );
+      itemIndex += 1;
+    }
+    itemPos += child.nodeSize;
+  });
+
+  if (transaction.docChanged) {
+    view.dispatch(transaction.scrollIntoView());
+  }
+
+  return true;
+}
+
+function wrapSelectionInList(
+  view: EditorView,
+  bulletListType: ReturnType<typeof bulletListSchema.type>,
+  orderedListType: ReturnType<typeof orderedListSchema.type>,
+  targetId: 'bulletList' | 'orderedList' | 'taskList'
+) {
+  const listType = targetId === 'orderedList' ? orderedListType : bulletListType;
+  const wrapped = wrapInList(listType)(view.state, view.dispatch);
+
+  if (!wrapped) {
+    return false;
+  }
+
+  if (targetId === 'taskList') {
+    return convertCurrentList(view, bulletListType, orderedListType, 'taskList');
+  }
+
+  return true;
+}
+
 function resolveBlockContext(
   crepe: Crepe,
   editorRoot: HTMLDivElement,
@@ -222,6 +413,17 @@ function applyBlockTypeMenuSelection(crepe: Crepe, targetPos: number, option: Bl
     const id = option.id;
     if (id === 'paragraph') {
       commands.call(setBlockTypeCommand.key, { nodeType: paragraphSchema.type(ctx) });
+    } else if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
+      const bulletListType = bulletListSchema.type(ctx);
+      const orderedListType = orderedListSchema.type(ctx);
+      const paragraphType = paragraphSchema.type(ctx);
+
+      if (convertCurrentList(view, bulletListType, orderedListType, id)) {
+        return;
+      }
+
+      normalizeSelectionForList(view, commands, paragraphType);
+      wrapSelectionInList(view, bulletListType, orderedListType, id);
     } else if (id.startsWith('heading')) {
       const level = parseInt(id.replace('heading', ''), 10);
       commands.call(setBlockTypeCommand.key, {
@@ -230,15 +432,6 @@ function applyBlockTypeMenuSelection(crepe: Crepe, targetPos: number, option: Bl
       });
     } else if (id === 'quote') {
       commands.call(wrapInBlockTypeCommand.key, { nodeType: blockquoteSchema.type(ctx) });
-    } else if (id === 'bulletList') {
-      commands.call(wrapInBlockTypeCommand.key, { nodeType: bulletListSchema.type(ctx) });
-    } else if (id === 'orderedList') {
-      commands.call(wrapInBlockTypeCommand.key, { nodeType: orderedListSchema.type(ctx) });
-    } else if (id === 'taskList') {
-      commands.call(wrapInBlockTypeCommand.key, {
-        nodeType: listItemSchema.type(ctx),
-        attrs: { checked: false }
-      });
     } else if (id === 'code') {
       commands.call(setBlockTypeCommand.key, { nodeType: codeBlockSchema.type(ctx) });
     }
