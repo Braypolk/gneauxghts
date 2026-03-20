@@ -35,6 +35,8 @@ export interface SemanticIndexJob {
 export interface SemanticStatus {
   settings: SemanticSettings;
   model: SemanticModelInfo;
+  platformSupported: boolean;
+  disabledReason: string | null;
   modelAvailable: boolean;
   indexingPaused: boolean;
   indexingInProgress: boolean;

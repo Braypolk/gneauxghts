@@ -2,12 +2,13 @@
   import { invoke } from '@tauri-apps/api/core';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-import type { MapGraph, MapNode, SemanticSettings } from '$lib/types/semantic';
+  import type { MapGraph, MapNode, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
 
   const WIDTH = 1200;
   const HEIGHT = 760;
 
   let graph = $state<MapGraph | null>(null);
+  let semanticStatus = $state<SemanticStatus | null>(null);
   let semanticSettings = $state<SemanticSettings | null>(null);
   let filterQuery = $state('');
   let strongestOnly = $state(false);
@@ -22,9 +23,22 @@ import type { MapGraph, MapNode, SemanticSettings } from '$lib/types/semantic';
     isLoading = true;
 
     try {
-      semanticSettings = await invoke<SemanticSettings>('get_semantic_settings');
+      const [status, settings] = await Promise.all([
+        invoke<SemanticStatus>('get_semantic_status'),
+        invoke<SemanticSettings>('get_semantic_settings')
+      ]);
+      semanticStatus = status;
+      semanticSettings = settings;
       strongestOnly = semanticSettings.strongestLinksOnly;
       minScore = semanticSettings.graphMinScore;
+      if (!semanticStatus.platformSupported) {
+        graph = {
+          nodes: [],
+          edges: [],
+          minScore
+        };
+        return;
+      }
       graph = await invoke<MapGraph>('get_map_graph', {
         view: 'notes',
         limit: strongestOnly ? 96 : 180,
@@ -146,6 +160,10 @@ import type { MapGraph, MapNode, SemanticSettings } from '$lib/types/semantic';
         {#if isLoading}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-background/60 text-sm text-muted-foreground">
             Building note graph…
+          </div>
+        {:else if semanticStatus && !semanticStatus.platformSupported}
+          <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-background/60 px-6 text-center text-sm text-muted-foreground">
+            {semanticStatus.disabledReason ?? 'Semantic graph is unavailable on this platform.'}
           </div>
         {:else if !graph || graph.nodes.length === 0}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-background/60 text-sm text-muted-foreground">

@@ -33,6 +33,8 @@ pub(crate) struct VaultInfo {
     pub(crate) is_default: bool,
     pub(crate) note_count: usize,
     pub(crate) requires_restart: bool,
+    pub(crate) can_configure_path: bool,
+    pub(crate) path_configuration_note: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -136,6 +138,16 @@ pub(crate) fn write_vault_config(config: &VaultConfig) -> Result<(), String> {
 }
 
 pub(crate) fn set_notes_root(path: Option<&Path>) -> Result<VaultInfo, String> {
+    if !supports_custom_vault_paths() {
+        let default_path = default_notes_root()?;
+        if path.is_some_and(|candidate| candidate != default_path.as_path()) {
+            return Err("Custom vault paths are not available on iPhone builds yet.".to_string());
+        }
+
+        write_vault_config(&VaultConfig { notes_root: None })?;
+        return current_vault_info();
+    }
+
     let notes_root = match path {
         Some(path) => {
             fs::create_dir_all(path).map_err(|err| err.to_string())?;
@@ -166,7 +178,9 @@ pub(crate) fn current_vault_info() -> Result<VaultInfo, String> {
         forgotten_path: forgotten_path.to_string_lossy().into_owned(),
         is_default: current_path == default_path,
         note_count,
-        requires_restart: true,
+        requires_restart: supports_custom_vault_paths(),
+        can_configure_path: supports_custom_vault_paths(),
+        path_configuration_note: vault_path_configuration_note(),
     })
 }
 
@@ -346,6 +360,18 @@ fn configured_app_data_dir() -> Result<Option<PathBuf>, String> {
         .lock()
         .map_err(|_| "App data directory lock poisoned".to_string())
         .map(|value| value.clone())
+}
+
+fn supports_custom_vault_paths() -> bool {
+    !cfg!(target_os = "ios")
+}
+
+fn vault_path_configuration_note() -> Option<String> {
+    if supports_custom_vault_paths() {
+        None
+    } else {
+        Some("iPhone builds currently store notes inside the app sandbox Documents directory.".to_string())
+    }
 }
 
 fn dedupe_hidden_task_keys(state: &mut PersistedState) {

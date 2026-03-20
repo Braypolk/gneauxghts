@@ -5,6 +5,8 @@ export interface VaultInfo {
   isDefault: boolean;
   noteCount: number;
   requiresRestart: boolean;
+  canConfigurePath: boolean;
+  pathConfigurationNote: string | null;
 }
 
 export interface LinkedVaultState {

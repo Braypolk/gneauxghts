@@ -703,12 +703,16 @@
       </div>
 
       <div class="border-t border-border/70 px-6 py-5">
-        <div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-4">
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-sm font-medium">Vault Directory</p>
               <p class="mt-0.5 text-xs text-muted-foreground">
-                Desktop vaults can live in any normal folder. Changing the directory updates future note IO and takes full effect after restarting the app.
+                {#if vaultInfo?.canConfigurePath ?? true}
+                  Desktop vaults can live in any normal folder. Changing the directory updates future note IO and takes full effect after restarting the app.
+                {:else}
+                  iPhone builds currently keep notes inside the app sandbox. Custom vault locations are disabled for now.
+                {/if}
               </p>
             </div>
           </div>
@@ -720,6 +724,7 @@
                 class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
                 bind:value={vaultPathInput}
                 placeholder={vaultInfo?.defaultPath ?? 'Vault path'}
+                disabled={!(vaultInfo?.canConfigurePath ?? true)}
               />
             </label>
 
@@ -727,7 +732,7 @@
               <button
                 class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
                 type="button"
-                disabled={isSavingVault}
+                disabled={isSavingVault || !(vaultInfo?.canConfigurePath ?? true)}
                 onclick={() => {
                   vaultPathInput = vaultInfo?.defaultPath ?? '';
                   void saveVaultDirectory();
@@ -738,13 +743,19 @@
               <button
                 class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
                 type="button"
-                disabled={isSavingVault}
+                disabled={isSavingVault || !(vaultInfo?.canConfigurePath ?? true)}
                 onclick={() => void saveVaultDirectory()}
               >
                 {isSavingVault ? 'Saving…' : 'Save vault'}
               </button>
             </div>
           </div>
+
+          {#if vaultInfo?.pathConfigurationNote}
+            <div class="rounded-3xl border border-sky-300/60 bg-sky-50 px-5 py-4 text-sm text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
+              {vaultInfo.pathConfigurationNote}
+            </div>
+          {/if}
 
           {#if vaultInfo}
             <div class="grid gap-4 md:grid-cols-3">
@@ -1081,49 +1092,55 @@
         </div>
 
         {#if semanticSettings && semanticStatus}
-          <div class="mt-6 grid gap-4 md:grid-cols-2">
-            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <p class="text-sm font-medium">Semantic Search</p>
-                  <p class="mt-1 text-xs text-muted-foreground">Blend semantic matches into the existing keyword search.</p>
+          {#if !semanticStatus.platformSupported}
+            <div class="mt-6 rounded-3xl border border-sky-300/60 bg-sky-50 px-5 py-4 text-sm text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
+              {semanticStatus.disabledReason ?? 'Semantic search is unavailable on this platform.'}
+            </div>
+          {:else}
+            <div class="mt-6 grid gap-4 md:grid-cols-2">
+              <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-sm font-medium">Semantic Search</p>
+                    <p class="mt-1 text-xs text-muted-foreground">Blend semantic matches into the existing keyword search.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={semanticSettings.semanticSearchEnabled}
+                    onchange={(event) => updateSetting('semanticSearchEnabled', (event.currentTarget as HTMLInputElement).checked)}
+                  />
                 </div>
-                <input
-                  type="checkbox"
-                  checked={semanticSettings.semanticSearchEnabled}
-                  onchange={(event) => updateSetting('semanticSearchEnabled', (event.currentTarget as HTMLInputElement).checked)}
-                />
-              </div>
-            </label>
+              </label>
 
-            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <p class="text-sm font-medium">Local-only Mode</p>
-                  <p class="mt-1 text-xs text-muted-foreground">Refuse any model download flow and stay offline.</p>
+              <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-sm font-medium">Local-only Mode</p>
+                    <p class="mt-1 text-xs text-muted-foreground">Refuse any model download flow and stay offline.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={semanticSettings.localOnlyMode}
+                    onchange={(event) => updateSetting('localOnlyMode', (event.currentTarget as HTMLInputElement).checked)}
+                  />
                 </div>
-                <input
-                  type="checkbox"
-                  checked={semanticSettings.localOnlyMode}
-                  onchange={(event) => updateSetting('localOnlyMode', (event.currentTarget as HTMLInputElement).checked)}
-                />
-              </div>
-            </label>
+              </label>
 
-            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <p class="text-sm font-medium">Auto-download Models</p>
-                  <p class="mt-1 text-xs text-muted-foreground">Reserved for future runtime providers that need local model files.</p>
+              <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-sm font-medium">Auto-download Models</p>
+                    <p class="mt-1 text-xs text-muted-foreground">Reserved for future runtime providers that need local model files.</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={semanticSettings.autoDownloadModel}
+                    onchange={(event) => updateSetting('autoDownloadModel', (event.currentTarget as HTMLInputElement).checked)}
+                  />
                 </div>
-                <input
-                  type="checkbox"
-                  checked={semanticSettings.autoDownloadModel}
-                  onchange={(event) => updateSetting('autoDownloadModel', (event.currentTarget as HTMLInputElement).checked)}
-                />
-              </div>
-            </label>
-          </div>
+              </label>
+            </div>
+          {/if}
 
           <div class="mt-6 grid gap-4 md:grid-cols-3">
             <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
@@ -1174,41 +1191,43 @@
             </div>
           </div>
 
-          <div class="mt-6 flex flex-wrap items-center gap-3">
-            <button
-              class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-              type="button"
-              disabled={isRunningAction}
-              onclick={() => void runAction('prepare_semantic_model')}
-            >
-              Prepare local model
-            </button>
+          {#if semanticStatus.platformSupported}
+            <div class="mt-6 flex flex-wrap items-center gap-3">
+              <button
+                class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                type="button"
+                disabled={isRunningAction}
+                onclick={() => void runAction('prepare_semantic_model')}
+              >
+                Prepare local model
+              </button>
 
-            <button
-              class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-              type="button"
-              disabled={isRunningAction}
-              onclick={() => void runAction('rebuild_semantic_index')}
-            >
-              Rebuild semantic index
-            </button>
+              <button
+                class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                type="button"
+                disabled={isRunningAction}
+                onclick={() => void runAction('rebuild_semantic_index')}
+              >
+                Rebuild semantic index
+              </button>
 
-            <button
-              class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-              type="button"
-              disabled={isRunningAction}
-              onclick={() =>
-                void runAction(
-                  semanticStatus?.indexingPaused ? 'resume_semantic_indexing' : 'pause_semantic_indexing'
-                )}
-            >
-              {semanticStatus.indexingPaused ? 'Resume indexing' : 'Pause indexing'}
-            </button>
+              <button
+                class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                type="button"
+                disabled={isRunningAction}
+                onclick={() =>
+                  void runAction(
+                    semanticStatus?.indexingPaused ? 'resume_semantic_indexing' : 'pause_semantic_indexing'
+                  )}
+              >
+                {semanticStatus.indexingPaused ? 'Resume indexing' : 'Pause indexing'}
+              </button>
 
-            {#if isSaving || isRunningAction}
-              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Updating…</p>
-            {/if}
-          </div>
+              {#if isSaving || isRunningAction}
+                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Updating…</p>
+              {/if}
+            </div>
+          {/if}
 
           {#if semanticStatus.latestJob}
             <div class="mt-6 rounded-3xl border border-border/70 bg-background/70 px-5 py-4">

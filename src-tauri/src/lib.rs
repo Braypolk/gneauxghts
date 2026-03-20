@@ -22,9 +22,14 @@ pub fn run() {
             initialize_app_data_dir(app_data_dir.clone())?;
             let notes_dir = notes_root()?;
             sync::initialize()?;
-            let bundled_runtime_path = bundled_llama_server_path(app.handle());
-            let semantic =
-                SemanticState::new_with_runtime(app_data_dir, notes_dir, bundled_runtime_path)?;
+            let semantic = if cfg!(target_os = "ios") {
+                SemanticState::new_disabled(
+                    "Semantic search is disabled on iPhone builds for now.",
+                )
+            } else {
+                let bundled_runtime_path = bundled_llama_server_path(app.handle());
+                SemanticState::new_with_runtime(app_data_dir, notes_dir, bundled_runtime_path)?
+            };
             app.manage(AppState::new(semantic));
             app.manage(sync::start_vault_watcher(app.handle().clone())?);
             Ok(())
