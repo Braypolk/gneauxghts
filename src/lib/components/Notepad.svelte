@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Crepe } from '@milkdown/crepe';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick } from 'svelte';
+  import { cancelScheduledAutoSync, runAutoSyncNow, scheduleAutoSync } from '$lib/sync/autoSync';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
   import { forgottenNoteRetentionPreference } from '$lib/appSettings';
   import type { SearchItem } from '$lib/types/semantic';
@@ -95,6 +97,12 @@
   let wikilinkAutocomplete = $state<WikilinkAutocompleteState>(createWikilinkAutocompleteState());
   let isRefreshingFromDisk = false;
   let isApplyingExternalContent = false;
+  let vaultNoteChangeUnlisten: UnlistenFn | null = null;
+
+  interface VaultNoteChangeEvent {
+    notePath: string;
+    deleted: boolean;
+  }
 
   function applySessionSnapshot(snapshot: NotepadSessionSnapshot) {
     title = snapshot.title;
@@ -219,6 +227,7 @@
     await replaceEditorContent('');
     scheduleSearch();
     void loadRecentNotes();
+    scheduleAutoSync('note-forgotten', 400);
   }
 
   async function unforgetNotepad() {
@@ -238,6 +247,7 @@
         await replaceEditorContent(bodyMarkdown);
         scheduleSearch();
         void loadRecentNotes();
+        scheduleAutoSync('forgotten-restored', 400);
         return;
       } catch (error) {
         console.error('Failed to restore forgotten note:', error);
@@ -256,6 +266,7 @@
     scheduleAutosave();
     scheduleSearch();
     void loadRecentNotes();
+    scheduleAutoSync('forgotten-restored-draft', 400);
   }
 
   async function loadSavedNote() {
@@ -353,10 +364,12 @@
 
     if (mode === 'remember') {
       await rememberNoteSession(markdown, currentNotePath);
+      scheduleAutoSync('note-remembered', 400);
       return;
     }
 
     applySessionSnapshot(await saveNoteSession(markdown, currentNotePath));
+    scheduleAutoSync('note-saved', 600);
   }
 
   async function rememberCurrentNote() {
@@ -655,13 +668,35 @@
   }
 
   function handleWindowFocus() {
-    void refreshCurrentNoteIfChanged();
+    void syncAndRefresh('window-focus');
   }
 
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
-      void refreshCurrentNoteIfChanged();
+      void syncAndRefresh('window-visible');
     }
+  }
+
+  async function syncAndRefresh(reason: string) {
+    await runAutoSyncNow(reason);
+    await refreshCurrentNoteIfChanged();
+    void loadRecentNotes();
+    void loadRecentTasks();
+    if (searchQuery.trim() !== '') {
+      scheduleSearch();
+    }
+  }
+
+  async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
+    if (currentNotePath === payload.notePath) {
+      await refreshCurrentNoteIfChanged();
+    }
+    void loadRecentNotes();
+    void loadRecentTasks();
+    if (searchQuery.trim() !== '') {
+      scheduleSearch();
+    }
+    scheduleAutoSync('vault-note-change', 1200);
   }
 
   onMount(() => {
@@ -678,6 +713,13 @@
         if (pendingTaskTarget) {
           await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
         }
+        vaultNoteChangeUnlisten = await listen<VaultNoteChangeEvent>(
+          'vault-note-changed',
+          ({ payload }) => {
+            void handleVaultNoteChanged(payload);
+          }
+        );
+        scheduleAutoSync('notepad-mounted', 900);
       } catch (err) {
         console.error('Notepad init failed:', err);
       }
@@ -687,7 +729,10 @@
       mounted = false;
       isEditorReady = false;
       flushPendingAutosave();
+      cancelScheduledAutoSync();
       if (searchTimer) window.clearTimeout(searchTimer);
+      vaultNoteChangeUnlisten?.();
+      vaultNoteChangeUnlisten = null;
       void destroyEditor();
     };
   });

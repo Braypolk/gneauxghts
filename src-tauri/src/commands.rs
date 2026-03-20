@@ -4,17 +4,21 @@ use crate::{
         normalize_search_text, task_key, toggle_task_in_markdown, AppState, IndexedNote,
         NotesIndex,
     },
+    note,
     search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
     semantic::{
         debug::SemanticDebugSnapshot, MapGraph, SemanticChunkMatch, SemanticSettings,
         SemanticStatus,
     },
     state::{
-        forgotten_notes_root, is_valid_note_path, notes_root, persist_note, prune_recent_paths,
-        push_unique, read_state, touch_recent_path, validate_current_path, write_state,
-        PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
+        current_vault_info, forgotten_notes_root, is_valid_note_path, notes_root, persist_note,
+        prune_recent_paths, push_unique, read_state, set_notes_root, touch_recent_path,
+        validate_current_path, write_state, PersistedForgottenNote, PersistedState,
+        PersistedTaskTimestamps, VaultInfo,
     },
+    sync::{self, SyncConflict, SyncConflictDetail, SyncStatus},
 };
+use gneauxghts_sync_contract::RequestMagicLinkResponse;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -150,6 +154,98 @@ pub(crate) fn read_note(path: String) -> Result<NoteSession, String> {
         .ok_or_else(|| "Missing note path".to_string())?;
 
     read_note_session_from_path(&note_path)
+}
+
+#[tauri::command]
+pub(crate) fn get_vault_info() -> Result<VaultInfo, String> {
+    current_vault_info()
+}
+
+#[tauri::command]
+pub(crate) fn set_vault_directory(path: Option<String>) -> Result<VaultInfo, String> {
+    match path.as_deref().map(str::trim) {
+        Some("") => set_notes_root(None),
+        Some(path) => set_notes_root(Some(Path::new(path))),
+        None => set_notes_root(None),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn get_sync_status() -> Result<SyncStatus, String> {
+    sync::get_sync_status()
+}
+
+#[tauri::command]
+pub(crate) fn list_sync_conflicts() -> Result<Vec<SyncConflict>, String> {
+    sync::list_sync_conflicts()
+}
+
+#[tauri::command]
+pub(crate) fn get_sync_conflict_detail(note_id: String) -> Result<Option<SyncConflictDetail>, String> {
+    sync::get_sync_conflict_detail(&note_id)
+}
+
+#[tauri::command]
+pub(crate) fn request_sync_magic_link(
+    sync_base_url: String,
+    email: String,
+) -> Result<RequestMagicLinkResponse, String> {
+    sync::request_magic_link(&sync_base_url, &email)
+}
+
+#[tauri::command]
+pub(crate) fn complete_sync_sign_in(
+    sync_base_url: String,
+    email: String,
+    magic_link_token: String,
+    device_name: Option<String>,
+) -> Result<SyncStatus, String> {
+    sync::complete_magic_link(
+        &sync_base_url,
+        &email,
+        &magic_link_token,
+        device_name.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub(crate) fn sync_now(state: State<'_, AppState>) -> Result<SyncStatus, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    sync::sync_now(&state, &notes_dir)
+}
+
+#[tauri::command]
+pub(crate) fn dismiss_sync_conflict(note_id: String) -> Result<SyncStatus, String> {
+    sync::dismiss_sync_conflict(&note_id)
+}
+
+#[tauri::command]
+pub(crate) fn resolve_sync_conflict_keep_local(
+    state: State<'_, AppState>,
+    note_id: String,
+) -> Result<SyncStatus, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    sync::resolve_sync_conflict_keep_local(&state, &notes_dir, &note_id)
+}
+
+#[tauri::command]
+pub(crate) fn resolve_sync_conflict_keep_remote(
+    state: State<'_, AppState>,
+    note_id: String,
+) -> Result<SyncStatus, String> {
+    sync::resolve_sync_conflict_keep_remote(&state, &note_id)
+}
+
+#[tauri::command]
+pub(crate) fn sign_out_sync(keep_server_url: Option<bool>) -> Result<SyncStatus, String> {
+    sync::sign_out(keep_server_url.unwrap_or(true))
+}
+
+#[tauri::command]
+pub(crate) fn set_sync_paused(paused: bool) -> Result<SyncStatus, String> {
+    sync::set_sync_paused(paused)
 }
 
 #[tauri::command]
@@ -291,9 +387,11 @@ pub(crate) fn save_note(
         }
     }
     if let Some(saved_path) = saved_path.as_deref() {
+        let persisted_markdown = fs::read_to_string(saved_path).map_err(|err| err.to_string())?;
+        sync::mark_note_dirty(Path::new(saved_path), &persisted_markdown)?;
         state.semantic.queue_note_update(
             Path::new(saved_path),
-            markdown.clone(),
+            persisted_markdown,
             timestamp_millis,
         )?;
     }
@@ -362,9 +460,12 @@ pub(crate) fn remember_note(
         }
     }
     if let Some(remembered_path) = remembered_path.as_deref() {
+        let persisted_markdown =
+            fs::read_to_string(remembered_path).map_err(|err| err.to_string())?;
+        sync::mark_note_dirty(Path::new(remembered_path), &persisted_markdown)?;
         state
             .semantic
-            .queue_note_update(Path::new(remembered_path), markdown, timestamp_millis)?;
+            .queue_note_update(Path::new(remembered_path), persisted_markdown, timestamp_millis)?;
     }
     if let Some(previous_path) = current_path.as_deref() {
         let previous_raw_path = previous_path.to_string_lossy().into_owned();
@@ -395,11 +496,20 @@ pub(crate) fn forget_note(
         fs::create_dir_all(&forgotten_dir).map_err(|err| err.to_string())?;
         let forgotten_path = resolve_forgotten_target_path(&notes_dir, note_path);
         let forgotten_at_millis = current_time_millis()?;
+        let forgotten_at_rfc3339 = note::current_timestamp_rfc3339()?;
         let purge_at_millis = forgotten_at_millis
             .saturating_add(u64::from(retention_days).saturating_mul(24 * 60 * 60 * 1000));
+        let note_markdown = fs::read_to_string(note_path).map_err(|err| err.to_string())?;
+        let forgotten_markdown = note::prepare_note_markdown(
+            &note_markdown,
+            Some(&note_markdown),
+            Some(Some(forgotten_at_rfc3339)),
+        )?
+        .0;
 
         if note_path.exists() {
             fs::rename(note_path, &forgotten_path).map_err(|err| err.to_string())?;
+            fs::write(&forgotten_path, &forgotten_markdown).map_err(|err| err.to_string())?;
         }
 
         reconcile_note_task_timestamps(
@@ -437,6 +547,7 @@ pub(crate) fn forget_note(
                 purge_at_millis,
             });
         state.semantic.queue_delete_note(note_path)?;
+        sync::mark_note_trashed(&forgotten_path, &forgotten_markdown)?;
         let summary = build_forgotten_note_summary(
             persisted_state
                 .forgotten_notes
@@ -506,14 +617,18 @@ pub(crate) fn restore_forgotten_notes(
         let restored_path =
             resolve_restore_target_path(&notes_dir, Path::new(&forgotten_note.original_path));
         let markdown = fs::read_to_string(&forgotten_path).map_err(|err| err.to_string())?;
+        let restored_markdown =
+            note::prepare_note_markdown(&markdown, Some(&markdown), Some(None))?.0;
         let timestamp_millis = current_time_millis()?;
         fs::rename(&forgotten_path, &restored_path).map_err(|err| err.to_string())?;
+        fs::write(&restored_path, &restored_markdown).map_err(|err| err.to_string())?;
 
-        let note = build_indexed_note(&restored_path, &markdown, timestamp_millis);
+        let note = build_indexed_note(&restored_path, &restored_markdown, timestamp_millis);
         upsert_notes_index_entry(&state, restored_path.clone(), note)?;
+        sync::mark_note_dirty(&restored_path, &restored_markdown)?;
         state
             .semantic
-            .queue_note_update(&restored_path, markdown, timestamp_millis)?;
+            .queue_note_update(&restored_path, restored_markdown, timestamp_millis)?;
 
         restored_notes.push(RestoredForgottenNote {
             forgotten_path: forgotten_note.forgotten_path,
@@ -549,6 +664,9 @@ pub(crate) fn delete_forgotten_notes(forgotten_paths: Vec<String>) -> Result<(),
         let forgotten_note = persisted_state.forgotten_notes.remove(index);
         let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
         if forgotten_path.exists() {
+            if let Ok(markdown) = fs::read_to_string(&forgotten_path) {
+                let _ = sync::mark_note_trashed(&forgotten_path, &markdown);
+            }
             fs::remove_file(&forgotten_path).map_err(|err| err.to_string())?;
         }
         write_state(&notes_dir, &persisted_state)?;
@@ -907,6 +1025,7 @@ pub(crate) fn toggle_task(
     let Some(toggled_task_key) =
         find_task_key_for_line(&note_path, &updated_note, line_number, &task_text)
     else {
+        sync::mark_note_dirty(&note_path, &updated_markdown)?;
         upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
         return Ok(());
     };
@@ -919,9 +1038,10 @@ pub(crate) fn toggle_task(
         .or_insert(PersistedTaskTimestamps {
             created_at_millis: fallback_timestamp,
             updated_at_millis: fallback_timestamp,
-        });
+    });
     timestamps.updated_at_millis = timestamp_millis;
     write_state(&notes_dir, &persisted_state)?;
+    sync::mark_note_dirty(&note_path, &updated_markdown)?;
     upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
     state
         .semantic
@@ -947,6 +1067,7 @@ pub(crate) fn delete_task(
     fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
     let timestamp_millis = current_time_millis()?;
     let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
+    sync::mark_note_dirty(&note_path, &updated_markdown)?;
     upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
 
     let mut persisted_state = read_state(&notes_dir)?;
@@ -1897,7 +2018,7 @@ fn structural_boost_from_semantic(
 fn read_note_session_from_path(note_path: &Path) -> Result<NoteSession, String> {
     let markdown = fs::read_to_string(note_path).map_err(|err| err.to_string())?;
     Ok(NoteSession {
-        markdown,
+        markdown: note::strip_frontmatter(&markdown),
         path: Some(note_path.to_string_lossy().into_owned()),
     })
 }

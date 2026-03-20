@@ -1,4 +1,4 @@
-use crate::{semantic::SemanticState, state::derive_file_stem};
+use crate::{note, semantic::SemanticState, state::derive_file_stem};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -300,7 +300,7 @@ fn build_indexed_note_with_signature(
         .map(str::to_string)
         .unwrap_or_else(|| derive_file_stem(markdown));
 
-    let (title, body) = extract_title_and_body(markdown, &fallback_file_name);
+    let (title, body) = note::extract_title_and_body(markdown, &fallback_file_name);
     let file_name = fallback_file_name;
 
     IndexedNote {
@@ -313,36 +313,6 @@ fn build_indexed_note_with_signature(
         tasks: build_tasks(markdown),
         file_name,
     }
-}
-
-fn extract_title_and_body(markdown: &str, fallback_title: &str) -> (String, String) {
-    let normalized = markdown.replace("\r\n", "\n");
-    let lines = normalized.lines().collect::<Vec<_>>();
-    let first_content_index = lines.iter().position(|line| !line.trim().is_empty());
-
-    let Some(first_content_index) = first_content_index else {
-        return (fallback_title.to_string(), String::new());
-    };
-
-    let first_content_line = lines[first_content_index].trim();
-    let heading = first_content_line
-        .strip_prefix("# ")
-        .map(str::trim)
-        .filter(|heading| !heading.is_empty());
-
-    if let Some(title) = heading {
-        let mut remaining_lines = lines[first_content_index + 1..].to_vec();
-        if remaining_lines
-            .first()
-            .is_some_and(|line| line.trim().is_empty())
-        {
-            remaining_lines.remove(0);
-        }
-
-        return (title.to_string(), remaining_lines.join("\n"));
-    }
-
-    (fallback_title.to_string(), normalized)
 }
 
 fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {

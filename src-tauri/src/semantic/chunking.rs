@@ -1,3 +1,4 @@
+use crate::note;
 use blake3::hash;
 
 const MAX_CHUNK_CHARS: usize = 480;
@@ -36,7 +37,7 @@ struct Section {
 }
 
 pub(crate) fn chunk_markdown(markdown: &str, fallback_title: &str) -> ChunkedNote {
-    let normalized = markdown.replace("\r\n", "\n");
+    let normalized = note::strip_frontmatter(markdown);
     let lines = normalized.lines().collect::<Vec<_>>();
     let first_content_index = lines.iter().position(|line| !line.trim().is_empty());
 

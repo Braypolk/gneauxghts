@@ -1,14 +1,16 @@
 mod commands;
 mod index;
+mod note;
 mod search;
 mod semantic;
 mod state;
+mod sync;
 #[cfg(test)]
 mod test_support;
 
 use index::AppState;
 use semantic::SemanticState;
-use state::notes_root;
+use state::{initialize_app_data_dir, notes_root};
 use std::path::PathBuf;
 use tauri::{Manager, RunEvent};
 
@@ -17,11 +19,14 @@ pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+            initialize_app_data_dir(app_data_dir.clone())?;
             let notes_dir = notes_root()?;
+            sync::initialize()?;
             let bundled_runtime_path = bundled_llama_server_path(app.handle());
             let semantic =
                 SemanticState::new_with_runtime(app_data_dir, notes_dir, bundled_runtime_path)?;
             app.manage(AppState::new(semantic));
+            app.manage(sync::start_vault_watcher(app.handle().clone())?);
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -29,6 +34,11 @@ pub fn run() {
             commands::load_note_session,
             commands::open_note,
             commands::read_note,
+            commands::get_vault_info,
+            commands::set_vault_directory,
+            commands::request_sync_magic_link,
+            commands::complete_sync_sign_in,
+            commands::list_sync_conflicts,
             commands::resolve_note_link,
             commands::autocomplete_note_links,
             commands::save_note,
@@ -37,6 +47,14 @@ pub fn run() {
             commands::list_forgotten_notes,
             commands::restore_forgotten_notes,
             commands::delete_forgotten_notes,
+            commands::get_sync_status,
+            commands::get_sync_conflict_detail,
+            commands::sync_now,
+            commands::dismiss_sync_conflict,
+            commands::resolve_sync_conflict_keep_local,
+            commands::resolve_sync_conflict_keep_remote,
+            commands::sign_out_sync,
+            commands::set_sync_paused,
             commands::list_recent_notes,
             commands::list_recent_tasks,
             commands::list_tasks,

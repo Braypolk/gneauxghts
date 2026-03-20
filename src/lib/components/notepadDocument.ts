@@ -4,7 +4,7 @@ export interface ParsedNoteDocument {
 }
 
 export function parseStoredMarkdown(markdown: string): ParsedNoteDocument {
-  const normalized = markdown.replace(/\r\n/g, '\n');
+  const normalized = stripFrontmatter(markdown.replace(/\r\n/g, '\n'));
   const lines = normalized.split('\n');
   const firstContentLineIndex = lines.findIndex((line) => line.trim() !== '');
 
@@ -36,4 +36,17 @@ export function composeMarkdown(noteTitle: string, noteBody: string) {
 
   const bodyWithoutLeadingSpace = normalizedBody.replace(/^\n+/, '');
   return bodyWithoutLeadingSpace ? `# ${trimmedTitle}\n\n${bodyWithoutLeadingSpace}` : `# ${trimmedTitle}`;
+}
+
+function stripFrontmatter(markdown: string) {
+  if (!markdown.startsWith('---\n')) {
+    return markdown;
+  }
+
+  const closingIndex = markdown.indexOf('\n---\n', 4);
+  if (closingIndex === -1) {
+    return markdown;
+  }
+
+  return markdown.slice(closingIndex + 5);
 }
