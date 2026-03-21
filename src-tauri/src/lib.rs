@@ -10,7 +10,7 @@ mod test_support;
 
 use index::AppState;
 use semantic::SemanticState;
-use state::{initialize_app_data_dir, notes_root};
+use state::{initialize_app_data_dir, initialize_documents_dir, migrate_legacy_ios_notes_dir, notes_root};
 use std::path::PathBuf;
 use tauri::{Manager, RunEvent};
 
@@ -20,6 +20,10 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
             initialize_app_data_dir(app_data_dir.clone())?;
+            if let Ok(documents_dir) = app.path().document_dir() {
+                initialize_documents_dir(documents_dir)?;
+            }
+            migrate_legacy_ios_notes_dir()?;
             let notes_dir = notes_root()?;
             sync::initialize()?;
             let semantic = if cfg!(target_os = "ios") {

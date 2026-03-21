@@ -13,7 +13,7 @@
 
 <div class="min-h-full h-full flex flex-col overflow-hidden bg-background text-foreground">
   <NavBar />
-  <div class="flex-1 min-h-0 overflow-hidden px-4">
+  <div class="flex-1 min-h-0 overflow-hidden px-3 sm:px-4">
     {@render children()}
   </div>
 </div>

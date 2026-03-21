@@ -1,13 +1,13 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { Settings } from 'lucide-svelte';
+  import { House, Inbox, ListTodo, Network, Settings } from 'lucide-svelte';
 
   const navLinks = [
-    { href: '/', label: 'Gneauxght' },
-    { href: '/inbox', label: 'Inbox' },
-    { href: '/map', label: 'Map' },
-    { href: '/list', label: 'List' }
+    { href: '/', label: 'Note', icon: House },
+    { href: '/inbox', label: 'Inbox', icon: Inbox },
+    { href: '/map', label: 'Map', icon: Network },
+    { href: '/list', label: 'List', icon: ListTodo }
   ] as const;
   const settingsHref = '/settings';
 
@@ -17,7 +17,7 @@
   }
 
   const linkClass = (href: string) =>
-    `inline-flex min-w-[105px] items-center justify-center rounded-full border px-3 py-2 text-sm font-medium transition-colors ${
+    `inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors sm:h-auto sm:w-auto sm:min-w-[105px] sm:gap-2 sm:px-3 sm:py-2 ${
       isActive(href, $page.url.pathname)
         ? 'border-foreground/15 bg-card text-foreground shadow-sm'
         : 'border-transparent text-muted-foreground hover:border-border/80 hover:text-foreground'
@@ -75,26 +75,28 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <header
-  class="relative z-10 shrink-0 px-6 pt-4 pb-4 min-h-[4.75rem] grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center select-none"
+  class="relative z-10 shrink-0 grid min-h-[3.75rem] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-4 pt-3 pb-2 select-none sm:min-h-[4.75rem] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-0 sm:px-6 sm:pt-4 sm:pb-4"
   onmousedown={handleHeaderMouseDown}
 >
   <div data-tauri-drag-region class="absolute inset-x-0 top-0 h-8"></div>
 
-  <div class="relative z-10 flex justify-start min-w-0">
+  <div class="relative z-10 hidden min-w-0 justify-start sm:flex">
     <!-- Reserved for native window controls and drag area -->
   </div>
 
-  <div class="relative z-10 flex justify-center">
-    <nav class="flex items-center gap-0 rounded-full border border-border/80 bg-card/70 shadow-sm backdrop-blur-md">
-      {#each navLinks as { href, label }}
-        <a href={href} class={linkClass(href)}>
-          {label}
+  <div class="relative z-10 flex min-w-0 justify-start sm:justify-center">
+    <nav class="flex items-center gap-1 rounded-full border border-border/80 bg-card/70 p-1 shadow-sm backdrop-blur-md sm:gap-0 sm:p-0">
+      {#each navLinks as { href, label, icon }}
+        {@const Icon = icon}
+        <a href={href} class={linkClass(href)} aria-label={label}>
+          <Icon class="h-4 w-4 shrink-0" />
+          <span class="hidden sm:inline">{label}</span>
         </a>
       {/each}
     </nav>
   </div>
 
-  <div class="relative z-10 flex justify-end min-w-0">
+  <div class="relative z-10 flex min-w-0 justify-end">
     <a
       href={settingsHref}
       class={settingsButtonClass()}

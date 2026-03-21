@@ -378,16 +378,16 @@
   }
 </script>
 
-<div class="relative rounded-2xl shadow-lg min-w-0 overflow-visible">
+<div class="relative min-w-0 overflow-visible rounded-none shadow-none sm:rounded-2xl sm:shadow-lg">
   <div
-    class="absolute inset-0 rounded-2xl bg-card/70 backdrop-blur-md"
+    class="absolute inset-0 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
     style="mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
   ></div>
-  <div class="relative z-10 flex items-center justify-between gap-4 py-4 px-6 min-w-0">
+  <div class="relative z-10 flex min-w-0 items-center justify-between gap-2 px-3 py-2 sm:gap-4 sm:px-6 sm:py-4">
     {#if canUnforget}
       <button
         type="button"
-        class="inline-flex h-[2.9rem] w-[2.9rem] shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5"
+        class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5"
         onclick={() => onUnforget()}
         aria-label="Unforget"
       >
@@ -397,7 +397,7 @@
     {:else}
       <button
         type="button"
-        class={`relative isolate inline-flex h-[2.9rem] w-[2.9rem] shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-[color,background-color,border-color,box-shadow] duration-200 hover:border-destructive/40 hover:text-muted-foreground active:text-destructive min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5 ${
+        class={`relative isolate inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-[color,background-color,border-color,box-shadow] duration-200 hover:border-destructive/40 hover:text-muted-foreground active:text-destructive min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5 ${
           isHoldingForget
             ? 'border-destructive/70 text-destructive animate-[forget-hold-pulse_0.95s_ease-in-out_infinite_alternate]'
             : ''
@@ -429,7 +429,7 @@
     {/if}
 
     <div
-      class="search-bar search-bar-shell relative flex flex-1 min-w-0 max-w-2xl items-center gap-3 overflow-visible rounded-full border border-border/70 bg-background pl-5"
+      class="search-bar search-bar-shell relative flex max-w-2xl flex-1 min-w-0 items-center gap-2 overflow-visible rounded-full border border-border/70 bg-background pl-3 pr-1 sm:gap-3 sm:pl-5"
       onfocusin={handleSearchFocus}
       onfocusout={handleSearchBlur}
     >
@@ -439,7 +439,7 @@
           bind:this={searchInput}
           type="text"
           autocomplete="off"
-          class="search-bar-input w-full py-1.5 outline-none text-foreground placeholder:text-muted-foreground text-sm"
+          class="search-bar-input w-full py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground sm:py-2"
           placeholder={getSearchPlaceholder()}
           value={searchQuery}
           oninput={handleSearchInput}
@@ -447,10 +447,10 @@
         />
       </div>
 
-      <div class="search-mode-toggle flex items-center gap-1 rounded-full bg-card/80 p-1 shrink-0">
+      <div class="search-mode-toggle flex shrink-0 items-center gap-1 rounded-full bg-card/80 p-1">
         <button
           type="button"
-          class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:h-9 sm:w-9"
           class:bg-primary={isSearchFocused && searchMode === 'current'}
           class:text-primary={isSearchFocused && searchMode === 'current'}
           onmousedown={(event) => event.preventDefault()}
@@ -461,7 +461,7 @@
         </button>
         <button
           type="button"
-          class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:h-9 sm:w-9"
           class:bg-primary={isSearchFocused && searchMode === 'all'}
           class:text-primary={isSearchFocused && searchMode === 'all'}
           onmousedown={(event) => event.preventDefault()}
@@ -473,7 +473,7 @@
       </div>
 
       {#if isSearchFocused}
-        <div class="search-results-panel absolute bottom-[calc(100%+0.85rem)] left-0 right-0 z-30 rounded-[1.5rem] border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md">
+        <div class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]">
           {#if isSearching && searchQuery.trim() !== ''}
             <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
           {:else if visibleItems.length === 0}
@@ -591,7 +591,7 @@
     </div>
 
     <button
-      class="inline-flex h-[2.9rem] w-[2.9rem] shrink-0 items-center justify-center rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5"
+      class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5"
       type="button"
       onclick={() => onRemember()}
       aria-label="Remember"

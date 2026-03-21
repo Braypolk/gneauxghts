@@ -355,9 +355,9 @@
 <svelte:document onvisibilitychange={handleVisibilityChange} />
 
 <div class="h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
-  <main class="flex-1 min-h-0 overflow-hidden py-4">
-    <section class="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden rounded-[2rem] border border-border bg-card shadow-sm">
-      <div class="border-b border-border px-8 py-6">
+  <main class="flex-1 min-h-0 overflow-hidden py-0 sm:py-4">
+    <section class="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden border-y border-border bg-card shadow-sm sm:rounded-[2rem] sm:border">
+      <div class="border-b border-border px-4 py-4 sm:px-8 sm:py-6">
         <div class="flex flex-col gap-5">
           <div class="space-y-2">
             <p class="text-sm text-muted-foreground">{taskCountLabel}</p>

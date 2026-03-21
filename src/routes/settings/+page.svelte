@@ -557,13 +557,13 @@
 <svelte:document onvisibilitychange={handleVisibilityChange} />
 
 <div class="h-full w-full overflow-auto bg-background text-foreground">
-  <main class="mx-auto flex min-h-full w-full max-w-4xl items-start justify-center px-2 pb-10">
-    <section class="mt-2 w-full overflow-hidden rounded-[1.75rem] border border-border/80 bg-card/80 shadow-sm backdrop-blur-md">
-      <div class="px-6 py-5">
+  <main class="mx-auto flex min-h-full w-full max-w-4xl items-start justify-center px-0 pb-6 sm:px-2 sm:pb-10">
+    <section class="mt-0 w-full overflow-hidden border-y border-border/80 bg-card/80 shadow-sm backdrop-blur-md sm:mt-2 sm:rounded-[1.75rem] sm:border">
+      <div class="px-4 py-4 sm:px-6 sm:py-5">
         <p class="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">Settings</p>
       </div>
 
-      <div class="border-t border-border/70 px-6 py-4">
+      <div class="border-t border-border/70 px-4 py-3 sm:px-6 sm:py-4">
         <div class="inline-flex items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
           <button
             class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${

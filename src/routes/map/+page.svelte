@@ -122,9 +122,9 @@
 <svelte:window onpointermove={handlePointerMove} onpointerup={handlePointerUp} />
 
 <div class="h-full w-full overflow-hidden bg-background text-foreground">
-  <main class="mx-auto flex h-full w-full max-w-[1600px] flex-col px-2 pb-4">
-    <section class="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.75rem] border border-border/80 bg-card/80 shadow-sm backdrop-blur-md">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-6 py-5">
+  <main class="mx-auto flex h-full w-full max-w-[1600px] flex-col px-0 pb-0 sm:px-2 sm:pb-4">
+    <section class="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden border-y border-border/80 bg-card/80 shadow-sm backdrop-blur-md sm:mt-2 sm:rounded-[1.75rem] sm:border">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-4 py-4 sm:px-6 sm:py-5">
         <div>
           <p class="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">Map</p>
           <p class="mt-1 text-sm text-muted-foreground">Note-level semantic graph. Filter or tighten the edge threshold if it gets noisy.</p>
@@ -156,7 +156,7 @@
         </div>
       </div>
 
-      <div class="flex-1 min-h-0 p-4">
+      <div class="flex-1 min-h-0 p-3 sm:p-4">
         {#if isLoading}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-background/60 text-sm text-muted-foreground">
             Building note graph…

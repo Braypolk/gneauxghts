@@ -186,26 +186,32 @@ pub(crate) fn get_sync_conflict_detail(note_id: String) -> Result<Option<SyncCon
 }
 
 #[tauri::command]
-pub(crate) fn request_sync_magic_link(
+pub(crate) async fn request_sync_magic_link(
     sync_base_url: String,
     email: String,
 ) -> Result<RequestMagicLinkResponse, String> {
-    sync::request_magic_link(&sync_base_url, &email)
+    tauri::async_runtime::spawn_blocking(move || sync::request_magic_link(&sync_base_url, &email))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn complete_sync_sign_in(
+pub(crate) async fn complete_sync_sign_in(
     sync_base_url: String,
     email: String,
     magic_link_token: String,
     device_name: Option<String>,
 ) -> Result<SyncStatus, String> {
-    sync::complete_magic_link(
-        &sync_base_url,
-        &email,
-        &magic_link_token,
-        device_name.as_deref(),
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        sync::complete_magic_link(
+            &sync_base_url,
+            &email,
+            &magic_link_token,
+            device_name.as_deref(),
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]

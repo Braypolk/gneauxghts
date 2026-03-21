@@ -741,8 +741,8 @@
 <svelte:window onkeydowncapture={handleGlobalKeydown} onfocus={handleWindowFocus} />
 <svelte:document onvisibilitychange={handleVisibilityChange} />
 
-<div bind:this={notepadShell} class="notepad-shell relative w-full h-full min-h-0 overflow-visible">
-  <div class="w-full h-full min-h-0 text-card-foreground rounded-[2rem] shadow-sm border border-border flex flex-col overflow-hidden transition-all duration-300 relative">
+<div bind:this={notepadShell} class="notepad-shell relative h-full w-full min-h-0 overflow-x-hidden overflow-y-visible">
+  <div class="relative flex h-full min-h-0 w-full flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-all duration-300 sm:rounded-[2rem] sm:border">
     <!-- Title bar -->
     <div class="absolute top-0 left-0 right-0 z-20">
       <div class="relative">
@@ -750,20 +750,20 @@
           class="pointer-events-none absolute inset-0 bg-card/70 backdrop-blur-md"
           style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
         ></div>
-        <div class="relative z-10 px-8 pt-3 pb-4">
-          <div bind:this={titleShell} class="mx-auto flex w-full max-w-3xl flex-col items-center gap-2 rounded-[1.4rem] px-4 py-2 transition-all duration-300">
-            <div class="flex w-full items-center justify-center gap-3 text-3xl font-semibold tracking-tight text-foreground">
+        <div class="relative z-10 px-4 pt-2 pb-2 sm:px-8 sm:pt-3 sm:pb-4">
+          <div bind:this={titleShell} class="mx-auto flex w-full max-w-3xl flex-col items-start gap-1 rounded-[1.4rem] px-0 py-1 transition-all duration-300 sm:items-center sm:gap-2 sm:px-4 sm:py-2">
+            <div class="flex w-full items-center justify-start gap-3 text-[1.35rem] font-semibold tracking-tight text-foreground sm:justify-center sm:text-3xl">
               <input
                 bind:this={titleInput}
                 type="text"
-                class="w-full max-w-2xl bg-transparent text-center outline-none placeholder:text-muted-foreground/55"
+                class="w-full max-w-2xl bg-transparent text-left outline-none placeholder:text-muted-foreground/55 sm:text-center"
                 placeholder="Title"
                 value={title}
                 oninput={handleTitleInput}
                 onkeydown={handleTitleKeydown}
               />
             </div>
-            <div class="h-px w-40 rounded-full bg-border"></div>
+            <div class="h-px w-16 rounded-full bg-border sm:w-40"></div>
           </div>
         </div>
       </div>
@@ -822,9 +822,12 @@
 
 <style>
   .notepad-shell {
-    --editor-left-padding: 3.5rem;
+    --editor-left-padding: 1rem;
     --editor-right-padding: 1rem;
     --editor-readable-width: 100%;
+    --editor-top-padding: 4.25rem;
+    --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px));
+    overflow-x: clip;
   }
 
   @media (min-width: 640px) {
@@ -832,6 +835,8 @@
       --editor-left-padding: 3.75rem;
       --editor-right-padding: 1.5rem;
       --editor-readable-width: 44rem;
+      --editor-top-padding: 6rem;
+      --editor-bottom-padding: 100%;
     }
   }
 
@@ -881,6 +886,9 @@
 
   .notepad-editor-shell :global(.milkdown) {
     min-height: 100%;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
   }
 
   /* Hide the + button that adds a new line in the block handle */
@@ -891,17 +899,22 @@
   .notepad-editor-shell :global(.milkdown .ProseMirror) {
     box-sizing: border-box;
     min-height: 100%;
+    max-width: 100%;
     width: min(
       100%,
       calc(var(--editor-readable-width) + var(--editor-left-padding) + var(--editor-right-padding))
     );
     margin-inline: auto;
-    padding-top: 6.5rem;
+    padding-top: var(--editor-top-padding);
     padding-left: var(--editor-left-padding);
     padding-right: var(--editor-right-padding);
-    padding-bottom: 100%;
+    padding-bottom: var(--editor-bottom-padding);
     overflow-anchor: auto;
     position: relative;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror > *) {
+    max-width: 100%;
   }
 
   .notepad-editor-shell :global(.milkdown .ProseMirror .gn-wikilink) {

@@ -17,6 +17,7 @@ const MAX_FILE_STEM_LENGTH: usize = 80;
 const MAX_RECENT_NOTES: usize = 20;
 
 static APP_DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+static DOCUMENTS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +99,15 @@ pub(crate) fn initialize_app_data_dir(app_data_dir: PathBuf) -> Result<(), Strin
     Ok(())
 }
 
+pub(crate) fn initialize_documents_dir(documents_dir: PathBuf) -> Result<(), String> {
+    fs::create_dir_all(&documents_dir).map_err(|err| err.to_string())?;
+    let mut stored = DOCUMENTS_DIR
+        .lock()
+        .map_err(|_| "Documents directory lock poisoned".to_string())?;
+    *stored = Some(documents_dir);
+    Ok(())
+}
+
 pub(crate) fn app_data_dir() -> Result<PathBuf, String> {
     if let Some(path) = configured_app_data_dir()? {
         return Ok(path);
@@ -113,8 +123,53 @@ pub(crate) fn app_data_dir() -> Result<PathBuf, String> {
 }
 
 pub(crate) fn default_notes_root() -> Result<PathBuf, String> {
+    if let Some(documents_dir) = configured_documents_dir()? {
+        if cfg!(target_os = "ios") {
+            return Ok(documents_dir);
+        }
+
+        return Ok(documents_dir.join(NOTES_DIRECTORY_NAME));
+    }
+
     let home = home_dir().ok_or_else(|| "Unable to determine the home directory".to_string())?;
     Ok(home.join("Documents").join(NOTES_DIRECTORY_NAME))
+}
+
+pub(crate) fn migrate_legacy_ios_notes_dir() -> Result<(), String> {
+    if !cfg!(target_os = "ios") {
+        return Ok(());
+    }
+
+    let Some(documents_dir) = configured_documents_dir()? else {
+        return Ok(());
+    };
+    let legacy_dir = documents_dir.join(NOTES_DIRECTORY_NAME);
+    if !legacy_dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(&legacy_dir).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let source = entry.path();
+        let target = documents_dir.join(entry.file_name());
+        if target.exists() {
+            continue;
+        }
+
+        fs::rename(&source, &target).map_err(|err| err.to_string())?;
+    }
+
+    let is_empty = fs::read_dir(&legacy_dir)
+        .map_err(|err| err.to_string())?
+        .next()
+        .is_none();
+    if is_empty {
+        fs::remove_dir(&legacy_dir).map_err(|err| err.to_string())?;
+    }
+
+    migrate_legacy_ios_state_paths(&documents_dir, &legacy_dir)?;
+
+    Ok(())
 }
 
 pub(crate) fn read_vault_config() -> Result<VaultConfig, String> {
@@ -344,6 +399,34 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+fn migrate_legacy_ios_state_paths(notes_dir: &Path, legacy_dir: &Path) -> Result<(), String> {
+    let path = state_path(notes_dir);
+    if !path.is_file() {
+        return Ok(());
+    }
+
+    let contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let mut state: PersistedState = serde_json::from_str(&contents).map_err(|err| err.to_string())?;
+    let mut changed = false;
+
+    changed |= remap_optional_path_prefix(&mut state.last_opened_path, legacy_dir, notes_dir);
+    changed |= remap_path_collection_prefix(&mut state.recent_paths, legacy_dir, notes_dir);
+    changed |= remap_path_collection_prefix(&mut state.hidden_note_paths, legacy_dir, notes_dir);
+    changed |= remap_path_collection_prefix(&mut state.note_order, legacy_dir, notes_dir);
+    changed |= remap_path_collection_prefix(&mut state.collapsed_note_paths, legacy_dir, notes_dir);
+
+    for forgotten_note in &mut state.forgotten_notes {
+        changed |= remap_string_path_prefix(&mut forgotten_note.forgotten_path, legacy_dir, notes_dir);
+        changed |= remap_string_path_prefix(&mut forgotten_note.original_path, legacy_dir, notes_dir);
+    }
+
+    if !changed {
+        return Ok(());
+    }
+
+    write_state(notes_dir, &state)
+}
+
 fn state_path(notes_dir: &Path) -> PathBuf {
     match configured_app_data_dir() {
         Ok(Some(path)) => path.join(STATE_FILE_NAME),
@@ -362,6 +445,31 @@ fn configured_app_data_dir() -> Result<Option<PathBuf>, String> {
         .map(|value| value.clone())
 }
 
+fn remap_optional_path_prefix(raw_path: &mut Option<String>, from: &Path, to: &Path) -> bool {
+    raw_path
+        .as_mut()
+        .map(|raw_path| remap_string_path_prefix(raw_path, from, to))
+        .unwrap_or(false)
+}
+
+fn remap_path_collection_prefix(paths: &mut Vec<String>, from: &Path, to: &Path) -> bool {
+    let mut changed = false;
+    for raw_path in paths {
+        changed |= remap_string_path_prefix(raw_path, from, to);
+    }
+    changed
+}
+
+fn remap_string_path_prefix(raw_path: &mut String, from: &Path, to: &Path) -> bool {
+    let candidate = Path::new(raw_path);
+    let Ok(suffix) = candidate.strip_prefix(from) else {
+        return false;
+    };
+
+    *raw_path = to.join(suffix).to_string_lossy().into_owned();
+    true
+}
+
 fn supports_custom_vault_paths() -> bool {
     !cfg!(target_os = "ios")
 }
@@ -370,8 +478,15 @@ fn vault_path_configuration_note() -> Option<String> {
     if supports_custom_vault_paths() {
         None
     } else {
-        Some("iPhone builds currently store notes inside the app sandbox Documents directory.".to_string())
+        Some("On iPhone, notes are stored in Files > On My iPhone > Gneauxghts.".to_string())
     }
+}
+
+fn configured_documents_dir() -> Result<Option<PathBuf>, String> {
+    DOCUMENTS_DIR
+        .lock()
+        .map_err(|_| "Documents directory lock poisoned".to_string())
+        .map(|value| value.clone())
 }
 
 fn dedupe_hidden_task_keys(state: &mut PersistedState) {

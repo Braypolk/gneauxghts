@@ -26,12 +26,14 @@ use std::{
     collections::HashSet,
     fs,
     path::{Component, Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager};
 
 const SYNC_DB_FILE_NAME: &str = "sync.sqlite3";
 pub(crate) const VAULT_NOTE_CHANGED_EVENT: &str = "vault-note-changed";
+const SYNC_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const SYNC_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[allow(dead_code)]
 pub(crate) struct VaultWatcherHandle {
@@ -1450,11 +1452,17 @@ fn clear_last_sync_error() -> Result<(), String> {
 }
 
 fn build_client() -> Result<Client, String> {
-    Client::builder().build().map_err(|err| err.to_string())
+    Client::builder()
+        .connect_timeout(SYNC_HTTP_CONNECT_TIMEOUT)
+        .timeout(SYNC_HTTP_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|err| err.to_string())
 }
 
 fn authorized_client(sync_base_url: &str, session_token: &str) -> Result<Client, String> {
     Client::builder()
+        .connect_timeout(SYNC_HTTP_CONNECT_TIMEOUT)
+        .timeout(SYNC_HTTP_REQUEST_TIMEOUT)
         .default_headers(
             [(
                 reqwest::header::AUTHORIZATION,
@@ -1674,11 +1682,12 @@ fn relative_sync_path(notes_dir: &Path, note_path: &Path) -> Result<String, Stri
 }
 
 fn forgotten_original_relative_path(notes_dir: &Path, note_path: &Path) -> Result<String, String> {
+    let forgotten_path = note_path.to_string_lossy().into_owned();
     let state = read_state(notes_dir)?;
-    state
+    if let Some(relative_path) = state
         .forgotten_notes
         .iter()
-        .find(|forgotten_note| forgotten_note.forgotten_path == note_path.to_string_lossy())
+        .find(|forgotten_note| forgotten_note.forgotten_path == forgotten_path)
         .map(|forgotten_note| {
             Path::new(&forgotten_note.original_path)
                 .strip_prefix(notes_dir)
@@ -1686,7 +1695,37 @@ fn forgotten_original_relative_path(notes_dir: &Path, note_path: &Path) -> Resul
                 .map_err(|_| "Forgotten note original path is outside the vault".to_string())
         })
         .transpose()?
-        .ok_or_else(|| "Forgotten note is missing its original path metadata".to_string())
+    {
+        return Ok(relative_path);
+    }
+
+    repair_missing_forgotten_original_path(notes_dir, note_path)
+}
+
+fn repair_missing_forgotten_original_path(notes_dir: &Path, note_path: &Path) -> Result<String, String> {
+    let file_name = note_path
+        .file_name()
+        .ok_or_else(|| "Forgotten note file name is missing".to_string())?
+        .to_string_lossy()
+        .into_owned();
+    let original_path = notes_dir.join(&file_name);
+    let title = Path::new(&file_name)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let forgotten_at_millis = current_time_millis()?;
+    let mut state = read_state(notes_dir)?;
+    state.forgotten_notes.push(PersistedForgottenNote {
+        forgotten_path: note_path.to_string_lossy().into_owned(),
+        original_path: original_path.to_string_lossy().into_owned(),
+        title,
+        forgotten_at_millis,
+        purge_after_days: 7,
+        purge_at_millis: forgotten_at_millis + 7 * 24 * 60 * 60 * 1000,
+    });
+    write_state(notes_dir, &state)?;
+    Ok(file_name)
 }
 
 fn validated_relative_path(relative_path: &str) -> Result<PathBuf, String> {
