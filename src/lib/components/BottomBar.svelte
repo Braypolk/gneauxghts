@@ -40,7 +40,10 @@
     onSearchInput: (value: string) => void;
     onSearchModeChange: (mode: 'current' | 'all') => void | Promise<void>;
     onSearchSelect: (result: SearchItem) => void;
+    onRecentNoteSelect: (result: SearchItem) => void;
     onRecentTaskSelect: (task: RecentTaskItem) => void;
+    onRecentNoteShortcut: (index: number) => void | Promise<void>;
+    onRecentTaskShortcut: (index: number) => void | Promise<void>;
     onSearchFocus: () => void;
     focusRequest: number;
   }
@@ -59,7 +62,10 @@
     onSearchInput,
     onSearchModeChange,
     onSearchSelect,
+    onRecentNoteSelect,
     onRecentTaskSelect,
+    onRecentNoteShortcut,
+    onRecentTaskShortcut,
     onSearchFocus,
     focusRequest
   }: Props = $props();
@@ -268,7 +274,41 @@
     return searchMode === 'current' ? 'Current Gneauxght' : 'All Gneauxghts';
   }
 
+  function getDigitShortcutIndex(event: KeyboardEvent) {
+    const shortcutMatch = event.code.match(/^Digit(\d)$/);
+    if (!shortcutMatch) {
+      return null;
+    }
+
+    return Number(shortcutMatch[1]) - 1;
+  }
+
   function handleSearchKeydown(event: KeyboardEvent) {
+    const shortcutIndex = getDigitShortcutIndex(event);
+    if (event.ctrlKey && !event.metaKey && !event.altKey && shortcutIndex !== null) {
+      event.preventDefault();
+
+      if (event.shiftKey) {
+        const task = recentTasks[shortcutIndex];
+        if (task) {
+          selectItem({ kind: 'task', item: task });
+          return;
+        }
+
+        void onRecentTaskShortcut(shortcutIndex);
+        return;
+      }
+
+      const note = recentNotes[shortcutIndex];
+      if (note) {
+        selectItem({ kind: 'note', item: note });
+        return;
+      }
+
+      void onRecentNoteShortcut(shortcutIndex);
+      return;
+    }
+
     const items = visibleItems;
     const isPanelVisible = isSearchFocused && (searchQuery.trim() !== '' || recentNotes.length > 0 || recentTasks.length > 0);
 
@@ -371,6 +411,11 @@
 
     if (item.kind === 'task') {
       onRecentTaskSelect(item.item);
+      return;
+    }
+
+    if (item.kind === 'note') {
+      onRecentNoteSelect(item.item);
       return;
     }
 

@@ -13,10 +13,19 @@
     destroyNotepadEditor,
     insertWikilinkSuggestion,
     prepareNotepadEditor,
+    readNotepadCursorPosition,
+    readNotepadEditorState,
     replaceNotepadEditorContent,
+    replaceNotepadEditorState,
+    restoreNotepadCursorPosition,
     resetNotepadSlashMenuPortal
   } from './notepadEditor';
-  import { focusEditorAtEnd, focusInputAtEnd } from './notepadNavigation';
+  import {
+    loadNotepadCursorPosition,
+    saveNotepadCursorPosition,
+    type NotepadCursorPosition
+  } from './notepadCursorState';
+  import { focusEditorAtEnd, focusInputAtEnd, waitForEditorPaint } from './notepadNavigation';
   import {
     navigateToPendingTaskTarget,
     openRecentTask,
@@ -64,6 +73,7 @@
   import type { RecentTaskItem } from './notepadTypes';
   import BottomBar from './BottomBar.svelte';
   import NotepadWikilinkAutocomplete from './NotepadWikilinkAutocomplete.svelte';
+  import type { EditorState } from '@milkdown/kit/prose/state';
 
   let crepe: Crepe | null = null;
   let notepadShell: HTMLDivElement | null = null;
@@ -98,6 +108,7 @@
   let isRefreshingFromDisk = false;
   let isApplyingExternalContent = false;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
+  const editorStateByNotePath = new Map<string, EditorState>();
 
   interface VaultNoteChangeEvent {
     notePath: string;
@@ -163,15 +174,81 @@
     isEditorReady = true;
   }
 
+  function saveCursorPositionForNote(
+    notePath: string | null = currentNotePath,
+    position: NotepadCursorPosition | null = readNotepadCursorPosition(crepe)
+  ) {
+    if (!notePath || !position) {
+      return;
+    }
+
+    saveNotepadCursorPosition(notePath, position);
+  }
+
+  function saveEditorStateForNote(
+    notePath: string | null = currentNotePath,
+    editorState: EditorState | null = readNotepadEditorState(crepe)
+  ) {
+    if (!notePath || !editorState) {
+      return;
+    }
+
+    editorStateByNotePath.set(notePath, editorState);
+  }
+
+  function getEditorStateForNote(notePath: string | null) {
+    if (!notePath) {
+      return null;
+    }
+
+    return editorStateByNotePath.get(notePath) ?? null;
+  }
+
+  function discardEditorStateForNote(notePath: string | null) {
+    if (!notePath) {
+      return;
+    }
+
+    editorStateByNotePath.delete(notePath);
+  }
+
+  function restoreCursorPositionForNote(
+    notePath: string | null = currentNotePath,
+    position: NotepadCursorPosition | null = loadNotepadCursorPosition(notePath)
+  ) {
+    if (!notePath || !position) {
+      return false;
+    }
+
+    return restoreNotepadCursorPosition(crepe, position);
+  }
+
   async function replaceEditorContent(
     nextMarkdown: string,
-    { preserveScroll = false }: { preserveScroll?: boolean } = {}
+    {
+      preserveScroll = false,
+      restoreCursor = false,
+      cursorPosition = undefined
+    }: {
+      preserveScroll?: boolean;
+      restoreCursor?: boolean;
+      cursorPosition?: NotepadCursorPosition | null | undefined;
+    } = {}
   ) {
     const scrollTop = preserveScroll ? (editorShell?.scrollTop ?? 0) : 0;
     isEditorReady = false;
     await destroyEditor();
     bodyMarkdown = nextMarkdown;
     await createEditor(nextMarkdown);
+
+    if (restoreCursor) {
+      await waitForEditorPaint();
+      if (cursorPosition === undefined) {
+        restoreCursorPositionForNote(currentNotePath);
+      } else {
+        restoreCursorPositionForNote(currentNotePath, cursorPosition);
+      }
+    }
 
     if (preserveScroll && editorShell) {
       await tick();
@@ -180,24 +257,65 @@
   }
 
   async function replaceEditorContentInPlace(nextMarkdown: string) {
+    const cursorPosition = readNotepadCursorPosition(crepe);
+    const scrollTop = editorShell?.scrollTop ?? 0;
     isApplyingExternalContent = true;
     try {
       if (!replaceNotepadEditorContent(crepe, nextMarkdown)) {
         isApplyingExternalContent = false;
-        await replaceEditorContent(nextMarkdown, { preserveScroll: true });
+        await replaceEditorContent(nextMarkdown, {
+          preserveScroll: true,
+          restoreCursor: !!cursorPosition,
+          cursorPosition
+        });
         return;
       }
 
       bodyMarkdown = nextMarkdown;
       closeWikilinkAutocomplete();
+      restoreNotepadCursorPosition(crepe, cursorPosition);
       await tick();
+      if (editorShell) {
+        editorShell.scrollTop = Math.min(scrollTop, editorShell.scrollHeight);
+      }
+    } finally {
+      isApplyingExternalContent = false;
+    }
+  }
+
+  async function replaceEditorContentInPlaceForNote(
+    nextMarkdown: string,
+    notePath: string | null
+  ) {
+    const cursorPosition = loadNotepadCursorPosition(notePath) ?? { anchor: 1, head: 1 };
+
+    isApplyingExternalContent = true;
+    try {
+      if (!replaceNotepadEditorContent(crepe, nextMarkdown, { flushHistory: true })) {
+        isApplyingExternalContent = false;
+        await replaceEditorContent(nextMarkdown, {
+          restoreCursor: true,
+          cursorPosition
+        });
+        return;
+      }
+
+      bodyMarkdown = nextMarkdown;
+      closeWikilinkAutocomplete();
+      restoreNotepadCursorPosition(crepe, cursorPosition);
+      await tick();
+      saveEditorStateForNote(notePath);
     } finally {
       isApplyingExternalContent = false;
     }
   }
 
   async function clearNotepad({ canRestore = true }: { canRestore?: boolean } = {}) {
+    const notePathToClear = currentNotePath;
+
     if (currentNotePath) {
+      saveCursorPositionForNote();
+      saveEditorStateForNote();
       cancelPendingAutosave();
       await enqueueSave('autosave');
     }
@@ -225,6 +343,7 @@
     applySessionSnapshot(createEmptySessionSnapshot());
     canUnforget = canRestore && hasContent;
     await replaceEditorContent('');
+    discardEditorStateForNote(notePathToClear);
     scheduleSearch();
     void loadRecentNotes();
     scheduleAutoSync('note-forgotten', 400);
@@ -373,6 +492,9 @@
   }
 
   async function rememberCurrentNote() {
+    const rememberedPath = currentNotePath;
+    saveCursorPositionForNote();
+    saveEditorStateForNote();
     cancelPendingAutosave();
 
     await enqueueSave('remember');
@@ -380,6 +502,7 @@
     lastSavedMarkdown = '';
     lastSavedPath = null;
     forgottenNote = null;
+    discardEditorStateForNote(rememberedPath);
     clearSearch();
     await clearNotepad({ canRestore: false });
   }
@@ -491,6 +614,30 @@
     }
   }
 
+  async function refreshRecentNotesNow() {
+    const requestId = ++activeRecentNotesRequest;
+
+    try {
+      const notes = await listRecentNotes({
+        currentPath: currentNotePath,
+        currentMarkdown: getCurrentMarkdown()
+      });
+
+      if (requestId === activeRecentNotesRequest) {
+        recentNotes = notes;
+      }
+
+      return notes;
+    } catch (error) {
+      if (requestId === activeRecentNotesRequest) {
+        recentNotes = [];
+      }
+
+      console.error('Failed to load recent notes:', error);
+      return [];
+    }
+  }
+
   async function loadRecentTasks() {
     const requestId = ++activeRecentTasksRequest;
 
@@ -504,6 +651,82 @@
       console.error('Failed to load recent tasks:', error);
       recentTasks = [];
     }
+  }
+
+  async function refreshRecentTasksNow() {
+    const requestId = ++activeRecentTasksRequest;
+
+    try {
+      const tasks = await listRecentTasks();
+
+      if (requestId === activeRecentTasksRequest) {
+        recentTasks = tasks;
+      }
+
+      return tasks;
+    } catch (error) {
+      if (requestId === activeRecentTasksRequest) {
+        recentTasks = [];
+      }
+
+      console.error('Failed to load recent tasks:', error);
+      return [];
+    }
+  }
+
+  async function openRecentNoteByIndex(
+    index: number,
+    { forceReload = false }: { forceReload?: boolean } = {}
+  ) {
+    const notes = forceReload || !recentNotes[index] ? await refreshRecentNotesNow() : recentNotes;
+    const note = notes[index];
+    if (!note) {
+      return;
+    }
+
+    try {
+      await openRecentNoteItem(note);
+    } catch (error) {
+      console.error('Failed to open recent note:', error);
+    }
+  }
+
+  async function openRecentTaskByIndex(
+    index: number,
+    { forceReload = false }: { forceReload?: boolean } = {}
+  ) {
+    const tasks = forceReload || !recentTasks[index] ? await refreshRecentTasksNow() : recentTasks;
+    const task = tasks[index];
+    if (!task) {
+      return;
+    }
+
+    try {
+      await handleRecentTaskSelect(task);
+    } catch (error) {
+      console.error('Failed to open recent task:', error);
+    }
+  }
+
+  async function openRecentNoteItem(note: SearchItem) {
+    clearSearch();
+
+    if (!note.notePath) {
+      await handleSearchResultSelect(note);
+      return;
+    }
+
+    await openNotePath(note.notePath);
+  }
+
+  async function handleSearchResultSelect(result: SearchItem) {
+    await openSearchResult(getOpenContext(), getNavigationContext(), result);
+    saveCursorPositionForNote();
+  }
+
+  async function handleRecentTaskSelect(task: RecentTaskItem) {
+    await openRecentTask(getOpenContext(), getNavigationContext(), task);
+    saveCursorPositionForNote();
   }
 
   function handleSearchInput(value: string) {
@@ -630,18 +853,48 @@
       }
     }
 
+    if (
+      event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === 'l'
+    ) {
+      event.preventDefault();
+      void openRecentNoteByIndex(0, { forceReload: true });
+      return;
+    }
+
     if (!event.metaKey || event.key.toLowerCase() !== 'f') return;
 
     event.preventDefault();
     requestSearchFocus(event.shiftKey ? 'all' : 'current');
   }
 
-  async function openNotePath(notePath: string) {
+  async function openNotePath(
+    notePath: string,
+    { currentNoteAlreadySaved = false }: { currentNoteAlreadySaved?: boolean } = {}
+  ) {
+    const previousPath = currentNotePath;
+    saveCursorPositionForNote();
+    saveEditorStateForNote();
+    if (!currentNoteAlreadySaved && previousPath && previousPath !== notePath) {
+      cancelPendingAutosave();
+      await enqueueSave('autosave');
+    }
+
     const session = await openNoteSession(notePath);
     applySessionSnapshot(session);
     canUnforget = false;
     forgottenNote = null;
-    await replaceEditorContent(session.bodyMarkdown);
+    closeWikilinkAutocomplete();
+
+    if (replaceNotepadEditorState(crepe, getEditorStateForNote(session.currentNotePath))) {
+      await tick();
+      return;
+    }
+
+    await replaceEditorContentInPlaceForNote(session.bodyMarkdown, session.currentNotePath);
   }
 
   async function openWikilink(rawTarget: string) {
@@ -662,6 +915,7 @@
         getNavigationContext(),
         resolved
       );
+      saveCursorPositionForNote();
     } catch (error) {
       console.error('Failed to resolve wikilink:', error);
     }
@@ -690,6 +944,8 @@
   async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
     if (currentNotePath === payload.notePath) {
       await refreshCurrentNoteIfChanged();
+    } else {
+      discardEditorStateForNote(payload.notePath);
     }
     void loadRecentNotes();
     void loadRecentTasks();
@@ -709,6 +965,7 @@
       if (!mounted || !editorRoot) return;
       try {
         await createEditor(bodyMarkdown);
+        restoreCursorPositionForNote();
         const pendingTaskTarget = consumePendingTaskTarget();
         if (pendingTaskTarget) {
           await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
@@ -728,12 +985,41 @@
     return () => {
       mounted = false;
       isEditorReady = false;
+      saveCursorPositionForNote();
+      saveEditorStateForNote();
       flushPendingAutosave();
       cancelScheduledAutoSync();
       if (searchTimer) window.clearTimeout(searchTimer);
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
       void destroyEditor();
+    };
+  });
+
+  $effect(() => {
+    if (!isEditorReady || !editorRoot) {
+      return;
+    }
+
+    const proseMirror = editorRoot.querySelector('.ProseMirror');
+    if (!(proseMirror instanceof HTMLElement)) {
+      return;
+    }
+
+    const persistCursorPosition = () => {
+      saveCursorPositionForNote();
+    };
+
+    proseMirror.addEventListener('keyup', persistCursorPosition);
+    proseMirror.addEventListener('mouseup', persistCursorPosition);
+    proseMirror.addEventListener('touchend', persistCursorPosition);
+    proseMirror.addEventListener('focusout', persistCursorPosition);
+
+    return () => {
+      proseMirror.removeEventListener('keyup', persistCursorPosition);
+      proseMirror.removeEventListener('mouseup', persistCursorPosition);
+      proseMirror.removeEventListener('touchend', persistCursorPosition);
+      proseMirror.removeEventListener('focusout', persistCursorPosition);
     };
   });
 </script>
@@ -799,13 +1085,19 @@
         onSearchInput={handleSearchInput}
         onSearchModeChange={handleSearchModeChange}
         onSearchSelect={(result) =>
-          void openSearchResult(getOpenContext(), getNavigationContext(), result).catch((error) => {
+          void handleSearchResultSelect(result).catch((error) => {
             console.error('Failed to open searched note:', error);
           })}
+        onRecentNoteSelect={(result) =>
+          void openRecentNoteItem(result).catch((error) => {
+            console.error('Failed to open recent note:', error);
+          })}
         onRecentTaskSelect={(task) =>
-          void openRecentTask(getOpenContext(), getNavigationContext(), task).catch((error) => {
+          void handleRecentTaskSelect(task).catch((error) => {
             console.error('Failed to open recent task:', error);
           })}
+        onRecentNoteShortcut={(index) => void openRecentNoteByIndex(index)}
+        onRecentTaskShortcut={(index) => void openRecentTaskByIndex(index)}
         onSearchFocus={handleSearchFocus}
       />
     </div>

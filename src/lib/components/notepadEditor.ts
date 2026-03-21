@@ -12,11 +12,12 @@ import {
 } from '@milkdown/kit/preset/commonmark';
 import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
 import { wrapInList } from '@milkdown/kit/prose/schema-list';
-import { TextSelection } from '@milkdown/kit/prose/state';
+import { EditorState, TextSelection } from '@milkdown/kit/prose/state';
 import { liftTarget } from '@milkdown/kit/prose/transform';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { replaceAll } from '@milkdown/kit/utils';
 import { tick } from 'svelte';
+import type { NotepadCursorPosition } from './notepadCursorState';
 import { notepadWikilinks, type ActiveWikilink } from './notepadWikilinks';
 import { setupNotepadSlashMenuPortal } from './notepadSlashMenuPortal';
 
@@ -33,6 +34,10 @@ interface ResetSlashMenuPortalOptions {
   editorRoot: HTMLDivElement | null;
   portalRoot: HTMLDivElement | null;
   currentCleanup: (() => void) | null;
+}
+
+interface ReplaceNotepadEditorContentOptions {
+  flushHistory?: boolean;
 }
 
 const wikilinkSlashIcon = `
@@ -175,6 +180,21 @@ function getSelectionAncestorInfo(view: EditorView): SelectionAncestorInfo {
   }
 
   return { listPos, listNode };
+}
+
+function getSelectionScrollTarget(view: EditorView) {
+  const { node } = view.domAtPos(view.state.selection.head);
+
+  if (node instanceof HTMLElement) {
+    return node;
+  }
+
+  return node.parentElement ?? view.dom;
+}
+
+function scrollSelectionIntoView(view: EditorView) {
+  const target = getSelectionScrollTarget(view);
+  target.scrollIntoView({ block: 'center', inline: 'nearest' });
 }
 
 function liftSelectionOutOfBlockquote(view: EditorView) {
@@ -765,13 +785,97 @@ export async function destroyNotepadEditor(crepe: Crepe | null) {
   return null;
 }
 
-export function replaceNotepadEditorContent(crepe: Crepe | null, markdown: string) {
+export function replaceNotepadEditorContent(
+  crepe: Crepe | null,
+  markdown: string,
+  { flushHistory = false }: ReplaceNotepadEditorContentOptions = {}
+) {
   if (!crepe) {
     return false;
   }
 
-  crepe.editor.action(replaceAll(markdown, false));
+  crepe.editor.action(replaceAll(markdown, flushHistory));
   return true;
+}
+
+export function readNotepadEditorState(crepe: Crepe | null): EditorState | null {
+  if (!crepe) {
+    return null;
+  }
+
+  let state: EditorState | null = null;
+
+  crepe.editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    state = view.state;
+  });
+
+  return state;
+}
+
+export function replaceNotepadEditorState(crepe: Crepe | null, state: EditorState | null) {
+  if (!crepe || !state) {
+    return false;
+  }
+
+  crepe.editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.updateState(state);
+    view.focus();
+    window.requestAnimationFrame(() => {
+      scrollSelectionIntoView(view);
+    });
+  });
+
+  return true;
+}
+
+export function readNotepadCursorPosition(crepe: Crepe | null): NotepadCursorPosition | null {
+  if (!crepe) {
+    return null;
+  }
+
+  let position: NotepadCursorPosition | null = null;
+
+  crepe.editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    position = {
+      anchor: view.state.selection.anchor,
+      head: view.state.selection.head
+    };
+  });
+
+  return position;
+}
+
+export function restoreNotepadCursorPosition(
+  crepe: Crepe | null,
+  position: NotepadCursorPosition | null
+) {
+  if (!crepe || !position) {
+    return false;
+  }
+
+  let restored = false;
+
+  crepe.editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const maxPos = Math.max(1, view.state.doc.nodeSize - 2);
+    const anchor = Math.max(1, Math.min(position.anchor, maxPos));
+    const head = Math.max(1, Math.min(position.head, maxPos));
+    const transaction = view.state.tr
+      .setSelection(TextSelection.create(view.state.doc, anchor, head))
+      .scrollIntoView();
+
+    view.dispatch(transaction);
+    view.focus();
+    window.requestAnimationFrame(() => {
+      scrollSelectionIntoView(view);
+    });
+    restored = true;
+  });
+
+  return restored;
 }
 
 export function resetNotepadSlashMenuPortal({

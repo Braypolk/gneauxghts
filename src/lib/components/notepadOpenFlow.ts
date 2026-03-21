@@ -16,7 +16,10 @@ export interface NotepadOpenContext {
   stopPendingAutosave: () => void;
   enqueueAutosave: () => Promise<void>;
   clearSearch: () => void;
-  openNotePath: (notePath: string) => Promise<void>;
+  openNotePath: (
+    notePath: string,
+    options?: { currentNoteAlreadySaved?: boolean }
+  ) => Promise<void>;
 }
 
 async function ensureNoteContext(
@@ -32,7 +35,7 @@ async function ensureNoteContext(
   }
 
   await enqueueAutosave();
-  await openNotePath(nextNotePath);
+  await openNotePath(nextNotePath, { currentNoteAlreadySaved: true });
   return true;
 }
 
@@ -80,7 +83,7 @@ export async function navigateToPendingTaskTarget(
 
   const targetBlock = findBestEditorTarget(editorRoot, target.text);
   if (targetBlock) {
-    targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    focusEditorTarget(editorRoot, targetBlock);
   }
 }
 
