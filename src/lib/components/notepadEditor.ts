@@ -1,32 +1,58 @@
-import type { Crepe } from '@milkdown/crepe';
-import { commandsCtx, editorViewCtx } from '@milkdown/kit/core';
+import type { Ctx } from '@milkdown/kit/ctx';
 import {
+  commandsCtx,
+  defaultValueCtx,
+  Editor,
+  editorViewCtx,
+  editorViewOptionsCtx,
+  rootCtx
+} from '@milkdown/kit/core';
+import { block, blockConfig, BlockProvider, type BlockProviderOptions } from '@milkdown/kit/plugin/block';
+import { listItemBlockComponent, listItemBlockConfig } from '@milkdown/kit/component/list-item-block';
+import { clipboard } from '@milkdown/kit/plugin/clipboard';
+import { cursor, dropIndicatorConfig } from '@milkdown/kit/plugin/cursor';
+import { history } from '@milkdown/kit/plugin/history';
+import { indent, indentConfig } from '@milkdown/kit/plugin/indent';
+import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
+import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
+import { trailing } from '@milkdown/kit/plugin/trailing';
+import {
+  addBlockTypeCommand,
   blockquoteSchema,
   bulletListSchema,
+  clearTextInCurrentBlockCommand,
   codeBlockSchema,
   headingSchema,
+  hrSchema,
   orderedListSchema,
   paragraphSchema,
   setBlockTypeCommand,
   wrapInBlockTypeCommand
 } from '@milkdown/kit/preset/commonmark';
+import { commonmark } from '@milkdown/kit/preset/commonmark';
+import { gfm } from '@milkdown/kit/preset/gfm';
+import { findParent } from '@milkdown/kit/prose';
 import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
 import { wrapInList } from '@milkdown/kit/prose/schema-list';
-import { EditorState, TextSelection } from '@milkdown/kit/prose/state';
+import { EditorState, Plugin, PluginKey, TextSelection, type PluginView, type Selection } from '@milkdown/kit/prose/state';
 import { liftTarget } from '@milkdown/kit/prose/transform';
-import type { EditorView } from '@milkdown/kit/prose/view';
-import { replaceAll } from '@milkdown/kit/utils';
+import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
+import { $ctx, $prose, replaceAll } from '@milkdown/kit/utils';
 import { tick } from 'svelte';
 import type { NotepadCursorPosition } from './notepadCursorState';
+import { notepadImages } from './notepadImages';
+import type { StoredImageAsset } from './notepadTypes';
 import { notepadWikilinks, type ActiveWikilink } from './notepadWikilinks';
 import { setupNotepadSlashMenuPortal } from './notepadSlashMenuPortal';
 
 interface CreateNotepadEditorOptions {
+  assetRootPath: string | null;
   editorRoot: HTMLDivElement;
   initialValue: string;
   onOpenLink: (rawTarget: string) => void;
   onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
   onMarkdownChange: (markdown: string) => void;
+  onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
 }
 
 interface ResetSlashMenuPortalOptions {
@@ -38,6 +64,10 @@ interface ResetSlashMenuPortalOptions {
 
 interface ReplaceNotepadEditorContentOptions {
   flushHistory?: boolean;
+}
+
+export interface NotepadEditorController {
+  editor: Editor;
 }
 
 const wikilinkSlashIcon = `
@@ -58,6 +88,744 @@ const wikilinkSlashIcon = `
   </svg>
 `;
 
+const addIcon = `
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d="M12 5v14" />
+    <path d="M5 12h14" />
+  </svg>
+`;
+
+const dragHandleIcon = `
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <circle cx="7.25" cy="5.9" r="1.4" />
+    <circle cx="7.25" cy="12" r="1.4" />
+    <circle cx="7.25" cy="18.1" r="1.4" />
+    <circle cx="16.75" cy="5.9" r="1.4" />
+    <circle cx="16.75" cy="12" r="1.4" />
+    <circle cx="16.75" cy="18.1" r="1.4" />
+  </svg>
+`;
+
+const bulletListLabel = `
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    viewBox="0 0 16 16"
+    fill="currentColor"
+  >
+    <circle cx="8" cy="8" r="2.4" />
+  </svg>
+`;
+
+const taskListCheckedLabel = `
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+  >
+    <path
+      d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3ZM10.71 16.29C10.32 16.68 9.69 16.68 9.3 16.29L5.71 12.7C5.32 12.31 5.32 11.68 5.71 11.29C6.1 10.9 6.73 10.9 7.12 11.29L10 14.17L16.88 7.29C17.27 6.9 17.9 6.9 18.29 7.29C18.68 7.68 18.68 8.31 18.29 8.7L10.71 16.29Z"
+    />
+  </svg>
+`;
+
+const taskListUncheckedLabel = `
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+  >
+    <path
+      d="M18 19H6C5.45 19 5 18.55 5 18V6C5 5.45 5.45 5 6 5H18C18.55 5 19 5.45 19 6V18C19 18.55 18.55 19 18 19ZM19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3Z"
+    />
+  </svg>
+`;
+
+// ── Placeholder ──────────────────────────────────────────────────────
+
+interface PlaceholderConfig {
+  text: string;
+  mode: 'doc' | 'block';
+}
+
+const notepadPlaceholderConfig = $ctx<PlaceholderConfig, 'notepadPlaceholderConfig'>(
+  {
+    text: 'Start writing',
+    mode: 'doc'
+  },
+  'notepadPlaceholderConfig'
+);
+
+function isDocEmpty(doc: ProseMirrorNode) {
+  return doc.childCount <= 1 && !doc.firstChild?.content.size;
+}
+
+function isInCodeContext(selection: Selection) {
+  const { $from } = selection;
+  if ($from.parent.type.name === 'code_block') {
+    return true;
+  }
+
+  return $from.marks().some((mark) => mark.type.name === 'code');
+}
+
+function isInList(selection: Selection) {
+  const { $from } = selection;
+  for (let depth = $from.depth; depth >= 1; depth -= 1) {
+    const nodeName = $from.node(depth).type.name;
+    if (nodeName === 'list_item' || nodeName === 'bullet_list' || nodeName === 'ordered_list') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function createPlaceholderDecoration(
+  state: EditorState,
+  placeholderText: string
+): Decoration | null {
+  const { selection } = state;
+  if (!selection.empty) return null;
+
+  const $pos = selection.$anchor;
+  const node = $pos.parent;
+  if (node.content.size > 0) return null;
+
+  const inTable = findParent((candidate) => candidate.type.name === 'table')($pos);
+  if (inTable) return null;
+
+  const before = $pos.before();
+  return Decoration.node(before, before + node.nodeSize, {
+    class: 'crepe-placeholder',
+    'data-placeholder': placeholderText
+  });
+}
+
+const notepadPlaceholderPlugin = $prose((ctx) => {
+  return new Plugin({
+    key: new PluginKey('NOTEPAD_PLACEHOLDER'),
+    props: {
+      decorations: (state) => {
+        const config = ctx.get(notepadPlaceholderConfig.key);
+
+        if (config.mode === 'doc' && !isDocEmpty(state.doc)) {
+          return null;
+        }
+
+        if (isInCodeContext(state.selection) || isInList(state.selection)) {
+          return null;
+        }
+
+        const decoration = createPlaceholderDecoration(state, config.text);
+        if (!decoration) {
+          return null;
+        }
+
+        return DecorationSet.create(state.doc, [decoration]);
+      }
+    }
+  });
+});
+
+// ── Slash menu ───────────────────────────────────────────────────────
+
+interface SlashMenuOption {
+  id: string;
+  label: string;
+}
+
+interface SlashMenuGroup {
+  key: string;
+  label: string;
+  items: readonly SlashMenuOption[];
+}
+
+interface SlashMenuItemWithIndex extends SlashMenuOption {
+  index: number;
+}
+
+interface SlashMenuGroupWithItems {
+  key: string;
+  label: string;
+  range: readonly [number, number];
+  items: SlashMenuItemWithIndex[];
+}
+
+interface SlashMenuState {
+  groups: SlashMenuGroupWithItems[];
+  size: number;
+}
+
+interface SlashMenuAPI {
+  show: (pos: number) => void;
+  hide: () => void;
+}
+
+const slashMenu = slashFactory('NOTEPAD_SLASH_MENU');
+const slashMenuAPI = $ctx<SlashMenuAPI, 'notepadSlashMenuAPI'>(
+  {
+    show: () => {},
+    hide: () => {}
+  },
+  'notepadSlashMenuAPI'
+);
+
+const slashMenuGroups: readonly SlashMenuGroup[] = [
+  {
+    key: 'text',
+    label: 'Text',
+    items: [
+      { id: 'paragraph', label: 'Text' },
+      { id: 'heading1', label: 'Heading 1' },
+      { id: 'heading2', label: 'Heading 2' },
+      { id: 'heading3', label: 'Heading 3' },
+      { id: 'heading4', label: 'Heading 4' },
+      { id: 'heading5', label: 'Heading 5' },
+      { id: 'heading6', label: 'Heading 6' },
+      { id: 'quote', label: 'Quote' },
+      { id: 'divider', label: 'Divider' },
+      { id: 'wikilink', label: 'Wikilink' }
+    ]
+  },
+  {
+    key: 'list',
+    label: 'List',
+    items: [
+      { id: 'bulletList', label: 'Bullet List' },
+      { id: 'orderedList', label: 'Ordered List' },
+      { id: 'taskList', label: 'Task List' }
+    ]
+  },
+  {
+    key: 'advanced',
+    label: 'Advanced',
+    items: [{ id: 'code', label: 'Code' }]
+  }
+];
+
+const slashMenuOptionIds = new Set(slashMenuGroups.flatMap((group) => group.items.map((item) => item.id)));
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function getSlashMenuState(filter = ''): SlashMenuState {
+  const normalizedFilter = filter.trim().toLowerCase();
+  const groups: SlashMenuGroupWithItems[] = [];
+  let index = 0;
+
+  for (const group of slashMenuGroups) {
+    const items = group.items
+      .filter((item) => {
+        if (normalizedFilter === '') {
+          return true;
+        }
+
+        return item.label.toLowerCase().includes(normalizedFilter);
+      })
+      .map((item) => ({
+        ...item,
+        index: index++
+      }));
+
+    if (items.length === 0) {
+      continue;
+    }
+
+    groups.push({
+      key: group.key,
+      label: group.label,
+      range: [items[0].index, items[items.length - 1].index + 1],
+      items
+    });
+  }
+
+  return {
+    groups,
+    size: index
+  };
+}
+
+function isSelectionAtEndOfNode(selection: Selection) {
+  if (!(selection instanceof TextSelection)) return false;
+
+  const { $head } = selection;
+  return $head.parentOffset === $head.parent.content.size;
+}
+
+function runSlashMenuSelection(
+  ctx: Ctx,
+  view: EditorView,
+  optionId: string
+) {
+  if (!slashMenuOptionIds.has(optionId)) {
+    return;
+  }
+
+  applyBlockTypeSelection(ctx, view, optionId, { clearCurrentBlock: true });
+}
+
+class NotepadSlashMenuView implements PluginView {
+  readonly #ctx: Ctx;
+  readonly #content: HTMLElement;
+  readonly #provider: SlashProvider;
+  #filter = '';
+  #hoverIndex = 0;
+  #view: EditorView;
+  #programmaticPos: number | null = null;
+  #menuState: SlashMenuState = getSlashMenuState();
+
+  constructor(ctx: Ctx, view: EditorView) {
+    this.#ctx = ctx;
+    this.#view = view;
+
+    const content = document.createElement('div');
+    content.className = 'milkdown-slash-menu';
+    content.dataset.show = 'false';
+    content.addEventListener('pointerdown', this.handlePointerDown);
+    content.addEventListener('pointermove', this.handlePointerMove);
+    content.addEventListener('pointerup', this.handlePointerUp);
+    this.#content = content;
+
+    this.#provider = new SlashProvider({
+      content,
+      debounce: 20,
+      shouldShow: (nextView) => {
+        if (isInCodeContext(nextView.state.selection) || isInList(nextView.state.selection)) {
+          return false;
+        }
+
+        const currentText = this.#provider.getContent(nextView, (node) =>
+          node.type.name === 'paragraph' || node.type.name === 'heading'
+        );
+
+        if (currentText == null || !isSelectionAtEndOfNode(nextView.state.selection)) {
+          return false;
+        }
+
+        this.#filter = currentText.startsWith('/') ? currentText.slice(1) : currentText;
+        this.#menuState = getSlashMenuState(this.#filter);
+        this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
+
+        const pos = this.#programmaticPos;
+        if (typeof pos === 'number') {
+          const maxSize = nextView.state.doc.nodeSize - 2;
+          const validPos = Math.min(pos, maxSize);
+          if (
+            nextView.state.doc.resolve(validPos).node() !==
+            nextView.state.doc.resolve(nextView.state.selection.from).node()
+          ) {
+            this.#programmaticPos = null;
+            return false;
+          }
+
+          return true;
+        }
+
+        return currentText.startsWith('/');
+      },
+      offset: 10
+    });
+
+    this.#provider.onShow = () => {
+      this.render();
+    };
+    this.#provider.onHide = () => {
+      this.#content.dataset.show = 'false';
+    };
+
+    ctx.set(slashMenuAPI.key, {
+      show: (pos) => this.show(pos),
+      hide: () => this.hide()
+    });
+
+    window.addEventListener('keydown', this.handleWindowKeydown, true);
+    this.update(view);
+  }
+
+  update = (view: EditorView) => {
+    this.#view = view;
+    this.#provider.update(view);
+    if (this.#content.dataset.show === 'true') {
+      this.render();
+    }
+  };
+
+  show = (pos: number) => {
+    this.#programmaticPos = pos;
+    this.#filter = '';
+    this.#menuState = getSlashMenuState('');
+    this.#hoverIndex = 0;
+    this.#provider.update(this.#view);
+    this.#provider.show();
+    this.render();
+  };
+
+  hide = () => {
+    this.#programmaticPos = null;
+    this.#provider.hide();
+  };
+
+  destroy = () => {
+    window.removeEventListener('keydown', this.handleWindowKeydown, true);
+    this.#provider.destroy();
+    this.#content.removeEventListener('pointerdown', this.handlePointerDown);
+    this.#content.removeEventListener('pointermove', this.handlePointerMove);
+    this.#content.removeEventListener('pointerup', this.handlePointerUp);
+    this.#content.remove();
+  };
+
+  private render() {
+    if (this.#menuState.size === 0) {
+      this.hide();
+      return;
+    }
+
+    this.#content.dataset.show = 'true';
+    this.#content.innerHTML = `
+      <nav class="tab-group">
+        <ul>
+          ${this.#menuState.groups
+            .map(
+              (group) => `
+                <li
+                  data-tab-group="${escapeHtml(group.key)}"
+                  class="${this.#hoverIndex >= group.range[0] && this.#hoverIndex < group.range[1] ? 'selected' : ''}"
+                >
+                  ${escapeHtml(group.label)}
+                </li>
+              `
+            )
+            .join('')}
+        </ul>
+      </nav>
+      <div class="menu-groups">
+        ${this.#menuState.groups
+          .map(
+            (group) => `
+              <div class="menu-group" data-group="${escapeHtml(group.key)}">
+                <h6>${escapeHtml(group.label)}</h6>
+                <ul>
+                  ${group.items
+                    .map(
+                      (item) => `
+                        <li
+                          data-index="${item.index}"
+                          data-option="${escapeHtml(item.id)}"
+                          class="${item.index === this.#hoverIndex ? 'hover' : ''}"
+                        >
+                          ${blockTypeIcons[item.id] ?? ''}
+                          <span>${escapeHtml(item.label)}</span>
+                        </li>
+                      `
+                    )
+                    .join('')}
+                </ul>
+              </div>
+            `
+          )
+          .join('')}
+      </div>
+    `;
+  }
+
+  private runAtIndex(index: number) {
+    const item = this.#menuState.groups.flatMap((group) => group.items).find((candidate) => candidate.index === index);
+    if (!item) {
+      return;
+    }
+
+    runSlashMenuSelection(this.#ctx, this.#view, item.id);
+    this.hide();
+  }
+
+  private scrollToIndex(index: number) {
+    const target = this.#content.querySelector<HTMLElement>(`li[data-index="${index}"]`);
+    const scrollRoot = this.#content.querySelector<HTMLElement>('.menu-groups');
+    if (!target || !scrollRoot) {
+      return;
+    }
+
+    scrollRoot.scrollTop = target.offsetTop - scrollRoot.offsetTop;
+  }
+
+  private setHoverIndex(index: number) {
+    if (this.#menuState.size === 0) {
+      return;
+    }
+
+    const nextIndex = Math.max(0, Math.min(index, this.#menuState.size - 1));
+    if (nextIndex === this.#hoverIndex) {
+      return;
+    }
+
+    this.#hoverIndex = nextIndex;
+    this.render();
+    this.scrollToIndex(nextIndex);
+  }
+
+  private handlePointerDown = (event: PointerEvent) => {
+    event.preventDefault();
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('li[data-index]') : null;
+    target?.classList.add('active');
+  };
+
+  private handlePointerMove = (event: PointerEvent) => {
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('li[data-index]') : null;
+    if (!target) {
+      return;
+    }
+
+    const index = Number(target.dataset.index);
+    if (Number.isFinite(index)) {
+      this.setHoverIndex(index);
+    }
+  };
+
+  private handlePointerUp = (event: PointerEvent) => {
+    const target = event.target instanceof Element ? event.target.closest<HTMLElement>('li[data-index]') : null;
+    if (target) {
+      target.classList.remove('active');
+      const index = Number(target.dataset.index);
+      if (Number.isFinite(index)) {
+        this.runAtIndex(index);
+        return;
+      }
+    }
+
+    const tab = event.target instanceof Element ? event.target.closest<HTMLElement>('li[data-tab-group]') : null;
+    if (!tab) {
+      return;
+    }
+
+    const groupKey = tab.dataset.tabGroup;
+    const group = this.#menuState.groups.find((candidate) => candidate.key === groupKey);
+    if (!group) {
+      return;
+    }
+
+    this.setHoverIndex(group.range[0]);
+  };
+
+  private handleWindowKeydown = (event: KeyboardEvent) => {
+    if (this.#content.dataset.show !== 'true') {
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.hide();
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      this.setHoverIndex(this.#hoverIndex + 1);
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.setHoverIndex(this.#hoverIndex - 1);
+      return;
+    }
+
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      const group = this.#menuState.groups.find(
+        (candidate) =>
+          this.#hoverIndex >= candidate.range[0] && this.#hoverIndex < candidate.range[1]
+      );
+      if (!group) {
+        return;
+      }
+
+      const previousGroup = this.#menuState.groups[this.#menuState.groups.indexOf(group) - 1];
+      if (previousGroup) {
+        this.setHoverIndex(previousGroup.range[1] - 1);
+      }
+      return;
+    }
+
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      const group = this.#menuState.groups.find(
+        (candidate) =>
+          this.#hoverIndex >= candidate.range[0] && this.#hoverIndex < candidate.range[1]
+      );
+      if (!group) {
+        return;
+      }
+
+      const nextGroup = this.#menuState.groups[this.#menuState.groups.indexOf(group) + 1];
+      if (nextGroup) {
+        this.setHoverIndex(nextGroup.range[0]);
+      }
+      return;
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.runAtIndex(this.#hoverIndex);
+    }
+  };
+}
+
+function configureSlashMenu(ctx: Ctx) {
+  ctx.set(slashMenu.key, {
+    view: (view) => new NotepadSlashMenuView(ctx, view)
+  });
+}
+
+// ── Block handle ─────────────────────────────────────────────────────
+
+function getBlockHandleContent(documentRoot: Document) {
+  const content = documentRoot.createElement('div');
+  content.className = 'milkdown-block-handle';
+  content.dataset.show = 'false';
+
+  const addButton = documentRoot.createElement('div');
+  addButton.className = 'operation-item';
+  addButton.innerHTML = addIcon;
+
+  const dragButton = documentRoot.createElement('div');
+  dragButton.className = 'operation-item';
+  dragButton.innerHTML = dragHandleIcon;
+
+  content.appendChild(addButton);
+  content.appendChild(dragButton);
+
+  return { content, addButton };
+}
+
+class NotepadBlockHandleView implements PluginView {
+  readonly #ctx: Ctx;
+  readonly #provider: BlockProvider;
+  readonly #content: HTMLElement;
+  readonly #addButton: HTMLElement;
+
+  constructor(ctx: Ctx) {
+    this.#ctx = ctx;
+    const documentRoot = document;
+    const { content, addButton } = getBlockHandleContent(documentRoot);
+    this.#content = content;
+    this.#addButton = addButton;
+
+    this.#addButton.addEventListener('pointerdown', this.handleAddPointerDown);
+    this.#addButton.addEventListener('pointerup', this.handleAddPointerUp);
+
+    const blockProviderOptions: Partial<BlockProviderOptions> = {};
+    this.#provider = new BlockProvider({
+      ctx,
+      content,
+      getOffset: () => 16,
+      getPlacement: ({ active, blockDom }) => {
+        if (active.node.type.name === 'heading') return 'left';
+
+        let totalDescendant = 0;
+        active.node.descendants((node) => {
+          totalDescendant += node.childCount;
+        });
+
+        const domRect = active.el.getBoundingClientRect();
+        const handleRect = blockDom.getBoundingClientRect();
+        const style = window.getComputedStyle(active.el);
+        const paddingTop = Number.parseInt(style.paddingTop, 10) || 0;
+        const paddingBottom = Number.parseInt(style.paddingBottom, 10) || 0;
+        const height = domRect.height - paddingTop - paddingBottom;
+        const handleHeight = handleRect.height;
+        return totalDescendant > 2 || handleHeight < height ? 'left-start' : 'left';
+      },
+      ...blockProviderOptions
+    });
+    this.update();
+  }
+
+  update = () => {
+    this.#provider.update();
+  };
+
+  destroy = () => {
+    this.#addButton.removeEventListener('pointerdown', this.handleAddPointerDown);
+    this.#addButton.removeEventListener('pointerup', this.handleAddPointerUp);
+    this.#provider.destroy();
+    this.#content.remove();
+  };
+
+  private handleAddPointerDown = (event: PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    this.#addButton.classList.add('active');
+  };
+
+  private handleAddPointerUp = (event: PointerEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    this.#addButton.classList.remove('active');
+
+    const view = this.#ctx.get(editorViewCtx);
+    if (!view.hasFocus()) {
+      view.focus();
+    }
+
+    const active = this.#provider.active;
+    if (!active) {
+      return;
+    }
+
+    const pos = active.$pos.pos + active.node.nodeSize;
+    let transaction = view.state.tr.insert(pos, paragraphSchema.type(this.#ctx).create());
+    transaction = transaction.setSelection(TextSelection.near(transaction.doc.resolve(pos)));
+    view.dispatch(transaction.scrollIntoView());
+
+    this.#provider.hide();
+    this.#ctx.get(slashMenuAPI.key).show(transaction.selection.from);
+  };
+}
+
+function configureBlockHandle(ctx: Ctx) {
+  ctx.set(blockConfig.key, {
+    filterNodes: (pos) => {
+      const filtered = findParent((node) =>
+        ['table', 'blockquote', 'math_inline'].includes(node.type.name)
+      )(pos);
+      return !filtered;
+    }
+  });
+  ctx.set(block.key, {
+    view: () => new NotepadBlockHandleView(ctx)
+  });
+}
+
 // ── Block type menu ──────────────────────────────────────────────────
 
 const blockTypeIcons: Record<string, string> = {
@@ -69,10 +837,12 @@ const blockTypeIcons: Record<string, string> = {
   heading5: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3ZM19 19H5V5H19V19ZM15 15V13C15 11.89 14.1 11 13 11H11V9H15V7H9V13H13V15H9V17H13C14.1 17 15 16.11 15 15Z"/></svg>`,
   heading6: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M11 17H13C14.1 17 15 16.11 15 15V13C15 11.89 14.1 11 13 11H11V9H15V7H11C9.9 7 9 7.89 9 9V15C9 16.11 9.9 17 11 17ZM11 13H13V15H11V13ZM19 3H5C3.9 3 3 3.9 3 5V19C3 20.1 3.9 21 5 21H19C20.1 21 21 20.1 21 19V5C21 3.9 20.1 3 19 3ZM19 19H5V5H19V19Z"/></svg>`,
   quote: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M7.17 17C7.68 17 8.15 16.71 8.37 16.26L9.79 13.42C9.93 13.14 10 12.84 10 12.53V8C10 7.45 9.55 7 9 7H5C4.45 7 4 7.45 4 8V12C4 12.55 4.45 13 5 13H7L5.97 15.06C5.52 15.95 6.17 17 7.17 17ZM17.17 17C17.68 17 18.15 16.71 18.37 16.26L19.79 13.42C19.93 13.14 20 12.84 20 12.53V8C20 7.45 19.55 7 19 7H15C14.45 7 14 7.45 14 8V12C14 12.55 14.45 13 15 13H17L15.97 15.06C15.52 15.95 16.17 17 17.17 17Z"/></svg>`,
+  divider: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M4 11H20V13H4V11Z"/></svg>`,
   bulletList: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M4 10.5C3.17 10.5 2.5 11.17 2.5 12C2.5 12.83 3.17 13.5 4 13.5C4.83 13.5 5.5 12.83 5.5 12C5.5 11.17 4.83 10.5 4 10.5ZM4 4.5C3.17 4.5 2.5 5.17 2.5 6C2.5 6.83 3.17 7.5 4 7.5C4.83 7.5 5.5 6.83 5.5 6C5.5 5.17 4.83 4.5 4 4.5ZM4 16.5C3.17 16.5 2.5 17.18 2.5 18C2.5 18.82 3.18 19.5 4 19.5C4.82 19.5 5.5 18.82 5.5 18C5.5 17.18 4.83 16.5 4 16.5ZM8 19H20C20.55 19 21 18.55 21 18C21 17.45 20.55 17 20 17H8C7.45 17 7 17.45 7 18C7 18.55 7.45 19 8 19ZM8 13H20C20.55 13 21 12.55 21 12C21 11.45 20.55 11 20 11H8C7.45 11 7 11.45 7 12C7 12.55 7.45 13 8 13ZM7 6C7 6.55 7.45 7 8 7H20C20.55 7 21 6.55 21 6C21 5.45 20.55 5 20 5H8C7.45 5 7 5.45 7 6Z"/></svg>`,
   orderedList: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M8 7H20C20.55 7 21 6.55 21 6C21 5.45 20.55 5 20 5H8C7.45 5 7 5.45 7 6C7 6.55 7.45 7 8 7ZM20 17H8C7.45 17 7 17.45 7 18C7 18.55 7.45 19 8 19H20C20.55 19 21 18.55 21 18C21 17.45 20.55 17 20 17ZM20 11H8C7.45 11 7 11.45 7 12C7 12.55 7.45 13 8 13H20C20.55 13 21 12.55 21 12C21 11.45 20.55 11 20 11ZM4.5 16H2.5C2.22 16 2 16.22 2 16.5C2 16.78 2.22 17 2.5 17H4V17.5H3.5C3.22 17.5 3 17.72 3 18C3 18.28 3.22 18.5 3.5 18.5H4V19H2.5C2.22 19 2 19.22 2 19.5C2 19.78 2.22 20 2.5 20H4.5C4.78 20 5 19.78 5 19.5V16.5C5 16.22 4.78 16 4.5 16ZM2.5 5H3V7.5C3 7.78 3.22 8 3.5 8C3.78 8 4 7.78 4 7.5V4.5C4 4.22 3.78 4 3.5 4H2.5C2.22 4 2 4.22 2 4.5C2 4.78 2.22 5 2.5 5ZM4.5 10H2.5C2.22 10 2 10.22 2 10.5C2 10.78 2.22 11 2.5 11H3.8L2.12 12.96C2.04 13.05 2 13.17 2 13.28V13.5C2 13.78 2.22 14 2.5 14H4.5C4.78 14 5 13.78 5 13.5C5 13.22 4.78 13 4.5 13H3.2L4.88 11.04C4.96 10.95 5 10.83 5 10.72V10.5C5 10.22 4.78 10 4.5 10Z"/></svg>`,
   taskList: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M5.67 16.34L9.39 12.62C9.54 12.47 9.72 12.39 9.92 12.4C10.12 12.4 10.3 12.48 10.45 12.63C10.58 12.78 10.65 12.96 10.65 13.16C10.65 13.36 10.58 13.54 10.45 13.69L6.33 17.82C6.15 18 5.94 18.09 5.69 18.09C5.45 18.09 5.24 18 5.06 17.82L3.02 15.78C2.88 15.64 2.81 15.46 2.81 15.25C2.82 15.04 2.89 14.87 3.03 14.73C3.17 14.59 3.34 14.52 3.55 14.52C3.76 14.52 3.93 14.59 4.07 14.73L5.67 16.34ZM5.67 8.72L9.39 5C9.54 4.85 9.72 4.78 9.92 4.78C10.12 4.78 10.3 4.86 10.45 5.02C10.58 5.17 10.65 5.34 10.65 5.54C10.65 5.75 10.58 5.92 10.45 6.07L6.33 10.2C6.15 10.39 5.94 10.48 5.69 10.48C5.45 10.48 5.24 10.39 5.06 10.2L3.02 8.16C2.88 8.02 2.81 7.85 2.81 7.64C2.82 7.43 2.89 7.25 3.03 7.12C3.17 6.98 3.34 6.91 3.55 6.91C3.76 6.91 3.93 6.98 4.07 7.12L5.67 8.72ZM13.76 16.56C13.55 16.56 13.37 16.49 13.23 16.34C13.08 16.2 13.01 16.02 13.01 15.81C13.01 15.6 13.08 15.42 13.23 15.27C13.37 15.13 13.55 15.06 13.76 15.06H20.76C20.97 15.06 21.15 15.13 21.29 15.27C21.44 15.42 21.51 15.6 21.51 15.81C21.51 16.02 21.44 16.2 21.29 16.34C21.15 16.49 20.97 16.56 20.76 16.56H13.76ZM13.76 8.94C13.55 8.94 13.37 8.87 13.23 8.73C13.08 8.58 13.01 8.41 13.01 8.19C13.01 7.98 13.08 7.8 13.23 7.66C13.37 7.51 13.55 7.44 13.76 7.44H20.76C20.97 7.44 21.15 7.51 21.29 7.66C21.44 7.8 21.51 7.98 21.51 8.19C21.51 8.41 21.44 8.58 21.29 8.73C21.15 8.87 20.97 8.94 20.76 8.94H13.76Z"/></svg>`,
-  code: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M9.4 16.6L4.8 12L9.4 7.4L8 6L2 12L8 18L9.4 16.6ZM14.6 16.6L19.2 12L14.6 7.4L16 6L22 12L16 18L14.6 16.6Z"/></svg>`
+  code: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M9.4 16.6L4.8 12L9.4 7.4L8 6L2 12L8 18L9.4 16.6ZM14.6 16.6L19.2 12L14.6 7.4L16 6L22 12L16 18L14.6 16.6Z"/></svg>`,
+  wikilink: wikilinkSlashIcon
 };
 
 interface BlockTypeMenuOption {
@@ -117,7 +887,7 @@ const blockTypeMenuGroups: readonly BlockTypeMenuGroup[] = [
   }
 ];
 
-const blockHandleMenuCleanupByCrepe = new WeakMap<Crepe, () => void>();
+const blockHandleMenuCleanupByEditor = new WeakMap<NotepadEditorController, () => void>();
 
 function getBlockHandleDragButton(target: EventTarget | null) {
   if (!(target instanceof Element)) return null;
@@ -170,7 +940,7 @@ function getSelectionAncestorInfo(view: EditorView): SelectionAncestorInfo {
   let listPos: number | null = null;
   let listNode: ProseMirrorNode | null = null;
 
-  for (let depth = $from.depth; depth >= 1; depth--) {
+  for (let depth = $from.depth; depth >= 1; depth -= 1) {
     const node = $from.node(depth);
     if (node.type.name === 'bullet_list' || node.type.name === 'ordered_list') {
       listPos = $from.before(depth);
@@ -239,7 +1009,10 @@ function normalizeSelectionForList(
   return lifted;
 }
 
-function buildListAttrsForTarget(listNode: ProseMirrorNode, targetId: 'bulletList' | 'orderedList' | 'taskList') {
+function buildListAttrsForTarget(
+  listNode: ProseMirrorNode,
+  targetId: 'bulletList' | 'orderedList' | 'taskList'
+) {
   const spread = readBooleanAttr(listNode.attrs.spread, false);
 
   if (targetId === 'orderedList') {
@@ -338,8 +1111,78 @@ function wrapSelectionInList(
   return true;
 }
 
+function insertWikilinkAtSelection(view: EditorView) {
+  const { $from } = view.state.selection;
+  const from = $from.start();
+  const to = $from.end();
+  const transaction = view.state.tr.insertText('[[]]', from, to);
+  transaction.setSelection(TextSelection.create(transaction.doc, from + 2));
+  view.dispatch(transaction);
+  view.focus();
+}
+
+function applyBlockTypeSelection(
+  ctx: Ctx,
+  view: EditorView,
+  id: string,
+  { clearCurrentBlock = false }: { clearCurrentBlock?: boolean } = {}
+) {
+  const commands = ctx.get(commandsCtx);
+
+  if (clearCurrentBlock) {
+    commands.call(clearTextInCurrentBlockCommand.key);
+  }
+
+  if (id === 'paragraph') {
+    commands.call(setBlockTypeCommand.key, { nodeType: paragraphSchema.type(ctx) });
+    return;
+  }
+
+  if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
+    const bulletListType = bulletListSchema.type(ctx);
+    const orderedListType = orderedListSchema.type(ctx);
+    const paragraphType = paragraphSchema.type(ctx);
+
+    if (convertCurrentList(view, bulletListType, orderedListType, id)) {
+      return;
+    }
+
+    normalizeSelectionForList(view, commands, paragraphType);
+    wrapSelectionInList(view, bulletListType, orderedListType, id);
+    return;
+  }
+
+  if (id.startsWith('heading')) {
+    const level = parseInt(id.replace('heading', ''), 10);
+    commands.call(setBlockTypeCommand.key, {
+      nodeType: headingSchema.type(ctx),
+      attrs: { level }
+    });
+    return;
+  }
+
+  if (id === 'quote') {
+    commands.call(wrapInBlockTypeCommand.key, { nodeType: blockquoteSchema.type(ctx) });
+    return;
+  }
+
+  if (id === 'code') {
+    commands.call(setBlockTypeCommand.key, { nodeType: codeBlockSchema.type(ctx) });
+    return;
+  }
+
+  if (id === 'divider') {
+    commands.call(addBlockTypeCommand.key, { nodeType: hrSchema.type(ctx) });
+    return;
+  }
+
+  if (id === 'wikilink') {
+    insertWikilinkAtSelection(view);
+  }
+}
+
 function resolveBlockContext(
-  crepe: Crepe,
+  controller: NotepadEditorController,
   editorRoot: HTMLDivElement,
   handleButton: HTMLElement
 ): BlockContext | null {
@@ -361,13 +1204,13 @@ function resolveBlockContext(
   if (!hitElement) return null;
 
   let result: BlockContext | null = null;
-  crepe.editor.action((ctx) => {
+  controller.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     try {
       const pos = view.posAtDOM(hitElement!, 0);
       const $pos = view.state.doc.resolve(pos);
 
-      for (let depth = $pos.depth; depth >= 1; depth--) {
+      for (let depth = $pos.depth; depth >= 1; depth -= 1) {
         const node = $pos.node(depth);
         const name = node.type.name;
 
@@ -417,10 +1260,13 @@ function resolveBlockContext(
   return result;
 }
 
-function applyBlockTypeMenuSelection(crepe: Crepe, targetPos: number, option: BlockTypeMenuOption) {
-  crepe.editor.action((ctx) => {
+function applyBlockTypeMenuSelection(
+  controller: NotepadEditorController,
+  targetPos: number,
+  option: BlockTypeMenuOption
+) {
+  controller.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
-    const commands = ctx.get(commandsCtx);
     const maxPos = Math.max(1, view.state.doc.nodeSize - 2);
     const selectionPos = Math.max(1, Math.min(targetPos, maxPos));
     const transaction = view.state.tr
@@ -429,32 +1275,7 @@ function applyBlockTypeMenuSelection(crepe: Crepe, targetPos: number, option: Bl
 
     view.dispatch(transaction);
     view.focus();
-
-    const id = option.id;
-    if (id === 'paragraph') {
-      commands.call(setBlockTypeCommand.key, { nodeType: paragraphSchema.type(ctx) });
-    } else if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
-      const bulletListType = bulletListSchema.type(ctx);
-      const orderedListType = orderedListSchema.type(ctx);
-      const paragraphType = paragraphSchema.type(ctx);
-
-      if (convertCurrentList(view, bulletListType, orderedListType, id)) {
-        return;
-      }
-
-      normalizeSelectionForList(view, commands, paragraphType);
-      wrapSelectionInList(view, bulletListType, orderedListType, id);
-    } else if (id.startsWith('heading')) {
-      const level = parseInt(id.replace('heading', ''), 10);
-      commands.call(setBlockTypeCommand.key, {
-        nodeType: headingSchema.type(ctx),
-        attrs: { level }
-      });
-    } else if (id === 'quote') {
-      commands.call(wrapInBlockTypeCommand.key, { nodeType: blockquoteSchema.type(ctx) });
-    } else if (id === 'code') {
-      commands.call(setBlockTypeCommand.key, { nodeType: codeBlockSchema.type(ctx) });
-    }
+    applyBlockTypeSelection(ctx, view, option.id);
   });
 }
 
@@ -484,7 +1305,10 @@ function positionBlockTypeMenu(menuRoot: HTMLDivElement, anchorRect: DOMRect) {
   });
 }
 
-function setupBlockHandleTypeMenu(crepe: Crepe, editorRoot: HTMLDivElement) {
+function setupBlockHandleTypeMenu(
+  controller: NotepadEditorController,
+  editorRoot: HTMLDivElement
+) {
   const documentRoot = editorRoot.ownerDocument;
   const menuRoot = documentRoot.createElement('div');
   menuRoot.className = 'notepad-block-type-menu';
@@ -501,15 +1325,14 @@ function setupBlockHandleTypeMenu(crepe: Crepe, editorRoot: HTMLDivElement) {
     menuRoot.style.removeProperty('visibility');
   };
 
-  // Tab navigation
   const tabNav = documentRoot.createElement('nav');
   tabNav.className = 'notepad-block-type-menu-tabs';
   const tabList = documentRoot.createElement('ul');
   const tabsByKey = new Map<string, HTMLLIElement>();
 
   const selectTab = (key: string) => {
-    for (const [k, tab] of tabsByKey) {
-      tab.classList.toggle('selected', k === key);
+    for (const [candidateKey, tab] of tabsByKey) {
+      tab.classList.toggle('selected', candidateKey === key);
     }
     const targetGroup = menuGroups.querySelector(`[data-group="${key}"]`);
     if (targetGroup) {
@@ -520,8 +1343,8 @@ function setupBlockHandleTypeMenu(crepe: Crepe, editorRoot: HTMLDivElement) {
   for (const group of blockTypeMenuGroups) {
     const tab = documentRoot.createElement('li');
     tab.textContent = group.label;
-    tab.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
+    tab.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
       selectTab(group.key);
     });
     tabsByKey.set(group.key, tab);
@@ -531,19 +1354,18 @@ function setupBlockHandleTypeMenu(crepe: Crepe, editorRoot: HTMLDivElement) {
   tabNav.appendChild(tabList);
   menuRoot.appendChild(tabNav);
 
-  // Menu groups
   const menuGroups = documentRoot.createElement('div');
   menuGroups.className = 'notepad-block-type-menu-groups';
   const groupElementsByKey = new Map<string, HTMLDivElement>();
 
   for (const group of blockTypeMenuGroups) {
-    const groupEl = documentRoot.createElement('div');
-    groupEl.className = 'notepad-block-type-menu-group';
-    groupEl.dataset.group = group.key;
+    const groupElement = documentRoot.createElement('div');
+    groupElement.className = 'notepad-block-type-menu-group';
+    groupElement.dataset.group = group.key;
 
     const heading = documentRoot.createElement('h6');
     heading.textContent = group.label;
-    groupEl.appendChild(heading);
+    groupElement.appendChild(heading);
 
     for (const option of group.items) {
       const button = documentRoot.createElement('button');
@@ -553,37 +1375,35 @@ function setupBlockHandleTypeMenu(crepe: Crepe, editorRoot: HTMLDivElement) {
       button.innerHTML = `${blockTypeIcons[option.id] ?? ''}<span>${option.label}</span>`;
       button.addEventListener('click', () => {
         if (activeTargetPos === null) return;
-        applyBlockTypeMenuSelection(crepe, activeTargetPos, option);
+        applyBlockTypeMenuSelection(controller, activeTargetPos, option);
         closeMenu();
       });
 
       buttonsById.set(option.id, button);
-      groupEl.appendChild(button);
+      groupElement.appendChild(button);
     }
 
-    groupElementsByKey.set(group.key, groupEl);
-    menuGroups.appendChild(groupEl);
+    groupElementsByKey.set(group.key, groupElement);
+    menuGroups.appendChild(groupElement);
   }
 
-  // Sync tab selection on scroll
   const updateActiveTab = () => {
     const scrollTop = menuGroups.scrollTop;
     let activeKey = blockTypeMenuGroups[0]?.key;
-    for (const [key, el] of groupElementsByKey) {
-      if (el.offsetTop - menuGroups.offsetTop <= scrollTop + 8) {
+    for (const [key, element] of groupElementsByKey) {
+      if (element.offsetTop - menuGroups.offsetTop <= scrollTop + 8) {
         activeKey = key;
       }
     }
     if (activeKey) {
-      for (const [k, tab] of tabsByKey) {
-        tab.classList.toggle('selected', k === activeKey);
+      for (const [key, tab] of tabsByKey) {
+        tab.classList.toggle('selected', key === activeKey);
       }
     }
   };
   menuGroups.addEventListener('scroll', updateActiveTab);
 
   menuRoot.appendChild(menuGroups);
-
   documentRoot.body.appendChild(menuRoot);
 
   let pointerState: {
@@ -626,7 +1446,7 @@ function setupBlockHandleTypeMenu(crepe: Crepe, editorRoot: HTMLDivElement) {
     event.preventDefault();
     event.stopPropagation();
 
-    const context = resolveBlockContext(crepe, editorRoot, captured.handleButton);
+    const context = resolveBlockContext(controller, editorRoot, captured.handleButton);
     if (!context) {
       closeMenu();
       return;
@@ -647,11 +1467,10 @@ function setupBlockHandleTypeMenu(crepe: Crepe, editorRoot: HTMLDivElement) {
       }
     }
 
-    for (const [k, tab] of tabsByKey) {
-      tab.classList.toggle('selected', k === activeGroupKey);
+    for (const [key, tab] of tabsByKey) {
+      tab.classList.toggle('selected', key === activeGroupKey);
     }
     menuGroups.scrollTop = 0;
-
     positionBlockTypeMenu(menuRoot, captured.handleButton.getBoundingClientRect());
   };
 
@@ -671,7 +1490,6 @@ function setupBlockHandleTypeMenu(crepe: Crepe, editorRoot: HTMLDivElement) {
     }
 
     if (menuRoot.contains(target) || getBlockHandleDragButton(target)) return;
-
     closeMenu();
   };
 
@@ -716,109 +1534,127 @@ export async function prepareNotepadEditor(editorRoot: HTMLDivElement | null) {
 }
 
 export async function createNotepadEditor({
+  assetRootPath,
   editorRoot,
   initialValue,
   onOpenLink,
   onActiveWikilinkChange,
-  onMarkdownChange
+  onMarkdownChange,
+  onStorePastedImage
 }: CreateNotepadEditorOptions) {
-  const { Crepe } = await import('@milkdown/crepe');
-
-  const crepe = new Crepe({
-    root: editorRoot,
-    defaultValue: initialValue,
-    featureConfigs: {
-      [Crepe.Feature.Placeholder]: {
-        text: 'Start writing',
-        mode: 'doc'
-      },
-      [Crepe.Feature.BlockEdit]: {
-        buildMenu: (builder) => {
-          builder.getGroup('text').addItem('wikilink', {
-            label: 'Wikilink',
-            icon: wikilinkSlashIcon,
-            onRun: (ctx) => {
-              const view = ctx.get(editorViewCtx);
-              const selectionFrom = view.state.selection.$from;
-              const from = selectionFrom.start();
-              const to = selectionFrom.end();
-              const transaction = view.state.tr.insertText('[[]]', from, to);
-              transaction.setSelection(TextSelection.create(transaction.doc, from + 2));
-              view.dispatch(transaction);
-              view.focus();
-            }
-          });
-        }
-      }
-    }
+  const editor = Editor.make();
+  notepadImages(editor, {
+    assetRootPath,
+    storePastedImage: onStorePastedImage
   });
+  editor
+    .config((ctx) => {
+      ctx.set(rootCtx, editorRoot);
+      ctx.set(defaultValueCtx, initialValue);
+      ctx.set(editorViewOptionsCtx, {
+        editable: () => true
+      });
+      ctx.update(dropIndicatorConfig.key, () => ({
+        class: 'crepe-drop-cursor',
+        width: 4,
+        color: false
+      }));
+      ctx.update(listItemBlockConfig.key, () => ({
+        renderLabel: ({ label, listType, checked }) => {
+          if (checked == null) {
+            return listType === 'bullet' ? bulletListLabel : label;
+          }
 
-  crepe.addFeature(notepadWikilinks, {
+          return checked ? taskListCheckedLabel : taskListUncheckedLabel;
+        }
+      }));
+      ctx.update(indentConfig.key, (value) => ({
+        ...value,
+        size: 4
+      }));
+      configureSlashMenu(ctx);
+      configureBlockHandle(ctx);
+    })
+    .use(commonmark)
+    .use(listener)
+    .use(cursor)
+    .use(history)
+    .use(indent)
+    .use(trailing)
+    .use(clipboard)
+    .use(gfm)
+    .use(listItemBlockComponent)
+    .use(notepadPlaceholderConfig)
+    .use(notepadPlaceholderPlugin)
+    .use(slashMenuAPI)
+    .use(slashMenu)
+    .use(block)
+    .config((ctx) => {
+      ctx.get(listenerCtx).markdownUpdated((_listenerCtx, markdown) => {
+        onMarkdownChange(markdown);
+      });
+    });
+
+  notepadWikilinks(editor, {
     onOpenLink,
     onActiveWikilinkChange
   });
 
-  crepe.on((listener) => {
-    listener.markdownUpdated((_ctx, markdown) => {
-      onMarkdownChange(markdown);
-    });
-  });
+  await editor.create();
 
-  await crepe.create();
-
-  const menuCleanup = setupBlockHandleTypeMenu(crepe, editorRoot);
-  blockHandleMenuCleanupByCrepe.set(crepe, menuCleanup);
-
-  return crepe;
+  const controller: NotepadEditorController = { editor };
+  const menuCleanup = setupBlockHandleTypeMenu(controller, editorRoot);
+  blockHandleMenuCleanupByEditor.set(controller, menuCleanup);
+  return controller;
 }
 
-export async function destroyNotepadEditor(crepe: Crepe | null) {
-  if (!crepe) return null;
+export async function destroyNotepadEditor(controller: NotepadEditorController | null) {
+  if (!controller) return null;
 
-  const menuCleanup = blockHandleMenuCleanupByCrepe.get(crepe);
+  const menuCleanup = blockHandleMenuCleanupByEditor.get(controller);
   if (menuCleanup) {
     menuCleanup();
-    blockHandleMenuCleanupByCrepe.delete(crepe);
+    blockHandleMenuCleanupByEditor.delete(controller);
   }
 
-  await crepe.destroy();
+  await controller.editor.destroy();
   return null;
 }
 
 export function replaceNotepadEditorContent(
-  crepe: Crepe | null,
+  controller: NotepadEditorController | null,
   markdown: string,
   { flushHistory = false }: ReplaceNotepadEditorContentOptions = {}
 ) {
-  if (!crepe) {
+  if (!controller) {
     return false;
   }
 
-  crepe.editor.action(replaceAll(markdown, flushHistory));
+  controller.editor.action(replaceAll(markdown, flushHistory));
   return true;
 }
 
-export function readNotepadEditorState(crepe: Crepe | null): EditorState | null {
-  if (!crepe) {
+export function readNotepadEditorState(controller: NotepadEditorController | null): EditorState | null {
+  if (!controller) {
     return null;
   }
 
   let state: EditorState | null = null;
-
-  crepe.editor.action((ctx) => {
-    const view = ctx.get(editorViewCtx);
-    state = view.state;
+  controller.editor.action((ctx) => {
+    state = ctx.get(editorViewCtx).state;
   });
-
   return state;
 }
 
-export function replaceNotepadEditorState(crepe: Crepe | null, state: EditorState | null) {
-  if (!crepe || !state) {
+export function replaceNotepadEditorState(
+  controller: NotepadEditorController | null,
+  state: EditorState | null
+) {
+  if (!controller || !state) {
     return false;
   }
 
-  crepe.editor.action((ctx) => {
+  controller.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     view.updateState(state);
     view.focus();
@@ -830,35 +1666,34 @@ export function replaceNotepadEditorState(crepe: Crepe | null, state: EditorStat
   return true;
 }
 
-export function readNotepadCursorPosition(crepe: Crepe | null): NotepadCursorPosition | null {
-  if (!crepe) {
+export function readNotepadCursorPosition(
+  controller: NotepadEditorController | null
+): NotepadCursorPosition | null {
+  if (!controller) {
     return null;
   }
 
   let position: NotepadCursorPosition | null = null;
-
-  crepe.editor.action((ctx) => {
+  controller.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     position = {
       anchor: view.state.selection.anchor,
       head: view.state.selection.head
     };
   });
-
   return position;
 }
 
 export function restoreNotepadCursorPosition(
-  crepe: Crepe | null,
+  controller: NotepadEditorController | null,
   position: NotepadCursorPosition | null
 ) {
-  if (!crepe || !position) {
+  if (!controller || !position) {
     return false;
   }
 
   let restored = false;
-
-  crepe.editor.action((ctx) => {
+  controller.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const maxPos = Math.max(1, view.state.doc.nodeSize - 2);
     const anchor = Math.max(1, Math.min(position.anchor, maxPos));
@@ -892,7 +1727,6 @@ export function resetNotepadSlashMenuPortal({
     return null;
   }
 
-  // Crepe mounts the slash menu inside the clipped editor tree, so we reparent and clamp it here.
   return setupNotepadSlashMenuPortal({
     boundsElement,
     editorRoot,
@@ -901,15 +1735,15 @@ export function resetNotepadSlashMenuPortal({
 }
 
 export function insertWikilinkSuggestion(
-  crepe: Crepe | null,
+  controller: NotepadEditorController | null,
   activeWikilink: ActiveWikilink | null,
   suggestionValue: string
 ) {
-  if (!crepe || !activeWikilink) {
+  if (!controller || !activeWikilink) {
     return false;
   }
 
-  crepe.editor.action((ctx) => {
+  controller.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const transaction = view.state.tr.insertText(
       suggestionValue,

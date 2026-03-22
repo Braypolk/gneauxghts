@@ -3,6 +3,11 @@ export interface NoteSession {
   path: string | null;
 }
 
+export interface StoredImageAsset {
+  fileName: string;
+  filePath: string;
+}
+
 export interface RecentTaskItem {
   taskKey: string;
   notePath: string;

@@ -44,6 +44,8 @@ pub fn run() {
             commands::open_note,
             commands::read_note,
             commands::get_vault_info,
+            commands::read_image_asset_data_url,
+            commands::store_pasted_image,
             commands::set_vault_directory,
             commands::request_sync_magic_link,
             commands::complete_sync_sign_in,

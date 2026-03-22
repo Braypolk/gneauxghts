@@ -52,6 +52,13 @@ pub(crate) fn strip_frontmatter(markdown: &str) -> String {
     parse_note(markdown).body
 }
 
+pub(crate) fn normalize_wikilink_markdown(markdown: &str) -> String {
+    markdown
+        .replace("!\\[\\[", "![[")
+        .replace("\\[\\[", "[[")
+        .replace("\\]\\]", "]]")
+}
+
 pub(crate) fn extract_title_and_body(markdown: &str, fallback_title: &str) -> (String, String) {
     let normalized = strip_frontmatter(markdown);
     let lines = normalized.lines().collect::<Vec<_>>();
@@ -376,7 +383,9 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_title_and_body, parse_note, prepare_note_markdown};
+    use super::{
+        extract_title_and_body, normalize_wikilink_markdown, parse_note, prepare_note_markdown,
+    };
 
     #[test]
     fn parse_note_separates_frontmatter_and_body() {
@@ -421,5 +430,13 @@ mod tests {
         assert!(prepared.contains("# Title\n\nBody"));
         assert_eq!(metadata.id, "01TEST");
         assert_eq!(metadata.trashed_at, None);
+    }
+
+    #[test]
+    fn normalize_wikilink_markdown_unescapes_obsidian_style_links() {
+        assert_eq!(
+            normalize_wikilink_markdown("# Title\n\n!\\[\\[Pasted image.png\\]\\]\n\\[\\[Project Atlas\\]\\]"),
+            "# Title\n\n![[Pasted image.png]]\n[[Project Atlas]]"
+        );
     }
 }

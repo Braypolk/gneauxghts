@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Crepe } from '@milkdown/crepe';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick } from 'svelte';
   import { cancelScheduledAutoSync, runAutoSyncNow, scheduleAutoSync } from '$lib/sync/autoSync';
@@ -12,6 +11,7 @@
     createNotepadEditor,
     destroyNotepadEditor,
     insertWikilinkSuggestion,
+    type NotepadEditorController,
     prepareNotepadEditor,
     readNotepadCursorPosition,
     readNotepadEditorState,
@@ -45,12 +45,14 @@
     createForgottenNote,
     forgetNoteSession,
     hasNotepadContent,
+    loadCurrentVaultInfo,
     loadSavedNoteSession,
     openNoteSession,
     readNoteSession,
     rememberNoteSession,
     restoreForgottenNotes,
     saveNoteSession,
+    storePastedImageAsset,
     shouldSkipAutosave,
     type ForgottenNote,
     type NotepadSessionSnapshot,
@@ -75,7 +77,7 @@
   import NotepadWikilinkAutocomplete from './NotepadWikilinkAutocomplete.svelte';
   import type { EditorState } from '@milkdown/kit/prose/state';
 
-  let crepe: Crepe | null = null;
+  let crepe: NotepadEditorController | null = null;
   let notepadShell: HTMLDivElement | null = null;
   let editorShell: HTMLDivElement | null = null;
   let editorRoot: HTMLDivElement | null = null;
@@ -108,6 +110,7 @@
   let isRefreshingFromDisk = false;
   let isApplyingExternalContent = false;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
+  let assetRootPath = $state<string | null>(null);
   const editorStateByNotePath = new Map<string, EditorState>();
 
   interface VaultNoteChangeEvent {
@@ -156,6 +159,7 @@
   async function createEditor(initialValue: string) {
     if (!(await prepareNotepadEditor(editorRoot)) || !editorRoot) return;
     crepe = await createNotepadEditor({
+      assetRootPath,
       editorRoot,
       initialValue,
       onOpenLink: (rawTarget) => {
@@ -164,14 +168,20 @@
       onActiveWikilinkChange: handleActiveWikilinkChange,
       onMarkdownChange: (nextMarkdown) => {
         bodyMarkdown = nextMarkdown;
+        saveEditorStateForNote();
         if (isApplyingExternalContent) return;
         if (nextMarkdown.trim() !== '') canUnforget = false;
         scheduleAutosave();
         scheduleSearch();
-      }
+      },
+      onStorePastedImage: storePastedImageAsset
     });
     setupSlashMenuPortal();
     isEditorReady = true;
+  }
+
+  function resolveAssetRootPath(vaultPath: string) {
+    return `${vaultPath.replace(/[\\/]+$/u, '')}${vaultPath.includes('\\') ? '\\' : '/'}assets`;
   }
 
   function saveCursorPositionForNote(
@@ -394,6 +404,16 @@
     } catch (error) {
       console.error('Failed to load saved note:', error);
       applySessionSnapshot(createEmptySessionSnapshot());
+    }
+  }
+
+  async function loadAssetRoot() {
+    try {
+      const vaultInfo = await loadCurrentVaultInfo();
+      assetRootPath = resolveAssetRootPath(vaultInfo.currentPath);
+    } catch (error) {
+      console.error('Failed to load vault info for image assets:', error);
+      assetRootPath = null;
     }
   }
 
@@ -944,7 +964,7 @@
   async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
     if (currentNotePath === payload.notePath) {
       await refreshCurrentNoteIfChanged();
-    } else {
+    } else if (payload.deleted) {
       discardEditorStateForNote(payload.notePath);
     }
     void loadRecentNotes();
@@ -961,7 +981,7 @@
     (async () => {
       await tick();
       if (!mounted || !editorRoot) return;
-      await loadSavedNote();
+      await Promise.all([loadSavedNote(), loadAssetRoot()]);
       if (!mounted || !editorRoot) return;
       try {
         await createEditor(bodyMarkdown);
@@ -1221,6 +1241,66 @@
 
   .notepad-editor-shell :global(.milkdown .ProseMirror .gn-wikilink:hover) {
     background: color-mix(in oklab, var(--accent) 72%, transparent);
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed-source) {
+    display: none;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed) {
+    display: block;
+    position: relative;
+    max-width: min(100%, 42rem);
+    margin: 0.9rem 0;
+    cursor: text;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed img) {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.9rem;
+    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+    background: color-mix(in oklab, var(--card) 92%, var(--background));
+    box-shadow:
+      0 14px 28px -24px color-mix(in oklab, var(--foreground) 34%, transparent),
+      0 4px 12px -8px color-mix(in oklab, var(--foreground) 18%, transparent);
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed-resize-handle) {
+    position: absolute;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--background) 72%, transparent);
+    background: color-mix(in oklab, var(--foreground) 76%, var(--accent) 24%);
+    box-shadow: 0 3px 10px -6px color-mix(in oklab, var(--foreground) 60%, transparent);
+    cursor: nwse-resize;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed:hover .gn-image-embed-resize-handle) {
+    opacity: 1;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed[data-broken='true'] img) {
+    opacity: 0.45;
+    filter: grayscale(1);
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-upload-placeholder) {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.45rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+    background: color-mix(in oklab, var(--card) 92%, var(--background));
+    color: color-mix(in oklab, var(--foreground) 72%, transparent);
+    font-size: 0.92rem;
   }
 
   .notepad-editor-shell :global(.ProseMirror.virtual-cursor-enabled) {

@@ -350,8 +350,10 @@ pub(crate) fn persist_note(
     markdown: &str,
     current_path: Option<&Path>,
 ) -> Result<Option<String>, String> {
-    if note::strip_frontmatter(markdown).trim().is_empty() {
-        let target_path = resolve_target_path(notes_dir, markdown, current_path)?;
+    let normalized_markdown = note::normalize_wikilink_markdown(markdown);
+
+    if note::strip_frontmatter(&normalized_markdown).trim().is_empty() {
+        let target_path = resolve_target_path(notes_dir, &normalized_markdown, current_path)?;
         let Some(target_path) = target_path else {
             return Ok(None);
         };
@@ -371,8 +373,12 @@ pub(crate) fn persist_note(
         .map(fs::read_to_string)
         .transpose()
         .map_err(|err| err.to_string())?;
-    let prepared_markdown =
-        note::prepare_note_markdown(markdown, existing_markdown.as_deref(), Some(None))?.0;
+    let prepared_markdown = note::prepare_note_markdown(
+        &normalized_markdown,
+        existing_markdown.as_deref(),
+        Some(None),
+    )?
+    .0;
     let target_path = resolve_target_path(notes_dir, &prepared_markdown, current_path)?;
     let Some(target_path) = target_path else {
         return Ok(None);
