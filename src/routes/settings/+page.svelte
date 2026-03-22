@@ -1306,10 +1306,13 @@
                 <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
                   <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Requests</p>
                   <p class="mt-2 text-sm font-medium">
-                    search {metrics.searchRequestCount} · map {metrics.mapRequestCount}
+                    search {metrics.searchRequestCount} · related {metrics.relatedRequestCount}
                   </p>
                   <p class="mt-1 text-xs text-muted-foreground">
-                    search semantic used {metrics.searchSemanticUsedCount} · skipped {metrics.searchSemanticSkippedCount}
+                    map {metrics.mapRequestCount} · search semantic used {metrics.searchSemanticUsedCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    search skipped {metrics.searchSemanticSkippedCount} · related unavailable {metrics.relatedUnavailableCount}
                   </p>
                 </div>
 
@@ -1338,6 +1341,20 @@
                     · max {formatMillis(metrics.indexDurationMaxMillis)}
                   </p>
                 </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Related Panel</p>
+                  <p class="mt-2 text-sm font-medium">
+                    note {metrics.relatedNoteRequestCount} · selection {metrics.relatedSelectionRequestCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    cache {metrics.relatedCacheHitCount} · edges {metrics.relatedEdgeReuseCount} · semantic {metrics.relatedSemanticQueryCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    avg {formatMillis(averageDuration(metrics.relatedDurationTotalMillis, metrics.relatedRequestCount))}
+                    · max {formatMillis(metrics.relatedDurationMaxMillis)}
+                  </p>
+                </div>
               </div>
 
               <div class="mt-4 grid gap-4 md:grid-cols-2">
@@ -1362,6 +1379,16 @@
                   <p class="mt-1 text-xs text-muted-foreground">
                     avg {formatMillis(averageDuration(metrics.annRebuildDurationTotalMillis, metrics.annRebuildCount))}
                     · max {formatMillis(metrics.annRebuildDurationMaxMillis)}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Related Outcomes</p>
+                  <p class="mt-2 text-sm font-medium">
+                    results {metrics.relatedResultTotal} · insufficient {metrics.relatedInsufficientContentCount}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    unavailable {metrics.relatedUnavailableCount} · requests {metrics.relatedRequestCount}
                   </p>
                 </div>
               </div>

@@ -94,6 +94,17 @@ export interface SemanticDebugMetrics {
   mapRequestCount: number;
   mapDurationTotalMillis: number;
   mapDurationMaxMillis: number;
+  relatedRequestCount: number;
+  relatedNoteRequestCount: number;
+  relatedSelectionRequestCount: number;
+  relatedCacheHitCount: number;
+  relatedEdgeReuseCount: number;
+  relatedSemanticQueryCount: number;
+  relatedInsufficientContentCount: number;
+  relatedUnavailableCount: number;
+  relatedResultTotal: number;
+  relatedDurationTotalMillis: number;
+  relatedDurationMaxMillis: number;
   indexJobEnqueuedCount: number;
   indexJobStartedCount: number;
   indexJobCompletedCount: number;
@@ -131,6 +142,24 @@ export interface SearchItem {
   semanticScore: number | null;
   startLine: number | null;
   endLine: number | null;
+}
+
+export interface RelatedNoteItem {
+  notePath: string;
+  noteTitle: string;
+  sectionLabel: string;
+  excerpt: string;
+  matchText: string;
+  score: number;
+  startLine: number;
+  endLine: number;
+}
+
+export interface RelatedNotesResponse {
+  status: 'ready' | 'insufficientContent' | 'unavailable';
+  scope: 'note' | 'selection';
+  reason: string | null;
+  items: RelatedNoteItem[];
 }
 
 export interface MapNode {

@@ -77,6 +77,7 @@ pub fn run() {
             commands::delete_task,
             commands::search_notes,
             commands::search_notes_hybrid,
+            commands::get_related_notes,
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,

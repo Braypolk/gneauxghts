@@ -4,7 +4,7 @@
   import { cancelScheduledAutoSync, runAutoSyncNow, scheduleAutoSync } from '$lib/sync/autoSync';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
   import { forgottenNoteRetentionPreference } from '$lib/appSettings';
-  import type { SearchItem } from '$lib/types/semantic';
+  import type { RelatedNoteItem, RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
   import type { ActiveWikilink } from './notepadWikilinks';
   import { composeMarkdown } from './notepadDocument';
   import {
@@ -35,6 +35,7 @@
     type NotepadOpenContext
   } from './notepadOpenFlow';
   import {
+    getRelatedNotes,
     listRecentNotes,
     listRecentTasks,
     searchNotes,
@@ -75,7 +76,11 @@
   import type { RecentTaskItem } from './notepadTypes';
   import BottomBar from './BottomBar.svelte';
   import NotepadWikilinkAutocomplete from './NotepadWikilinkAutocomplete.svelte';
+  import RelatedPanel from './RelatedPanel.svelte';
   import type { EditorState } from '@milkdown/kit/prose/state';
+
+  const RELATED_SCOPE_SELECTION_MIN_CHARS = 48;
+  const EMPTY_RELATED_REASON = 'Write a bit more before looking for related notes.';
 
   let crepe: NotepadEditorController | null = null;
   let notepadShell: HTMLDivElement | null = null;
@@ -101,7 +106,9 @@
   let recentTasks = $state<RecentTaskItem[]>([]);
   let isSearching = $state(false);
   let searchTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let relatedTimer: ReturnType<typeof window.setTimeout> | null = null;
   let activeSearchRequest = 0;
+  let activeRelatedRequest = 0;
   let activeRecentNotesRequest = 0;
   let activeRecentTasksRequest = 0;
   let searchFocusRequest = $state(0);
@@ -111,6 +118,15 @@
   let isApplyingExternalContent = false;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
   let assetRootPath = $state<string | null>(null);
+  let relatedItems = $state<RelatedNoteItem[]>([]);
+  let relatedStatus = $state<RelatedNotesResponse['status']>('insufficientContent');
+  let relatedReason = $state<string | null>(EMPTY_RELATED_REASON);
+  let relatedScope = $state<'note' | 'selection'>('note');
+  let isLoadingRelated = $state(false);
+  let selectedRelatedText = $state<string | null>(null);
+  let isRelatedPanelCollapsed = $state(true);
+  let relatedDrawerReservedWidth = $state(0);
+  let lastRelatedRequestKey = '';
   const editorStateByNotePath = new Map<string, EditorState>();
 
   interface VaultNoteChangeEvent {
@@ -128,6 +144,170 @@
 
   function getCurrentMarkdown() {
     return composeMarkdown(title, bodyMarkdown);
+  }
+
+  function normalizeRelatedText(value: string) {
+    return value.replace(/\s+/gu, ' ').trim();
+  }
+
+  function hashRelatedText(value: string) {
+    let hash = 2166136261;
+
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return (hash >>> 0).toString(16);
+  }
+
+  function getExpandedRelatedDrawerWidth() {
+    const preferred = window.innerWidth * 0.24;
+    return Math.round(Math.max(18 * 16, Math.min(preferred, 22 * 16)));
+  }
+
+  function getCurrentRelatedDrawerWidth() {
+    if (typeof window === 'undefined') {
+      return isRelatedPanelCollapsed ? 44 : 320;
+    }
+
+    return isRelatedPanelCollapsed ? 44 : getExpandedRelatedDrawerWidth();
+  }
+
+  function findHorizontalClipBoundary(element: HTMLElement) {
+    let current: HTMLElement | null = element.parentElement;
+    let boundary = window.innerWidth;
+
+    while (current) {
+      const styles = window.getComputedStyle(current);
+      if (styles.overflowX !== 'visible' || styles.overflow === 'hidden' || styles.overflow === 'clip') {
+        boundary = Math.min(boundary, current.getBoundingClientRect().right);
+      }
+      current = current.parentElement;
+    }
+
+    return boundary;
+  }
+
+  function updateRelatedDrawerLayout() {
+    if (!notepadShell || typeof window === 'undefined') {
+      return;
+    }
+
+    const shellRect = notepadShell.getBoundingClientRect();
+    const drawerGap = 16;
+    const rightBoundary = findHorizontalClipBoundary(notepadShell) - 8;
+    const availableRightSpace = Math.max(0, rightBoundary - shellRect.right);
+    const overflow = Math.max(
+      0,
+      getCurrentRelatedDrawerWidth() + drawerGap - availableRightSpace
+    );
+
+    relatedDrawerReservedWidth = overflow;
+  }
+
+  function getNotepadCardStyle() {
+    return `width: calc(100% - ${relatedDrawerReservedWidth}px);`;
+  }
+
+  function getRelatedDrawerStyle() {
+    return `left: calc(100% + var(--related-drawer-gap) - ${relatedDrawerReservedWidth}px); width: ${getCurrentRelatedDrawerWidth()}px;`;
+  }
+
+  function buildRelatedRequestKey(markdown: string, selectedText: string | null) {
+    return [
+      currentNotePath ?? '',
+      relatedScope,
+      hashRelatedText(markdown),
+      hashRelatedText(selectedText ?? '')
+    ].join(':');
+  }
+
+  function resetRelatedResults(
+    status: RelatedNotesResponse['status'] = 'insufficientContent',
+    reason: string | null = EMPTY_RELATED_REASON
+  ) {
+    relatedItems = [];
+    relatedStatus = status;
+    relatedReason = reason;
+    isLoadingRelated = false;
+    lastRelatedRequestKey = '';
+  }
+
+  function cancelRelatedAssessment() {
+    if (relatedTimer) {
+      window.clearTimeout(relatedTimer);
+      relatedTimer = null;
+    }
+
+    activeRelatedRequest += 1;
+    isLoadingRelated = false;
+  }
+
+  function getActiveRelatedSelectionText() {
+    return relatedScope === 'selection' ? selectedRelatedText : null;
+  }
+
+  function getEditorSelectionText() {
+    const selection = getEditorDomSelection();
+    if (!selection) {
+      return null;
+    }
+
+    const text = normalizeRelatedText(selection.toString());
+    if (text.length < RELATED_SCOPE_SELECTION_MIN_CHARS) {
+      return null;
+    }
+
+    return text;
+  }
+
+  function updateSelectedRelatedText() {
+    const nextSelection = getEditorSelectionText();
+    if (nextSelection === selectedRelatedText) {
+      return;
+    }
+
+    const hadSelection = !!selectedRelatedText;
+    selectedRelatedText = nextSelection;
+
+    if (selectedRelatedText && !hadSelection) {
+      relatedScope = 'selection';
+    } else if (!selectedRelatedText) {
+      relatedScope = 'note';
+    }
+
+    scheduleRelated({ immediate: true });
+  }
+
+  function clearSelectedRelatedText() {
+    selectedRelatedText = null;
+    relatedScope = 'note';
+  }
+
+  function getEditorDomSelection() {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      return null;
+    }
+
+    const anchorNode =
+      selection.anchorNode instanceof Element
+        ? selection.anchorNode
+        : selection.anchorNode?.parentElement ?? null;
+    const focusNode =
+      selection.focusNode instanceof Element
+        ? selection.focusNode
+        : selection.focusNode?.parentElement ?? null;
+    if (!anchorNode || !focusNode || !editorRoot) {
+      return null;
+    }
+
+    if (!editorRoot.contains(anchorNode) || !editorRoot.contains(focusNode)) {
+      return null;
+    }
+
+    return selection;
   }
 
   function hasCleanBuffer() {
@@ -173,6 +353,7 @@
         if (nextMarkdown.trim() !== '') canUnforget = false;
         scheduleAutosave();
         scheduleSearch();
+        scheduleRelated();
       },
       onStorePastedImage: storePastedImageAsset
     });
@@ -353,8 +534,10 @@
     applySessionSnapshot(createEmptySessionSnapshot());
     canUnforget = canRestore && hasContent;
     await replaceEditorContent('');
+    clearSelectedRelatedText();
     discardEditorStateForNote(notePathToClear);
     scheduleSearch();
+    scheduleRelated({ immediate: true });
     void loadRecentNotes();
     scheduleAutoSync('note-forgotten', 400);
   }
@@ -374,7 +557,9 @@
         canUnforget = false;
         forgottenNote = null;
         await replaceEditorContent(bodyMarkdown);
+        clearSelectedRelatedText();
         scheduleSearch();
+        scheduleRelated({ immediate: true });
         void loadRecentNotes();
         scheduleAutoSync('forgotten-restored', 400);
         return;
@@ -392,8 +577,10 @@
     canUnforget = false;
     await replaceEditorContent(forgottenNote.bodyMarkdown);
     forgottenNote = null;
+    clearSelectedRelatedText();
     scheduleAutosave();
     scheduleSearch();
+    scheduleRelated({ immediate: true });
     void loadRecentNotes();
     scheduleAutoSync('forgotten-restored-draft', 400);
   }
@@ -442,7 +629,9 @@
       canUnforget = false;
       forgottenNote = null;
       await replaceEditorContentInPlace(session.bodyMarkdown);
+      clearSelectedRelatedText();
       scheduleSearch();
+      scheduleRelated({ immediate: true });
     } catch (error) {
       console.error('Failed to refresh note from disk:', error);
     } finally {
@@ -471,6 +660,87 @@
       searchTimer = null;
       void runSearch(searchQuery);
     }, 120);
+  }
+
+  function scheduleRelated({ immediate = false }: { immediate?: boolean } = {}) {
+    if (relatedTimer) {
+      window.clearTimeout(relatedTimer);
+      relatedTimer = null;
+    }
+
+    if (isRelatedPanelCollapsed) {
+      isLoadingRelated = false;
+      return;
+    }
+
+    const markdown = getCurrentMarkdown();
+    const activeSelection = getActiveRelatedSelectionText();
+    const normalizedContent = normalizeRelatedText(activeSelection ?? markdown);
+
+    if (
+      normalizedContent === '' ||
+      (relatedScope === 'selection' && !activeSelection)
+    ) {
+      resetRelatedResults();
+      return;
+    }
+
+    const delay = immediate
+      ? activeSelection
+        ? 180
+        : 220
+      : Math.max(900, Math.min(3600, 900 + Math.round(normalizedContent.length / 320) * 180));
+
+    relatedTimer = window.setTimeout(() => {
+      relatedTimer = null;
+      void runRelatedNotes();
+    }, delay);
+  }
+
+  async function runRelatedNotes() {
+    if (isRelatedPanelCollapsed) {
+      isLoadingRelated = false;
+      return;
+    }
+
+    const markdown = getCurrentMarkdown();
+    const selectedText = getActiveRelatedSelectionText();
+    const requestKey = buildRelatedRequestKey(markdown, selectedText);
+
+    if (requestKey === lastRelatedRequestKey) {
+      return;
+    }
+
+    const requestId = ++activeRelatedRequest;
+    isLoadingRelated = true;
+
+    try {
+      const response = await getRelatedNotes(
+        {
+          currentPath: currentNotePath,
+          currentMarkdown: markdown
+        },
+        selectedText,
+        6
+      );
+
+      if (requestId !== activeRelatedRequest) return;
+      relatedItems = response.items;
+      relatedStatus = response.status;
+      relatedReason = response.reason;
+      lastRelatedRequestKey = requestKey;
+    } catch (error) {
+      if (requestId !== activeRelatedRequest) return;
+      console.error('Failed to load related notes:', error);
+      relatedItems = [];
+      relatedStatus = 'unavailable';
+      relatedReason = 'Related notes are unavailable right now.';
+      lastRelatedRequestKey = '';
+    } finally {
+      if (requestId === activeRelatedRequest) {
+        isLoadingRelated = false;
+      }
+    }
   }
 
   async function enqueueSave(mode: NotepadSaveMode) {
@@ -532,6 +802,7 @@
     if (title.trim() !== '' || bodyMarkdown.trim() !== '') canUnforget = false;
     scheduleAutosave();
     scheduleSearch();
+    scheduleRelated();
   }
 
   function focusTitleAtEnd() {
@@ -749,6 +1020,43 @@
     saveCursorPositionForNote();
   }
 
+  async function handleRelatedItemSelect(item: RelatedNoteItem) {
+    await openSearchResult(getOpenContext(), getNavigationContext(), {
+      notePath: item.notePath,
+      fileName: item.noteTitle,
+      sectionLabel: item.sectionLabel,
+      excerpt: item.excerpt,
+      highlightRanges: [],
+      matchText: item.matchText,
+      reasonLabels: ['related'],
+      lexicalScore: null,
+      semanticScore: item.score,
+      startLine: item.startLine,
+      endLine: item.endLine
+    });
+    saveCursorPositionForNote();
+  }
+
+  function handleRelatedScopeChange(scope: 'note' | 'selection') {
+    if (scope === 'selection' && !selectedRelatedText) {
+      return;
+    }
+
+    relatedScope = scope;
+    scheduleRelated({ immediate: true });
+  }
+
+  function toggleRelatedPanel() {
+    isRelatedPanelCollapsed = !isRelatedPanelCollapsed;
+    updateRelatedDrawerLayout();
+    if (isRelatedPanelCollapsed) {
+      cancelRelatedAssessment();
+      return;
+    }
+
+    scheduleRelated({ immediate: true });
+  }
+
   function handleSearchInput(value: string) {
     searchQuery = value;
     if (value.trim() === '') {
@@ -908,13 +1216,16 @@
     canUnforget = false;
     forgottenNote = null;
     closeWikilinkAutocomplete();
+    clearSelectedRelatedText();
 
     if (replaceNotepadEditorState(crepe, getEditorStateForNote(session.currentNotePath))) {
       await tick();
+      scheduleRelated({ immediate: true });
       return;
     }
 
     await replaceEditorContentInPlaceForNote(session.bodyMarkdown, session.currentNotePath);
+    scheduleRelated({ immediate: true });
   }
 
   async function openWikilink(rawTarget: string) {
@@ -945,6 +1256,10 @@
     void syncAndRefresh('window-focus');
   }
 
+  function handleWindowResize() {
+    updateRelatedDrawerLayout();
+  }
+
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
       void syncAndRefresh('window-visible');
@@ -959,6 +1274,7 @@
     if (searchQuery.trim() !== '') {
       scheduleSearch();
     }
+    scheduleRelated({ immediate: true });
   }
 
   async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
@@ -972,11 +1288,18 @@
     if (searchQuery.trim() !== '') {
       scheduleSearch();
     }
+    scheduleRelated({ immediate: true });
     scheduleAutoSync('vault-note-change', 1200);
   }
 
   onMount(() => {
     let mounted = true;
+    const shellResizeObserver =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            updateRelatedDrawerLayout();
+          });
 
     (async () => {
       await tick();
@@ -986,6 +1309,9 @@
       try {
         await createEditor(bodyMarkdown);
         restoreCursorPositionForNote();
+        clearSelectedRelatedText();
+        updateRelatedDrawerLayout();
+        scheduleRelated({ immediate: true });
         const pendingTaskTarget = consumePendingTaskTarget();
         if (pendingTaskTarget) {
           await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
@@ -1002,6 +1328,10 @@
       }
     })();
 
+    if (notepadShell && shellResizeObserver) {
+      shellResizeObserver.observe(notepadShell);
+    }
+
     return () => {
       mounted = false;
       isEditorReady = false;
@@ -1010,8 +1340,10 @@
       flushPendingAutosave();
       cancelScheduledAutoSync();
       if (searchTimer) window.clearTimeout(searchTimer);
+      if (relatedTimer) window.clearTimeout(relatedTimer);
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
+      shellResizeObserver?.disconnect();
       void destroyEditor();
     };
   });
@@ -1030,98 +1362,159 @@
       saveCursorPositionForNote();
     };
 
+    const handleSelectionChange = () => {
+      updateSelectedRelatedText();
+    };
+
     proseMirror.addEventListener('keyup', persistCursorPosition);
     proseMirror.addEventListener('mouseup', persistCursorPosition);
     proseMirror.addEventListener('touchend', persistCursorPosition);
     proseMirror.addEventListener('focusout', persistCursorPosition);
+    proseMirror.addEventListener('keyup', handleSelectionChange);
+    proseMirror.addEventListener('mouseup', handleSelectionChange);
+    proseMirror.addEventListener('touchend', handleSelectionChange);
+    proseMirror.addEventListener('focusout', handleSelectionChange);
+    document.addEventListener('selectionchange', handleSelectionChange);
 
     return () => {
       proseMirror.removeEventListener('keyup', persistCursorPosition);
       proseMirror.removeEventListener('mouseup', persistCursorPosition);
       proseMirror.removeEventListener('touchend', persistCursorPosition);
       proseMirror.removeEventListener('focusout', persistCursorPosition);
+      proseMirror.removeEventListener('keyup', handleSelectionChange);
+      proseMirror.removeEventListener('mouseup', handleSelectionChange);
+      proseMirror.removeEventListener('touchend', handleSelectionChange);
+      proseMirror.removeEventListener('focusout', handleSelectionChange);
+      document.removeEventListener('selectionchange', handleSelectionChange);
     };
   });
 </script>
 
-<svelte:window onkeydowncapture={handleGlobalKeydown} onfocus={handleWindowFocus} />
+<svelte:window onkeydowncapture={handleGlobalKeydown} onfocus={handleWindowFocus} onresize={handleWindowResize} />
 <svelte:document onvisibilitychange={handleVisibilityChange} />
 
-<div bind:this={notepadShell} class="notepad-shell relative h-full w-full min-h-0 overflow-x-hidden overflow-y-visible">
-  <div class="relative flex h-full min-h-0 w-full flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-all duration-300 sm:rounded-[2rem] sm:border">
-    <!-- Title bar -->
-    <div class="absolute top-0 left-0 right-0 z-20">
-      <div class="relative">
-        <div
-          class="pointer-events-none absolute inset-0 bg-card/70 backdrop-blur-md"
-          style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
-        ></div>
-        <div class="relative z-10 px-4 pt-2 pb-2 sm:px-8 sm:pt-3 sm:pb-4">
-          <div bind:this={titleShell} class="mx-auto flex w-full max-w-3xl flex-col items-start gap-1 rounded-[1.4rem] px-0 py-1 transition-all duration-300 sm:items-center sm:gap-2 sm:px-4 sm:py-2">
-            <div class="flex w-full items-center justify-start gap-3 text-[1.35rem] font-semibold tracking-tight text-foreground sm:justify-center sm:text-3xl">
-              <input
-                bind:this={titleInput}
-                type="text"
-                class="w-full max-w-2xl bg-transparent text-left outline-none placeholder:text-muted-foreground/55 sm:text-center"
-                placeholder="Title"
-                value={title}
-                oninput={handleTitleInput}
-                onkeydown={handleTitleKeydown}
-              />
+<div bind:this={notepadShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
+  <div
+    class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-all duration-300 sm:rounded-[2rem] sm:border"
+    style={getNotepadCardStyle()}
+  >
+      <!-- Title bar -->
+      <div class="absolute top-0 left-0 right-0 z-20">
+        <div class="relative">
+          <div
+            class="pointer-events-none absolute inset-0 bg-card/70 backdrop-blur-md"
+            style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
+          ></div>
+          <div class="relative z-10 px-4 pt-2 pb-2 sm:px-8 sm:pt-3 sm:pb-4">
+            <div bind:this={titleShell} class="mx-auto flex w-full max-w-3xl flex-col items-start gap-1 rounded-[1.4rem] px-0 py-1 transition-all duration-300 sm:items-center sm:gap-2 sm:px-4 sm:py-2">
+              <div class="flex w-full items-center justify-start gap-3 text-[1.35rem] font-semibold tracking-tight text-foreground sm:justify-center sm:text-3xl">
+                <input
+                  bind:this={titleInput}
+                  type="text"
+                  class="w-full max-w-2xl bg-transparent text-left outline-none placeholder:text-muted-foreground/55 sm:text-center"
+                  placeholder="Title"
+                  value={title}
+                  oninput={handleTitleInput}
+                  onkeydown={handleTitleKeydown}
+                />
+              </div>
+              <div class="h-px w-16 rounded-full bg-border sm:w-40"></div>
             </div>
-            <div class="h-px w-16 rounded-full bg-border sm:w-40"></div>
           </div>
         </div>
       </div>
-    </div>
-    <!-- Editor Area -->
-    <div class="flex-1 min-h-0">
-      <div bind:this={editorShell} class="notepad-editor-shell relative h-full">
-        {#if !isEditorReady}
-          <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-            <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
-              Loading editor
-            </span>
-          </div>
-        {/if}
+      <!-- Editor Area -->
+      <div class="flex-1 min-h-0">
+        <div bind:this={editorShell} class="notepad-editor-shell relative h-full">
+          {#if !isEditorReady}
+            <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+              <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
+                Loading editor
+              </span>
+            </div>
+          {/if}
 
-        <div bind:this={editorRoot} class="min-h-full"></div>
+          <div bind:this={editorRoot} class="min-h-full"></div>
+        </div>
+      </div>
+      <!-- Bottom Bar -->
+      <div class="absolute bottom-0 left-0 right-0 z-10">
+        <BottomBar
+          {canUnforget}
+          {searchMode}
+          {searchQuery}
+          {searchResults}
+          {recentNotes}
+          {recentTasks}
+          {isSearching}
+          focusRequest={searchFocusRequest}
+          onForget={() => void clearNotepad()}
+          onUnforget={() => void unforgetNotepad()}
+          onRemember={() => void rememberCurrentNote()}
+          onSearchInput={handleSearchInput}
+          onSearchModeChange={handleSearchModeChange}
+          onSearchSelect={(result) =>
+            void handleSearchResultSelect(result).catch((error) => {
+              console.error('Failed to open searched note:', error);
+            })}
+          onRecentNoteSelect={(result) =>
+            void openRecentNoteItem(result).catch((error) => {
+              console.error('Failed to open recent note:', error);
+            })}
+          onRecentTaskSelect={(task) =>
+            void handleRecentTaskSelect(task).catch((error) => {
+              console.error('Failed to open recent task:', error);
+            })}
+          onRecentNoteShortcut={(index) => void openRecentNoteByIndex(index)}
+          onRecentTaskShortcut={(index) => void openRecentTaskByIndex(index)}
+          onSearchFocus={handleSearchFocus}
+        />
+      </div>
+  </div>
+
+  <aside
+    class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch transition-[left,width] duration-300"
+    aria-label="Related notes panel"
+    style={getRelatedDrawerStyle()}
+  >
+    <div class="relative h-full min-h-0 w-full">
+      <button
+        type="button"
+        class="related-drawer-handle group absolute top-1/2 left-0 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center"
+        aria-expanded={!isRelatedPanelCollapsed}
+        aria-controls="related-drawer-panel"
+        aria-label={isRelatedPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
+        onclick={toggleRelatedPanel}
+      >
+        <span class="related-drawer-handle-pill flex h-30 w-12 items-center justify-center rounded-full border border-border/70 bg-card/92 text-[11px] font-semibold tracking-[0.16em] text-muted-foreground shadow-lg backdrop-blur-md transition group-hover:text-foreground">
+          <span class="-rotate-90">RELATED</span>
+        </span>
+      </button>
+
+      <div
+        id="related-drawer-panel"
+        class={`h-full min-h-0 w-full pl-4 transition-[opacity,transform] duration-300 ${
+          isRelatedPanelCollapsed
+            ? 'pointer-events-none translate-x-6 opacity-0'
+            : 'pointer-events-auto translate-x-0 opacity-100'
+        }`}
+      >
+        <RelatedPanel
+          items={relatedItems}
+          scope={relatedScope}
+          status={relatedStatus}
+          reason={relatedReason}
+          loading={isLoadingRelated}
+          hasSelection={!!selectedRelatedText}
+          onScopeChange={handleRelatedScopeChange}
+          onSelect={(item) =>
+            void handleRelatedItemSelect(item).catch((error) => {
+              console.error('Failed to open related note:', error);
+            })}
+        />
       </div>
     </div>
-    <!-- Bottom Bar -->
-    <div class="absolute bottom-0 left-0 right-0 z-10">
-      <BottomBar
-        {canUnforget}
-        {searchMode}
-        {searchQuery}
-        {searchResults}
-        {recentNotes}
-        {recentTasks}
-        {isSearching}
-        focusRequest={searchFocusRequest}
-        onForget={() => void clearNotepad()}
-        onUnforget={() => void unforgetNotepad()}
-        onRemember={() => void rememberCurrentNote()}
-        onSearchInput={handleSearchInput}
-        onSearchModeChange={handleSearchModeChange}
-        onSearchSelect={(result) =>
-          void handleSearchResultSelect(result).catch((error) => {
-            console.error('Failed to open searched note:', error);
-          })}
-        onRecentNoteSelect={(result) =>
-          void openRecentNoteItem(result).catch((error) => {
-            console.error('Failed to open recent note:', error);
-          })}
-        onRecentTaskSelect={(task) =>
-          void handleRecentTaskSelect(task).catch((error) => {
-            console.error('Failed to open recent task:', error);
-          })}
-        onRecentNoteShortcut={(index) => void openRecentNoteByIndex(index)}
-        onRecentTaskShortcut={(index) => void openRecentTaskByIndex(index)}
-        onSearchFocus={handleSearchFocus}
-      />
-    </div>
-  </div>
+  </aside>
   <div bind:this={slashMenuPortal} class="notepad-slash-portal milkdown fixed inset-0 z-40 pointer-events-none"></div>
   <NotepadWikilinkAutocomplete
     active={wikilinkAutocomplete.active}
@@ -1139,7 +1532,9 @@
     --editor-readable-width: 100%;
     --editor-top-padding: 4.25rem;
     --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px));
-    overflow-x: clip;
+    --related-drawer-gap: 1rem;
+    --related-drawer-peek-width: 2.75rem;
+    overflow: visible;
   }
 
   @media (min-width: 640px) {
@@ -1174,6 +1569,18 @@
     overflow-x: hidden;
   }
 
+  .related-drawer {
+    overflow: visible;
+  }
+
+  .related-drawer-handle {
+    outline: none;
+  }
+
+  .related-drawer-handle-pill {
+    writing-mode: horizontal-tb;
+  }
+
   .notepad-shell,
   .notepad-editor-shell :global(.milkdown),
   .notepad-slash-portal {
@@ -1194,6 +1601,8 @@
     --crepe-color-hover: color-mix(in oklab, var(--accent) 82%, transparent);
     --crepe-color-selected: color-mix(in oklab, var(--accent) 92%, var(--background));
     --crepe-color-inline-area: color-mix(in oklab, var(--muted) 80%, var(--background));
+    --gn-editor-selection-background: color-mix(in oklab, var(--foreground) 42%, var(--background));
+    --gn-editor-selection-color: var(--background);
   }
 
   .notepad-editor-shell :global(.milkdown) {
@@ -1227,6 +1636,16 @@
 
   .notepad-editor-shell :global(.milkdown .ProseMirror > *) {
     max-width: 100%;
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror *::selection) {
+    background: var(--gn-editor-selection-background);
+    color: var(--gn-editor-selection-color);
+  }
+
+  .notepad-editor-shell :global(.milkdown .ProseMirror *::-moz-selection) {
+    background: var(--gn-editor-selection-background);
+    color: var(--gn-editor-selection-color);
   }
 
   .notepad-editor-shell :global(.milkdown .ProseMirror .gn-wikilink) {

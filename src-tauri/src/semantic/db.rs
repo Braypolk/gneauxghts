@@ -35,6 +35,16 @@ pub(crate) struct StoredNoteEmbedding {
     pub(crate) embedding: Vec<f32>,
 }
 
+pub(crate) struct StoredRelatedNotePreview {
+    pub(crate) note_path: String,
+    pub(crate) note_title: String,
+    pub(crate) section_label: String,
+    pub(crate) text: String,
+    pub(crate) start_line: usize,
+    pub(crate) end_line: usize,
+    pub(crate) score: f32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AnnIndexSignature {
     pub(crate) chunk_count: usize,
@@ -180,6 +190,29 @@ pub(crate) fn load_stored_note_records(
     }
 
     Ok(notes)
+}
+
+pub(crate) fn load_note_record(
+    connection: &Connection,
+    note_path: &str,
+) -> Result<Option<StoredNoteRecord>, String> {
+    connection
+        .query_row(
+            "
+            SELECT modified_millis, content_hash
+            FROM notes
+            WHERE path = ?1
+            ",
+            params![note_path],
+            |row| {
+                Ok(StoredNoteRecord {
+                    modified_millis: row.get(0)?,
+                    content_hash: row.get(1)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|err| err.to_string())
 }
 
 pub(crate) fn load_existing_chunk_embeddings(
@@ -730,6 +763,78 @@ pub(crate) fn load_graph_data(
         edges,
         min_score,
     })
+}
+
+pub(crate) fn load_related_note_previews(
+    connection: &Connection,
+    note_path: &str,
+    limit: usize,
+) -> Result<Vec<StoredRelatedNotePreview>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+                n.path,
+                n.title,
+                COALESCE((
+                    SELECT c.section_label
+                    FROM chunks c
+                    WHERE c.note_path = n.path
+                    ORDER BY CASE WHEN c.section_label = 'Title' THEN 1 ELSE 0 END, c.ordinal
+                    LIMIT 1
+                ), 'Title'),
+                COALESCE((
+                    SELECT c.text
+                    FROM chunks c
+                    WHERE c.note_path = n.path
+                    ORDER BY CASE WHEN c.section_label = 'Title' THEN 1 ELSE 0 END, c.ordinal
+                    LIMIT 1
+                ), n.title),
+                COALESCE((
+                    SELECT c.start_line
+                    FROM chunks c
+                    WHERE c.note_path = n.path
+                    ORDER BY CASE WHEN c.section_label = 'Title' THEN 1 ELSE 0 END, c.ordinal
+                    LIMIT 1
+                ), 1),
+                COALESCE((
+                    SELECT c.end_line
+                    FROM chunks c
+                    WHERE c.note_path = n.path
+                    ORDER BY CASE WHEN c.section_label = 'Title' THEN 1 ELSE 0 END, c.ordinal
+                    LIMIT 1
+                ), 1),
+                e.score
+            FROM edges e
+            INNER JOIN notes n
+                ON n.path = CASE
+                    WHEN e.source_note_path = ?1 THEN e.target_note_path
+                    ELSE e.source_note_path
+                END
+            WHERE e.source_note_path = ?1 OR e.target_note_path = ?1
+            ORDER BY e.score DESC, n.title ASC, n.path ASC
+            LIMIT ?2
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement
+        .query(params![note_path, limit.max(1)])
+        .map_err(|err| err.to_string())?;
+    let mut previews = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        previews.push(StoredRelatedNotePreview {
+            note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            note_title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            section_label: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+            text: row.get::<_, String>(3).map_err(|err| err.to_string())?,
+            start_line: row.get::<_, usize>(4).map_err(|err| err.to_string())?,
+            end_line: row.get::<_, usize>(5).map_err(|err| err.to_string())?,
+            score: row.get::<_, f32>(6).map_err(|err| err.to_string())?,
+        });
+    }
+
+    Ok(previews)
 }
 
 pub(crate) fn content_hash(markdown: &str) -> String {

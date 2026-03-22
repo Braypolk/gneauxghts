@@ -7,8 +7,8 @@ use crate::{
     note,
     search::{build_recent_result, search_note, NoteSearchResult, MAX_SEARCH_RESULTS},
     semantic::{
-        debug::SemanticDebugSnapshot, MapGraph, SemanticChunkMatch, SemanticSettings,
-        SemanticStatus,
+        debug::SemanticDebugSnapshot, MapGraph, RelatedNotesResponse, SemanticChunkMatch,
+        SemanticSettings, SemanticStatus,
     },
     state::{
         current_vault_info, forgotten_notes_root, is_valid_note_path, notes_root, persist_note,
@@ -1300,6 +1300,34 @@ pub(crate) async fn search_notes_hybrid(
         },
     );
     Ok(ranked)
+}
+
+#[tauri::command]
+pub(crate) async fn get_related_notes(
+    state: State<'_, AppState>,
+    current_path: Option<String>,
+    current_markdown: String,
+    selected_text: Option<String>,
+    limit: usize,
+) -> Result<RelatedNotesResponse, String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let current_path = validate_current_path(current_path, &notes_dir)?;
+    let current_path_raw = current_path
+        .as_deref()
+        .map(|path| path.to_string_lossy().into_owned());
+    let semantic = state.semantic.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        semantic.related_notes(
+            current_path_raw.as_deref(),
+            &current_markdown,
+            selected_text.as_deref(),
+            limit.max(1),
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]

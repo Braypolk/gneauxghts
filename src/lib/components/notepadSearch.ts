@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { SearchItem } from '$lib/types/semantic';
+import type { RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
 import type { RecentTaskItem } from './notepadTypes';
 
 export type NotepadSearchMode = 'current' | 'all';
@@ -42,5 +42,18 @@ export async function listRecentNotes(context: NotepadSearchContext) {
 export async function listRecentTasks() {
   return invoke<RecentTaskItem[]>('list_recent_tasks', {
     limit: 12
+  });
+}
+
+export async function getRelatedNotes(
+  context: NotepadSearchContext,
+  selectedText: string | null,
+  limit = 6
+) {
+  return invoke<RelatedNotesResponse>('get_related_notes', {
+    currentPath: context.currentPath,
+    currentMarkdown: context.currentMarkdown,
+    selectedText,
+    limit
   });
 }
