@@ -81,6 +81,7 @@
 
   const RELATED_SCOPE_SELECTION_MIN_CHARS = 48;
   const EMPTY_RELATED_REASON = 'Write a bit more before looking for related notes.';
+  const MIN_NOTEPAD_WIDTH_FOR_SIDE_RELATED = 760;
 
   let crepe: NotepadEditorController | null = null;
   let notepadShell: HTMLDivElement | null = null;
@@ -122,12 +123,14 @@
   let relatedStatus = $state<RelatedNotesResponse['status']>('insufficientContent');
   let relatedReason = $state<string | null>(EMPTY_RELATED_REASON);
   let relatedScope = $state<'note' | 'selection'>('note');
+  let relatedPanelPlacement = $state<'side' | 'bottom'>('side');
   let isLoadingRelated = $state(false);
   let selectedRelatedText = $state<string | null>(null);
   let isRelatedPanelCollapsed = $state(true);
   let relatedDrawerReservedWidth = $state(0);
   let lastRelatedRequestKey = '';
-  const editorStateByNotePath = new Map<string, EditorState>();
+  const editorStateByNotePath = new Map<string, { generation: number; state: EditorState }>();
+  let editorStateGeneration = 0;
 
   interface VaultNoteChangeEvent {
     notePath: string;
@@ -166,12 +169,26 @@
     return Math.round(Math.max(18 * 16, Math.min(preferred, 22 * 16)));
   }
 
-  function getCurrentRelatedDrawerWidth() {
+  function getCollapsedRelatedDrawerWidth() {
+    return 44;
+  }
+
+  function getLayoutRelatedDrawerWidth() {
     if (typeof window === 'undefined') {
-      return isRelatedPanelCollapsed ? 44 : 320;
+      return isRelatedPanelCollapsed ? getCollapsedRelatedDrawerWidth() : 320;
     }
 
-    return isRelatedPanelCollapsed ? 44 : getExpandedRelatedDrawerWidth();
+    return isRelatedPanelCollapsed
+      ? getCollapsedRelatedDrawerWidth()
+      : getExpandedRelatedDrawerWidth();
+  }
+
+  function getVisualRelatedDrawerWidth() {
+    if (typeof window === 'undefined') {
+      return 320;
+    }
+
+    return getExpandedRelatedDrawerWidth();
   }
 
   function findHorizontalClipBoundary(element: HTMLElement) {
@@ -198,20 +215,41 @@
     const drawerGap = 16;
     const rightBoundary = findHorizontalClipBoundary(notepadShell) - 8;
     const availableRightSpace = Math.max(0, rightBoundary - shellRect.right);
+    const openSideOverflow = Math.max(
+      0,
+      getExpandedRelatedDrawerWidth() + drawerGap - availableRightSpace
+    );
+    const projectedSideWidth = shellRect.width - openSideOverflow;
+
+    if (projectedSideWidth < MIN_NOTEPAD_WIDTH_FOR_SIDE_RELATED) {
+      relatedPanelPlacement = 'bottom';
+      relatedDrawerReservedWidth = 0;
+      return;
+    }
+
+    relatedPanelPlacement = 'side';
     const overflow = Math.max(
       0,
-      getCurrentRelatedDrawerWidth() + drawerGap - availableRightSpace
+      getLayoutRelatedDrawerWidth() + drawerGap - availableRightSpace
     );
 
     relatedDrawerReservedWidth = overflow;
   }
 
   function getNotepadCardStyle() {
+    if (relatedPanelPlacement === 'bottom') {
+      return 'width: 100%;';
+    }
+
     return `width: calc(100% - ${relatedDrawerReservedWidth}px);`;
   }
 
   function getRelatedDrawerStyle() {
-    return `left: calc(100% + var(--related-drawer-gap) - ${relatedDrawerReservedWidth}px); width: ${getCurrentRelatedDrawerWidth()}px;`;
+    return `left: calc(100% + var(--related-drawer-gap) - ${relatedDrawerReservedWidth}px); width: ${getVisualRelatedDrawerWidth()}px;`;
+  }
+
+  function getBottomSheetStyle() {
+    return 'top: 1rem; right: 1rem; bottom: var(--related-bottom-offset); width: min(calc(100% - 1rem), 32rem);';
   }
 
   function buildRelatedRequestKey(markdown: string, selectedText: string | null) {
@@ -357,6 +395,7 @@
       },
       onStorePastedImage: storePastedImageAsset
     });
+    editorStateGeneration += 1;
     setupSlashMenuPortal();
     isEditorReady = true;
   }
@@ -384,7 +423,10 @@
       return;
     }
 
-    editorStateByNotePath.set(notePath, editorState);
+    editorStateByNotePath.set(notePath, {
+      generation: editorStateGeneration,
+      state: editorState
+    });
   }
 
   function getEditorStateForNote(notePath: string | null) {
@@ -392,7 +434,12 @@
       return null;
     }
 
-    return editorStateByNotePath.get(notePath) ?? null;
+    const cachedState = editorStateByNotePath.get(notePath);
+    if (!cachedState || cachedState.generation !== editorStateGeneration) {
+      return null;
+    }
+
+    return cachedState.state;
   }
 
   function discardEditorStateForNote(notePath: string | null) {
@@ -721,7 +768,7 @@
           currentMarkdown: markdown
         },
         selectedText,
-        6
+        4
       );
 
       if (requestId !== activeRelatedRequest) return;
@@ -1186,6 +1233,18 @@
       !event.ctrlKey &&
       !event.altKey &&
       !event.shiftKey &&
+      event.key.toLowerCase() === 'r'
+    ) {
+      event.preventDefault();
+      toggleRelatedPanel();
+      return;
+    }
+
+    if (
+      event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
       event.key.toLowerCase() === 'l'
     ) {
       event.preventDefault();
@@ -1472,49 +1531,95 @@
       </div>
   </div>
 
-  <aside
-    class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch transition-[left,width] duration-300"
-    aria-label="Related notes panel"
-    style={getRelatedDrawerStyle()}
-  >
-    <div class="relative h-full min-h-0 w-full">
-      <button
-        type="button"
-        class="related-drawer-handle group absolute top-1/2 left-0 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center"
-        aria-expanded={!isRelatedPanelCollapsed}
-        aria-controls="related-drawer-panel"
-        aria-label={isRelatedPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
-        onclick={toggleRelatedPanel}
-      >
-        <span class="related-drawer-handle-pill flex h-30 w-12 items-center justify-center rounded-full border border-border/70 bg-card/92 text-[11px] font-semibold tracking-[0.16em] text-muted-foreground shadow-lg backdrop-blur-md transition group-hover:text-foreground">
-          <span class="-rotate-90">RELATED</span>
-        </span>
-      </button>
+  {#if relatedPanelPlacement === 'side'}
+    <aside
+      class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch transition-[left] duration-300"
+      aria-label="Related notes panel"
+      style={getRelatedDrawerStyle()}
+    >
+      <div class="relative h-full min-h-0 w-full">
+        <button
+          type="button"
+          class="related-drawer-handle group absolute -mx-4 top-1/2 left-0 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center"
+          aria-expanded={!isRelatedPanelCollapsed}
+          aria-controls="related-drawer-panel"
+          aria-label={isRelatedPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
+          onclick={toggleRelatedPanel}
+        >
+          <span class="related-drawer-handle-pill flex h-28 w-7 items-center justify-center rounded-full border border-border/70 bg-card/92 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground shadow-lg backdrop-blur-md transition group-hover:text-foreground">
+            <span class="-rotate-90">RELATED</span>
+          </span>
+        </button>
 
-      <div
-        id="related-drawer-panel"
-        class={`h-full min-h-0 w-full pl-4 transition-[opacity,transform] duration-300 ${
-          isRelatedPanelCollapsed
-            ? 'pointer-events-none translate-x-6 opacity-0'
-            : 'pointer-events-auto translate-x-0 opacity-100'
-        }`}
-      >
-        <RelatedPanel
-          items={relatedItems}
-          scope={relatedScope}
-          status={relatedStatus}
-          reason={relatedReason}
-          loading={isLoadingRelated}
-          hasSelection={!!selectedRelatedText}
-          onScopeChange={handleRelatedScopeChange}
-          onSelect={(item) =>
-            void handleRelatedItemSelect(item).catch((error) => {
-              console.error('Failed to open related note:', error);
-            })}
-        />
+        <div
+          id="related-drawer-panel"
+          class={`absolute inset-y-0 left-0 flex w-full min-h-0 pl-4 transition-[opacity,transform] duration-300 ease-out ${
+            isRelatedPanelCollapsed
+              ? 'pointer-events-none translate-x-3 opacity-0'
+              : 'pointer-events-auto translate-x-0 opacity-100'
+          }`}
+        >
+          <div class="my-auto max-h-full w-full">
+            <RelatedPanel
+              items={relatedItems}
+              scope={relatedScope}
+              status={relatedStatus}
+              reason={relatedReason}
+              loading={isLoadingRelated}
+              hasSelection={!!selectedRelatedText}
+              onScopeChange={handleRelatedScopeChange}
+              onSelect={(item) =>
+                void handleRelatedItemSelect(item).catch((error) => {
+                  console.error('Failed to open related note:', error);
+                })}
+            />
+          </div>
+        </div>
+      </div>
+    </aside>
+  {:else}
+    <div class="related-bottom-sheet pointer-events-none absolute z-20" style={getBottomSheetStyle()}>
+      <div class="related-bottom-sheet-anchor pointer-events-none relative">
+        <div
+          aria-hidden="true"
+          class={`related-bottom-sheet-backdrop ${isRelatedPanelCollapsed ? 'hidden' : 'block'}`}
+        ></div>
+        <div
+          id="related-drawer-panel"
+          class={`related-bottom-sheet-panel w-full overflow-hidden transition-[opacity,transform] duration-300 ease-out ${
+            isRelatedPanelCollapsed
+              ? 'pointer-events-none translate-y-0 opacity-0'
+              : 'pointer-events-auto translate-y-0 opacity-100'
+          }`}
+        >
+          <RelatedPanel
+            items={relatedItems}
+            scope={relatedScope}
+            status={relatedStatus}
+            reason={relatedReason}
+            loading={isLoadingRelated}
+            hasSelection={!!selectedRelatedText}
+            onScopeChange={handleRelatedScopeChange}
+            onSelect={(item) =>
+              void handleRelatedItemSelect(item).catch((error) => {
+                console.error('Failed to open related note:', error);
+              })}
+          />
+        </div>
+
+        <button
+          type="button"
+          class="related-bottom-sheet-toggle pointer-events-auto inline-flex h-11 items-center gap-2 rounded-full border border-border/70 bg-card/92 px-4 py-2 text-[11px] font-semibold tracking-[0.16em] text-muted-foreground shadow-lg backdrop-blur-md transition hover:text-foreground"
+          aria-expanded={!isRelatedPanelCollapsed}
+          aria-controls="related-drawer-panel"
+          aria-label={isRelatedPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
+          onclick={toggleRelatedPanel}
+        >
+          RELATED
+        </button>
       </div>
     </div>
-  </aside>
+  {/if}
   <div bind:this={slashMenuPortal} class="notepad-slash-portal milkdown fixed inset-0 z-40 pointer-events-none"></div>
   <NotepadWikilinkAutocomplete
     active={wikilinkAutocomplete.active}
@@ -1534,6 +1639,7 @@
     --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px));
     --related-drawer-gap: 1rem;
     --related-drawer-peek-width: 2.75rem;
+    --related-bottom-offset: calc(6.1rem + env(safe-area-inset-bottom, 0px));
     overflow: visible;
   }
 
@@ -1579,6 +1685,45 @@
 
   .related-drawer-handle-pill {
     writing-mode: horizontal-tb;
+  }
+
+  .related-bottom-sheet {
+    --related-bottom-sheet-toggle-height: 2.75rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-end;
+    max-width: calc(100% - 1rem);
+  }
+
+  .related-bottom-sheet-anchor {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  .related-bottom-sheet-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: calc(var(--related-bottom-sheet-toggle-height) + 0.75rem);
+  }
+
+  .related-bottom-sheet-backdrop {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: calc(var(--related-bottom-sheet-toggle-height) + 0.75rem);
+    left: 0;
+    border-radius: 1.8rem;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .related-bottom-sheet-toggle {
+    position: absolute;
+    right: 0;
+    bottom: 0;
   }
 
   .notepad-shell,

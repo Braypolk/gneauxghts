@@ -48,7 +48,7 @@ export async function listRecentTasks() {
 export async function getRelatedNotes(
   context: NotepadSearchContext,
   selectedText: string | null,
-  limit = 6
+  limit = 4
 ) {
   return invoke<RelatedNotesResponse>('get_related_notes', {
     currentPath: context.currentPath,

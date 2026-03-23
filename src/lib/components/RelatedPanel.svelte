@@ -24,18 +24,9 @@
   }: RelatedPanelProps = $props();
 </script>
 
-<aside class="related-panel flex h-full min-h-0 flex-col rounded-[1.8rem] border border-border/80 bg-card/80 backdrop-blur-sm">
+<aside class="related-panel flex h-full min-h-0 flex-col rounded-[1.8rem] border border-border/80 bg-card/50">
   <div class="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
-    <div>
-      <h2 class="text-sm font-semibold tracking-[0.08em] text-foreground/88 uppercase">Related</h2>
-      <p class="mt-1 text-xs text-muted-foreground">
-        {#if scope === 'selection'}
-          Based on the current selection
-        {:else}
-          Based on the current note
-        {/if}
-      </p>
-    </div>
+    <h2 class="text-sm font-semibold tracking-[0.08em] text-foreground/88 uppercase">Related</h2>
     <div class="flex items-center gap-1 rounded-full border border-border/70 bg-background/60 p-1">
       <button
         type="button"

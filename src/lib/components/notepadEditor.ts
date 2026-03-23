@@ -1,5 +1,6 @@
 import type { Ctx } from '@milkdown/kit/ctx';
 import {
+  type CommandManager,
   commandsCtx,
   defaultValueCtx,
   Editor,
@@ -32,7 +33,7 @@ import {
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { findParent } from '@milkdown/kit/prose';
-import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
+import { Fragment, type Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
 import { wrapInList } from '@milkdown/kit/prose/schema-list';
 import { EditorState, Plugin, PluginKey, TextSelection, type PluginView, type Selection } from '@milkdown/kit/prose/state';
 import { liftTarget } from '@milkdown/kit/prose/transform';
@@ -905,14 +906,21 @@ interface BlockContext {
   currentTypeId: string | null;
 }
 
-interface SelectionAncestorInfo {
-  listPos: number | null;
-  listNode: ProseMirrorNode | null;
+interface ListSelectionRangeInfo {
+  listPos: number;
+  listDepth: number;
+  listNode: ProseMirrorNode;
+  startIndex: number;
+  endIndex: number;
 }
 
-interface CommandRunner {
-  call: (command: unknown, payload?: unknown) => boolean;
-}
+type CommandRunner = Pick<CommandManager, 'call'>;
+
+type DropIndicatorOptions = {
+  width: number;
+  color: string | false;
+  class: string;
+};
 
 function readBooleanAttr(value: unknown, fallback: boolean) {
   if (typeof value === 'boolean') return value;
@@ -935,21 +943,55 @@ function readNumberAttr(value: unknown, fallback: number) {
   return fallback;
 }
 
-function getSelectionAncestorInfo(view: EditorView): SelectionAncestorInfo {
-  const { $from } = view.state.selection;
-  let listPos: number | null = null;
-  let listNode: ProseMirrorNode | null = null;
-
-  for (let depth = $from.depth; depth >= 1; depth -= 1) {
-    const node = $from.node(depth);
+function getNearestListAncestor($pos: Selection['$from']) {
+  for (let depth = $pos.depth; depth >= 1; depth -= 1) {
+    const node = $pos.node(depth);
     if (node.type.name === 'bullet_list' || node.type.name === 'ordered_list') {
-      listPos = $from.before(depth);
-      listNode = node;
-      break;
+      return {
+        listDepth: depth,
+        listNode: node,
+        listPos: $pos.before(depth)
+      };
     }
   }
 
-  return { listPos, listNode };
+  return null;
+}
+
+function resolveListSelectionRange(view: EditorView): ListSelectionRangeInfo | null {
+  const { doc, selection } = view.state;
+  const rangeStart = selection.from;
+  const rangeEnd = selection.empty ? selection.to : Math.max(selection.from, selection.to - 1);
+  const startResolved = doc.resolve(rangeStart);
+  const endResolved = doc.resolve(rangeEnd);
+  const startInfo = getNearestListAncestor(startResolved);
+  const endInfo = getNearestListAncestor(endResolved);
+
+  if (!startInfo || !endInfo) {
+    return null;
+  }
+
+  if (startInfo.listPos !== endInfo.listPos || startInfo.listDepth !== endInfo.listDepth) {
+    return null;
+  }
+
+  const startIndex = startResolved.index(startInfo.listDepth);
+  const endIndex = endResolved.index(endInfo.listDepth);
+
+  if (
+    startIndex < 0 ||
+    endIndex < 0 ||
+    startIndex >= startInfo.listNode.childCount ||
+    endIndex >= startInfo.listNode.childCount
+  ) {
+    return null;
+  }
+
+  return {
+    ...startInfo,
+    startIndex: Math.min(startIndex, endIndex),
+    endIndex: Math.max(startIndex, endIndex)
+  };
 }
 
 function getSelectionScrollTarget(view: EditorView) {
@@ -1011,13 +1053,27 @@ function normalizeSelectionForList(
 
 function buildListAttrsForTarget(
   listNode: ProseMirrorNode,
-  targetId: 'bulletList' | 'orderedList' | 'taskList'
+  targetId: 'bulletList' | 'orderedList' | 'taskList',
+  orderedStart = readNumberAttr(listNode.attrs.order, 1)
 ) {
   const spread = readBooleanAttr(listNode.attrs.spread, false);
 
   if (targetId === 'orderedList') {
     return {
-      order: readNumberAttr(listNode.attrs.order, 1),
+      order: orderedStart,
+      spread
+    };
+  }
+
+  return { spread };
+}
+
+function buildListAttrsForExistingType(listNode: ProseMirrorNode, orderedStart: number) {
+  const spread = readBooleanAttr(listNode.attrs.spread, false);
+
+  if (listNode.type.name === 'ordered_list') {
+    return {
+      order: orderedStart,
       spread
     };
   }
@@ -1053,36 +1109,105 @@ function buildListItemAttrsForTarget(
   };
 }
 
+function isListSelectionAlreadyTargeted(
+  listNode: ProseMirrorNode,
+  selectedItems: readonly ProseMirrorNode[],
+  targetId: 'bulletList' | 'orderedList' | 'taskList'
+) {
+  if (targetId === 'orderedList') {
+    return listNode.type.name === 'ordered_list';
+  }
+
+  if (listNode.type.name !== 'bullet_list') {
+    return false;
+  }
+
+  if (targetId === 'bulletList') {
+    return selectedItems.every((item) => readNullableBooleanAttr(item.attrs.checked) == null);
+  }
+
+  return selectedItems.every((item) => readNullableBooleanAttr(item.attrs.checked) != null);
+}
+
 function convertCurrentList(
   view: EditorView,
   bulletListType: ReturnType<typeof bulletListSchema.type>,
   orderedListType: ReturnType<typeof orderedListSchema.type>,
   targetId: 'bulletList' | 'orderedList' | 'taskList'
 ) {
-  const { listNode, listPos } = getSelectionAncestorInfo(view);
-  if (!listNode || listPos === null) {
+  const selectionRange = resolveListSelectionRange(view);
+  if (!selectionRange) {
     return false;
   }
 
+  const { listNode, listPos, startIndex, endIndex } = selectionRange;
   const targetListType = targetId === 'orderedList' ? orderedListType : bulletListType;
-  const orderedStart = readNumberAttr(listNode.attrs.order, 1);
+  const originalOrderedStart = readNumberAttr(listNode.attrs.order, 1);
+  const targetOrderedStart =
+    listNode.type.name === 'ordered_list' ? originalOrderedStart + startIndex : 1;
   const transaction = view.state.tr;
 
-  transaction.setNodeMarkup(listPos, targetListType, buildListAttrsForTarget(listNode, targetId));
+  const beforeItems: ProseMirrorNode[] = [];
+  const selectedItems: ProseMirrorNode[] = [];
+  const afterItems: ProseMirrorNode[] = [];
 
-  let itemPos = listPos + 1;
-  let itemIndex = 0;
-  listNode.forEach((child) => {
-    if (child.type.name === 'list_item') {
-      transaction.setNodeMarkup(
-        itemPos,
-        child.type,
-        buildListItemAttrsForTarget(child, targetId, itemIndex, orderedStart)
-      );
-      itemIndex += 1;
+  for (let index = 0; index < listNode.childCount; index += 1) {
+    const child = listNode.child(index);
+    if (index < startIndex) {
+      beforeItems.push(child);
+      continue;
     }
-    itemPos += child.nodeSize;
-  });
+
+    if (index > endIndex) {
+      afterItems.push(child);
+      continue;
+    }
+
+    selectedItems.push(child);
+  }
+
+  if (selectedItems.length === 0 || isListSelectionAlreadyTargeted(listNode, selectedItems, targetId)) {
+    return true;
+  }
+
+  const replacementNodes: ProseMirrorNode[] = [];
+
+  if (beforeItems.length > 0) {
+    replacementNodes.push(
+      listNode.type.create(buildListAttrsForExistingType(listNode, originalOrderedStart), beforeItems)
+    );
+  }
+
+  replacementNodes.push(
+    targetListType.create(
+      buildListAttrsForTarget(listNode, targetId, targetOrderedStart),
+      selectedItems.map((item, itemIndex) =>
+        item.type.create(
+          buildListItemAttrsForTarget(item, targetId, itemIndex, targetOrderedStart),
+          item.content,
+          item.marks
+        )
+      )
+    )
+  );
+
+  if (afterItems.length > 0) {
+    const afterOrderedStart =
+      listNode.type.name === 'ordered_list' ? originalOrderedStart + endIndex + 1 : 1;
+    replacementNodes.push(
+      listNode.type.create(buildListAttrsForExistingType(listNode, afterOrderedStart), afterItems)
+    );
+  }
+
+  transaction.replaceWith(
+    listPos,
+    listPos + listNode.nodeSize,
+    Fragment.fromArray(replacementNodes)
+  );
+
+  const mappedAnchor = transaction.mapping.map(view.state.selection.anchor);
+  const mappedHead = transaction.mapping.map(view.state.selection.head);
+  transaction.setSelection(TextSelection.create(transaction.doc, mappedAnchor, mappedHead));
 
   if (transaction.docChanged) {
     view.dispatch(transaction.scrollIntoView());
@@ -1263,20 +1388,55 @@ function resolveBlockContext(
 function applyBlockTypeMenuSelection(
   controller: NotepadEditorController,
   targetPos: number,
-  option: BlockTypeMenuOption
+  option: BlockTypeMenuOption,
+  preservedSelection: NotepadCursorPosition | null = null
 ) {
   controller.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
     const maxPos = Math.max(1, view.state.doc.nodeSize - 2);
     const selectionPos = Math.max(1, Math.min(targetPos, maxPos));
+    const nextAnchor = preservedSelection
+      ? Math.max(1, Math.min(preservedSelection.anchor, maxPos))
+      : selectionPos;
+    const nextHead = preservedSelection
+      ? Math.max(1, Math.min(preservedSelection.head, maxPos))
+      : selectionPos;
     const transaction = view.state.tr
-      .setSelection(TextSelection.near(view.state.doc.resolve(selectionPos)))
+      .setSelection(TextSelection.create(view.state.doc, nextAnchor, nextHead))
       .scrollIntoView();
 
     view.dispatch(transaction);
+
     view.focus();
     applyBlockTypeSelection(ctx, view, option.id);
   });
+}
+
+function getTextblockRangeAtPos(doc: ProseMirrorNode, pos: number) {
+  const maxPos = Math.max(1, doc.nodeSize - 2);
+  const $pos = doc.resolve(Math.max(1, Math.min(pos, maxPos)));
+
+  for (let depth = $pos.depth; depth >= 1; depth -= 1) {
+    const node = $pos.node(depth);
+    if (node.isTextblock) {
+      return {
+        from: $pos.start(depth),
+        to: $pos.end(depth)
+      };
+    }
+  }
+
+  return {
+    from: $pos.pos,
+    to: $pos.pos
+  };
+}
+
+function selectionTouchesBlock(doc: ProseMirrorNode, selection: NotepadCursorPosition, pos: number) {
+  const start = Math.min(selection.anchor, selection.head);
+  const end = Math.max(selection.anchor, selection.head);
+  const blockRange = getTextblockRangeAtPos(doc, pos);
+  return end >= blockRange.from && start <= blockRange.to;
 }
 
 function positionBlockTypeMenu(menuRoot: HTMLDivElement, anchorRect: DOMRect) {
@@ -1316,9 +1476,11 @@ function setupBlockHandleTypeMenu(
 
   const buttonsById = new Map<string, HTMLButtonElement>();
   let activeTargetPos: number | null = null;
+  let activeSelection: NotepadCursorPosition | null = null;
 
   const closeMenu = () => {
     activeTargetPos = null;
+    activeSelection = null;
     menuRoot.dataset.open = 'false';
     menuRoot.style.removeProperty('left');
     menuRoot.style.removeProperty('top');
@@ -1375,7 +1537,7 @@ function setupBlockHandleTypeMenu(
       button.innerHTML = `${blockTypeIcons[option.id] ?? ''}<span>${option.label}</span>`;
       button.addEventListener('click', () => {
         if (activeTargetPos === null) return;
-        applyBlockTypeMenuSelection(controller, activeTargetPos, option);
+        applyBlockTypeMenuSelection(controller, activeTargetPos, option, activeSelection);
         closeMenu();
       });
 
@@ -1412,19 +1574,34 @@ function setupBlockHandleTypeMenu(
     startY: number;
     handleButton: HTMLElement;
     moved: boolean;
+    selection: NotepadCursorPosition | null;
   } | null = null;
 
   const onTrackedPointerDown = (event: PointerEvent) => {
     const handleButton = getBlockHandleDragButton(event.target);
     if (!handleButton) return;
 
-    pointerState = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      handleButton,
-      moved: false
-    };
+    controller.editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const { selection } = view.state;
+      const preservedSelection = !selection.empty
+        ? {
+            anchor: selection.anchor,
+            head: selection.head
+          }
+        : null;
+
+      pointerState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        handleButton,
+        moved: false,
+        selection: preservedSelection
+      };
+    });
+
+    event.preventDefault();
   };
 
   const onWindowPointerMove = (event: PointerEvent) => {
@@ -1453,6 +1630,17 @@ function setupBlockHandleTypeMenu(
     }
 
     activeTargetPos = context.targetPos;
+    if (captured.selection) {
+      controller.editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        activeSelection = selectionTouchesBlock(view.state.doc, captured.selection!, context.targetPos)
+          ? captured.selection
+          : null;
+      });
+    } else {
+      activeSelection = null;
+    }
+
     let activeGroupKey = blockTypeMenuGroups[0]?.key;
     for (const [optionId, button] of buttonsById) {
       const isActive = context.currentTypeId === optionId;
@@ -1554,7 +1742,7 @@ export async function createNotepadEditor({
       ctx.set(editorViewOptionsCtx, {
         editable: () => true
       });
-      ctx.update(dropIndicatorConfig.key, () => ({
+      ctx.update(dropIndicatorConfig.key, (): DropIndicatorOptions => ({
         class: 'crepe-drop-cursor',
         width: 4,
         color: false
