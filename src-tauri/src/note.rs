@@ -147,11 +147,11 @@ pub(crate) fn prepare_note_markdown(
     let existing_parsed = existing_markdown.map(parse_note);
     let now = current_timestamp_rfc3339()?;
 
-    let existing_metadata = parsed
-        .frontmatter
-        .managed
-        .clone()
-        .or_else(|| existing_parsed.as_ref().and_then(|note| note.frontmatter.managed.clone()));
+    let existing_metadata = parsed.frontmatter.managed.clone().or_else(|| {
+        existing_parsed
+            .as_ref()
+            .and_then(|note| note.frontmatter.managed.clone())
+    });
 
     let metadata = ManagedNoteMetadata {
         id: existing_metadata
@@ -172,20 +172,18 @@ pub(crate) fn prepare_note_markdown(
         }),
     };
 
-    let raw_other = parsed
-        .frontmatter
-        .raw_other
-        .clone()
-        .or_else(|| existing_parsed.as_ref().and_then(|note| note.frontmatter.raw_other.clone()));
+    let raw_other = parsed.frontmatter.raw_other.clone().or_else(|| {
+        existing_parsed
+            .as_ref()
+            .and_then(|note| note.frontmatter.raw_other.clone())
+    });
     let body = parsed.body.trim_start_matches('\n');
     let frontmatter = compose_frontmatter(raw_other.as_deref(), &metadata);
 
     let enriched = if body.is_empty() {
         format!("{FRONTMATTER_DELIMITER}\n{frontmatter}\n{FRONTMATTER_DELIMITER}\n")
     } else {
-        format!(
-            "{FRONTMATTER_DELIMITER}\n{frontmatter}\n{FRONTMATTER_DELIMITER}\n\n{body}"
-        )
+        format!("{FRONTMATTER_DELIMITER}\n{frontmatter}\n{FRONTMATTER_DELIMITER}\n\n{body}")
     };
 
     Ok((enriched, metadata))
@@ -220,7 +218,9 @@ fn split_frontmatter(markdown: &str) -> Option<(&str, &str)> {
     Some((raw_frontmatter, body))
 }
 
-fn split_managed_frontmatter(raw_frontmatter: &str) -> (Option<String>, Option<ManagedNoteMetadata>) {
+fn split_managed_frontmatter(
+    raw_frontmatter: &str,
+) -> (Option<String>, Option<ManagedNoteMetadata>) {
     let lines = raw_frontmatter.lines().collect::<Vec<_>>();
     let mut preserved = Vec::new();
     let mut metadata = None;
@@ -435,7 +435,9 @@ mod tests {
     #[test]
     fn normalize_wikilink_markdown_unescapes_obsidian_style_links() {
         assert_eq!(
-            normalize_wikilink_markdown("# Title\n\n!\\[\\[Pasted image.png\\]\\]\n\\[\\[Project Atlas\\]\\]"),
+            normalize_wikilink_markdown(
+                "# Title\n\n!\\[\\[Pasted image.png\\]\\]\n\\[\\[Project Atlas\\]\\]"
+            ),
             "# Title\n\n![[Pasted image.png]]\n[[Project Atlas]]"
         );
     }

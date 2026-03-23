@@ -354,11 +354,13 @@ impl SemanticState {
     pub(crate) fn rebuild_index(&self) -> Result<(), String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
-                state
-                    .debug
-                    .record_with_metrics("index", "enqueue_rebuild", None, None, |metrics| {
-                        metrics.index_job_enqueued_count += 1
-                    });
+                state.debug.record_with_metrics(
+                    "index",
+                    "enqueue_rebuild",
+                    None,
+                    None,
+                    |metrics| metrics.index_job_enqueued_count += 1,
+                );
                 {
                     let mut pending = state
                         .pending
@@ -868,24 +870,28 @@ impl ActiveSemanticState {
 
         let (response, strategy) = if normalized_selection.is_none() {
             match current_path
-                .zip(load_note_record(&connection, current_path.unwrap_or_default())?)
+                .zip(load_note_record(
+                    &connection,
+                    current_path.unwrap_or_default(),
+                )?)
                 .filter(|(note_path, stored)| {
                     stored.content_hash == content_hash(current_markdown) && !note_path.is_empty()
                 }) {
                 Some((note_path, _)) => {
-                    let items = load_related_note_previews(&connection, note_path, effective_limit)?
-                        .into_iter()
-                        .map(|preview| RelatedNoteMatch {
-                            note_path: preview.note_path,
-                            note_title: preview.note_title,
-                            section_label: preview.section_label,
-                            excerpt: build_excerpt(&preview.text, 180),
-                            match_text: preview.text,
-                            score: preview.score,
-                            start_line: preview.start_line,
-                            end_line: preview.end_line,
-                        })
-                        .collect::<Vec<_>>();
+                    let items =
+                        load_related_note_previews(&connection, note_path, effective_limit)?
+                            .into_iter()
+                            .map(|preview| RelatedNoteMatch {
+                                note_path: preview.note_path,
+                                note_title: preview.note_title,
+                                section_label: preview.section_label,
+                                excerpt: build_excerpt(&preview.text, 180),
+                                match_text: preview.text,
+                                score: preview.score,
+                                start_line: preview.start_line,
+                                end_line: preview.end_line,
+                            })
+                            .collect::<Vec<_>>();
 
                     (
                         RelatedNotesResponse {
@@ -943,8 +949,7 @@ impl ActiveSemanticState {
                     status: "unavailable".to_string(),
                     scope: "selection".to_string(),
                     reason: Some(
-                        "Semantic index is still warming up or has not been built yet."
-                            .to_string(),
+                        "Semantic index is still warming up or has not been built yet.".to_string(),
                     ),
                     items: Vec::new(),
                 };

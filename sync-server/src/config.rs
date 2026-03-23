@@ -20,8 +20,7 @@ impl Config {
             .context("parse BIND_ADDR")?;
         let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
         let blob_root = PathBuf::from(
-            env::var("BLOB_ROOT")
-                .unwrap_or_else(|_| "./sync-server-data/blobs".to_string()),
+            env::var("BLOB_ROOT").unwrap_or_else(|_| "./sync-server-data/blobs".to_string()),
         );
         let app_base_url =
             env::var("APP_BASE_URL").unwrap_or_else(|_| "http://localhost:8787".to_string());

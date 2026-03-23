@@ -2,8 +2,7 @@ use crate::{index::is_note_file, note};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -114,10 +113,7 @@ pub(crate) fn app_data_dir() -> Result<PathBuf, String> {
     }
 
     let home = home_dir().ok_or_else(|| "Unable to determine the home directory".to_string())?;
-    let fallback = home
-        .join(".local")
-        .join("share")
-        .join("Gneauxghts");
+    let fallback = home.join(".local").join("share").join("Gneauxghts");
     fs::create_dir_all(&fallback).map_err(|err| err.to_string())?;
     Ok(fallback)
 }
@@ -352,7 +348,10 @@ pub(crate) fn persist_note(
 ) -> Result<Option<String>, String> {
     let normalized_markdown = note::normalize_wikilink_markdown(markdown);
 
-    if note::strip_frontmatter(&normalized_markdown).trim().is_empty() {
+    if note::strip_frontmatter(&normalized_markdown)
+        .trim()
+        .is_empty()
+    {
         let target_path = resolve_target_path(notes_dir, &normalized_markdown, current_path)?;
         let Some(target_path) = target_path else {
             return Ok(None);
@@ -412,7 +411,8 @@ fn migrate_legacy_ios_state_paths(notes_dir: &Path, legacy_dir: &Path) -> Result
     }
 
     let contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
-    let mut state: PersistedState = serde_json::from_str(&contents).map_err(|err| err.to_string())?;
+    let mut state: PersistedState =
+        serde_json::from_str(&contents).map_err(|err| err.to_string())?;
     let mut changed = false;
 
     changed |= remap_optional_path_prefix(&mut state.last_opened_path, legacy_dir, notes_dir);
@@ -422,8 +422,10 @@ fn migrate_legacy_ios_state_paths(notes_dir: &Path, legacy_dir: &Path) -> Result
     changed |= remap_path_collection_prefix(&mut state.collapsed_note_paths, legacy_dir, notes_dir);
 
     for forgotten_note in &mut state.forgotten_notes {
-        changed |= remap_string_path_prefix(&mut forgotten_note.forgotten_path, legacy_dir, notes_dir);
-        changed |= remap_string_path_prefix(&mut forgotten_note.original_path, legacy_dir, notes_dir);
+        changed |=
+            remap_string_path_prefix(&mut forgotten_note.forgotten_path, legacy_dir, notes_dir);
+        changed |=
+            remap_string_path_prefix(&mut forgotten_note.original_path, legacy_dir, notes_dir);
     }
 
     if !changed {

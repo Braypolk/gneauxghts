@@ -79,6 +79,10 @@ export async function loadCurrentVaultInfo() {
   return invoke<VaultInfo>('get_vault_info');
 }
 
+export function resolveAssetRootPath(vaultPath: string) {
+  return `${vaultPath.replace(/[\\/]+$/u, '')}${vaultPath.includes('\\') ? '\\' : '/'}assets`;
+}
+
 export async function openNoteSession(notePath: string) {
   const session = await invoke<NoteSession>('open_note', { path: notePath });
   return createSessionSnapshot(session);

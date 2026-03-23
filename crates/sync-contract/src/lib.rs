@@ -60,6 +60,18 @@ pub struct GetNoteResponse {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GetNotesRequest {
+    pub note_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetNotesResponse {
+    pub notes: Vec<RemoteHead>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncChange {
     pub cursor: i64,
     pub kind: SyncChangeKind,

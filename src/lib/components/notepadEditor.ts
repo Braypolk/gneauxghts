@@ -254,18 +254,18 @@ const notepadPlaceholderPlugin = $prose((ctx) => {
 
 // ── Slash menu ───────────────────────────────────────────────────────
 
-interface SlashMenuOption {
+interface EditorMenuOption {
   id: string;
   label: string;
 }
 
-interface SlashMenuGroup {
+interface EditorMenuGroup {
   key: string;
   label: string;
-  items: readonly SlashMenuOption[];
+  items: readonly EditorMenuOption[];
 }
 
-interface SlashMenuItemWithIndex extends SlashMenuOption {
+interface SlashMenuItemWithIndex extends EditorMenuOption {
   index: number;
 }
 
@@ -295,19 +295,31 @@ const slashMenuAPI = $ctx<SlashMenuAPI, 'notepadSlashMenuAPI'>(
   'notepadSlashMenuAPI'
 );
 
-const slashMenuGroups: readonly SlashMenuGroup[] = [
+const baseTextMenuItems = [
+  { id: 'paragraph', label: 'Text' },
+  { id: 'heading1', label: 'Heading 1' },
+  { id: 'heading2', label: 'Heading 2' },
+  { id: 'heading3', label: 'Heading 3' },
+  { id: 'heading4', label: 'Heading 4' },
+  { id: 'heading5', label: 'Heading 5' },
+  { id: 'heading6', label: 'Heading 6' },
+  { id: 'quote', label: 'Quote' }
+] as const satisfies readonly EditorMenuOption[];
+
+const baseListMenuItems = [
+  { id: 'bulletList', label: 'Bullet List' },
+  { id: 'orderedList', label: 'Ordered List' },
+  { id: 'taskList', label: 'Task List' }
+] as const satisfies readonly EditorMenuOption[];
+
+const baseAdvancedMenuItems = [{ id: 'code', label: 'Code' }] as const satisfies readonly EditorMenuOption[];
+
+const slashMenuGroups: readonly EditorMenuGroup[] = [
   {
     key: 'text',
     label: 'Text',
     items: [
-      { id: 'paragraph', label: 'Text' },
-      { id: 'heading1', label: 'Heading 1' },
-      { id: 'heading2', label: 'Heading 2' },
-      { id: 'heading3', label: 'Heading 3' },
-      { id: 'heading4', label: 'Heading 4' },
-      { id: 'heading5', label: 'Heading 5' },
-      { id: 'heading6', label: 'Heading 6' },
-      { id: 'quote', label: 'Quote' },
+      ...baseTextMenuItems,
       { id: 'divider', label: 'Divider' },
       { id: 'wikilink', label: 'Wikilink' }
     ]
@@ -315,16 +327,12 @@ const slashMenuGroups: readonly SlashMenuGroup[] = [
   {
     key: 'list',
     label: 'List',
-    items: [
-      { id: 'bulletList', label: 'Bullet List' },
-      { id: 'orderedList', label: 'Ordered List' },
-      { id: 'taskList', label: 'Task List' }
-    ]
+    items: baseListMenuItems
   },
   {
     key: 'advanced',
     label: 'Advanced',
-    items: [{ id: 'code', label: 'Code' }]
+    items: baseAdvancedMenuItems
   }
 ];
 
@@ -846,45 +854,21 @@ const blockTypeIcons: Record<string, string> = {
   wikilink: wikilinkSlashIcon
 };
 
-interface BlockTypeMenuOption {
-  id: string;
-  label: string;
-}
-
-interface BlockTypeMenuGroup {
-  key: string;
-  label: string;
-  items: readonly BlockTypeMenuOption[];
-}
-
-const blockTypeMenuGroups: readonly BlockTypeMenuGroup[] = [
+const blockTypeMenuGroups: readonly EditorMenuGroup[] = [
   {
     key: 'text',
     label: 'Text',
-    items: [
-      { id: 'paragraph', label: 'Text' },
-      { id: 'heading1', label: 'Heading 1' },
-      { id: 'heading2', label: 'Heading 2' },
-      { id: 'heading3', label: 'Heading 3' },
-      { id: 'heading4', label: 'Heading 4' },
-      { id: 'heading5', label: 'Heading 5' },
-      { id: 'heading6', label: 'Heading 6' },
-      { id: 'quote', label: 'Quote' }
-    ]
+    items: baseTextMenuItems
   },
   {
     key: 'list',
     label: 'List',
-    items: [
-      { id: 'bulletList', label: 'Bullet List' },
-      { id: 'orderedList', label: 'Ordered List' },
-      { id: 'taskList', label: 'Task List' }
-    ]
+    items: baseListMenuItems
   },
   {
     key: 'advanced',
     label: 'Advanced',
-    items: [{ id: 'code', label: 'Code' }]
+    items: baseAdvancedMenuItems
   }
 ];
 
@@ -1388,7 +1372,7 @@ function resolveBlockContext(
 function applyBlockTypeMenuSelection(
   controller: NotepadEditorController,
   targetPos: number,
-  option: BlockTypeMenuOption,
+  option: EditorMenuOption,
   preservedSelection: NotepadCursorPosition | null = null
 ) {
   controller.editor.action((ctx) => {

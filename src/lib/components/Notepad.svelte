@@ -5,27 +5,10 @@
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
   import { forgottenNoteRetentionPreference } from '$lib/appSettings';
   import type { RelatedNoteItem, RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
+  import type { NotepadEditorController } from './notepadEditor';
   import type { ActiveWikilink } from './notepadWikilinks';
   import { composeMarkdown } from './notepadDocument';
-  import {
-    createNotepadEditor,
-    destroyNotepadEditor,
-    insertWikilinkSuggestion,
-    type NotepadEditorController,
-    prepareNotepadEditor,
-    readNotepadCursorPosition,
-    readNotepadEditorState,
-    replaceNotepadEditorContent,
-    replaceNotepadEditorState,
-    restoreNotepadCursorPosition,
-    resetNotepadSlashMenuPortal
-  } from './notepadEditor';
-  import {
-    loadNotepadCursorPosition,
-    saveNotepadCursorPosition,
-    type NotepadCursorPosition
-  } from './notepadCursorState';
-  import { focusEditorAtEnd, focusInputAtEnd, waitForEditorPaint } from './notepadNavigation';
+  import { focusEditorAtEnd, focusInputAtEnd } from './notepadNavigation';
   import {
     navigateToPendingTaskTarget,
     openRecentTask,
@@ -35,53 +18,33 @@
     type NotepadOpenContext
   } from './notepadOpenFlow';
   import {
-    getRelatedNotes,
-    listRecentNotes,
-    listRecentTasks,
-    searchNotes,
     type NotepadSearchMode
   } from './notepadSearch';
   import {
-    createEmptySessionSnapshot,
-    createForgottenNote,
-    forgetNoteSession,
-    hasNotepadContent,
-    loadCurrentVaultInfo,
-    loadSavedNoteSession,
-    openNoteSession,
-    readNoteSession,
-    rememberNoteSession,
-    restoreForgottenNotes,
-    saveNoteSession,
     storePastedImageAsset,
-    shouldSkipAutosave,
     type ForgottenNote,
     type NotepadSessionSnapshot,
     type NotepadSaveMode
   } from './notepadSession';
   import {
-    autocompleteNoteLinks,
-    beginWikilinkSuggestionRequest,
-    completeWikilinkSuggestionRequest,
     createWikilinkAutocompleteState,
-    dismissWikilinkAutocomplete,
-    getSelectedWikilinkSuggestion,
-    hasWikilinkAlias,
-    moveWikilinkSelection as moveWikilinkSelectionState,
-    resetWikilinkAutocomplete,
-    resolveNoteLink,
-    setActiveWikilink,
     type WikilinkAutocompleteState
   } from './notepadWikilinkState';
   import type { RecentTaskItem } from './notepadTypes';
   import BottomBar from './BottomBar.svelte';
   import NotepadWikilinkAutocomplete from './NotepadWikilinkAutocomplete.svelte';
   import RelatedPanel from './RelatedPanel.svelte';
-  import type { EditorState } from '@milkdown/kit/prose/state';
-
-  const RELATED_SCOPE_SELECTION_MIN_CHARS = 48;
-  const EMPTY_RELATED_REASON = 'Write a bit more before looking for related notes.';
-  const MIN_NOTEPAD_WIDTH_FOR_SIDE_RELATED = 760;
+  import {
+    EMPTY_RELATED_REASON,
+    getBottomSheetStyle,
+    getNotepadCardStyle,
+    getRelatedDrawerStyle
+  } from './notepadRelated';
+  import { createNotepadSearchController } from './notepadSearchController';
+  import { createNotepadRelatedController } from './notepadRelatedController';
+  import { createNotepadSessionController } from './notepadSessionController';
+  import { createNotepadEditorLifecycleController } from './notepadEditorController';
+  import { createNotepadWikilinkController } from './notepadWikilinkController';
 
   let crepe: NotepadEditorController | null = null;
   let notepadShell: HTMLDivElement | null = null;
@@ -98,22 +61,13 @@
   let lastSavedPath: string | null = null;
   let canUnforget = $state(false);
   let forgottenNote: ForgottenNote | null = null;
-  let saveTimer: ReturnType<typeof window.setTimeout> | null = null;
-  let saveQueue: Promise<void> = Promise.resolve();
   let searchMode = $state<NotepadSearchMode>('all');
   let searchQuery = $state('');
   let searchResults = $state<SearchItem[]>([]);
   let recentNotes = $state<SearchItem[]>([]);
   let recentTasks = $state<RecentTaskItem[]>([]);
   let isSearching = $state(false);
-  let searchTimer: ReturnType<typeof window.setTimeout> | null = null;
-  let relatedTimer: ReturnType<typeof window.setTimeout> | null = null;
-  let activeSearchRequest = 0;
-  let activeRelatedRequest = 0;
-  let activeRecentNotesRequest = 0;
-  let activeRecentTasksRequest = 0;
   let searchFocusRequest = $state(0);
-  let slashMenuPortalCleanup: (() => void) | null = null;
   let wikilinkAutocomplete = $state<WikilinkAutocompleteState>(createWikilinkAutocompleteState());
   let isRefreshingFromDisk = false;
   let isApplyingExternalContent = false;
@@ -128,9 +82,6 @@
   let selectedRelatedText = $state<string | null>(null);
   let isRelatedPanelCollapsed = $state(true);
   let relatedDrawerReservedWidth = $state(0);
-  let lastRelatedRequestKey = '';
-  const editorStateByNotePath = new Map<string, { generation: number; state: EditorState }>();
-  let editorStateGeneration = 0;
 
   interface VaultNoteChangeEvent {
     notePath: string;
@@ -149,699 +100,19 @@
     return composeMarkdown(title, bodyMarkdown);
   }
 
-  function normalizeRelatedText(value: string) {
-    return value.replace(/\s+/gu, ' ').trim();
-  }
-
-  function hashRelatedText(value: string) {
-    let hash = 2166136261;
-
-    for (let index = 0; index < value.length; index += 1) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-
-    return (hash >>> 0).toString(16);
-  }
-
-  function getExpandedRelatedDrawerWidth() {
-    const preferred = window.innerWidth * 0.24;
-    return Math.round(Math.max(18 * 16, Math.min(preferred, 22 * 16)));
-  }
-
-  function getCollapsedRelatedDrawerWidth() {
-    return 44;
-  }
-
-  function getLayoutRelatedDrawerWidth() {
-    if (typeof window === 'undefined') {
-      return isRelatedPanelCollapsed ? getCollapsedRelatedDrawerWidth() : 320;
-    }
-
-    return isRelatedPanelCollapsed
-      ? getCollapsedRelatedDrawerWidth()
-      : getExpandedRelatedDrawerWidth();
-  }
-
-  function getVisualRelatedDrawerWidth() {
-    if (typeof window === 'undefined') {
-      return 320;
-    }
-
-    return getExpandedRelatedDrawerWidth();
-  }
-
-  function findHorizontalClipBoundary(element: HTMLElement) {
-    let current: HTMLElement | null = element.parentElement;
-    let boundary = window.innerWidth;
-
-    while (current) {
-      const styles = window.getComputedStyle(current);
-      if (styles.overflowX !== 'visible' || styles.overflow === 'hidden' || styles.overflow === 'clip') {
-        boundary = Math.min(boundary, current.getBoundingClientRect().right);
-      }
-      current = current.parentElement;
-    }
-
-    return boundary;
-  }
-
-  function updateRelatedDrawerLayout() {
-    if (!notepadShell || typeof window === 'undefined') {
-      return;
-    }
-
-    const shellRect = notepadShell.getBoundingClientRect();
-    const drawerGap = 16;
-    const rightBoundary = findHorizontalClipBoundary(notepadShell) - 8;
-    const availableRightSpace = Math.max(0, rightBoundary - shellRect.right);
-    const openSideOverflow = Math.max(
-      0,
-      getExpandedRelatedDrawerWidth() + drawerGap - availableRightSpace
-    );
-    const projectedSideWidth = shellRect.width - openSideOverflow;
-
-    if (projectedSideWidth < MIN_NOTEPAD_WIDTH_FOR_SIDE_RELATED) {
-      relatedPanelPlacement = 'bottom';
-      relatedDrawerReservedWidth = 0;
-      return;
-    }
-
-    relatedPanelPlacement = 'side';
-    const overflow = Math.max(
-      0,
-      getLayoutRelatedDrawerWidth() + drawerGap - availableRightSpace
-    );
-
-    relatedDrawerReservedWidth = overflow;
-  }
-
-  function getNotepadCardStyle() {
-    if (relatedPanelPlacement === 'bottom') {
-      return 'width: 100%;';
-    }
-
-    return `width: calc(100% - ${relatedDrawerReservedWidth}px);`;
-  }
-
-  function getRelatedDrawerStyle() {
-    return `left: calc(100% + var(--related-drawer-gap) - ${relatedDrawerReservedWidth}px); width: ${getVisualRelatedDrawerWidth()}px;`;
-  }
-
-  function getBottomSheetStyle() {
-    return 'top: 1rem; right: 1rem; bottom: var(--related-bottom-offset); width: min(calc(100% - 1rem), 32rem);';
-  }
-
-  function buildRelatedRequestKey(markdown: string, selectedText: string | null) {
-    return [
-      currentNotePath ?? '',
-      relatedScope,
-      hashRelatedText(markdown),
-      hashRelatedText(selectedText ?? '')
-    ].join(':');
-  }
-
-  function resetRelatedResults(
-    status: RelatedNotesResponse['status'] = 'insufficientContent',
-    reason: string | null = EMPTY_RELATED_REASON
-  ) {
-    relatedItems = [];
-    relatedStatus = status;
-    relatedReason = reason;
-    isLoadingRelated = false;
-    lastRelatedRequestKey = '';
-  }
-
-  function cancelRelatedAssessment() {
-    if (relatedTimer) {
-      window.clearTimeout(relatedTimer);
-      relatedTimer = null;
-    }
-
-    activeRelatedRequest += 1;
-    isLoadingRelated = false;
-  }
-
-  function getActiveRelatedSelectionText() {
-    return relatedScope === 'selection' ? selectedRelatedText : null;
-  }
-
-  function getEditorSelectionText() {
-    const selection = getEditorDomSelection();
-    if (!selection) {
-      return null;
-    }
-
-    const text = normalizeRelatedText(selection.toString());
-    if (text.length < RELATED_SCOPE_SELECTION_MIN_CHARS) {
-      return null;
-    }
-
-    return text;
-  }
-
-  function updateSelectedRelatedText() {
-    const nextSelection = getEditorSelectionText();
-    if (nextSelection === selectedRelatedText) {
-      return;
-    }
-
-    const hadSelection = !!selectedRelatedText;
-    selectedRelatedText = nextSelection;
-
-    if (selectedRelatedText && !hadSelection) {
-      relatedScope = 'selection';
-    } else if (!selectedRelatedText) {
-      relatedScope = 'note';
-    }
-
-    scheduleRelated({ immediate: true });
-  }
-
-  function clearSelectedRelatedText() {
-    selectedRelatedText = null;
-    relatedScope = 'note';
-  }
-
-  function getEditorDomSelection() {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) {
-      return null;
-    }
-
-    const anchorNode =
-      selection.anchorNode instanceof Element
-        ? selection.anchorNode
-        : selection.anchorNode?.parentElement ?? null;
-    const focusNode =
-      selection.focusNode instanceof Element
-        ? selection.focusNode
-        : selection.focusNode?.parentElement ?? null;
-    if (!anchorNode || !focusNode || !editorRoot) {
-      return null;
-    }
-
-    if (!editorRoot.contains(anchorNode) || !editorRoot.contains(focusNode)) {
-      return null;
-    }
-
-    return selection;
-  }
-
-  function hasCleanBuffer() {
-    return shouldSkipAutosave(getCurrentMarkdown(), currentNotePath, {
-      lastSavedMarkdown,
-      lastSavedPath
-    });
-  }
-
-  async function destroyEditor() {
-    slashMenuPortalCleanup = resetNotepadSlashMenuPortal({
-      boundsElement: null,
-      editorRoot: null,
-      portalRoot: null,
-      currentCleanup: slashMenuPortalCleanup
-    });
-    crepe = await destroyNotepadEditor(crepe);
-  }
-
-  function setupSlashMenuPortal() {
-    slashMenuPortalCleanup = resetNotepadSlashMenuPortal({
-      boundsElement: notepadShell,
-      editorRoot,
-      portalRoot: slashMenuPortal,
-      currentCleanup: slashMenuPortalCleanup
-    });
-  }
-
-  async function createEditor(initialValue: string) {
-    if (!(await prepareNotepadEditor(editorRoot)) || !editorRoot) return;
-    crepe = await createNotepadEditor({
-      assetRootPath,
-      editorRoot,
-      initialValue,
-      onOpenLink: (rawTarget) => {
-        void openWikilink(rawTarget);
-      },
-      onActiveWikilinkChange: handleActiveWikilinkChange,
-      onMarkdownChange: (nextMarkdown) => {
-        bodyMarkdown = nextMarkdown;
-        saveEditorStateForNote();
-        if (isApplyingExternalContent) return;
-        if (nextMarkdown.trim() !== '') canUnforget = false;
-        scheduleAutosave();
-        scheduleSearch();
-        scheduleRelated();
-      },
-      onStorePastedImage: storePastedImageAsset
-    });
-    editorStateGeneration += 1;
-    setupSlashMenuPortal();
-    isEditorReady = true;
-  }
-
-  function resolveAssetRootPath(vaultPath: string) {
-    return `${vaultPath.replace(/[\\/]+$/u, '')}${vaultPath.includes('\\') ? '\\' : '/'}assets`;
-  }
-
-  function saveCursorPositionForNote(
-    notePath: string | null = currentNotePath,
-    position: NotepadCursorPosition | null = readNotepadCursorPosition(crepe)
-  ) {
-    if (!notePath || !position) {
-      return;
-    }
-
-    saveNotepadCursorPosition(notePath, position);
-  }
-
-  function saveEditorStateForNote(
-    notePath: string | null = currentNotePath,
-    editorState: EditorState | null = readNotepadEditorState(crepe)
-  ) {
-    if (!notePath || !editorState) {
-      return;
-    }
-
-    editorStateByNotePath.set(notePath, {
-      generation: editorStateGeneration,
-      state: editorState
-    });
-  }
-
-  function getEditorStateForNote(notePath: string | null) {
-    if (!notePath) {
-      return null;
-    }
-
-    const cachedState = editorStateByNotePath.get(notePath);
-    if (!cachedState || cachedState.generation !== editorStateGeneration) {
-      return null;
-    }
-
-    return cachedState.state;
-  }
-
-  function discardEditorStateForNote(notePath: string | null) {
-    if (!notePath) {
-      return;
-    }
-
-    editorStateByNotePath.delete(notePath);
-  }
-
-  function restoreCursorPositionForNote(
-    notePath: string | null = currentNotePath,
-    position: NotepadCursorPosition | null = loadNotepadCursorPosition(notePath)
-  ) {
-    if (!notePath || !position) {
-      return false;
-    }
-
-    return restoreNotepadCursorPosition(crepe, position);
-  }
-
-  async function replaceEditorContent(
-    nextMarkdown: string,
-    {
-      preserveScroll = false,
-      restoreCursor = false,
-      cursorPosition = undefined
-    }: {
-      preserveScroll?: boolean;
-      restoreCursor?: boolean;
-      cursorPosition?: NotepadCursorPosition | null | undefined;
-    } = {}
-  ) {
-    const scrollTop = preserveScroll ? (editorShell?.scrollTop ?? 0) : 0;
-    isEditorReady = false;
-    await destroyEditor();
+  function handleEditorMarkdownChange(nextMarkdown: string) {
     bodyMarkdown = nextMarkdown;
-    await createEditor(nextMarkdown);
-
-    if (restoreCursor) {
-      await waitForEditorPaint();
-      if (cursorPosition === undefined) {
-        restoreCursorPositionForNote(currentNotePath);
-      } else {
-        restoreCursorPositionForNote(currentNotePath, cursorPosition);
-      }
+    if (isApplyingExternalContent) {
+      return;
     }
 
-    if (preserveScroll && editorShell) {
-      await tick();
-      editorShell.scrollTop = Math.min(scrollTop, editorShell.scrollHeight);
-    }
-  }
-
-  async function replaceEditorContentInPlace(nextMarkdown: string) {
-    const cursorPosition = readNotepadCursorPosition(crepe);
-    const scrollTop = editorShell?.scrollTop ?? 0;
-    isApplyingExternalContent = true;
-    try {
-      if (!replaceNotepadEditorContent(crepe, nextMarkdown)) {
-        isApplyingExternalContent = false;
-        await replaceEditorContent(nextMarkdown, {
-          preserveScroll: true,
-          restoreCursor: !!cursorPosition,
-          cursorPosition
-        });
-        return;
-      }
-
-      bodyMarkdown = nextMarkdown;
-      closeWikilinkAutocomplete();
-      restoreNotepadCursorPosition(crepe, cursorPosition);
-      await tick();
-      if (editorShell) {
-        editorShell.scrollTop = Math.min(scrollTop, editorShell.scrollHeight);
-      }
-    } finally {
-      isApplyingExternalContent = false;
-    }
-  }
-
-  async function replaceEditorContentInPlaceForNote(
-    nextMarkdown: string,
-    notePath: string | null
-  ) {
-    const cursorPosition = loadNotepadCursorPosition(notePath) ?? { anchor: 1, head: 1 };
-
-    isApplyingExternalContent = true;
-    try {
-      if (!replaceNotepadEditorContent(crepe, nextMarkdown, { flushHistory: true })) {
-        isApplyingExternalContent = false;
-        await replaceEditorContent(nextMarkdown, {
-          restoreCursor: true,
-          cursorPosition
-        });
-        return;
-      }
-
-      bodyMarkdown = nextMarkdown;
-      closeWikilinkAutocomplete();
-      restoreNotepadCursorPosition(crepe, cursorPosition);
-      await tick();
-      saveEditorStateForNote(notePath);
-    } finally {
-      isApplyingExternalContent = false;
-    }
-  }
-
-  async function clearNotepad({ canRestore = true }: { canRestore?: boolean } = {}) {
-    const notePathToClear = currentNotePath;
-
-    if (currentNotePath) {
-      saveCursorPositionForNote();
-      saveEditorStateForNote();
-      cancelPendingAutosave();
-      await enqueueSave('autosave');
+    if (nextMarkdown.trim() !== '') {
+      canUnforget = false;
     }
 
-    const draft = { title, bodyMarkdown, currentNotePath };
-    const hasContent = hasNotepadContent(draft);
-    let forgottenPath: string | null = null;
-
-    if (currentNotePath) {
-      try {
-        const forgottenNoteSummary = await forgetNoteSession(
-          currentNotePath,
-          $forgottenNoteRetentionPreference
-        );
-        forgottenPath = forgottenNoteSummary?.forgottenPath ?? null;
-      } catch (error) {
-        console.error('Failed to forget note:', error);
-        return;
-      }
-    }
-
-    const noteToForget =
-      canRestore && hasContent ? createForgottenNote(draft, forgottenPath) : null;
-    forgottenNote = noteToForget;
-    applySessionSnapshot(createEmptySessionSnapshot());
-    canUnforget = canRestore && hasContent;
-    await replaceEditorContent('');
-    clearSelectedRelatedText();
-    discardEditorStateForNote(notePathToClear);
-    scheduleSearch();
-    scheduleRelated({ immediate: true });
-    void loadRecentNotes();
-    scheduleAutoSync('note-forgotten', 400);
-  }
-
-  async function unforgetNotepad() {
-    if (!forgottenNote) return;
-
-    if (forgottenNote.forgottenPath) {
-      try {
-        const restoredNotes = await restoreForgottenNotes([forgottenNote.forgottenPath]);
-        const restoredPath = restoredNotes[0]?.restoredPath;
-        if (!restoredPath) {
-          return;
-        }
-
-        applySessionSnapshot(await openNoteSession(restoredPath));
-        canUnforget = false;
-        forgottenNote = null;
-        await replaceEditorContent(bodyMarkdown);
-        clearSelectedRelatedText();
-        scheduleSearch();
-        scheduleRelated({ immediate: true });
-        void loadRecentNotes();
-        scheduleAutoSync('forgotten-restored', 400);
-        return;
-      } catch (error) {
-        console.error('Failed to restore forgotten note:', error);
-        return;
-      }
-    }
-
-    applySessionSnapshot({
-      ...forgottenNote,
-      lastSavedMarkdown: '',
-      lastSavedPath: null
-    });
-    canUnforget = false;
-    await replaceEditorContent(forgottenNote.bodyMarkdown);
-    forgottenNote = null;
-    clearSelectedRelatedText();
     scheduleAutosave();
     scheduleSearch();
-    scheduleRelated({ immediate: true });
-    void loadRecentNotes();
-    scheduleAutoSync('forgotten-restored-draft', 400);
-  }
-
-  async function loadSavedNote() {
-    try {
-      applySessionSnapshot(await loadSavedNoteSession());
-    } catch (error) {
-      console.error('Failed to load saved note:', error);
-      applySessionSnapshot(createEmptySessionSnapshot());
-    }
-  }
-
-  async function loadAssetRoot() {
-    try {
-      const vaultInfo = await loadCurrentVaultInfo();
-      assetRootPath = resolveAssetRootPath(vaultInfo.currentPath);
-    } catch (error) {
-      console.error('Failed to load vault info for image assets:', error);
-      assetRootPath = null;
-    }
-  }
-
-  async function refreshCurrentNoteIfChanged() {
-    if (!currentNotePath || !isEditorReady || isRefreshingFromDisk || !hasCleanBuffer()) {
-      return;
-    }
-
-    isRefreshingFromDisk = true;
-
-    try {
-      const session = await readNoteSession(currentNotePath);
-
-      if (!hasCleanBuffer() || session.currentNotePath !== currentNotePath) {
-        return;
-      }
-
-      if (
-        session.lastSavedMarkdown === lastSavedMarkdown &&
-        session.lastSavedPath === lastSavedPath
-      ) {
-        return;
-      }
-
-      applySessionSnapshot(session);
-      canUnforget = false;
-      forgottenNote = null;
-      await replaceEditorContentInPlace(session.bodyMarkdown);
-      clearSelectedRelatedText();
-      scheduleSearch();
-      scheduleRelated({ immediate: true });
-    } catch (error) {
-      console.error('Failed to refresh note from disk:', error);
-    } finally {
-      isRefreshingFromDisk = false;
-    }
-  }
-
-  function scheduleAutosave() {
-    if (saveTimer) window.clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => {
-      saveTimer = null;
-      void enqueueSave('autosave');
-    }, 1000);
-  }
-
-  function scheduleSearch() {
-    if (searchTimer) window.clearTimeout(searchTimer);
-
-    if (searchQuery.trim() === '') {
-      searchResults = [];
-      isSearching = false;
-      return;
-    }
-
-    searchTimer = window.setTimeout(() => {
-      searchTimer = null;
-      void runSearch(searchQuery);
-    }, 120);
-  }
-
-  function scheduleRelated({ immediate = false }: { immediate?: boolean } = {}) {
-    if (relatedTimer) {
-      window.clearTimeout(relatedTimer);
-      relatedTimer = null;
-    }
-
-    if (isRelatedPanelCollapsed) {
-      isLoadingRelated = false;
-      return;
-    }
-
-    const markdown = getCurrentMarkdown();
-    const activeSelection = getActiveRelatedSelectionText();
-    const normalizedContent = normalizeRelatedText(activeSelection ?? markdown);
-
-    if (
-      normalizedContent === '' ||
-      (relatedScope === 'selection' && !activeSelection)
-    ) {
-      resetRelatedResults();
-      return;
-    }
-
-    const delay = immediate
-      ? activeSelection
-        ? 180
-        : 220
-      : Math.max(900, Math.min(3600, 900 + Math.round(normalizedContent.length / 320) * 180));
-
-    relatedTimer = window.setTimeout(() => {
-      relatedTimer = null;
-      void runRelatedNotes();
-    }, delay);
-  }
-
-  async function runRelatedNotes() {
-    if (isRelatedPanelCollapsed) {
-      isLoadingRelated = false;
-      return;
-    }
-
-    const markdown = getCurrentMarkdown();
-    const selectedText = getActiveRelatedSelectionText();
-    const requestKey = buildRelatedRequestKey(markdown, selectedText);
-
-    if (requestKey === lastRelatedRequestKey) {
-      return;
-    }
-
-    const requestId = ++activeRelatedRequest;
-    isLoadingRelated = true;
-
-    try {
-      const response = await getRelatedNotes(
-        {
-          currentPath: currentNotePath,
-          currentMarkdown: markdown
-        },
-        selectedText,
-        4
-      );
-
-      if (requestId !== activeRelatedRequest) return;
-      relatedItems = response.items;
-      relatedStatus = response.status;
-      relatedReason = response.reason;
-      lastRelatedRequestKey = requestKey;
-    } catch (error) {
-      if (requestId !== activeRelatedRequest) return;
-      console.error('Failed to load related notes:', error);
-      relatedItems = [];
-      relatedStatus = 'unavailable';
-      relatedReason = 'Related notes are unavailable right now.';
-      lastRelatedRequestKey = '';
-    } finally {
-      if (requestId === activeRelatedRequest) {
-        isLoadingRelated = false;
-      }
-    }
-  }
-
-  async function enqueueSave(mode: NotepadSaveMode) {
-    saveQueue = saveQueue
-      .then(() => persistNote(mode))
-      .catch((error) => {
-        console.error(`Failed to ${mode} note:`, error);
-      });
-
-    return saveQueue;
-  }
-
-  function flushPendingAutosave() {
-    if (!saveTimer) return;
-
-    window.clearTimeout(saveTimer);
-    saveTimer = null;
-    void enqueueSave('autosave');
-  }
-
-  async function persistNote(mode: NotepadSaveMode) {
-    const markdown = getCurrentMarkdown();
-
-    if (
-      mode === 'autosave' &&
-      shouldSkipAutosave(markdown, currentNotePath, { lastSavedMarkdown, lastSavedPath })
-    ) {
-      return;
-    }
-
-    if (mode === 'remember') {
-      await rememberNoteSession(markdown, currentNotePath);
-      scheduleAutoSync('note-remembered', 400);
-      return;
-    }
-
-    applySessionSnapshot(await saveNoteSession(markdown, currentNotePath));
-    scheduleAutoSync('note-saved', 600);
-  }
-
-  async function rememberCurrentNote() {
-    const rememberedPath = currentNotePath;
-    saveCursorPositionForNote();
-    saveEditorStateForNote();
-    cancelPendingAutosave();
-
-    await enqueueSave('remember');
-    currentNotePath = null;
-    lastSavedMarkdown = '';
-    lastSavedPath = null;
-    forgottenNote = null;
-    discardEditorStateForNote(rememberedPath);
-    clearSearch();
-    await clearNotepad({ canRestore: false });
+    scheduleRelated();
   }
 
   function handleTitleInput(event: Event) {
@@ -854,15 +125,6 @@
 
   function focusTitleAtEnd() {
     focusInputAtEnd(titleInput);
-  }
-
-  function cancelPendingAutosave() {
-    if (!saveTimer) {
-      return;
-    }
-
-    window.clearTimeout(saveTimer);
-    saveTimer = null;
   }
 
   function getNavigationContext(): NotepadNavigationContext {
@@ -893,170 +155,6 @@
     void focusEditorAtEnd(editorRoot);
   }
 
-  function clearSearch() {
-    searchQuery = '';
-    searchResults = [];
-    isSearching = false;
-    activeSearchRequest += 1;
-    if (searchTimer) {
-      window.clearTimeout(searchTimer);
-      searchTimer = null;
-    }
-  }
-
-  async function runSearch(query: string) {
-    const trimmedQuery = query.trim();
-    if (trimmedQuery === '') {
-      searchResults = [];
-      isSearching = false;
-      return;
-    }
-
-    const requestId = ++activeSearchRequest;
-    isSearching = true;
-
-    try {
-      const results = await searchNotes(trimmedQuery, searchMode, {
-        currentPath: currentNotePath,
-        currentMarkdown: getCurrentMarkdown()
-      });
-
-      if (requestId !== activeSearchRequest) return;
-      searchResults = results;
-    } catch (error) {
-      if (requestId !== activeSearchRequest) return;
-      console.error('Failed to search notes:', error);
-      searchResults = [];
-    } finally {
-      if (requestId === activeSearchRequest) {
-        isSearching = false;
-      }
-    }
-  }
-
-  async function loadRecentNotes() {
-    const requestId = ++activeRecentNotesRequest;
-
-    try {
-      const notes = await listRecentNotes({
-        currentPath: currentNotePath,
-        currentMarkdown: getCurrentMarkdown()
-      });
-
-      if (requestId !== activeRecentNotesRequest) return;
-      recentNotes = notes;
-    } catch (error) {
-      if (requestId !== activeRecentNotesRequest) return;
-      console.error('Failed to load recent notes:', error);
-      recentNotes = [];
-    }
-  }
-
-  async function refreshRecentNotesNow() {
-    const requestId = ++activeRecentNotesRequest;
-
-    try {
-      const notes = await listRecentNotes({
-        currentPath: currentNotePath,
-        currentMarkdown: getCurrentMarkdown()
-      });
-
-      if (requestId === activeRecentNotesRequest) {
-        recentNotes = notes;
-      }
-
-      return notes;
-    } catch (error) {
-      if (requestId === activeRecentNotesRequest) {
-        recentNotes = [];
-      }
-
-      console.error('Failed to load recent notes:', error);
-      return [];
-    }
-  }
-
-  async function loadRecentTasks() {
-    const requestId = ++activeRecentTasksRequest;
-
-    try {
-      const tasks = await listRecentTasks();
-
-      if (requestId !== activeRecentTasksRequest) return;
-      recentTasks = tasks;
-    } catch (error) {
-      if (requestId !== activeRecentTasksRequest) return;
-      console.error('Failed to load recent tasks:', error);
-      recentTasks = [];
-    }
-  }
-
-  async function refreshRecentTasksNow() {
-    const requestId = ++activeRecentTasksRequest;
-
-    try {
-      const tasks = await listRecentTasks();
-
-      if (requestId === activeRecentTasksRequest) {
-        recentTasks = tasks;
-      }
-
-      return tasks;
-    } catch (error) {
-      if (requestId === activeRecentTasksRequest) {
-        recentTasks = [];
-      }
-
-      console.error('Failed to load recent tasks:', error);
-      return [];
-    }
-  }
-
-  async function openRecentNoteByIndex(
-    index: number,
-    { forceReload = false }: { forceReload?: boolean } = {}
-  ) {
-    const notes = forceReload || !recentNotes[index] ? await refreshRecentNotesNow() : recentNotes;
-    const note = notes[index];
-    if (!note) {
-      return;
-    }
-
-    try {
-      await openRecentNoteItem(note);
-    } catch (error) {
-      console.error('Failed to open recent note:', error);
-    }
-  }
-
-  async function openRecentTaskByIndex(
-    index: number,
-    { forceReload = false }: { forceReload?: boolean } = {}
-  ) {
-    const tasks = forceReload || !recentTasks[index] ? await refreshRecentTasksNow() : recentTasks;
-    const task = tasks[index];
-    if (!task) {
-      return;
-    }
-
-    try {
-      await handleRecentTaskSelect(task);
-    } catch (error) {
-      console.error('Failed to open recent task:', error);
-    }
-  }
-
-  async function openRecentNoteItem(note: SearchItem) {
-    clearSearch();
-
-    if (!note.notePath) {
-      await handleSearchResultSelect(note);
-      return;
-    }
-
-    await openNotePath(note.notePath);
-  }
-
   async function handleSearchResultSelect(result: SearchItem) {
     await openSearchResult(getOpenContext(), getNavigationContext(), result);
     saveCursorPositionForNote();
@@ -1084,148 +182,9 @@
     saveCursorPositionForNote();
   }
 
-  function handleRelatedScopeChange(scope: 'note' | 'selection') {
-    if (scope === 'selection' && !selectedRelatedText) {
-      return;
-    }
-
-    relatedScope = scope;
-    scheduleRelated({ immediate: true });
-  }
-
-  function toggleRelatedPanel() {
-    isRelatedPanelCollapsed = !isRelatedPanelCollapsed;
-    updateRelatedDrawerLayout();
-    if (isRelatedPanelCollapsed) {
-      cancelRelatedAssessment();
-      return;
-    }
-
-    scheduleRelated({ immediate: true });
-  }
-
-  function handleSearchInput(value: string) {
-    searchQuery = value;
-    if (value.trim() === '') {
-      searchResults = [];
-      isSearching = false;
-      return;
-    }
-    scheduleSearch();
-  }
-
-  async function handleSearchModeChange(mode: NotepadSearchMode) {
-    searchMode = mode;
-    if (searchQuery.trim() !== '') {
-      await runSearch(searchQuery);
-    }
-  }
-
-  function handleSearchFocus() {
-    void loadRecentNotes();
-    void loadRecentTasks();
-  }
-
-  function requestSearchFocus(mode: NotepadSearchMode) {
-    searchMode = mode;
-    if (searchQuery.trim() !== '') {
-      void runSearch(searchQuery);
-    }
-    searchFocusRequest += 1;
-  }
-
-  function closeWikilinkAutocomplete() {
-    wikilinkAutocomplete = dismissWikilinkAutocomplete(wikilinkAutocomplete);
-  }
-
-  function handleActiveWikilinkChange(nextActiveWikilink: ActiveWikilink | null) {
-    if (hasWikilinkAlias(nextActiveWikilink)) {
-      wikilinkAutocomplete = resetWikilinkAutocomplete(wikilinkAutocomplete);
-      return;
-    }
-
-    wikilinkAutocomplete = setActiveWikilink(wikilinkAutocomplete, nextActiveWikilink);
-
-    if (!nextActiveWikilink) {
-      closeWikilinkAutocomplete();
-      return;
-    }
-
-    void loadWikilinkSuggestions(nextActiveWikilink);
-  }
-
-  async function loadWikilinkSuggestions(nextActiveWikilink: ActiveWikilink) {
-    const pendingRequest = beginWikilinkSuggestionRequest(wikilinkAutocomplete, nextActiveWikilink);
-    wikilinkAutocomplete = pendingRequest.state;
-
-    try {
-      const suggestions = await autocompleteNoteLinks(
-        nextActiveWikilink.rawTarget,
-        currentNotePath,
-        getCurrentMarkdown()
-      );
-      wikilinkAutocomplete = completeWikilinkSuggestionRequest(
-        wikilinkAutocomplete,
-        pendingRequest.requestId,
-        suggestions
-      );
-    } catch (error) {
-      console.error('Failed to load wikilink suggestions:', error);
-      wikilinkAutocomplete = completeWikilinkSuggestionRequest(
-        wikilinkAutocomplete,
-        pendingRequest.requestId,
-        []
-      );
-    }
-  }
-
-  function selectWikilinkSuggestion(suggestionValue: string) {
-    if (
-      !insertWikilinkSuggestion(crepe, wikilinkAutocomplete.activeWikilink, suggestionValue)
-    ) {
-      return;
-    }
-
-    closeWikilinkAutocomplete();
-  }
-
-  function moveWikilinkSelection(direction: -1 | 1) {
-    wikilinkAutocomplete = moveWikilinkSelectionState(wikilinkAutocomplete, direction);
-  }
-
   function handleGlobalKeydown(event: KeyboardEvent) {
-    if (wikilinkAutocomplete.active) {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeWikilinkAutocomplete();
-        return;
-      }
-
-      if (wikilinkAutocomplete.suggestions.length > 0 && event.key === 'ArrowDown') {
-        event.preventDefault();
-        moveWikilinkSelection(1);
-        return;
-      }
-
-      if (wikilinkAutocomplete.suggestions.length > 0 && event.key === 'ArrowUp') {
-        event.preventDefault();
-        moveWikilinkSelection(-1);
-        return;
-      }
-
-      if (
-        wikilinkAutocomplete.suggestions.length > 0 &&
-        (event.key === 'Enter' || event.key === 'Tab')
-      ) {
-        const suggestion = getSelectedWikilinkSuggestion(wikilinkAutocomplete);
-        if (!suggestion) {
-          return;
-        }
-
-        event.preventDefault();
-        selectWikilinkSuggestion(suggestion.value);
-        return;
-      }
+    if (handleWikilinkKeydown(event)) {
+      return;
     }
 
     if (
@@ -1258,59 +217,6 @@
     requestSearchFocus(event.shiftKey ? 'all' : 'current');
   }
 
-  async function openNotePath(
-    notePath: string,
-    { currentNoteAlreadySaved = false }: { currentNoteAlreadySaved?: boolean } = {}
-  ) {
-    const previousPath = currentNotePath;
-    saveCursorPositionForNote();
-    saveEditorStateForNote();
-    if (!currentNoteAlreadySaved && previousPath && previousPath !== notePath) {
-      cancelPendingAutosave();
-      await enqueueSave('autosave');
-    }
-
-    const session = await openNoteSession(notePath);
-    applySessionSnapshot(session);
-    canUnforget = false;
-    forgottenNote = null;
-    closeWikilinkAutocomplete();
-    clearSelectedRelatedText();
-
-    if (replaceNotepadEditorState(crepe, getEditorStateForNote(session.currentNotePath))) {
-      await tick();
-      scheduleRelated({ immediate: true });
-      return;
-    }
-
-    await replaceEditorContentInPlaceForNote(session.bodyMarkdown, session.currentNotePath);
-    scheduleRelated({ immediate: true });
-  }
-
-  async function openWikilink(rawTarget: string) {
-    try {
-      const resolved = await resolveNoteLink(rawTarget, currentNotePath, getCurrentMarkdown());
-
-      if (!resolved) {
-        return;
-      }
-
-      await openResolvedNoteLink(
-        {
-          currentNotePath,
-          stopPendingAutosave: cancelPendingAutosave,
-          enqueueAutosave: () => enqueueSave('autosave'),
-          openNotePath
-        },
-        getNavigationContext(),
-        resolved
-      );
-      saveCursorPositionForNote();
-    } catch (error) {
-      console.error('Failed to resolve wikilink:', error);
-    }
-  }
-
   function handleWindowFocus() {
     void syncAndRefresh('window-focus');
   }
@@ -1325,9 +231,7 @@
     }
   }
 
-  async function syncAndRefresh(reason: string) {
-    await runAutoSyncNow(reason);
-    await refreshCurrentNoteIfChanged();
+  function refreshDerivedViews() {
     void loadRecentNotes();
     void loadRecentTasks();
     if (searchQuery.trim() !== '') {
@@ -1336,19 +240,341 @@
     scheduleRelated({ immediate: true });
   }
 
+  async function syncAndRefresh(reason: string) {
+    await runAutoSyncNow(reason);
+    await refreshCurrentNoteIfChanged();
+    refreshDerivedViews();
+  }
+
   async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
     if (currentNotePath === payload.notePath) {
       await refreshCurrentNoteIfChanged();
     } else if (payload.deleted) {
       discardEditorStateForNote(payload.notePath);
     }
-    void loadRecentNotes();
-    void loadRecentTasks();
-    if (searchQuery.trim() !== '') {
-      scheduleSearch();
-    }
-    scheduleRelated({ immediate: true });
+    refreshDerivedViews();
     scheduleAutoSync('vault-note-change', 1200);
+  }
+
+  const searchController = createNotepadSearchController({
+    getCurrentMarkdown,
+    getCurrentPath: () => currentNotePath,
+    getSearchMode: () => searchMode,
+    setSearchMode: (mode) => {
+      searchMode = mode;
+    },
+    getSearchQuery: () => searchQuery,
+    setSearchQuery: (query) => {
+      searchQuery = query;
+    },
+    setSearchResults: (results) => {
+      searchResults = results;
+    },
+    getRecentNotes: () => recentNotes,
+    setRecentNotes: (notes) => {
+      recentNotes = notes;
+    },
+    getRecentTasks: () => recentTasks,
+    setRecentTasks: (tasks) => {
+      recentTasks = tasks;
+    },
+    setIsSearching: (value) => {
+      isSearching = value;
+    },
+    bumpSearchFocusRequest: () => {
+      searchFocusRequest += 1;
+    },
+    openSearchResult: handleSearchResultSelect,
+    openRecentTask: handleRecentTaskSelect,
+    openNotePath: async (notePath) => openNotePath(notePath)
+  });
+
+  const relatedController = createNotepadRelatedController({
+    getCurrentMarkdown,
+    getCurrentPath: () => currentNotePath,
+    getScope: () => relatedScope,
+    setScope: (scope) => {
+      relatedScope = scope;
+    },
+    getSelectedText: () => selectedRelatedText,
+    setSelectedText: (value) => {
+      selectedRelatedText = value;
+    },
+    isPanelCollapsed: () => isRelatedPanelCollapsed,
+    setPanelCollapsed: (value) => {
+      isRelatedPanelCollapsed = value;
+    },
+    setPanelLayout: (placement, reservedWidth) => {
+      relatedPanelPlacement = placement;
+      relatedDrawerReservedWidth = reservedWidth;
+    },
+    setItems: (items) => {
+      relatedItems = items;
+    },
+    setStatus: (status) => {
+      relatedStatus = status;
+    },
+    setReason: (reason) => {
+      relatedReason = reason;
+    },
+    setIsLoading: (value) => {
+      isLoadingRelated = value;
+    }
+  });
+
+  const {
+    clearSearch,
+    scheduleSearch,
+    loadRecentNotes,
+    loadRecentTasks,
+    openRecentNoteItem,
+    openRecentNoteByIndex,
+    openRecentTaskByIndex,
+    handleSearchInput,
+    handleSearchModeChange,
+    handleSearchFocus,
+    requestSearchFocus
+  } = searchController;
+
+  const {
+    updateDrawerLayout: updateRelatedDrawerLayoutController,
+    clearSelectedRelatedText: clearSelectedRelatedTextController,
+    scheduleRelated,
+    handleRelatedScopeChange,
+    toggleRelatedPanel: toggleRelatedPanelController,
+    updateSelectedRelatedText: updateSelectedRelatedTextController
+  } = relatedController;
+
+  const editorLifecycleController = createNotepadEditorLifecycleController({
+    getController: () => crepe,
+    setController: (value) => {
+      crepe = value;
+    },
+    getNotepadShell: () => notepadShell,
+    getEditorShell: () => editorShell,
+    getEditorRoot: () => editorRoot,
+    getSlashMenuPortal: () => slashMenuPortal,
+    getCurrentPath: () => currentNotePath,
+    getAssetRootPath: () => assetRootPath,
+    setBodyMarkdown: (value) => {
+      bodyMarkdown = value;
+    },
+    setIsEditorReady: (value) => {
+      isEditorReady = value;
+    },
+    setIsApplyingExternalContent: (value) => {
+      isApplyingExternalContent = value;
+    },
+    handleEditorMarkdownChange,
+    onOpenLink: (rawTarget) => {
+      void openWikilink(rawTarget);
+    },
+    onActiveWikilinkChange: handleActiveWikilinkChange,
+    onStorePastedImage: storePastedImageAsset,
+    closeTransientUi: closeWikilinkAutocomplete
+  });
+
+  const sessionController = createNotepadSessionController({
+    getTitle: () => title,
+    getBodyMarkdown: () => bodyMarkdown,
+    getCurrentMarkdown,
+    getCurrentPath: () => currentNotePath,
+    setCurrentPath: (value) => {
+      currentNotePath = value;
+    },
+    getLastSavedMarkdown: () => lastSavedMarkdown,
+    setLastSavedMarkdown: (value) => {
+      lastSavedMarkdown = value;
+    },
+    getLastSavedPath: () => lastSavedPath,
+    setLastSavedPath: (value) => {
+      lastSavedPath = value;
+    },
+    applySessionSnapshot,
+    isEditorReady: () => isEditorReady,
+    getIsRefreshingFromDisk: () => isRefreshingFromDisk,
+    setIsRefreshingFromDisk: (value) => {
+      isRefreshingFromDisk = value;
+    },
+    getForgottenNote: () => forgottenNote,
+    setForgottenNote: (value) => {
+      forgottenNote = value;
+    },
+    setCanUnforget: (value) => {
+      canUnforget = value;
+    },
+    getForgottenRetentionDays: () => $forgottenNoteRetentionPreference,
+    saveCursorPositionForNote,
+    saveEditorStateForNote,
+    discardEditorStateForNote,
+    replaceEditorContent,
+    replaceEditorContentInPlace,
+    replaceEditorContentInPlaceForNote,
+    restoreEditorStateForNote,
+    clearSelectedRelatedText,
+    clearSearch,
+    scheduleSearch,
+    scheduleRelated,
+    loadRecentNotes,
+    scheduleAutoSync,
+    closeWikilinkAutocomplete,
+    setAssetRootPath: (value) => {
+      assetRootPath = value;
+    }
+  });
+
+  const wikilinkController = createNotepadWikilinkController({
+    getState: () => wikilinkAutocomplete,
+    setState: (value) => {
+      wikilinkAutocomplete = value;
+    },
+    getCurrentPath: () => currentNotePath,
+    getCurrentMarkdown,
+    getEditorController: () => crepe,
+    cancelPendingAutosave,
+    enqueueAutosave: () => enqueueSave('autosave'),
+    openNotePath,
+    getNavigationContext,
+    saveCursorPositionForNote
+  });
+
+  async function destroyEditor() {
+    await editorLifecycleController.destroyEditor();
+  }
+
+  async function createEditor(initialValue: string) {
+    await editorLifecycleController.createEditor(initialValue);
+  }
+
+  function saveCursorPositionForNote() {
+    editorLifecycleController.saveCursorPositionForNote();
+  }
+
+  function saveEditorStateForNote() {
+    editorLifecycleController.saveEditorStateForNote();
+  }
+
+  function discardEditorStateForNote(notePath: string | null) {
+    editorLifecycleController.discardEditorStateForNote(notePath);
+  }
+
+  function restoreCursorPositionForNote() {
+    return editorLifecycleController.restoreCursorPositionForNote();
+  }
+
+  async function replaceEditorContent(
+    nextMarkdown: string,
+    options: {
+      preserveScroll?: boolean;
+      restoreCursor?: boolean;
+    } = {}
+  ) {
+    await editorLifecycleController.replaceEditorContent(nextMarkdown, options);
+  }
+
+  async function replaceEditorContentInPlace(nextMarkdown: string) {
+    await editorLifecycleController.replaceEditorContentInPlace(nextMarkdown);
+  }
+
+  async function replaceEditorContentInPlaceForNote(nextMarkdown: string, notePath: string | null) {
+    await editorLifecycleController.replaceEditorContentInPlaceForNote(nextMarkdown, notePath);
+  }
+
+  function scheduleAutosave() {
+    sessionController.scheduleAutosave();
+  }
+
+  function cancelPendingAutosave() {
+    sessionController.cancelPendingAutosave();
+  }
+
+  async function enqueueSave(mode: NotepadSaveMode) {
+    return sessionController.enqueueSave(mode);
+  }
+
+  function flushPendingAutosave() {
+    sessionController.flushPendingAutosave();
+  }
+
+  async function clearNotepad(options: { canRestore?: boolean } = {}) {
+    await sessionController.clearNotepad(options);
+  }
+
+  async function unforgetNotepad() {
+    await sessionController.unforgetNotepad();
+  }
+
+  async function loadSavedNote() {
+    await sessionController.loadSavedNote();
+  }
+
+  async function loadAssetRoot() {
+    await sessionController.loadAssetRoot();
+  }
+
+  async function refreshCurrentNoteIfChanged() {
+    await sessionController.refreshCurrentNoteIfChanged();
+  }
+
+  async function rememberCurrentNote() {
+    await sessionController.rememberCurrentNote();
+  }
+
+  async function restoreEditorStateForNote(notePath: string | null) {
+    return editorLifecycleController.restoreCachedEditorState(notePath);
+  }
+
+  async function openNotePath(
+    notePath: string,
+    options: { currentNoteAlreadySaved?: boolean } = {}
+  ) {
+    await sessionController.openNotePath(notePath, options);
+  }
+
+  function closeWikilinkAutocomplete() {
+    wikilinkController.closeWikilinkAutocomplete();
+  }
+
+  function handleActiveWikilinkChange(nextActiveWikilink: ActiveWikilink | null) {
+    wikilinkController.handleActiveWikilinkChange(nextActiveWikilink);
+  }
+
+  function handleWikilinkKeydown(event: KeyboardEvent) {
+    return wikilinkController.handleAutocompleteKeydown(event);
+  }
+
+  async function openWikilink(rawTarget: string) {
+    await wikilinkController.openWikilink(rawTarget);
+  }
+
+  function handleWikilinkSuggestionSelect(value: string) {
+    const state = wikilinkAutocomplete;
+    const nextIndex = state.suggestions.findIndex((suggestion) => suggestion.value === value);
+    if (nextIndex === -1) {
+      return;
+    }
+
+    wikilinkAutocomplete = {
+      ...state,
+      selectedIndex: nextIndex
+    };
+    wikilinkController.selectWikilinkSuggestion(value);
+  }
+
+  function updateRelatedDrawerLayout() {
+    updateRelatedDrawerLayoutController(notepadShell);
+  }
+
+  function clearSelectedRelatedText() {
+    clearSelectedRelatedTextController();
+  }
+
+  function updateSelectedRelatedText() {
+    updateSelectedRelatedTextController(editorRoot);
+  }
+
+  function toggleRelatedPanel() {
+    toggleRelatedPanelController(notepadShell);
   }
 
   onMount(() => {
@@ -1397,9 +623,11 @@
       saveCursorPositionForNote();
       saveEditorStateForNote();
       flushPendingAutosave();
+      editorLifecycleController.dispose();
+      sessionController.dispose();
       cancelScheduledAutoSync();
-      if (searchTimer) window.clearTimeout(searchTimer);
-      if (relatedTimer) window.clearTimeout(relatedTimer);
+      searchController.dispose();
+      relatedController.dispose();
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
       shellResizeObserver?.disconnect();
@@ -1455,7 +683,7 @@
 <div bind:this={notepadShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
   <div
     class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-all duration-300 sm:rounded-[2rem] sm:border"
-    style={getNotepadCardStyle()}
+    style={getNotepadCardStyle(relatedPanelPlacement, relatedDrawerReservedWidth)}
   >
       <!-- Title bar -->
       <div class="absolute top-0 left-0 right-0 z-20">
@@ -1535,7 +763,7 @@
     <aside
       class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch transition-[left] duration-300"
       aria-label="Related notes panel"
-      style={getRelatedDrawerStyle()}
+      style={getRelatedDrawerStyle(relatedDrawerReservedWidth)}
     >
       <div class="relative h-full min-h-0 w-full">
         <button
@@ -1626,7 +854,7 @@
     activeWikilink={wikilinkAutocomplete.activeWikilink}
     suggestions={wikilinkAutocomplete.suggestions}
     selectedIndex={wikilinkAutocomplete.selectedIndex}
-    onSelect={(suggestion) => selectWikilinkSuggestion(suggestion.value)}
+    onSelect={(suggestion) => handleWikilinkSuggestionSelect(suggestion.value)}
   />
 </div>
 

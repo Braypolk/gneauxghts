@@ -22,6 +22,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use gneauxghts_sync_contract::RequestMagicLinkResponse;
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp::Reverse,
     collections::{HashMap, HashSet},
     ffi::OsStr,
     fs,
@@ -138,27 +139,30 @@ struct HybridCandidate {
     result: NoteSearchResult,
 }
 
-#[tauri::command]
-pub(crate) fn load_note_session() -> Result<NoteSession, String> {
+fn prepare_notes_dir(cleanup_forgotten_notes: bool) -> Result<PathBuf, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    if cleanup_forgotten_notes {
+        cleanup_expired_forgotten_notes(&notes_dir)?;
+    }
+    Ok(notes_dir)
+}
+
+#[tauri::command]
+pub(crate) fn load_note_session() -> Result<NoteSession, String> {
+    let notes_dir = prepare_notes_dir(true)?;
     load_note_session_from_notes_dir(&notes_dir)
 }
 
 #[tauri::command]
 pub(crate) fn open_note(path: String) -> Result<NoteSession, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
     open_note_from_notes_dir(&notes_dir, path)
 }
 
 #[tauri::command]
 pub(crate) fn read_note(path: String) -> Result<NoteSession, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
 
     let note_path = validate_current_path(Some(path), &notes_dir)?
         .ok_or_else(|| "Missing note path".to_string())?;
@@ -173,8 +177,7 @@ pub(crate) fn get_vault_info() -> Result<VaultInfo, String> {
 
 #[tauri::command]
 pub(crate) fn read_image_asset_data_url(file_name: String) -> Result<String, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
     let assets_dir = notes_dir.join(ASSETS_DIRECTORY_NAME);
     read_image_asset_data_url_from_assets_dir(&assets_dir, &file_name)
 }
@@ -189,16 +192,12 @@ pub(crate) fn store_pasted_image(
         return Err("Pasted image is empty".to_string());
     }
 
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
     let assets_dir = notes_dir.join(ASSETS_DIRECTORY_NAME);
     fs::create_dir_all(&assets_dir).map_err(|err| err.to_string())?;
 
-    let target_path = resolve_pasted_image_path(
-        &assets_dir,
-        original_name.as_deref(),
-        mime_type.as_deref(),
-    );
+    let target_path =
+        resolve_pasted_image_path(&assets_dir, original_name.as_deref(), mime_type.as_deref());
     fs::write(&target_path, bytes).map_err(|err| err.to_string())?;
 
     Ok(StoredImageAsset {
@@ -231,7 +230,9 @@ pub(crate) fn list_sync_conflicts() -> Result<Vec<SyncConflict>, String> {
 }
 
 #[tauri::command]
-pub(crate) fn get_sync_conflict_detail(note_id: String) -> Result<Option<SyncConflictDetail>, String> {
+pub(crate) fn get_sync_conflict_detail(
+    note_id: String,
+) -> Result<Option<SyncConflictDetail>, String> {
     sync::get_sync_conflict_detail(&note_id)
 }
 
@@ -266,8 +267,7 @@ pub(crate) async fn complete_sync_sign_in(
 
 #[tauri::command]
 pub(crate) fn sync_now(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
     sync::sync_now(&state, &notes_dir)
 }
 
@@ -281,8 +281,7 @@ pub(crate) fn resolve_sync_conflict_keep_local(
     state: State<'_, AppState>,
     note_id: String,
 ) -> Result<SyncStatus, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
     sync::resolve_sync_conflict_keep_local(&state, &notes_dir, &note_id)
 }
 
@@ -311,8 +310,7 @@ pub(crate) fn resolve_note_link(
     current_path: Option<String>,
     current_markdown: String,
 ) -> Result<Option<ResolvedNoteLink>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let current_override = build_current_override(current_path.as_deref(), &current_markdown);
@@ -355,8 +353,7 @@ pub(crate) fn autocomplete_note_links(
     current_markdown: String,
     limit: usize,
 ) -> Result<Vec<NoteLinkSuggestion>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let current_override = build_current_override(current_path.as_deref(), &current_markdown);
@@ -403,9 +400,7 @@ pub(crate) fn save_note(
     markdown: String,
     current_path: Option<String>,
 ) -> Result<NoteSession, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let previous_note = current_path
@@ -419,11 +414,12 @@ pub(crate) fn save_note(
         .as_deref()
         .map(|saved_path| fs::read_to_string(saved_path).map_err(|err| err.to_string()))
         .transpose()?;
-    let next_note = saved_path.as_deref().zip(persisted_markdown.as_deref()).map(
-        |(saved_path, persisted_markdown)| {
+    let next_note = saved_path
+        .as_deref()
+        .zip(persisted_markdown.as_deref())
+        .map(|(saved_path, persisted_markdown)| {
             build_indexed_note(Path::new(saved_path), persisted_markdown, timestamp_millis)
-        },
-    );
+        });
 
     let mut persisted_state = read_state(&notes_dir)?;
     persisted_state.last_opened_path = saved_path.clone();
@@ -480,9 +476,7 @@ pub(crate) fn remember_note(
     markdown: String,
     current_path: Option<String>,
 ) -> Result<(), String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let previous_note = current_path
@@ -529,9 +523,11 @@ pub(crate) fn remember_note(
         let persisted_markdown =
             fs::read_to_string(remembered_path).map_err(|err| err.to_string())?;
         sync::mark_note_dirty(Path::new(remembered_path), &persisted_markdown)?;
-        state
-            .semantic
-            .queue_note_update(Path::new(remembered_path), persisted_markdown, timestamp_millis)?;
+        state.semantic.queue_note_update(
+            Path::new(remembered_path),
+            persisted_markdown,
+            timestamp_millis,
+        )?;
     }
     if let Some(previous_path) = current_path.as_deref() {
         let previous_raw_path = previous_path.to_string_lossy().into_owned();
@@ -548,9 +544,7 @@ pub(crate) fn forget_note(
     current_path: Option<String>,
     retention_days: u32,
 ) -> Result<Option<ForgottenNoteSummary>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let mut persisted_state = read_state(&notes_dir)?;
@@ -631,9 +625,7 @@ pub(crate) fn forget_note(
 
 #[tauri::command]
 pub(crate) fn list_forgotten_notes() -> Result<Vec<ForgottenNoteSummary>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
 
     let mut forgotten_notes = read_state(&notes_dir)?.forgotten_notes;
     forgotten_notes.sort_by(|left, right| {
@@ -654,9 +646,7 @@ pub(crate) fn restore_forgotten_notes(
     state: State<'_, AppState>,
     forgotten_paths: Vec<String>,
 ) -> Result<Vec<RestoredForgottenNote>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
 
     let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)?;
     if selected_paths.is_empty() {
@@ -709,9 +699,7 @@ pub(crate) fn restore_forgotten_notes(
 
 #[tauri::command]
 pub(crate) fn delete_forgotten_notes(forgotten_paths: Vec<String>) -> Result<(), String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
 
     let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)?;
     if selected_paths.is_empty() {
@@ -748,9 +736,7 @@ pub(crate) fn list_recent_notes(
     current_path: Option<String>,
     current_markdown: String,
 ) -> Result<Vec<NoteSearchResult>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-    cleanup_expired_forgotten_notes(&notes_dir)?;
+    let notes_dir = prepare_notes_dir(true)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let _ = current_markdown;
@@ -800,8 +786,7 @@ pub(crate) fn list_recent_tasks(
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<Vec<RecentTaskItem>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let mut persisted_state = read_state(&notes_dir)?;
     let hidden_task_keys = persisted_state
@@ -862,17 +847,13 @@ pub(crate) fn list_recent_tasks(
         write_state(&notes_dir, &persisted_state)?;
     }
 
-    tasks.sort_by(|left, right| {
-        right
-            .updated_at_millis
-            .cmp(&left.updated_at_millis)
-            .then_with(|| {
-                left.note_title
-                    .to_lowercase()
-                    .cmp(&right.note_title.to_lowercase())
-            })
-            .then_with(|| left.line_number.cmp(&right.line_number))
-            .then_with(|| left.text.to_lowercase().cmp(&right.text.to_lowercase()))
+    tasks.sort_by_cached_key(|task| {
+        (
+            Reverse(task.updated_at_millis),
+            task.note_title.to_lowercase(),
+            task.line_number,
+            task.text.to_lowercase(),
+        )
     });
     tasks.truncate(limit);
 
@@ -884,8 +865,7 @@ pub(crate) fn list_tasks(
     state: State<'_, AppState>,
     filter: TaskFilter,
 ) -> Result<Vec<TaskListItem>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
     let mut persisted_state = read_state(&notes_dir)?;
     let hidden_task_keys = persisted_state
         .hidden_task_keys
@@ -914,6 +894,9 @@ pub(crate) fn list_tasks(
     let mut tasks = Vec::new();
 
     for (path, note) in &index.entries {
+        let raw_path = path.to_string_lossy().into_owned();
+        let note_hidden = hidden_note_paths.contains(&raw_path);
+        let note_collapsed = collapsed_note_paths.contains(&raw_path);
         for task in &note.tasks {
             let matches_filter = match filter {
                 TaskFilter::Open => !task.completed,
@@ -937,15 +920,15 @@ pub(crate) fn list_tasks(
 
             tasks.push(TaskListItem {
                 task_key: task_key.clone(),
-                note_path: path.to_string_lossy().into_owned(),
+                note_path: raw_path.clone(),
                 file_name: note.file_name.clone(),
                 note_title: note.title.clone(),
                 section_label: task.section_label.clone(),
                 text: task.text.clone(),
                 completed: task.completed,
                 hidden: hidden_task_keys.contains(&task_key),
-                note_hidden: hidden_note_paths.contains(&path.to_string_lossy().into_owned()),
-                note_collapsed: collapsed_note_paths.contains(&path.to_string_lossy().into_owned()),
+                note_hidden,
+                note_collapsed,
                 depth: task.depth,
                 line_number: task.line_number,
                 created_at_millis: timestamps.created_at_millis,
@@ -965,23 +948,16 @@ pub(crate) fn list_tasks(
         .map(|(index, path)| (path.as_str(), index))
         .collect::<HashMap<_, _>>();
 
-    tasks.sort_by(|left, right| {
-        let left_note_rank = note_order_index.get(left.note_path.as_str()).copied();
-        let right_note_rank = note_order_index.get(right.note_path.as_str()).copied();
-
-        match (left_note_rank, right_note_rank) {
-            (Some(left_rank), Some(right_rank)) => left_rank.cmp(&right_rank),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
-        .then_with(|| {
-            left.note_title
-                .to_lowercase()
-                .cmp(&right.note_title.to_lowercase())
-        })
-        .then_with(|| left.line_number.cmp(&right.line_number))
-        .then_with(|| left.text.to_lowercase().cmp(&right.text.to_lowercase()))
+    tasks.sort_by_cached_key(|task| {
+        (
+            note_order_index
+                .get(task.note_path.as_str())
+                .copied()
+                .map_or((1usize, usize::MAX), |rank| (0usize, rank)),
+            task.note_title.to_lowercase(),
+            task.line_number,
+            task.text.to_lowercase(),
+        )
     });
 
     Ok(tasks)
@@ -989,8 +965,7 @@ pub(crate) fn list_tasks(
 
 #[tauri::command]
 pub(crate) fn set_task_hidden(task_key: String, hidden: bool) -> Result<(), String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let mut state = read_state(&notes_dir)?;
     if hidden {
@@ -1005,8 +980,7 @@ pub(crate) fn set_task_hidden(task_key: String, hidden: bool) -> Result<(), Stri
 
 #[tauri::command]
 pub(crate) fn set_note_hidden(note_path: String, hidden: bool) -> Result<(), String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let validated_path = validate_current_path(Some(note_path), &notes_dir)?
         .ok_or_else(|| "Missing note path".to_string())?;
@@ -1025,8 +999,7 @@ pub(crate) fn set_note_hidden(note_path: String, hidden: bool) -> Result<(), Str
 
 #[tauri::command]
 pub(crate) fn set_note_collapsed(note_path: String, collapsed: bool) -> Result<(), String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let validated_path = validate_current_path(Some(note_path), &notes_dir)?
         .ok_or_else(|| "Missing note path".to_string())?;
@@ -1045,8 +1018,7 @@ pub(crate) fn set_note_collapsed(note_path: String, collapsed: bool) -> Result<(
 
 #[tauri::command]
 pub(crate) fn set_note_order(note_paths: Vec<String>) -> Result<(), String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let mut normalized_paths = Vec::new();
     let mut seen = HashSet::new();
@@ -1078,8 +1050,7 @@ pub(crate) fn toggle_task(
     line_number: usize,
     task_text: String,
 ) -> Result<(), String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let note_path = validate_current_path(Some(note_path), &notes_dir)?
         .ok_or_else(|| "Missing note path".to_string())?;
@@ -1104,7 +1075,7 @@ pub(crate) fn toggle_task(
         .or_insert(PersistedTaskTimestamps {
             created_at_millis: fallback_timestamp,
             updated_at_millis: fallback_timestamp,
-    });
+        });
     timestamps.updated_at_millis = timestamp_millis;
     write_state(&notes_dir, &persisted_state)?;
     sync::mark_note_dirty(&note_path, &updated_markdown)?;
@@ -1123,8 +1094,7 @@ pub(crate) fn delete_task(
     task_text: String,
     task_key: String,
 ) -> Result<(), String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let note_path = validate_current_path(Some(note_path), &notes_dir)?
         .ok_or_else(|| "Missing note path".to_string())?;
@@ -1155,8 +1125,7 @@ pub(crate) fn search_notes(
     current_path: Option<String>,
     current_markdown: String,
 ) -> Result<Vec<NoteSearchResult>, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let normalized_query = normalize_search_text(&query);
     if normalized_query.is_empty() {
@@ -1210,8 +1179,7 @@ pub(crate) async fn search_notes_hybrid(
     lexical_weight: Option<f32>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let started_at = Instant::now();
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let normalized_query = normalize_search_text(&query);
     if normalized_query.is_empty() {
@@ -1310,8 +1278,7 @@ pub(crate) async fn get_related_notes(
     selected_text: Option<String>,
     limit: usize,
 ) -> Result<RelatedNotesResponse, String> {
-    let notes_dir = notes_root()?;
-    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let current_path_raw = current_path
         .as_deref()
@@ -2291,7 +2258,9 @@ fn resolve_asset_image_path(assets_dir: &Path, file_name: &str) -> Result<PathBu
     }
 
     let file_path = Path::new(trimmed);
-    if file_path.components().count() != 1 || file_path.file_name().and_then(OsStr::to_str) != Some(trimmed) {
+    if file_path.components().count() != 1
+        || file_path.file_name().and_then(OsStr::to_str) != Some(trimmed)
+    {
         return Err("Image asset path must be a file name".to_string());
     }
 
@@ -3020,8 +2989,8 @@ mod tests {
         fs::create_dir_all(&assets_dir).expect("create assets dir");
         fs::write(assets_dir.join("diagram.png"), [0_u8, 1, 2, 3]).expect("write asset");
 
-        let data_url =
-            read_image_asset_data_url_from_assets_dir(&assets_dir, "diagram.png").expect("data url");
+        let data_url = read_image_asset_data_url_from_assets_dir(&assets_dir, "diagram.png")
+            .expect("data url");
 
         assert!(data_url.starts_with("data:image/png;base64,"));
     }

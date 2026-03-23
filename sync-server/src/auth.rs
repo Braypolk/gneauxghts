@@ -23,13 +23,23 @@ impl FromRequestParts<Arc<AppState>> for AuthenticatedSession {
             .headers
             .get(AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
-            .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Missing authorization header".to_string()))?;
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    "Missing authorization header".to_string(),
+                )
+            })?;
 
         let token = authorization
             .strip_prefix("Bearer ")
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Invalid authorization header".to_string()))?;
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    "Invalid authorization header".to_string(),
+                )
+            })?;
 
         let token_hash = blake3::hash(token.as_bytes()).to_hex().to_string();
         let session = db::authenticate_session(state, &token_hash)

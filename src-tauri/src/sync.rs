@@ -9,12 +9,15 @@ use crate::{
     },
 };
 use gneauxghts_sync_contract::{
-    CompleteMagicLinkRequest, GetManifestResponse, GetNoteResponse, PullChangesResponse,
-    PushNoteSnapshotRequest, PushNoteSnapshotResponse, PushNoteSnapshotStatus,
+    CompleteMagicLinkRequest, GetManifestResponse, GetNotesRequest, GetNotesResponse,
+    PullChangesResponse, PushNoteSnapshotRequest, PushNoteSnapshotResponse, PushNoteSnapshotStatus,
     PushTrashEventRequest, PushTrashEventResponse, RemoteHead, RequestMagicLinkRequest,
     RequestMagicLinkResponse, TrashAction,
 };
-use notify::{event::ModifyKind, Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    event::ModifyKind, Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode,
+    Watcher,
+};
 use reqwest::blocking::Client;
 use rusqlite::{
     params,
@@ -168,7 +171,9 @@ pub(crate) fn request_magic_link(
         .map_err(|err| err.to_string())?;
 
     if !response.status().is_success() {
-        return Err(response.text().unwrap_or_else(|_| "Magic link request failed".to_string()));
+        return Err(response
+            .text()
+            .unwrap_or_else(|_| "Magic link request failed".to_string()));
     }
 
     response.json().map_err(|err| err.to_string())
@@ -196,7 +201,9 @@ pub(crate) fn complete_magic_link(
         .map_err(|err| err.to_string())?;
 
     if !response.status().is_success() {
-        return Err(response.text().unwrap_or_else(|_| "Sign-in failed".to_string()));
+        return Err(response
+            .text()
+            .unwrap_or_else(|_| "Sign-in failed".to_string()));
     }
 
     let session: gneauxghts_sync_contract::AuthSession =
@@ -256,7 +263,14 @@ fn sync_now_inner(state: &AppState, notes_dir: &Path) -> Result<SyncStatus, Stri
 
     let dirty_notes = load_dirty_notes(&connection)?;
     for tracked_note in dirty_notes {
-        push_local_change(&connection, state, notes_dir, &base_url, &client, &tracked_note)?;
+        push_local_change(
+            &connection,
+            state,
+            notes_dir,
+            &base_url,
+            &client,
+            &tracked_note,
+        )?;
     }
 
     let manifest: GetManifestResponse = client
@@ -299,24 +313,40 @@ fn sync_now_inner(state: &AppState, notes_dir: &Path) -> Result<SyncStatus, Stri
         notes_to_fetch.insert(change.note_id.clone());
     }
 
+    let mut eligible_note_ids = Vec::new();
+    let mut tracked_by_note_id = Vec::new();
     for note_id in notes_to_fetch {
         let tracked = get_tracked_note(&connection, &note_id)?;
         if tracked.as_ref().is_some_and(|tracked| tracked.dirty) {
             continue;
         }
 
-        let remote: GetNoteResponse = client
-            .get(sync_url(
-                &base_url,
-                &format!("/v1/sync/notes/{note_id}"),
-            )?)
+        tracked_by_note_id.push((note_id.clone(), tracked));
+        eligible_note_ids.push(note_id);
+    }
+
+    if !eligible_note_ids.is_empty() {
+        let remote: GetNotesResponse = client
+            .post(sync_url(&base_url, "/v1/sync/notes/batch")?)
+            .json(&GetNotesRequest {
+                note_ids: eligible_note_ids,
+            })
             .send()
             .map_err(|err| err.to_string())?
             .error_for_status()
             .map_err(|err| err.to_string())?
             .json()
             .map_err(|err| err.to_string())?;
-        apply_remote_head(&connection, state, notes_dir, &remote.note, tracked.as_ref())?;
+        let tracked_by_note_id = tracked_by_note_id
+            .into_iter()
+            .collect::<std::collections::HashMap<_, _>>();
+
+        for note in remote.notes {
+            let tracked = tracked_by_note_id
+                .get(&note.note_id)
+                .and_then(|tracked| tracked.as_ref());
+            apply_remote_head(&connection, state, notes_dir, &note, tracked)?;
+        }
     }
 
     connection
@@ -328,11 +358,7 @@ fn sync_now_inner(state: &AppState, notes_dir: &Path) -> Result<SyncStatus, Stri
                  last_sync_at_millis = ?3,
                  last_sync_error = NULL
              WHERE id = 1",
-            params![
-                manifest.vault_id,
-                manifest.cursor,
-                current_time_millis()?,
-            ],
+            params![manifest.vault_id, manifest.cursor, current_time_millis()?,],
         )
         .map_err(|err| err.to_string())?;
 
@@ -356,7 +382,9 @@ pub(crate) fn get_sync_status() -> Result<SyncStatus, String> {
     let connection = open_database()?;
     let sync_state = load_sync_state(&connection)?;
     let tracked_note_count = connection
-        .query_row("SELECT COUNT(*) FROM tracked_notes", [], |row| row.get::<_, usize>(0))
+        .query_row("SELECT COUNT(*) FROM tracked_notes", [], |row| {
+            row.get::<_, usize>(0)
+        })
         .map_err(|err| err.to_string())?;
     let dirty_note_count = connection
         .query_row(
@@ -454,14 +482,18 @@ pub(crate) fn resolve_sync_conflict_keep_local(
     note_id: &str,
 ) -> Result<SyncStatus, String> {
     initialize()?;
-    let record = load_sync_conflict_record(note_id)?
-        .ok_or_else(|| "Sync conflict not found".to_string())?;
+    let record =
+        load_sync_conflict_record(note_id)?.ok_or_else(|| "Sync conflict not found".to_string())?;
     let connection = open_database()?;
     let canonical_path = resolve_conflict_canonical_path(&connection, &record);
     let previous_canonical_path = canonical_path.clone();
-    let saved_path = persist_note(notes_dir, &record.detail.local_markdown, Some(&canonical_path))?
-        .map(PathBuf::from)
-        .ok_or_else(|| "Failed to write resolved note".to_string())?;
+    let saved_path = persist_note(
+        notes_dir,
+        &record.detail.local_markdown,
+        Some(&canonical_path),
+    )?
+    .map(PathBuf::from)
+    .ok_or_else(|| "Failed to write resolved note".to_string())?;
     let persisted_markdown = fs::read_to_string(&saved_path).map_err(|err| err.to_string())?;
     let timestamp_millis = current_time_millis()?;
     let note = build_indexed_note(&saved_path, &persisted_markdown, timestamp_millis);
@@ -491,13 +523,15 @@ pub(crate) fn resolve_sync_conflict_keep_remote(
     note_id: &str,
 ) -> Result<SyncStatus, String> {
     initialize()?;
-    let record = load_sync_conflict_record(note_id)?
-        .ok_or_else(|| "Sync conflict not found".to_string())?;
+    let record =
+        load_sync_conflict_record(note_id)?.ok_or_else(|| "Sync conflict not found".to_string())?;
     cleanup_resolved_sync_conflict(state, &record.detail, false)?;
     get_sync_status()
 }
 
-pub(crate) fn get_sync_conflict_detail(note_id: &str) -> Result<Option<SyncConflictDetail>, String> {
+pub(crate) fn get_sync_conflict_detail(
+    note_id: &str,
+) -> Result<Option<SyncConflictDetail>, String> {
     initialize()?;
     Ok(load_sync_conflict_record(note_id)?.map(|record| record.detail))
 }
@@ -818,7 +852,14 @@ fn handle_push_response(
             let remote_head = response
                 .remote_head
                 .ok_or_else(|| "Conflict response missing remote head".to_string())?;
-            resolve_sync_conflict(connection, state, notes_dir, tracked_note, local_markdown, &remote_head)?;
+            resolve_sync_conflict(
+                connection,
+                state,
+                notes_dir,
+                tracked_note,
+                local_markdown,
+                &remote_head,
+            )?;
             connection
                 .execute(
                     "UPDATE sync_state SET sync_cursor = MAX(sync_cursor, ?1) WHERE id = 1",
@@ -853,7 +894,13 @@ fn import_local_note(
     let current_path = note_path.to_string_lossy().into_owned();
     match get_tracked_note(connection, &sync_ready.note_id)? {
         Some(tracked_note) if tracked_note.local_only => {
-            update_local_only_tracked_note(connection, &sync_ready.note_id, note_path, &sync_ready.markdown, deleted)?;
+            update_local_only_tracked_note(
+                connection,
+                &sync_ready.note_id,
+                note_path,
+                &sync_ready.markdown,
+                deleted,
+            )?;
         }
         Some(tracked_note)
             if tracked_note.note_path == current_path
@@ -888,7 +935,8 @@ fn ensure_sync_ready_note(
             .is_none_or(|managed| managed.trashed_at.is_none());
 
     if !needs_metadata && !needs_trashed_at {
-        let managed = existing_managed.ok_or_else(|| "Managed note metadata missing".to_string())?;
+        let managed =
+            existing_managed.ok_or_else(|| "Managed note metadata missing".to_string())?;
         return Ok(SyncReadyNote {
             note_id: managed.id.clone(),
             markdown: markdown.to_string(),
@@ -937,7 +985,13 @@ fn resolve_sync_conflict(
         &conflict_copy_markdown,
         remote_head,
     )?;
-    apply_remote_head(connection, state, notes_dir, remote_head, Some(tracked_note))?;
+    apply_remote_head(
+        connection,
+        state,
+        notes_dir,
+        remote_head,
+        Some(tracked_note),
+    )?;
     Ok(())
 }
 
@@ -1059,9 +1113,11 @@ fn apply_remote_head(
                 .map_err(|_| "Search index lock poisoned".to_string())?;
             index.upsert_note(target_path.clone(), note);
         }
-        state
-            .semantic
-            .queue_note_update(&target_path, remote_head.markdown.clone(), timestamp_millis)?;
+        state.semantic.queue_note_update(
+            &target_path,
+            remote_head.markdown.clone(),
+            timestamp_millis,
+        )?;
     }
 
     Ok(())
@@ -1075,9 +1131,11 @@ fn reconcile_forgotten_state(
     let mut state = read_state(notes_dir)?;
     let original_path = notes_dir.join(validated_relative_path(&remote_head.relative_path)?);
     if remote_head.trashed_at.is_some() {
-        if !state.forgotten_notes.iter().any(|forgotten_note| {
-            forgotten_note.forgotten_path == target_path.to_string_lossy()
-        }) {
+        if !state
+            .forgotten_notes
+            .iter()
+            .any(|forgotten_note| forgotten_note.forgotten_path == target_path.to_string_lossy())
+        {
             let (title, _) = note::extract_title_and_body(
                 &remote_head.markdown,
                 &Path::new(&remote_head.relative_path)
@@ -1221,7 +1279,10 @@ fn load_dirty_notes(connection: &Connection) -> Result<Vec<TrackedNoteRow>, Stri
         .map_err(|err| err.to_string())
 }
 
-fn get_tracked_note(connection: &Connection, note_id: &str) -> Result<Option<TrackedNoteRow>, String> {
+fn get_tracked_note(
+    connection: &Connection,
+    note_id: &str,
+) -> Result<Option<TrackedNoteRow>, String> {
     connection
         .query_row(
             "SELECT
@@ -1372,16 +1433,41 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
             );",
         )
         .map_err(|err| err.to_string())?;
-    ensure_column(connection, "sync_state", "sync_cursor", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(connection, "sync_state", "paused", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(
+        connection,
+        "sync_state",
+        "sync_cursor",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        connection,
+        "sync_state",
+        "paused",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     ensure_column(connection, "sync_state", "sync_base_url", "TEXT")?;
     ensure_column(connection, "sync_state", "session_token", "TEXT")?;
     ensure_column(connection, "sync_state", "last_sync_error", "TEXT")?;
-    ensure_column(connection, "tracked_notes", "local_only", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(
+        connection,
+        "tracked_notes",
+        "local_only",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     ensure_column(connection, "sync_conflicts", "original_note_id", "TEXT")?;
     ensure_column(connection, "sync_conflicts", "original_note_path", "TEXT")?;
-    ensure_column(connection, "sync_conflicts", "local_markdown", "TEXT NOT NULL DEFAULT ''")?;
-    ensure_column(connection, "sync_conflicts", "remote_markdown", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(
+        connection,
+        "sync_conflicts",
+        "local_markdown",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        connection,
+        "sync_conflicts",
+        "remote_markdown",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
     Ok(())
 }
 
@@ -1396,7 +1482,9 @@ fn ensure_column(
     let rows = statement
         .query_map([], |row| row.get::<_, String>(1))
         .map_err(|err| err.to_string())?;
-    let columns = rows.collect::<Result<Vec<_>, _>>().map_err(|err| err.to_string())?;
+    let columns = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())?;
     if columns.iter().any(|existing| existing == column) {
         return Ok(());
     }
@@ -1446,7 +1534,10 @@ fn clear_last_sync_error() -> Result<(), String> {
     initialize()?;
     let connection = open_database()?;
     connection
-        .execute("UPDATE sync_state SET last_sync_error = NULL WHERE id = 1", [])
+        .execute(
+            "UPDATE sync_state SET last_sync_error = NULL WHERE id = 1",
+            [],
+        )
         .map_err(|err| err.to_string())?;
     Ok(())
 }
@@ -1578,12 +1669,19 @@ fn record_sync_conflict(
     Ok(())
 }
 
-fn resolve_conflict_canonical_path(connection: &Connection, record: &SyncConflictRecord) -> PathBuf {
+fn resolve_conflict_canonical_path(
+    connection: &Connection,
+    record: &SyncConflictRecord,
+) -> PathBuf {
     record
         .detail
         .original_note_id
         .as_deref()
-        .and_then(|original_note_id| get_tracked_note(connection, original_note_id).ok().flatten())
+        .and_then(|original_note_id| {
+            get_tracked_note(connection, original_note_id)
+                .ok()
+                .flatten()
+        })
         .map(|tracked_note| PathBuf::from(tracked_note.note_path))
         .or_else(|| record.detail.original_note_path.as_ref().map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from(&record.detail.conflict.note_path))
@@ -1702,7 +1800,10 @@ fn forgotten_original_relative_path(notes_dir: &Path, note_path: &Path) -> Resul
     repair_missing_forgotten_original_path(notes_dir, note_path)
 }
 
-fn repair_missing_forgotten_original_path(notes_dir: &Path, note_path: &Path) -> Result<String, String> {
+fn repair_missing_forgotten_original_path(
+    notes_dir: &Path,
+    note_path: &Path,
+) -> Result<String, String> {
     let file_name = note_path
         .file_name()
         .ok_or_else(|| "Forgotten note file name is missing".to_string())?

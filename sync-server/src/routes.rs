@@ -10,14 +10,15 @@ use axum::{
     Json, Router,
 };
 use gneauxghts_sync_contract::{
-    AuthSession, CompleteMagicLinkRequest, GetManifestResponse, GetNoteResponse, NoteHead,
-    PullChangesResponse, PushNoteSnapshotRequest, PushNoteSnapshotResponse,
-    PushNoteSnapshotStatus, PushTrashEventRequest, PushTrashEventResponse, RemoteHead,
-    RequestMagicLinkRequest, RequestMagicLinkResponse, SyncChange, SyncChangeKind, TrashAction,
+    AuthSession, CompleteMagicLinkRequest, GetManifestResponse, GetNoteResponse, GetNotesRequest,
+    GetNotesResponse, NoteHead, PullChangesResponse, PushNoteSnapshotRequest,
+    PushNoteSnapshotResponse, PushNoteSnapshotStatus, PushTrashEventRequest,
+    PushTrashEventResponse, RemoteHead, RequestMagicLinkRequest, RequestMagicLinkResponse,
+    SyncChange, SyncChangeKind, TrashAction,
 };
 use serde::Deserialize;
 use sqlx::{FromRow, PgPool};
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -28,6 +29,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/auth/complete", post(complete_magic_link))
         .route("/v1/sync/manifest", get(get_manifest))
         .route("/v1/sync/changes", get(pull_changes))
+        .route("/v1/sync/notes/batch", post(get_notes_batch))
         .route("/v1/sync/notes/:note_id", get(get_note))
         .route("/v1/sync/notes", post(push_note_snapshot))
         .route("/v1/sync/trash", post(push_trash_event))
@@ -99,7 +101,12 @@ async fn complete_magic_link(
     .fetch_optional(&state.pool)
     .await
     .map_err(internal_error)?
-    .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Invalid or expired magic link".to_string()))?;
+    .ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            "Invalid or expired magic link".to_string(),
+        )
+    })?;
 
     sqlx::query(
         "UPDATE magic_link_tokens SET consumed_at = NOW() WHERE token_hash = $1 AND consumed_at IS NULL",
@@ -285,6 +292,55 @@ async fn get_note(
     Ok(Json(GetNoteResponse { note }))
 }
 
+async fn get_notes_batch(
+    State(state): State<Arc<AppState>>,
+    session: AuthenticatedSession,
+    Json(request): Json<GetNotesRequest>,
+) -> Result<Json<GetNotesResponse>, (StatusCode, String)> {
+    if request.note_ids.is_empty() {
+        return Ok(Json(GetNotesResponse { notes: Vec::new() }));
+    }
+
+    let mut notes = Vec::new();
+    let mut seen_note_ids = HashSet::new();
+
+    for note_id in request.note_ids {
+        if !seen_note_ids.insert(note_id.clone()) {
+            continue;
+        }
+
+        let existing = sqlx::query_as::<_, ExistingNoteRow>(
+            "SELECT
+                id,
+                current_revision,
+                current_relative_path,
+                current_content_hash,
+                CASE
+                    WHEN trashed_at IS NULL THEN NULL
+                    ELSE to_char(trashed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+                END AS trashed_at,
+                to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS updated_at
+             FROM notes
+             WHERE vault_id = $1 AND note_id = $2",
+        )
+        .bind(session.vault_id)
+        .bind(&note_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(internal_error)?;
+
+        let Some(existing) = existing else {
+            continue;
+        };
+
+        notes.push(
+            load_remote_head(&state.pool, &state.config.blob_root, &note_id, existing).await?,
+        );
+    }
+
+    Ok(Json(GetNotesResponse { notes }))
+}
+
 async fn push_note_snapshot(
     State(state): State<Arc<AppState>>,
     session: AuthenticatedSession,
@@ -370,7 +426,10 @@ async fn push_note_like(
     .await
     .map_err(internal_error)?;
 
-    let current_revision = existing.as_ref().map(|note| note.current_revision).unwrap_or(0);
+    let current_revision = existing
+        .as_ref()
+        .map(|note| note.current_revision)
+        .unwrap_or(0);
     if current_revision != base_revision.unwrap_or(0) {
         let remote_head = if let Some(existing) = existing {
             Some(load_remote_head(&state.pool, &state.config.blob_root, &note_id, existing).await?)
