@@ -5,6 +5,7 @@ use super::{
 use crate::{
     index::{build_indexed_note, AppState},
     note,
+    path_utils::unique_path_in_dir,
     state::{
         forgotten_notes_root, read_state, validate_current_path, write_state,
         PersistedForgottenNote,
@@ -262,7 +263,7 @@ fn validate_forgotten_path_inputs(
 }
 
 fn resolve_forgotten_target_path(notes_dir: &Path, original_path: &Path) -> PathBuf {
-    super::path_utils::unique_path_in_dir(
+    unique_path_in_dir(
         &forgotten_notes_root(notes_dir),
         original_path
             .file_name()
@@ -276,7 +277,7 @@ fn resolve_restore_target_path(notes_dir: &Path, original_path: &Path) -> PathBu
         return original_path.to_path_buf();
     }
 
-    super::path_utils::unique_path_in_dir(
+    unique_path_in_dir(
         notes_dir,
         original_path
             .file_name()

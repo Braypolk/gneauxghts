@@ -1,6 +1,7 @@
 use super::{
     prepare_notes_dir, StoredImageAsset, ASSETS_DIRECTORY_NAME, DEFAULT_PASTED_IMAGE_NAME,
 };
+use crate::path_utils::unique_path_in_dir;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use std::{
     ffi::OsStr,
@@ -111,7 +112,7 @@ pub(super) fn resolve_pasted_image_path(
         .or_else(|| mime_type.and_then(asset_extension_from_mime_type))
         .unwrap_or("png");
 
-    super::path_utils::unique_path_in_dir(
+    unique_path_in_dir(
         assets_dir,
         OsStr::new(&format!("{sanitized_stem}.{extension}")),
         DEFAULT_PASTED_IMAGE_NAME,

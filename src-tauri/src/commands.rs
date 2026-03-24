@@ -1,7 +1,6 @@
 pub(crate) mod asset_commands;
 pub(crate) mod forgotten_note_commands;
 mod note_persistence;
-mod path_utils;
 pub(crate) mod search_commands;
 mod task_commands;
 pub(crate) mod wikilink_commands;
@@ -15,13 +14,14 @@ use crate::{
         touch_recent_path, validate_current_path, write_state, VaultInfo,
     },
     sync::{self, SyncConflict, SyncConflictDetail, SyncStatus},
+    time::current_time_millis,
 };
 use gneauxghts_sync_contract::RequestMagicLinkResponse;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 #[cfg(test)]
 use task_commands::find_task_key_for_line;
@@ -498,14 +498,6 @@ fn read_note_session_from_path(note_path: &Path) -> Result<NoteSession, String> 
         markdown: note::strip_frontmatter(&markdown),
         path: Some(note_path.to_string_lossy().into_owned()),
     })
-}
-
-fn current_time_millis() -> Result<u64, String> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| err.to_string())?
-        .as_millis();
-    Ok(now.min(u128::from(u64::MAX)) as u64)
 }
 
 fn read_modified_millis(path: &Path) -> Result<u64, String> {

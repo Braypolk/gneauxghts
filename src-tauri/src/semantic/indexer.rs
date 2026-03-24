@@ -1,7 +1,6 @@
 use super::{
     ann::AnnIndexState,
     chunking::chunk_markdown,
-    current_time_millis,
     db::{
         content_hash, delete_note, ensure_schema, insert_job, load_existing_chunk_embeddings,
         load_note_chunk_labels, load_stored_note_records, open_database, rebuild_edges, update_job,
@@ -11,7 +10,7 @@ use super::{
     embed::{EmbeddingInputKind, EmbeddingProvider},
     RuntimeState,
 };
-use crate::{index::is_note_file, state::derive_file_stem};
+use crate::{index::is_note_file, state::derive_file_stem, time::current_time_millis};
 use std::{
     collections::{HashMap, HashSet},
     fs,

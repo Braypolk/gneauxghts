@@ -1,24 +1,18 @@
 mod client;
+mod conflicts;
+mod paths;
 mod reconcile;
 mod store;
+mod watcher;
 
 use crate::{
-    index::{build_indexed_note, AppState},
-    note,
-    semantic::db::content_hash,
-    state::{
-        is_forgotten_note_path, notes_root, persist_note, read_state, write_state,
-        PersistedForgottenNote,
-    },
+    index::AppState, note, semantic::db::content_hash, state::notes_root, time::current_time_millis,
 };
 use client::{authorized_client, build_client, normalize_base_url, sync_url};
 use gneauxghts_sync_contract::{
     CompleteMagicLinkRequest, RemoteHead, RequestMagicLinkRequest, RequestMagicLinkResponse,
 };
-use notify::{
-    event::ModifyKind, Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode,
-    Watcher,
-};
+use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
 use rusqlite::{
     params,
     types::{Type, ValueRef},
@@ -26,13 +20,12 @@ use rusqlite::{
 };
 use serde::Serialize;
 use std::{
-    collections::HashSet,
     fs,
-    path::{Component, Path, PathBuf},
+    path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use store::{ensure_schema, ensure_sync_state_row, open_database};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
 
 const SYNC_DB_FILE_NAME: &str = "sync.sqlite3";
 pub(crate) const VAULT_NOTE_CHANGED_EVENT: &str = "vault-note-changed";
@@ -138,7 +131,7 @@ pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherH
     let callback_handle = app_handle.clone();
     let mut watcher = RecommendedWatcher::new(
         move |result| {
-            if let Err(error) = handle_watch_result(&callback_handle, result) {
+            if let Err(error) = watcher::handle_watch_result(&callback_handle, result) {
                 eprintln!("vault watcher error: {error}");
             }
         },
@@ -304,47 +297,11 @@ pub(crate) fn set_sync_paused(paused: bool) -> Result<SyncStatus, String> {
 }
 
 pub(crate) fn list_sync_conflicts() -> Result<Vec<SyncConflict>, String> {
-    initialize()?;
-    let connection = open_database()?;
-    let mut statement = connection
-        .prepare(
-            "SELECT note_id, note_path, title, deleted, created_at_millis
-             FROM sync_conflicts
-             ORDER BY created_at_millis DESC, note_id ASC",
-        )
-        .map_err(|err| err.to_string())?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok(SyncConflict {
-                note_id: row.get(0)?,
-                note_path: row.get(1)?,
-                title: row.get(2)?,
-                deleted: row.get::<_, i64>(3)? != 0,
-                updated_at_millis: read_optional_u64(row, 4)?.unwrap_or(0),
-            })
-        })
-        .map_err(|err| err.to_string())?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|err| err.to_string())
+    conflicts::list_sync_conflicts()
 }
 
 pub(crate) fn dismiss_sync_conflict(note_id: &str) -> Result<SyncStatus, String> {
-    initialize()?;
-    let connection = open_database()?;
-    connection
-        .execute(
-            "DELETE FROM sync_conflicts WHERE note_id = ?1",
-            params![note_id],
-        )
-        .map_err(|err| err.to_string())?;
-    connection
-        .execute(
-            "UPDATE tracked_notes SET conflicted = 0 WHERE note_id = ?1",
-            params![note_id],
-        )
-        .map_err(|err| err.to_string())?;
-    get_sync_status()
+    conflicts::dismiss_sync_conflict(note_id)
 }
 
 pub(crate) fn resolve_sync_conflict_keep_local(
@@ -352,59 +309,20 @@ pub(crate) fn resolve_sync_conflict_keep_local(
     notes_dir: &Path,
     note_id: &str,
 ) -> Result<SyncStatus, String> {
-    initialize()?;
-    let record =
-        load_sync_conflict_record(note_id)?.ok_or_else(|| "Sync conflict not found".to_string())?;
-    let connection = open_database()?;
-    let canonical_path = resolve_conflict_canonical_path(&connection, &record);
-    let previous_canonical_path = canonical_path.clone();
-    let saved_path = persist_note(
-        notes_dir,
-        &record.detail.local_markdown,
-        Some(&canonical_path),
-    )?
-    .map(PathBuf::from)
-    .ok_or_else(|| "Failed to write resolved note".to_string())?;
-    let persisted_markdown = fs::read_to_string(&saved_path).map_err(|err| err.to_string())?;
-    let timestamp_millis = current_time_millis()?;
-    let note = build_indexed_note(&saved_path, &persisted_markdown, timestamp_millis);
-    {
-        let mut index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.upsert_note(saved_path.clone(), note);
-        if previous_canonical_path != saved_path {
-            index.remove_note(&previous_canonical_path);
-        }
-    }
-    if previous_canonical_path != saved_path && previous_canonical_path.exists() {
-        state.semantic.queue_delete_note(&previous_canonical_path)?;
-    }
-    state
-        .semantic
-        .queue_note_update(&saved_path, persisted_markdown.clone(), timestamp_millis)?;
-    mark_note_dirty(&saved_path, &persisted_markdown)?;
-    cleanup_resolved_sync_conflict(state, &record.detail, true)?;
-    get_sync_status()
+    conflicts::resolve_sync_conflict_keep_local(state, notes_dir, note_id)
 }
 
 pub(crate) fn resolve_sync_conflict_keep_remote(
     state: &AppState,
     note_id: &str,
 ) -> Result<SyncStatus, String> {
-    initialize()?;
-    let record =
-        load_sync_conflict_record(note_id)?.ok_or_else(|| "Sync conflict not found".to_string())?;
-    cleanup_resolved_sync_conflict(state, &record.detail, false)?;
-    get_sync_status()
+    conflicts::resolve_sync_conflict_keep_remote(state, note_id)
 }
 
 pub(crate) fn get_sync_conflict_detail(
     note_id: &str,
 ) -> Result<Option<SyncConflictDetail>, String> {
-    initialize()?;
-    Ok(load_sync_conflict_record(note_id)?.map(|record| record.detail))
+    conflicts::get_sync_conflict_detail(note_id)
 }
 
 pub(crate) fn sign_out(keep_server_url: bool) -> Result<SyncStatus, String> {
@@ -436,127 +354,6 @@ pub(crate) fn sign_out(keep_server_url: bool) -> Result<SyncStatus, String> {
         )
         .map_err(|err| err.to_string())?;
     get_sync_status()
-}
-
-fn handle_watch_result(
-    app_handle: &AppHandle,
-    result: notify::Result<Event>,
-) -> Result<(), String> {
-    let event = match result {
-        Ok(event) => event,
-        Err(error) => return Err(error.to_string()),
-    };
-    if !should_process_watch_event(&event.kind) {
-        return Ok(());
-    }
-
-    let notes_dir = notes_root()?;
-    let Some(state) = app_handle.try_state::<AppState>() else {
-        return Ok(());
-    };
-    let connection = open_database()?;
-    let mut seen_paths = HashSet::new();
-
-    for path in event.paths {
-        if !seen_paths.insert(path.clone()) {
-            continue;
-        }
-        if !is_watchable_markdown_path(&path) {
-            continue;
-        }
-        handle_watched_path_change(app_handle, &connection, &state, &notes_dir, &path)?;
-    }
-
-    Ok(())
-}
-
-fn should_process_watch_event(kind: &EventKind) -> bool {
-    matches!(
-        kind,
-        EventKind::Create(_)
-            | EventKind::Modify(ModifyKind::Data(_))
-            | EventKind::Modify(ModifyKind::Name(_))
-            | EventKind::Modify(ModifyKind::Any)
-            | EventKind::Modify(ModifyKind::Metadata(_))
-            | EventKind::Remove(_)
-    )
-}
-
-fn is_watchable_markdown_path(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-}
-
-fn handle_watched_path_change(
-    app_handle: &AppHandle,
-    connection: &Connection,
-    state: &AppState,
-    notes_dir: &Path,
-    path: &Path,
-) -> Result<(), String> {
-    if path.exists() {
-        let markdown = fs::read_to_string(path).map_err(|err| err.to_string())?;
-        let deleted = is_forgotten_note_path(path, notes_dir);
-        reconcile::import_local_note(connection, path, &markdown, deleted)?;
-        let payload = VaultNoteChangeEvent {
-            note_path: path.to_string_lossy().into_owned(),
-            deleted,
-        };
-
-        if deleted {
-            state.semantic.queue_delete_note(path)?;
-            let mut index = state
-                .notes_index
-                .lock()
-                .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.remove_note(path);
-        } else {
-            let timestamp_millis = current_time_millis()?;
-            let note = build_indexed_note(path, &markdown, timestamp_millis);
-            {
-                let mut index = state
-                    .notes_index
-                    .lock()
-                    .map_err(|_| "Search index lock poisoned".to_string())?;
-                index.upsert_note(path.to_path_buf(), note);
-            }
-            state
-                .semantic
-                .queue_note_update(path, markdown, timestamp_millis)?;
-        }
-
-        app_handle
-            .emit(VAULT_NOTE_CHANGED_EVENT, payload)
-            .map_err(|err| err.to_string())
-    } else {
-        if let Some(tracked_note) = get_tracked_note_by_path(connection, path)? {
-            connection
-                .execute(
-                    "UPDATE tracked_notes
-                     SET dirty = 1,
-                         deleted = 1,
-                         updated_at_millis = ?2
-                     WHERE note_id = ?1",
-                    params![tracked_note.note_id, current_time_millis()?],
-                )
-                .map_err(|err| err.to_string())?;
-        }
-        state.semantic.queue_delete_note(path)?;
-        let mut index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.remove_note(path);
-        app_handle
-            .emit(
-                VAULT_NOTE_CHANGED_EVENT,
-                VaultNoteChangeEvent {
-                    note_path: path.to_string_lossy().into_owned(),
-                    deleted: true,
-                },
-            )
-            .map_err(|err| err.to_string())
-    }
 }
 
 fn upsert_tracked_note(
@@ -805,159 +602,6 @@ fn clear_last_sync_error() -> Result<(), String> {
     Ok(())
 }
 
-fn load_sync_conflict_record(note_id: &str) -> Result<Option<SyncConflictRecord>, String> {
-    initialize()?;
-    let connection = open_database()?;
-    connection
-        .query_row(
-            "SELECT
-                note_id,
-                note_path,
-                title,
-                deleted,
-                created_at_millis,
-                original_note_id,
-                original_note_path,
-                local_markdown,
-                remote_markdown
-             FROM sync_conflicts
-             WHERE note_id = ?1",
-            params![note_id],
-            |row| {
-                Ok(SyncConflictRecord {
-                    detail: SyncConflictDetail {
-                        conflict: SyncConflict {
-                            note_id: row.get(0)?,
-                            note_path: row.get(1)?,
-                            title: row.get(2)?,
-                            deleted: row.get::<_, i64>(3)? != 0,
-                            updated_at_millis: read_optional_u64(row, 4)?.unwrap_or(0),
-                        },
-                        original_note_id: row.get(5)?,
-                        original_note_path: row.get(6)?,
-                        local_markdown: row.get(7)?,
-                        remote_markdown: row.get(8)?,
-                    },
-                })
-            },
-        )
-        .optional()
-        .map_err(|err| err.to_string())
-}
-
-fn record_sync_conflict(
-    connection: &Connection,
-    original_note: &TrackedNoteRow,
-    note_path: &Path,
-    local_markdown: &str,
-    conflict_copy_markdown: &str,
-    remote_head: &RemoteHead,
-) -> Result<(), String> {
-    let note_id = resolve_note_id(note_path, conflict_copy_markdown)?;
-    let title = read_conflict_title(note_path);
-    connection
-        .execute(
-            "INSERT INTO sync_conflicts (
-                note_id,
-                note_path,
-                title,
-                deleted,
-                original_note_id,
-                original_note_path,
-                local_markdown,
-                remote_markdown,
-                created_at_millis
-             ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(note_id) DO UPDATE SET
-                note_path = excluded.note_path,
-                title = excluded.title,
-                deleted = excluded.deleted,
-                original_note_id = excluded.original_note_id,
-                original_note_path = excluded.original_note_path,
-                local_markdown = excluded.local_markdown,
-                remote_markdown = excluded.remote_markdown",
-            params![
-                note_id,
-                note_path.to_string_lossy().into_owned(),
-                title,
-                original_note.note_id,
-                original_note.note_path,
-                local_markdown,
-                remote_head.markdown,
-                current_time_millis()?,
-            ],
-        )
-        .map_err(|err| err.to_string())?;
-    Ok(())
-}
-
-fn resolve_conflict_canonical_path(
-    connection: &Connection,
-    record: &SyncConflictRecord,
-) -> PathBuf {
-    record
-        .detail
-        .original_note_id
-        .as_deref()
-        .and_then(|original_note_id| {
-            get_tracked_note(connection, original_note_id)
-                .ok()
-                .flatten()
-        })
-        .map(|tracked_note| PathBuf::from(tracked_note.note_path))
-        .or_else(|| record.detail.original_note_path.as_ref().map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from(&record.detail.conflict.note_path))
-}
-
-fn cleanup_resolved_sync_conflict(
-    state: &AppState,
-    detail: &SyncConflictDetail,
-    preserve_original_note: bool,
-) -> Result<(), String> {
-    let connection = open_database()?;
-    connection
-        .execute(
-            "DELETE FROM sync_conflicts WHERE note_id = ?1",
-            params![detail.conflict.note_id],
-        )
-        .map_err(|err| err.to_string())?;
-    connection
-        .execute(
-            "DELETE FROM tracked_notes WHERE note_id = ?1",
-            params![detail.conflict.note_id],
-        )
-        .map_err(|err| err.to_string())?;
-
-    let conflict_path = PathBuf::from(&detail.conflict.note_path);
-    if conflict_path.exists() {
-        fs::remove_file(&conflict_path).map_err(|err| err.to_string())?;
-    }
-
-    {
-        let mut index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.remove_note(&conflict_path);
-    }
-    state.semantic.queue_delete_note(&conflict_path)?;
-
-    if !preserve_original_note {
-        if let Some(original_note_id) = detail.original_note_id.as_deref() {
-            if let Some(tracked_note) = get_tracked_note(&connection, original_note_id)? {
-                connection
-                    .execute(
-                        "UPDATE tracked_notes SET dirty = 0 WHERE note_id = ?1",
-                        params![tracked_note.note_id],
-                    )
-                    .map_err(|err| err.to_string())?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 fn update_local_only_tracked_note(
     connection: &Connection,
     note_id: &str,
@@ -985,111 +629,6 @@ fn update_local_only_tracked_note(
         )
         .map_err(|err| err.to_string())?;
     Ok(())
-}
-
-fn relative_sync_path(notes_dir: &Path, note_path: &Path) -> Result<String, String> {
-    if is_forgotten_note_path(note_path, notes_dir) {
-        let file_name = note_path
-            .file_name()
-            .ok_or_else(|| "Forgotten note file name is missing".to_string())?;
-        return Ok(file_name.to_string_lossy().into_owned());
-    }
-
-    note_path
-        .strip_prefix(notes_dir)
-        .map_err(|_| "Note path is outside the vault".to_string())
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-}
-
-fn forgotten_original_relative_path(notes_dir: &Path, note_path: &Path) -> Result<String, String> {
-    let forgotten_path = note_path.to_string_lossy().into_owned();
-    let state = read_state(notes_dir)?;
-    if let Some(relative_path) = state
-        .forgotten_notes
-        .iter()
-        .find(|forgotten_note| forgotten_note.forgotten_path == forgotten_path)
-        .map(|forgotten_note| {
-            Path::new(&forgotten_note.original_path)
-                .strip_prefix(notes_dir)
-                .map(|path| path.to_string_lossy().replace('\\', "/"))
-                .map_err(|_| "Forgotten note original path is outside the vault".to_string())
-        })
-        .transpose()?
-    {
-        return Ok(relative_path);
-    }
-
-    repair_missing_forgotten_original_path(notes_dir, note_path)
-}
-
-fn repair_missing_forgotten_original_path(
-    notes_dir: &Path,
-    note_path: &Path,
-) -> Result<String, String> {
-    let file_name = note_path
-        .file_name()
-        .ok_or_else(|| "Forgotten note file name is missing".to_string())?
-        .to_string_lossy()
-        .into_owned();
-    let original_path = notes_dir.join(&file_name);
-    let title = Path::new(&file_name)
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    let forgotten_at_millis = current_time_millis()?;
-    let mut state = read_state(notes_dir)?;
-    state.forgotten_notes.push(PersistedForgottenNote {
-        forgotten_path: note_path.to_string_lossy().into_owned(),
-        original_path: original_path.to_string_lossy().into_owned(),
-        title,
-        forgotten_at_millis,
-        purge_after_days: 7,
-        purge_at_millis: forgotten_at_millis + 7 * 24 * 60 * 60 * 1000,
-    });
-    write_state(notes_dir, &state)?;
-    Ok(file_name)
-}
-
-fn validated_relative_path(relative_path: &str) -> Result<PathBuf, String> {
-    let candidate = PathBuf::from(relative_path);
-    if candidate.is_absolute() {
-        return Err("Remote relative path must not be absolute".to_string());
-    }
-    if candidate
-        .components()
-        .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
-    {
-        return Err("Remote relative path is invalid".to_string());
-    }
-    Ok(candidate)
-}
-
-fn resolve_unique_path(directory: &Path, preferred_file_name: &str) -> PathBuf {
-    let preferred_path = directory.join(preferred_file_name);
-    if !preferred_path.exists() {
-        return preferred_path;
-    }
-
-    let preferred_path = Path::new(preferred_file_name);
-    let stem = preferred_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    let extension = preferred_path
-        .extension()
-        .map(|extension| format!(".{}", extension.to_string_lossy()))
-        .unwrap_or_default();
-
-    for suffix in 2.. {
-        let candidate = directory.join(format!("{stem} {suffix}{extension}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-
-    preferred_path.to_path_buf()
 }
 
 fn resolve_note_id(note_path: &Path, markdown: &str) -> Result<String, String> {
@@ -1124,13 +663,6 @@ fn generate_device_id() -> String {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0);
     format!("device-{millis:x}-{:x}", std::process::id())
-}
-
-fn current_time_millis() -> Result<u64, String> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| err.to_string())?
-        .as_millis() as u64)
 }
 
 fn read_optional_i64(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<i64>> {
@@ -1172,10 +704,11 @@ fn read_optional_u64(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u64
 
 #[cfg(test)]
 mod tests {
+    use super::conflicts::record_sync_conflict;
     use super::reconcile::import_existing_local_notes;
     use super::{
         complete_magic_link, dismiss_sync_conflict, get_sync_status, initialize, mark_conflicted,
-        mark_note_dirty, record_sync_conflict,
+        mark_note_dirty,
     };
     use crate::note;
     use crate::state::initialize_app_data_dir;

@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
 const args = process.argv.slice(2);
 const tauriBin = resolveTauriBinary();
 const finalArgs = withBundleConfig(args);
+
+syncIosAppIcons(finalArgs);
 
 const child = spawn(tauriBin, finalArgs, {
   stdio: "inherit",
@@ -47,4 +49,35 @@ function resolveTauriBinary() {
   }
 
   return binaryName;
+}
+
+function syncIosAppIcons(cliArgs) {
+  if (cliArgs[0] !== "ios") {
+    return;
+  }
+
+  const sourceDir = path.join(process.cwd(), "src-tauri", "icons", "ios");
+  const targetDir = path.join(
+    process.cwd(),
+    "src-tauri",
+    "gen",
+    "apple",
+    "Assets.xcassets",
+    "AppIcon.appiconset"
+  );
+
+  if (!existsSync(sourceDir) || !existsSync(targetDir)) {
+    return;
+  }
+
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".png")) {
+      continue;
+    }
+
+    copyFileSync(
+      path.join(sourceDir, entry.name),
+      path.join(targetDir, entry.name)
+    );
+  }
 }

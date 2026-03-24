@@ -1,12 +1,12 @@
 use super::{
     chunking::SemanticChunk,
-    current_time_millis,
     db::{
         ann_label_for, load_ann_index_signature, load_chunks_with_embeddings, AnnIndexSignature,
         StoredChunkRow,
     },
     debug::SemanticDebugState,
 };
+use crate::time::current_time_millis;
 use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore, SetOutcome};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};

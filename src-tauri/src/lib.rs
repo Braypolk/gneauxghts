@@ -1,12 +1,14 @@
 mod commands;
 mod index;
 mod note;
+mod path_utils;
 mod search;
 mod semantic;
 mod state;
 mod sync;
 #[cfg(test)]
 mod test_support;
+mod time;
 
 use index::AppState;
 use semantic::SemanticState;

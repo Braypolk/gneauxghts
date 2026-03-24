@@ -1,3 +1,4 @@
+use crate::time::current_time_millis;
 use blake3::Hasher;
 use serde::Serialize;
 use std::{
@@ -341,13 +342,6 @@ fn encode_base32(bytes: [u8; 16]) -> String {
         value >>= 5;
     }
     String::from_utf8(encoded.to_vec()).expect("valid base32")
-}
-
-fn current_time_millis() -> Result<u64, String> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| err.to_string())?
-        .as_millis() as u64)
 }
 
 pub(crate) fn current_timestamp_rfc3339() -> Result<String, String> {

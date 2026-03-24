@@ -32,6 +32,38 @@ struct TaskTimestampCandidate {
     fallback_millis: u64,
 }
 
+struct SortableRecentTaskItem {
+    item: RecentTaskItem,
+    note_title_lower: String,
+    text_lower: String,
+}
+
+impl SortableRecentTaskItem {
+    fn new(item: RecentTaskItem) -> Self {
+        Self {
+            note_title_lower: item.note_title.to_lowercase(),
+            text_lower: item.text.to_lowercase(),
+            item,
+        }
+    }
+}
+
+struct SortableTaskListItem {
+    item: TaskListItem,
+    note_title_lower: String,
+    text_lower: String,
+}
+
+impl SortableTaskListItem {
+    fn new(item: TaskListItem) -> Self {
+        Self {
+            note_title_lower: item.note_title.to_lowercase(),
+            text_lower: item.text.to_lowercase(),
+            item,
+        }
+    }
+}
+
 pub(super) fn list_recent_tasks(
     state: State<'_, AppState>,
     limit: usize,
@@ -81,14 +113,14 @@ pub(super) fn list_recent_tasks(
                 .map(|timestamps| timestamps.updated_at_millis)
                 .unwrap_or(note.modified_millis);
 
-            tasks.push(RecentTaskItem {
+            tasks.push(SortableRecentTaskItem::new(RecentTaskItem {
                 task_key,
                 note_path: raw_path.clone(),
                 note_title: note.title.clone(),
                 text: task.text.clone(),
                 line_number: task.line_number,
                 updated_at_millis,
-            });
+            }));
         }
     }
 
@@ -99,15 +131,15 @@ pub(super) fn list_recent_tasks(
 
     tasks.sort_by_cached_key(|task| {
         (
-            Reverse(task.updated_at_millis),
-            task.note_title.to_lowercase(),
-            task.line_number,
-            task.text.to_lowercase(),
+            Reverse(task.item.updated_at_millis),
+            task.note_title_lower.clone(),
+            task.item.line_number,
+            task.text_lower.clone(),
         )
     });
     tasks.truncate(limit);
 
-    Ok(tasks)
+    Ok(tasks.into_iter().map(|task| task.item).collect())
 }
 
 pub(super) fn list_tasks(
@@ -167,7 +199,7 @@ pub(super) fn list_tasks(
                     updated_at_millis: note.modified_millis,
                 });
 
-            tasks.push(TaskListItem {
+            tasks.push(SortableTaskListItem::new(TaskListItem {
                 task_key: task_key.clone(),
                 note_path: raw_path.clone(),
                 file_name: note.file_name.clone(),
@@ -182,7 +214,7 @@ pub(super) fn list_tasks(
                 line_number: task.line_number,
                 created_at_millis: timestamps.created_at_millis,
                 updated_at_millis: timestamps.updated_at_millis,
-            });
+            }));
         }
     }
 
@@ -200,16 +232,16 @@ pub(super) fn list_tasks(
     tasks.sort_by_cached_key(|task| {
         (
             note_order_index
-                .get(task.note_path.as_str())
+                .get(task.item.note_path.as_str())
                 .copied()
                 .map_or((1usize, usize::MAX), |rank| (0usize, rank)),
-            task.note_title.to_lowercase(),
-            task.line_number,
-            task.text.to_lowercase(),
+            task.note_title_lower.clone(),
+            task.item.line_number,
+            task.text_lower.clone(),
         )
     });
 
-    Ok(tasks)
+    Ok(tasks.into_iter().map(|task| task.item).collect())
 }
 
 pub(super) fn set_task_hidden(task_key: String, hidden: bool) -> Result<(), String> {

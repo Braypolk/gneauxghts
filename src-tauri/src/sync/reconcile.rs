@@ -1,9 +1,12 @@
 use super::{
-    current_time_millis, forgotten_original_relative_path, get_sync_status, get_tracked_note,
-    get_tracked_note_by_path, initialize, load_dirty_notes, load_sync_state, mark_conflicted,
-    open_database, relative_sync_path, resolve_unique_path, sync_url,
-    update_local_only_tracked_note, upsert_tracked_note_record, validated_relative_path,
-    TrackedNoteRow,
+    conflicts::record_sync_conflict,
+    current_time_millis, get_sync_status, get_tracked_note, get_tracked_note_by_path, initialize,
+    load_dirty_notes, load_sync_state, mark_conflicted, open_database,
+    paths::{
+        forgotten_original_relative_path, relative_sync_path, resolve_unique_sync_path,
+        validated_relative_path,
+    },
+    sync_url, update_local_only_tracked_note, upsert_tracked_note_record, TrackedNoteRow,
 };
 use crate::{
     index::{build_indexed_note, AppState},
@@ -446,7 +449,7 @@ fn resolve_sync_conflict(
     let conflict_copy_markdown =
         fs::read_to_string(&conflict_copy_path).map_err(|err| err.to_string())?;
     mark_conflicted(&conflict_copy_path, &conflict_copy_markdown)?;
-    super::record_sync_conflict(
+    record_sync_conflict(
         connection,
         tracked_note,
         &conflict_copy_path,
@@ -478,7 +481,7 @@ fn write_conflicted_copy(notes_dir: &Path, markdown: &str) -> Result<PathBuf, St
     };
     let prepared = note::prepare_note_markdown(&conflict_markdown, None, Some(None))?.0;
     let file_stem = crate::state::derive_file_stem(&prepared);
-    let target_path = resolve_unique_path(notes_dir, &format!("{file_stem}.md"));
+    let target_path = resolve_unique_sync_path(notes_dir, &format!("{file_stem}.md"));
     fs::write(&target_path, prepared).map_err(|err| err.to_string())?;
     Ok(target_path)
 }
@@ -503,7 +506,7 @@ fn apply_remote_head(
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| format!("{}.md", remote_head.note_id));
-                resolve_unique_path(&forgotten_dir, &file_name)
+                resolve_unique_sync_path(&forgotten_dir, &file_name)
             })
     } else {
         let relative_path = validated_relative_path(&remote_head.relative_path)?;

@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) fn unique_path_in_dir(
+pub(crate) fn unique_path_in_dir(
     directory: &Path,
     preferred_file_name: &OsStr,
     default_stem: &str,

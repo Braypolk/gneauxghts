@@ -1,7 +1,8 @@
 use super::{
-    chunking::SemanticChunk, current_time_millis, embed::mean_pool, MapEdge, MapGraph, MapNode,
-    SemanticIndexJob, SemanticSettings,
+    chunking::SemanticChunk, embed::mean_pool, MapEdge, MapGraph, MapNode, SemanticIndexJob,
+    SemanticSettings,
 };
+use crate::time::current_time_millis;
 use blake3::hash;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
