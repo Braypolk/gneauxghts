@@ -25,12 +25,14 @@ pub(crate) fn resolve_note_link(
     state: State<'_, AppState>,
     raw_target: String,
     current_path: Option<String>,
+    current_title: String,
     current_markdown: String,
 ) -> Result<Option<ResolvedNoteLink>, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_override = build_current_override(current_path.as_deref(), &current_markdown);
+    let current_override =
+        build_current_override(current_path.as_deref(), &current_title, &current_markdown);
     let target = parse_wikilink_target(&raw_target);
     let Some(note_path) = resolve_wikilink_note_path(
         &state,
@@ -67,13 +69,15 @@ pub(crate) fn autocomplete_note_links(
     state: State<'_, AppState>,
     raw_target: String,
     current_path: Option<String>,
+    current_title: String,
     current_markdown: String,
     limit: usize,
 ) -> Result<Vec<NoteLinkSuggestion>, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_override = build_current_override(current_path.as_deref(), &current_markdown);
+    let current_override =
+        build_current_override(current_path.as_deref(), &current_title, &current_markdown);
     let target = parse_wikilink_target(&raw_target);
     let limit = limit.max(1);
 

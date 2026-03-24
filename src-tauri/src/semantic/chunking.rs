@@ -37,27 +37,10 @@ struct Section {
 }
 
 pub(crate) fn chunk_markdown(markdown: &str, fallback_title: &str) -> ChunkedNote {
-    let normalized = note::strip_frontmatter(markdown);
-    let lines = normalized.lines().collect::<Vec<_>>();
-    let first_content_index = lines.iter().position(|line| !line.trim().is_empty());
-
-    let (title, body_start_index, title_line) = match first_content_index {
-        Some(index) => {
-            let trimmed = lines[index].trim();
-            if let Some(title) = trimmed
-                .strip_prefix("# ")
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-            {
-                (title.to_string(), index + 1, index + 1)
-            } else {
-                (fallback_title.to_string(), index, index + 1)
-            }
-        }
-        None => (fallback_title.to_string(), 0, 1),
-    };
-
-    let sections = parse_sections(&lines, body_start_index);
+    let (title, body) = note::extract_file_name_title_and_body(markdown, fallback_title);
+    let lines = body.lines().collect::<Vec<_>>();
+    let title_line = 1;
+    let sections = parse_sections(&lines, 0);
     let mut chunks = Vec::new();
 
     if !title.trim().is_empty() {
@@ -77,7 +60,7 @@ pub(crate) fn chunk_markdown(markdown: &str, fallback_title: &str) -> ChunkedNot
 
     ChunkedNote {
         title,
-        content_hash: hash_string(&normalized),
+        content_hash: hash_string(&body),
         chunks,
     }
 }

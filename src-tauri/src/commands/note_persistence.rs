@@ -19,6 +19,7 @@ pub(super) enum NotePersistenceMode {
 
 pub(super) fn persist_note_session(
     state: &State<'_, AppState>,
+    title: String,
     markdown: String,
     current_path: Option<String>,
     mode: NotePersistenceMode,
@@ -31,10 +32,12 @@ pub(super) fn persist_note_session(
         .transpose()?
         .flatten();
     let persisted_path = match mode {
-        NotePersistenceMode::Save => persist_note(&notes_dir, &markdown, current_path.as_deref())?,
+        NotePersistenceMode::Save => {
+            persist_note(&notes_dir, &title, &markdown, current_path.as_deref())?
+        }
         NotePersistenceMode::Remember => {
-            if !markdown.trim().is_empty() || current_path.is_some() {
-                persist_note(&notes_dir, &markdown, current_path.as_deref())?
+            if !title.trim().is_empty() || !markdown.trim().is_empty() || current_path.is_some() {
+                persist_note(&notes_dir, &title, &markdown, current_path.as_deref())?
             } else {
                 None
             }
@@ -116,9 +119,21 @@ pub(super) fn persist_note_session(
 
     match mode {
         NotePersistenceMode::Save => Ok(Some(NoteSession {
+            title: persisted_path
+                .as_deref()
+                .and_then(|path| Path::new(path).file_stem())
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| title.trim().to_string()),
             markdown: persisted_markdown
                 .as_deref()
-                .map(note::strip_frontmatter)
+                .map(|saved| {
+                    let fallback_title = persisted_path
+                        .as_deref()
+                        .and_then(|path| Path::new(path).file_stem())
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    note::extract_file_name_title_and_body(saved, &fallback_title).1
+                })
                 .unwrap_or_else(|| note::normalize_wikilink_markdown(&markdown)),
             path: persisted_path,
         })),

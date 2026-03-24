@@ -1,6 +1,6 @@
 # Gneauxghts
 
-Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and Rust. It stores plain Markdown files in your `Documents` folder, keeps a live master task list from Markdown checkboxes, and layers semantic search plus a note graph on top without moving your notes into a proprietary database.
+Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and Rust. It stores plain Markdown files in your `Documents` folder, keeps a live master task list from Markdown checkboxes, and layers semantic search on top without moving your notes into a proprietary database.
 
 ## What It Does
 
@@ -11,7 +11,7 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 - Build a master task list from Markdown checkboxes like `- [ ]` and `- [x]`.
 - Toggle task completion from the list view and jump back to the source note.
 - Hide or reorder task groups by note.
-- Generate a semantic note graph and blend semantic matches into keyword search.
+- Blend semantic matches into keyword search.
 - Inspect semantic indexing status, model state, and diagnostics from Settings.
 
 ## How Notes Are Stored
@@ -27,8 +27,7 @@ This means your notes stay easy to back up, sync, or edit outside the app.
 
 - `Cmd+1` opens the main note view
 - `Cmd+2` opens Inbox
-- `Cmd+3` opens Map
-- `Cmd+4` opens List
+- `Cmd+3` opens List
 - `Cmd+,` opens Settings
 - `Cmd+F` focuses search in the current note
 - `Cmd+Shift+F` switches search to all notes
@@ -76,14 +75,13 @@ Build a release app:
 pnpm tauri build
 ```
 
-## Semantic Search And Map
+## Semantic Search
 
 The semantic layer is local-first and optional.
 
 - Notes are still stored as Markdown files.
 - Semantic indexing metadata is stored in the app data directory, not inside your note files.
 - Search can blend lexical and semantic results.
-- The map view renders note-to-note links from semantic similarity.
 
 ### Development Runtime Requirements
 
@@ -123,7 +121,6 @@ SEMANTIC_BENCHMARK.md
 
 - `/` main note editor
 - `/list` master task list
-- `/map` semantic note graph
 - `/settings` theme, forget button, and semantic controls
 - `/inbox` placeholder route
 

@@ -132,12 +132,14 @@ export function getBottomSheetStyle() {
 export function buildRelatedRequestKey(
   currentNotePath: string | null,
   relatedScope: RelatedScope,
+  title: string,
   markdown: string,
   selectedText: string | null
 ) {
   return [
     currentNotePath ?? '',
     relatedScope,
+    hashRelatedText(title),
     hashRelatedText(markdown),
     hashRelatedText(selectedText ?? '')
   ].join(':');

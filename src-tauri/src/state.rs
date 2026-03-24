@@ -343,16 +343,15 @@ pub(crate) fn is_forgotten_note_path(path: &Path, notes_dir: &Path) -> bool {
 
 pub(crate) fn persist_note(
     notes_dir: &Path,
+    title: &str,
     markdown: &str,
     current_path: Option<&Path>,
 ) -> Result<Option<String>, String> {
     let normalized_markdown = note::normalize_wikilink_markdown(markdown);
 
-    if note::strip_frontmatter(&normalized_markdown)
-        .trim()
-        .is_empty()
-    {
-        let target_path = resolve_target_path(notes_dir, &normalized_markdown, current_path)?;
+    if title.trim().is_empty() && normalized_markdown.trim().is_empty() {
+        let target_path =
+            resolve_target_path(notes_dir, title, &normalized_markdown, current_path)?;
         let Some(target_path) = target_path else {
             return Ok(None);
         };
@@ -378,7 +377,7 @@ pub(crate) fn persist_note(
         Some(None),
     )?
     .0;
-    let target_path = resolve_target_path(notes_dir, &prepared_markdown, current_path)?;
+    let target_path = resolve_target_path(notes_dir, title, &prepared_markdown, current_path)?;
     let Some(target_path) = target_path else {
         return Ok(None);
     };
@@ -395,6 +394,15 @@ pub(crate) fn persist_note(
 
 pub(crate) fn derive_file_stem(markdown: &str) -> String {
     note::derive_file_stem(markdown, DEFAULT_NOTE_NAME, MAX_FILE_STEM_LENGTH)
+}
+
+pub(crate) fn derive_file_stem_from_title_and_markdown(title: &str, markdown: &str) -> String {
+    note::derive_file_stem_from_title_and_markdown(
+        title,
+        markdown,
+        DEFAULT_NOTE_NAME,
+        MAX_FILE_STEM_LENGTH,
+    )
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -550,14 +558,15 @@ fn is_path_in_notes_dir(path: &Path, notes_dir: &Path) -> bool {
 
 fn resolve_target_path(
     notes_dir: &Path,
+    title: &str,
     markdown: &str,
     current_path: Option<&Path>,
 ) -> Result<Option<PathBuf>, String> {
-    if markdown.trim().is_empty() {
+    if title.trim().is_empty() && markdown.trim().is_empty() {
         return Ok(current_path.map(Path::to_path_buf));
     }
 
-    let file_stem = derive_file_stem(markdown);
+    let file_stem = derive_file_stem_from_title_and_markdown(title, markdown);
     let preferred_path = notes_dir.join(format!("{file_stem}.md"));
 
     if current_path.is_some_and(|path| path == preferred_path) || !preferred_path.exists() {
@@ -583,8 +592,9 @@ fn resolve_target_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_file_stem, forgotten_notes_root, initialize_app_data_dir, persist_note, read_state,
-        write_state, PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
+        derive_file_stem, derive_file_stem_from_title_and_markdown, forgotten_notes_root,
+        initialize_app_data_dir, persist_note, read_state, write_state, PersistedForgottenNote,
+        PersistedState, PersistedTaskTimestamps,
     };
     use crate::test_support::{TestDir, TEST_ENV_GUARD};
     use std::{collections::HashMap, fs};
@@ -607,6 +617,16 @@ mod tests {
     }
 
     #[test]
+    fn derive_file_stem_prefers_explicit_title() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let app_data_dir = TestDir::new("state-app-data-derive-title");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+
+        let stem = derive_file_stem_from_title_and_markdown("  Title From Input  ", "Body text");
+        assert_eq!(stem, "Title From Input");
+    }
+
+    #[test]
     fn persist_note_renames_existing_file_when_title_changes() {
         let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
         let app_data_dir = TestDir::new("state-app-data-persist");
@@ -614,11 +634,12 @@ mod tests {
         let temp = TestDir::new("state-persist-note");
         let notes_dir = temp.path();
         let original_path = notes_dir.join("First Note.md");
-        fs::write(&original_path, "# First Note\n\nOld content").expect("write original note");
+        fs::write(&original_path, "Old content").expect("write original note");
 
         let saved_path = persist_note(
             notes_dir,
-            "# Second Note\n\nFresh content",
+            "Second Note",
+            "Fresh content",
             Some(original_path.as_path()),
         )
         .expect("persist note")
@@ -629,7 +650,7 @@ mod tests {
         assert!(!original_path.exists());
         let saved_markdown = fs::read_to_string(&renamed_path).expect("read renamed note");
         assert!(saved_markdown.contains("gneauxghts:"));
-        assert!(saved_markdown.ends_with("# Second Note\n\nFresh content"));
+        assert!(saved_markdown.ends_with("Fresh content"));
     }
 
     #[test]

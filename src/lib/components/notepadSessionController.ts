@@ -28,6 +28,8 @@ interface NotepadSessionControllerDeps {
   getCurrentMarkdown: () => string;
   getCurrentPath: () => string | null;
   setCurrentPath: (value: string | null) => void;
+  getLastSavedTitle: () => string;
+  setLastSavedTitle: (value: string) => void;
   getLastSavedMarkdown: () => string;
   setLastSavedMarkdown: (value: string) => void;
   getLastSavedPath: () => string | null;
@@ -69,6 +71,8 @@ export function createNotepadSessionController({
   getCurrentMarkdown,
   getCurrentPath,
   setCurrentPath,
+  getLastSavedTitle,
+  setLastSavedTitle,
   getLastSavedMarkdown,
   setLastSavedMarkdown,
   getLastSavedPath,
@@ -101,7 +105,8 @@ export function createNotepadSessionController({
   let saveQueue: Promise<void> = Promise.resolve();
 
   function hasCleanBuffer() {
-    return shouldSkipAutosave(getCurrentMarkdown(), getCurrentPath(), {
+    return shouldSkipAutosave(getTitle(), getCurrentMarkdown(), getCurrentPath(), {
+      lastSavedTitle: getLastSavedTitle(),
       lastSavedMarkdown: getLastSavedMarkdown(),
       lastSavedPath: getLastSavedPath()
     });
@@ -142,6 +147,7 @@ export function createNotepadSessionController({
       }
 
       if (
+        session.lastSavedTitle === getLastSavedTitle() &&
         session.lastSavedMarkdown === getLastSavedMarkdown() &&
         session.lastSavedPath === getLastSavedPath()
       ) {
@@ -172,11 +178,13 @@ export function createNotepadSessionController({
   }
 
   async function persistNote(mode: NotepadSaveMode) {
+    const title = getTitle();
     const markdown = getCurrentMarkdown();
 
     if (
       mode === 'autosave' &&
-      shouldSkipAutosave(markdown, getCurrentPath(), {
+      shouldSkipAutosave(title, markdown, getCurrentPath(), {
+        lastSavedTitle: getLastSavedTitle(),
         lastSavedMarkdown: getLastSavedMarkdown(),
         lastSavedPath: getLastSavedPath()
       })
@@ -185,12 +193,12 @@ export function createNotepadSessionController({
     }
 
     if (mode === 'remember') {
-      await rememberNoteSession(markdown, getCurrentPath());
+      await rememberNoteSession(title, markdown, getCurrentPath());
       scheduleAutoSync('note-remembered', 400);
       return;
     }
 
-    applySessionSnapshot(await saveNoteSession(markdown, getCurrentPath()));
+    applySessionSnapshot(await saveNoteSession(title, markdown, getCurrentPath()));
     scheduleAutoSync('note-saved', 600);
   }
 
@@ -297,6 +305,7 @@ export function createNotepadSessionController({
 
     applySessionSnapshot({
       ...forgottenNote,
+      lastSavedTitle: '',
       lastSavedMarkdown: '',
       lastSavedPath: null
     });
@@ -319,6 +328,7 @@ export function createNotepadSessionController({
 
     await enqueueSave('remember');
     setCurrentPath(null);
+    setLastSavedTitle('');
     setLastSavedMarkdown('');
     setLastSavedPath(null);
     setForgottenNote(null);

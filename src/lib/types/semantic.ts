@@ -91,9 +91,6 @@ export interface SemanticDebugMetrics {
   annRebuildDurationTotalMillis: number;
   annRebuildDurationMaxMillis: number;
   annUpdateFailureCount: number;
-  mapRequestCount: number;
-  mapDurationTotalMillis: number;
-  mapDurationMaxMillis: number;
   relatedRequestCount: number;
   relatedNoteRequestCount: number;
   relatedSelectionRequestCount: number;
@@ -160,24 +157,4 @@ export interface RelatedNotesResponse {
   scope: 'note' | 'selection';
   reason: string | null;
   items: RelatedNoteItem[];
-}
-
-export interface MapNode {
-  notePath: string;
-  title: string;
-  degree: number;
-  x: number;
-  y: number;
-}
-
-export interface MapEdge {
-  sourceNotePath: string;
-  targetNotePath: string;
-  score: number;
-}
-
-export interface MapGraph {
-  nodes: MapNode[];
-  edges: MapEdge[];
-  minScore: number;
 }

@@ -27,11 +27,13 @@ pub(crate) fn list_recent_notes(
     state: State<'_, AppState>,
     limit: usize,
     current_path: Option<String>,
+    current_title: String,
     current_markdown: String,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let notes_dir = prepare_notes_dir(true)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
+    let _ = current_title;
     let _ = current_markdown;
     let mut persisted_state = read_state(&notes_dir)?;
     prune_recent_paths(&mut persisted_state, &notes_dir);
@@ -78,6 +80,7 @@ pub(crate) fn search_notes(
     query: String,
     mode: SearchMode,
     current_path: Option<String>,
+    current_title: String,
     current_markdown: String,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let notes_dir = prepare_notes_dir(false)?;
@@ -101,6 +104,7 @@ pub(crate) fn search_notes(
         &notes_dir,
         mode,
         current_path.as_deref(),
+        &current_title,
         &current_markdown,
         &normalized_query,
         &query_terms,
@@ -128,6 +132,7 @@ pub(crate) async fn search_notes_hybrid(
     query: String,
     mode: SearchMode,
     current_path: Option<String>,
+    current_title: String,
     current_markdown: String,
     limit: usize,
     semantic_weight: Option<f32>,
@@ -155,6 +160,7 @@ pub(crate) async fn search_notes_hybrid(
         &notes_dir,
         mode.clone(),
         current_path.as_deref(),
+        &current_title,
         &current_markdown,
         &normalized_query,
         &query_terms,
@@ -229,6 +235,7 @@ pub(crate) async fn search_notes_hybrid(
 pub(crate) async fn get_related_notes(
     state: State<'_, AppState>,
     current_path: Option<String>,
+    current_title: String,
     current_markdown: String,
     selected_text: Option<String>,
     limit: usize,
@@ -243,6 +250,7 @@ pub(crate) async fn get_related_notes(
     tauri::async_runtime::spawn_blocking(move || {
         semantic.related_notes(
             current_path_raw.as_deref(),
+            &current_title,
             &current_markdown,
             selected_text.as_deref(),
             limit.max(1),
@@ -257,11 +265,12 @@ fn collect_lexical_candidates(
     notes_dir: &Path,
     mode: SearchMode,
     current_path: Option<&Path>,
+    current_title: &str,
     current_markdown: &str,
     normalized_query: &str,
     query_terms: &[&str],
 ) -> Result<Vec<ScoredSearchResult>, String> {
-    let current_override = build_current_override(current_path, current_markdown);
+    let current_override = build_current_override(current_path, current_title, current_markdown);
     let mut index = state
         .notes_index
         .lock()

@@ -19,6 +19,7 @@ interface NotepadWikilinkControllerDeps {
   getState: () => WikilinkAutocompleteState;
   setState: (value: WikilinkAutocompleteState) => void;
   getCurrentPath: () => string | null;
+  getCurrentTitle: () => string;
   getCurrentMarkdown: () => string;
   getEditorController: () => NotepadEditorController | null;
   cancelPendingAutosave: () => void;
@@ -35,6 +36,7 @@ export function createNotepadWikilinkController({
   getState,
   setState,
   getCurrentPath,
+  getCurrentTitle,
   getCurrentMarkdown,
   getEditorController,
   cancelPendingAutosave,
@@ -55,6 +57,7 @@ export function createNotepadWikilinkController({
       const suggestions = await autocompleteNoteLinks(
         nextActiveWikilink.rawTarget,
         getCurrentPath(),
+        getCurrentTitle(),
         getCurrentMarkdown()
       );
       setState(completeWikilinkSuggestionRequest(getState(), pendingRequest.requestId, suggestions));
@@ -138,7 +141,12 @@ export function createNotepadWikilinkController({
 
   async function openWikilink(rawTarget: string) {
     try {
-      const resolved = await resolveNoteLink(rawTarget, getCurrentPath(), getCurrentMarkdown());
+      const resolved = await resolveNoteLink(
+        rawTarget,
+        getCurrentPath(),
+        getCurrentTitle(),
+        getCurrentMarkdown()
+      );
       if (!resolved) {
         return;
       }

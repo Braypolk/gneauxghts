@@ -290,10 +290,10 @@
               search {metrics.searchRequestCount} · related {metrics.relatedRequestCount}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
-              map {metrics.mapRequestCount} · search semantic used {metrics.searchSemanticUsedCount}
+              search semantic used {metrics.searchSemanticUsedCount} · skipped {metrics.searchSemanticSkippedCount}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
-              search skipped {metrics.searchSemanticSkippedCount} · related unavailable {metrics.relatedUnavailableCount}
+              related unavailable {metrics.relatedUnavailableCount}
             </p>
           </div>
 

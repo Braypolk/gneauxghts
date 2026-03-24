@@ -1,4 +1,5 @@
 export interface NoteSession {
+  title: string;
   markdown: string;
   path: string | null;
 }

@@ -11,6 +11,7 @@ import {
 } from './notepadRelated';
 
 interface NotepadRelatedControllerDeps {
+  getCurrentTitle: () => string;
   getCurrentMarkdown: () => string;
   getCurrentPath: () => string | null;
   getScope: () => RelatedScope;
@@ -27,6 +28,7 @@ interface NotepadRelatedControllerDeps {
 }
 
 export function createNotepadRelatedController({
+  getCurrentTitle,
   getCurrentMarkdown,
   getCurrentPath,
   getScope,
@@ -145,6 +147,7 @@ export function createNotepadRelatedController({
     const requestKey = buildRelatedRequestKey(
       getCurrentPath(),
       getScope(),
+      getCurrentTitle(),
       markdown,
       selectedText
     );
@@ -160,6 +163,7 @@ export function createNotepadRelatedController({
       const response = await getRelatedNotes(
         {
           currentPath: getCurrentPath(),
+          currentTitle: getCurrentTitle(),
           currentMarkdown: markdown
         },
         selectedText,

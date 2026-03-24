@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { parseStoredMarkdown } from './notepadDocument';
 import type { NoteSession, StoredImageAsset } from './notepadTypes';
 import type { ForgottenNoteSummary, RestoredForgottenNote } from '$lib/types/forgottenNotes';
 import type { VaultInfo } from '$lib/types/sync';
@@ -18,6 +17,7 @@ export interface NotepadDraft {
 }
 
 export interface NotepadSessionSnapshot extends NotepadDraft {
+  lastSavedTitle: string;
   lastSavedMarkdown: string;
   lastSavedPath: string | null;
 }
@@ -29,6 +29,7 @@ export function createEmptySessionSnapshot(): NotepadSessionSnapshot {
     title: '',
     bodyMarkdown: '',
     currentNotePath: null,
+    lastSavedTitle: '',
     lastSavedMarkdown: '',
     lastSavedPath: null
   };
@@ -51,23 +52,27 @@ export function createForgottenNote(
 }
 
 export function createSessionSnapshot(session: NoteSession): NotepadSessionSnapshot {
-  const parsed = parseStoredMarkdown(session.markdown);
-
   return {
-    title: parsed.title,
-    bodyMarkdown: parsed.bodyMarkdown,
+    title: session.title,
+    bodyMarkdown: session.markdown,
     currentNotePath: session.path,
+    lastSavedTitle: session.title,
     lastSavedMarkdown: session.markdown,
     lastSavedPath: session.path
   };
 }
 
 export function shouldSkipAutosave(
+  title: string,
   markdown: string,
   currentNotePath: string | null,
-  snapshot: Pick<NotepadSessionSnapshot, 'lastSavedMarkdown' | 'lastSavedPath'>
+  snapshot: Pick<NotepadSessionSnapshot, 'lastSavedTitle' | 'lastSavedMarkdown' | 'lastSavedPath'>
 ) {
-  return markdown === snapshot.lastSavedMarkdown && currentNotePath === snapshot.lastSavedPath;
+  return (
+    title === snapshot.lastSavedTitle &&
+    markdown === snapshot.lastSavedMarkdown &&
+    currentNotePath === snapshot.lastSavedPath
+  );
 }
 
 export async function loadSavedNoteSession() {
@@ -93,13 +98,21 @@ export async function readNoteSession(notePath: string) {
   return createSessionSnapshot(session);
 }
 
-export async function saveNoteSession(markdown: string, currentPath: string | null) {
-  const saved = await invoke<NoteSession>('save_note', { markdown, currentPath });
+export async function saveNoteSession(
+  title: string,
+  markdown: string,
+  currentPath: string | null
+) {
+  const saved = await invoke<NoteSession>('save_note', { title, markdown, currentPath });
   return createSessionSnapshot(saved);
 }
 
-export async function rememberNoteSession(markdown: string, currentPath: string | null) {
-  await invoke('remember_note', { markdown, currentPath });
+export async function rememberNoteSession(
+  title: string,
+  markdown: string,
+  currentPath: string | null
+) {
+  await invoke('remember_note', { title, markdown, currentPath });
 }
 
 function formatPastedImageTimestamp(date: Date) {

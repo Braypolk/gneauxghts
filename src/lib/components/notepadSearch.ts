@@ -6,6 +6,7 @@ export type NotepadSearchMode = 'current' | 'all';
 
 export interface NotepadSearchContext {
   currentPath: string | null;
+  currentTitle: string;
   currentMarkdown: string;
 }
 
@@ -26,6 +27,7 @@ export async function searchNotes(
     query,
     mode,
     currentPath: context.currentPath,
+    currentTitle: context.currentTitle,
     currentMarkdown: context.currentMarkdown,
     limit: 12
   });
@@ -35,6 +37,7 @@ export async function listRecentNotes(context: NotepadSearchContext) {
   return invoke<SearchItem[]>('list_recent_notes', {
     limit: 12,
     currentPath: context.currentPath,
+    currentTitle: context.currentTitle,
     currentMarkdown: context.currentMarkdown
   });
 }
@@ -52,6 +55,7 @@ export async function getRelatedNotes(
 ) {
   return invoke<RelatedNotesResponse>('get_related_notes', {
     currentPath: context.currentPath,
+    currentTitle: context.currentTitle,
     currentMarkdown: context.currentMarkdown,
     selectedText,
     limit

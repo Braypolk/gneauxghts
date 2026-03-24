@@ -9,6 +9,7 @@ import { listRecentNotes, listRecentTasks, searchNotes, type NotepadSearchMode }
 import type { RecentTaskItem } from './notepadTypes';
 
 interface NotepadSearchControllerDeps {
+  getCurrentTitle: () => string;
   getCurrentMarkdown: () => string;
   getCurrentPath: () => string | null;
   getSearchMode: () => NotepadSearchMode;
@@ -28,6 +29,7 @@ interface NotepadSearchControllerDeps {
 }
 
 export function createNotepadSearchController({
+  getCurrentTitle,
   getCurrentMarkdown,
   getCurrentPath,
   getSearchMode,
@@ -81,6 +83,7 @@ export function createNotepadSearchController({
     try {
       const results = await searchNotes(trimmedQuery, getSearchMode(), {
         currentPath: getCurrentPath(),
+        currentTitle: getCurrentTitle(),
         currentMarkdown: getCurrentMarkdown()
       });
 
@@ -125,6 +128,7 @@ export function createNotepadSearchController({
       () =>
         listRecentNotes({
           currentPath: getCurrentPath(),
+          currentTitle: getCurrentTitle(),
           currentMarkdown: getCurrentMarkdown()
         }),
       setRecentNotes,
@@ -144,6 +148,7 @@ export function createNotepadSearchController({
       () =>
         listRecentNotes({
           currentPath: getCurrentPath(),
+          currentTitle: getCurrentTitle(),
           currentMarkdown: getCurrentMarkdown()
         }),
       setRecentNotes,

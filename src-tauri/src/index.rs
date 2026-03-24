@@ -1,4 +1,8 @@
-use crate::{note, semantic::SemanticState, state::derive_file_stem};
+use crate::{
+    note,
+    semantic::SemanticState,
+    state::{derive_file_stem, derive_file_stem_from_title_and_markdown},
+};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -136,14 +140,16 @@ pub(crate) fn is_note_file(path: &Path) -> bool {
 
 pub(crate) fn build_current_override(
     current_path: Option<&Path>,
+    current_title: &str,
     markdown: &str,
 ) -> Option<IndexedNote> {
-    if markdown.trim().is_empty() && current_path.is_none() {
+    if markdown.trim().is_empty() && current_path.is_none() && current_title.trim().is_empty() {
         return None;
     }
 
-    Some(build_indexed_note_with_signature(
+    Some(build_current_override_with_signature(
         current_path,
+        current_title,
         markdown,
         FileSignature {
             modified_millis: 0,
@@ -300,7 +306,7 @@ fn build_indexed_note_with_signature(
         .map(str::to_string)
         .unwrap_or_else(|| derive_file_stem(markdown));
 
-    let (title, body) = note::extract_title_and_body(markdown, &fallback_file_name);
+    let (title, body) = note::extract_file_name_title_and_body(markdown, &fallback_file_name);
     let file_name = fallback_file_name;
 
     IndexedNote {
@@ -310,6 +316,42 @@ fn build_indexed_note_with_signature(
         title_lower: title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&title, &body),
+        tasks: build_tasks(markdown),
+        file_name,
+    }
+}
+
+fn build_current_override_with_signature(
+    path: Option<&Path>,
+    current_title: &str,
+    markdown: &str,
+    signature: FileSignature,
+) -> IndexedNote {
+    let modified_millis = signature.modified_millis;
+    let file_name = if current_title.trim().is_empty() {
+        path.and_then(|path| path.file_stem())
+            .and_then(|file_name| file_name.to_str())
+            .filter(|file_name| !file_name.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| derive_file_stem(markdown))
+    } else {
+        derive_file_stem_from_title_and_markdown(current_title, markdown)
+    };
+
+    let title = current_title.trim().to_string();
+    let effective_title = if title.is_empty() {
+        file_name.clone()
+    } else {
+        title
+    };
+
+    IndexedNote {
+        signature,
+        modified_millis,
+        title: effective_title.clone(),
+        title_lower: effective_title.to_lowercase(),
+        file_name_lower: file_name.to_lowercase(),
+        paragraphs: build_paragraphs(&effective_title, markdown),
         tasks: build_tasks(markdown),
         file_name,
     }

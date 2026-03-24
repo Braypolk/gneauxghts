@@ -1,6 +1,7 @@
 use super::{
-    chunking::SemanticChunk, embed::mean_pool, MapEdge, MapGraph, MapNode, SemanticIndexJob,
-    SemanticSettings,
+    chunking::SemanticChunk,
+    embed::mean_pool,
+    SemanticIndexJob, SemanticSettings,
 };
 use crate::time::current_time_millis;
 use blake3::hash;
@@ -83,7 +84,9 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 modified_millis INTEGER NOT NULL,
                 content_hash TEXT NOT NULL,
                 chunk_count INTEGER NOT NULL,
-                indexed_at_millis INTEGER NOT NULL
+                indexed_at_millis INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS chunks (
@@ -135,7 +138,8 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|err| err.to_string())?;
 
-    migrate_chunk_ann_labels(connection)
+    migrate_chunk_ann_labels(connection)?;
+    migrate_note_columns(connection)
 }
 
 pub(crate) fn load_semantic_settings(
@@ -256,6 +260,8 @@ pub(crate) fn upsert_note_chunks(
     title: &str,
     modified_millis: u64,
     content_hash: &str,
+    created_at: &str,
+    updated_at: &str,
     chunks: &[SemanticChunk],
     embeddings: &[Vec<f32>],
 ) -> Result<(), String> {
@@ -308,14 +314,25 @@ pub(crate) fn upsert_note_chunks(
     transaction
         .execute(
             "
-            INSERT INTO notes (path, title, modified_millis, content_hash, chunk_count, indexed_at_millis)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO notes (
+                path,
+                title,
+                modified_millis,
+                content_hash,
+                chunk_count,
+                indexed_at_millis,
+                created_at,
+                updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(path) DO UPDATE SET
                 title = excluded.title,
                 modified_millis = excluded.modified_millis,
                 content_hash = excluded.content_hash,
                 chunk_count = excluded.chunk_count,
-                indexed_at_millis = excluded.indexed_at_millis
+                indexed_at_millis = excluded.indexed_at_millis,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
             ",
             params![
                 note_path,
@@ -324,6 +341,8 @@ pub(crate) fn upsert_note_chunks(
                 content_hash,
                 chunks.len(),
                 indexed_at_millis,
+                created_at,
+                updated_at,
             ],
         )
         .map_err(|err| err.to_string())?;
@@ -706,66 +725,6 @@ pub(crate) fn load_latest_job(connection: &Connection) -> Result<Option<Semantic
         .map_err(|err| err.to_string())
 }
 
-pub(crate) fn load_graph_data(
-    connection: &Connection,
-    limit: usize,
-    min_score: f32,
-) -> Result<MapGraph, String> {
-    let mut edge_statement = connection
-        .prepare(
-            "
-            SELECT source_note_path, target_note_path, score
-            FROM edges
-            WHERE score >= ?1
-            ORDER BY score DESC
-            LIMIT ?2
-            ",
-        )
-        .map_err(|err| err.to_string())?;
-    let mut edge_rows = edge_statement
-        .query(params![min_score, limit])
-        .map_err(|err| err.to_string())?;
-    let mut edges = Vec::new();
-    let mut degrees = HashMap::<String, usize>::new();
-
-    while let Some(row) = edge_rows.next().map_err(|err| err.to_string())? {
-        let source_note_path = row.get::<_, String>(0).map_err(|err| err.to_string())?;
-        let target_note_path = row.get::<_, String>(1).map_err(|err| err.to_string())?;
-        edges.push(MapEdge {
-            source_note_path: source_note_path.clone(),
-            target_note_path: target_note_path.clone(),
-            score: row.get::<_, f32>(2).map_err(|err| err.to_string())?,
-        });
-        *degrees.entry(source_note_path).or_default() += 1;
-        *degrees.entry(target_note_path).or_default() += 1;
-    }
-
-    let mut node_statement = connection
-        .prepare("SELECT path, title FROM notes")
-        .map_err(|err| err.to_string())?;
-    let mut node_rows = node_statement.query([]).map_err(|err| err.to_string())?;
-    let mut nodes = Vec::new();
-
-    while let Some(row) = node_rows.next().map_err(|err| err.to_string())? {
-        let note_path = row.get::<_, String>(0).map_err(|err| err.to_string())?;
-        let title = row.get::<_, String>(1).map_err(|err| err.to_string())?;
-        let (x, y) = seed_position(&note_path);
-        nodes.push(MapNode {
-            note_path: note_path.clone(),
-            title,
-            degree: degrees.get(&note_path).copied().unwrap_or_default(),
-            x,
-            y,
-        });
-    }
-
-    Ok(MapGraph {
-        nodes,
-        edges,
-        min_score,
-    })
-}
-
 pub(crate) fn load_related_note_previews(
     connection: &Connection,
     note_path: &str,
@@ -864,17 +823,6 @@ fn deserialize_embedding(blob: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-fn seed_position(note_path: &str) -> (f32, f32) {
-    let bytes = hash(note_path.as_bytes()).as_bytes().to_vec();
-    let x = (u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32 / u32::MAX as f32)
-        * 2.0
-        - 1.0;
-    let y = (u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as f32 / u32::MAX as f32)
-        * 2.0
-        - 1.0;
-    (x, y)
-}
-
 fn migrate_chunk_ann_labels(connection: &Connection) -> Result<(), String> {
     if !has_column(connection, "chunks", "ann_label")? {
         connection
@@ -912,6 +860,28 @@ fn migrate_chunk_ann_labels(connection: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn migrate_note_columns(connection: &Connection) -> Result<(), String> {
+    if !has_column(connection, "notes", "created_at")? {
+        connection
+            .execute(
+                "ALTER TABLE notes ADD COLUMN created_at TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+
+    if !has_column(connection, "notes", "updated_at")? {
+        connection
+            .execute(
+                "ALTER TABLE notes ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+
     Ok(())
 }
 

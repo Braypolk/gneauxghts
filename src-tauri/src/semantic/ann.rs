@@ -662,6 +662,8 @@ mod tests {
             "Seed Note",
             1,
             "seed-hash",
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:00:00Z",
             &chunks,
             &embeddings,
         )

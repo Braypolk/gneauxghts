@@ -8,7 +8,7 @@ pub(crate) mod wikilink_commands;
 use crate::{
     index::{build_indexed_note, AppState, IndexedNote},
     note,
-    semantic::{debug::SemanticDebugSnapshot, MapGraph, SemanticSettings, SemanticStatus},
+    semantic::{debug::SemanticDebugSnapshot, SemanticSettings, SemanticStatus},
     state::{
         current_vault_info, is_valid_note_path, notes_root, read_state, set_notes_root,
         touch_recent_path, validate_current_path, write_state, VaultInfo,
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{Duration, Instant, UNIX_EPOCH},
+    time::{Duration, UNIX_EPOCH},
 };
 #[cfg(test)]
 use task_commands::find_task_key_for_line;
@@ -41,6 +41,7 @@ const DEFAULT_PASTED_IMAGE_NAME: &str = "Pasted image";
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteSession {
+    title: String,
     markdown: String,
     path: Option<String>,
 }
@@ -266,11 +267,13 @@ pub(crate) fn set_sync_paused(paused: bool) -> Result<SyncStatus, String> {
 #[tauri::command]
 pub(crate) fn save_note(
     state: State<'_, AppState>,
+    title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<NoteSession, String> {
     note_persistence::persist_note_session(
         &state,
+        title,
         markdown,
         current_path,
         note_persistence::NotePersistenceMode::Save,
@@ -281,11 +284,13 @@ pub(crate) fn save_note(
 #[tauri::command]
 pub(crate) fn remember_note(
     state: State<'_, AppState>,
+    title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<(), String> {
     note_persistence::persist_note_session(
         &state,
+        title,
         markdown,
         current_path,
         note_persistence::NotePersistenceMode::Remember,
@@ -396,52 +401,6 @@ pub(crate) async fn prepare_semantic_model(state: State<'_, AppState>) -> Result
 }
 
 #[tauri::command]
-pub(crate) async fn get_map_graph(
-    state: State<'_, AppState>,
-    _view: Option<String>,
-    limit: usize,
-    min_score: f32,
-) -> Result<MapGraph, String> {
-    let started_at = Instant::now();
-    let semantic = state.semantic.clone();
-    let graph = tauri::async_runtime::spawn_blocking(move || {
-        semantic.map_graph(limit.max(24), min_score.max(0.0))
-    })
-    .await
-    .map_err(|err| err.to_string())?;
-    let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-    match &graph {
-        Ok(graph_data) => state.semantic.debug_state().record_timing(
-            "map",
-            "map_completed",
-            Some(format!(
-                "nodes={} edges={}",
-                graph_data.nodes.len(),
-                graph_data.edges.len()
-            )),
-            elapsed,
-            |metrics| {
-                metrics.map_request_count += 1;
-                metrics.map_duration_total_millis += elapsed;
-                metrics.map_duration_max_millis = metrics.map_duration_max_millis.max(elapsed);
-            },
-        ),
-        Err(error) => state.semantic.debug_state().record_timing(
-            "map",
-            "map_failed",
-            Some(error.clone()),
-            elapsed,
-            |metrics| {
-                metrics.map_request_count += 1;
-                metrics.map_duration_total_millis += elapsed;
-                metrics.map_duration_max_millis = metrics.map_duration_max_millis.max(elapsed);
-            },
-        ),
-    }
-    graph
-}
-
-#[tauri::command]
 pub(crate) fn get_semantic_debug_metrics(
     state: State<'_, AppState>,
 ) -> Result<SemanticDebugSnapshot, String> {
@@ -457,6 +416,7 @@ fn load_note_session_from_notes_dir(notes_dir: &Path) -> Result<NoteSession, Str
     let mut state = read_state(notes_dir)?;
     let Some(last_opened_path) = state.last_opened_path.clone() else {
         return Ok(NoteSession {
+            title: String::new(),
             markdown: String::new(),
             path: None,
         });
@@ -470,6 +430,7 @@ fn load_note_session_from_notes_dir(notes_dir: &Path) -> Result<NoteSession, Str
             .retain(|path| PathBuf::from(path) != note_path);
         write_state(notes_dir, &state)?;
         return Ok(NoteSession {
+            title: String::new(),
             markdown: String::new(),
             path: None,
         });
@@ -494,8 +455,15 @@ fn open_note_from_notes_dir(notes_dir: &Path, path: String) -> Result<NoteSessio
 
 fn read_note_session_from_path(note_path: &Path) -> Result<NoteSession, String> {
     let markdown = fs::read_to_string(note_path).map_err(|err| err.to_string())?;
+    let fallback_title = note_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let (title, body) = note::extract_file_name_title_and_body(&markdown, &fallback_title);
     Ok(NoteSession {
-        markdown: note::strip_frontmatter(&markdown),
+        title,
+        markdown: body,
         path: Some(note_path.to_string_lossy().into_owned()),
     })
 }
@@ -591,6 +559,7 @@ mod tests {
         let session = load_note_session_from_notes_dir(notes_dir).expect("load note session");
         let state = read_state(notes_dir).expect("read state");
 
+        assert_eq!(session.title, "");
         assert_eq!(session.markdown, "");
         assert_eq!(session.path, None);
         assert_eq!(state.last_opened_path, None);
@@ -612,7 +581,8 @@ mod tests {
         let state = read_state(notes_dir).expect("read state");
 
         assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
-        assert_eq!(session.markdown, "# Open Me\n\nBody");
+        assert_eq!(session.title, "Open Me");
+        assert_eq!(session.markdown, "Body");
         assert_eq!(
             state.last_opened_path,
             Some(note_path.to_string_lossy().into_owned())
@@ -648,7 +618,8 @@ mod tests {
         let state = read_state(notes_dir).expect("read state");
 
         assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
-        assert_eq!(session.markdown, "# Read Me\n\nBody");
+        assert_eq!(session.title, "Read Me");
+        assert_eq!(session.markdown, "Body");
         assert_eq!(
             state.last_opened_path,
             Some(existing_open_path.to_string_lossy().into_owned())
@@ -895,7 +866,7 @@ mod tests {
         assert_eq!(heading_target.match_text, "## Ideas");
 
         assert_eq!(fallback_target.section_label, "Title");
-        assert_eq!(fallback_target.match_text, "Project Atlas");
+        assert_eq!(fallback_target.match_text, "project");
     }
 
     #[test]
@@ -967,7 +938,8 @@ mod tests {
     #[test]
     fn command_payload_json_contracts_remain_stable() {
         let session = NoteSession {
-            markdown: "# Title".to_string(),
+            title: "Title".to_string(),
+            markdown: "Body".to_string(),
             path: Some("/notes/title.md".to_string()),
         };
         let resolved_note_link = ResolvedNoteLink {
@@ -1003,7 +975,8 @@ mod tests {
         assert_eq!(
             serde_json::to_value(session).expect("serialize note session"),
             json!({
-                "markdown": "# Title",
+                "title": "Title",
+                "markdown": "Body",
                 "path": "/notes/title.md",
             })
         );

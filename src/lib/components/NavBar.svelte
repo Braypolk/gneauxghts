@@ -1,12 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { House, Inbox, ListTodo, Network, Settings } from 'lucide-svelte';
+  import { House, Inbox, ListTodo, Settings } from 'lucide-svelte';
 
   const navLinks = [
     { href: '/', label: 'Note', icon: House },
     { href: '/inbox', label: 'Inbox', icon: Inbox },
-    { href: '/map', label: 'Map', icon: Network },
     { href: '/list', label: 'List', icon: ListTodo }
   ] as const;
   const settingsHref = '/settings';

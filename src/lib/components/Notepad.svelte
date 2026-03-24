@@ -7,7 +7,6 @@
   import type { RelatedNoteItem, RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
   import type { NotepadEditorController } from './notepadEditor';
   import type { ActiveWikilink } from './notepadWikilinks';
-  import { composeMarkdown } from './notepadDocument';
   import { focusEditorAtEnd, focusInputAtEnd } from './notepadNavigation';
   import {
     navigateToPendingTaskTarget,
@@ -57,6 +56,7 @@
   let title = $state('');
   let bodyMarkdown = $state('');
   let currentNotePath = $state<string | null>(null);
+  let lastSavedTitle = '';
   let lastSavedMarkdown = '';
   let lastSavedPath: string | null = null;
   let canUnforget = $state(false);
@@ -92,12 +92,13 @@
     title = snapshot.title;
     bodyMarkdown = snapshot.bodyMarkdown;
     currentNotePath = snapshot.currentNotePath;
+    lastSavedTitle = snapshot.lastSavedTitle;
     lastSavedMarkdown = snapshot.lastSavedMarkdown;
     lastSavedPath = snapshot.lastSavedPath;
   }
 
   function getCurrentMarkdown() {
-    return composeMarkdown(title, bodyMarkdown);
+    return bodyMarkdown;
   }
 
   function handleEditorMarkdownChange(nextMarkdown: string) {
@@ -121,6 +122,10 @@
     scheduleAutosave();
     scheduleSearch();
     scheduleRelated();
+  }
+
+  function handleTitleBlur() {
+    flushPendingAutosave();
   }
 
   function focusTitleAtEnd() {
@@ -257,6 +262,7 @@
   }
 
   const searchController = createNotepadSearchController({
+    getCurrentTitle: () => title,
     getCurrentMarkdown,
     getCurrentPath: () => currentNotePath,
     getSearchMode: () => searchMode,
@@ -290,6 +296,7 @@
   });
 
   const relatedController = createNotepadRelatedController({
+    getCurrentTitle: () => title,
     getCurrentMarkdown,
     getCurrentPath: () => currentNotePath,
     getScope: () => relatedScope,
@@ -382,6 +389,10 @@
     setCurrentPath: (value) => {
       currentNotePath = value;
     },
+    getLastSavedTitle: () => lastSavedTitle,
+    setLastSavedTitle: (value) => {
+      lastSavedTitle = value;
+    },
     getLastSavedMarkdown: () => lastSavedMarkdown,
     setLastSavedMarkdown: (value) => {
       lastSavedMarkdown = value;
@@ -429,6 +440,7 @@
       wikilinkAutocomplete = value;
     },
     getCurrentPath: () => currentNotePath,
+    getCurrentTitle: () => title,
     getCurrentMarkdown,
     getEditorController: () => crepe,
     cancelPendingAutosave,
@@ -702,6 +714,7 @@
                   placeholder="Title"
                   value={title}
                   oninput={handleTitleInput}
+                  onblur={handleTitleBlur}
                   onkeydown={handleTitleKeydown}
                 />
               </div>

@@ -68,8 +68,14 @@ pub(super) fn resolve_sync_conflict_keep_local(
     let connection = open_database()?;
     let canonical_path = resolve_conflict_canonical_path(&connection, &record);
     let previous_canonical_path = canonical_path.clone();
+    let title = canonical_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     let saved_path = persist_note(
         notes_dir,
+        &title,
         &record.detail.local_markdown,
         Some(&canonical_path),
     )?

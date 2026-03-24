@@ -88,8 +88,7 @@ pub fn run() {
             commands::rebuild_semantic_index,
             commands::pause_semantic_indexing,
             commands::resume_semantic_indexing,
-            commands::prepare_semantic_model,
-            commands::get_map_graph
+            commands::prepare_semantic_model
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

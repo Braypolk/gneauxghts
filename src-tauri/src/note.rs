@@ -60,45 +60,40 @@ pub(crate) fn normalize_wikilink_markdown(markdown: &str) -> String {
         .replace("\\]\\]", "]]")
 }
 
-pub(crate) fn extract_title_and_body(markdown: &str, fallback_title: &str) -> (String, String) {
+pub(crate) fn extract_file_name_title_and_body(
+    markdown: &str,
+    fallback_title: &str,
+) -> (String, String) {
     let normalized = strip_frontmatter(markdown);
-    let lines = normalized.lines().collect::<Vec<_>>();
-    let first_content_index = lines.iter().position(|line| !line.trim().is_empty());
-
-    let Some(first_content_index) = first_content_index else {
-        return (fallback_title.to_string(), String::new());
-    };
-
-    let first_content_line = lines[first_content_index].trim();
-    let heading = first_content_line
-        .strip_prefix("# ")
-        .map(str::trim)
-        .filter(|heading| !heading.is_empty());
-
-    if let Some(title) = heading {
-        let mut remaining_lines = lines[first_content_index + 1..].to_vec();
-        if remaining_lines
-            .first()
-            .is_some_and(|line| line.trim().is_empty())
-        {
-            remaining_lines.remove(0);
-        }
-
-        return (title.to_string(), remaining_lines.join("\n"));
-    }
-
-    (fallback_title.to_string(), normalized)
+    (fallback_title.to_string(), strip_leading_title_heading(&normalized))
 }
 
 pub(crate) fn derive_file_stem(markdown: &str, default_name: &str, max_len: usize) -> String {
-    let body = strip_frontmatter(markdown);
-    let first_line = body
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .map(str::trim)
-        .unwrap_or(default_name);
+    derive_file_stem_from_title_and_markdown("", markdown, default_name, max_len)
+}
 
-    let heading_trimmed = first_line
+pub(crate) fn derive_file_stem_from_title_and_markdown(
+    title: &str,
+    markdown: &str,
+    default_name: &str,
+    max_len: usize,
+) -> String {
+    let preferred_title = title.trim();
+    let body = strip_frontmatter(markdown);
+    let first_line = if preferred_title.is_empty() {
+        body.lines()
+            .find(|line| !line.trim().is_empty())
+            .map(str::trim)
+            .unwrap_or(default_name)
+    } else {
+        preferred_title
+    };
+
+    sanitize_file_stem(first_line, default_name, max_len)
+}
+
+fn sanitize_file_stem(value: &str, default_name: &str, max_len: usize) -> String {
+    let heading_trimmed = value
         .trim_start_matches('#')
         .trim()
         .trim_matches('`')
@@ -137,6 +132,33 @@ pub(crate) fn derive_file_stem(markdown: &str, default_name: &str, max_len: usiz
     }
 
     cleaned.chars().take(max_len).collect()
+}
+
+fn strip_leading_title_heading(markdown: &str) -> String {
+    let normalized = markdown.replace("\r\n", "\n");
+    let mut lines = normalized.lines().map(str::to_string).collect::<Vec<_>>();
+    let Some(first_content_index) = lines.iter().position(|line| !line.trim().is_empty()) else {
+        return normalized;
+    };
+
+    let Some(_) = lines[first_content_index]
+        .trim()
+        .strip_prefix("# ")
+        .map(str::trim)
+        .filter(|heading| !heading.is_empty())
+    else {
+        return normalized;
+    };
+
+    lines.remove(first_content_index);
+    if lines
+        .get(first_content_index)
+        .is_some_and(|line| line.trim().is_empty())
+    {
+        lines.remove(first_content_index);
+    }
+
+    lines.join("\n")
 }
 
 pub(crate) fn prepare_note_markdown(
@@ -348,7 +370,15 @@ pub(crate) fn current_timestamp_rfc3339() -> Result<String, String> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|err| err.to_string())?;
-    let total_seconds = duration.as_secs() as i64;
+    Ok(timestamp_seconds_to_rfc3339(duration.as_secs()))
+}
+
+pub(crate) fn timestamp_millis_to_rfc3339(timestamp_millis: u64) -> String {
+    timestamp_seconds_to_rfc3339(timestamp_millis / 1_000)
+}
+
+fn timestamp_seconds_to_rfc3339(total_seconds: u64) -> String {
+    let total_seconds = total_seconds as i64;
     let days = total_seconds.div_euclid(86_400);
     let seconds_of_day = total_seconds.rem_euclid(86_400);
     let (year, month, day) = civil_from_days(days);
@@ -356,9 +386,9 @@ pub(crate) fn current_timestamp_rfc3339() -> Result<String, String> {
     let minute = (seconds_of_day % 3_600) / 60;
     let second = seconds_of_day % 60;
 
-    Ok(format!(
+    format!(
         "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
-    ))
+    )
 }
 
 fn civil_from_days(days: i64) -> (i64, i64, i64) {
@@ -378,7 +408,8 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_title_and_body, normalize_wikilink_markdown, parse_note, prepare_note_markdown,
+        extract_file_name_title_and_body, normalize_wikilink_markdown, parse_note,
+        prepare_note_markdown,
     };
 
     #[test]
@@ -398,10 +429,10 @@ mod tests {
     }
 
     #[test]
-    fn extract_title_and_body_ignores_frontmatter() {
-        let (title, body) = extract_title_and_body(
-            "---\ngneauxghts:\n  id: 01TEST\n  created_at: 2026-01-01T00:00:00Z\n  updated_at: 2026-01-02T00:00:00Z\n  trashed_at: null\n---\n\n# Launch Plan\n\nBody",
-            "Fallback",
+    fn extract_file_name_title_and_body_uses_file_name_and_strips_leading_heading() {
+        let (title, body) = extract_file_name_title_and_body(
+            "---\ngneauxghts:\n  id: 01TEST\n---\n\n# Launch Plan\n\nBody",
+            "Launch Plan",
         );
 
         assert_eq!(title, "Launch Plan");

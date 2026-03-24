@@ -110,20 +110,28 @@ export function hasWikilinkAlias(activeWikilink: ActiveWikilink | null) {
 export async function autocompleteNoteLinks(
   rawTarget: string,
   currentPath: string | null,
+  currentTitle: string,
   currentMarkdown: string
 ) {
   return invoke<NoteLinkSuggestion[]>('autocomplete_note_links', {
     rawTarget,
     currentPath,
+    currentTitle,
     currentMarkdown,
     limit: 8
   });
 }
 
-export async function resolveNoteLink(rawTarget: string, currentPath: string | null, currentMarkdown: string) {
+export async function resolveNoteLink(
+  rawTarget: string,
+  currentPath: string | null,
+  currentTitle: string,
+  currentMarkdown: string
+) {
   return invoke<ResolvedNoteLink | null>('resolve_note_link', {
     rawTarget,
     currentPath,
+    currentTitle,
     currentMarkdown
   });
 }

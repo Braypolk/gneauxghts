@@ -468,20 +468,10 @@ fn resolve_sync_conflict(
 }
 
 fn write_conflicted_copy(notes_dir: &Path, markdown: &str) -> Result<PathBuf, String> {
-    let (title, _) = note::extract_title_and_body(markdown, "Conflicted Note");
-    let conflict_markdown = if title.trim().is_empty() {
-        note::strip_frontmatter(markdown)
-    } else {
-        let body = note::strip_frontmatter(markdown);
-        body.replacen(
-            &format!("# {title}"),
-            &format!("# {title} (Conflicted Copy)"),
-            1,
-        )
-    };
-    let prepared = note::prepare_note_markdown(&conflict_markdown, None, Some(None))?.0;
-    let file_stem = crate::state::derive_file_stem(&prepared);
-    let target_path = resolve_unique_sync_path(notes_dir, &format!("{file_stem}.md"));
+    let body = note::strip_frontmatter(markdown);
+    let file_stem = crate::state::derive_file_stem(&body);
+    let target_path = resolve_unique_sync_path(notes_dir, &format!("{file_stem} (Conflicted Copy).md"));
+    let prepared = note::prepare_note_markdown(&body, None, Some(None))?.0;
     fs::write(&target_path, prepared).map_err(|err| err.to_string())?;
     Ok(target_path)
 }
@@ -608,7 +598,7 @@ fn reconcile_forgotten_state(
             .iter()
             .any(|forgotten_note| forgotten_note.forgotten_path == target_path.to_string_lossy())
         {
-            let (title, _) = note::extract_title_and_body(
+            let (title, _) = note::extract_file_name_title_and_body(
                 &remote_head.markdown,
                 &Path::new(&remote_head.relative_path)
                     .file_stem()

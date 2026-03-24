@@ -3,14 +3,19 @@ use super::{
     chunking::chunk_markdown,
     db::{
         content_hash, delete_note, ensure_schema, insert_job, load_existing_chunk_embeddings,
-        load_note_chunk_labels, load_stored_note_records, open_database, rebuild_edges, update_job,
-        upsert_note_chunks,
+        load_note_chunk_labels, load_stored_note_records, open_database, rebuild_edges,
+        update_job, upsert_note_chunks,
     },
     debug::SemanticDebugState,
     embed::{EmbeddingInputKind, EmbeddingProvider},
     RuntimeState,
 };
-use crate::{index::is_note_file, state::derive_file_stem, time::current_time_millis};
+use crate::{
+    index::is_note_file,
+    note,
+    state::derive_file_stem,
+    time::current_time_millis,
+};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -417,8 +422,9 @@ fn process_note_batch(
     let mut needs_ann_rebuild = ann.needs_rebuild();
 
     for note_path in deleted_notes {
-        let previous_labels = load_note_chunk_labels(connection, &note_path.to_string_lossy())?;
-        delete_note(connection, &note_path.to_string_lossy())?;
+        let path_str = note_path.to_string_lossy().into_owned();
+        let previous_labels = load_note_chunk_labels(connection, &path_str)?;
+        delete_note(connection, &path_str)?;
         if !ann.apply_note_delete(&previous_labels)? {
             needs_ann_rebuild = true;
         }
@@ -477,6 +483,24 @@ fn index_note_content(
     let chunked_note = chunk_markdown(markdown, &fallback_title);
     let note_path = note_path.to_string_lossy().into_owned();
     let stored_chunks = load_existing_chunk_embeddings(connection, &note_path)?;
+    let parsed_note = note::parse_note(markdown);
+    let fallback_timestamp = note::timestamp_millis_to_rfc3339(modified_millis);
+    let created_at = parsed_note
+        .frontmatter
+        .managed
+        .as_ref()
+        .map(|metadata| metadata.created_at.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&fallback_timestamp)
+        .to_string();
+    let updated_at = parsed_note
+        .frontmatter
+        .managed
+        .as_ref()
+        .map(|metadata| metadata.updated_at.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&fallback_timestamp)
+        .to_string();
 
     let mut embeddings = vec![Vec::new(); chunked_note.chunks.len()];
     let mut texts_to_embed = Vec::new();
@@ -505,6 +529,8 @@ fn index_note_content(
         &chunked_note.title,
         modified_millis,
         &chunked_note.content_hash,
+        &created_at,
+        &updated_at,
         &chunked_note.chunks,
         &embeddings,
     )?;

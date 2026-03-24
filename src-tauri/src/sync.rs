@@ -645,7 +645,7 @@ fn read_conflict_title(note_path: &Path) -> String {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            note::extract_title_and_body(&markdown, &fallback).0
+            note::extract_file_name_title_and_body(&markdown, &fallback).0
         })
         .filter(|title| !title.trim().is_empty())
         .unwrap_or_else(|| {

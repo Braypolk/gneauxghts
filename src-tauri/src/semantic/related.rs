@@ -12,6 +12,7 @@ impl ActiveSemanticState {
     pub(super) fn related_notes(
         &self,
         current_path: Option<&str>,
+        current_title: &str,
         current_markdown: &str,
         selected_text: Option<&str>,
         limit: usize,
@@ -82,6 +83,7 @@ impl ActiveSemanticState {
         let cache_key = build_related_cache_key(
             revision,
             current_path,
+            current_title,
             current_markdown,
             normalized_selection.as_deref(),
             limit,
@@ -197,6 +199,7 @@ impl ActiveSemanticState {
             }
 
             let query_text = build_selection_query_text(
+                current_title,
                 current_markdown,
                 normalized_selection.as_deref().unwrap_or_default(),
             );
@@ -333,6 +336,7 @@ fn normalize_related_text(text: &str) -> String {
 fn build_related_cache_key(
     revision: u64,
     current_path: Option<&str>,
+    current_title: &str,
     current_markdown: &str,
     selected_text: Option<&str>,
     limit: usize,
@@ -342,7 +346,7 @@ fn build_related_cache_key(
     } else {
         "note"
     };
-    let base_hash = content_hash(current_markdown);
+    let base_hash = content_hash(&format!("{current_title}\n{current_markdown}"));
     let selected_hash = selected_text
         .map(content_hash)
         .unwrap_or_else(|| "none".to_string());
@@ -352,8 +356,8 @@ fn build_related_cache_key(
     )
 }
 
-fn build_selection_query_text(current_markdown: &str, selected_text: &str) -> String {
-    let chunked = chunking::chunk_markdown(current_markdown, "");
+fn build_selection_query_text(current_title: &str, current_markdown: &str, selected_text: &str) -> String {
+    let chunked = chunking::chunk_markdown(current_markdown, current_title);
     if chunked.title.trim().is_empty() {
         selected_text.to_string()
     } else {

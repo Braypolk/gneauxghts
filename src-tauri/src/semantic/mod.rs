@@ -11,8 +11,8 @@ use self::{
     ann::AnnIndexState,
     db::{
         content_hash, count_indexed_items, ensure_schema, load_chunks_by_ann_labels,
-        load_graph_data, load_latest_job, load_note_record, load_related_note_previews,
-        load_semantic_settings, open_database, save_semantic_settings,
+        load_latest_job, load_note_record, load_related_note_previews, load_semantic_settings,
+        open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
@@ -128,32 +128,6 @@ pub(crate) struct RelatedNotesResponse {
     pub(crate) scope: String,
     pub(crate) reason: Option<String>,
     pub(crate) items: Vec<RelatedNoteMatch>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MapNode {
-    pub(crate) note_path: String,
-    pub(crate) title: String,
-    pub(crate) degree: usize,
-    pub(crate) x: f32,
-    pub(crate) y: f32,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MapEdge {
-    pub(crate) source_note_path: String,
-    pub(crate) target_note_path: String,
-    pub(crate) score: f32,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MapGraph {
-    pub(crate) nodes: Vec<MapNode>,
-    pub(crate) edges: Vec<MapEdge>,
-    pub(crate) min_score: f32,
 }
 
 #[derive(Default)]
@@ -498,13 +472,14 @@ impl SemanticState {
     pub(crate) fn related_notes(
         &self,
         current_path: Option<&str>,
+        current_title: &str,
         current_markdown: &str,
         selected_text: Option<&str>,
         limit: usize,
     ) -> Result<RelatedNotesResponse, String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
-                state.related_notes(current_path, current_markdown, selected_text, limit)
+                state.related_notes(current_path, current_title, current_markdown, selected_text, limit)
             }
             SemanticStateInner::Disabled(state) => Ok(RelatedNotesResponse {
                 status: "unavailable".to_string(),
@@ -515,16 +490,6 @@ impl SemanticState {
         }
     }
 
-    pub(crate) fn map_graph(&self, limit: usize, min_score: f32) -> Result<MapGraph, String> {
-        match &self.inner {
-            SemanticStateInner::Active(state) => state.map_graph(limit, min_score),
-            SemanticStateInner::Disabled(_) => Ok(MapGraph {
-                nodes: Vec::new(),
-                edges: Vec::new(),
-                min_score,
-            }),
-        }
-    }
 }
 
 impl ActiveSemanticState {
@@ -731,13 +696,6 @@ impl ActiveSemanticState {
                     metrics.ann_query_duration_max_millis.max(elapsed);
             });
         Ok(matches)
-    }
-
-    fn map_graph(&self, limit: usize, min_score: f32) -> Result<MapGraph, String> {
-        let connection = open_database(&self.db_path)?;
-        ensure_schema(&connection)?;
-        let graph = load_graph_data(&connection, limit, min_score)?;
-        Ok(graph)
     }
 }
 
