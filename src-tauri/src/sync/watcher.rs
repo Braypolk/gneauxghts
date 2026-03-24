@@ -34,7 +34,7 @@ pub(super) fn handle_watch_result(
         if !seen_paths.insert(path.clone()) {
             continue;
         }
-        if !is_watchable_markdown_path(&path) {
+        if !is_watchable_markdown_path(&path, &notes_dir) {
             continue;
         }
         handle_watched_path_change(app_handle, &connection, &state, &notes_dir, &path)?;
@@ -50,14 +50,14 @@ fn should_process_watch_event(kind: &EventKind) -> bool {
             | EventKind::Modify(ModifyKind::Data(_))
             | EventKind::Modify(ModifyKind::Name(_))
             | EventKind::Modify(ModifyKind::Any)
-            | EventKind::Modify(ModifyKind::Metadata(_))
             | EventKind::Remove(_)
     )
 }
 
-fn is_watchable_markdown_path(path: &Path) -> bool {
+fn is_watchable_markdown_path(path: &Path, notes_dir: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        && !is_forgotten_note_path(path, notes_dir)
 }
 
 fn handle_watched_path_change(
@@ -129,5 +129,51 @@ fn handle_watched_path_change(
                 },
             )
             .map_err(|err| err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_watchable_markdown_path, should_process_watch_event};
+    use notify::{
+        event::{CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode},
+        EventKind,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn ignores_metadata_only_changes() {
+        assert!(!should_process_watch_event(&EventKind::Modify(
+            ModifyKind::Metadata(MetadataKind::Any),
+        )));
+    }
+
+    #[test]
+    fn keeps_processing_content_and_lifecycle_changes() {
+        assert!(should_process_watch_event(&EventKind::Create(
+            CreateKind::Any,
+        )));
+        assert!(should_process_watch_event(&EventKind::Modify(
+            ModifyKind::Data(DataChange::Any),
+        )));
+        assert!(should_process_watch_event(&EventKind::Modify(
+            ModifyKind::Name(RenameMode::Any),
+        )));
+        assert!(should_process_watch_event(&EventKind::Modify(
+            ModifyKind::Any,
+        )));
+        assert!(should_process_watch_event(&EventKind::Remove(
+            RemoveKind::Any,
+        )));
+    }
+
+    #[test]
+    fn ignores_forgotten_note_paths() {
+        let notes_dir = Path::new("/tmp/Gneauxghts");
+        let forgotten_note = Path::new("/tmp/Gneauxghts/.forgotten/Archived Note.md");
+        let active_note = Path::new("/tmp/Gneauxghts/Active Note.md");
+
+        assert!(!is_watchable_markdown_path(forgotten_note, notes_dir));
+        assert!(is_watchable_markdown_path(active_note, notes_dir));
     }
 }
