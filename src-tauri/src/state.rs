@@ -586,11 +586,12 @@ mod tests {
         derive_file_stem, forgotten_notes_root, initialize_app_data_dir, persist_note, read_state,
         write_state, PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
     };
-    use crate::test_support::TestDir;
+    use crate::test_support::{TestDir, TEST_ENV_GUARD};
     use std::{collections::HashMap, fs};
 
     #[test]
     fn derive_file_stem_sanitizes_invalid_characters_and_truncates() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
         let app_data_dir = TestDir::new("state-app-data-derive");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let markdown =
@@ -607,6 +608,7 @@ mod tests {
 
     #[test]
     fn persist_note_renames_existing_file_when_title_changes() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
         let app_data_dir = TestDir::new("state-app-data-persist");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-persist-note");
@@ -632,6 +634,7 @@ mod tests {
 
     #[test]
     fn read_state_prunes_invalid_paths_and_dedupes_entries() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
         let app_data_dir = TestDir::new("state-app-data-prune");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-pruning");

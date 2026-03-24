@@ -2,8 +2,11 @@ use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+pub(crate) static TEST_ENV_GUARD: Mutex<()> = Mutex::new(());
 
 pub(crate) struct TestDir {
     path: PathBuf,

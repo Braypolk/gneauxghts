@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
   import {
     ArrowDown,
@@ -16,45 +14,18 @@
     RefreshCw,
     Trash2
   } from 'lucide-svelte';
-  import { storePendingTaskTarget } from '$lib/taskNavigation';
-
-  interface TaskItem {
-    taskKey: string;
-    notePath: string;
-    fileName: string;
-    noteTitle: string;
-    sectionLabel: string | null;
-    text: string;
-    completed: boolean;
-    hidden: boolean;
-    noteHidden: boolean;
-    noteCollapsed: boolean;
-    depth: number;
-    lineNumber: number;
-    createdAtMillis: number;
-    updatedAtMillis: number;
-  }
-
-  interface TaskGroup {
-    notePath: string;
-    noteTitle: string;
-    fileName: string;
-    noteHidden: boolean;
-    noteCollapsed: boolean;
-    displayTasks: TaskItem[];
-    hiddenCount: number;
-    visibleCount: number;
-    displayCount: number;
-  }
-
-  type TaskFilter = 'open' | 'completed' | 'all';
+  import {
+    createTaskListController,
+    type TaskFilter,
+    type TaskGroup,
+    type TaskItem
+  } from './taskListController';
 
   const filterOptions = [
     { id: 'all', label: 'All tasks' },
     { id: 'open', label: 'Open' },
     { id: 'completed', label: 'Completed' }
   ] as const satisfies ReadonlyArray<{ id: TaskFilter; label: string }>;
-  const TASK_FILTER_STORAGE_KEY = 'gneauxghts.master-task-filter';
 
   let filter = $state<TaskFilter>('all');
   let showHidden = $state(false);
@@ -63,7 +34,6 @@
   let deletingTaskKeys = $state<Record<string, boolean>>({});
   let isLoading = $state(true);
   let errorMessage = $state('');
-  let activeRequest = 0;
 
   const groupedTasks = $derived.by(() => {
     const groups = new Map<string, TaskGroup>();
@@ -114,231 +84,39 @@
     return `${count} total ${noun}`;
   });
 
-  async function loadTasks({ background = false } = {}) {
-    const requestId = ++activeRequest;
-
-    if (!background) {
-      isLoading = true;
-    }
-
-    try {
-      const nextTasks = await invoke<TaskItem[]>('list_tasks', { filter });
-
-      if (requestId !== activeRequest) return;
-      tasks = nextTasks;
-      errorMessage = '';
-    } catch (error) {
-      if (requestId !== activeRequest) return;
-      console.error('Failed to load tasks:', error);
-      errorMessage = 'Unable to load the master task list.';
-    } finally {
-      if (requestId === activeRequest) {
-        isLoading = false;
-      }
-    }
-  }
-
-  function setFilter(nextFilter: TaskFilter) {
-    if (filter === nextFilter) return;
-    filter = nextFilter;
-    persistTaskFilter(nextFilter);
-    void loadTasks({ background: tasks.length > 0 });
-  }
-
-  function refreshTasks() {
-    void loadTasks({ background: tasks.length > 0 });
-  }
-
-  function toggleShowHidden() {
-    showHidden = !showHidden;
-  }
-
-  function persistTaskFilter(nextFilter: TaskFilter) {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(TASK_FILTER_STORAGE_KEY, nextFilter);
-  }
-
-  function readStoredTaskFilter(): TaskFilter | null {
-    if (typeof window === 'undefined') return null;
-
-    const storedFilter = window.localStorage.getItem(TASK_FILTER_STORAGE_KEY);
-    if (storedFilter === 'open' || storedFilter === 'completed' || storedFilter === 'all') {
-      return storedFilter;
-    }
-
-    return null;
-  }
-
-  function handleWindowFocus() {
-    void loadTasks({ background: true });
-  }
-
-  function handleVisibilityChange() {
-    if (document.visibilityState === 'visible') {
-      void loadTasks({ background: true });
-    }
-  }
-
-  async function toggleNoteCollapsed(group: TaskGroup) {
-    const previousTasks = tasks;
-    tasks = tasks.map((candidate) =>
-      candidate.notePath === group.notePath ? { ...candidate, noteCollapsed: !group.noteCollapsed } : candidate
-    );
-
-    try {
-      await invoke('set_note_collapsed', {
-        notePath: group.notePath,
-        collapsed: !group.noteCollapsed
-      });
-      errorMessage = '';
-    } catch (error) {
-      console.error('Failed to update collapsed note state:', error);
-      tasks = previousTasks;
-      errorMessage = 'Unable to save collapsed files.';
-    }
-  }
-
-  async function setTaskHidden(task: TaskItem, hidden: boolean) {
-    const previousTasks = tasks;
-    tasks = tasks.map((candidate) => (candidate.taskKey === task.taskKey ? { ...candidate, hidden } : candidate));
-
-    try {
-      await invoke('set_task_hidden', {
-        taskKey: task.taskKey,
-        hidden
-      });
-      errorMessage = '';
-    } catch (error) {
-      console.error('Failed to update hidden task state:', error);
-      tasks = previousTasks;
-      errorMessage = 'Unable to update hidden tasks.';
-    }
-  }
-
-  async function toggleTask(task: TaskItem) {
-    togglingTaskKeys = {
-      ...togglingTaskKeys,
-      [task.taskKey]: true
-    };
-
-    try {
-      await invoke('toggle_task', {
-        notePath: task.notePath,
-        lineNumber: task.lineNumber,
-        taskText: task.text
-      });
-      errorMessage = '';
-      await loadTasks({ background: true });
-    } catch (error) {
-      console.error('Failed to toggle task:', error);
-      errorMessage = 'Unable to update task completion.';
-    } finally {
-      const nextTogglingTaskKeys = { ...togglingTaskKeys };
-      delete nextTogglingTaskKeys[task.taskKey];
-      togglingTaskKeys = nextTogglingTaskKeys;
-    }
-  }
-
-  async function setNoteHidden(group: TaskGroup, hidden: boolean) {
-    const previousTasks = tasks;
-    tasks = tasks.map((candidate) =>
-      candidate.notePath === group.notePath ? { ...candidate, noteHidden: hidden } : candidate
-    );
-
-    try {
-      await invoke('set_note_hidden', {
-        notePath: group.notePath,
-        hidden
-      });
-      errorMessage = '';
-    } catch (error) {
-      console.error('Failed to update hidden note state:', error);
-      tasks = previousTasks;
-      errorMessage = 'Unable to update hidden files.';
-    }
-  }
-
-  function buildNoteOrder() {
-    const notePaths = [];
-    const seen = new Set<string>();
-
-    for (const task of tasks) {
-      if (seen.has(task.notePath)) continue;
-      seen.add(task.notePath);
-      notePaths.push(task.notePath);
-    }
-
-    return notePaths;
-  }
+  const taskListController = createTaskListController({
+    getFilter: () => filter,
+    setFilter: (value) => (filter = value),
+    getShowHidden: () => showHidden,
+    setShowHidden: (value) => (showHidden = value),
+    getTasks: () => tasks,
+    setTasks: (value) => (tasks = value),
+    getTogglingTaskKeys: () => togglingTaskKeys,
+    setTogglingTaskKeys: (value) => (togglingTaskKeys = value),
+    getDeletingTaskKeys: () => deletingTaskKeys,
+    setDeletingTaskKeys: (value) => (deletingTaskKeys = value),
+    setIsLoading: (value) => (isLoading = value),
+    setErrorMessage: (value) => (errorMessage = value)
+  });
+  const {
+    loadTasks,
+    readStoredTaskFilter,
+    setActiveFilter,
+    refreshTasks,
+    toggleShowHidden,
+    handleWindowFocus,
+    handleVisibilityChange,
+    toggleNoteCollapsed,
+    setTaskHidden,
+    toggleTask,
+    setNoteHidden,
+    moveNote,
+    openTask,
+    deleteTask
+  } = taskListController;
 
   function taskIndentStyle(depth: number) {
     return `margin-left: ${Math.min(depth, 6) * 1.1}rem;`;
-  }
-
-  async function moveNote(group: TaskGroup, direction: 'up' | 'down') {
-    const noteOrder = buildNoteOrder();
-    const currentIndex = noteOrder.indexOf(group.notePath);
-    if (currentIndex === -1) return;
-
-    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (targetIndex < 0 || targetIndex >= noteOrder.length) return;
-
-    [noteOrder[currentIndex], noteOrder[targetIndex]] = [noteOrder[targetIndex], noteOrder[currentIndex]];
-
-    const previousTasks = tasks;
-    const noteRank = new Map(noteOrder.map((notePath, index) => [notePath, index]));
-    tasks = [...tasks].sort((left, right) => {
-      const leftRank = noteRank.get(left.notePath) ?? Number.MAX_SAFE_INTEGER;
-      const rightRank = noteRank.get(right.notePath) ?? Number.MAX_SAFE_INTEGER;
-
-      return leftRank - rightRank || left.lineNumber - right.lineNumber || left.text.localeCompare(right.text);
-    });
-
-    try {
-      await invoke('set_note_order', { notePaths: noteOrder });
-      errorMessage = '';
-    } catch (error) {
-      console.error('Failed to save note order:', error);
-      tasks = previousTasks;
-      errorMessage = 'Unable to save note order.';
-    }
-  }
-
-  async function openTask(task: TaskItem) {
-    try {
-      await invoke('open_note', { path: task.notePath });
-      storePendingTaskTarget({
-        notePath: task.notePath,
-        text: task.text,
-        lineNumber: task.lineNumber,
-        sectionLabel: task.sectionLabel
-      });
-      await goto('/');
-    } catch (error) {
-      console.error('Failed to open task note:', error);
-      errorMessage = `Unable to open ${task.noteTitle}.`;
-    }
-  }
-
-  async function deleteTask(task: TaskItem) {
-    deletingTaskKeys = { ...deletingTaskKeys, [task.taskKey]: true };
-    try {
-      await invoke('delete_task', {
-        notePath: task.notePath,
-        lineNumber: task.lineNumber,
-        taskText: task.text,
-        taskKey: task.taskKey
-      });
-      errorMessage = '';
-      await loadTasks({ background: true });
-    } catch (error) {
-      console.error('Failed to delete task:', error);
-      errorMessage = 'Unable to delete task.';
-    } finally {
-      const next = { ...deletingTaskKeys };
-      delete next[task.taskKey];
-      deletingTaskKeys = next;
-    }
   }
 
   onMount(() => {
@@ -371,7 +149,7 @@
                   class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
                     filter === option.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                   }`}
-                  onclick={() => setFilter(option.id)}
+                  onclick={() => setActiveFilter(option.id)}
                 >
                   {option.label}
                 </button>

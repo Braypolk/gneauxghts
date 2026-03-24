@@ -1,30 +1,19 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle } from 'lucide-svelte';
   import {
     forgetButtonDurationPreference,
     resolveForgetButtonDurationMs
   } from '$lib/appSettings';
+  import { createBottomBarForgetHoldController } from '$lib/components/bottomBarForgetHold';
+  import {
+    buildHighlightedSegments,
+    createBottomBarSearchController,
+    deriveBottomBarVisibleItems,
+    type BottomBarVisibleItem
+  } from '$lib/components/bottomBarSearchController';
+  import type { RecentTaskItem } from '$lib/components/notepadTypes';
   import type { SearchItem } from '$lib/types/semantic';
-
-  interface TextRange {
-    start: number;
-    end: number;
-  }
-
-  interface RecentTaskItem {
-    taskKey: string;
-    notePath: string;
-    noteTitle: string;
-    text: string;
-    lineNumber: number;
-    updatedAtMillis: number;
-  }
-
-  type VisibleItem =
-    | { kind: 'search'; item: SearchItem }
-    | { kind: 'note'; item: SearchItem }
-    | { kind: 'task'; item: RecentTaskItem };
 
   interface Props {
     canUnforget: boolean;
@@ -75,7 +64,6 @@
   let isSearchFocused = $state(false);
   let activeIndex = $state(0);
   let lastHandledFocusRequest = 0;
-  const FORGET_HOLD_COMPLETION_DELAY_MS = 100;
   let isHoldingForget = $state(false);
   let forgetHoldProgress = $state(0);
   let forgetHoldStartedAt = 0;
@@ -84,78 +72,70 @@
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
 
-  const visibleItems = $derived.by<VisibleItem[]>(() => {
-    if (searchQuery.trim() === '') {
-      return [
-        ...recentNotes.map((item) => ({ kind: 'note' as const, item })),
-        ...recentTasks.map((item) => ({ kind: 'task' as const, item }))
-      ];
-    }
+  const visibleItems = $derived.by<BottomBarVisibleItem[]>(() =>
+    deriveBottomBarVisibleItems(searchQuery, searchResults, recentNotes, recentTasks)
+  );
 
-    return searchResults.map((item) => ({ kind: 'search' as const, item }));
+  const forgetHoldController = createBottomBarForgetHoldController({
+    getIsForgetHoldEnabled: () => isForgetHoldEnabled,
+    getIsHoldingForget: () => isHoldingForget,
+    setIsHoldingForget: (value) => (isHoldingForget = value),
+    getForgetHoldDurationMs: () => forgetHoldDurationMs,
+    getForgetHoldStartedAt: () => forgetHoldStartedAt,
+    setForgetHoldStartedAt: (value) => (forgetHoldStartedAt = value),
+    setForgetHoldProgress: (value) => (forgetHoldProgress = value),
+    getForgetHoldFrame: () => forgetHoldFrame,
+    setForgetHoldFrame: (value) => (forgetHoldFrame = value),
+    getForgetHoldTimeout: () => forgetHoldTimeout,
+    setForgetHoldTimeout: (value) => (forgetHoldTimeout = value),
+    onForget: () => onForget()
   });
+  const {
+    resetForgetHold,
+    handleForgetPointerDown,
+    handleForgetKeyDown,
+    handleForgetKeyUp,
+    handleForgetClick,
+    cancelForgetHold,
+    getForgetButtonAriaLabel
+  } = forgetHoldController;
 
-  function resetActiveIndex() {
-    activeIndex = 0;
-  }
-
-  function clearForgetHoldFrame() {
-    if (forgetHoldFrame === null) return;
-    window.cancelAnimationFrame(forgetHoldFrame);
-    forgetHoldFrame = null;
-  }
-
-  function clearForgetHoldTimeout() {
-    if (forgetHoldTimeout === null) return;
-    window.clearTimeout(forgetHoldTimeout);
-    forgetHoldTimeout = null;
-  }
-
-  function resetForgetHold() {
-    clearForgetHoldFrame();
-    clearForgetHoldTimeout();
-    isHoldingForget = false;
-    forgetHoldProgress = 0;
-    forgetHoldStartedAt = 0;
-  }
-
-  function tickForgetHoldProgress() {
-    if (!isHoldingForget || !isForgetHoldEnabled) return;
-
-    const elapsed = performance.now() - forgetHoldStartedAt;
-    forgetHoldProgress = Math.min(elapsed / forgetHoldDurationMs, 1);
-
-    if (forgetHoldProgress >= 1) {
-      forgetHoldFrame = null;
-      return;
-    }
-
-    forgetHoldFrame = window.requestAnimationFrame(tickForgetHoldProgress);
-  }
-
-  function beginForgetHold() {
-    if (!isForgetHoldEnabled || isHoldingForget) return;
-
-    clearForgetHoldFrame();
-    clearForgetHoldTimeout();
-    isHoldingForget = true;
-    forgetHoldProgress = 0;
-    forgetHoldStartedAt = performance.now();
-    tickForgetHoldProgress();
-    forgetHoldTimeout = window.setTimeout(() => {
-      clearForgetHoldFrame();
-      forgetHoldProgress = 1;
-      forgetHoldTimeout = window.setTimeout(() => {
-        resetForgetHold();
-        onForget();
-      }, FORGET_HOLD_COMPLETION_DELAY_MS);
-    }, forgetHoldDurationMs);
-  }
-
-  function cancelForgetHold() {
-    if (!isHoldingForget) return;
-    resetForgetHold();
-  }
+  const searchController = createBottomBarSearchController({
+    getSearchInput: () => searchInput,
+    getSearchResultsViewport: () => searchResultsViewport,
+    getSearchMode: () => searchMode,
+    getSearchQuery: () => searchQuery,
+    getSearchResults: () => searchResults,
+    getRecentNotes: () => recentNotes,
+    getRecentTasks: () => recentTasks,
+    getVisibleItems: () => visibleItems,
+    getIsSearchFocused: () => isSearchFocused,
+    setIsSearchFocused: (value) => (isSearchFocused = value),
+    getActiveIndex: () => activeIndex,
+    setActiveIndex: (value) => (activeIndex = value),
+    getLastHandledFocusRequest: () => lastHandledFocusRequest,
+    setLastHandledFocusRequest: (value) => (lastHandledFocusRequest = value),
+    onSearchInput: (value) => onSearchInput(value),
+    onSearchModeChange: (mode) => onSearchModeChange(mode),
+    onSearchSelect: (result) => onSearchSelect(result),
+    onRecentNoteSelect: (result) => onRecentNoteSelect(result),
+    onRecentTaskSelect: (task) => onRecentTaskSelect(task),
+    onRecentNoteShortcut: (index) => onRecentNoteShortcut(index),
+    onRecentTaskShortcut: (index) => onRecentTaskShortcut(index),
+    onSearchFocus: () => onSearchFocus()
+  });
+  const {
+    resetActiveIndex,
+    handleSearchInput,
+    handleSearchFocus,
+    handleSearchBlur,
+    handleSearchModeClick,
+    getSearchPlaceholder,
+    handleSearchKeydown,
+    selectItem,
+    handleFocusRequest,
+    syncActiveItemIntoView
+  } = searchController;
 
   $effect(() => {
     visibleItems;
@@ -176,203 +156,19 @@
 
   $effect(() => {
     focusRequest;
-    if (focusRequest <= lastHandledFocusRequest) return;
-    lastHandledFocusRequest = focusRequest;
-    if (!searchInput) return;
-    searchInput.focus();
-    const end = searchInput.value.length;
-    searchInput.setSelectionRange(end, end);
-    isSearchFocused = true;
-    onSearchFocus();
+    handleFocusRequest(focusRequest);
   });
 
   $effect(() => {
     isSearchFocused;
     activeIndex;
     visibleItems;
-
-    if (!isSearchFocused || !searchResultsViewport) return;
-
-    void tick().then(() => {
-      requestAnimationFrame(() => {
-        const activeItem = searchResultsViewport?.querySelector<HTMLElement>('[data-search-result-active="true"]');
-        activeItem?.scrollIntoView({ block: 'nearest' });
-      });
-    });
+    void syncActiveItemIntoView();
   });
-
-  function handleSearchInput(event: Event) {
-    onSearchInput((event.currentTarget as HTMLInputElement).value);
-  }
-
-  function handleSearchFocus() {
-    isSearchFocused = true;
-    onSearchFocus();
-  }
-
-  function handleSearchBlur(event: FocusEvent) {
-    const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && event.currentTarget instanceof HTMLElement && event.currentTarget.contains(nextTarget)) {
-      return;
-    }
-
-    isSearchFocused = false;
-    resetActiveIndex();
-  }
-
-  function closeSearchPanel() {
-    isSearchFocused = false;
-    resetActiveIndex();
-    searchInput?.blur();
-  }
-
-  function handleForgetPointerDown(event: PointerEvent) {
-    if (!isForgetHoldEnabled || event.button !== 0) return;
-    beginForgetHold();
-  }
-
-  function handleForgetKeyDown(event: KeyboardEvent) {
-    if (!isForgetHoldEnabled || event.repeat || (event.key !== ' ' && event.key !== 'Enter')) return;
-    event.preventDefault();
-    beginForgetHold();
-  }
-
-  function handleForgetKeyUp(event: KeyboardEvent) {
-    if (!isForgetHoldEnabled || (event.key !== ' ' && event.key !== 'Enter')) return;
-    event.preventDefault();
-    cancelForgetHold();
-  }
-
-  function handleForgetClick() {
-    if (isForgetHoldEnabled) return;
-    onForget();
-  }
-
-  function getForgetButtonAriaLabel() {
-    return isForgetHoldEnabled ? 'Hold to forget' : 'Forget';
-  }
 
   onDestroy(() => {
     resetForgetHold();
   });
-
-  async function handleSearchModeClick(mode: 'current' | 'all') {
-    const selectionStart = searchInput?.selectionStart ?? null;
-    const selectionEnd = searchInput?.selectionEnd ?? null;
-    await onSearchModeChange(mode);
-    await tick();
-    requestAnimationFrame(() => {
-      if (!searchInput) return;
-      searchInput.focus();
-      if (selectionStart === null || selectionEnd === null) return;
-      searchInput.setSelectionRange(selectionStart, selectionEnd);
-    });
-  }
-
-  function getSearchPlaceholder() {
-    if (!isSearchFocused) return '';
-    return searchMode === 'current' ? 'Current Gneauxght' : 'All Gneauxghts';
-  }
-
-  function getDigitShortcutIndex(event: KeyboardEvent) {
-    const shortcutMatch = event.code.match(/^Digit(\d)$/);
-    if (!shortcutMatch) {
-      return null;
-    }
-
-    return Number(shortcutMatch[1]) - 1;
-  }
-
-  function handleSearchKeydown(event: KeyboardEvent) {
-    const shortcutIndex = getDigitShortcutIndex(event);
-    if (event.ctrlKey && !event.metaKey && !event.altKey && shortcutIndex !== null) {
-      event.preventDefault();
-
-      if (event.shiftKey) {
-        const task = recentTasks[shortcutIndex];
-        if (task) {
-          selectItem({ kind: 'task', item: task });
-          return;
-        }
-
-        void onRecentTaskShortcut(shortcutIndex);
-        return;
-      }
-
-      const note = recentNotes[shortcutIndex];
-      if (note) {
-        selectItem({ kind: 'note', item: note });
-        return;
-      }
-
-      void onRecentNoteShortcut(shortcutIndex);
-      return;
-    }
-
-    const items = visibleItems;
-    const isPanelVisible = isSearchFocused && (searchQuery.trim() !== '' || recentNotes.length > 0 || recentTasks.length > 0);
-
-    if (event.key === 'Escape') {
-      if (searchQuery.trim() !== '') {
-        onSearchInput('');
-        return;
-      }
-
-      closeSearchPanel();
-      return;
-    }
-
-    if (!isPanelVisible || items.length === 0) {
-      if (event.key === 'Enter' && searchQuery.trim() === '') {
-        event.preventDefault();
-      }
-      return;
-    }
-
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      activeIndex = (activeIndex + 1) % items.length;
-      return;
-    }
-
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      activeIndex = (activeIndex - 1 + items.length) % items.length;
-      return;
-    }
-
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      selectItem(items[activeIndex] ?? items[0]);
-    }
-  }
-
-  function buildHighlightedSegments(text: string, ranges: TextRange[]) {
-    const characters = Array.from(text);
-    const segments: Array<{ text: string; highlighted: boolean }> = [];
-    let cursor = 0;
-
-    for (const range of ranges) {
-      const start = Math.max(0, Math.min(range.start, characters.length));
-      const end = Math.max(start, Math.min(range.end, characters.length));
-
-      if (start > cursor) {
-        segments.push({ text: characters.slice(cursor, start).join(''), highlighted: false });
-      }
-
-      if (end > start) {
-        segments.push({ text: characters.slice(start, end).join(''), highlighted: true });
-      }
-
-      cursor = end;
-    }
-
-    if (cursor < characters.length) {
-      segments.push({ text: characters.slice(cursor).join(''), highlighted: false });
-    }
-
-    return segments.length > 0 ? segments : [{ text, highlighted: false }];
-  }
 
   function getRecentNotesViewportClass() {
     return 'h-[8.25rem] overflow-y-auto';
@@ -404,22 +200,6 @@
 
   function getExcerptClass() {
     return 'line-clamp-3 text-sm leading-relaxed text-muted-foreground';
-  }
-
-  function selectItem(item: VisibleItem) {
-    closeSearchPanel();
-
-    if (item.kind === 'task') {
-      onRecentTaskSelect(item.item);
-      return;
-    }
-
-    if (item.kind === 'note') {
-      onRecentNoteSelect(item.item);
-      return;
-    }
-
-    onSearchSelect(item.item);
   }
 </script>
 
