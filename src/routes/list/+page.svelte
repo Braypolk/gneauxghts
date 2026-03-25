@@ -19,7 +19,7 @@
     type TaskFilter,
     type TaskGroup,
     type TaskItem
-  } from './taskListController';
+  } from '$lib/features/tasks/taskListController';
 
   const filterOptions = [
     { id: 'all', label: 'All tasks' },

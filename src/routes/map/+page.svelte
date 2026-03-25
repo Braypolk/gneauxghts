@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import GraphView from '$lib/components/graph/GraphView.svelte';
-  import GraphToolbar from '$lib/components/graph/GraphToolbar.svelte';
+  import GraphView from '$lib/features/graph/GraphView.svelte';
+  import GraphToolbar from '$lib/features/graph/GraphToolbar.svelte';
   import type { GraphData } from '$lib/types/graph';
 
   let graphData = $state<GraphData | null>(null);

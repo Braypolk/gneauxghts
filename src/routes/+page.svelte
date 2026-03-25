@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Notepad from '$lib/components/Notepad.svelte';
+  import Notepad from '$lib/features/notepad/Notepad.svelte';
 </script>
 
 <div class="h-full w-full bg-background text-foreground flex flex-col overflow-hidden">

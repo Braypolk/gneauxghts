@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import "../app.css";
   import { initializeTheme } from '$lib/theme';
-  import NavBar from "$lib/components/NavBar.svelte";
+  import NavBar from '$lib/ui/NavBar.svelte';
 
   let { children } = $props();
 

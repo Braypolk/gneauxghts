@@ -2,25 +2,25 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Monitor, Moon, RefreshCcw, Sun } from 'lucide-svelte';
   import { onDestroy, onMount } from 'svelte';
-  import ForgottenNotesPanel from '$lib/components/settings/ForgottenNotesPanel.svelte';
-  import SemanticSettingsPanel from '$lib/components/settings/SemanticSettingsPanel.svelte';
-  import SyncSettingsPanel from '$lib/components/settings/SyncSettingsPanel.svelte';
+  import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
+  import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
+  import SyncSettingsPanel from '$lib/features/settings/SyncSettingsPanel.svelte';
   import {
     createForgottenNotesController,
     formatForgottenRetention
-  } from '$lib/components/settings/forgottenNotesController';
+  } from '$lib/features/settings/forgottenNotesController';
   import {
     averageDuration,
     createSemanticSettingsController,
     formatMillis,
     formatTimestamp
-  } from '$lib/components/settings/semanticSettingsController';
+  } from '$lib/features/settings/semanticSettingsController';
   import {
     buildConflictDiffRows,
     conflictRowClass,
     createSyncSettingsController,
     formatSyncTimestamp
-  } from '$lib/components/settings/syncSettingsController';
+  } from '$lib/features/settings/syncSettingsController';
   import { runAutoSyncNow, scheduleAutoSync, cancelScheduledAutoSync } from '$lib/sync/autoSync';
   import {
     forgetButtonDurationOptions,
