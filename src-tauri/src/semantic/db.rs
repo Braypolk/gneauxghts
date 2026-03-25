@@ -139,7 +139,8 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
 
     migrate_chunk_ann_labels(connection)?;
-    migrate_note_columns(connection)
+    migrate_note_columns(connection)?;
+    migrate_graph_positions(connection)
 }
 
 pub(crate) fn load_semantic_settings(
@@ -883,6 +884,156 @@ fn migrate_note_columns(connection: &Connection) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn migrate_graph_positions(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS graph_positions (
+                note_path TEXT PRIMARY KEY,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                updated_at_millis INTEGER NOT NULL
+            );
+            ",
+        )
+        .map_err(|err| err.to_string())
+}
+
+pub(crate) struct StoredGraphPosition {
+    pub(crate) note_path: String,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+}
+
+pub(crate) fn load_graph_positions(
+    connection: &Connection,
+) -> Result<Vec<StoredGraphPosition>, String> {
+    let mut statement = connection
+        .prepare("SELECT note_path, x, y FROM graph_positions")
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+    let mut positions = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        positions.push(StoredGraphPosition {
+            note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            x: row.get::<_, f64>(1).map_err(|err| err.to_string())?,
+            y: row.get::<_, f64>(2).map_err(|err| err.to_string())?,
+        });
+    }
+
+    Ok(positions)
+}
+
+pub(crate) fn save_graph_positions(
+    connection: &mut Connection,
+    positions: &[(String, f64, f64)],
+) -> Result<(), String> {
+    let updated_at_millis = current_time_millis()?;
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+
+    for (note_path, x, y) in positions {
+        transaction
+            .execute(
+                "
+                INSERT INTO graph_positions (note_path, x, y, updated_at_millis)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(note_path) DO UPDATE SET
+                    x = excluded.x,
+                    y = excluded.y,
+                    updated_at_millis = excluded.updated_at_millis
+                ",
+                params![note_path, x, y, updated_at_millis],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+
+    transaction.commit().map_err(|err| err.to_string())
+}
+
+pub(crate) struct StoredEdge {
+    pub(crate) source_note_path: String,
+    pub(crate) target_note_path: String,
+    pub(crate) score: f32,
+}
+
+pub(crate) fn load_all_edges(connection: &Connection) -> Result<Vec<StoredEdge>, String> {
+    let mut statement = connection
+        .prepare("SELECT source_note_path, target_note_path, score FROM edges")
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+    let mut edges = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        edges.push(StoredEdge {
+            source_note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            target_note_path: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            score: row.get::<_, f32>(2).map_err(|err| err.to_string())?,
+        });
+    }
+
+    Ok(edges)
+}
+
+pub(crate) struct StoredNoteWithMeta {
+    pub(crate) path: String,
+    pub(crate) title: String,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) modified_millis: u64,
+}
+
+pub(crate) fn load_all_notes_with_meta(
+    connection: &Connection,
+) -> Result<Vec<StoredNoteWithMeta>, String> {
+    let mut statement = connection
+        .prepare("SELECT path, title, created_at, updated_at, modified_millis FROM notes")
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+    let mut notes = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        notes.push(StoredNoteWithMeta {
+            path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            created_at: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+            updated_at: row.get::<_, String>(3).map_err(|err| err.to_string())?,
+            modified_millis: row.get::<_, u64>(4).map_err(|err| err.to_string())?,
+        });
+    }
+
+    Ok(notes)
+}
+
+pub(crate) fn load_first_chunk_text_per_note(
+    connection: &Connection,
+) -> Result<HashMap<String, String>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT c.note_path, c.text
+            FROM chunks c
+            INNER JOIN (
+                SELECT note_path, MIN(ordinal) AS min_ordinal
+                FROM chunks
+                GROUP BY note_path
+            ) m ON c.note_path = m.note_path AND c.ordinal = m.min_ordinal
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+    let mut snippets = HashMap::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        snippets.insert(
+            row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            row.get::<_, String>(1).map_err(|err| err.to_string())?,
+        );
+    }
+
+    Ok(snippets)
 }
 
 fn has_column(

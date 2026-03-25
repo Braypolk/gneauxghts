@@ -1,5 +1,6 @@
 pub(crate) mod asset_commands;
 pub(crate) mod forgotten_note_commands;
+pub(crate) mod graph_commands;
 mod note_persistence;
 pub(crate) mod search_commands;
 mod task_commands;

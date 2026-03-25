@@ -1,5 +1,6 @@
 pub(crate) mod ann;
 pub(crate) mod chunking;
+pub(crate) mod cluster;
 pub(crate) mod db;
 pub(crate) mod debug;
 pub(crate) mod embed;
@@ -367,6 +368,22 @@ impl SemanticState {
     pub(crate) fn warmup_model_in_background(&self) {
         if let SemanticStateInner::Active(state) = &self.inner {
             state.warmup_model_in_background();
+        }
+    }
+
+    pub(crate) fn db_path(&self) -> Option<PathBuf> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => Some(state.db_path.clone()),
+            SemanticStateInner::Disabled(_) => None,
+        }
+    }
+
+    pub(crate) fn embedding_provider(
+        &self,
+    ) -> Option<Arc<dyn EmbeddingProvider + Send + Sync>> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => Some(state.provider.clone()),
+            SemanticStateInner::Disabled(_) => None,
         }
     }
 
