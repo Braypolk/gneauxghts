@@ -1,5 +1,9 @@
 <script lang="ts">
   import { Search, Maximize2, Clock, Palette } from 'lucide-svelte';
+  import {
+    formatGraphDateShort,
+    formatGraphFilterDate
+  } from '$lib/components/graph/graphFormatting';
 
   interface Props {
     searchQuery: string;
@@ -44,8 +48,13 @@
   });
 
   function handleScrubberInput(which: 'start' | 'end', value: number) {
-    if (which === 'start') scrubberStart = value;
-    else scrubberEnd = value;
+    const clampedValue = Math.max(0, Math.min(100, value));
+
+    if (which === 'start') {
+      scrubberStart = Math.min(clampedValue, scrubberEnd);
+    } else {
+      scrubberEnd = Math.max(clampedValue, scrubberStart);
+    }
 
     const span = timeRange[1] - timeRange[0];
     if (span <= 0) return;
@@ -58,18 +67,6 @@
     } else {
       onTimeFilterChange([startMs, endMs]);
     }
-  }
-
-  function formatDateShort(millis: number): string {
-    const d = new Date(millis);
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${months[d.getMonth()]} ${d.getFullYear()}`;
-  }
-
-  function formatFilterDate(millis: number): string {
-    const d = new Date(millis);
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
   }
 </script>
 
@@ -129,7 +126,7 @@
 
   {#if scrubberActive && timeRange[1] > timeRange[0]}
     <div class="flex items-center gap-3 rounded-lg border border-border/80 bg-card px-3 py-2">
-      <span class="shrink-0 text-[11px] text-muted-foreground">{formatDateShort(timeRange[0])}</span>
+      <span class="shrink-0 text-[11px] text-muted-foreground">{formatGraphDateShort(timeRange[0])}</span>
 
       <div class="relative flex-1">
         <input
@@ -158,12 +155,12 @@
         </div>
       </div>
 
-      <span class="shrink-0 text-[11px] text-muted-foreground">{formatDateShort(timeRange[1])}</span>
+      <span class="shrink-0 text-[11px] text-muted-foreground">{formatGraphDateShort(timeRange[1])}</span>
     </div>
 
     {#if timeFilterRange}
       <div class="text-center text-[11px] text-muted-foreground">
-        {formatFilterDate(timeFilterRange[0])} — {formatFilterDate(timeFilterRange[1])}
+        {formatGraphFilterDate(timeFilterRange[0])} — {formatGraphFilterDate(timeFilterRange[1])}
       </div>
     {/if}
   {/if}

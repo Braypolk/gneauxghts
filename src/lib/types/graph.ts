@@ -51,6 +51,9 @@ export interface SimNode extends GraphNode {
   fx: number | null;
   fy: number | null;
   radius: number;
+  shortTitle: string;
+  titleLower: string;
+  snippetLower: string;
 }
 
 export interface SimLink {

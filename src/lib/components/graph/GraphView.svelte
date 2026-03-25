@@ -9,8 +9,6 @@
     forceCollide,
     forceX,
     forceY,
-    line,
-    curveCatmullRomClosed,
     zoom as d3Zoom,
     zoomIdentity,
     drag as d3Drag,
@@ -20,6 +18,14 @@
     type ZoomBehavior
   } from 'd3';
   import { invoke } from '@tauri-apps/api/core';
+  import {
+    buildClusterAnchors,
+    buildClusterBubbles,
+    clusterColor,
+    getGraphBounds,
+    nodeRadius,
+    temporalDecay
+  } from '$lib/components/graph/graphLayout';
   import type {
     GraphData,
     SimNode,
@@ -28,25 +34,18 @@
     GraphPositionEntry
   } from '$lib/types/graph';
 
-  const CLUSTER_COLORS = [
-    '#78c8ff',
-    '#f5b56b',
-    '#9be37a',
-    '#c7a6ff',
-    '#ff8ca8',
-    '#7be1d0'
-  ];
-
   const INFERRED_EDGE_COLOR = '#B4B2A9';
   const INFERRED_EDGE_SIMILARITY_THRESHOLD = 0.72;
   const MAX_INFERRED_EDGES_PER_NODE = 3;
-  const TEMPORAL_DECAY_HALF_LIFE_DAYS = 30;
   const CLUSTER_VIEW_END_ZOOM = 0.95;
   const NODE_BLEND_END_ZOOM = 1.4;
   const LABEL_SHOW_ZOOM = 1.15;
   const LABEL_FADE_RANGE = 0.16;
   const INFERRED_EDGE_SHOW_ZOOM = 1.05;
   const WIKILINK_SHOW_ZOOM = 0.82;
+  const DIMMED_MATCH_SCORE = 0.15;
+  const STRONG_MATCH_SCORE = 0.7;
+  const UNKNOWN_CLUSTER_LABEL = 'Unknown';
   const ENTRY_ANIMATION_SCALE = 0.90;
   const ENTRY_ANIMATION_JITTER = 52;
   const ENTRY_BURST_PROBABILITY = 0.6;
@@ -57,12 +56,16 @@
   interface Props {
     data: GraphData;
     searchQuery: string;
-    zoomLevel: number;
     onZoomChange: (zoom: number) => void;
     timeFilterRange: [number, number] | null;
   }
 
-  let { data, searchQuery, zoomLevel, onZoomChange, timeFilterRange }: Props = $props();
+  interface NodeRenderInfo {
+    matchScore: number;
+    inRange: boolean;
+  }
+
+  let { data, searchQuery, onZoomChange, timeFilterRange }: Props = $props();
 
   let containerEl: HTMLDivElement;
   let svgEl: SVGSVGElement;
@@ -76,230 +79,15 @@
   let simNodes: SimNode[] = [];
   let simLinks: SimLink[] = [];
   let clusterBubbles: ClusterBubble[] = [];
+  let nodeRenderInfo = new Map<string, NodeRenderInfo>();
+  let clusterColorIndexById = new Map<number, number>();
+  let clusterLabelById = new Map<number, string>();
+  let clusterLabelLowerById = new Map<number, string>();
 
   let savePositionTimer: ReturnType<typeof setTimeout> | null = null;
   let entryDelayTimer: ReturnType<typeof setTimeout> | null = null;
   let hasFittedOnce = false;
   let hasUserInteracted = false;
-
-  function nodeRadius(modifiedMillis: number): number {
-    const now = Date.now();
-    const daysSince = (now - modifiedMillis) / (1000 * 60 * 60 * 24);
-    if (daysSince < 1) return 13.5;
-    if (daysSince < 7) return 11;
-    if (daysSince < 30) return 8.5;
-    if (daysSince < 90) return 6.5;
-    return 5;
-  }
-
-  function recencyStrength(modifiedMillis: number): number {
-    const now = Date.now();
-    const daysSince = (now - modifiedMillis) / (1000 * 60 * 60 * 24);
-    if (daysSince < 1) return 0.08;
-    if (daysSince < 7) return 0.05;
-    if (daysSince < 30) return 0.03;
-    return 0.01;
-  }
-
-  function temporalDecay(createdA: number, createdB: number, score: number): number {
-    const daysBetween = Math.abs(createdA - createdB) / (1000 * 60 * 60 * 24);
-    return score * Math.exp(-daysBetween / TEMPORAL_DECAY_HALF_LIFE_DAYS);
-  }
-
-  function clusterColor(colorIndex: number): string {
-    return CLUSTER_COLORS[colorIndex % CLUSTER_COLORS.length];
-  }
-
-  function buildClusterAnchors(clusters: GraphData['clusters'], totalNodes: number) {
-    const anchors = new Map<number, { x: number; y: number }>();
-    if (clusters.length === 0) return anchors;
-
-    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
-    const baseSpacing = Math.max(128, Math.sqrt(totalNodes) * 22);
-    const sortedClusters = [...clusters].sort((a, b) => b.noteCount - a.noteCount);
-
-    sortedClusters.forEach((cluster, index) => {
-      const estimatedRadius = 52 + Math.sqrt(cluster.noteCount) * 19;
-      const radialDistance =
-        index === 0
-          ? estimatedRadius * 0.22
-          : baseSpacing * Math.sqrt(index) + estimatedRadius * 0.45;
-      const angle = index * goldenAngle;
-
-      anchors.set(cluster.id, {
-        x: Math.cos(angle) * radialDistance * 0.95,
-        y: Math.sin(angle) * radialDistance * 0.8
-      });
-    });
-
-    return anchors;
-  }
-
-  function smoothCircularValues(values: number[], iterations = 3): number[] {
-    let current = values;
-    for (let iteration = 0; iteration < iterations; iteration += 1) {
-      current = current.map((_, index) => {
-        const prev2 = current[(index - 2 + current.length) % current.length];
-        const prev1 = current[(index - 1 + current.length) % current.length];
-        const self = current[index];
-        const next1 = current[(index + 1) % current.length];
-        const next2 = current[(index + 2) % current.length];
-        return (prev2 + prev1 * 2 + self * 3 + next1 * 2 + next2) / 9;
-      });
-    }
-    return current;
-  }
-
-  function emphasizeCircularValues(
-    values: number[],
-    baseRadius: number,
-    factor: number
-  ): number[] {
-    return values.map((value) => {
-      const emphasized = baseRadius + (value - baseRadius) * factor;
-      return Math.max(baseRadius * 0.92, emphasized);
-    });
-  }
-
-  function angularDelta(a: number, b: number): number {
-    const raw = Math.abs(a - b) % (Math.PI * 2);
-    return raw > Math.PI ? Math.PI * 2 - raw : raw;
-  }
-
-  function buildRadialBlobPoints(
-    perimeterPoints: [number, number][],
-    cx: number,
-    cy: number,
-    radius: number
-  ): [number, number][] {
-    const sampleCount = 56;
-    const baseRadius = Math.max(radius * 0.5, 34);
-    const angularWindow = 0.48;
-    const annotatedPoints = perimeterPoints.map(([px, py]) => {
-      const dx = px - cx;
-      const dy = py - cy;
-      return {
-        angle: Math.atan2(dy, dx),
-        distance: Math.hypot(dx, dy)
-      };
-    });
-    const radii = Array.from({ length: sampleCount }, (_, index) => {
-      const theta = (index / sampleCount) * Math.PI * 2;
-      let support = baseRadius;
-
-      for (const point of annotatedPoints) {
-        const delta = angularDelta(theta, point.angle);
-        if (delta > angularWindow) {
-          continue;
-        }
-
-        const falloff = Math.pow(Math.cos((delta / angularWindow) * (Math.PI / 2)), 2);
-        const contribution = baseRadius + (point.distance - baseRadius) * falloff;
-
-        if (contribution > support) {
-          support = contribution;
-        }
-      }
-
-      return support;
-    });
-
-    const smoothedRadii = smoothCircularValues(radii, 2);
-    const emphasizedRadii = emphasizeCircularValues(smoothedRadii, baseRadius, 1.22);
-    return emphasizedRadii.map((distance, index) => {
-      const theta = (index / sampleCount) * Math.PI * 2;
-      return [cx + Math.cos(theta) * distance, cy + Math.sin(theta) * distance];
-    });
-  }
-
-  function makeBlobPath(points: [number, number][]): string {
-    const blobLine = line<[number, number]>()
-      .curve(curveCatmullRomClosed.alpha(1))
-      .x((d: [number, number]) => d[0])
-      .y((d: [number, number]) => d[1]);
-    return blobLine(points) ?? '';
-  }
-
-  function buildClusterBlob(members: SimNode[], cx: number, cy: number, radius: number) {
-    const perimeterPoints: [number, number][] = [];
-
-    for (const member of members) {
-      const pad = member.radius + 20;
-      perimeterPoints.push(
-        [member.x - pad, member.y],
-        [member.x - pad * 0.72, member.y - pad * 0.72],
-        [member.x, member.y - pad],
-        [member.x + pad * 0.72, member.y - pad * 0.72],
-        [member.x + pad, member.y],
-        [member.x + pad * 0.72, member.y + pad * 0.72],
-        [member.x, member.y + pad],
-        [member.x - pad * 0.72, member.y + pad * 0.72]
-      );
-    }
-
-    const shapePoints = buildRadialBlobPoints(perimeterPoints, cx, cy, radius);
-
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (const [x, y] of shapePoints) {
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-
-    return {
-      path: makeBlobPath(shapePoints),
-      minX,
-      minY,
-      maxX,
-      maxY
-    };
-  }
-
-  function buildClusterBubbles(nodes: SimNode[], useHomePositions = false): ClusterBubble[] {
-    const clusterNodes = new Map<number, SimNode[]>();
-    for (const node of nodes) {
-      const list = clusterNodes.get(node.clusterId) ?? [];
-      list.push(node);
-      clusterNodes.set(node.clusterId, list);
-    }
-
-    return data.clusters
-      .map((cluster) => {
-        const members = clusterNodes.get(cluster.id) ?? [];
-        if (members.length === 0) return null;
-
-        let cx = 0;
-        let cy = 0;
-        for (const member of members) {
-          cx += useHomePositions ? member.homeX : member.x;
-          cy += useHomePositions ? member.homeY : member.y;
-        }
-        cx /= members.length;
-        cy /= members.length;
-
-        const positionedMembers = members.map((member) => ({
-          ...member,
-          x: useHomePositions ? member.homeX : member.x,
-          y: useHomePositions ? member.homeY : member.y
-        }));
-
-        let maxDist = 0;
-        for (const member of positionedMembers) {
-          const dist = Math.hypot(member.x - cx, member.y - cy);
-          if (dist > maxDist) maxDist = dist;
-        }
-        const radius = Math.max(maxDist * 1.15 + 20, 35 + members.length * 2);
-        const blob = buildClusterBlob(positionedMembers, cx, cy, radius);
-
-        return { ...cluster, cx, cy, radius, ...blob } as ClusterBubble;
-      })
-      .filter((bubble): bubble is ClusterBubble => bubble !== null);
-  }
 
   function hintsAreUsable(nodes: GraphData['nodes']): boolean {
     const withHints = nodes.filter((n) => n.xHint !== null && n.yHint !== null);
@@ -313,6 +101,48 @@
     }
     const span = Math.max(maxX - minX, maxY - minY);
     return span > 50;
+  }
+
+  function rebuildClusterLookups() {
+    clusterColorIndexById = new Map(data.clusters.map((cluster) => [cluster.id, cluster.colorIndex]));
+    clusterLabelById = new Map(data.clusters.map((cluster) => [cluster.id, cluster.label]));
+    clusterLabelLowerById = new Map(
+      data.clusters.map((cluster) => [cluster.id, cluster.label.toLowerCase()])
+    );
+  }
+
+  function searchMatchScore(node: SimNode, normalizedQuery: string): number {
+    if (!normalizedQuery) return 1.0;
+    if (node.titleLower.includes(normalizedQuery)) return 1.0;
+    if (node.snippetLower.includes(normalizedQuery)) return STRONG_MATCH_SCORE;
+    if (clusterLabelLowerById.get(node.clusterId)?.includes(normalizedQuery)) return 0.5;
+    return 0;
+  }
+
+  function isInTimeRange(node: SimNode): boolean {
+    if (!timeFilterRange) return true;
+    return node.createdAtMillis >= timeFilterRange[0] && node.createdAtMillis <= timeFilterRange[1];
+  }
+
+  function refreshNodeRenderInfo() {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    nodeRenderInfo = new Map(
+      simNodes.map((node) => [
+        node.path,
+        {
+          matchScore: searchMatchScore(node, normalizedQuery),
+          inRange: isInTimeRange(node)
+        }
+      ])
+    );
+  }
+
+  function getClusterColorIndex(clusterId: number): number {
+    return clusterColorIndexById.get(clusterId) ?? 0;
+  }
+
+  function getClusterLabel(clusterId: number): string {
+    return clusterLabelById.get(clusterId) ?? UNKNOWN_CLUSTER_LABEL;
   }
 
   function buildSimData(graphData: GraphData) {
@@ -366,7 +196,10 @@
         vy: (targetY - y) * 0.02 + tangentY * swirlVelocity,
         fx: null,
         fy: null,
-        radius: nodeRadius(n.modifiedMillis)
+        radius: nodeRadius(n.modifiedMillis),
+        shortTitle: n.title.length > 24 ? `${n.title.slice(0, 22)}...` : n.title,
+        titleLower: n.title.toLowerCase(),
+        snippetLower: n.snippet.toLowerCase()
       };
       nodeMap.set(n.path, node);
       return node;
@@ -411,67 +244,7 @@
     }
 
     simLinks = links;
-  }
-
-  function computeClusterBubbles() {
-    clusterBubbles = buildClusterBubbles(simNodes);
-  }
-
-  function searchMatchScore(node: SimNode, query: string): number {
-    if (!query) return 1.0;
-    const q = query.toLowerCase();
-    if (node.title.toLowerCase().includes(q)) return 1.0;
-    if (node.snippet.toLowerCase().includes(q)) return 0.7;
-    const cluster = data.clusters.find((c) => c.id === node.clusterId);
-    if (cluster && cluster.label.toLowerCase().includes(q)) return 0.5;
-    return 0;
-  }
-
-  function isInTimeRange(node: SimNode): boolean {
-    if (!timeFilterRange) return true;
-    return node.createdAtMillis >= timeFilterRange[0] && node.createdAtMillis <= timeFilterRange[1];
-  }
-
-  function getClusterColorIndex(clusterId: number): number {
-    return data.clusters.find((c) => c.id === clusterId)?.colorIndex ?? 0;
-  }
-
-  function getGraphBounds(useHomePositions = false) {
-    const bubbles = useHomePositions
-      ? buildClusterBubbles(simNodes, true)
-      : (computeClusterBubbles(), clusterBubbles);
-
-    if (bubbles.length > 0) {
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-
-      for (const bubble of bubbles) {
-        minX = Math.min(minX, bubble.minX - 28);
-        minY = Math.min(minY, bubble.minY - 28);
-        maxX = Math.max(maxX, bubble.maxX + 28);
-        maxY = Math.max(maxY, bubble.maxY + 28);
-      }
-
-      return { minX, minY, maxX, maxY };
-    }
-
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const node of simNodes) {
-      const r = node.radius + 24;
-      const x = useHomePositions ? node.homeX : node.x;
-      const y = useHomePositions ? node.homeY : node.y;
-      minX = Math.min(minX, x - r);
-      minY = Math.min(minY, y - r);
-      maxX = Math.max(maxX, x + r);
-      maxY = Math.max(maxY, y + r);
-    }
-
-    return { minX, minY, maxX, maxY };
+    refreshNodeRenderInfo();
   }
 
   function makeClusterCollisionForce(padding: number) {
@@ -594,7 +367,7 @@
     const svg = select(svgEl);
     const k = currentTransform.k;
 
-    computeClusterBubbles();
+    clusterBubbles = buildClusterBubbles(simNodes, data.clusters);
 
     const clusterOpacity =
       k <= CLUSTER_VIEW_END_ZOOM
@@ -623,13 +396,6 @@
 
     const g = svg.select<SVGGElement>('.graph-container');
     g.attr('transform', currentTransform.toString());
-
-    const filteredNodes = simNodes.map((n) => ({
-      node: n,
-      matchScore: searchMatchScore(n, searchQuery),
-      inRange: isInTimeRange(n)
-    }));
-    const nodeInfo = new Map(filteredNodes.map((f) => [f.node.path, f]));
 
     // -- Cluster bubbles (drawn first, behind everything) --
     const clusterSel = g.selectAll<SVGGElement, ClusterBubble>('.cluster-group')
@@ -738,25 +504,25 @@
       .attr('cx', (d: SimNode) => d.x)
       .attr('cy', (d: SimNode) => d.y)
       .attr('r', (d: SimNode) => {
-        const info = nodeInfo.get(d.path);
+        const info = nodeRenderInfo.get(d.path);
         const base = d.radius;
         if (!info) return base;
         if (!info.inRange) return base * 0.5;
-        if (info.matchScore < 0.15) return base * 0.7;
-        if (info.matchScore >= 0.7) return base * 1.2;
+        if (info.matchScore < DIMMED_MATCH_SCORE) return base * 0.7;
+        if (info.matchScore >= STRONG_MATCH_SCORE) return base * 1.2;
         return base;
       })
       .attr('fill', (d: SimNode) => clusterColor(getClusterColorIndex(d.clusterId)))
       .attr('fill-opacity', (d: SimNode) => {
-        const info = nodeInfo.get(d.path);
+        const info = nodeRenderInfo.get(d.path);
         if (!info) return nodeOpacity;
         if (!info.inRange) return 0.1;
-        if (info.matchScore < 0.15) return nodeOpacity * 0.24;
+        if (info.matchScore < DIMMED_MATCH_SCORE) return nodeOpacity * 0.24;
         return nodeOpacity;
       })
       .attr('stroke', 'var(--foreground)')
       .attr('stroke-opacity', (d: SimNode) => {
-        const info = nodeInfo.get(d.path);
+        const info = nodeRenderInfo.get(d.path);
         if (!info) return nodeOpacity * 0.5;
         if (!info.inRange) return 0.05;
         return nodeOpacity * 0.5;
@@ -822,11 +588,11 @@
       .attr('stroke-opacity', 0.92)
       .attr('stroke-width', 3.8)
       .style('opacity', (d: SimNode) => {
-        const info = nodeInfo.get(d.path);
+        const info = nodeRenderInfo.get(d.path);
         if (!info?.inRange) return 0;
-        return labelOpacity * (info.matchScore < 0.15 ? 0.15 : 1);
+        return labelOpacity * (info.matchScore < DIMMED_MATCH_SCORE ? 0.15 : 1);
       })
-      .text((d: SimNode) => d.title.length > 24 ? d.title.slice(0, 22) + '...' : d.title);
+      .text((d: SimNode) => d.shortTitle);
 
     labelSel.exit().remove();
   }
@@ -850,7 +616,7 @@
     const height = containerEl.clientHeight;
     if (width === 0 || height === 0) return;
 
-    const { minX, minY, maxX, maxY } = getGraphBounds(useHomePositions);
+    const { minX, minY, maxX, maxY } = getGraphBounds(simNodes, data.clusters, useHomePositions);
 
     const graphW = maxX - minX;
     const graphH = maxY - minY;
@@ -879,10 +645,12 @@
   $effect(() => {
     searchQuery;
     timeFilterRange;
+    refreshNodeRenderInfo();
     render();
   });
 
   onMount(() => {
+    rebuildClusterLookups();
     buildSimData(data);
     const svg = select(svgEl);
     svg.append('g').attr('class', 'graph-container');
@@ -929,9 +697,9 @@
       {/if}
       <div
         class="mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-        style="background: {clusterColor(data.clusters.find((c) => c.id === tooltipNode?.clusterId)?.colorIndex ?? 0)}20; color: {clusterColor(data.clusters.find((c) => c.id === tooltipNode?.clusterId)?.colorIndex ?? 0)}"
+        style="background: {clusterColor(getClusterColorIndex(tooltipNode.clusterId))}20; color: {clusterColor(getClusterColorIndex(tooltipNode.clusterId))}"
       >
-        {data.clusters.find((c) => c.id === tooltipNode?.clusterId)?.label ?? 'Unknown'}
+        {getClusterLabel(tooltipNode.clusterId)}
       </div>
     </div>
   {/if}

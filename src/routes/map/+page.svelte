@@ -14,18 +14,32 @@
   let scrubberActive = $state(false);
   let timeFilterRange = $state<[number, number] | null>(null);
   let colorGroupCount = $state(4);
+  let activeLoadRequest = 0;
 
   let graphViewRef = $state<GraphView | null>(null);
 
   async function loadGraphData() {
+    const requestId = ++activeLoadRequest;
     isLoading = true;
     errorMessage = '';
     try {
-      graphData = await invoke<GraphData>('get_graph_data', { colorGroupCount });
+      const nextGraphData = await invoke<GraphData>('get_graph_data', { colorGroupCount });
+      if (requestId !== activeLoadRequest) {
+        return;
+      }
+
+      graphData = nextGraphData;
     } catch (err) {
+      if (requestId !== activeLoadRequest) {
+        return;
+      }
+
+      graphData = null;
       errorMessage = String(err);
     } finally {
-      isLoading = false;
+      if (requestId === activeLoadRequest) {
+        isLoading = false;
+      }
     }
   }
 
@@ -38,6 +52,15 @@
     if (!scrubberActive) {
       timeFilterRange = null;
     }
+  }
+
+  function handleColorGroupCountChange(count: number) {
+    if (count === colorGroupCount) {
+      return;
+    }
+
+    colorGroupCount = count;
+    void loadGraphData();
   }
 
   function waitForNextPaint(): Promise<void> {
@@ -66,10 +89,7 @@
       {scrubberActive}
       onToggleScrubber={handleToggleScrubber}
       {colorGroupCount}
-      onColorGroupCountChange={(count) => {
-        colorGroupCount = count;
-        void loadGraphData();
-      }}
+      onColorGroupCountChange={handleColorGroupCountChange}
       timeRange={graphData?.timeRange ?? [0, 0]}
       {timeFilterRange}
       onTimeFilterChange={(range) => (timeFilterRange = range)}
@@ -97,7 +117,6 @@
         bind:this={graphViewRef}
         data={graphData}
         {searchQuery}
-        {zoomLevel}
         onZoomChange={(z) => (zoomLevel = z)}
         {timeFilterRange}
       />
