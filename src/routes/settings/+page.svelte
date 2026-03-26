@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Monitor, Moon, RefreshCcw, Sun } from 'lucide-svelte';
   import { onDestroy, onMount } from 'svelte';
@@ -23,13 +24,20 @@
   } from '$lib/features/settings/syncSettingsController';
   import { runAutoSyncNow, scheduleAutoSync, cancelScheduledAutoSync } from '$lib/sync/autoSync';
   import {
+    cleanUpApplyPolicyOptions,
+    cleanUpApplyPolicyPreference,
+    defaultRememberModePreference,
     forgetButtonDurationOptions,
     forgetButtonDurationPreference,
     forgottenNoteRetentionOptions,
     forgottenNoteRetentionPreference,
+    rememberModeOptions,
+    setCleanUpApplyPolicyPreference,
+    setDefaultRememberModePreference,
     setForgottenNoteRetentionPreference,
     setForgetButtonDurationPreference
   } from '$lib/appSettings';
+  import type { AiModelOption, AiProviderKind, AiSettings, AiSettingsUpdate } from '$lib/types/ai';
   import {
     setThemePreference,
     themeOptions,
@@ -87,6 +95,15 @@
   let isUpdatingForgottenNotes = $state(false);
   let isSaving = $state(false);
   let isRunningAction = $state(false);
+  let aiSettings = $state<AiSettings | null>(null);
+  let aiProviderKindInput = $state<AiProviderKind>('openAiCompatible');
+  let aiBaseUrlInput = $state('');
+  let aiModelInput = $state('');
+  let aiApiKeyInput = $state('');
+  let aiModels = $state<AiModelOption[]>([]);
+  let aiModelsError = $state('');
+  let isLoadingAiModels = $state(false);
+  let isSavingAiSettings = $state(false);
   let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
   let allForgottenSelected = $derived(
@@ -187,6 +204,7 @@
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
       void loadSemanticStatus();
+      void loadAiSettings();
       void runAutoSyncNow('settings-visible').then(() => loadSemanticState());
       syncSemanticPolling();
       return;
@@ -195,9 +213,79 @@
     stopSemanticPolling();
   }
 
+  async function loadAiSettings() {
+    try {
+      const settings = await invoke<AiSettings>('get_ai_settings');
+      aiSettings = settings;
+      aiProviderKindInput = settings.providerKind;
+      aiBaseUrlInput = settings.baseUrl;
+      aiModelInput = settings.model;
+      await loadAiModels();
+    } catch (error) {
+      console.error('Failed to load AI settings:', error);
+    }
+  }
+
+  async function loadAiModels() {
+    if (aiProviderKindInput !== 'openAiCompatible') {
+      aiModels = [];
+      aiModelsError = '';
+      return;
+    }
+
+    isLoadingAiModels = true;
+    try {
+      const models = await invoke<AiModelOption[]>('list_ai_models', {
+        baseUrl: aiBaseUrlInput,
+        apiKey: aiApiKeyInput.trim() === '' ? null : aiApiKeyInput
+      });
+      aiModels = models;
+      aiModelsError = '';
+      if (
+        aiModelInput.trim() !== '' &&
+        !models.some((model) => model.id === aiModelInput)
+      ) {
+        aiModels = [{ id: aiModelInput }, ...models];
+      }
+    } catch (error) {
+      console.error('Failed to load AI models:', error);
+      aiModelsError = 'Unable to load models from /v1/models.';
+      if (aiModelInput.trim() !== '') {
+        aiModels = [{ id: aiModelInput }];
+      } else {
+        aiModels = [];
+      }
+    } finally {
+      isLoadingAiModels = false;
+    }
+  }
+
+  async function saveAiSettings() {
+    const nextSettings: AiSettingsUpdate = {
+      providerKind: aiProviderKindInput,
+      baseUrl: aiBaseUrlInput,
+      model: aiModelInput,
+      apiKey: aiApiKeyInput.trim() === '' ? null : aiApiKeyInput
+    };
+    isSavingAiSettings = true;
+    try {
+      aiSettings = await invoke<AiSettings>('set_ai_settings', { settings: nextSettings });
+      aiProviderKindInput = aiSettings.providerKind;
+      aiBaseUrlInput = aiSettings.baseUrl;
+      aiModelInput = aiSettings.model;
+      aiApiKeyInput = '';
+      await loadAiModels();
+    } catch (error) {
+      console.error('Failed to save AI settings:', error);
+    } finally {
+      isSavingAiSettings = false;
+    }
+  }
+
   onMount(() => {
     void loadSemanticState();
     void loadForgottenNotes();
+    void loadAiSettings();
     void listen('vault-note-changed', () => {
       scheduleAutoSync('settings-vault-note-change', 1200);
       void loadForgottenNotes();
@@ -361,6 +449,155 @@
               </label>
             {/each}
           </fieldset>
+        </div>
+      </div>
+
+      <div class="border-t border-border/70 px-6 py-5">
+        <div class="flex flex-col gap-4">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-sm font-medium">AI Remember</p>
+              <p class="mt-0.5 text-xs text-muted-foreground">
+                Choose the default remember action and configure the generation provider used for clean up and integrate.
+              </p>
+            </div>
+            <button
+              class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+              type="button"
+              disabled={isSavingAiSettings}
+              onclick={() => void saveAiSettings()}
+            >
+              {isSavingAiSettings ? 'Saving…' : 'Save AI settings'}
+            </button>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Default remember mode</p>
+              <fieldset class="mt-3 flex flex-wrap gap-2">
+                <legend class="sr-only">Default remember mode</legend>
+                {#each rememberModeOptions as option}
+                  <label
+                    title={option.description}
+                    class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                      $defaultRememberModePreference === option.id
+                        ? 'bg-foreground text-background shadow-sm'
+                        : 'bg-card text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <input
+                      class="sr-only"
+                      type="radio"
+                      name="default-remember-mode"
+                      value={option.id}
+                      checked={$defaultRememberModePreference === option.id}
+                      onchange={() => setDefaultRememberModePreference(option.id)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                {/each}
+              </fieldset>
+            </div>
+
+            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Cleanup apply policy</p>
+              <fieldset class="mt-3 flex flex-wrap gap-2">
+                <legend class="sr-only">Cleanup apply policy</legend>
+                {#each cleanUpApplyPolicyOptions as option}
+                  <label
+                    title={option.description}
+                    class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                      $cleanUpApplyPolicyPreference === option.id
+                        ? 'bg-foreground text-background shadow-sm'
+                        : 'bg-card text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <input
+                      class="sr-only"
+                      type="radio"
+                      name="cleanup-apply-policy"
+                      value={option.id}
+                      checked={$cleanUpApplyPolicyPreference === option.id}
+                      onchange={() => setCleanUpApplyPolicyPreference(option.id)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                {/each}
+              </fieldset>
+              <p class="mt-3 text-xs text-muted-foreground">
+                Integrate always requires Inbox approval in v1, even when cleanup auto-applies.
+              </p>
+            </div>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+              <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Provider</span>
+              <select
+                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
+                disabled={isSavingAiSettings}
+                bind:value={aiProviderKindInput}
+              >
+                <option value="openAiCompatible">OpenAI-compatible HTTP</option>
+                <option value="llamaServer" disabled>llama-server (coming later)</option>
+              </select>
+            </label>
+
+            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+              <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Base URL</span>
+              <input
+                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
+                bind:value={aiBaseUrlInput}
+                placeholder="https://api.openai.com/v1"
+                disabled={isSavingAiSettings}
+              />
+            </label>
+
+            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+              <div class="flex items-start justify-between gap-3">
+                <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Model</span>
+                <button
+                  class="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                  type="button"
+                  disabled={isSavingAiSettings || isLoadingAiModels || aiProviderKindInput !== 'openAiCompatible'}
+                  onclick={() => void loadAiModels()}
+                >
+                  {isLoadingAiModels ? 'Loading…' : 'Refresh models'}
+                </button>
+              </div>
+              <select
+                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
+                bind:value={aiModelInput}
+                disabled={isSavingAiSettings || isLoadingAiModels || aiProviderKindInput !== 'openAiCompatible'}
+              >
+                {#if aiModels.length === 0}
+                  <option value="">
+                    {aiModelsError || 'Load models from /v1/models'}
+                  </option>
+                {/if}
+                {#each aiModels as model}
+                  <option value={model.id}>{model.id}</option>
+                {/each}
+              </select>
+              <p class="mt-2 text-xs text-muted-foreground">
+                The dropdown is populated from `{aiBaseUrlInput || 'https://api.openai.com/v1'}/models`.
+              </p>
+            </div>
+
+            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+              <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">API key</span>
+              <input
+                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
+                type="password"
+                bind:value={aiApiKeyInput}
+                placeholder={aiSettings?.apiKeyConfigured ? 'Stored; enter a new key to replace it' : 'Paste API key'}
+                disabled={isSavingAiSettings}
+              />
+              <p class="mt-2 text-xs text-muted-foreground">
+                Stored in app data. Current status: {aiSettings?.apiKeyConfigured ? 'configured' : 'missing'}.
+              </p>
+            </label>
+          </div>
         </div>
       </div>
 

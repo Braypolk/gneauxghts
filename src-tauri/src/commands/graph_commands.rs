@@ -4,8 +4,9 @@ use crate::{
     semantic::{
         cluster::cluster_notes,
         db::{
-            ensure_schema, load_all_edges, load_all_notes_with_meta, load_first_chunk_text_per_note,
-            load_graph_positions, load_note_embeddings, open_database, save_graph_positions,
+            ensure_schema, load_all_edges, load_all_notes_with_meta,
+            load_first_chunk_text_per_note, load_graph_positions, load_note_embeddings,
+            open_database, save_graph_positions,
         },
     },
 };
@@ -107,10 +108,8 @@ pub(crate) fn get_graph_data(
         .map(|p| (p.note_path, (p.x, p.y)))
         .collect();
 
-    let indexed_paths: HashSet<String> = embeddings_raw
-        .iter()
-        .map(|e| e.note_path.clone())
-        .collect();
+    let indexed_paths: HashSet<String> =
+        embeddings_raw.iter().map(|e| e.note_path.clone()).collect();
     let stored_note_map: HashMap<String, _> = stored_notes
         .iter()
         .filter(|n| indexed_paths.contains(&n.path))
@@ -151,7 +150,9 @@ pub(crate) fn get_graph_data(
         &embeddings_for_cluster,
         &note_titles,
         &note_snippets,
-        embed_fn.as_ref().map(|f| f as &crate::semantic::cluster::EmbedFn),
+        embed_fn
+            .as_ref()
+            .map(|f| f as &crate::semantic::cluster::EmbedFn),
         color_group_count.unwrap_or(3),
     );
 
@@ -171,8 +172,8 @@ pub(crate) fn get_graph_data(
             let cluster_id = *path_to_cluster.get(path)?;
             let snippet_raw = snippets.get(path).cloned().unwrap_or_default();
             let snippet = truncate_snippet(&snippet_raw, 120);
-            let created_at_millis = parse_rfc3339_to_millis(&note_meta.created_at)
-                .unwrap_or(note_meta.modified_millis);
+            let created_at_millis =
+                parse_rfc3339_to_millis(&note_meta.created_at).unwrap_or(note_meta.modified_millis);
             let pos = position_map.get(path);
 
             if created_at_millis > 0 {
@@ -256,10 +257,8 @@ pub(crate) fn save_graph_node_positions(
     let mut connection = open_database(&db_path)?;
     ensure_schema(&connection)?;
 
-    let entries: Vec<(String, f64, f64)> = positions
-        .into_iter()
-        .map(|p| (p.path, p.x, p.y))
-        .collect();
+    let entries: Vec<(String, f64, f64)> =
+        positions.into_iter().map(|p| (p.path, p.x, p.y)).collect();
     save_graph_positions(&mut connection, &entries)
 }
 

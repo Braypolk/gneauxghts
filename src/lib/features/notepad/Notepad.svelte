@@ -1,10 +1,21 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick } from 'svelte';
   import { cancelScheduledAutoSync, runAutoSyncNow, scheduleAutoSync } from '$lib/sync/autoSync';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
-  import { forgottenNoteRetentionPreference } from '$lib/appSettings';
-  import type { RelatedNoteItem, RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
+  import {
+    cleanUpApplyPolicyPreference,
+    defaultRememberModePreference,
+    forgottenNoteRetentionPreference
+  } from '$lib/appSettings';
+  import type { RememberMode } from '$lib/types/ai';
+  import type {
+    RelatedNoteItem,
+    RelatedNotesResponse,
+    SearchItem,
+    SemanticStatus
+  } from '$lib/types/semantic';
   import type { EditorController } from '$lib/features/notepad/editor/editor';
   import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
   import { focusEditorAtEnd, focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
@@ -82,6 +93,7 @@
   let selectedRelatedText = $state<string | null>(null);
   let isRelatedPanelCollapsed = $state(true);
   let relatedDrawerReservedWidth = $state(0);
+  let semanticStatus = $state<SemanticStatus | null>(null);
 
   interface VaultNoteChangeEvent {
     notePath: string;
@@ -259,6 +271,35 @@
     }
     refreshDerivedViews();
     scheduleAutoSync('vault-note-change', 1200);
+  }
+
+  async function loadRememberCapabilities() {
+    try {
+      semanticStatus = await invoke<SemanticStatus>('get_semantic_status');
+    } catch (error) {
+      console.error('Failed to load semantic status for remember modes:', error);
+      semanticStatus = null;
+    }
+  }
+
+  function integrateDisabledReason() {
+    if (!semanticStatus) {
+      return 'Integrate needs semantic search status.';
+    }
+    if (!semanticStatus.platformSupported) {
+      return semanticStatus.disabledReason ?? 'Integrate is unavailable on this platform.';
+    }
+    if (!semanticStatus.settings.semanticSearchEnabled) {
+      return 'Enable semantic search in Settings to use integrate.';
+    }
+    if (semanticStatus.indexedNotes === 0) {
+      return 'Integrate needs at least one indexed note in the vault.';
+    }
+    return null;
+  }
+
+  function canIntegrate() {
+    return integrateDisabledReason() === null;
   }
 
   const searchController = createSearchController({
@@ -528,8 +569,12 @@
     await sessionController.refreshCurrentNoteIfChanged();
   }
 
-  async function rememberCurrentNote() {
-    await sessionController.rememberCurrentNote();
+  async function rememberCurrentNote(mode: RememberMode) {
+    const resolvedMode = mode === 'integrate' && !canIntegrate() ? 'exact' : mode;
+    await sessionController.rememberCurrentNote(
+      resolvedMode,
+      $cleanUpApplyPolicyPreference
+    );
   }
 
   async function restoreEditorStateForNote(notePath: string | null) {
@@ -601,7 +646,7 @@
     (async () => {
       await tick();
       if (!mounted || !editorRoot) return;
-      await Promise.all([loadSavedNote(), loadAssetRoot()]);
+      await Promise.all([loadSavedNote(), loadAssetRoot(), loadRememberCapabilities()]);
       if (!mounted || !editorRoot) return;
       try {
         await createEditor(bodyMarkdown);
@@ -747,10 +792,13 @@
           {recentNotes}
           {recentTasks}
           {isSearching}
+          defaultRememberMode={$defaultRememberModePreference}
+          integrateEnabled={canIntegrate()}
+          integrateDisabledReason={integrateDisabledReason()}
           focusRequest={searchFocusRequest}
           onForget={() => void clearNotepad()}
           onUnforget={() => void unforgetNotepad()}
-          onRemember={() => void rememberCurrentNote()}
+          onRemember={(mode) => void rememberCurrentNote(mode)}
           onSearchInput={handleSearchInput}
           onSearchModeChange={handleSearchModeChange}
           onSearchSelect={(result) =>

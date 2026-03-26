@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle } from 'lucide-svelte';
+  import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle, ChevronDown } from 'lucide-svelte';
   import {
     forgetButtonDurationPreference,
     resolveForgetButtonDurationMs
@@ -13,13 +13,17 @@
     type BottomBarVisibleItem
   } from '$lib/features/notepad/search/bottomBarSearchController';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
+  import type { RememberMode } from '$lib/types/ai';
   import type { SearchItem } from '$lib/types/semantic';
 
   interface Props {
     canUnforget: boolean;
     onForget: () => void;
     onUnforget: () => void;
-    onRemember: () => void;
+    defaultRememberMode: RememberMode;
+    integrateEnabled: boolean;
+    integrateDisabledReason: string | null;
+    onRemember: (mode: RememberMode) => void;
     searchMode: 'current' | 'all';
     searchQuery: string;
     searchResults: SearchItem[];
@@ -41,6 +45,9 @@
     canUnforget = false,
     onForget,
     onUnforget,
+    defaultRememberMode,
+    integrateEnabled,
+    integrateDisabledReason,
     onRemember,
     searchMode,
     searchQuery,
@@ -61,7 +68,9 @@
 
   let searchInput: HTMLInputElement | null = null;
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
+  let rememberMenuShell = $state<HTMLDivElement | null>(null);
   let isSearchFocused = $state(false);
+  let isRememberMenuOpen = $state(false);
   let activeIndex = $state(0);
   let lastHandledFocusRequest = 0;
   let isHoldingForget = $state(false);
@@ -170,6 +179,31 @@
     resetForgetHold();
   });
 
+  $effect(() => {
+    if (!isRememberMenuOpen || typeof window === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !rememberMenuShell?.contains(event.target)) {
+        isRememberMenuOpen = false;
+      }
+    };
+
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        isRememberMenuOpen = false;
+      }
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeydown);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeydown);
+    };
+  });
+
   function getRecentNotesViewportClass() {
     return 'h-[8.25rem] overflow-y-auto';
   }
@@ -200,6 +234,27 @@
 
   function getExcerptClass() {
     return 'line-clamp-3 text-sm leading-relaxed text-muted-foreground';
+  }
+
+  function resolvePrimaryRememberMode(): RememberMode {
+    if (defaultRememberMode === 'integrate' && !integrateEnabled) {
+      return 'exact';
+    }
+    return defaultRememberMode;
+  }
+
+  function rememberModeLabel(mode: RememberMode) {
+    if (mode === 'cleanUp') return 'Remember + Clean Up';
+    if (mode === 'integrate') return 'Remember + Integrate';
+    return 'Remember Exact';
+  }
+
+  function handleRemember(mode: RememberMode) {
+    if (mode === 'integrate' && !integrateEnabled) {
+      return;
+    }
+    isRememberMenuOpen = false;
+    onRemember(mode);
   }
 </script>
 
@@ -415,15 +470,72 @@
       {/if}
     </div>
 
-    <button
-      class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5"
-      type="button"
-      onclick={() => onRemember()}
-      aria-label="Remember"
-    >
-      <span class="hidden min-[700px]:inline">Remember</span>
-      <Brain class="h-5 w-5 min-[700px]:hidden" />
-    </button>
+    <div bind:this={rememberMenuShell} class="relative shrink-0">
+      <div class="inline-flex items-center gap-1 rounded-full border border-border bg-background p-1 text-muted-foreground shadow-sm">
+        <button
+          class="inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2"
+          type="button"
+          onclick={() => handleRemember(resolvePrimaryRememberMode())}
+          aria-label={rememberModeLabel(resolvePrimaryRememberMode())}
+          title={rememberModeLabel(resolvePrimaryRememberMode())}
+        >
+          <span class="hidden min-[700px]:inline">Remember</span>
+          <Brain class="h-5 w-5 min-[700px]:hidden" />
+        </button>
+        <button
+          class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted/55 p-0 transition-colors hover:bg-accent hover:text-accent-foreground"
+          type="button"
+          aria-expanded={isRememberMenuOpen}
+          aria-haspopup="menu"
+          aria-label="Remember modes"
+          onclick={() => (isRememberMenuOpen = !isRememberMenuOpen)}
+        >
+          <ChevronDown class={`h-4 w-4 transition-transform ${isRememberMenuOpen ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+
+      {#if isRememberMenuOpen}
+        <div
+          class="absolute bottom-[calc(100%+0.5rem)] right-0 z-40 w-64 rounded-[1.2rem] border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md"
+          role="menu"
+          aria-label="Remember modes"
+        >
+          <button
+            type="button"
+            class="flex w-full flex-col items-start rounded-[1rem] px-3 py-2 text-left transition-colors hover:bg-accent"
+            role="menuitem"
+            onclick={() => handleRemember('exact')}
+          >
+            <span class="text-sm font-medium text-popover-foreground">Remember Exact</span>
+            <span class="mt-0.5 text-xs text-muted-foreground">Save exactly as written.</span>
+          </button>
+          <button
+            type="button"
+            class="mt-1 flex w-full flex-col items-start rounded-[1rem] px-3 py-2 text-left transition-colors hover:bg-accent"
+            role="menuitem"
+            onclick={() => handleRemember('cleanUp')}
+          >
+            <span class="text-sm font-medium text-popover-foreground">Remember + Clean Up</span>
+            <span class="mt-0.5 text-xs text-muted-foreground">Let AI polish the source note.</span>
+          </button>
+          <button
+            type="button"
+            class="mt-1 flex w-full flex-col items-start rounded-[1rem] px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 hover:bg-accent"
+            role="menuitem"
+            disabled={!integrateEnabled}
+            title={integrateDisabledReason ?? undefined}
+            onclick={() => handleRemember('integrate')}
+          >
+            <span class="text-sm font-medium text-popover-foreground">Remember + Integrate</span>
+            <span class="mt-0.5 text-xs text-muted-foreground">
+              {integrateEnabled
+                ? 'Let AI fit the note into the vault through Inbox review.'
+                : integrateDisabledReason ?? 'Integrate is unavailable right now.'}
+            </span>
+          </button>
+        </div>
+      {/if}
+    </div>
   </div>
 </div>
 

@@ -1,8 +1,4 @@
-use super::{
-    chunking::SemanticChunk,
-    embed::mean_pool,
-    SemanticIndexJob, SemanticSettings,
-};
+use super::{chunking::SemanticChunk, embed::mean_pool, SemanticIndexJob, SemanticSettings};
 use crate::time::current_time_millis;
 use blake3::hash;
 use rusqlite::{params, Connection, OptionalExtension};

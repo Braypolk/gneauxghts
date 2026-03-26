@@ -1,7 +1,7 @@
 pub(crate) mod asset_commands;
 pub(crate) mod forgotten_note_commands;
 pub(crate) mod graph_commands;
-mod note_persistence;
+pub(crate) mod note_persistence;
 pub(crate) mod search_commands;
 mod task_commands;
 pub(crate) mod wikilink_commands;
@@ -39,7 +39,7 @@ const INTERACTIVE_INDEX_REFRESH_MAX_AGE: Duration = Duration::from_millis(750);
 const ASSETS_DIRECTORY_NAME: &str = "assets";
 const DEFAULT_PASTED_IMAGE_NAME: &str = "Pasted image";
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteSession {
     title: String,

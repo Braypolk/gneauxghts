@@ -65,7 +65,10 @@ pub(crate) fn extract_file_name_title_and_body(
     fallback_title: &str,
 ) -> (String, String) {
     let normalized = strip_frontmatter(markdown);
-    (fallback_title.to_string(), strip_leading_title_heading(&normalized))
+    (
+        fallback_title.to_string(),
+        strip_leading_title_heading(&normalized),
+    )
 }
 
 pub(crate) fn derive_file_stem(markdown: &str, default_name: &str, max_len: usize) -> String {
@@ -386,9 +389,7 @@ fn timestamp_seconds_to_rfc3339(total_seconds: u64) -> String {
     let minute = (seconds_of_day % 3_600) / 60;
     let second = seconds_of_day % 60;
 
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 fn civil_from_days(days: i64) -> (i64, i64, i64) {

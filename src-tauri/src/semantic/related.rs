@@ -356,7 +356,11 @@ fn build_related_cache_key(
     )
 }
 
-fn build_selection_query_text(current_title: &str, current_markdown: &str, selected_text: &str) -> String {
+fn build_selection_query_text(
+    current_title: &str,
+    current_markdown: &str,
+    selected_text: &str,
+) -> String {
     let chunked = chunking::chunk_markdown(current_markdown, current_title);
     if chunked.title.trim().is_empty() {
         selected_text.to_string()

@@ -47,7 +47,11 @@ pub(crate) fn cluster_notes(
     }
 
     let assignments = split_oversized_clusters(embeddings, kmeans(embeddings, k, 25));
-    let final_k = assignments.iter().max().map(|cluster| cluster + 1).unwrap_or(0);
+    let final_k = assignments
+        .iter()
+        .max()
+        .map(|cluster| cluster + 1)
+        .unwrap_or(0);
     let cluster_members = build_cluster_members(&assignments);
     let centroids = compute_cluster_centroids(embeddings, &cluster_members);
     let labels = generate_labels(
@@ -127,9 +131,7 @@ fn generate_labels(
     // Fallback: TF-IDF per cluster
     (0..k)
         .map(|c| {
-            let paths = cluster_members[c]
-                .iter()
-                .map(|&i| embeddings[i].0.as_str());
+            let paths = cluster_members[c].iter().map(|&i| embeddings[i].0.as_str());
             tfidf_label(paths, note_titles, note_snippets)
         })
         .collect()
@@ -539,7 +541,11 @@ fn split_oversized_clusters(
 }
 
 fn build_cluster_members(assignments: &[usize]) -> Vec<Vec<usize>> {
-    let cluster_count = assignments.iter().max().map(|cluster| cluster + 1).unwrap_or(0);
+    let cluster_count = assignments
+        .iter()
+        .max()
+        .map(|cluster| cluster + 1)
+        .unwrap_or(0);
     let mut clusters = vec![Vec::new(); cluster_count];
     for (index, &cluster_id) in assignments.iter().enumerate() {
         if cluster_id < cluster_count {
@@ -748,15 +754,15 @@ fn capitalize_first(s: &str) -> String {
 
 fn stop_words() -> HashSet<&'static str> {
     [
-        "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was",
-        "one", "our", "out", "has", "his", "how", "its", "may", "new", "now", "old", "see",
-        "way", "who", "did", "get", "let", "say", "she", "too", "use", "that", "with", "have",
-        "this", "will", "your", "from", "they", "been", "call", "come", "each", "make", "like",
-        "long", "look", "many", "over", "such", "take", "than", "them", "very", "when", "what",
-        "about", "could", "other", "their", "there", "these", "think", "which", "would", "into",
-        "just", "also", "more", "some", "then", "most", "only", "need", "note", "notes", "todo",
-        "it's", "don't", "i'll", "i've", "we're", "they're", "doesn't", "didn't", "won't",
-        "really", "going", "things", "thing", "still", "much", "well", "back",
+        "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was", "one",
+        "our", "out", "has", "his", "how", "its", "may", "new", "now", "old", "see", "way", "who",
+        "did", "get", "let", "say", "she", "too", "use", "that", "with", "have", "this", "will",
+        "your", "from", "they", "been", "call", "come", "each", "make", "like", "long", "look",
+        "many", "over", "such", "take", "than", "them", "very", "when", "what", "about", "could",
+        "other", "their", "there", "these", "think", "which", "would", "into", "just", "also",
+        "more", "some", "then", "most", "only", "need", "note", "notes", "todo", "it's", "don't",
+        "i'll", "i've", "we're", "they're", "doesn't", "didn't", "won't", "really", "going",
+        "things", "thing", "still", "much", "well", "back",
     ]
     .into_iter()
     .collect()
@@ -830,7 +836,9 @@ mod tests {
         let clusters = build_cluster_members(&assignments);
 
         assert!(clusters.len() > 1);
-        assert!(clusters.iter().all(|cluster| cluster.len() <= MAX_CLUSTER_NOTES));
+        assert!(clusters
+            .iter()
+            .all(|cluster| cluster.len() <= MAX_CLUSTER_NOTES));
     }
 
     #[test]

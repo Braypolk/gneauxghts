@@ -1,6 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { NoteSession, StoredImageAsset } from '$lib/features/notepad/model/types';
 import type { ForgottenNoteSummary, RestoredForgottenNote } from '$lib/types/forgottenNotes';
+import type {
+  CleanUpApplyPolicy,
+  RememberDispatchResult,
+  RememberMode
+} from '$lib/types/ai';
 import type { VaultInfo } from '$lib/types/sync';
 
 export interface ForgottenNote {
@@ -113,6 +118,22 @@ export async function rememberNoteSession(
   currentPath: string | null
 ) {
   await invoke('remember_note', { title, markdown, currentPath });
+}
+
+export async function rememberWithMode(
+  mode: RememberMode,
+  cleanUpApplyPolicy: CleanUpApplyPolicy,
+  title: string,
+  markdown: string,
+  currentPath: string | null
+) {
+  return invoke<RememberDispatchResult>('remember_with_mode', {
+    mode,
+    cleanUpApplyPolicy,
+    title,
+    markdown,
+    currentPath
+  });
 }
 
 function formatPastedImageTimestamp(date: Date) {

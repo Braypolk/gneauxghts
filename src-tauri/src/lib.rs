@@ -1,3 +1,4 @@
+mod ai;
 mod commands;
 mod index;
 mod note;
@@ -37,6 +38,7 @@ pub fn run() {
                 SemanticState::new_with_runtime(app_data_dir, notes_dir, bundled_runtime_path)?
             };
             app.manage(AppState::new(semantic));
+            app.manage(ai::AiState::new(app.handle().clone())?);
             app.manage(sync::start_vault_watcher(app.handle().clone())?);
             Ok(())
         })
@@ -56,6 +58,7 @@ pub fn run() {
             commands::wikilink_commands::autocomplete_note_links,
             commands::save_note,
             commands::remember_note,
+            ai::remember_with_mode,
             commands::forgotten_note_commands::forget_note,
             commands::forgotten_note_commands::list_forgotten_notes,
             commands::forgotten_note_commands::restore_forgotten_notes,
@@ -90,7 +93,16 @@ pub fn run() {
             commands::rebuild_semantic_index,
             commands::pause_semantic_indexing,
             commands::resume_semantic_indexing,
-            commands::prepare_semantic_model
+            commands::prepare_semantic_model,
+            ai::get_ai_settings,
+            ai::set_ai_settings,
+            ai::list_ai_models,
+            ai::list_inbox_items,
+            ai::get_inbox_item,
+            ai::approve_inbox_item,
+            ai::reject_inbox_item,
+            ai::retry_inbox_item,
+            ai::clear_inbox
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

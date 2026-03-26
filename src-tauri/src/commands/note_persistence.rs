@@ -11,19 +11,36 @@ use crate::{
 use std::path::{Path, PathBuf};
 use tauri::State;
 
+#[derive(Clone, Debug)]
+pub(crate) struct PersistNoteOutcome {
+    pub(crate) session: Option<NoteSession>,
+    pub(crate) persisted_path: Option<String>,
+    pub(crate) persisted_markdown: Option<String>,
+}
+
 #[derive(Clone, Copy)]
-pub(super) enum NotePersistenceMode {
+pub(crate) enum NotePersistenceMode {
     Save,
     Remember,
 }
 
-pub(super) fn persist_note_session(
+pub(crate) fn persist_note_session(
     state: &State<'_, AppState>,
     title: String,
     markdown: String,
     current_path: Option<String>,
     mode: NotePersistenceMode,
 ) -> Result<Option<NoteSession>, String> {
+    Ok(persist_note_session_with_outcome(state, title, markdown, current_path, mode)?.session)
+}
+
+pub(crate) fn persist_note_session_with_outcome(
+    state: &State<'_, AppState>,
+    title: String,
+    markdown: String,
+    current_path: Option<String>,
+    mode: NotePersistenceMode,
+) -> Result<PersistNoteOutcome, String> {
     let notes_dir = prepare_notes_dir(true)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let previous_note = current_path
@@ -117,8 +134,8 @@ pub(super) fn persist_note_session(
         }
     }
 
-    match mode {
-        NotePersistenceMode::Save => Ok(Some(NoteSession {
+    let session = match mode {
+        NotePersistenceMode::Save => Some(NoteSession {
             title: persisted_path
                 .as_deref()
                 .and_then(|path| Path::new(path).file_stem())
@@ -135,10 +152,16 @@ pub(super) fn persist_note_session(
                     note::extract_file_name_title_and_body(saved, &fallback_title).1
                 })
                 .unwrap_or_else(|| note::normalize_wikilink_markdown(&markdown)),
-            path: persisted_path,
-        })),
-        NotePersistenceMode::Remember => Ok(None),
-    }
+            path: persisted_path.clone(),
+        }),
+        NotePersistenceMode::Remember => None,
+    };
+
+    Ok(PersistNoteOutcome {
+        session,
+        persisted_path,
+        persisted_markdown: sync_markdown,
+    })
 }
 
 fn note_path_changed(previous_path: &Path, next_path: Option<&str>) -> bool {

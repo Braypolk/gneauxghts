@@ -3,19 +3,14 @@ use super::{
     chunking::chunk_markdown,
     db::{
         content_hash, delete_note, ensure_schema, insert_job, load_existing_chunk_embeddings,
-        load_note_chunk_labels, load_stored_note_records, open_database, rebuild_edges,
-        update_job, upsert_note_chunks,
+        load_note_chunk_labels, load_stored_note_records, open_database, rebuild_edges, update_job,
+        upsert_note_chunks,
     },
     debug::SemanticDebugState,
     embed::{EmbeddingInputKind, EmbeddingProvider},
     RuntimeState,
 };
-use crate::{
-    index::is_note_file,
-    note,
-    state::derive_file_stem,
-    time::current_time_millis,
-};
+use crate::{index::is_note_file, note, state::derive_file_stem, time::current_time_millis};
 use std::{
     collections::{HashMap, HashSet},
     fs,

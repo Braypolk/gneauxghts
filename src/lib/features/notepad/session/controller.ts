@@ -7,7 +7,7 @@ import {
   loadSavedNoteSession,
   openNoteSession,
   readNoteSession,
-  rememberNoteSession,
+  rememberWithMode,
   resolveAssetRootPath,
   restoreForgottenNotes,
   saveNoteSession,
@@ -16,6 +16,7 @@ import {
   type SaveMode,
   type SessionSnapshot
 } from '$lib/features/notepad/session/session';
+import type { CleanUpApplyPolicy, RememberMode } from '$lib/types/ai';
 
 interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
@@ -193,7 +194,7 @@ export function createSessionController({
     }
 
     if (mode === 'remember') {
-      await rememberNoteSession(title, markdown, getCurrentPath());
+      await rememberWithMode('exact', 'autoApply', title, markdown, getCurrentPath());
       scheduleAutoSync('note-remembered', 400);
       return;
     }
@@ -320,13 +321,18 @@ export function createSessionController({
     scheduleAutoSync('forgotten-restored-draft', 400);
   }
 
-  async function rememberCurrentNote() {
+  async function rememberCurrentNote(
+    mode: RememberMode,
+    cleanUpApplyPolicy: CleanUpApplyPolicy
+  ) {
     const rememberedPath = getCurrentPath();
     saveCursorPositionForNote();
     saveEditorStateForNote();
     cancelPendingAutosave();
-
-    await enqueueSave('remember');
+    const title = getTitle();
+    const markdown = getCurrentMarkdown();
+    await rememberWithMode(mode, cleanUpApplyPolicy, title, markdown, getCurrentPath());
+    scheduleAutoSync('note-remembered', 400);
     setCurrentPath(null);
     setLastSavedTitle('');
     setLastSavedMarkdown('');

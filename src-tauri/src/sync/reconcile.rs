@@ -470,7 +470,8 @@ fn resolve_sync_conflict(
 fn write_conflicted_copy(notes_dir: &Path, markdown: &str) -> Result<PathBuf, String> {
     let body = note::strip_frontmatter(markdown);
     let file_stem = crate::state::derive_file_stem(&body);
-    let target_path = resolve_unique_sync_path(notes_dir, &format!("{file_stem} (Conflicted Copy).md"));
+    let target_path =
+        resolve_unique_sync_path(notes_dir, &format!("{file_stem} (Conflicted Copy).md"));
     let prepared = note::prepare_note_markdown(&body, None, Some(None))?.0;
     fs::write(&target_path, prepared).map_err(|err| err.to_string())?;
     Ok(target_path)

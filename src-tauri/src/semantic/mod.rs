@@ -378,9 +378,7 @@ impl SemanticState {
         }
     }
 
-    pub(crate) fn embedding_provider(
-        &self,
-    ) -> Option<Arc<dyn EmbeddingProvider + Send + Sync>> {
+    pub(crate) fn embedding_provider(&self) -> Option<Arc<dyn EmbeddingProvider + Send + Sync>> {
         match &self.inner {
             SemanticStateInner::Active(state) => Some(state.provider.clone()),
             SemanticStateInner::Disabled(_) => None,
@@ -495,9 +493,13 @@ impl SemanticState {
         limit: usize,
     ) -> Result<RelatedNotesResponse, String> {
         match &self.inner {
-            SemanticStateInner::Active(state) => {
-                state.related_notes(current_path, current_title, current_markdown, selected_text, limit)
-            }
+            SemanticStateInner::Active(state) => state.related_notes(
+                current_path,
+                current_title,
+                current_markdown,
+                selected_text,
+                limit,
+            ),
             SemanticStateInner::Disabled(state) => Ok(RelatedNotesResponse {
                 status: "unavailable".to_string(),
                 scope: related_scope_label(selected_text),
@@ -506,7 +508,6 @@ impl SemanticState {
             }),
         }
     }
-
 }
 
 impl ActiveSemanticState {

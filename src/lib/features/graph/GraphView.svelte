@@ -34,14 +34,12 @@
     GraphPositionEntry
   } from '$lib/types/graph';
 
-  const INFERRED_EDGE_COLOR = '#B4B2A9';
   const INFERRED_EDGE_SIMILARITY_THRESHOLD = 0.72;
   const MAX_INFERRED_EDGES_PER_NODE = 3;
   const CLUSTER_VIEW_END_ZOOM = 0.95;
   const NODE_BLEND_END_ZOOM = 1.4;
   const LABEL_SHOW_ZOOM = 1.15;
   const LABEL_FADE_RANGE = 0.16;
-  const INFERRED_EDGE_SHOW_ZOOM = 1.05;
   const WIKILINK_SHOW_ZOOM = 0.82;
   const DIMMED_MATCH_SCORE = 0.15;
   const STRONG_MATCH_SCORE = 0.7;
@@ -389,11 +387,6 @@
       k <= WIKILINK_SHOW_ZOOM
         ? 0
         : Math.min(0.42, ((k - WIKILINK_SHOW_ZOOM) / 0.8) * 0.42);
-    const inferredEdgeOpacity =
-      k <= INFERRED_EDGE_SHOW_ZOOM
-        ? 0
-        : Math.min(0.14, ((k - INFERRED_EDGE_SHOW_ZOOM) / 0.7) * 0.14);
-
     const g = svg.select<SVGGElement>('.graph-container');
     g.attr('transform', currentTransform.toString());
 
@@ -402,6 +395,7 @@
       .data(clusterBubbles, (d: ClusterBubble) => String(d.id));
 
     const clusterEnter = clusterSel.enter().insert('g', ':first-child').attr('class', 'cluster-group');
+    clusterEnter.append('path').attr('class', 'cluster-shape-outline');
     clusterEnter.append('path').attr('class', 'cluster-shape');
     clusterEnter.append('text').attr('class', 'cluster-label');
     clusterEnter.append('text').attr('class', 'cluster-count');
@@ -409,16 +403,26 @@
     const clusterMerge = clusterEnter.merge(clusterSel);
     clusterMerge.style('opacity', String(clusterOpacity)).style('pointer-events', clusterOpacity > 0.1 ? 'all' : 'none');
 
+    clusterMerge.select<SVGPathElement>('.cluster-shape-outline')
+      .attr('d', (d: ClusterBubble) => d.path)
+      .attr('fill', 'none')
+      .attr('stroke', 'var(--foreground)')
+      .attr('stroke-opacity', 0.16)
+      .attr('stroke-width', 5.5)
+      .attr('stroke-linejoin', 'round')
+      .attr('stroke-linecap', 'round')
+      .style('filter', 'drop-shadow(0 12px 24px rgba(0, 0, 0, 0.18))');
+
     clusterMerge.select<SVGPathElement>('.cluster-shape')
       .attr('d', (d: ClusterBubble) => d.path)
       .attr('fill', (d: ClusterBubble) => clusterColor(d.colorIndex))
       .attr('fill-opacity', 0.1)
       .attr('stroke', (d: ClusterBubble) => clusterColor(d.colorIndex))
-      .attr('stroke-opacity', 0.48)
-      .attr('stroke-width', 1.35)
+      .attr('stroke-opacity', 0.8)
+      .attr('stroke-width', 2.25)
       .attr('stroke-linejoin', 'round')
       .attr('stroke-linecap', 'round')
-      .style('filter', 'drop-shadow(0 0 12px rgba(0, 0, 0, 0.22))');
+      .style('filter', 'drop-shadow(0 0 16px rgba(0, 0, 0, 0.12))');
 
     clusterMerge.select<SVGTextElement>('.cluster-label')
       .attr('x', (d: ClusterBubble) => d.cx)
@@ -469,8 +473,9 @@
 
     // -- Edges --
     const edgeKey = (d: SimLink) => `${d.source.path}::${d.target.path}::${d.type}`;
+    const visibleEdges = simLinks.filter((link) => link.type === 'wikilink');
     const edgeSel = g.selectAll<SVGLineElement, SimLink>('.edge-line')
-      .data(simLinks, edgeKey);
+      .data(visibleEdges, edgeKey);
 
     const edgeEnter = edgeSel.enter().append('line').attr('class', 'edge-line');
     const edgeMerge = edgeEnter.merge(edgeSel);
@@ -480,16 +485,10 @@
       .attr('y1', (d: SimLink) => d.source.y)
       .attr('x2', (d: SimLink) => d.target.x)
       .attr('y2', (d: SimLink) => d.target.y)
-      .attr('stroke', (d: SimLink) => {
-        if (d.type === 'wikilink') return clusterColor(getClusterColorIndex(d.source.clusterId));
-        return INFERRED_EDGE_COLOR;
-      })
-      .attr('stroke-opacity', (d: SimLink) => {
-        if (d.type === 'wikilink') return wikilinkOpacity;
-        return inferredEdgeOpacity;
-      })
-      .attr('stroke-width', (d: SimLink) => d.type === 'wikilink' ? 1.15 : 0.9)
-      .attr('stroke-dasharray', (d: SimLink) => d.type === 'inferred' ? '4 3' : 'none');
+      .attr('stroke', (d: SimLink) => clusterColor(getClusterColorIndex(d.source.clusterId)))
+      .attr('stroke-opacity', wikilinkOpacity)
+      .attr('stroke-width', 1.15)
+      .attr('stroke-dasharray', 'none');
 
     edgeSel.exit().remove();
 
