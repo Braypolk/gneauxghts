@@ -204,6 +204,7 @@
     };
   });
 
+
   function getRecentNotesViewportClass() {
     return 'h-[8.25rem] overflow-y-auto';
   }
@@ -244,8 +245,8 @@
   }
 
   function rememberModeLabel(mode: RememberMode) {
-    if (mode === 'cleanUp') return 'Remember + Clean Up';
-    if (mode === 'integrate') return 'Remember + Integrate';
+    if (mode === 'cleanUp') return 'Clean Up';
+    if (mode === 'integrate') return 'Integrate';
     return 'Remember Exact';
   }
 
@@ -506,8 +507,8 @@
             role="menuitem"
             onclick={() => handleRemember('exact')}
           >
-            <span class="text-sm font-medium text-popover-foreground">Remember Exact</span>
-            <span class="mt-0.5 text-xs text-muted-foreground">Save exactly as written.</span>
+            <span class="text-sm font-medium text-popover-foreground">Remember</span>
+            <span class="mt-0.5 text-xs text-muted-foreground">Remember exactly as written.</span>
           </button>
           <button
             type="button"
@@ -515,7 +516,7 @@
             role="menuitem"
             onclick={() => handleRemember('cleanUp')}
           >
-            <span class="text-sm font-medium text-popover-foreground">Remember + Clean Up</span>
+            <span class="text-sm font-medium text-popover-foreground">Clean Up</span>
             <span class="mt-0.5 text-xs text-muted-foreground">Let AI polish the source note.</span>
           </button>
           <button
@@ -526,7 +527,7 @@
             title={integrateDisabledReason ?? undefined}
             onclick={() => handleRemember('integrate')}
           >
-            <span class="text-sm font-medium text-popover-foreground">Remember + Integrate</span>
+            <span class="text-sm font-medium text-popover-foreground">Integrate</span>
             <span class="mt-0.5 text-xs text-muted-foreground">
               {integrateEnabled
                 ? 'Let AI fit the note into the vault through Inbox review.'

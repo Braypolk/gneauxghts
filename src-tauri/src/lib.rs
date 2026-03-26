@@ -96,6 +96,8 @@ pub fn run() {
             commands::prepare_semantic_model,
             ai::get_ai_settings,
             ai::set_ai_settings,
+            ai::get_ai_diagnostics,
+            ai::clear_ai_diagnostics,
             ai::list_ai_models,
             ai::list_inbox_items,
             ai::get_inbox_item,

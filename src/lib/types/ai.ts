@@ -53,6 +53,33 @@ export interface ClearInboxResult {
   removedJobs: number;
 }
 
+export interface AiDiagnosticsLastRun {
+  kind: RememberMode;
+  status: AiJobStatus;
+  model: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  elapsedMillis: number;
+  updatedAtMillis: number;
+}
+
+export interface AiDiagnosticsMetrics {
+  runCount: number;
+  promptTokensTotal: number;
+  completionTokensTotal: number;
+  totalTokensTotal: number;
+  promptTokensMax: number;
+  completionTokensMax: number;
+  totalTokensMax: number;
+  lastRun: AiDiagnosticsLastRun | null;
+}
+
+export interface AiDiagnosticsSnapshot {
+  capturedAtMillis: number;
+  metrics: AiDiagnosticsMetrics;
+}
+
 export interface AiSettingsUpdate {
   providerKind: AiProviderKind;
   baseUrl: string;

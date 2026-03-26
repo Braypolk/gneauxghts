@@ -111,6 +111,39 @@ pub(crate) struct ClearInboxResult {
     pub(crate) removed_jobs: usize,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AiDiagnosticsSnapshot {
+    pub(crate) captured_at_millis: u64,
+    pub(crate) metrics: AiDiagnosticsMetrics,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AiDiagnosticsMetrics {
+    pub(crate) run_count: u64,
+    pub(crate) prompt_tokens_total: u64,
+    pub(crate) completion_tokens_total: u64,
+    pub(crate) total_tokens_total: u64,
+    pub(crate) prompt_tokens_max: u64,
+    pub(crate) completion_tokens_max: u64,
+    pub(crate) total_tokens_max: u64,
+    pub(crate) last_run: Option<AiDiagnosticsLastRun>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AiDiagnosticsLastRun {
+    pub(crate) kind: RememberMode,
+    pub(crate) status: AiJobStatus,
+    pub(crate) model: Option<String>,
+    pub(crate) prompt_tokens: Option<u64>,
+    pub(crate) completion_tokens: Option<u64>,
+    pub(crate) total_tokens: Option<u64>,
+    pub(crate) elapsed_millis: u64,
+    pub(crate) updated_at_millis: u64,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AiSettingsUpdate {
@@ -483,6 +516,32 @@ pub(crate) fn set_ai_settings(
     settings: AiSettingsUpdate,
 ) -> Result<AiSettings, String> {
     ai.save_settings(settings)
+}
+
+#[tauri::command]
+pub(crate) fn get_ai_diagnostics(ai: State<'_, AiState>) -> Result<AiDiagnosticsSnapshot, String> {
+    let connection = ai.connection()?;
+    let jobs = list_jobs_including_cancelled(&connection)?;
+    Ok(AiDiagnosticsSnapshot {
+        captured_at_millis: current_time_millis()?,
+        metrics: build_ai_diagnostics_metrics(&jobs),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn clear_ai_diagnostics(ai: State<'_, AiState>) -> Result<(), String> {
+    let connection = ai.connection()?;
+    connection
+        .execute(
+            "UPDATE ai_jobs
+             SET metrics_json = NULL,
+                 updated_at_millis = ?1
+             WHERE metrics_json IS NOT NULL",
+            params![current_time_millis()?],
+        )
+        .map_err(|err| err.to_string())?;
+    ai.emit_inbox_changed()?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -889,7 +948,7 @@ fn run_clean_up_job(
     job: &StoredAiJob,
     provider: &dyn GenerationProvider,
 ) -> Result<GeneratedProposal, String> {
-    let system_prompt = "You clean up markdown notes without adding new facts. Preserve intent. Keep markdown plain. Return JSON only.";
+    let system_prompt = "You aggressively clean up rough markdown notes without adding new facts. Preserve intent and meaning, but reorganize, reorder, rewrite, and structure the note so it becomes usable. Keep markdown plain. Return JSON only.";
     let user_prompt = json!({
         "task": "cleanUp",
         "sourceNote": {
@@ -900,7 +959,11 @@ fn run_clean_up_job(
         },
         "rules": [
             "Do not add new facts.",
-            "You may improve wording, structure, headings, and wikilinks.",
+            "You may rewrite wording, reorder content, improve structure, add headings, and add wikilinks.",
+            "Prefer making the note clearly organized and usable over preserving its original order.",
+            "You may collapse repetition and fix obvious inconsistencies when the intended meaning is clear.",
+            "If parts of the note are ambiguous, underspecified, or missing needed context, add follow-up tasks in markdown task format using '* [ ]'.",
+            "Only add task items when they reflect a real gap or ambiguity in the source note.",
             "Return only changes for the source note.",
             "Set newTitle to the current note title unless you are intentionally renaming the note.",
             "Use one updateNote change or an empty changes array."
@@ -937,13 +1000,13 @@ fn run_integrate_job(
 ) -> Result<GeneratedProposal, String> {
     let candidates = retrieve_integrate_candidates(app_handle, &job.source)?;
     let planning_completion = provider.complete_json(
-        "You plan how a new note should fit into a markdown knowledge base. Return JSON only.",
+        "You plan how a source note should be absorbed into a markdown knowledge base. Prefer real integration over superficial linking. Return JSON only.",
         &build_integrate_plan_prompt(job, &candidates)?,
     )?;
     let plan: IntegratePlanResponse = parse_model_json(&planning_completion.text)?;
     let target_context = load_target_note_contexts(&plan, &candidates, &job.source)?;
     let edit_completion = provider.complete_json(
-        "You propose structured markdown note edits. Return JSON only.",
+        "You rewrite markdown notes so source content is actually integrated into the note set. Prefer absorbing content into the best existing notes over adding wikilinks. Return JSON only.",
         &build_integrate_edit_prompt(job, &plan, &target_context)?,
     )?;
     let edit_response = parse_integrate_edit_response(&edit_completion.text, job, &target_context)?;
@@ -1041,8 +1104,13 @@ fn build_integrate_plan_prompt(
             },
             "candidateNotes": packed_candidates,
             "rules": [
-                "Decide whether the source note should stay separate, integrate with existing notes, or merge into another note.",
+                "Decide whether the source note should stay separate, integrate with existing notes, or merge into other notes.",
                 "Prefer conservative decisions when confidence is low.",
+                "Prefer absorbing content into existing notes when it clearly belongs there instead of keeping a separate note with wikilinks.",
+                "A single source note may map to multiple existing notes when different sections clearly belong in different places.",
+                "If most of the source can be absorbed, prefer integrate or merge over keepSeparate.",
+                "Set deleteSource to true only when the meaningful content of the source should be fully absorbed elsewhere.",
+                "Set deleteSource to false when meaningful remainder content should stay in the source note because it does not fit the chosen target notes.",
                 "Only select targetNotePaths from candidateNotes.",
                 "deleteSource may only be true when the source should be absorbed into another note."
             ],
@@ -1089,7 +1157,15 @@ fn build_integrate_edit_prompt(
                 "createNote may be used when a new standalone note is better than overloading an existing note.",
                 "deleteNote is allowed only for the source note and only if the source should be merged into other notes.",
                 "Do not add new facts.",
-                "Prefer light linking and wording adjustments when uncertain.",
+                "Prefer direct integration over wikilinks when the content can naturally fit into an existing note.",
+                "A single source note may be split across multiple target notes when different sections clearly belong in different places.",
+                "Rewrite target notes so the absorbed content reads naturally there instead of feeling appended.",
+                "Deduplicate overlapping information instead of keeping the same idea in multiple places.",
+                "If content from the source does not fit the target notes, keep that meaningful remainder in the source note rather than forcing it elsewhere.",
+                "If the source is fully absorbed into target notes, delete the source note.",
+                "If the source is only partially absorbed, update the source note so it contains only the meaningful remainder.",
+                "Only use wikilinks when they still add navigation value after integration, not as a substitute for integration.",
+                "If a real ambiguity or missing context blocks clean integration, add follow-up tasks in markdown task format using '* [ ]' in the most relevant updated note.",
                 "Every updateNote MUST include path, baseContentHash, newTitle, and newMarkdown.",
                 "Every deleteNote MUST include path and baseContentHash.",
                 "For updateNote, use the field name newMarkdown, not markdown.",
@@ -2013,8 +2089,24 @@ fn insert_job(connection: &Connection, job: &StoredAiJob) -> Result<i64, String>
 }
 
 fn list_jobs(connection: &Connection) -> Result<Vec<StoredAiJob>, String> {
+    list_jobs_with_filter(connection, true)
+}
+
+fn list_jobs_including_cancelled(connection: &Connection) -> Result<Vec<StoredAiJob>, String> {
+    list_jobs_with_filter(connection, false)
+}
+
+fn list_jobs_with_filter(
+    connection: &Connection,
+    hide_cancelled: bool,
+) -> Result<Vec<StoredAiJob>, String> {
+    let filter_clause = if hide_cancelled {
+        "WHERE status != 'cancelled'"
+    } else {
+        ""
+    };
     let mut statement = connection
-        .prepare(
+        .prepare(&format!(
             "SELECT
                 id,
                 kind,
@@ -2034,9 +2126,9 @@ fn list_jobs(connection: &Connection) -> Result<Vec<StoredAiJob>, String> {
                 created_at_millis,
                 updated_at_millis
              FROM ai_jobs
-             WHERE status != 'cancelled'
-             ORDER BY updated_at_millis DESC, id DESC",
-        )
+             {filter_clause}
+             ORDER BY updated_at_millis DESC, id DESC"
+        ))
         .map_err(|err| err.to_string())?;
     let rows = statement
         .query_map([], |row| row_to_job(row))
@@ -2344,6 +2436,44 @@ fn emit_inbox_changed(app_handle: &AppHandle) -> Result<(), String> {
     app_handle
         .emit(INBOX_CHANGED_EVENT, json!({ "updated": true }))
         .map_err(|err| err.to_string())
+}
+
+fn build_ai_diagnostics_metrics(jobs: &[StoredAiJob]) -> AiDiagnosticsMetrics {
+    let mut metrics = AiDiagnosticsMetrics::default();
+    for job in jobs {
+        let Some(run_metrics) = job.metrics.as_ref() else {
+            continue;
+        };
+        metrics.run_count += 1;
+        let prompt_tokens = run_metrics.prompt_tokens.unwrap_or(0);
+        let completion_tokens = run_metrics.completion_tokens.unwrap_or(0);
+        let total_tokens = run_metrics
+            .total_tokens
+            .unwrap_or(prompt_tokens + completion_tokens);
+        metrics.prompt_tokens_total += prompt_tokens;
+        metrics.completion_tokens_total += completion_tokens;
+        metrics.total_tokens_total += total_tokens;
+        metrics.prompt_tokens_max = metrics.prompt_tokens_max.max(prompt_tokens);
+        metrics.completion_tokens_max = metrics.completion_tokens_max.max(completion_tokens);
+        metrics.total_tokens_max = metrics.total_tokens_max.max(total_tokens);
+        let should_replace_last_run = match metrics.last_run.as_ref() {
+            Some(last_run) => job.updated_at_millis > last_run.updated_at_millis,
+            None => true,
+        };
+        if should_replace_last_run {
+            metrics.last_run = Some(AiDiagnosticsLastRun {
+                kind: job.kind.clone(),
+                status: job.status.clone(),
+                model: job.model.clone(),
+                prompt_tokens: run_metrics.prompt_tokens,
+                completion_tokens: run_metrics.completion_tokens,
+                total_tokens: run_metrics.total_tokens,
+                elapsed_millis: run_metrics.elapsed_millis,
+                updated_at_millis: job.updated_at_millis,
+            });
+        }
+    }
+    metrics
 }
 
 enum ApplyError {

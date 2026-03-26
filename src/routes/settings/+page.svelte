@@ -37,7 +37,13 @@
     setForgottenNoteRetentionPreference,
     setForgetButtonDurationPreference
   } from '$lib/appSettings';
-  import type { AiModelOption, AiProviderKind, AiSettings, AiSettingsUpdate } from '$lib/types/ai';
+  import type {
+    AiDiagnosticsSnapshot,
+    AiModelOption,
+    AiProviderKind,
+    AiSettings,
+    AiSettingsUpdate
+  } from '$lib/types/ai';
   import {
     setThemePreference,
     themeOptions,
@@ -104,6 +110,9 @@
   let aiModelsError = $state('');
   let isLoadingAiModels = $state(false);
   let isSavingAiSettings = $state(false);
+  let aiDiagnostics = $state<AiDiagnosticsSnapshot | null>(null);
+  let isLoadingAiDiagnostics = $state(false);
+  let isClearingAiDiagnostics = $state(false);
   let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
   let allForgottenSelected = $derived(
@@ -220,9 +229,21 @@
       aiProviderKindInput = settings.providerKind;
       aiBaseUrlInput = settings.baseUrl;
       aiModelInput = settings.model;
+      await loadAiDiagnostics();
       await loadAiModels();
     } catch (error) {
       console.error('Failed to load AI settings:', error);
+    }
+  }
+
+  async function loadAiDiagnostics() {
+    isLoadingAiDiagnostics = true;
+    try {
+      aiDiagnostics = await invoke<AiDiagnosticsSnapshot>('get_ai_diagnostics');
+    } catch (error) {
+      console.error('Failed to load AI diagnostics:', error);
+    } finally {
+      isLoadingAiDiagnostics = false;
     }
   }
 
@@ -280,6 +301,22 @@
     } finally {
       isSavingAiSettings = false;
     }
+  }
+
+  async function clearAiDiagnostics() {
+    isClearingAiDiagnostics = true;
+    try {
+      await invoke('clear_ai_diagnostics');
+      await loadAiDiagnostics();
+    } catch (error) {
+      console.error('Failed to clear AI diagnostics:', error);
+    } finally {
+      isClearingAiDiagnostics = false;
+    }
+  }
+
+  function formatCount(value: number | null | undefined) {
+    return (value ?? 0).toLocaleString();
   }
 
   onMount(() => {
@@ -597,6 +634,96 @@
                 Stored in app data. Current status: {aiSettings?.apiKeyConfigured ? 'configured' : 'missing'}.
               </p>
             </label>
+          </div>
+
+          <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Diagnostics</p>
+                <p class="mt-2 text-sm font-medium">AI token usage</p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  {#if aiDiagnostics}
+                    Captured {formatTimestamp(aiDiagnostics.capturedAtMillis)}
+                  {:else}
+                    Tracks prompt and completion token usage from AI remember jobs.
+                  {/if}
+                </p>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                  type="button"
+                  disabled={isLoadingAiDiagnostics}
+                  onclick={() => void loadAiDiagnostics()}
+                >
+                  {isLoadingAiDiagnostics ? 'Loading…' : 'Refresh diagnostics'}
+                </button>
+                <button
+                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                  type="button"
+                  disabled={isClearingAiDiagnostics}
+                  onclick={() => void clearAiDiagnostics()}
+                >
+                  {isClearingAiDiagnostics ? 'Clearing…' : 'Clear diagnostics'}
+                </button>
+              </div>
+            </div>
+
+            {#if aiDiagnostics}
+              {@const metrics = aiDiagnostics.metrics}
+              <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Totals</p>
+                  <p class="mt-2 text-sm font-medium">{formatCount(metrics.totalTokensTotal)} total</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    input {formatCount(metrics.promptTokensTotal)} · output {formatCount(metrics.completionTokensTotal)}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    runs {formatCount(metrics.runCount)}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Average Per Run</p>
+                  <p class="mt-2 text-sm font-medium">
+                    {formatCount(metrics.runCount ? Math.round(metrics.totalTokensTotal / metrics.runCount) : 0)} total
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    input {formatCount(metrics.runCount ? Math.round(metrics.promptTokensTotal / metrics.runCount) : 0)}
+                    · output {formatCount(metrics.runCount ? Math.round(metrics.completionTokensTotal / metrics.runCount) : 0)}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Largest Run</p>
+                  <p class="mt-2 text-sm font-medium">{formatCount(metrics.totalTokensMax)} total</p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    input {formatCount(metrics.promptTokensMax)} · output {formatCount(metrics.completionTokensMax)}
+                  </p>
+                </div>
+
+                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
+                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Latest Run</p>
+                  {#if metrics.lastRun}
+                    <p class="mt-2 text-sm font-medium">
+                      {formatCount(metrics.lastRun.totalTokens)} total
+                    </p>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      input {formatCount(metrics.lastRun.promptTokens)} · output {formatCount(metrics.lastRun.completionTokens)}
+                    </p>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      {metrics.lastRun.kind} · {metrics.lastRun.status} · {formatMillis(metrics.lastRun.elapsedMillis)}
+                    </p>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      {metrics.lastRun.model ?? 'Unknown model'} · {formatTimestamp(metrics.lastRun.updatedAtMillis)}
+                    </p>
+                  {:else}
+                    <p class="mt-2 text-sm text-muted-foreground">No AI runs captured yet.</p>
+                  {/if}
+                </div>
+              </div>
+            {/if}
           </div>
         </div>
       </div>
