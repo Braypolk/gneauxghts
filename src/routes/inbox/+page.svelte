@@ -2,12 +2,15 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { onDestroy, onMount } from 'svelte';
-  import type {
-    AiChangePreview,
-    ClearInboxResult,
-    InboxItemDetail,
-    InboxListItem
-  } from '$lib/types/ai';
+  import {
+    buildApprovedChanges,
+    buildReviewChanges,
+    isReviewChangeSelected,
+    setReviewChangeSelection,
+    type DiffDisplayLine,
+    type ReviewChange
+  } from '$lib/features/inbox/reviewDiff';
+  import type { ClearInboxResult, InboxItemDetail, InboxListItem } from '$lib/types/ai';
 
   type InboxGroupKey = 'pendingApproval' | 'running' | 'applied' | 'failed' | 'stale' | 'rejected';
 
@@ -23,6 +26,7 @@
   let items = $state<InboxListItem[]>([]);
   let selectedId = $state<number | null>(null);
   let selectedItem = $state<InboxItemDetail | null>(null);
+  let reviewChanges = $state<ReviewChange[]>([]);
   let isLoading = $state(false);
   let isMutating = $state(false);
   let errorMessage = $state('');
@@ -58,6 +62,11 @@
     return new Date(value).toLocaleString();
   }
 
+  function setSelectedInboxItem(item: InboxItemDetail | null) {
+    selectedItem = item;
+    reviewChanges = item ? buildReviewChanges(item.changePreviews) : [];
+  }
+
   async function loadInbox() {
     isLoading = true;
     try {
@@ -70,7 +79,11 @@
       }
       const nextSelectedId = nextItems[0]?.id ?? null;
       selectedId = nextSelectedId;
-      selectedItem = nextSelectedId === null ? null : await invoke<InboxItemDetail>('get_inbox_item', { id: nextSelectedId });
+      setSelectedInboxItem(
+        nextSelectedId === null
+          ? null
+          : await invoke<InboxItemDetail | null>('get_inbox_item', { id: nextSelectedId })
+      );
     } catch (error) {
       console.error('Failed to load inbox:', error);
       errorMessage = 'Unable to load Inbox items.';
@@ -82,7 +95,7 @@
   async function loadInboxItem(id: number) {
     try {
       selectedId = id;
-      selectedItem = await invoke<InboxItemDetail>('get_inbox_item', { id });
+      setSelectedInboxItem(await invoke<InboxItemDetail | null>('get_inbox_item', { id }));
     } catch (error) {
       console.error('Failed to load inbox item:', error);
       errorMessage = 'Unable to load the selected Inbox item.';
@@ -95,7 +108,7 @@
     }
     isMutating = true;
     try {
-      selectedItem = await invoke<InboxItemDetail>(command, { id: selectedId });
+      setSelectedInboxItem(await invoke<InboxItemDetail | null>(command, { id: selectedId }));
       await loadInbox();
     } catch (error) {
       console.error(`Failed to run ${command}:`, error);
@@ -119,15 +132,85 @@
     }
   }
 
-  function changeTitle(changePreview: AiChangePreview) {
-    const { change } = changePreview;
-    if (change.kind === 'updateNote') {
-      return change.newTitle || changePreview.currentTitle || 'Updated note';
+  async function approveSelectedChanges() {
+    if (selectedId === null) {
+      return;
     }
-    if (change.kind === 'createNote') {
-      return change.suggestedTitle || 'New note';
+    isMutating = true;
+    try {
+      const changes = buildApprovedChanges(reviewChanges);
+      if (changes.length === 0) {
+        setSelectedInboxItem(await invoke<InboxItemDetail | null>('reject_inbox_item', { id: selectedId }));
+      } else {
+        setSelectedInboxItem(
+          await invoke<InboxItemDetail | null>('approve_inbox_item_with_changes', {
+            id: selectedId,
+            changes
+          })
+        );
+      }
+      await loadInbox();
+    } catch (error) {
+      console.error('Failed to approve edited changes:', error);
+      errorMessage = 'Unable to approve the selected changes.';
+    } finally {
+      isMutating = false;
     }
-    return changePreview.currentTitle || 'Deleted note';
+  }
+
+  function reviewChangeTitle(reviewChange: ReviewChange) {
+    if (reviewChange.kind === 'updateNote') {
+      return reviewChange.proposedTitle || reviewChange.currentTitle || 'Updated note';
+    }
+    if (reviewChange.kind === 'createNote') {
+      return reviewChange.change.suggestedTitle || 'New note';
+    }
+    return reviewChange.title || 'Deleted note';
+  }
+
+  function acceptedHunkCount(reviewChange: ReviewChange) {
+    if (reviewChange.kind !== 'updateNote') {
+      return isReviewChangeSelected(reviewChange) ? 1 : 0;
+    }
+    return reviewChange.hunks.filter((hunk) => hunk.selected).length;
+  }
+
+  function toggleReviewChange(index: number, selected: boolean) {
+    const nextChanges = [...reviewChanges];
+    setReviewChangeSelection(nextChanges[index], selected);
+    reviewChanges = nextChanges;
+  }
+
+  function toggleReviewHunk(changeIndex: number, hunkIndex: number, selected: boolean) {
+    const nextChanges = [...reviewChanges];
+    const reviewChange = nextChanges[changeIndex];
+    if (reviewChange.kind !== 'updateNote') {
+      reviewChanges = nextChanges;
+      return;
+    }
+    reviewChange.hunks[hunkIndex].selected = selected;
+    reviewChanges = nextChanges;
+  }
+
+  function toggleReviewTitle(changeIndex: number, selected: boolean) {
+    const nextChanges = [...reviewChanges];
+    const reviewChange = nextChanges[changeIndex];
+    if (reviewChange.kind !== 'updateNote' || !reviewChange.titleChanged) {
+      reviewChanges = nextChanges;
+      return;
+    }
+    reviewChange.titleSelected = selected;
+    reviewChanges = nextChanges;
+  }
+
+  function selectedApprovedChangeCount() {
+    return buildApprovedChanges(reviewChanges).length;
+  }
+
+  function diffLinePrefix(line: DiffDisplayLine) {
+    if (line.kind === 'add') return '+';
+    if (line.kind === 'remove') return '-';
+    return ' ';
   }
 
   onMount(() => {
@@ -242,9 +325,9 @@
                     class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
                     type="button"
                     disabled={isMutating}
-                    onclick={() => void runAction('approve_inbox_item')}
+                    onclick={() => void approveSelectedChanges()}
                   >
-                    Approve
+                    {selectedApprovedChangeCount() === 0 ? 'Reject All' : 'Approve Selected'}
                   </button>
                   <button
                     class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
@@ -301,36 +384,187 @@
 
             <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
               <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Proposed changes</p>
-              {#if selectedItem.changePreviews.length === 0}
+              {#if reviewChanges.length === 0}
                 <p class="mt-3 text-sm text-muted-foreground">No note edits were proposed.</p>
               {:else}
                 <div class="mt-4 space-y-4">
-                  {#each selectedItem.changePreviews as changePreview}
-                    <div class="rounded-2xl border border-border/70 bg-card/80 px-4 py-4">
+                  {#each reviewChanges as reviewChange, changeIndex (`${reviewChange.kind}-${reviewChangeTitle(reviewChange)}-${changeIndex}`)}
+                    {@const noteSelected = isReviewChangeSelected(reviewChange)}
+                    <div class={`rounded-2xl border px-4 py-4 transition-colors ${
+                      noteSelected
+                        ? 'border-border/70 bg-card/80'
+                        : 'border-border/50 bg-card/45 opacity-75'
+                    }`}>
                       <div class="flex items-start justify-between gap-3">
                         <div>
-                          <p class="text-sm font-medium">{changeTitle(changePreview)}</p>
+                          <p class="text-sm font-medium">{reviewChangeTitle(reviewChange)}</p>
                           <p class="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                            {changePreview.change.kind}
+                            {reviewChange.kind}
                           </p>
+                          <p class="mt-1 text-xs text-muted-foreground">
+                            {noteSelected ? 'Selected for approval' : 'Rejected from approval'}
+                          </p>
+                          {#if reviewChange.kind === 'updateNote'}
+                            <p class="mt-1 text-xs text-muted-foreground">
+                              {acceptedHunkCount(reviewChange)} of {reviewChange.hunks.length} hunks selected
+                            </p>
+                          {/if}
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <button
+                            type="button"
+                            class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                              noteSelected
+                                ? 'border-foreground/20 bg-foreground text-background'
+                                : 'border-border bg-background hover:bg-accent'
+                            }`}
+                            onclick={() => toggleReviewChange(changeIndex, true)}
+                          >
+                            Accept note
+                          </button>
+                          <button
+                            type="button"
+                            class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                              !noteSelected
+                                ? 'border-foreground/20 bg-foreground text-background'
+                                : 'border-border bg-background hover:bg-accent'
+                            }`}
+                            onclick={() => toggleReviewChange(changeIndex, false)}
+                          >
+                            Reject note
+                          </button>
                         </div>
                       </div>
 
-                      {#if changePreview.change.kind === 'updateNote'}
-                        <div class="mt-4 grid gap-4 lg:grid-cols-2">
-                          <div>
-                            <p class="text-xs uppercase tracking-[0.16em] text-muted-foreground">Current</p>
-                            <pre class="mt-2 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-border/70 bg-background/80 px-3 py-3 text-sm leading-relaxed">{changePreview.currentMarkdown ?? 'Unavailable'}</pre>
+                      {#if reviewChange.kind === 'updateNote'}
+                        {#if reviewChange.titleChanged}
+                          <div class="mt-4 rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
+                            <div class="flex items-start justify-between gap-3">
+                              <div>
+                                <p class="text-xs uppercase tracking-[0.16em] text-muted-foreground">Title change</p>
+                                <p class="mt-2 text-sm text-muted-foreground">
+                                  {reviewChange.currentTitle}
+                                  <span class="mx-2 text-muted-foreground/60">→</span>
+                                  <span class="font-medium text-foreground">{reviewChange.proposedTitle}</span>
+                                </p>
+                              </div>
+                              <div class="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                                    reviewChange.titleSelected
+                                      ? 'border-foreground/20 bg-foreground text-background'
+                                      : 'border-border bg-background hover:bg-accent'
+                                  }`}
+                                  onclick={() => toggleReviewTitle(changeIndex, true)}
+                                >
+                                  Accept title
+                                </button>
+                                <button
+                                  type="button"
+                                  class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                                    !reviewChange.titleSelected
+                                      ? 'border-foreground/20 bg-foreground text-background'
+                                      : 'border-border bg-background hover:bg-accent'
+                                  }`}
+                                  onclick={() => toggleReviewTitle(changeIndex, false)}
+                                >
+                                  Reject title
+                                </button>
+                              </div>
+                            </div>
                           </div>
-                          <div>
-                            <p class="text-xs uppercase tracking-[0.16em] text-muted-foreground">Proposed</p>
-                            <pre class="mt-2 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-border/70 bg-background/80 px-3 py-3 text-sm leading-relaxed">{changePreview.change.newMarkdown}</pre>
+                        {/if}
+
+                        {#if reviewChange.hunks.length === 0}
+                          <p class="mt-4 text-sm text-muted-foreground">No line changes were proposed for this note.</p>
+                        {:else}
+                          <div class="mt-4 space-y-4">
+                            {#each reviewChange.hunks as hunk, hunkIndex (hunk.id)}
+                              <div class="rounded-2xl border border-border/70 bg-background/80">
+                                <div class="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
+                                  <p class="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                                    Hunk {hunkIndex + 1}
+                                  </p>
+                                  <div class="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                                        hunk.selected
+                                          ? 'border-foreground/20 bg-foreground text-background'
+                                          : 'border-border bg-background hover:bg-accent'
+                                      }`}
+                                      onclick={() => toggleReviewHunk(changeIndex, hunkIndex, true)}
+                                    >
+                                      Accept hunk
+                                    </button>
+                                    <button
+                                      type="button"
+                                      class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                                        !hunk.selected
+                                          ? 'border-foreground/20 bg-foreground text-background'
+                                          : 'border-border bg-background hover:bg-accent'
+                                      }`}
+                                      onclick={() => toggleReviewHunk(changeIndex, hunkIndex, false)}
+                                    >
+                                      Reject hunk
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div class="overflow-x-auto">
+                                  <div class="min-w-[36rem] font-mono text-[12px] leading-6">
+                                    {#each hunk.lines as line, lineIndex (`${hunk.id}-${lineIndex}`)}
+                                      <div
+                                        class={`grid grid-cols-[3.5rem_3.5rem_1.5rem_1fr] gap-0 border-b border-border/40 px-3 ${
+                                          line.kind === 'add'
+                                            ? hunk.selected
+                                              ? 'bg-emerald-500/12'
+                                              : 'bg-emerald-500/6 opacity-60'
+                                            : line.kind === 'remove'
+                                              ? hunk.selected
+                                                ? 'bg-rose-500/12'
+                                                : 'bg-rose-500/6 opacity-60'
+                                              : 'bg-transparent'
+                                        }`}
+                                      >
+                                        <span class="select-none px-2 text-right text-muted-foreground/75">
+                                          {line.oldLineNumber ?? ''}
+                                        </span>
+                                        <span class="select-none px-2 text-right text-muted-foreground/75">
+                                          {line.newLineNumber ?? ''}
+                                        </span>
+                                        <span class={`select-none px-2 ${
+                                          line.kind === 'add'
+                                            ? 'text-emerald-500'
+                                            : line.kind === 'remove'
+                                              ? 'text-rose-500'
+                                              : 'text-muted-foreground/70'
+                                        }`}>
+                                          {diffLinePrefix(line)}
+                                        </span>
+                                        <span class="whitespace-pre-wrap break-words px-2 text-foreground">
+                                          {line.text === '' ? ' ' : line.text}
+                                        </span>
+                                      </div>
+                                    {/each}
+                                  </div>
+                                </div>
+                              </div>
+                            {/each}
                           </div>
+                        {/if}
+                      {:else if reviewChange.kind === 'createNote'}
+                        <div class="mt-4 rounded-2xl border border-border/70 bg-background/80">
+                          <div class="border-b border-border/70 px-4 py-3">
+                            <p class="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                              New note
+                            </p>
+                          </div>
+                          <pre class="overflow-x-auto whitespace-pre-wrap px-4 py-4 text-sm leading-relaxed">{reviewChange.change.markdown}</pre>
                         </div>
-                      {:else if changePreview.change.kind === 'createNote'}
-                        <pre class="mt-3 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-border/70 bg-background/80 px-3 py-3 text-sm leading-relaxed">{changePreview.change.markdown}</pre>
                       {:else}
-                        <p class="mt-3 text-sm text-muted-foreground">
+                        <p class="mt-4 text-sm text-muted-foreground">
                           Delete the source note after its contents have been absorbed elsewhere.
                         </p>
                       {/if}

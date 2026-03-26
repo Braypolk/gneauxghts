@@ -102,6 +102,7 @@ pub fn run() {
             ai::list_inbox_items,
             ai::get_inbox_item,
             ai::approve_inbox_item,
+            ai::approve_inbox_item_with_changes,
             ai::reject_inbox_item,
             ai::retry_inbox_item,
             ai::clear_inbox

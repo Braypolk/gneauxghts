@@ -682,6 +682,53 @@ pub(crate) fn approve_inbox_item(
 }
 
 #[tauri::command]
+pub(crate) fn approve_inbox_item_with_changes(
+    ai: State<'_, AiState>,
+    id: i64,
+    changes: Vec<AiChange>,
+) -> Result<Option<InboxItemDetail>, String> {
+    let connection = ai.connection()?;
+    let Some(job) = load_job(&connection, id)? else {
+        return Ok(None);
+    };
+    if job.status != AiJobStatus::PendingApproval {
+        return Ok(Some(to_detail_item(&job)?));
+    }
+
+    if changes.is_empty() {
+        let updated = update_job_status(
+            &connection,
+            job.id,
+            AiJobStatus::Rejected,
+            Some("Proposal rejected".to_string()),
+            job.failure_reason.clone(),
+            Some(Vec::new()),
+            job.provider_kind.clone(),
+            job.model.clone(),
+            job.metrics.clone(),
+        )?;
+        ai.emit_inbox_changed()?;
+        return Ok(Some(to_detail_item(&updated)?));
+    }
+
+    validate_override_changes(&job, &changes)?;
+    let updated = update_job_status(
+        &connection,
+        job.id,
+        AiJobStatus::PendingApproval,
+        Some(job.summary.clone()),
+        None,
+        Some(changes),
+        job.provider_kind.clone(),
+        job.model.clone(),
+        job.metrics.clone(),
+    )?;
+    let applied = apply_pending_job(&ai, &updated)?;
+    ai.emit_inbox_changed()?;
+    Ok(Some(to_detail_item(&applied)?))
+}
+
+#[tauri::command]
 pub(crate) fn reject_inbox_item(
     ai: State<'_, AiState>,
     id: i64,
@@ -1299,6 +1346,86 @@ fn validate_job_changes(job: &StoredAiJob, changes: &[AiChange]) -> Result<(), S
             }
         }
     }
+    Ok(())
+}
+
+fn validate_override_changes(job: &StoredAiJob, changes: &[AiChange]) -> Result<(), String> {
+    validate_job_changes(job, changes)?;
+
+    let mut original_updates = HashMap::<&str, &str>::new();
+    let mut original_deletes = HashMap::<&str, &str>::new();
+    let mut original_creates = HashSet::<(&str, &str)>::new();
+    for change in &job.proposed_changes {
+        match change {
+            AiChange::UpdateNote {
+                path,
+                base_content_hash,
+                ..
+            } => {
+                original_updates.insert(path.as_str(), base_content_hash.as_str());
+            }
+            AiChange::CreateNote {
+                suggested_title,
+                markdown,
+            } => {
+                original_creates.insert((suggested_title.as_str(), markdown.as_str()));
+            }
+            AiChange::DeleteNote {
+                path,
+                base_content_hash,
+            } => {
+                original_deletes.insert(path.as_str(), base_content_hash.as_str());
+            }
+        }
+    }
+
+    for change in changes {
+        match change {
+            AiChange::UpdateNote {
+                path,
+                base_content_hash,
+                ..
+            } => {
+                let Some(expected_hash) = original_updates.get(path.as_str()) else {
+                    return Err(format!(
+                        "Edited approval may only update notes from the original proposal: {path}"
+                    ));
+                };
+                if expected_hash != &base_content_hash.as_str() {
+                    return Err(format!(
+                        "Edited approval must preserve the original base content hash for {path}"
+                    ));
+                }
+            }
+            AiChange::CreateNote {
+                suggested_title,
+                markdown,
+            } => {
+                if !original_creates.contains(&(suggested_title.as_str(), markdown.as_str())) {
+                    return Err(
+                        "Edited approval may only keep or drop createNote proposals as-is."
+                            .to_string(),
+                    );
+                }
+            }
+            AiChange::DeleteNote {
+                path,
+                base_content_hash,
+            } => {
+                let Some(expected_hash) = original_deletes.get(path.as_str()) else {
+                    return Err(format!(
+                        "Edited approval may only delete notes from the original proposal: {path}"
+                    ));
+                };
+                if expected_hash != &base_content_hash.as_str() {
+                    return Err(format!(
+                        "Edited approval must preserve the original base content hash for {path}"
+                    ));
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -2485,8 +2612,8 @@ enum ApplyError {
 mod tests {
     use super::{
         parse_integrate_edit_response, parse_model_json, str_to_job_status, str_to_provider_kind,
-        validate_job_changes, AiChange, AiJobStatus, AiProviderKind, RememberMode, SourceSnapshot,
-        StoredAiJob, TargetNoteContext,
+        validate_job_changes, validate_override_changes, AiChange, AiJobStatus, AiProviderKind,
+        RememberMode, SourceSnapshot, StoredAiJob, TargetNoteContext,
     };
 
     #[test]
@@ -2614,6 +2741,89 @@ mod tests {
         )
         .expect_err("cleanup delete should fail");
         assert!(error.contains("deleteNote"));
+    }
+
+    #[test]
+    fn validate_override_changes_accepts_update_subset_with_same_base_hash() {
+        let job = StoredAiJob {
+            id: 1,
+            kind: RememberMode::Integrate,
+            status: AiJobStatus::PendingApproval,
+            source: SourceSnapshot {
+                path: "/notes/source.md".to_string(),
+                title: "Source".to_string(),
+                markdown: "Body".to_string(),
+                content_hash: "source-hash".to_string(),
+            },
+            requires_approval: true,
+            summary: String::new(),
+            proposed_changes: vec![AiChange::UpdateNote {
+                path: "/notes/target.md".to_string(),
+                base_content_hash: "target-hash".to_string(),
+                new_title: "Target".to_string(),
+                new_markdown: "proposed".to_string(),
+            }],
+            failure_reason: None,
+            provider_kind: None,
+            model: None,
+            metrics: None,
+            created_at_millis: 0,
+            updated_at_millis: 0,
+            retry_of_job_id: None,
+        };
+
+        validate_override_changes(
+            &job,
+            &[AiChange::UpdateNote {
+                path: "/notes/target.md".to_string(),
+                base_content_hash: "target-hash".to_string(),
+                new_title: "Target".to_string(),
+                new_markdown: "edited".to_string(),
+            }],
+        )
+        .expect("allow edited markdown with same base hash");
+    }
+
+    #[test]
+    fn validate_override_changes_rejects_unknown_update_paths() {
+        let job = StoredAiJob {
+            id: 1,
+            kind: RememberMode::Integrate,
+            status: AiJobStatus::PendingApproval,
+            source: SourceSnapshot {
+                path: "/notes/source.md".to_string(),
+                title: "Source".to_string(),
+                markdown: "Body".to_string(),
+                content_hash: "source-hash".to_string(),
+            },
+            requires_approval: true,
+            summary: String::new(),
+            proposed_changes: vec![AiChange::UpdateNote {
+                path: "/notes/target.md".to_string(),
+                base_content_hash: "target-hash".to_string(),
+                new_title: "Target".to_string(),
+                new_markdown: "proposed".to_string(),
+            }],
+            failure_reason: None,
+            provider_kind: None,
+            model: None,
+            metrics: None,
+            created_at_millis: 0,
+            updated_at_millis: 0,
+            retry_of_job_id: None,
+        };
+
+        let error = validate_override_changes(
+            &job,
+            &[AiChange::UpdateNote {
+                path: "/notes/other.md".to_string(),
+                base_content_hash: "target-hash".to_string(),
+                new_title: "Other".to_string(),
+                new_markdown: "edited".to_string(),
+            }],
+        )
+        .expect_err("reject unknown path");
+        assert!(error.contains("original proposal"));
     }
 
     #[test]
