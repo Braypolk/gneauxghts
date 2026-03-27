@@ -1,14 +1,22 @@
-import { writable } from 'svelte/store';
+import { derived, writable } from 'svelte/store';
+import {
+  defaultEditableRememberActions,
+  editableRememberActionToOption,
+  EXACT_REMEMBER_ACTION,
+  type EditableRememberAction
+} from '$lib/types/ai';
 
 export type ForgetButtonDurationPreference = 'none' | 'short' | 'medium' | 'long';
 export type ForgottenNoteRetentionPreference = 1 | 7 | 30;
-export type RememberModePreference = 'exact' | 'cleanUp' | 'integrate';
+export type RememberActionPreference = string;
 export type CleanUpApplyPolicyPreference = 'autoApply' | 'requireApproval';
 
 const FORGET_BUTTON_DURATION_STORAGE_KEY = 'gneauxghts.forget-button-duration';
 const FORGOTTEN_NOTE_RETENTION_STORAGE_KEY = 'gneauxghts.forgotten-note-retention-days';
-const DEFAULT_REMEMBER_MODE_STORAGE_KEY = 'gneauxghts.default-remember-mode';
+const DEFAULT_REMEMBER_ACTION_STORAGE_KEY = 'gneauxghts.default-remember-action';
 const CLEAN_UP_APPLY_POLICY_STORAGE_KEY = 'gneauxghts.cleanup-apply-policy';
+const REMEMBER_ACTIONS_STORAGE_KEY = 'gneauxghts.remember-actions';
+const LEGACY_CUSTOM_REMEMBER_ACTIONS_STORAGE_KEY = 'gneauxghts.custom-remember-actions';
 
 const FORGET_BUTTON_DURATION_MS: Record<ForgetButtonDurationPreference, number> = {
   none: 0,
@@ -74,38 +82,25 @@ export const forgottenNoteRetentionPreference = writable<ForgottenNoteRetentionP
   readStoredForgottenNoteRetentionPreference()
 );
 
-export const rememberModeOptions = [
-  {
-    id: 'exact',
-    label: 'Exact',
-    description: 'Save exactly as written.'
-  },
-  {
-    id: 'cleanUp',
-    label: 'Clean Up',
-    description: 'Have AI lightly rewrite the note.'
-  },
-  {
-    id: 'integrate',
-    label: 'Integrate',
-    description: 'Have AI fit the note into the vault.'
-  }
-] as const satisfies ReadonlyArray<{
-  id: RememberModePreference;
-  label: string;
-  description: string;
-}>;
+export const rememberActions = writable<EditableRememberAction[]>(readStoredRememberActions());
+
+export const rememberActionOptions = derived(rememberActions, ($rememberActions) => [
+  EXACT_REMEMBER_ACTION,
+  ...$rememberActions
+    .filter((action) => action.visible)
+    .map(editableRememberActionToOption)
+]);
 
 export const cleanUpApplyPolicyOptions = [
   {
     id: 'autoApply',
     label: 'Auto-apply',
-    description: 'Apply cleanup results immediately and log them to Inbox.'
+    description: 'Apply single-note AI transform results immediately and log them to Inbox.'
   },
   {
     id: 'requireApproval',
     label: 'Require approval',
-    description: 'Send cleanup results to Inbox before they are applied.'
+    description: 'Send single-note AI transform results to Inbox before they are applied.'
   }
 ] as const satisfies ReadonlyArray<{
   id: CleanUpApplyPolicyPreference;
@@ -113,8 +108,8 @@ export const cleanUpApplyPolicyOptions = [
   description: string;
 }>;
 
-export const defaultRememberModePreference = writable<RememberModePreference>(
-  readStoredDefaultRememberModePreference()
+export const defaultRememberActionPreference = writable<RememberActionPreference>(
+  readStoredDefaultRememberActionPreference()
 );
 
 export const cleanUpApplyPolicyPreference = writable<CleanUpApplyPolicyPreference>(
@@ -141,9 +136,9 @@ export function setForgottenNoteRetentionPreference(
   persistForgottenNoteRetentionPreference(nextPreference);
 }
 
-export function setDefaultRememberModePreference(nextPreference: RememberModePreference): void {
-  defaultRememberModePreference.set(nextPreference);
-  persistDefaultRememberModePreference(nextPreference);
+export function setDefaultRememberActionPreference(nextPreference: RememberActionPreference): void {
+  defaultRememberActionPreference.set(nextPreference);
+  persistDefaultRememberActionPreference(nextPreference);
 }
 
 export function setCleanUpApplyPolicyPreference(
@@ -151,6 +146,11 @@ export function setCleanUpApplyPolicyPreference(
 ): void {
   cleanUpApplyPolicyPreference.set(nextPreference);
   persistCleanUpApplyPolicyPreference(nextPreference);
+}
+
+export function setRememberActions(nextActions: EditableRememberAction[]): void {
+  rememberActions.set(nextActions);
+  persistRememberActions(nextActions);
 }
 
 function readStoredForgetButtonDurationPreference(): ForgetButtonDurationPreference {
@@ -184,21 +184,86 @@ function readStoredForgottenNoteRetentionPreference(): ForgottenNoteRetentionPre
   return 7;
 }
 
-function readStoredDefaultRememberModePreference(): RememberModePreference {
+function readStoredDefaultRememberActionPreference(): RememberActionPreference {
   if (!isBrowser()) {
     return 'exact';
   }
 
-  const storedPreference = window.localStorage.getItem(DEFAULT_REMEMBER_MODE_STORAGE_KEY);
-  if (
-    storedPreference === 'exact' ||
-    storedPreference === 'cleanUp' ||
-    storedPreference === 'integrate'
-  ) {
+  const storedPreference = window.localStorage.getItem(DEFAULT_REMEMBER_ACTION_STORAGE_KEY);
+  if (storedPreference && storedPreference.trim() !== '') {
     return storedPreference;
   }
 
   return 'exact';
+}
+
+function readStoredRememberActions(): EditableRememberAction[] {
+  if (!isBrowser()) {
+    return defaultEditableRememberActions.map((action) => ({ ...action }));
+  }
+
+  const stored = readRememberActionsFromStorageKey(REMEMBER_ACTIONS_STORAGE_KEY);
+  if (stored !== null) {
+    return stored;
+  }
+
+  const legacy = readLegacyRememberActions();
+  return [...defaultEditableRememberActions.map((action) => ({ ...action })), ...legacy];
+}
+
+function readRememberActionsFromStorageKey(
+  storageKey: string
+): EditableRememberAction[] | null {
+  const raw = window.localStorage.getItem(storageKey);
+  if (raw === null) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const seenIds = new Set<string>();
+    const normalized: EditableRememberAction[] = [];
+    for (const value of parsed) {
+      const action = normalizeStoredRememberAction(value);
+      if (!action || action.id === 'exact' || seenIds.has(action.id)) {
+        continue;
+      }
+      seenIds.add(action.id);
+      normalized.push(action);
+    }
+    return normalized;
+  } catch {
+    return [];
+  }
+}
+
+function readLegacyRememberActions(): EditableRememberAction[] {
+  const raw = window.localStorage.getItem(LEGACY_CUSTOM_REMEMBER_ACTIONS_STORAGE_KEY);
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const normalized: EditableRememberAction[] = [];
+    for (const value of parsed) {
+      const action = normalizeLegacyRememberAction(value);
+      if (action) {
+        normalized.push(action);
+      }
+    }
+    return normalized;
+  } catch {
+    return [];
+  }
 }
 
 function readStoredCleanUpApplyPolicyPreference(): CleanUpApplyPolicyPreference {
@@ -234,12 +299,20 @@ function persistForgottenNoteRetentionPreference(
   window.localStorage.setItem(FORGOTTEN_NOTE_RETENTION_STORAGE_KEY, String(preference));
 }
 
-function persistDefaultRememberModePreference(preference: RememberModePreference): void {
+function persistDefaultRememberActionPreference(preference: RememberActionPreference): void {
   if (!isBrowser()) {
     return;
   }
 
-  window.localStorage.setItem(DEFAULT_REMEMBER_MODE_STORAGE_KEY, preference);
+  window.localStorage.setItem(DEFAULT_REMEMBER_ACTION_STORAGE_KEY, preference);
+}
+
+function persistRememberActions(actions: EditableRememberAction[]): void {
+  if (!isBrowser()) {
+    return;
+  }
+
+  window.localStorage.setItem(REMEMBER_ACTIONS_STORAGE_KEY, JSON.stringify(actions));
 }
 
 function persistCleanUpApplyPolicyPreference(preference: CleanUpApplyPolicyPreference): void {
@@ -252,4 +325,85 @@ function persistCleanUpApplyPolicyPreference(preference: CleanUpApplyPolicyPrefe
 
 function isBrowser(): boolean {
   return typeof window !== 'undefined';
+}
+
+function normalizeStoredRememberAction(value: unknown): EditableRememberAction | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<EditableRememberAction>;
+  if (
+    typeof candidate.id !== 'string' ||
+    candidate.id.trim() === '' ||
+    typeof candidate.label !== 'string' ||
+    candidate.label.trim() === '' ||
+    typeof candidate.description !== 'string' ||
+    typeof candidate.prompt !== 'string' ||
+    (candidate.kind !== 'singleNote' && candidate.kind !== 'advanced')
+  ) {
+    return null;
+  }
+
+  return {
+    id: candidate.id.trim(),
+    label: candidate.label.trim(),
+    description: candidate.description,
+    prompt: candidate.prompt,
+    kind: candidate.kind,
+    family: normalizeEditableFamily(candidate.family, candidate.kind, candidate.id),
+    visible: candidate.visible !== false
+  };
+}
+
+function normalizeLegacyRememberAction(value: unknown): EditableRememberAction | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<{
+    id: string;
+    label: string;
+    description: string;
+    prompt: string;
+    kind: 'singleNote' | 'advanced';
+  }>;
+
+  if (
+    typeof candidate.id !== 'string' ||
+    candidate.id.trim() === '' ||
+    typeof candidate.label !== 'string' ||
+    candidate.label.trim() === '' ||
+    typeof candidate.description !== 'string' ||
+    typeof candidate.prompt !== 'string' ||
+    (candidate.kind !== 'singleNote' && candidate.kind !== 'advanced')
+  ) {
+    return null;
+  }
+
+  return {
+    id: candidate.id.trim(),
+    label: candidate.label.trim(),
+    description: candidate.description,
+    prompt: candidate.prompt,
+    kind: candidate.kind,
+    family: normalizeEditableFamily(undefined, candidate.kind, candidate.id),
+    visible: true
+  };
+}
+
+function normalizeEditableFamily(
+  family: string | undefined,
+  kind: EditableRememberAction['kind'],
+  id: string
+): EditableRememberAction['family'] {
+  if (family === 'edit' || family === 'organize' || family === 'integrate') {
+    return kind === 'singleNote' ? 'edit' : family;
+  }
+
+  if (kind === 'singleNote') {
+    return 'edit';
+  }
+
+  return id === 'integrate' ? 'integrate' : 'organize';
 }

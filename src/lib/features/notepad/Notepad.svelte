@@ -6,10 +6,15 @@
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
   import {
     cleanUpApplyPolicyPreference,
-    defaultRememberModePreference,
-    forgottenNoteRetentionPreference
+    defaultRememberActionPreference,
+    forgottenNoteRetentionPreference,
+    rememberActionOptions
   } from '$lib/appSettings';
-  import type { RememberMode } from '$lib/types/ai';
+  import {
+    EXACT_REMEMBER_ACTION,
+    rememberActionRequiresIntegrateSupport,
+    type RememberActionOption
+  } from '$lib/types/ai';
   import type {
     RelatedNoteItem,
     RelatedNotesResponse,
@@ -45,6 +50,11 @@
   import WikilinkAutocomplete from '$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte';
   import RelatedPanel from '$lib/features/notepad/related/RelatedPanel.svelte';
   import {
+    applySelectedHunks,
+    type ReviewUpdateChange
+  } from '$lib/features/inbox/reviewDiff';
+  import ProposalReviewList from '$lib/features/proposals/ProposalReviewList.svelte';
+  import {
     EMPTY_RELATED_REASON,
     getBottomSheetStyle,
     getCardStyle,
@@ -55,6 +65,13 @@
   import { createSessionController } from '$lib/features/notepad/session/controller';
   import { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
   import { createWikilinkController } from '$lib/features/notepad/wikilinks/controller';
+  import {
+    activeProposalSession,
+    getProposalChangesForPath,
+    toggleProposalChange,
+    toggleProposalHunk,
+    toggleProposalTitle
+  } from '$lib/features/proposals/session';
 
   let crepe: EditorController | null = null;
   let shellEl: HTMLDivElement | null = null;
@@ -94,6 +111,9 @@
   let isRelatedPanelCollapsed = $state(true);
   let relatedDrawerReservedWidth = $state(0);
   let semanticStatus = $state<SemanticStatus | null>(null);
+  let proposalPreviewPath = $state<string | null>(null);
+  let isSyncingProposalPreview = false;
+  let proposalErrorMessage = $state('');
 
   interface VaultNoteChangeEvent {
     notePath: string;
@@ -115,7 +135,7 @@
 
   function handleEditorMarkdownChange(nextMarkdown: string) {
     bodyMarkdown = nextMarkdown;
-    if (isApplyingExternalContent) {
+    if (isApplyingExternalContent || isCurrentNoteUnderProposal) {
       return;
     }
 
@@ -129,6 +149,9 @@
   }
 
   function handleTitleInput(event: Event) {
+    if (isCurrentNoteUnderProposal) {
+      return;
+    }
     title = (event.currentTarget as HTMLInputElement).value;
     if (title.trim() !== '' || bodyMarkdown.trim() !== '') canUnforget = false;
     scheduleAutosave();
@@ -137,6 +160,9 @@
   }
 
   function handleTitleBlur() {
+    if (isCurrentNoteUnderProposal) {
+      return;
+    }
     flushPendingAutosave();
   }
 
@@ -569,10 +595,17 @@
     await sessionController.refreshCurrentNoteIfChanged();
   }
 
-  async function rememberCurrentNote(mode: RememberMode) {
-    const resolvedMode = mode === 'integrate' && !canIntegrate() ? 'exact' : mode;
+  function resolveRememberAction(actionId: string): RememberActionOption {
+    return $rememberActionOptions.find((option) => option.id === actionId) ?? EXACT_REMEMBER_ACTION;
+  }
+
+  async function rememberCurrentNote(action: RememberActionOption) {
+    const resolvedAction =
+      rememberActionRequiresIntegrateSupport(action) && !canIntegrate()
+        ? resolveRememberAction('exact')
+        : action;
     await sessionController.rememberCurrentNote(
-      resolvedMode,
+      resolvedAction,
       $cleanUpApplyPolicyPreference
     );
   }
@@ -585,8 +618,82 @@
     notePath: string,
     options: { currentNoteAlreadySaved?: boolean } = {}
   ) {
-    await sessionController.openNotePath(notePath, options);
+    await sessionController.openNotePath(notePath, {
+      currentNoteAlreadySaved: options.currentNoteAlreadySaved ?? hasCurrentProposalReview
+    });
   }
+
+  let currentProposalChanges = $derived.by(() =>
+    getProposalChangesForPath($activeProposalSession, currentNotePath)
+  );
+  let currentProposalUpdate = $derived.by<ReviewUpdateChange | null>(() => {
+    const update = currentProposalChanges.find(
+      (reviewChange): reviewChange is ReviewUpdateChange => reviewChange.kind === 'updateNote'
+    );
+    return update ?? null;
+  });
+  let currentProposalPreview = $derived.by(() => {
+    if (!currentProposalUpdate) {
+      return null;
+    }
+
+    return {
+      title: currentProposalUpdate.titleSelected
+        ? currentProposalUpdate.proposedTitle
+        : currentProposalUpdate.currentTitle,
+      markdown: applySelectedHunks(
+        currentProposalUpdate.currentMarkdown,
+        currentProposalUpdate.hunks.filter((hunk) => hunk.selected)
+      )
+    };
+  });
+  let hasCurrentProposalReview = $derived(currentProposalChanges.length > 0);
+  let isCurrentNoteUnderProposal = $derived(hasCurrentProposalReview);
+
+  async function syncProposalPreviewToEditor() {
+    if (isSyncingProposalPreview) {
+      return;
+    }
+
+    const notePath = currentNotePath;
+    if (!notePath) {
+      proposalPreviewPath = null;
+      return;
+    }
+
+    isSyncingProposalPreview = true;
+    try {
+      if (!hasCurrentProposalReview) {
+        if (proposalPreviewPath === notePath) {
+          title = lastSavedTitle;
+        }
+        proposalPreviewPath = null;
+        return;
+      }
+
+      if (!currentProposalPreview) {
+        title = lastSavedTitle;
+        proposalPreviewPath = notePath;
+        return;
+      }
+
+      title = currentProposalPreview.title;
+      proposalPreviewPath = notePath;
+    } catch (error) {
+      console.error('Failed to sync proposal preview into editor:', error);
+      proposalErrorMessage = 'Unable to preview the proposed changes in the editor.';
+    } finally {
+      isSyncingProposalPreview = false;
+    }
+  }
+
+  $effect(() => {
+    currentNotePath;
+    lastSavedTitle;
+    hasCurrentProposalReview;
+    currentProposalPreview?.title;
+    void syncProposalPreviewToEditor();
+  });
 
   function closeWikilinkAutocomplete() {
     wikilinkController.closeWikilinkAutocomplete();
@@ -755,9 +862,12 @@
                 <input
                   bind:this={titleInput}
                   type="text"
-                  class="w-full max-w-2xl bg-transparent text-left outline-none placeholder:text-muted-foreground/55 sm:text-center"
+                  class={`w-full max-w-2xl bg-transparent text-left outline-none placeholder:text-muted-foreground/55 sm:text-center ${
+                    isCurrentNoteUnderProposal ? 'cursor-default text-muted-foreground' : ''
+                  }`}
                   placeholder="Title"
                   value={title}
+                  readonly={isCurrentNoteUnderProposal}
                   oninput={handleTitleInput}
                   onblur={handleTitleBlur}
                   onkeydown={handleTitleKeydown}
@@ -770,7 +880,10 @@
       </div>
       <!-- Editor Area -->
       <div class="flex-1 min-h-0">
-        <div bind:this={editorShell} class="notepad-editor-shell relative h-full">
+        <div
+          bind:this={editorShell}
+          class="notepad-editor-shell relative h-full"
+        >
           {#if !isEditorReady}
             <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
               <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
@@ -779,7 +892,29 @@
             </div>
           {/if}
 
-          <div bind:this={editorRoot} class="min-h-full"></div>
+          <div bind:this={editorRoot} class={`min-h-full ${hasCurrentProposalReview ? 'hidden' : ''}`}></div>
+          {#if hasCurrentProposalReview}
+            <section class="mx-auto min-h-full w-full max-w-3xl px-4 pt-24 pb-28 sm:px-8 sm:pt-28">
+              {#if proposalErrorMessage}
+                <div class="mb-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  {proposalErrorMessage}
+                </div>
+              {/if}
+
+              <ProposalReviewList
+                reviewChanges={currentProposalChanges}
+                compact={true}
+                minimal={true}
+                showSegmentControls={false}
+                framelessPreview={true}
+                showRemovedContent={false}
+                emptyMessage="No proposed edits are attached to this note."
+                onToggleChange={toggleProposalChange}
+                onToggleHunk={toggleProposalHunk}
+                onToggleTitle={toggleProposalTitle}
+              />
+            </section>
+          {/if}
         </div>
       </div>
       <!-- Bottom Bar -->
@@ -792,13 +927,14 @@
           {recentNotes}
           {recentTasks}
           {isSearching}
-          defaultRememberMode={$defaultRememberModePreference}
+          rememberActions={$rememberActionOptions}
+          defaultRememberActionId={$defaultRememberActionPreference}
           integrateEnabled={canIntegrate()}
           integrateDisabledReason={integrateDisabledReason()}
           focusRequest={searchFocusRequest}
           onForget={() => void clearNotepad()}
           onUnforget={() => void unforgetNotepad()}
-          onRemember={(mode) => void rememberCurrentNote(mode)}
+          onRemember={(action) => void rememberCurrentNote(action)}
           onSearchInput={handleSearchInput}
           onSearchModeChange={handleSearchModeChange}
           onSearchSelect={(result) =>

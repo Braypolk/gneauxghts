@@ -1,15 +1,24 @@
 <script lang="ts">
+  import { resolve } from '$app/paths';
+  import { goto } from '$app/navigation';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { onDestroy, onMount } from 'svelte';
   import {
-    buildApprovedChanges,
     buildReviewChanges,
-    isReviewChangeSelected,
-    setReviewChangeSelection,
-    type DiffDisplayLine,
-    type ReviewChange
   } from '$lib/features/inbox/reviewDiff';
+  import ProposalReviewList from '$lib/features/proposals/ProposalReviewList.svelte';
+  import {
+    activeProposalSession,
+    clearProposalSession,
+    focusProposalPath,
+    getApprovedChangesForSession,
+    getSelectedApprovedChangeCount,
+    syncProposalSessionFromInboxItem,
+    toggleProposalChange,
+    toggleProposalHunk,
+    toggleProposalTitle
+  } from '$lib/features/proposals/session';
   import type { ClearInboxResult, InboxItemDetail, InboxListItem } from '$lib/types/ai';
 
   type InboxGroupKey = 'pendingApproval' | 'running' | 'applied' | 'failed' | 'stale' | 'rejected';
@@ -26,11 +35,24 @@
   let items = $state<InboxListItem[]>([]);
   let selectedId = $state<number | null>(null);
   let selectedItem = $state<InboxItemDetail | null>(null);
-  let reviewChanges = $state<ReviewChange[]>([]);
   let isLoading = $state(false);
   let isMutating = $state(false);
   let errorMessage = $state('');
   let inboxUnlisten: UnlistenFn | null = null;
+  let reviewChanges = $derived.by(() => {
+    if (!selectedItem) {
+      return [];
+    }
+
+    if (
+      selectedItem.status === 'pendingApproval' &&
+      $activeProposalSession?.itemId === selectedItem.id
+    ) {
+      return $activeProposalSession.reviewChanges;
+    }
+
+    return buildReviewChanges(selectedItem.changePreviews);
+  });
 
   function groupForStatus(status: InboxListItem['status']): InboxGroupKey {
     if (status === 'pendingApproval') return 'pendingApproval';
@@ -62,9 +84,29 @@
     return new Date(value).toLocaleString();
   }
 
+  function formatStatusLabel(status: InboxListItem['status']) {
+    if (status === 'pendingApproval') return 'Pending approval';
+    if (status === 'queued') return 'Queued';
+    if (status === 'running') return 'Running';
+    if (status === 'applied') return 'Applied';
+    if (status === 'rejected') return 'Rejected';
+    if (status === 'failed') return 'Failed';
+    if (status === 'stale') return 'Stale';
+    return status;
+  }
+
+  function statusBadgeClass(status: InboxListItem['status']) {
+    if (status === 'pendingApproval') return 'border-amber-400/35 bg-amber-500/15 text-amber-200';
+    if (status === 'queued' || status === 'running') return 'border-sky-400/35 bg-sky-500/15 text-sky-200';
+    if (status === 'applied') return 'border-emerald-400/35 bg-emerald-500/15 text-emerald-200';
+    if (status === 'failed' || status === 'rejected') return 'border-rose-400/35 bg-rose-500/15 text-rose-200';
+    if (status === 'stale') return 'border-zinc-400/35 bg-zinc-500/15 text-zinc-200';
+    return 'border-border/70 bg-muted/60 text-muted-foreground';
+  }
+
   function setSelectedInboxItem(item: InboxItemDetail | null) {
     selectedItem = item;
-    reviewChanges = item ? buildReviewChanges(item.changePreviews) : [];
+    syncProposalSessionFromInboxItem(item);
   }
 
   async function loadInbox() {
@@ -138,7 +180,7 @@
     }
     isMutating = true;
     try {
-      const changes = buildApprovedChanges(reviewChanges);
+      const changes = getApprovedChangesForSession($activeProposalSession);
       if (changes.length === 0) {
         setSelectedInboxItem(await invoke<InboxItemDetail | null>('reject_inbox_item', { id: selectedId }));
       } else {
@@ -149,6 +191,7 @@
           })
         );
       }
+      clearProposalSession();
       await loadInbox();
     } catch (error) {
       console.error('Failed to approve edited changes:', error);
@@ -158,59 +201,26 @@
     }
   }
 
-  function reviewChangeTitle(reviewChange: ReviewChange) {
-    if (reviewChange.kind === 'updateNote') {
-      return reviewChange.proposedTitle || reviewChange.currentTitle || 'Updated note';
-    }
-    if (reviewChange.kind === 'createNote') {
-      return reviewChange.change.suggestedTitle || 'New note';
-    }
-    return reviewChange.title || 'Deleted note';
-  }
-
-  function acceptedHunkCount(reviewChange: ReviewChange) {
-    if (reviewChange.kind !== 'updateNote') {
-      return isReviewChangeSelected(reviewChange) ? 1 : 0;
-    }
-    return reviewChange.hunks.filter((hunk) => hunk.selected).length;
-  }
-
-  function toggleReviewChange(index: number, selected: boolean) {
-    const nextChanges = [...reviewChanges];
-    setReviewChangeSelection(nextChanges[index], selected);
-    reviewChanges = nextChanges;
-  }
-
-  function toggleReviewHunk(changeIndex: number, hunkIndex: number, selected: boolean) {
-    const nextChanges = [...reviewChanges];
-    const reviewChange = nextChanges[changeIndex];
-    if (reviewChange.kind !== 'updateNote') {
-      reviewChanges = nextChanges;
-      return;
-    }
-    reviewChange.hunks[hunkIndex].selected = selected;
-    reviewChanges = nextChanges;
-  }
-
-  function toggleReviewTitle(changeIndex: number, selected: boolean) {
-    const nextChanges = [...reviewChanges];
-    const reviewChange = nextChanges[changeIndex];
-    if (reviewChange.kind !== 'updateNote' || !reviewChange.titleChanged) {
-      reviewChanges = nextChanges;
-      return;
-    }
-    reviewChange.titleSelected = selected;
-    reviewChanges = nextChanges;
-  }
-
   function selectedApprovedChangeCount() {
-    return buildApprovedChanges(reviewChanges).length;
+    return getSelectedApprovedChangeCount($activeProposalSession);
   }
 
-  function diffLinePrefix(line: DiffDisplayLine) {
-    if (line.kind === 'add') return '+';
-    if (line.kind === 'remove') return '-';
-    return ' ';
+  async function openProposalPathInNotepad(path: string) {
+    if (!selectedItem || selectedItem.status !== 'pendingApproval') {
+      return;
+    }
+
+    isMutating = true;
+    try {
+      focusProposalPath(path);
+      await invoke('open_note', { path });
+      await goto(resolve('/'));
+    } catch (error) {
+      console.error('Failed to open proposal note in notepad:', error);
+      errorMessage = 'Unable to open the proposed note in Notepad.';
+    } finally {
+      isMutating = false;
+    }
   }
 
   onMount(() => {
@@ -229,17 +239,18 @@
 </script>
 
 <div class="h-full w-full overflow-hidden bg-background text-foreground">
-  <main class="mx-auto flex h-full w-full max-w-6xl flex-col px-0 pb-6 sm:px-2 sm:pb-10">
-    <section class="mt-0 flex h-full min-h-0 w-full overflow-hidden border-y border-border/80 bg-card/80 shadow-sm backdrop-blur-md sm:mt-2 sm:rounded-[1.75rem] sm:border">
-      <aside class="flex w-full max-w-[22rem] shrink-0 flex-col border-r border-border/70">
-        <div class="border-b border-border/70 px-4 py-4 sm:px-6">
-          <div class="flex items-start justify-between gap-3">
+  <main class="mx-auto flex h-full w-full max-w-7xl flex-col px-0 pb-6 sm:px-4 sm:pb-8 lg:px-6">
+    <section class="mt-0 flex h-full min-h-0 w-full overflow-hidden border-y border-border/70 bg-gradient-to-b from-card/95 to-card/80 shadow-xl shadow-black/5 backdrop-blur-xl sm:mt-2 sm:rounded-[1.75rem] sm:border">
+      <aside class="flex w-full max-w-[23.5rem] shrink-0 flex-col border-r border-border/60 bg-card/55">
+        <div class="border-b border-border/60 px-4 py-4 sm:px-6">
+          <div class="flex items-start justify-between gap-4">
             <div>
-              <p class="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">Inbox</p>
-              <p class="mt-1 text-sm text-muted-foreground">AI remember jobs, approvals, and failures.</p>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground/90">Inbox</p>
+              <p class="mt-1 text-sm font-medium text-foreground">AI jobs and approvals</p>
+              <p class="mt-1 text-xs text-muted-foreground">Review statuses, changes, and failures.</p>
             </div>
             <button
-              class="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-50"
+              class="rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               type="button"
               disabled={isMutating || !hasClearableItems()}
               onclick={() => void clearInbox()}
@@ -249,40 +260,50 @@
           </div>
         </div>
 
-        <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4">
           {#if isLoading && items.length === 0}
-            <p class="px-3 py-4 text-sm text-muted-foreground">Loading Inbox…</p>
+            <div class="mx-2 rounded-2xl border border-dashed border-border/70 bg-background/60 px-4 py-8 text-center">
+              <p class="text-sm font-medium text-foreground">Loading inbox...</p>
+              <p class="mt-1 text-xs text-muted-foreground">Fetching recent AI activity.</p>
+            </div>
           {:else if items.length === 0}
-            <p class="px-3 py-4 text-sm text-muted-foreground">No AI jobs yet.</p>
+            <div class="mx-2 rounded-2xl border border-dashed border-border/70 bg-background/60 px-4 py-8 text-center">
+              <p class="text-sm font-medium text-foreground">No inbox items yet</p>
+              <p class="mt-1 text-xs text-muted-foreground">Run an AI flow and it will appear here.</p>
+            </div>
           {:else}
-            <div class="space-y-5">
-              {#each (Object.keys(groupLabels) as InboxGroupKey[]) as groupKey}
+            <div class="space-y-6">
+              {#each (Object.keys(groupLabels) as InboxGroupKey[]) as groupKey (groupKey)}
                 {@const groupItems = groupedItems(groupKey)}
                 {#if groupItems.length > 0}
                   <section>
-                    <p class="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      {groupLabels[groupKey]}
-                    </p>
-                    <div class="space-y-2">
-                      {#each groupItems as item}
+                    <div class="mb-2 flex items-center justify-between px-3">
+                      <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                        {groupLabels[groupKey]}
+                      </p>
+                      <span class="rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                        {groupItems.length}
+                      </span>
+                    </div>
+                    <div class="space-y-2.5">
+                      {#each groupItems as item (item.id)}
                         <button
                           type="button"
-                          class={`w-full rounded-[1.25rem] border px-4 py-3 text-left transition-colors ${
+                          class={`group w-full rounded-2xl border px-4 py-3 text-left transition-all ${
                             selectedId === item.id
-                              ? 'border-foreground/15 bg-background shadow-sm'
-                              : 'border-border/70 bg-background/70 hover:bg-accent'
+                              ? 'border-primary/40 bg-primary/10 shadow-md shadow-primary/10 ring-1 ring-primary/20'
+                              : 'border-border/70 bg-background/70 hover:border-border hover:bg-accent/80'
                           }`}
                           onclick={() => void loadInboxItem(item.id)}
                         >
                           <div class="flex items-start justify-between gap-3">
-                            <p class="text-sm font-medium text-foreground">{item.title}</p>
-                            <span class="shrink-0 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                              {item.kind}
+                            <p class="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{item.title}</p>
+                            <span class="shrink-0 rounded-full border border-border/60 bg-background/90 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                              {item.actionLabel}
                             </span>
                           </div>
-                          <p class="mt-1 line-clamp-3 text-sm text-muted-foreground">{item.summary}</p>
                           {#if item.affectedNotes.length > 0}
-                            <p class="mt-2 text-xs text-muted-foreground">
+                            <p class="mt-2 line-clamp-2 text-xs text-muted-foreground">
                               {item.affectedNotes.join(' · ')}
                             </p>
                           {/if}
@@ -297,32 +318,42 @@
         </div>
       </aside>
 
-      <section class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+      <section class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 lg:px-8">
         {#if errorMessage}
-          <div class="mb-4 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {errorMessage}
+          <div class="mb-5 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-destructive">Error</p>
+            <p class="mt-1 text-sm text-destructive">{errorMessage}</p>
           </div>
         {/if}
 
         {#if !selectedItem}
-          <div class="flex h-full items-center justify-center">
-            <p class="text-sm text-muted-foreground">Select an Inbox item to inspect it.</p>
+          <div class="flex h-full items-center justify-center py-8">
+            <div class="max-w-md rounded-3xl border border-dashed border-border/70 bg-background/60 px-8 py-10 text-center">
+              <p class="text-base font-semibold text-foreground">Select an inbox item</p>
+              <p class="mt-2 text-sm text-muted-foreground">
+                Choose a job from the left to inspect details and proposed changes.
+              </p>
+            </div>
           </div>
         {:else}
-          <div class="space-y-5">
+          <div class="space-y-6">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                  {selectedItem.kind} · {selectedItem.status}
-                </p>
-                <h1 class="mt-2 text-2xl font-semibold tracking-tight">{selectedItem.title}</h1>
-                <p class="mt-2 max-w-3xl text-sm text-muted-foreground">{selectedItem.summary}</p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="rounded-full border border-border/70 bg-muted/50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    {selectedItem.actionLabel}
+                  </span>
+                  <span class={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${statusBadgeClass(selectedItem.status)}`}>
+                    {formatStatusLabel(selectedItem.status)}
+                  </span>
+                </div>
+                <h1 class="mt-3 text-2xl font-semibold leading-tight tracking-tight sm:text-3xl">{selectedItem.title}</h1>
               </div>
 
-              <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 {#if selectedItem.status === 'pendingApproval'}
                   <button
-                    class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                    class="rounded-full border border-emerald-400/35 bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-100 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
                     type="button"
                     disabled={isMutating}
                     onclick={() => void approveSelectedChanges()}
@@ -330,7 +361,7 @@
                     {selectedApprovedChangeCount() === 0 ? 'Reject All' : 'Approve Selected'}
                   </button>
                   <button
-                    class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                    class="rounded-full border border-rose-400/35 bg-rose-500/15 px-4 py-2 text-sm font-semibold text-rose-100 transition-colors hover:bg-rose-500/25 disabled:cursor-not-allowed disabled:opacity-60"
                     type="button"
                     disabled={isMutating}
                     onclick={() => void runAction('reject_inbox_item')}
@@ -341,7 +372,7 @@
 
                 {#if selectedItem.status === 'failed' || selectedItem.status === 'stale' || selectedItem.status === 'rejected'}
                   <button
-                    class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                    class="rounded-full border border-sky-400/35 bg-sky-500/15 px-4 py-2 text-sm font-semibold text-sky-100 transition-colors hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-60"
                     type="button"
                     disabled={isMutating}
                     onclick={() => void runAction('retry_inbox_item')}
@@ -352,226 +383,48 @@
               </div>
             </div>
 
-            <div class="grid gap-4 md:grid-cols-3">
-              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Source note</p>
-                <p class="mt-2 text-sm font-medium break-all">{selectedItem.sourceTitle}</p>
+            <div class="grid gap-4 xl:grid-cols-3">
+              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4 shadow-sm shadow-black/5">
+                <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Source note</p>
+                <p class="mt-2 text-sm font-semibold break-all text-foreground">{selectedItem.sourceTitle}</p>
                 <p class="mt-1 text-xs text-muted-foreground break-all">{selectedItem.sourcePath}</p>
               </div>
-              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Provider</p>
-                <p class="mt-2 text-sm font-medium">{selectedItem.providerKind ?? 'pending'}</p>
+              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4 shadow-sm shadow-black/5">
+                <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Provider</p>
+                <p class="mt-2 text-sm font-semibold text-foreground">{selectedItem.providerKind ?? 'pending'}</p>
                 <p class="mt-1 text-xs text-muted-foreground">{selectedItem.model ?? 'Model pending'}</p>
               </div>
-              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Timestamps</p>
-                <p class="mt-2 text-sm font-medium">{formatTimestamp(selectedItem.createdAtMillis)}</p>
+              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4 shadow-sm shadow-black/5">
+                <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Timestamps</p>
+                <p class="mt-2 text-sm font-semibold text-foreground">{formatTimestamp(selectedItem.createdAtMillis)}</p>
                 <p class="mt-1 text-xs text-muted-foreground">Updated {formatTimestamp(selectedItem.updatedAtMillis)}</p>
               </div>
             </div>
 
             {#if selectedItem.failureReason}
               <div class="rounded-3xl border border-destructive/30 bg-destructive/10 px-5 py-4">
-                <p class="text-xs uppercase tracking-[0.18em] text-destructive">Failure</p>
-                <p class="mt-2 text-sm text-destructive">{selectedItem.failureReason}</p>
+                <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-destructive">Failure reason</p>
+                <p class="mt-2 text-sm leading-relaxed text-destructive">{selectedItem.failureReason}</p>
               </div>
             {/if}
 
-            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Source snapshot</p>
-              <pre class="mt-3 overflow-x-auto whitespace-pre-wrap text-sm leading-relaxed text-foreground">{selectedItem.sourceMarkdown}</pre>
+            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4 shadow-sm shadow-black/5">
+              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Source snapshot</p>
+              <pre class="mt-3 max-h-[22rem] overflow-x-auto rounded-2xl border border-border/60 bg-background/80 p-4 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{selectedItem.sourceMarkdown}</pre>
             </div>
 
-            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Proposed changes</p>
-              {#if reviewChanges.length === 0}
-                <p class="mt-3 text-sm text-muted-foreground">No note edits were proposed.</p>
-              {:else}
-                <div class="mt-4 space-y-4">
-                  {#each reviewChanges as reviewChange, changeIndex (`${reviewChange.kind}-${reviewChangeTitle(reviewChange)}-${changeIndex}`)}
-                    {@const noteSelected = isReviewChangeSelected(reviewChange)}
-                    <div class={`rounded-2xl border px-4 py-4 transition-colors ${
-                      noteSelected
-                        ? 'border-border/70 bg-card/80'
-                        : 'border-border/50 bg-card/45 opacity-75'
-                    }`}>
-                      <div class="flex items-start justify-between gap-3">
-                        <div>
-                          <p class="text-sm font-medium">{reviewChangeTitle(reviewChange)}</p>
-                          <p class="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                            {reviewChange.kind}
-                          </p>
-                          <p class="mt-1 text-xs text-muted-foreground">
-                            {noteSelected ? 'Selected for approval' : 'Rejected from approval'}
-                          </p>
-                          {#if reviewChange.kind === 'updateNote'}
-                            <p class="mt-1 text-xs text-muted-foreground">
-                              {acceptedHunkCount(reviewChange)} of {reviewChange.hunks.length} hunks selected
-                            </p>
-                          {/if}
-                        </div>
-                        <div class="flex items-center gap-2">
-                          <button
-                            type="button"
-                            class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                              noteSelected
-                                ? 'border-foreground/20 bg-foreground text-background'
-                                : 'border-border bg-background hover:bg-accent'
-                            }`}
-                            onclick={() => toggleReviewChange(changeIndex, true)}
-                          >
-                            Accept note
-                          </button>
-                          <button
-                            type="button"
-                            class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                              !noteSelected
-                                ? 'border-foreground/20 bg-foreground text-background'
-                                : 'border-border bg-background hover:bg-accent'
-                            }`}
-                            onclick={() => toggleReviewChange(changeIndex, false)}
-                          >
-                            Reject note
-                          </button>
-                        </div>
-                      </div>
-
-                      {#if reviewChange.kind === 'updateNote'}
-                        {#if reviewChange.titleChanged}
-                          <div class="mt-4 rounded-2xl border border-border/70 bg-background/80 px-4 py-3">
-                            <div class="flex items-start justify-between gap-3">
-                              <div>
-                                <p class="text-xs uppercase tracking-[0.16em] text-muted-foreground">Title change</p>
-                                <p class="mt-2 text-sm text-muted-foreground">
-                                  {reviewChange.currentTitle}
-                                  <span class="mx-2 text-muted-foreground/60">→</span>
-                                  <span class="font-medium text-foreground">{reviewChange.proposedTitle}</span>
-                                </p>
-                              </div>
-                              <div class="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                                    reviewChange.titleSelected
-                                      ? 'border-foreground/20 bg-foreground text-background'
-                                      : 'border-border bg-background hover:bg-accent'
-                                  }`}
-                                  onclick={() => toggleReviewTitle(changeIndex, true)}
-                                >
-                                  Accept title
-                                </button>
-                                <button
-                                  type="button"
-                                  class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                                    !reviewChange.titleSelected
-                                      ? 'border-foreground/20 bg-foreground text-background'
-                                      : 'border-border bg-background hover:bg-accent'
-                                  }`}
-                                  onclick={() => toggleReviewTitle(changeIndex, false)}
-                                >
-                                  Reject title
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        {/if}
-
-                        {#if reviewChange.hunks.length === 0}
-                          <p class="mt-4 text-sm text-muted-foreground">No line changes were proposed for this note.</p>
-                        {:else}
-                          <div class="mt-4 space-y-4">
-                            {#each reviewChange.hunks as hunk, hunkIndex (hunk.id)}
-                              <div class="rounded-2xl border border-border/70 bg-background/80">
-                                <div class="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
-                                  <p class="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                                    Hunk {hunkIndex + 1}
-                                  </p>
-                                  <div class="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                                        hunk.selected
-                                          ? 'border-foreground/20 bg-foreground text-background'
-                                          : 'border-border bg-background hover:bg-accent'
-                                      }`}
-                                      onclick={() => toggleReviewHunk(changeIndex, hunkIndex, true)}
-                                    >
-                                      Accept hunk
-                                    </button>
-                                    <button
-                                      type="button"
-                                      class={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                                        !hunk.selected
-                                          ? 'border-foreground/20 bg-foreground text-background'
-                                          : 'border-border bg-background hover:bg-accent'
-                                      }`}
-                                      onclick={() => toggleReviewHunk(changeIndex, hunkIndex, false)}
-                                    >
-                                      Reject hunk
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <div class="overflow-x-auto">
-                                  <div class="min-w-[36rem] font-mono text-[12px] leading-6">
-                                    {#each hunk.lines as line, lineIndex (`${hunk.id}-${lineIndex}`)}
-                                      <div
-                                        class={`grid grid-cols-[3.5rem_3.5rem_1.5rem_1fr] gap-0 border-b border-border/40 px-3 ${
-                                          line.kind === 'add'
-                                            ? hunk.selected
-                                              ? 'bg-emerald-500/12'
-                                              : 'bg-emerald-500/6 opacity-60'
-                                            : line.kind === 'remove'
-                                              ? hunk.selected
-                                                ? 'bg-rose-500/12'
-                                                : 'bg-rose-500/6 opacity-60'
-                                              : 'bg-transparent'
-                                        }`}
-                                      >
-                                        <span class="select-none px-2 text-right text-muted-foreground/75">
-                                          {line.oldLineNumber ?? ''}
-                                        </span>
-                                        <span class="select-none px-2 text-right text-muted-foreground/75">
-                                          {line.newLineNumber ?? ''}
-                                        </span>
-                                        <span class={`select-none px-2 ${
-                                          line.kind === 'add'
-                                            ? 'text-emerald-500'
-                                            : line.kind === 'remove'
-                                              ? 'text-rose-500'
-                                              : 'text-muted-foreground/70'
-                                        }`}>
-                                          {diffLinePrefix(line)}
-                                        </span>
-                                        <span class="whitespace-pre-wrap break-words px-2 text-foreground">
-                                          {line.text === '' ? ' ' : line.text}
-                                        </span>
-                                      </div>
-                                    {/each}
-                                  </div>
-                                </div>
-                              </div>
-                            {/each}
-                          </div>
-                        {/if}
-                      {:else if reviewChange.kind === 'createNote'}
-                        <div class="mt-4 rounded-2xl border border-border/70 bg-background/80">
-                          <div class="border-b border-border/70 px-4 py-3">
-                            <p class="text-xs uppercase tracking-[0.16em] text-muted-foreground">
-                              New note
-                            </p>
-                          </div>
-                          <pre class="overflow-x-auto whitespace-pre-wrap px-4 py-4 text-sm leading-relaxed">{reviewChange.change.markdown}</pre>
-                        </div>
-                      {:else}
-                        <p class="mt-4 text-sm text-muted-foreground">
-                          Delete the source note after its contents have been absorbed elsewhere.
-                        </p>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              {/if}
+            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4 shadow-sm shadow-black/5">
+              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Proposed changes</p>
+              <div class="mt-4">
+                <ProposalReviewList
+                  {reviewChanges}
+                  showOpenButtons={selectedItem.status === 'pendingApproval'}
+                  onToggleChange={toggleProposalChange}
+                  onToggleHunk={toggleProposalHunk}
+                  onToggleTitle={toggleProposalTitle}
+                  onOpenPath={(path) => void openProposalPathInNotepad(path)}
+                />
+              </div>
             </div>
           </div>
         {/if}

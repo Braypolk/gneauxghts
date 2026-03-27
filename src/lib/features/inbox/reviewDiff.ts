@@ -33,6 +33,7 @@ export interface ReviewHunk {
 }
 
 export interface ReviewUpdateChange {
+  id: string;
   kind: 'updateNote';
   path: string;
   baseContentHash: string;
@@ -46,12 +47,14 @@ export interface ReviewUpdateChange {
 }
 
 export interface ReviewCreateChange {
+  id: string;
   kind: 'createNote';
   change: Extract<AiChange, { kind: 'createNote' }>;
   selected: boolean;
 }
 
 export interface ReviewDeleteChange {
+  id: string;
   kind: 'deleteNote';
   change: Extract<AiChange, { kind: 'deleteNote' }>;
   title: string;
@@ -63,13 +66,14 @@ export type ReviewChange = ReviewUpdateChange | ReviewCreateChange | ReviewDelet
 const DIFF_CONTEXT_LINES = 3;
 
 export function buildReviewChanges(changePreviews: AiChangePreview[]): ReviewChange[] {
-  return changePreviews.map((changePreview) => {
+  return changePreviews.map((changePreview, index) => {
     const { change } = changePreview;
     if (change.kind === 'updateNote') {
       const currentTitle = changePreview.currentTitle ?? fallbackTitleFromPath(change.path);
       const currentMarkdown = changePreview.currentMarkdown ?? '';
       const proposedTitle = change.newTitle.trim() === '' ? currentTitle : change.newTitle;
       return {
+        id: `updateNote:${change.path}`,
         kind: 'updateNote',
         path: change.path,
         baseContentHash: change.baseContentHash,
@@ -85,6 +89,7 @@ export function buildReviewChanges(changePreviews: AiChangePreview[]): ReviewCha
 
     if (change.kind === 'createNote') {
       return {
+        id: `createNote:${index}:${change.suggestedTitle}`,
         kind: 'createNote',
         change,
         selected: true
@@ -92,6 +97,7 @@ export function buildReviewChanges(changePreviews: AiChangePreview[]): ReviewCha
     }
 
     return {
+      id: `deleteNote:${change.path}`,
       kind: 'deleteNote',
       change,
       title: changePreview.currentTitle ?? fallbackTitleFromPath(change.path),
@@ -152,6 +158,39 @@ export function isReviewChangeSelected(reviewChange: ReviewChange) {
     (reviewChange.titleChanged && reviewChange.titleSelected) ||
     reviewChange.hunks.some((hunk) => hunk.selected)
   );
+}
+
+export function getReviewChangePath(reviewChange: ReviewChange) {
+  if (reviewChange.kind === 'updateNote') {
+    return reviewChange.path;
+  }
+  if (reviewChange.kind === 'deleteNote') {
+    return reviewChange.change.path;
+  }
+  return null;
+}
+
+export function reviewChangeTitle(reviewChange: ReviewChange) {
+  if (reviewChange.kind === 'updateNote') {
+    return reviewChange.proposedTitle || reviewChange.currentTitle || 'Updated note';
+  }
+  if (reviewChange.kind === 'createNote') {
+    return reviewChange.change.suggestedTitle || 'New note';
+  }
+  return reviewChange.title || 'Deleted note';
+}
+
+export function acceptedHunkCount(reviewChange: ReviewChange) {
+  if (reviewChange.kind !== 'updateNote') {
+    return isReviewChangeSelected(reviewChange) ? 1 : 0;
+  }
+  return reviewChange.hunks.filter((hunk) => hunk.selected).length;
+}
+
+export function diffLinePrefix(line: DiffDisplayLine) {
+  if (line.kind === 'add') return '+';
+  if (line.kind === 'remove') return '-';
+  return ' ';
 }
 
 export function setReviewChangeSelection(reviewChange: ReviewChange, selected: boolean) {

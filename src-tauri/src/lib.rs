@@ -59,6 +59,7 @@ pub fn run() {
             commands::save_note,
             commands::remember_note,
             ai::remember_with_mode,
+            ai::remember_with_action,
             commands::forgotten_note_commands::forget_note,
             commands::forgotten_note_commands::list_forgotten_notes,
             commands::forgotten_note_commands::restore_forgotten_notes,

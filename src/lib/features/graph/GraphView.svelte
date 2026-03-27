@@ -14,6 +14,7 @@
     drag as d3Drag,
     type Simulation,
     type D3ZoomEvent,
+    type Selection,
     type ZoomTransform,
     type ZoomBehavior
   } from 'd3';
@@ -50,6 +51,9 @@
   const ENTRY_SWIRL_DISTANCE = 78;
   const ENTRY_SWIRL_VELOCITY = 1.55;
   const ENTRY_START_DELAY_MS = 100;
+  const INITIAL_SIMULATION_ALPHA = 0.72;
+  const DRAG_REHEAT_ALPHA = 0.16;
+  const SETTLE_STOP_ALPHA = 0.045;
 
   interface Props {
     data: GraphData;
@@ -84,8 +88,19 @@
 
   let savePositionTimer: ReturnType<typeof setTimeout> | null = null;
   let entryDelayTimer: ReturnType<typeof setTimeout> | null = null;
+  let renderFrameHandle: number | null = null;
+  let queuedBubbleRefresh = false;
   let hasFittedOnce = false;
   let hasUserInteracted = false;
+  let isDraggingNode = false;
+  let lastGraphData: GraphData | null = null;
+  let isMounted = false;
+
+  let graphContainerSelection: Selection<SVGGElement, unknown, null, undefined> | null = null;
+  let clusterSelection: Selection<SVGGElement, ClusterBubble, SVGGElement, unknown> | null = null;
+  let edgeSelection: Selection<SVGLineElement, SimLink, SVGGElement, unknown> | null = null;
+  let nodeSelection: Selection<SVGCircleElement, SimNode, SVGGElement, unknown> | null = null;
+  let labelSelection: Selection<SVGTextElement, SimNode, SVGGElement, unknown> | null = null;
 
   function hintsAreUsable(nodes: GraphData['nodes']): boolean {
     const withHints = nodes.filter((n) => n.xHint !== null && n.yHint !== null);
@@ -245,6 +260,116 @@
     refreshNodeRenderInfo();
   }
 
+  function edgeKey(link: SimLink) {
+    return `${link.source.path}::${link.target.path}::${link.type}`;
+  }
+
+  function syncClusterScene() {
+    if (!graphContainerSelection) return;
+
+    const clusterSel = graphContainerSelection
+      .selectAll<SVGGElement, ClusterBubble>('.cluster-group')
+      .data(clusterBubbles, (d: ClusterBubble) => String(d.id));
+
+    const clusterEnter = clusterSel.enter().insert('g', ':first-child').attr('class', 'cluster-group');
+    clusterEnter.append('path').attr('class', 'cluster-shape-outline');
+    clusterEnter.append('path').attr('class', 'cluster-shape');
+    clusterEnter.append('text').attr('class', 'cluster-label');
+    clusterEnter.append('text').attr('class', 'cluster-count');
+
+    clusterSelection = clusterEnter.merge(clusterSel);
+    clusterSel.exit().remove();
+
+    clusterSelection.on('click', (_event: MouseEvent, d: ClusterBubble) => {
+      if (!zoomBehavior) return;
+      const svgSel = select(svgEl);
+      const width = containerEl.clientWidth;
+      const height = containerEl.clientHeight;
+      const padding = Math.max(64, Math.min(width, height) * 0.12);
+      const bubbleWidth = Math.max(d.maxX - d.minX, 1);
+      const bubbleHeight = Math.max(d.maxY - d.minY, 1);
+      const fitScale = Math.min(
+        (width - padding * 2) / bubbleWidth,
+        (height - padding * 2) / bubbleHeight
+      );
+      const targetK = Math.min(Math.max(fitScale, LABEL_SHOW_ZOOM + 0.08), 4.5);
+      const targetTransform = zoomIdentity
+        .translate(width / 2 - d.cx * targetK, height / 2 - d.cy * targetK)
+        .scale(targetK);
+      svgSel.transition().duration(600).call(zoomBehavior.transform, targetTransform);
+    });
+  }
+
+  function syncEdgeScene() {
+    if (!graphContainerSelection) return;
+
+    const visibleEdges = simLinks.filter((link) => link.type === 'wikilink');
+    const edgeSel = graphContainerSelection
+      .selectAll<SVGLineElement, SimLink>('.edge-line')
+      .data(visibleEdges, edgeKey);
+
+    edgeSelection = edgeSel.enter().append('line').attr('class', 'edge-line').merge(edgeSel);
+    edgeSel.exit().remove();
+  }
+
+  function syncNodeScene() {
+    if (!graphContainerSelection) return;
+
+    const nodeSel = graphContainerSelection
+      .selectAll<SVGCircleElement, SimNode>('.node-circle')
+      .data(simNodes, (d: SimNode) => d.path);
+
+    nodeSelection = nodeSel.enter().append('circle').attr('class', 'node-circle').merge(nodeSel);
+    nodeSel.exit().remove();
+
+    nodeSelection
+      .on('mouseenter', (event: MouseEvent, d: SimNode) => {
+        tooltipNode = d;
+        tooltipX = event.clientX;
+        tooltipY = event.clientY;
+      })
+      .on('mousemove', (event: MouseEvent) => {
+        tooltipX = event.clientX;
+        tooltipY = event.clientY;
+      })
+      .on('mouseleave', () => {
+        tooltipNode = null;
+      })
+      .on('click', (_event: MouseEvent, d: SimNode) => {
+        void invoke('open_note', { path: d.path }).then(() => goto('/'));
+      });
+
+    const dragBehavior = d3Drag<SVGCircleElement, SimNode>()
+      .on('start', (event: { active: number }, d: SimNode) => {
+        hasUserInteracted = true;
+        isDraggingNode = true;
+        if (!event.active) simulation?.alpha(DRAG_REHEAT_ALPHA).alphaTarget(0.12).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      })
+      .on('drag', (event: { x: number; y: number }, d: SimNode) => {
+        d.fx = event.x;
+        d.fy = event.y;
+        scheduleRender(true);
+      })
+      .on('end', (event: { active: number }, d: SimNode) => {
+        isDraggingNode = false;
+        if (!event.active) simulation?.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+        scheduleSavePositions();
+      });
+
+    nodeSelection.call(dragBehavior);
+
+    const labelSel = graphContainerSelection
+      .selectAll<SVGTextElement, SimNode>('.node-label')
+      .data(simNodes, (d: SimNode) => d.path);
+
+    labelSelection = labelSel.enter().append('text').attr('class', 'node-label').merge(labelSel);
+    labelSel.exit().remove();
+  }
+
   function makeClusterCollisionForce(padding: number) {
     return (alpha: number) => {
       const groups = new Map<number, SimNode[]>();
@@ -292,7 +417,7 @@
   }
 
   function initSimulation() {
-    if (!svgEl || simNodes.length === 0) return;
+    if (!svgEl || !graphContainerSelection || simNodes.length === 0) return;
 
     const n = simNodes.length;
     const chargeStrength = -Math.max(250, Math.min(1000, n * 5));
@@ -320,13 +445,18 @@
       .force('clusterCollision', makeClusterCollisionForce(18))
       .force('centerX', forceX(0).strength(0.005))
       .force('centerY', forceY(0).strength(0.005))
-      .alphaDecay(0.012)
+      .alphaMin(SETTLE_STOP_ALPHA)
+      .alphaDecay(0.028)
       .velocityDecay(0.35)
       .on('tick', () => {
-        render();
+        scheduleRender();
         if (!hasFittedOnce && !hasUserInteracted && simulation && simulation.alpha() < 0.12) {
           hasFittedOnce = true;
           fitAll(false);
+        }
+        if (!isDraggingNode && simulation && simulation.alpha() <= SETTLE_STOP_ALPHA) {
+          simulation.stop();
+          scheduleSavePositions();
         }
       });
 
@@ -341,7 +471,7 @@
         }
         currentTransform = event.transform;
         onZoomChange(Math.round(currentTransform.k * 100) / 100);
-        render();
+        scheduleRender();
       });
 
     svg.call(zoomBehavior);
@@ -351,59 +481,23 @@
     currentTransform = zoomIdentity;
     onZoomChange(1);
     requestAnimationFrame(() => {
-      render();
+      scheduleRender(true);
       fitAll(false, true);
     });
 
     entryDelayTimer = setTimeout(() => {
-      simulation?.alpha(0.9).restart();
+      simulation?.alpha(INITIAL_SIMULATION_ALPHA).restart();
     }, ENTRY_START_DELAY_MS);
   }
 
-  function render() {
-    if (!svgEl) return;
-    const svg = select(svgEl);
-    const k = currentTransform.k;
+  function updateClusterScene(clusterOpacity: number) {
+    if (!clusterSelection) return;
 
-    clusterBubbles = buildClusterBubbles(simNodes, data.clusters);
+    clusterSelection
+      .style('opacity', String(clusterOpacity))
+      .style('pointer-events', clusterOpacity > 0.1 ? 'all' : 'none');
 
-    const clusterOpacity =
-      k <= CLUSTER_VIEW_END_ZOOM
-        ? 1.0
-        : k < NODE_BLEND_END_ZOOM
-          ? Math.max(0, 1.0 - (k - CLUSTER_VIEW_END_ZOOM) / (NODE_BLEND_END_ZOOM - CLUSTER_VIEW_END_ZOOM))
-          : 0;
-    const nodeOpacity =
-      k <= CLUSTER_VIEW_END_ZOOM
-        ? 0.14
-        : k < NODE_BLEND_END_ZOOM
-          ? 0.14 + 0.86 * ((k - CLUSTER_VIEW_END_ZOOM) / (NODE_BLEND_END_ZOOM - CLUSTER_VIEW_END_ZOOM))
-          : 1.0;
-    const labelOpacity =
-      k <= LABEL_SHOW_ZOOM
-        ? 0
-        : Math.min(1, (k - LABEL_SHOW_ZOOM) / LABEL_FADE_RANGE);
-    const wikilinkOpacity =
-      k <= WIKILINK_SHOW_ZOOM
-        ? 0
-        : Math.min(0.42, ((k - WIKILINK_SHOW_ZOOM) / 0.8) * 0.42);
-    const g = svg.select<SVGGElement>('.graph-container');
-    g.attr('transform', currentTransform.toString());
-
-    // -- Cluster bubbles (drawn first, behind everything) --
-    const clusterSel = g.selectAll<SVGGElement, ClusterBubble>('.cluster-group')
-      .data(clusterBubbles, (d: ClusterBubble) => String(d.id));
-
-    const clusterEnter = clusterSel.enter().insert('g', ':first-child').attr('class', 'cluster-group');
-    clusterEnter.append('path').attr('class', 'cluster-shape-outline');
-    clusterEnter.append('path').attr('class', 'cluster-shape');
-    clusterEnter.append('text').attr('class', 'cluster-label');
-    clusterEnter.append('text').attr('class', 'cluster-count');
-
-    const clusterMerge = clusterEnter.merge(clusterSel);
-    clusterMerge.style('opacity', String(clusterOpacity)).style('pointer-events', clusterOpacity > 0.1 ? 'all' : 'none');
-
-    clusterMerge.select<SVGPathElement>('.cluster-shape-outline')
+    clusterSelection.select<SVGPathElement>('.cluster-shape-outline')
       .attr('d', (d: ClusterBubble) => d.path)
       .attr('fill', 'none')
       .attr('stroke', 'var(--foreground)')
@@ -413,7 +507,7 @@
       .attr('stroke-linecap', 'round')
       .style('filter', 'drop-shadow(0 12px 24px rgba(0, 0, 0, 0.18))');
 
-    clusterMerge.select<SVGPathElement>('.cluster-shape')
+    clusterSelection.select<SVGPathElement>('.cluster-shape')
       .attr('d', (d: ClusterBubble) => d.path)
       .attr('fill', (d: ClusterBubble) => clusterColor(d.colorIndex))
       .attr('fill-opacity', 0.1)
@@ -424,7 +518,7 @@
       .attr('stroke-linecap', 'round')
       .style('filter', 'drop-shadow(0 0 16px rgba(0, 0, 0, 0.12))');
 
-    clusterMerge.select<SVGTextElement>('.cluster-label')
+    clusterSelection.select<SVGTextElement>('.cluster-label')
       .attr('x', (d: ClusterBubble) => d.cx)
       .attr('y', (d: ClusterBubble) => d.cy - 10)
       .attr('text-anchor', 'middle')
@@ -438,7 +532,7 @@
       .style('letter-spacing', '0.02em')
       .text((d: ClusterBubble) => d.label);
 
-    clusterMerge.select<SVGTextElement>('.cluster-count')
+    clusterSelection.select<SVGTextElement>('.cluster-count')
       .attr('x', (d: ClusterBubble) => d.cx)
       .attr('y', (d: ClusterBubble) => d.cy + 21)
       .attr('text-anchor', 'middle')
@@ -449,38 +543,12 @@
       .attr('stroke-opacity', 0.9)
       .attr('stroke-width', 3.5)
       .text((d: ClusterBubble) => `${d.noteCount} notes`);
+  }
 
-    clusterSel.exit().remove();
+  function updateEdgeScene(wikilinkOpacity: number) {
+    if (!edgeSelection) return;
 
-    clusterMerge.on('click', (_event: MouseEvent, d: ClusterBubble) => {
-      if (!zoomBehavior) return;
-      const svgSel = select(svgEl);
-      const width = containerEl.clientWidth;
-      const height = containerEl.clientHeight;
-      const padding = Math.max(64, Math.min(width, height) * 0.12);
-      const bubbleWidth = Math.max(d.maxX - d.minX, 1);
-      const bubbleHeight = Math.max(d.maxY - d.minY, 1);
-      const fitScale = Math.min(
-        (width - padding * 2) / bubbleWidth,
-        (height - padding * 2) / bubbleHeight
-      );
-      const targetK = Math.min(Math.max(fitScale, LABEL_SHOW_ZOOM + 0.08), 4.5);
-      const targetTransform = zoomIdentity
-        .translate(width / 2 - d.cx * targetK, height / 2 - d.cy * targetK)
-        .scale(targetK);
-      svgSel.transition().duration(600).call(zoomBehavior.transform, targetTransform);
-    });
-
-    // -- Edges --
-    const edgeKey = (d: SimLink) => `${d.source.path}::${d.target.path}::${d.type}`;
-    const visibleEdges = simLinks.filter((link) => link.type === 'wikilink');
-    const edgeSel = g.selectAll<SVGLineElement, SimLink>('.edge-line')
-      .data(visibleEdges, edgeKey);
-
-    const edgeEnter = edgeSel.enter().append('line').attr('class', 'edge-line');
-    const edgeMerge = edgeEnter.merge(edgeSel);
-
-    edgeMerge
+    edgeSelection
       .attr('x1', (d: SimLink) => d.source.x)
       .attr('y1', (d: SimLink) => d.source.y)
       .attr('x2', (d: SimLink) => d.target.x)
@@ -489,17 +557,12 @@
       .attr('stroke-opacity', wikilinkOpacity)
       .attr('stroke-width', 1.15)
       .attr('stroke-dasharray', 'none');
+  }
 
-    edgeSel.exit().remove();
+  function updateNodeScene(nodeOpacity: number) {
+    if (!nodeSelection) return;
 
-    // -- Nodes --
-    const nodeSel = g.selectAll<SVGCircleElement, SimNode>('.node-circle')
-      .data(simNodes, (d: SimNode) => d.path);
-
-    const nodeEnter = nodeSel.enter().append('circle').attr('class', 'node-circle');
-    const nodeMerge = nodeEnter.merge(nodeSel);
-
-    nodeMerge
+    nodeSelection
       .attr('cx', (d: SimNode) => d.x)
       .attr('cy', (d: SimNode) => d.y)
       .attr('r', (d: SimNode) => {
@@ -528,54 +591,12 @@
       })
       .attr('stroke-width', 0.9)
       .style('cursor', 'pointer');
+  }
 
-    nodeMerge
-      .on('mouseenter', (event: MouseEvent, d: SimNode) => {
-        tooltipNode = d;
-        tooltipX = event.clientX;
-        tooltipY = event.clientY;
-      })
-      .on('mousemove', (event: MouseEvent) => {
-        tooltipX = event.clientX;
-        tooltipY = event.clientY;
-      })
-      .on('mouseleave', () => {
-        tooltipNode = null;
-      })
-      .on('click', (_event: MouseEvent, d: SimNode) => {
-        void invoke('open_note', { path: d.path }).then(() => goto('/'));
-      });
+  function updateLabelScene(labelOpacity: number) {
+    if (!labelSelection) return;
 
-    const dragBehavior = d3Drag<SVGCircleElement, SimNode>()
-      .on('start', (event: { active: number }, d: SimNode) => {
-        hasUserInteracted = true;
-        if (!event.active) simulation?.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      })
-      .on('drag', (event: { x: number; y: number }, d: SimNode) => {
-        d.fx = event.x;
-        d.fy = event.y;
-      })
-      .on('end', (event: { active: number }, d: SimNode) => {
-        if (!event.active) simulation?.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
-        scheduleSavePositions();
-      });
-
-    nodeMerge.call(dragBehavior);
-
-    nodeSel.exit().remove();
-
-    // -- Labels --
-    const labelSel = g.selectAll<SVGTextElement, SimNode>('.node-label')
-      .data(simNodes, (d: SimNode) => d.path);
-
-    const labelEnter = labelSel.enter().append('text').attr('class', 'node-label');
-    const labelMerge = labelEnter.merge(labelSel);
-
-    labelMerge
+    labelSelection
       .attr('x', (d: SimNode) => d.x)
       .attr('y', (d: SimNode) => d.y - d.radius - 7)
       .attr('text-anchor', 'middle')
@@ -592,8 +613,104 @@
         return labelOpacity * (info.matchScore < DIMMED_MATCH_SCORE ? 0.15 : 1);
       })
       .text((d: SimNode) => d.shortTitle);
+  }
 
-    labelSel.exit().remove();
+  function updateClusterBubbles(clusterVisible: boolean, force = false) {
+    if (!force && !clusterVisible) {
+      return;
+    }
+
+    clusterBubbles = buildClusterBubbles(simNodes, data.clusters);
+    syncClusterScene();
+  }
+
+  function render(forceBubbleRefresh = false) {
+    if (!svgEl || !graphContainerSelection) return;
+    const k = currentTransform.k;
+
+    const clusterOpacity =
+      k <= CLUSTER_VIEW_END_ZOOM
+        ? 1.0
+        : k < NODE_BLEND_END_ZOOM
+          ? Math.max(0, 1.0 - (k - CLUSTER_VIEW_END_ZOOM) / (NODE_BLEND_END_ZOOM - CLUSTER_VIEW_END_ZOOM))
+          : 0;
+    const nodeOpacity =
+      k <= CLUSTER_VIEW_END_ZOOM
+        ? 0.14
+        : k < NODE_BLEND_END_ZOOM
+          ? 0.14 + 0.86 * ((k - CLUSTER_VIEW_END_ZOOM) / (NODE_BLEND_END_ZOOM - CLUSTER_VIEW_END_ZOOM))
+          : 1.0;
+    const labelOpacity =
+      k <= LABEL_SHOW_ZOOM
+        ? 0
+        : Math.min(1, (k - LABEL_SHOW_ZOOM) / LABEL_FADE_RANGE);
+    const wikilinkOpacity =
+      k <= WIKILINK_SHOW_ZOOM
+        ? 0
+        : Math.min(0.42, ((k - WIKILINK_SHOW_ZOOM) / 0.8) * 0.42);
+
+    graphContainerSelection.attr('transform', currentTransform.toString());
+    updateClusterBubbles(clusterOpacity > 0.01, forceBubbleRefresh);
+    updateClusterScene(clusterOpacity);
+    updateEdgeScene(wikilinkOpacity);
+    updateNodeScene(nodeOpacity);
+    updateLabelScene(labelOpacity);
+  }
+
+  function scheduleRender(forceBubbleRefresh = false) {
+    queuedBubbleRefresh = queuedBubbleRefresh || forceBubbleRefresh;
+    if (renderFrameHandle !== null) {
+      return;
+    }
+
+    renderFrameHandle = requestAnimationFrame(() => {
+      renderFrameHandle = null;
+      const nextForceBubbleRefresh = queuedBubbleRefresh;
+      queuedBubbleRefresh = false;
+      render(nextForceBubbleRefresh);
+    });
+  }
+
+  function teardownGraphView() {
+    simulation?.stop();
+    simulation = null;
+    tooltipNode = null;
+    if (savePositionTimer) {
+      clearTimeout(savePositionTimer);
+      savePositionTimer = null;
+    }
+    if (entryDelayTimer) {
+      clearTimeout(entryDelayTimer);
+      entryDelayTimer = null;
+    }
+    if (renderFrameHandle !== null) {
+      cancelAnimationFrame(renderFrameHandle);
+      renderFrameHandle = null;
+    }
+    queuedBubbleRefresh = false;
+    isDraggingNode = false;
+    clusterSelection = null;
+    edgeSelection = null;
+    nodeSelection = null;
+    labelSelection = null;
+    graphContainerSelection?.selectAll('*').remove();
+  }
+
+  function rebuildGraphView() {
+    if (!graphContainerSelection) return;
+
+    teardownGraphView();
+    lastGraphData = data;
+    hasFittedOnce = false;
+    hasUserInteracted = false;
+    rebuildClusterLookups();
+    buildSimData(data);
+    clusterBubbles = buildClusterBubbles(simNodes, data.clusters);
+    syncClusterScene();
+    syncEdgeScene();
+    syncNodeScene();
+    initSimulation();
+    scheduleRender(true);
   }
 
   function scheduleSavePositions() {
@@ -645,24 +762,30 @@
     searchQuery;
     timeFilterRange;
     refreshNodeRenderInfo();
-    render();
+    scheduleRender();
+  });
+
+  $effect(() => {
+    data;
+    if (!isMounted || data === lastGraphData) {
+      return;
+    }
+    rebuildGraphView();
   });
 
   onMount(() => {
-    rebuildClusterLookups();
-    buildSimData(data);
     const svg = select(svgEl);
-    svg.append('g').attr('class', 'graph-container');
-    initSimulation();
+    graphContainerSelection = svg.append('g').attr('class', 'graph-container');
+    isMounted = true;
+    rebuildGraphView();
 
-    const resizeObserver = new ResizeObserver(() => render());
+    const resizeObserver = new ResizeObserver(() => scheduleRender(true));
     resizeObserver.observe(containerEl);
 
     return () => {
-      simulation?.stop();
+      teardownGraphView();
+      isMounted = false;
       resizeObserver.disconnect();
-      if (savePositionTimer) clearTimeout(savePositionTimer);
-      if (entryDelayTimer) clearTimeout(entryDelayTimer);
     };
   });
 </script>

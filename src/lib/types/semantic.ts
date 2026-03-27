@@ -18,6 +18,8 @@ export interface SemanticModelInfo {
   modelPath: string | null;
   modelRepoId: string;
   available: boolean;
+  loading: boolean;
+  ready: boolean;
   status: string;
   error: string | null;
 }

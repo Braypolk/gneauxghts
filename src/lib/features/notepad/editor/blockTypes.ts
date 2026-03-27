@@ -4,7 +4,6 @@ import {
   addBlockTypeCommand,
   blockquoteSchema,
   bulletListSchema,
-  clearTextInCurrentBlockCommand,
   codeBlockSchema,
   headingSchema,
   hrSchema,
@@ -455,14 +454,9 @@ function insertWikilinkAtSelection(view: EditorView) {
 export function applyBlockTypeSelection(
   ctx: Ctx,
   view: EditorView,
-  id: string,
-  { clearCurrentBlock = false }: { clearCurrentBlock?: boolean } = {}
+  id: string
 ) {
   const commands = ctx.get(commandsCtx);
-
-  if (clearCurrentBlock) {
-    commands.call(clearTextInCurrentBlockCommand.key);
-  }
 
   if (id === 'paragraph') {
     commands.call(setBlockTypeCommand.key, { nodeType: paragraphSchema.type(ctx) });

@@ -26,14 +26,16 @@
   import {
     cleanUpApplyPolicyOptions,
     cleanUpApplyPolicyPreference,
-    defaultRememberModePreference,
+    defaultRememberActionPreference,
     forgetButtonDurationOptions,
     forgetButtonDurationPreference,
     forgottenNoteRetentionOptions,
     forgottenNoteRetentionPreference,
-    rememberModeOptions,
+    rememberActions,
+    rememberActionOptions,
     setCleanUpApplyPolicyPreference,
-    setDefaultRememberModePreference,
+    setDefaultRememberActionPreference,
+    setRememberActions,
     setForgottenNoteRetentionPreference,
     setForgetButtonDurationPreference
   } from '$lib/appSettings';
@@ -42,7 +44,10 @@
     AiModelOption,
     AiProviderKind,
     AiSettings,
-    AiSettingsUpdate
+    AiSettingsUpdate,
+    EditableRememberAction,
+    CustomRememberActionKind,
+    EditableRememberActionFamily
   } from '$lib/types/ai';
   import {
     setThemePreference,
@@ -110,6 +115,8 @@
   let aiModelsError = $state('');
   let isLoadingAiModels = $state(false);
   let isSavingAiSettings = $state(false);
+  let rememberActionDrafts = $state<EditableRememberAction[]>([]);
+  let isSavingRememberActions = $state(false);
   let aiDiagnostics = $state<AiDiagnosticsSnapshot | null>(null);
   let isLoadingAiDiagnostics = $state(false);
   let isClearingAiDiagnostics = $state(false);
@@ -231,6 +238,7 @@
       aiModelInput = settings.model;
       await loadAiDiagnostics();
       await loadAiModels();
+      rememberActionDrafts = $rememberActions.map((action) => ({ ...action }));
     } catch (error) {
       console.error('Failed to load AI settings:', error);
     }
@@ -317,6 +325,104 @@
 
   function formatCount(value: number | null | undefined) {
     return (value ?? 0).toLocaleString();
+  }
+
+  function defaultFamilyForKind(
+    kind: CustomRememberActionKind
+  ): EditableRememberActionFamily {
+    return kind === 'singleNote' ? 'edit' : 'organize';
+  }
+
+  function createBlankRememberAction(kind: CustomRememberActionKind): EditableRememberAction {
+    return {
+      id: `custom-${crypto.randomUUID()}`,
+      label: '',
+      description: '',
+      prompt: '',
+      kind,
+      family: defaultFamilyForKind(kind),
+      visible: true
+    };
+  }
+
+  function addRememberAction(kind: CustomRememberActionKind) {
+    rememberActionDrafts = [...rememberActionDrafts, createBlankRememberAction(kind)];
+  }
+
+  function updateRememberAction(
+    id: string,
+    field: keyof Pick<
+      EditableRememberAction,
+      'label' | 'description' | 'prompt' | 'kind' | 'family' | 'visible'
+    >,
+    value: string | boolean
+  ) {
+    rememberActionDrafts = rememberActionDrafts.map((action) => {
+      if (action.id !== id) {
+        return action;
+      }
+
+      const nextAction = { ...action, [field]: value } as EditableRememberAction;
+      if (field === 'kind') {
+        nextAction.family =
+          value === 'singleNote'
+            ? 'edit'
+            : nextAction.family === 'edit'
+              ? 'organize'
+              : nextAction.family;
+      }
+      if (nextAction.kind === 'singleNote') {
+        nextAction.family = 'edit';
+      }
+      return nextAction;
+    });
+  }
+
+  function removeRememberAction(id: string) {
+    rememberActionDrafts = rememberActionDrafts.filter((action) => action.id !== id);
+    if ($defaultRememberActionPreference === id) {
+      setDefaultRememberActionPreference('exact');
+    }
+  }
+
+  function canSaveRememberActions() {
+    return rememberActionDrafts.every(
+      (action) =>
+        action.label.trim() !== '' &&
+        action.prompt.trim() !== '' &&
+        (action.kind === 'singleNote' ||
+          action.family === 'organize' ||
+          action.family === 'integrate')
+    );
+  }
+
+  async function saveRememberActions() {
+    if (!canSaveRememberActions()) {
+      return;
+    }
+
+    isSavingRememberActions = true;
+    try {
+      const sanitized = rememberActionDrafts.map((action) => ({
+        ...action,
+        label: action.label.trim(),
+        description: action.description.trim(),
+        prompt: action.prompt.trim(),
+        family: action.kind === 'singleNote' ? 'edit' : action.family
+      }));
+      setRememberActions(sanitized);
+      rememberActionDrafts = sanitized.map((action) => ({ ...action }));
+      if (
+        $defaultRememberActionPreference !== 'exact' &&
+        !sanitized.some(
+          (action) => action.id === $defaultRememberActionPreference && action.visible
+        )
+      ) {
+        setDefaultRememberActionPreference('exact');
+      }
+    } finally {
+      isSavingRememberActions = false;
+    }
   }
 
   onMount(() => {
@@ -495,7 +601,7 @@
             <div>
               <p class="text-sm font-medium">AI Remember</p>
               <p class="mt-0.5 text-xs text-muted-foreground">
-                Choose the default remember action and configure the generation provider used for clean up and integrate.
+                Choose the default remember action and configure the generation provider used for note transforms and vault integration.
               </p>
             </div>
             <button
@@ -510,14 +616,14 @@
 
           <div class="grid gap-4 md:grid-cols-2">
             <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Default remember mode</p>
+              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Default remember action</p>
               <fieldset class="mt-3 flex flex-wrap gap-2">
-                <legend class="sr-only">Default remember mode</legend>
-                {#each rememberModeOptions as option}
+                <legend class="sr-only">Default remember action</legend>
+                {#each $rememberActionOptions as option}
                   <label
                     title={option.description}
                     class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                      $defaultRememberModePreference === option.id
+                      $defaultRememberActionPreference === option.id
                         ? 'bg-foreground text-background shadow-sm'
                         : 'bg-card text-muted-foreground hover:text-foreground'
                     }`}
@@ -525,21 +631,24 @@
                     <input
                       class="sr-only"
                       type="radio"
-                      name="default-remember-mode"
+                      name="default-remember-action"
                       value={option.id}
-                      checked={$defaultRememberModePreference === option.id}
-                      onchange={() => setDefaultRememberModePreference(option.id)}
+                      checked={$defaultRememberActionPreference === option.id}
+                      onchange={() => setDefaultRememberActionPreference(option.id)}
                     />
                     <span>{option.label}</span>
                   </label>
                 {/each}
               </fieldset>
+              <p class="mt-3 text-xs text-muted-foreground">
+                Hidden actions stay editable in Settings but do not appear in the note UI.
+              </p>
             </div>
 
             <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Cleanup apply policy</p>
+              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">AI edit apply policy</p>
               <fieldset class="mt-3 flex flex-wrap gap-2">
-                <legend class="sr-only">Cleanup apply policy</legend>
+                <legend class="sr-only">AI edit apply policy</legend>
                 {#each cleanUpApplyPolicyOptions as option}
                   <label
                     title={option.description}
@@ -562,9 +671,142 @@
                 {/each}
               </fieldset>
               <p class="mt-3 text-xs text-muted-foreground">
-                Integrate always requires Inbox approval in v1, even when cleanup auto-applies.
+                Advanced actions always require Inbox approval in v1, even when single-note AI transforms auto-apply.
               </p>
             </div>
+          </div>
+
+          <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">AI actions</p>
+                <p class="mt-2 text-sm font-medium">Visible, editable remember actions</p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Every AI action except `Remember Exact` lives here. You can rename, rewrite, hide, remove, or add your own.
+                </p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
+                  type="button"
+                  onclick={() => addRememberAction('singleNote')}
+                >
+                  Add single-note action
+                </button>
+                <button
+                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
+                  type="button"
+                  onclick={() => addRememberAction('advanced')}
+                >
+                  Add advanced action
+                </button>
+                <button
+                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                  type="button"
+                  disabled={isSavingRememberActions || !canSaveRememberActions()}
+                  onclick={() => void saveRememberActions()}
+                >
+                  {isSavingRememberActions ? 'Saving…' : 'Save actions'}
+                </button>
+              </div>
+            </div>
+
+            <div class="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
+              Customizing AI actions can have unintended outcomes. Single-note actions are safer. Advanced actions may create notes, update existing notes, or otherwise reorganize your vault depending on the prompt.
+            </div>
+
+            {#if rememberActionDrafts.length === 0}
+              <p class="mt-4 text-sm text-muted-foreground">No AI actions configured.</p>
+            {:else}
+              <div class="mt-4 space-y-4">
+                {#each rememberActionDrafts as action (action.id)}
+                  <div class="rounded-2xl border border-border/70 bg-card/70 p-4">
+                    <div class="grid gap-4 md:grid-cols-[1fr_12rem_12rem_auto]">
+                      <label class="rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                        <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Label</span>
+                        <input
+                          class="mt-2 w-full bg-transparent text-sm font-medium outline-none"
+                          value={action.label}
+                          placeholder="Button label"
+                          oninput={(event) => updateRememberAction(action.id, 'label', (event.currentTarget as HTMLInputElement).value)}
+                        />
+                      </label>
+
+                      <label class="rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                        <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Kind</span>
+                        <select
+                          class="mt-2 w-full bg-transparent text-sm font-medium outline-none"
+                          value={action.kind}
+                          onchange={(event) => updateRememberAction(action.id, 'kind', (event.currentTarget as HTMLSelectElement).value)}
+                        >
+                          <option value="singleNote">Single note</option>
+                          <option value="advanced">Advanced</option>
+                        </select>
+                      </label>
+
+                      <label class="rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                        <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Section</span>
+                        <select
+                          class="mt-2 w-full bg-transparent text-sm font-medium outline-none"
+                          value={action.family}
+                          disabled={action.kind === 'singleNote'}
+                          onchange={(event) => updateRememberAction(action.id, 'family', (event.currentTarget as HTMLSelectElement).value)}
+                        >
+                          <option value="edit">Transform note</option>
+                          <option value="organize">Split or organize</option>
+                          <option value="integrate">Integrate into vault</option>
+                        </select>
+                      </label>
+
+                      <div class="flex items-center justify-end">
+                        <button
+                          class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
+                          type="button"
+                          onclick={() => removeRememberAction(action.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+
+                    <label class="mt-4 flex items-center justify-between rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                      <div>
+                        <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Visibility</span>
+                        <p class="mt-1 text-sm font-medium text-foreground">
+                          {action.visible ? 'Shown in the note UI' : 'Hidden from the note UI'}
+                        </p>
+                      </div>
+                      <input
+                        class="h-4 w-4"
+                        type="checkbox"
+                        checked={action.visible}
+                        onchange={(event) => updateRememberAction(action.id, 'visible', (event.currentTarget as HTMLInputElement).checked)}
+                      />
+                    </label>
+
+                    <label class="mt-4 block rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                      <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Description</span>
+                      <input
+                        class="mt-2 w-full bg-transparent text-sm font-medium outline-none"
+                        value={action.description}
+                        placeholder="Short description for the menu"
+                        oninput={(event) => updateRememberAction(action.id, 'description', (event.currentTarget as HTMLInputElement).value)}
+                      />
+                    </label>
+
+                    <label class="mt-4 block rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                      <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Prompt</span>
+                      <textarea
+                        class="mt-2 min-h-32 w-full resize-y bg-transparent text-sm font-medium outline-none"
+                        placeholder="Describe what the action should do."
+                        value={action.prompt}
+                        oninput={(event) => updateRememberAction(action.id, 'prompt', (event.currentTarget as HTMLTextAreaElement).value)}
+                      ></textarea>
+                    </label>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
 
           <div class="grid gap-4 md:grid-cols-2">
@@ -713,7 +955,7 @@
                       input {formatCount(metrics.lastRun.promptTokens)} · output {formatCount(metrics.lastRun.completionTokens)}
                     </p>
                     <p class="mt-1 text-xs text-muted-foreground">
-                      {metrics.lastRun.kind} · {metrics.lastRun.status} · {formatMillis(metrics.lastRun.elapsedMillis)}
+                      {metrics.lastRun.actionLabel} · {metrics.lastRun.status} · {formatMillis(metrics.lastRun.elapsedMillis)}
                     </p>
                     <p class="mt-1 text-xs text-muted-foreground">
                       {metrics.lastRun.model ?? 'Unknown model'} · {formatTimestamp(metrics.lastRun.updatedAtMillis)}

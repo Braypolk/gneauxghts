@@ -4,6 +4,7 @@ import type { PluginView, Selection } from '@milkdown/kit/prose/state';
 import { TextSelection } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
+import { bulletListSchema, listItemSchema, paragraphSchema } from '@milkdown/kit/preset/commonmark';
 import {
   applyBlockTypeSelection,
   blockTypeIcons,
@@ -96,12 +97,69 @@ function isSelectionAtEndOfNode(selection: Selection) {
   return $head.parentOffset === $head.parent.content.size;
 }
 
+function replaceCurrentBlockWithTaskList(ctx: Ctx, view: EditorView) {
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty || !isSelectionAtEndOfNode(selection)) {
+    return false;
+  }
+
+  const { $from } = selection;
+  const parent = $from.parent;
+  if (parent.type.name !== 'paragraph' && parent.type.name !== 'heading') {
+    return false;
+  }
+
+  const blockPos = $from.before();
+  const paragraph = paragraphSchema.type(ctx).create();
+  const listItem = listItemSchema.type(ctx).create(
+    {
+      label: '•',
+      listType: 'bullet',
+      spread: true,
+      checked: false
+    },
+    paragraph
+  );
+  const taskList = bulletListSchema.type(ctx).create({ spread: false }, listItem);
+  const transaction = view.state.tr.replaceWith(blockPos, blockPos + parent.nodeSize, taskList);
+
+  transaction.setSelection(TextSelection.create(transaction.doc, blockPos + 3));
+  view.dispatch(transaction.scrollIntoView());
+  return true;
+}
+
 function runSlashMenuSelection(ctx: Ctx, view: EditorView, optionId: string) {
   if (!slashMenuOptionIds.has(optionId)) {
     return;
   }
 
-  applyBlockTypeSelection(ctx, view, optionId, { clearCurrentBlock: true });
+  if (optionId === 'taskList' && replaceCurrentBlockWithTaskList(ctx, view)) {
+    return;
+  }
+
+  const selection = view.state.selection;
+  if (selection instanceof TextSelection) {
+    const { $from } = selection;
+    const parent = $from.parent;
+    if (
+      isSelectionAtEndOfNode(selection) &&
+      (parent.type.name === 'paragraph' || parent.type.name === 'heading')
+    ) {
+      const from = $from.start();
+      const to = $from.end();
+      const transaction = view.state.tr.deleteRange(from, to);
+      transaction.setSelection(TextSelection.create(transaction.doc, from));
+      view.dispatch(transaction);
+    }
+  }
+
+  applyBlockTypeSelection(ctx, view, optionId);
+}
+
+function consumeKeyEvent(event: KeyboardEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
 }
 
 class SlashMenuView implements PluginView {
@@ -268,7 +326,7 @@ class SlashMenuView implements PluginView {
     `;
   }
 
-  private runAtIndex(index: number) {
+  private runAtIndex(index: number, { hideMenu = true }: { hideMenu?: boolean } = {}) {
     const item = this.#menuState.groups
       .flatMap((group) => group.items)
       .find((candidate) => candidate.index === index);
@@ -277,7 +335,9 @@ class SlashMenuView implements PluginView {
     }
 
     runSlashMenuSelection(this.#ctx, this.#view, item.id);
-    this.hide();
+    if (hideMenu) {
+      this.hide();
+    }
   }
 
   private scrollToIndex(index: number) {
@@ -360,25 +420,25 @@ class SlashMenuView implements PluginView {
     }
 
     if (event.key === 'Escape') {
-      event.preventDefault();
+      consumeKeyEvent(event);
       this.hide();
       return;
     }
 
     if (event.key === 'ArrowDown') {
-      event.preventDefault();
+      consumeKeyEvent(event);
       this.setHoverIndex(this.#hoverIndex + 1);
       return;
     }
 
     if (event.key === 'ArrowUp') {
-      event.preventDefault();
+      consumeKeyEvent(event);
       this.setHoverIndex(this.#hoverIndex - 1);
       return;
     }
 
     if (event.key === 'ArrowLeft') {
-      event.preventDefault();
+      consumeKeyEvent(event);
       const group = this.#menuState.groups.find(
         (candidate) =>
           this.#hoverIndex >= candidate.range[0] && this.#hoverIndex < candidate.range[1]
@@ -395,7 +455,7 @@ class SlashMenuView implements PluginView {
     }
 
     if (event.key === 'ArrowRight') {
-      event.preventDefault();
+      consumeKeyEvent(event);
       const group = this.#menuState.groups.find(
         (candidate) =>
           this.#hoverIndex >= candidate.range[0] && this.#hoverIndex < candidate.range[1]
@@ -412,8 +472,12 @@ class SlashMenuView implements PluginView {
     }
 
     if (event.key === 'Enter') {
-      event.preventDefault();
-      this.runAtIndex(this.#hoverIndex);
+      consumeKeyEvent(event);
+      const index = this.#hoverIndex;
+      this.hide();
+      queueMicrotask(() => {
+        this.runAtIndex(index, { hideMenu: false });
+      });
     }
   };
 }

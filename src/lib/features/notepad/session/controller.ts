@@ -1,4 +1,9 @@
 import {
+  EXACT_REMEMBER_ACTION,
+  type CleanUpApplyPolicy,
+  type RememberActionOption
+} from '$lib/types/ai';
+import {
   createEmptySessionSnapshot,
   createForgottenNote,
   forgetNoteSession,
@@ -7,7 +12,7 @@ import {
   loadSavedNoteSession,
   openNoteSession,
   readNoteSession,
-  rememberWithMode,
+  rememberWithAction,
   resolveAssetRootPath,
   restoreForgottenNotes,
   saveNoteSession,
@@ -16,7 +21,6 @@ import {
   type SaveMode,
   type SessionSnapshot
 } from '$lib/features/notepad/session/session';
-import type { CleanUpApplyPolicy, RememberMode } from '$lib/types/ai';
 
 interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
@@ -194,7 +198,7 @@ export function createSessionController({
     }
 
     if (mode === 'remember') {
-      await rememberWithMode('exact', 'autoApply', title, markdown, getCurrentPath());
+      await rememberWithAction(EXACT_REMEMBER_ACTION, 'autoApply', title, markdown, getCurrentPath());
       scheduleAutoSync('note-remembered', 400);
       return;
     }
@@ -322,7 +326,7 @@ export function createSessionController({
   }
 
   async function rememberCurrentNote(
-    mode: RememberMode,
+    action: RememberActionOption,
     cleanUpApplyPolicy: CleanUpApplyPolicy
   ) {
     const rememberedPath = getCurrentPath();
@@ -331,7 +335,7 @@ export function createSessionController({
     cancelPendingAutosave();
     const title = getTitle();
     const markdown = getCurrentMarkdown();
-    await rememberWithMode(mode, cleanUpApplyPolicy, title, markdown, getCurrentPath());
+    await rememberWithAction(action, cleanUpApplyPolicy, title, markdown, getCurrentPath());
     scheduleAutoSync('note-remembered', 400);
     setCurrentPath(null);
     setLastSavedTitle('');

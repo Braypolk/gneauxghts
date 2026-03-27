@@ -15,8 +15,14 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::Path,
+    sync::{LazyLock, Mutex},
 };
 use tauri::State;
+
+const GRAPH_CLUSTER_CACHE_LIMIT: usize = 6;
+
+static GRAPH_CLUSTER_CACHE: LazyLock<Mutex<Vec<GraphClusterCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,11 +79,20 @@ pub(crate) struct GraphPositionEntry {
     y: f64,
 }
 
+#[derive(Clone)]
+struct GraphClusterCacheEntry {
+    revision: u64,
+    color_group_count: usize,
+    assignments: HashMap<String, usize>,
+    clusters: Vec<GraphCluster>,
+}
+
 #[tauri::command]
 pub(crate) fn get_graph_data(
     state: State<'_, AppState>,
     color_group_count: Option<usize>,
 ) -> Result<GraphData, String> {
+    let requested_color_group_count = color_group_count.unwrap_or(3);
     let notes_dir = prepare_notes_dir(false)?;
     let db_path = state
         .semantic
@@ -139,28 +154,85 @@ pub(crate) fn get_graph_data(
         .collect();
 
     let provider = state.semantic.embedding_provider();
-    let embed_fn = provider.as_ref().map(|p| {
-        let p = p.clone();
-        move |texts: &[String]| -> Result<Vec<Vec<f32>>, String> {
-            p.embed_texts(texts, crate::semantic::embed::EmbeddingInputKind::Document)
-        }
-    });
-
-    let cluster_result = cluster_notes(
-        &embeddings_for_cluster,
-        &note_titles,
-        &note_snippets,
-        embed_fn
+    let model = provider.as_ref().map(|provider| provider.model_info());
+    if !embeddings_for_cluster.is_empty() && model.as_ref().is_some_and(|model| !model.ready) {
+        let is_loading = model.as_ref().is_some_and(|model| model.loading);
+        let reason = model
             .as_ref()
-            .map(|f| f as &crate::semantic::cluster::EmbedFn),
-        color_group_count.unwrap_or(3),
-    );
+            .and_then(|model| model.error.clone())
+            .unwrap_or_else(|| {
+                model
+                    .as_ref()
+                    .map(|model| model.status.clone())
+                    .unwrap_or_else(|| "Embedding model is not ready".to_string())
+            });
+        let message = if is_loading {
+            format!("Map calculations are waiting for the embedding model to finish loading. {reason}")
+        } else {
+            format!("Map calculations are unavailable because the embedding model is not ready. {reason}")
+        };
+        return Err(message);
+    }
+    let semantic_revision = state.semantic.current_index_revision();
+    let cached_clusters = lookup_graph_cluster_cache(semantic_revision, requested_color_group_count)?;
+    let (path_to_cluster, mut clusters) = if let Some(cached) = cached_clusters {
+        (cached.assignments, cached.clusters)
+    } else {
+        let embed_fn = provider.as_ref().map(|p| {
+            let p = p.clone();
+            move |texts: &[String]| -> Result<Vec<Vec<f32>>, String> {
+                p.embed_texts(texts, crate::semantic::embed::EmbeddingInputKind::Document)
+            }
+        });
 
-    let path_to_cluster: HashMap<String, usize> = embeddings_for_cluster
-        .iter()
-        .enumerate()
-        .map(|(i, (path, _))| (path.clone(), cluster_result.assignments[i]))
-        .collect();
+        let cluster_result = cluster_notes(
+            &embeddings_for_cluster,
+            &note_titles,
+            &note_snippets,
+            embed_fn
+                .as_ref()
+                .map(|f| f as &crate::semantic::cluster::EmbedFn),
+            requested_color_group_count,
+        );
+
+        let assignments: HashMap<String, usize> = embeddings_for_cluster
+            .iter()
+            .enumerate()
+            .map(|(index, (path, _))| (path.clone(), cluster_result.assignments[index]))
+            .collect();
+
+        let clusters = (0..cluster_result.k)
+            .map(|id| {
+                let note_count = cluster_result
+                    .assignments
+                    .iter()
+                    .filter(|&&cluster_id| cluster_id == id)
+                    .count();
+                GraphCluster {
+                    id,
+                    label: cluster_result
+                        .labels
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| "Notes".to_string()),
+                    note_count,
+                    color_index: cluster_result.color_groups.get(id).copied().unwrap_or(0),
+                }
+            })
+            .filter(|cluster| cluster.note_count > 0)
+            .collect::<Vec<_>>();
+
+        store_graph_cluster_cache(
+            GraphClusterCacheEntry {
+                revision: semantic_revision,
+                color_group_count: requested_color_group_count,
+                assignments: assignments.clone(),
+                clusters: clusters.clone(),
+            },
+        )?;
+
+        (assignments, clusters)
+    };
 
     let mut time_min = u64::MAX;
     let mut time_max = 0u64;
@@ -199,26 +271,7 @@ pub(crate) fn get_graph_data(
         time_max = 0;
     }
 
-    let mut clusters: Vec<GraphCluster> = (0..cluster_result.k)
-        .map(|id| {
-            let note_count = cluster_result
-                .assignments
-                .iter()
-                .filter(|&&c| c == id)
-                .count();
-            GraphCluster {
-                id,
-                label: cluster_result
-                    .labels
-                    .get(id)
-                    .cloned()
-                    .unwrap_or_else(|| "Notes".to_string()),
-                note_count,
-                color_index: cluster_result.color_groups.get(id).copied().unwrap_or(0),
-            }
-        })
-        .collect();
-    clusters.retain(|c| c.note_count > 0);
+    clusters.retain(|cluster| cluster.note_count > 0);
 
     let inferred_edges: Vec<GraphEdge> = stored_edges
         .into_iter()
@@ -331,6 +384,36 @@ fn extract_wikilinks(
     }
 
     Ok(edges)
+}
+
+fn lookup_graph_cluster_cache(
+    revision: u64,
+    color_group_count: usize,
+) -> Result<Option<GraphClusterCacheEntry>, String> {
+    let cache = GRAPH_CLUSTER_CACHE
+        .lock()
+        .map_err(|_| "Graph cache lock poisoned".to_string())?;
+    Ok(cache
+        .iter()
+        .find(|entry| {
+            entry.revision == revision && entry.color_group_count == color_group_count
+        })
+        .cloned())
+}
+
+fn store_graph_cluster_cache(entry: GraphClusterCacheEntry) -> Result<(), String> {
+    let mut cache = GRAPH_CLUSTER_CACHE
+        .lock()
+        .map_err(|_| "Graph cache lock poisoned".to_string())?;
+    cache.retain(|existing| {
+        !(existing.revision == entry.revision
+            && existing.color_group_count == entry.color_group_count)
+    });
+    cache.insert(0, entry);
+    if cache.len() > GRAPH_CLUSTER_CACHE_LIMIT {
+        cache.truncate(GRAPH_CLUSTER_CACHE_LIMIT);
+    }
+    Ok(())
 }
 
 fn extract_wikilink_targets(markdown: &str) -> Vec<String> {

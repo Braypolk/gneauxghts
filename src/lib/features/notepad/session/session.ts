@@ -3,8 +3,8 @@ import type { NoteSession, StoredImageAsset } from '$lib/features/notepad/model/
 import type { ForgottenNoteSummary, RestoredForgottenNote } from '$lib/types/forgottenNotes';
 import type {
   CleanUpApplyPolicy,
+  RememberActionOption,
   RememberDispatchResult,
-  RememberMode
 } from '$lib/types/ai';
 import type { VaultInfo } from '$lib/types/sync';
 
@@ -120,15 +120,15 @@ export async function rememberNoteSession(
   await invoke('remember_note', { title, markdown, currentPath });
 }
 
-export async function rememberWithMode(
-  mode: RememberMode,
+export async function rememberWithAction(
+  action: RememberActionOption,
   cleanUpApplyPolicy: CleanUpApplyPolicy,
   title: string,
   markdown: string,
   currentPath: string | null
 ) {
-  return invoke<RememberDispatchResult>('remember_with_mode', {
-    mode,
+  return invoke<RememberDispatchResult>('remember_with_action', {
+    action,
     cleanUpApplyPolicy,
     title,
     markdown,

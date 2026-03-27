@@ -470,6 +470,13 @@ impl SemanticState {
         }
     }
 
+    pub(crate) fn current_index_revision(&self) -> u64 {
+        match &self.inner {
+            SemanticStateInner::Active(state) => state.index_revision.load(Ordering::Acquire),
+            SemanticStateInner::Disabled(_) => 0,
+        }
+    }
+
     pub(crate) fn semantic_matches_for_text(
         &self,
         text: &str,
@@ -736,6 +743,8 @@ impl DisabledSemanticState {
                 model_path: None,
                 model_repo_id: String::new(),
                 available: false,
+                loading: false,
+                ready: false,
                 status: self.reason.clone(),
                 error: None,
             },

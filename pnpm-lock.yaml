@@ -32,6 +32,9 @@ importers:
       lucide-svelte:
         specifier: ^0.577.0
         version: 0.577.0(svelte@5.53.7)
+      prosemirror-changeset:
+        specifier: ^2.4.0
+        version: 2.4.0
       prosemirror-history:
         specifier: ^1.5.0
         version: 1.5.0

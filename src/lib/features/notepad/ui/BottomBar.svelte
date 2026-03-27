@@ -13,17 +13,21 @@
     type BottomBarVisibleItem
   } from '$lib/features/notepad/search/bottomBarSearchController';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
-  import type { RememberMode } from '$lib/types/ai';
+  import {
+    rememberActionRequiresIntegrateSupport,
+    type RememberActionOption
+  } from '$lib/types/ai';
   import type { SearchItem } from '$lib/types/semantic';
 
   interface Props {
     canUnforget: boolean;
     onForget: () => void;
     onUnforget: () => void;
-    defaultRememberMode: RememberMode;
+    rememberActions: RememberActionOption[];
+    defaultRememberActionId: string;
     integrateEnabled: boolean;
     integrateDisabledReason: string | null;
-    onRemember: (mode: RememberMode) => void;
+    onRemember: (action: RememberActionOption) => void;
     searchMode: 'current' | 'all';
     searchQuery: string;
     searchResults: SearchItem[];
@@ -45,7 +49,8 @@
     canUnforget = false,
     onForget,
     onUnforget,
-    defaultRememberMode,
+    rememberActions,
+    defaultRememberActionId,
     integrateEnabled,
     integrateDisabledReason,
     onRemember,
@@ -80,6 +85,26 @@
   let forgetHoldTimeout: ReturnType<typeof window.setTimeout> | null = null;
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
+  const rememberModeSections = $derived(
+    [
+      {
+        heading: 'Remember',
+        options: rememberActions.filter((option) => option.family === 'exact')
+      },
+      {
+        heading: 'Transform Note',
+        options: rememberActions.filter((option) => option.family === 'edit')
+      },
+      {
+        heading: 'Split Or Organize',
+        options: rememberActions.filter((option) => option.family === 'organize')
+      },
+      {
+        heading: 'Integrate Into Vault',
+        options: rememberActions.filter((option) => option.family === 'integrate')
+      }
+    ].filter((section) => section.options.length > 0)
+  );
 
   const visibleItems = $derived.by<BottomBarVisibleItem[]>(() =>
     deriveBottomBarVisibleItems(searchQuery, searchResults, recentNotes, recentTasks)
@@ -237,25 +262,32 @@
     return 'line-clamp-3 text-sm leading-relaxed text-muted-foreground';
   }
 
-  function resolvePrimaryRememberMode(): RememberMode {
-    if (defaultRememberMode === 'integrate' && !integrateEnabled) {
-      return 'exact';
+  function resolveRememberAction(actionId: string): RememberActionOption {
+    return (
+      rememberActions.find((option) => option.id === actionId) ??
+      rememberActions.find((option) => option.family === 'exact') ??
+      rememberActions[0]
+    );
+  }
+
+  function resolvePrimaryRememberAction(): RememberActionOption {
+    const preferred = resolveRememberAction(defaultRememberActionId);
+    if (rememberActionRequiresIntegrateSupport(preferred) && !integrateEnabled) {
+      return resolveRememberAction('exact');
     }
-    return defaultRememberMode;
+    return preferred;
   }
 
-  function rememberModeLabel(mode: RememberMode) {
-    if (mode === 'cleanUp') return 'Clean Up';
-    if (mode === 'integrate') return 'Integrate';
-    return 'Remember Exact';
+  function isRememberActionDisabled(action: RememberActionOption) {
+    return rememberActionRequiresIntegrateSupport(action) && !integrateEnabled;
   }
 
-  function handleRemember(mode: RememberMode) {
-    if (mode === 'integrate' && !integrateEnabled) {
+  function handleRemember(action: RememberActionOption) {
+    if (isRememberActionDisabled(action)) {
       return;
     }
     isRememberMenuOpen = false;
-    onRemember(mode);
+    onRemember(action);
   }
 </script>
 
@@ -476,9 +508,9 @@
         <button
           class="inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2"
           type="button"
-          onclick={() => handleRemember(resolvePrimaryRememberMode())}
-          aria-label={rememberModeLabel(resolvePrimaryRememberMode())}
-          title={rememberModeLabel(resolvePrimaryRememberMode())}
+          onclick={() => handleRemember(resolvePrimaryRememberAction())}
+          aria-label={resolvePrimaryRememberAction().label}
+          title={resolvePrimaryRememberAction().label}
         >
           <span class="hidden min-[700px]:inline">Remember</span>
           <Brain class="h-5 w-5 min-[700px]:hidden" />
@@ -497,43 +529,38 @@
 
       {#if isRememberMenuOpen}
         <div
-          class="absolute bottom-[calc(100%+0.5rem)] right-0 z-40 w-64 rounded-[1.2rem] border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md"
+          class="absolute bottom-[calc(100%+0.5rem)] right-0 z-40 max-h-[28rem] w-[22rem] overflow-y-auto rounded-[1.2rem] border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md"
           role="menu"
           aria-label="Remember modes"
         >
-          <button
-            type="button"
-            class="flex w-full flex-col items-start rounded-[1rem] px-3 py-2 text-left transition-colors hover:bg-accent"
-            role="menuitem"
-            onclick={() => handleRemember('exact')}
-          >
-            <span class="text-sm font-medium text-popover-foreground">Remember</span>
-            <span class="mt-0.5 text-xs text-muted-foreground">Remember exactly as written.</span>
-          </button>
-          <button
-            type="button"
-            class="mt-1 flex w-full flex-col items-start rounded-[1rem] px-3 py-2 text-left transition-colors hover:bg-accent"
-            role="menuitem"
-            onclick={() => handleRemember('cleanUp')}
-          >
-            <span class="text-sm font-medium text-popover-foreground">Clean Up</span>
-            <span class="mt-0.5 text-xs text-muted-foreground">Let AI polish the source note.</span>
-          </button>
-          <button
-            type="button"
-            class="mt-1 flex w-full flex-col items-start rounded-[1rem] px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 hover:bg-accent"
-            role="menuitem"
-            disabled={!integrateEnabled}
-            title={integrateDisabledReason ?? undefined}
-            onclick={() => handleRemember('integrate')}
-          >
-            <span class="text-sm font-medium text-popover-foreground">Integrate</span>
-            <span class="mt-0.5 text-xs text-muted-foreground">
-              {integrateEnabled
-                ? 'Let AI fit the note into the vault through Inbox review.'
-                : integrateDisabledReason ?? 'Integrate is unavailable right now.'}
-            </span>
-          </button>
+          {#each rememberModeSections as section, sectionIndex (section.heading)}
+            <section class={sectionIndex > 0 ? 'mt-3 border-t border-border/70 pt-3' : ''}>
+              <div class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                {section.heading}
+              </div>
+              {#each section.options as option, optionIndex (option.id)}
+                <button
+                  type="button"
+                  class={`flex w-full flex-col items-start rounded-[1rem] px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 hover:bg-accent ${
+                    optionIndex > 0 ? 'mt-1' : ''
+                  }`}
+                  role="menuitem"
+                  disabled={isRememberActionDisabled(option)}
+                  title={isRememberActionDisabled(option) ? integrateDisabledReason ?? undefined : option.description}
+                  onclick={() => handleRemember(option)}
+                >
+                  <span class="text-sm font-medium text-popover-foreground">{option.label}</span>
+                  <span class="mt-0.5 text-xs text-muted-foreground">
+                    {#if isRememberActionDisabled(option)}
+                      {integrateDisabledReason ?? 'Integrate is unavailable right now.'}
+                    {:else}
+                      {option.description}
+                    {/if}
+                  </span>
+                </button>
+              {/each}
+            </section>
+          {/each}
         </div>
       {/if}
     </div>

@@ -1,15 +1,24 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { House, Inbox, ListTodo, Map, Settings } from 'lucide-svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { House, ListTodo, Map, Settings } from 'lucide-svelte';
+  import FeatherWriting from './icons/FeatherWriting.svelte';
+  import MailboxEmpty from './icons/MailboxEmpty.svelte';
+  import MailboxFull from './icons/MailboxFull.svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import type { InboxListItem } from '$lib/types/ai';
 
   const navLinks = [
     { href: '/', label: 'Note', icon: House },
-    { href: '/inbox', label: 'Inbox', icon: Inbox },
+    { href: '/inbox', label: 'Inbox', icon: MailboxEmpty },
     { href: '/map', label: 'Map', icon: Map },
     { href: '/list', label: 'List', icon: ListTodo }
   ] as const;
   const settingsHref = '/settings';
+  let inboxUnlisten: UnlistenFn | null = null;
+  let inboxStatusIndicator = $state<'running' | 'pendingApproval' | null>(null);
 
   function isActive(href: string, pathname: string): boolean {
     if (href === '/') return pathname === '/';
@@ -17,7 +26,7 @@
   }
 
   const linkClass = (href: string) =>
-    `inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors sm:h-auto sm:w-auto sm:min-w-[105px] sm:gap-2 sm:px-3 sm:py-2 ${
+    `relative inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors sm:h-auto sm:w-auto sm:min-w-[105px] sm:gap-2 sm:px-3 sm:py-2 ${
       isActive(href, $page.url.pathname)
         ? 'border-foreground/15 bg-card text-foreground shadow-sm'
         : 'border-transparent text-muted-foreground hover:border-border/80 hover:text-foreground'
@@ -69,6 +78,42 @@
     event.preventDefault();
     void goto(targetLink.href);
   }
+
+  function nextInboxStatusIndicator(items: InboxListItem[]): 'running' | 'pendingApproval' | null {
+    if (items.some((item) => item.status === 'pendingApproval')) {
+      return 'pendingApproval';
+    }
+
+    if (items.some((item) => item.status === 'queued' || item.status === 'running')) {
+      return 'running';
+    }
+
+    return null;
+  }
+
+  async function loadInboxStatusIndicator() {
+    try {
+      const items = await invoke<InboxListItem[]>('list_inbox_items');
+      inboxStatusIndicator = nextInboxStatusIndicator(items);
+    } catch (error) {
+      console.error('Failed to load inbox status indicator:', error);
+      inboxStatusIndicator = null;
+    }
+  }
+
+  onMount(() => {
+    void loadInboxStatusIndicator();
+    void listen('inbox-changed', () => {
+      void loadInboxStatusIndicator();
+    }).then((unlisten) => {
+      inboxUnlisten = unlisten;
+    });
+  });
+
+  onDestroy(() => {
+    inboxUnlisten?.();
+    inboxUnlisten = null;
+  });
 </script>
 
 <svelte:window onkeydown={handleGlobalShortcut} />
@@ -89,7 +134,17 @@
       {#each navLinks as { href, label, icon }}
         {@const Icon = icon}
         <a href={href} class={linkClass(href)} aria-label={label}>
-          <Icon class="h-4 w-4 shrink-0" />
+          {#if href === '/inbox'}
+            {#if inboxStatusIndicator === 'running'}
+              <FeatherWriting class="h-4 w-4 shrink-0" />
+            {:else if inboxStatusIndicator === 'pendingApproval'}
+              <MailboxFull class="h-4 w-4 shrink-0" />
+            {:else}
+              <MailboxEmpty class="h-4 w-4 shrink-0" />
+            {/if}
+          {:else}
+            <Icon class="h-4 w-4 shrink-0" />
+          {/if}
           <span class="hidden sm:inline">{label}</span>
         </a>
       {/each}

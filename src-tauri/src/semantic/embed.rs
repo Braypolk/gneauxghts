@@ -31,6 +31,8 @@ pub(crate) struct ModelInfo {
     pub(crate) model_path: Option<String>,
     pub(crate) model_repo_id: String,
     pub(crate) available: bool,
+    pub(crate) loading: bool,
+    pub(crate) ready: bool,
     pub(crate) status: String,
     pub(crate) error: Option<String>,
 }
@@ -418,6 +420,23 @@ impl JinaLlamaEmbeddingProvider {
             runtime.status = error;
         }
     }
+
+    fn readiness_snapshot(&self) -> (Option<u16>, bool, Option<String>, String) {
+        match self.runtime.lock() {
+            Ok(runtime) => (
+                runtime.port,
+                runtime.starting,
+                runtime.last_error.clone(),
+                runtime.status.clone(),
+            ),
+            Err(_) => (
+                None,
+                false,
+                Some("Embedding runtime lock poisoned".to_string()),
+                String::new(),
+            ),
+        }
+    }
 }
 
 impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
@@ -601,28 +620,30 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             .unwrap_or_default();
         let runtime_binary_path = self.resolve_runtime_binary();
         let cached_model_path = self.cached_model_path();
-        let runtime = self.runtime.lock().ok();
-        let runtime_error = runtime.as_ref().and_then(|state| state.last_error.clone());
-        let status = runtime
-            .as_ref()
-            .map(|state| state.status.clone())
-            .filter(|status| !status.is_empty())
-            .unwrap_or_else(|| {
-                if !runtime_binary_path.is_some() {
-                    "llama-server runtime not installed".to_string()
-                } else if cached_model_path.is_none() {
-                    if settings.local_only_mode {
-                        "model missing from llama.cpp cache and local-only mode blocks download"
-                            .to_string()
-                    } else if settings.auto_download_model {
-                        "model will download into llama.cpp cache on first semantic use".to_string()
-                    } else {
-                        "model missing from llama.cpp cache".to_string()
-                    }
-                } else {
-                    "ready".to_string()
-                }
-            });
+        let (runtime_port, runtime_starting, runtime_error, runtime_status) =
+            self.readiness_snapshot();
+        let can_prepare = runtime_binary_path.is_some() && cached_model_path.is_some();
+        let ready = runtime_error.is_none()
+            && !runtime_starting
+            && runtime_port.is_some_and(|port| self.server_ready(port));
+        let loading = !ready && runtime_error.is_none() && can_prepare;
+        let status = if ready {
+            "ready".to_string()
+        } else if !runtime_status.is_empty() {
+            runtime_status
+        } else if !runtime_binary_path.is_some() {
+            "llama-server runtime not installed".to_string()
+        } else if cached_model_path.is_none() {
+            if settings.local_only_mode {
+                "model missing from llama.cpp cache and local-only mode blocks download".to_string()
+            } else if settings.auto_download_model {
+                "model will download into llama.cpp cache on first semantic use".to_string()
+            } else {
+                "model missing from llama.cpp cache".to_string()
+            }
+        } else {
+            "waiting for local runtime".to_string()
+        };
 
         ModelInfo {
             id: MODEL_ID.to_string(),
@@ -645,6 +666,8 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             available: runtime_binary_path.is_some()
                 && cached_model_path.is_some()
                 && runtime_error.is_none(),
+            loading,
+            ready,
             status,
             error: runtime_error,
         }

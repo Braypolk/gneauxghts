@@ -42,7 +42,91 @@ pub(crate) const INBOX_CHANGED_EVENT: &str = "inbox-changed";
 pub(crate) enum RememberMode {
     Exact,
     CleanUp,
+    Summarize,
+    Outline,
+    ActionItems,
+    Decisions,
+    MeetingNotes,
+    Evergreen,
+    Retitle,
+    StudyGuide,
+    SplitUp,
     Integrate,
+    CustomSingleNote,
+    CustomAdvanced,
+}
+
+impl RememberMode {
+    fn is_exact(&self) -> bool {
+        matches!(self, Self::Exact)
+    }
+
+    fn is_edit_mode(&self) -> bool {
+        matches!(
+            self,
+            Self::CleanUp
+                | Self::Summarize
+                | Self::Outline
+                | Self::ActionItems
+                | Self::Decisions
+                | Self::MeetingNotes
+                | Self::Evergreen
+                | Self::Retitle
+                | Self::StudyGuide
+                | Self::CustomSingleNote
+        )
+    }
+
+    fn is_split_mode(&self) -> bool {
+        matches!(self, Self::SplitUp)
+    }
+
+    fn is_integrate_mode(&self) -> bool {
+        matches!(self, Self::Integrate)
+    }
+
+    fn is_custom_advanced_mode(&self) -> bool {
+        matches!(self, Self::CustomAdvanced)
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Exact => "Remember Exact",
+            Self::CleanUp => "Clean Up",
+            Self::Summarize => "Summarize",
+            Self::Outline => "Outline",
+            Self::ActionItems => "Action Items",
+            Self::Decisions => "Decisions",
+            Self::MeetingNotes => "Meeting Notes",
+            Self::Evergreen => "Evergreen",
+            Self::Retitle => "Retitle",
+            Self::StudyGuide => "Study Guide",
+            Self::SplitUp => "Split Up",
+            Self::Integrate => "Integrate",
+            Self::CustomSingleNote => "Custom Single Note",
+            Self::CustomAdvanced => "Custom Advanced",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum RememberActionKind {
+    Exact,
+    SingleNote,
+    Advanced,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RememberActionInput {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) description: String,
+    pub(crate) family: String,
+    pub(crate) built_in: bool,
+    pub(crate) action_kind: RememberActionKind,
+    pub(crate) prompt: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -135,6 +219,7 @@ pub(crate) struct AiDiagnosticsMetrics {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AiDiagnosticsLastRun {
     pub(crate) kind: RememberMode,
+    pub(crate) action_label: String,
     pub(crate) status: AiJobStatus,
     pub(crate) model: Option<String>,
     pub(crate) prompt_tokens: Option<u64>,
@@ -189,6 +274,7 @@ pub(crate) struct AiChangePreview {
 pub(crate) struct InboxListItem {
     pub(crate) id: i64,
     pub(crate) kind: RememberMode,
+    pub(crate) action_label: String,
     pub(crate) status: AiJobStatus,
     pub(crate) title: String,
     pub(crate) summary: String,
@@ -204,6 +290,7 @@ pub(crate) struct InboxListItem {
 pub(crate) struct InboxItemDetail {
     pub(crate) id: i64,
     pub(crate) kind: RememberMode,
+    pub(crate) action_label: String,
     pub(crate) status: AiJobStatus,
     pub(crate) title: String,
     pub(crate) summary: String,
@@ -252,6 +339,9 @@ struct StoredAiSettings {
 struct StoredAiJob {
     id: i64,
     kind: RememberMode,
+    action_id: String,
+    action_label: String,
+    action_prompt: Option<String>,
     status: AiJobStatus,
     source: SourceSnapshot,
     requires_approval: bool,
@@ -326,6 +416,14 @@ struct UsageTotals {
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
     total_tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedRememberAction {
+    mode: RememberMode,
+    action_id: String,
+    action_label: String,
+    action_prompt: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -442,7 +540,7 @@ impl AiState {
 
     fn enqueue_job(
         &self,
-        mode: RememberMode,
+        action: ResolvedRememberAction,
         source: SourceSnapshot,
         requires_approval: bool,
         retry_of_job_id: Option<i64>,
@@ -452,7 +550,10 @@ impl AiState {
             &connection,
             &StoredAiJob {
                 id: 0,
-                kind: mode,
+                kind: action.mode,
+                action_id: action.action_id,
+                action_label: action.action_label,
+                action_prompt: action.action_prompt,
                 status: AiJobStatus::Queued,
                 source,
                 requires_approval,
@@ -474,7 +575,7 @@ impl AiState {
 
     fn record_failed_job(
         &self,
-        mode: RememberMode,
+        action: ResolvedRememberAction,
         source: SourceSnapshot,
         failure_reason: String,
         retry_of_job_id: Option<i64>,
@@ -485,7 +586,10 @@ impl AiState {
             &connection,
             &StoredAiJob {
                 id: 0,
-                kind: mode,
+                kind: action.mode,
+                action_id: action.action_id,
+                action_label: action.action_label,
+                action_prompt: action.action_prompt,
                 status: AiJobStatus::Failed,
                 source,
                 requires_approval: true,
@@ -582,8 +686,56 @@ pub(crate) fn remember_with_mode(
     markdown: String,
     current_path: Option<String>,
 ) -> Result<RememberDispatchResult, String> {
-    let outcome = persist_note_session_with_outcome(
+    let resolved_action = ResolvedRememberAction {
+        action_id: remember_mode_to_str(&mode).to_string(),
+        action_label: mode.label().to_string(),
+        action_prompt: None,
+        mode,
+    };
+    dispatch_remember_action(
         &app_state,
+        &ai,
+        resolved_action,
+        clean_up_apply_policy,
+        title,
+        markdown,
+        current_path,
+    )
+}
+
+#[tauri::command]
+pub(crate) fn remember_with_action(
+    app_state: State<'_, AppState>,
+    ai: State<'_, AiState>,
+    action: RememberActionInput,
+    clean_up_apply_policy: CleanUpApplyPolicy,
+    title: String,
+    markdown: String,
+    current_path: Option<String>,
+) -> Result<RememberDispatchResult, String> {
+    let resolved_action = resolve_action_input(action)?;
+    dispatch_remember_action(
+        &app_state,
+        &ai,
+        resolved_action,
+        clean_up_apply_policy,
+        title,
+        markdown,
+        current_path,
+    )
+}
+
+fn dispatch_remember_action(
+    app_state: &State<'_, AppState>,
+    ai: &State<'_, AiState>,
+    action: ResolvedRememberAction,
+    clean_up_apply_policy: CleanUpApplyPolicy,
+    title: String,
+    markdown: String,
+    current_path: Option<String>,
+) -> Result<RememberDispatchResult, String> {
+    let outcome = persist_note_session_with_outcome(
+        app_state,
         title,
         markdown,
         current_path,
@@ -608,7 +760,7 @@ pub(crate) fn remember_with_mode(
     };
     let source = build_source_snapshot(&source_path, &saved_markdown);
 
-    if mode == RememberMode::Exact {
+    if action.mode.is_exact() {
         return Ok(RememberDispatchResult {
             source_path: Some(source.path),
             source_content_hash: Some(source.content_hash),
@@ -617,13 +769,16 @@ pub(crate) fn remember_with_mode(
         });
     }
 
-    let requires_approval = match mode {
-        RememberMode::Exact => false,
-        RememberMode::CleanUp => clean_up_apply_policy == CleanUpApplyPolicy::RequireApproval,
-        RememberMode::Integrate => true,
+    let requires_approval = if action.mode.is_split_mode()
+        || action.mode.is_integrate_mode()
+        || action.mode.is_custom_advanced_mode()
+    {
+        true
+    } else {
+        clean_up_apply_policy == CleanUpApplyPolicy::RequireApproval
     };
 
-    match ai.enqueue_job(mode.clone(), source.clone(), requires_approval, None) {
+    match ai.enqueue_job(action.clone(), source.clone(), requires_approval, None) {
         Ok(job_id) => Ok(RememberDispatchResult {
             source_path: Some(source.path),
             source_content_hash: Some(source.content_hash),
@@ -632,7 +787,7 @@ pub(crate) fn remember_with_mode(
         }),
         Err(error) => {
             let failed_job_id = ai
-                .record_failed_job(mode, source.clone(), error.clone(), None)
+                .record_failed_job(action, source.clone(), error.clone(), None)
                 .ok();
             Ok(RememberDispatchResult {
                 source_path: Some(source.path),
@@ -642,6 +797,42 @@ pub(crate) fn remember_with_mode(
             })
         }
     }
+}
+
+fn resolve_action_input(action: RememberActionInput) -> Result<ResolvedRememberAction, String> {
+    if action.built_in {
+        let mode = str_to_remember_mode(action.id.as_str())?;
+        return Ok(ResolvedRememberAction {
+            action_id: remember_mode_to_str(&mode).to_string(),
+            action_label: mode.label().to_string(),
+            action_prompt: None,
+            mode,
+        });
+    }
+
+    let label = action.label.trim().to_string();
+    if label.is_empty() {
+        return Err("Custom actions need a label.".to_string());
+    }
+    let prompt = action
+        .prompt
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Custom actions need a prompt.".to_string())?;
+    let mode = match action.action_kind {
+        RememberActionKind::Exact => {
+            return Err("Custom actions cannot use the exact action kind.".to_string())
+        }
+        RememberActionKind::SingleNote => RememberMode::CustomSingleNote,
+        RememberActionKind::Advanced => RememberMode::CustomAdvanced,
+    };
+
+    Ok(ResolvedRememberAction {
+        action_id: action.id.trim().to_string(),
+        action_label: label,
+        action_prompt: Some(prompt),
+        mode,
+    })
 }
 
 #[tauri::command]
@@ -761,11 +952,16 @@ pub(crate) fn retry_inbox_item(
     let Some(job) = load_job(&connection, id)? else {
         return Ok(None);
     };
-    if job.kind == RememberMode::Exact {
+    if job.kind.is_exact() {
         return Ok(Some(to_detail_item(&job)?));
     }
     let retry_id = ai.enqueue_job(
-        job.kind.clone(),
+        ResolvedRememberAction {
+            mode: job.kind.clone(),
+            action_id: job.action_id.clone(),
+            action_label: job.action_label.clone(),
+            action_prompt: job.action_prompt.clone(),
+        },
         job.source.clone(),
         job.requires_approval,
         Some(id),
@@ -847,10 +1043,16 @@ fn process_job(app_handle: &AppHandle, db_path: &Path, job: StoredAiJob) -> Resu
     ensure_schema(&connection)?;
     let settings = load_settings(&connection)?;
     let provider = build_provider(&settings)?;
-    let proposal = match job.kind {
-        RememberMode::Exact => return Ok(()),
-        RememberMode::CleanUp => run_clean_up_job(&job, provider.as_ref()),
-        RememberMode::Integrate => run_integrate_job(app_handle, &job, provider.as_ref()),
+    let proposal = if job.kind.is_exact() {
+        return Ok(());
+    } else if job.kind.is_edit_mode() {
+        run_edit_job(&job, provider.as_ref())
+    } else if job.kind.is_split_mode() {
+        run_split_up_job(app_handle, &job, provider.as_ref())
+    } else if job.kind.is_custom_advanced_mode() {
+        run_custom_advanced_job(app_handle, &job, provider.as_ref())
+    } else {
+        run_integrate_job(app_handle, &job, provider.as_ref())
     };
 
     match proposal {
@@ -991,30 +1193,175 @@ fn apply_pending_job_inner(
     })
 }
 
-fn run_clean_up_job(
+struct EditPromptProfile {
+    system_prompt: &'static str,
+    rules: Vec<&'static str>,
+}
+
+struct IntegratePromptProfile {
+    plan_system_prompt: &'static str,
+    edit_system_prompt: &'static str,
+    plan_rules: Vec<&'static str>,
+    edit_rules: Vec<&'static str>,
+}
+
+fn edit_prompt_profile(mode: &RememberMode) -> EditPromptProfile {
+    let mut rules = vec![
+        "Do not add new facts.",
+        "Return only changes for the source note.",
+        "Set newTitle to the current note title unless you are intentionally renaming the note.",
+        "Use one updateNote change or an empty changes array.",
+    ];
+
+    let system_prompt = match mode {
+        RememberMode::CleanUp => {
+            "You aggressively clean up rough markdown notes without adding new facts. Preserve intent and meaning, but reorganize, reorder, rewrite, and structure the note so it becomes usable. Keep markdown plain. Return JSON only."
+        }
+        RememberMode::Summarize => {
+            rules.push("Compress the note into a brief summary with concise supporting bullets.");
+            rules.push("Prefer the highest-signal points and remove repetition, filler, and low-value detail.");
+            "You condense rough markdown notes into short, high-signal summaries without adding new facts. Keep markdown plain. Return JSON only."
+        }
+        RememberMode::Outline => {
+            rules.push("Reshape the note into a hierarchical outline with clear headings and nested bullets.");
+            rules.push("Prefer structure and scanability over preserving the original prose.");
+            "You transform rough markdown notes into clear outlines without adding new facts. Keep markdown plain. Return JSON only."
+        }
+        RememberMode::ActionItems => {
+            rules.push("Center the note on next steps, blockers, and follow-up tasks.");
+            rules.push("When the source implies a missing next step or unresolved issue, represent it as a markdown task using '* [ ]'.");
+            "You rewrite rough markdown notes into action-oriented working notes without adding new facts. Emphasize tasks, blockers, and follow-ups. Keep markdown plain. Return JSON only."
+        }
+        RememberMode::Decisions => {
+            rules.push("Pull explicit decisions, assumptions, and unresolved questions into clearly labeled sections.");
+            rules.push("If the note contains uncertainty, preserve it as an open question rather than smoothing it over.");
+            "You rewrite rough markdown notes into decision logs without adding new facts. Highlight decisions, assumptions, and unresolved questions. Keep markdown plain. Return JSON only."
+        }
+        RememberMode::MeetingNotes => {
+            rules.push("Organize the note as a structured meeting record with sections such as context, discussion, decisions, and action items when supported by the source.");
+            rules.push("Do not invent attendees, dates, or agenda items that are not present or implied.");
+            "You rewrite rough markdown notes into structured meeting notes without adding new facts. Keep markdown plain. Return JSON only."
+        }
+        RememberMode::Evergreen => {
+            rules.push("Rewrite fleeting phrasing into durable reference language when the meaning is clear.");
+            rules.push("Prefer stable headings and reusable phrasing over journal-style narration.");
+            "You transform rough markdown notes into durable evergreen notes without adding new facts. Preserve meaning while making the result reference-friendly. Keep markdown plain. Return JSON only."
+        }
+        RememberMode::Retitle => {
+            rules.push("Choose a more specific, searchable title when the current title is vague or generic.");
+            rules.push("Only make light body edits needed to align the note with the improved title.");
+            "You improve note titles and lightly clean the supporting markdown without adding new facts. Prefer specific, searchable titles. Keep markdown plain. Return JSON only."
+        }
+        RememberMode::StudyGuide => {
+            rules.push("Turn the note into a review sheet with key concepts, compact explanations, and self-check questions answerable from the source.");
+            rules.push("Do not add answers or concepts that are not already supported by the source.");
+            "You transform rough markdown notes into study guides without adding new facts. Emphasize concepts, memory cues, and self-check questions. Keep markdown plain. Return JSON only."
+        }
+        _ => {
+            "You aggressively clean up rough markdown notes without adding new facts. Preserve intent and meaning, but reorganize, reorder, rewrite, and structure the note so it becomes usable. Keep markdown plain. Return JSON only."
+        }
+    };
+
+    rules.insert(
+        1,
+        "You may rewrite wording, reorder content, improve structure, add headings, and add wikilinks when it clearly helps the chosen transformation."
+    );
+    rules.insert(
+        2,
+        "Preserve the note's intent and meaning even when changing its format.",
+    );
+    rules.insert(
+        3,
+        "You may collapse repetition and fix obvious inconsistencies when the intended meaning is clear."
+    );
+
+    EditPromptProfile {
+        system_prompt,
+        rules,
+    }
+}
+
+fn integrate_prompt_profile(_mode: &RememberMode) -> IntegratePromptProfile {
+    let plan_rules = vec![
+        "Decide whether the source note should stay separate, integrate with existing notes, or merge into other notes.",
+        "Prefer conservative decisions when confidence is low.",
+        "Prefer absorbing content into existing notes when it clearly belongs there instead of keeping a separate note with wikilinks.",
+        "A single source note may map to multiple existing notes when different sections clearly belong in different places.",
+        "If most of the source can be absorbed, prefer integrate or merge over keepSeparate.",
+        "Set deleteSource to true only when the meaningful content of the source should be fully absorbed elsewhere.",
+        "Set deleteSource to false when meaningful remainder content should stay in the source note because it does not fit the chosen target notes.",
+        "Only select targetNotePaths from candidateNotes.",
+        "deleteSource may only be true when the source should be absorbed into another note.",
+    ];
+    let edit_rules = vec![
+        "Return note-level changes only.",
+        "updateNote and deleteNote paths must refer only to the source note or targetNotes paths provided here.",
+        "createNote may be used when a new standalone note is better than overloading an existing note.",
+        "deleteNote is allowed only for the source note and only if the source should be merged into other notes.",
+        "Do not add new facts.",
+        "Prefer direct integration over wikilinks when the content can naturally fit into an existing note.",
+        "A single source note may be split across multiple target notes when different sections clearly belong in different places.",
+        "Rewrite target notes so the absorbed content reads naturally there instead of feeling appended.",
+        "Deduplicate overlapping information instead of keeping the same idea in multiple places.",
+        "If content from the source does not fit the target notes, keep that meaningful remainder in the source note rather than forcing it elsewhere.",
+        "If the source is fully absorbed into target notes, delete the source note.",
+        "If the source is only partially absorbed, update the source note so it contains only the meaningful remainder.",
+        "Only use wikilinks when they still add navigation value after integration, not as a substitute for integration.",
+        "If a real ambiguity or missing context blocks clean integration, add follow-up tasks in markdown task format using '* [ ]' in the most relevant updated note.",
+        "Every updateNote MUST include path, baseContentHash, newTitle, and newMarkdown.",
+        "Every deleteNote MUST include path and baseContentHash.",
+        "For updateNote, use the field name newMarkdown, not markdown.",
+        "Copy baseContentHash exactly from sourceNote or targetNotes for the matching path.",
+        "If you are not renaming a note, set newTitle to the current note title.",
+    ];
+
+    IntegratePromptProfile {
+        plan_system_prompt: "You plan how a source note should be absorbed into a markdown knowledge base. Prefer real integration over superficial linking. Return JSON only.",
+        edit_system_prompt: "You rewrite markdown notes so source content is actually integrated into the note set. Prefer absorbing content into the best existing notes over adding wikilinks. Return JSON only.",
+        plan_rules,
+        edit_rules,
+    }
+}
+
+fn run_edit_job(
     job: &StoredAiJob,
     provider: &dyn GenerationProvider,
 ) -> Result<GeneratedProposal, String> {
-    let system_prompt = "You aggressively clean up rough markdown notes without adding new facts. Preserve intent and meaning, but reorganize, reorder, rewrite, and structure the note so it becomes usable. Keep markdown plain. Return JSON only.";
-    let user_prompt = json!({
-        "task": "cleanUp",
+    let user_instructions = if job.kind == RememberMode::CustomSingleNote {
+        Some(
+            job.action_prompt
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Custom single-note action is missing its prompt.".to_string())?,
+        )
+    } else {
+        None
+    };
+    let profile = if job.kind == RememberMode::CustomSingleNote {
+        EditPromptProfile {
+            system_prompt: "You apply a user-defined single-note transformation to markdown notes without adding new facts. Keep markdown plain and return JSON only.",
+            rules: vec![
+                "Do not add new facts.",
+                "Return only changes for the source note.",
+                "Preserve the note's meaning unless the user prompt explicitly asks for a stronger transformation.",
+                "Use the user's instructions as the primary goal.",
+                "Set newTitle to the current note title unless you are intentionally renaming the note.",
+                "Use one updateNote change or an empty changes array.",
+            ],
+        }
+    } else {
+        edit_prompt_profile(&job.kind)
+    };
+    let mut user_prompt = json!({
+        "task": remember_mode_to_str(&job.kind),
         "sourceNote": {
             "path": job.source.path,
             "title": job.source.title,
             "markdown": job.source.markdown,
             "baseContentHash": job.source.content_hash
         },
-        "rules": [
-            "Do not add new facts.",
-            "You may rewrite wording, reorder content, improve structure, add headings, and add wikilinks.",
-            "Prefer making the note clearly organized and usable over preserving its original order.",
-            "You may collapse repetition and fix obvious inconsistencies when the intended meaning is clear.",
-            "If parts of the note are ambiguous, underspecified, or missing needed context, add follow-up tasks in markdown task format using '* [ ]'.",
-            "Only add task items when they reflect a real gap or ambiguity in the source note.",
-            "Return only changes for the source note.",
-            "Set newTitle to the current note title unless you are intentionally renaming the note.",
-            "Use one updateNote change or an empty changes array."
-        ],
+        "mode": remember_mode_to_str(&job.kind),
+        "rules": profile.rules,
         "outputSchema": {
             "summary": "string",
             "changes": [
@@ -1027,13 +1374,188 @@ fn run_clean_up_job(
                 }
             ]
         }
-    })
-    .to_string();
-    let completion = provider.complete_json(system_prompt, &user_prompt)?;
+    });
+    if let Some(prompt) = user_instructions {
+        user_prompt["userInstructions"] = Value::String(prompt);
+    }
+    let completion = provider.complete_json(profile.system_prompt, &user_prompt.to_string())?;
     let proposal: CleanUpProposal = parse_model_json(&completion.text)?;
     Ok(GeneratedProposal {
         summary: proposal.summary,
         changes: proposal.changes,
+        provider_kind: provider.provider_kind(),
+        model: completion.model,
+        metrics: usage_to_metrics(completion.usage),
+    })
+}
+
+fn run_custom_advanced_job(
+    app_handle: &AppHandle,
+    job: &StoredAiJob,
+    provider: &dyn GenerationProvider,
+) -> Result<GeneratedProposal, String> {
+    let prompt = job
+        .action_prompt
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Custom advanced action is missing its prompt.".to_string())?;
+    let candidates = retrieve_optional_split_candidates(app_handle, &job.source);
+    let target_context = load_split_target_note_contexts(&candidates, &job.source)?;
+    let mut packed_targets = Vec::<Value>::new();
+    for target in &target_context {
+        packed_targets.push(json!({
+            "path": target.path,
+            "title": target.title,
+            "markdown": target.markdown,
+            "baseContentHash": target.content_hash
+        }));
+    }
+
+    let user_prompt = json!({
+        "task": "customAdvanced",
+        "mode": "customAdvanced",
+        "actionLabel": job.action_label,
+        "sourceNote": {
+            "path": job.source.path,
+            "title": job.source.title,
+            "markdown": job.source.markdown,
+            "baseContentHash": job.source.content_hash
+        },
+        "candidateNotes": pack_candidate_notes(&candidates)?,
+        "targetNotes": packed_targets,
+        "userInstructions": prompt,
+        "rules": [
+            "Treat the user instructions as the primary goal.",
+            "You may update the source note, update candidate target notes provided here, create new notes, and delete the source note when the user instructions clearly justify it.",
+            "Only update existing notes when the fit is high confidence.",
+            "Prefer creating new notes over forcing weak integrations into existing notes unless the user instructions clearly prefer integration.",
+            "Do not add new facts.",
+            "Avoid duplicating the same content across multiple notes.",
+            "Every updateNote MUST include path, baseContentHash, newTitle, and newMarkdown.",
+            "Every createNote MUST include suggestedTitle and markdown.",
+            "Every deleteNote MUST include path and baseContentHash.",
+            "For updateNote, use the field name newMarkdown, not markdown.",
+            "Copy baseContentHash exactly from sourceNote or targetNotes for the matching path.",
+            "If you are not renaming a note, set newTitle to the current note title."
+        ],
+        "outputSchema": {
+            "summary": "string",
+            "changes": [
+                {
+                    "kind": "updateNote",
+                    "path": "string",
+                    "baseContentHash": "string",
+                    "newTitle": "string",
+                    "newMarkdown": "string"
+                },
+                {
+                    "kind": "createNote",
+                    "suggestedTitle": "string",
+                    "markdown": "string"
+                },
+                {
+                    "kind": "deleteNote",
+                    "path": "string",
+                    "baseContentHash": "string"
+                }
+            ]
+        }
+    })
+    .to_string();
+    let completion = provider.complete_json(
+        "You perform user-defined advanced note organization tasks across a markdown vault. Use the user's instructions, but stay structurally valid and do not add new facts. Return JSON only.",
+        &user_prompt,
+    )?;
+    let response = parse_integrate_edit_response(&completion.text, job, &target_context)?;
+    Ok(GeneratedProposal {
+        summary: non_empty_summary(
+            response.summary,
+            default_summary_for_job(job, "Custom action proposal ready"),
+        ),
+        changes: response.changes,
+        provider_kind: provider.provider_kind(),
+        model: completion.model,
+        metrics: usage_to_metrics(completion.usage),
+    })
+}
+
+fn run_split_up_job(
+    app_handle: &AppHandle,
+    job: &StoredAiJob,
+    provider: &dyn GenerationProvider,
+) -> Result<GeneratedProposal, String> {
+    let candidates = retrieve_optional_split_candidates(app_handle, &job.source);
+    let target_context = load_split_target_note_contexts(&candidates, &job.source)?;
+    let mut packed_targets = Vec::<Value>::new();
+    for target in &target_context {
+        packed_targets.push(json!({
+            "path": target.path,
+            "title": target.title,
+            "markdown": target.markdown,
+            "baseContentHash": target.content_hash
+        }));
+    }
+
+    let user_prompt = json!({
+        "task": "splitUp",
+        "mode": "splitUp",
+        "sourceNote": {
+            "path": job.source.path,
+            "title": job.source.title,
+            "markdown": job.source.markdown,
+            "baseContentHash": job.source.content_hash
+        },
+        "candidateNotes": pack_candidate_notes(&candidates)?,
+        "targetNotes": packed_targets,
+        "rules": [
+            "Split the source note only when there are genuinely distinct themes, topics, or projects mixed together.",
+            "Prefer creating new focused notes over editing existing notes.",
+            "Only update an existing target note when the fit is high confidence and the source material clearly belongs there.",
+            "You may update the source note and any targetNotes provided here.",
+            "You may create multiple new notes when the source covers multiple themes.",
+            "Do not delete any note.",
+            "If splitting is useful, update the source note into a short index, overview, or meaningful remainder note instead of leaving it unchanged.",
+            "If the source is already coherent as a single note, avoid unnecessary splitting.",
+            "Choose specific, searchable titles for any createNote changes.",
+            "Avoid duplicating the same content across multiple notes.",
+            "Do not add new facts.",
+            "Every updateNote MUST include path, baseContentHash, newTitle, and newMarkdown.",
+            "Every createNote MUST include suggestedTitle and markdown.",
+            "For updateNote, use the field name newMarkdown, not markdown.",
+            "Copy baseContentHash exactly from sourceNote or targetNotes for the matching path.",
+            "If you are not renaming a note, set newTitle to the current note title."
+        ],
+        "outputSchema": {
+            "summary": "string",
+            "changes": [
+                {
+                    "kind": "updateNote",
+                    "path": "string",
+                    "baseContentHash": "string",
+                    "newTitle": "string",
+                    "newMarkdown": "string"
+                },
+                {
+                    "kind": "createNote",
+                    "suggestedTitle": "string",
+                    "markdown": "string"
+                }
+            ]
+        }
+    })
+    .to_string();
+
+    let completion = provider.complete_json(
+        "You split mixed-topic markdown notes into focused notes. Prefer creating new notes for distinct themes. If an existing note is an excellent fit, you may integrate into it. Return JSON only.",
+        &user_prompt,
+    )?;
+    let response = parse_integrate_edit_response(&completion.text, job, &target_context)?;
+    Ok(GeneratedProposal {
+        summary: non_empty_summary(
+            response.summary,
+            default_summary_for_job(job, "Split-up proposal ready"),
+        ),
+        changes: response.changes,
         provider_kind: provider.provider_kind(),
         model: completion.model,
         metrics: usage_to_metrics(completion.usage),
@@ -1045,16 +1567,17 @@ fn run_integrate_job(
     job: &StoredAiJob,
     provider: &dyn GenerationProvider,
 ) -> Result<GeneratedProposal, String> {
+    let profile = integrate_prompt_profile(&job.kind);
     let candidates = retrieve_integrate_candidates(app_handle, &job.source)?;
     let planning_completion = provider.complete_json(
-        "You plan how a source note should be absorbed into a markdown knowledge base. Prefer real integration over superficial linking. Return JSON only.",
-        &build_integrate_plan_prompt(job, &candidates)?,
+        profile.plan_system_prompt,
+        &build_integrate_plan_prompt(job, &candidates, &profile)?,
     )?;
     let plan: IntegratePlanResponse = parse_model_json(&planning_completion.text)?;
     let target_context = load_target_note_contexts(&plan, &candidates, &job.source)?;
     let edit_completion = provider.complete_json(
-        "You rewrite markdown notes so source content is actually integrated into the note set. Prefer absorbing content into the best existing notes over adding wikilinks. Return JSON only.",
-        &build_integrate_edit_prompt(job, &plan, &target_context)?,
+        profile.edit_system_prompt,
+        &build_integrate_edit_prompt(job, &plan, &target_context, &profile)?,
     )?;
     let edit_response = parse_integrate_edit_response(&edit_completion.text, job, &target_context)?;
     let metrics = sum_metrics(
@@ -1076,6 +1599,50 @@ fn run_integrate_job(
         model: edit_completion.model,
         metrics,
     })
+}
+
+fn retrieve_optional_split_candidates(
+    app_handle: &AppHandle,
+    source: &SourceSnapshot,
+) -> Vec<CandidateNote> {
+    match retrieve_integrate_candidates(app_handle, source) {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            eprintln!("split-up candidate lookup skipped: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn load_split_target_note_contexts(
+    candidates: &[CandidateNote],
+    source: &SourceSnapshot,
+) -> Result<Vec<TargetNoteContext>, String> {
+    let notes_dir = notes_root()?;
+    let mut loaded = Vec::new();
+    let mut consumed_chars = source.markdown.chars().count();
+
+    for candidate in candidates.iter().take(MAX_INTEGRATE_PACKED_NOTES) {
+        let path_buf = PathBuf::from(&candidate.path);
+        if !is_valid_note_path(&path_buf, &notes_dir) || !path_buf.is_file() {
+            continue;
+        }
+        let raw_markdown = fs::read_to_string(&path_buf).map_err(|err| err.to_string())?;
+        let body = body_markdown_from_path_and_raw(&candidate.path, &raw_markdown);
+        let next_chars = consumed_chars + body.chars().count();
+        if !loaded.is_empty() && next_chars > MAX_EDIT_CONTEXT_CHARS {
+            break;
+        }
+        consumed_chars = next_chars;
+        loaded.push(TargetNoteContext {
+            path: candidate.path.clone(),
+            title: candidate.title.clone(),
+            markdown: body,
+            content_hash: content_hash(&raw_markdown),
+        });
+    }
+
+    Ok(loaded)
 }
 
 fn retrieve_integrate_candidates(
@@ -1138,45 +1705,36 @@ fn retrieve_integrate_candidates(
 fn build_integrate_plan_prompt(
     job: &StoredAiJob,
     candidates: &[CandidateNote],
+    profile: &IntegratePromptProfile,
 ) -> Result<String, String> {
     let packed_candidates = pack_candidate_notes(candidates)?;
-    Ok(
-        json!({
-            "task": "integrate-plan",
-            "sourceNote": {
-                "path": job.source.path,
-                "title": job.source.title,
-                "markdown": job.source.markdown,
-                "baseContentHash": job.source.content_hash
-            },
-            "candidateNotes": packed_candidates,
-            "rules": [
-                "Decide whether the source note should stay separate, integrate with existing notes, or merge into other notes.",
-                "Prefer conservative decisions when confidence is low.",
-                "Prefer absorbing content into existing notes when it clearly belongs there instead of keeping a separate note with wikilinks.",
-                "A single source note may map to multiple existing notes when different sections clearly belong in different places.",
-                "If most of the source can be absorbed, prefer integrate or merge over keepSeparate.",
-                "Set deleteSource to true only when the meaningful content of the source should be fully absorbed elsewhere.",
-                "Set deleteSource to false when meaningful remainder content should stay in the source note because it does not fit the chosen target notes.",
-                "Only select targetNotePaths from candidateNotes.",
-                "deleteSource may only be true when the source should be absorbed into another note."
-            ],
-            "outputSchema": {
-                "summary": "string",
-                "confidence": "low | medium | high",
-                "strategy": "keepSeparate | integrate | merge",
-                "targetNotePaths": ["string"],
-                "deleteSource": "boolean"
-            }
-        })
-        .to_string(),
-    )
+    Ok(json!({
+        "task": format!("{}-plan", remember_mode_to_str(&job.kind)),
+        "mode": remember_mode_to_str(&job.kind),
+        "sourceNote": {
+            "path": job.source.path,
+            "title": job.source.title,
+            "markdown": job.source.markdown,
+            "baseContentHash": job.source.content_hash
+        },
+        "candidateNotes": packed_candidates,
+        "rules": profile.plan_rules,
+        "outputSchema": {
+            "summary": "string",
+            "confidence": "low | medium | high",
+            "strategy": "keepSeparate | integrate | merge",
+            "targetNotePaths": ["string"],
+            "deleteSource": "boolean"
+        }
+    })
+    .to_string())
 }
 
 fn build_integrate_edit_prompt(
     job: &StoredAiJob,
     plan: &IntegratePlanResponse,
     targets: &[TargetNoteContext],
+    profile: &IntegratePromptProfile,
 ) -> Result<String, String> {
     let mut packed_targets = Vec::<Value>::new();
     for target in targets {
@@ -1187,63 +1745,42 @@ fn build_integrate_edit_prompt(
             "baseContentHash": target.content_hash
         }));
     }
-    Ok(
-        json!({
-            "task": "integrate-edit",
-            "plan": plan,
-            "sourceNote": {
-                "path": job.source.path,
-                "title": job.source.title,
-                "markdown": job.source.markdown,
-                "baseContentHash": job.source.content_hash
-            },
-            "targetNotes": packed_targets,
-            "rules": [
-                "Return note-level changes only.",
-                "updateNote and deleteNote paths must refer only to the source note or targetNotes paths provided here.",
-                "createNote may be used when a new standalone note is better than overloading an existing note.",
-                "deleteNote is allowed only for the source note and only if the source should be merged into other notes.",
-                "Do not add new facts.",
-                "Prefer direct integration over wikilinks when the content can naturally fit into an existing note.",
-                "A single source note may be split across multiple target notes when different sections clearly belong in different places.",
-                "Rewrite target notes so the absorbed content reads naturally there instead of feeling appended.",
-                "Deduplicate overlapping information instead of keeping the same idea in multiple places.",
-                "If content from the source does not fit the target notes, keep that meaningful remainder in the source note rather than forcing it elsewhere.",
-                "If the source is fully absorbed into target notes, delete the source note.",
-                "If the source is only partially absorbed, update the source note so it contains only the meaningful remainder.",
-                "Only use wikilinks when they still add navigation value after integration, not as a substitute for integration.",
-                "If a real ambiguity or missing context blocks clean integration, add follow-up tasks in markdown task format using '* [ ]' in the most relevant updated note.",
-                "Every updateNote MUST include path, baseContentHash, newTitle, and newMarkdown.",
-                "Every deleteNote MUST include path and baseContentHash.",
-                "For updateNote, use the field name newMarkdown, not markdown.",
-                "Copy baseContentHash exactly from sourceNote or targetNotes for the matching path.",
-                "If you are not renaming a note, set newTitle to the current note title."
-            ],
-            "outputSchema": {
-                "summary": "string",
-                "changes": [
-                    {
-                        "kind": "updateNote",
-                        "path": "string",
-                        "baseContentHash": "string",
-                        "newTitle": "string",
-                        "newMarkdown": "string"
-                    },
-                    {
-                        "kind": "createNote",
-                        "suggestedTitle": "string",
-                        "markdown": "string"
-                    },
-                    {
-                        "kind": "deleteNote",
-                        "path": "string",
-                        "baseContentHash": "string"
-                    }
-                ]
-            }
-        })
-        .to_string(),
-    )
+    Ok(json!({
+        "task": format!("{}-edit", remember_mode_to_str(&job.kind)),
+        "mode": remember_mode_to_str(&job.kind),
+        "plan": plan,
+        "sourceNote": {
+            "path": job.source.path,
+            "title": job.source.title,
+            "markdown": job.source.markdown,
+            "baseContentHash": job.source.content_hash
+        },
+        "targetNotes": packed_targets,
+        "rules": profile.edit_rules,
+        "outputSchema": {
+            "summary": "string",
+            "changes": [
+                {
+                    "kind": "updateNote",
+                    "path": "string",
+                    "baseContentHash": "string",
+                    "newTitle": "string",
+                    "newMarkdown": "string"
+                },
+                {
+                    "kind": "createNote",
+                    "suggestedTitle": "string",
+                    "markdown": "string"
+                },
+                {
+                    "kind": "deleteNote",
+                    "path": "string",
+                    "baseContentHash": "string"
+                }
+            ]
+        }
+    })
+    .to_string())
 }
 
 fn load_target_note_contexts(
@@ -1334,7 +1871,7 @@ fn validate_job_changes(job: &StoredAiJob, changes: &[AiChange]) -> Result<(), S
             }
             AiChange::CreateNote { .. } => {}
             AiChange::DeleteNote { path, .. } => {
-                if job.kind != RememberMode::Integrate {
+                if !job.kind.is_integrate_mode() && !job.kind.is_custom_advanced_mode() {
                     return Err("deleteNote is only allowed for integrate jobs.".to_string());
                 }
                 if path != &job.source.path {
@@ -1528,6 +2065,7 @@ fn to_list_item(job: StoredAiJob) -> InboxListItem {
     InboxListItem {
         id: job.id,
         kind: job.kind.clone(),
+        action_label: job.action_label.clone(),
         status: job.status.clone(),
         title: job_title(&job),
         summary: non_empty_summary(job.summary.clone(), default_summary_for_job(&job, "Ready")),
@@ -1543,6 +2081,7 @@ fn to_detail_item(job: &StoredAiJob) -> Result<InboxItemDetail, String> {
     Ok(InboxItemDetail {
         id: job.id,
         kind: job.kind.clone(),
+        action_label: job.action_label.clone(),
         status: job.status.clone(),
         title: job_title(job),
         summary: non_empty_summary(job.summary.clone(), default_summary_for_job(job, "Ready")),
@@ -1949,18 +2488,18 @@ fn fallback_title_for_path(path: &str) -> String {
 }
 
 fn job_title(job: &StoredAiJob) -> String {
-    match job.kind {
-        RememberMode::Exact => format!("Remember exact: {}", job.source.title),
-        RememberMode::CleanUp => format!("Clean up: {}", job.source.title),
-        RememberMode::Integrate => format!("Integrate: {}", job.source.title),
+    if job.kind.is_exact() {
+        format!("Remember exact: {}", job.source.title)
+    } else {
+        format!("{}: {}", job.action_label, job.source.title)
     }
 }
 
 fn default_summary_for_job(job: &StoredAiJob, fallback: &str) -> String {
-    match job.kind {
-        RememberMode::Exact => fallback.to_string(),
-        RememberMode::CleanUp => format!("{fallback} for \"{}\".", job.source.title),
-        RememberMode::Integrate => format!("{fallback} for \"{}\".", job.source.title),
+    if job.kind.is_exact() {
+        fallback.to_string()
+    } else {
+        format!("{fallback} for \"{}\".", job.source.title)
     }
 }
 
@@ -2073,6 +2612,9 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS ai_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 kind TEXT NOT NULL,
+                action_id TEXT NOT NULL DEFAULT '',
+                action_label TEXT NOT NULL DEFAULT '',
+                action_prompt TEXT,
                 status TEXT NOT NULL,
                 source_path TEXT NOT NULL,
                 source_title TEXT NOT NULL,
@@ -2091,7 +2633,28 @@ fn ensure_schema(connection: &Connection) -> Result<(), String> {
             );
             ",
         )
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    ensure_column(
+        connection,
+        "ALTER TABLE ai_jobs ADD COLUMN action_id TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        connection,
+        "ALTER TABLE ai_jobs ADD COLUMN action_label TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        connection,
+        "ALTER TABLE ai_jobs ADD COLUMN action_prompt TEXT",
+    )?;
+    Ok(())
+}
+
+fn ensure_column(connection: &Connection, statement: &str) -> Result<(), String> {
+    match connection.execute(statement, []) {
+        Ok(_) => Ok(()),
+        Err(err) if err.to_string().contains("duplicate column name") => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
 }
 
 fn ensure_default_settings(connection: &Connection) -> Result<(), String> {
@@ -2176,6 +2739,9 @@ fn insert_job(connection: &Connection, job: &StoredAiJob) -> Result<i64, String>
         .execute(
             "INSERT INTO ai_jobs (
                 kind,
+                action_id,
+                action_label,
+                action_prompt,
                 status,
                 source_path,
                 source_title,
@@ -2191,9 +2757,12 @@ fn insert_job(connection: &Connection, job: &StoredAiJob) -> Result<i64, String>
                 retry_of_job_id,
                 created_at_millis,
                 updated_at_millis
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 remember_mode_to_str(&job.kind),
+                job.action_id,
+                job.action_label,
+                job.action_prompt,
                 job_status_to_str(&job.status),
                 job.source.path,
                 job.source.title,
@@ -2237,6 +2806,9 @@ fn list_jobs_with_filter(
             "SELECT
                 id,
                 kind,
+                action_id,
+                action_label,
+                action_prompt,
                 status,
                 source_path,
                 source_title,
@@ -2273,6 +2845,9 @@ fn load_job(connection: &Connection, id: i64) -> Result<Option<StoredAiJob>, Str
             "SELECT
                 id,
                 kind,
+                action_id,
+                action_label,
+                action_prompt,
                 status,
                 source_path,
                 source_title,
@@ -2305,6 +2880,9 @@ fn claim_next_queued_job(db_path: &Path) -> Result<Option<StoredAiJob>, String> 
             "SELECT
                 id,
                 kind,
+                action_id,
+                action_label,
+                action_prompt,
                 status,
                 source_path,
                 source_title,
@@ -2405,20 +2983,20 @@ fn should_skip_job_update(connection: &Connection, id: i64) -> Result<bool, Stri
 
 fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredAiJob> {
     let kind_text = row.get::<_, String>(1)?;
-    let status_text = row.get::<_, String>(2)?;
+    let status_text = row.get::<_, String>(5)?;
     let provider_kind = row
-        .get::<_, Option<String>>(11)?
+        .get::<_, Option<String>>(14)?
         .map(|value| str_to_provider_kind(value.as_str()))
         .transpose()
         .map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(
-                11,
+                14,
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
             )
         })?;
-    let proposed_changes_json = row.get::<_, Option<String>>(9)?;
-    let metrics_json = row.get::<_, Option<String>>(13)?;
+    let proposed_changes_json = row.get::<_, Option<String>>(12)?;
+    let metrics_json = row.get::<_, Option<String>>(16)?;
     Ok(StoredAiJob {
         id: row.get(0)?,
         kind: str_to_remember_mode(kind_text.as_str()).map_err(|err| {
@@ -2428,41 +3006,44 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredAiJob> {
                 Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
             )
         })?,
+        action_id: row.get(2)?,
+        action_label: row.get(3)?,
+        action_prompt: row.get(4)?,
         status: str_to_job_status(status_text.as_str()).map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(
-                2,
+                5,
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
             )
         })?,
         source: SourceSnapshot {
-            path: row.get(3)?,
-            title: row.get(4)?,
-            markdown: row.get(5)?,
-            content_hash: row.get(6)?,
+            path: row.get(6)?,
+            title: row.get(7)?,
+            markdown: row.get(8)?,
+            content_hash: row.get(9)?,
         },
-        requires_approval: row.get::<_, i64>(7)? == 1,
-        summary: row.get(8)?,
+        requires_approval: row.get::<_, i64>(10)? == 1,
+        summary: row.get(11)?,
         proposed_changes: deserialize_changes(proposed_changes_json.as_deref()).map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(
-                9,
+                12,
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
             )
         })?,
-        failure_reason: row.get(10)?,
+        failure_reason: row.get(13)?,
         provider_kind,
-        model: row.get(12)?,
+        model: row.get(15)?,
         metrics: deserialize_metrics(metrics_json.as_deref()).map_err(|err| {
             rusqlite::Error::FromSqlConversionFailure(
-                13,
+                16,
                 rusqlite::types::Type::Text,
                 Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, err)),
             )
         })?,
-        retry_of_job_id: row.get(14)?,
-        created_at_millis: row.get(15)?,
-        updated_at_millis: row.get(16)?,
+        retry_of_job_id: row.get(17)?,
+        created_at_millis: row.get(18)?,
+        updated_at_millis: row.get(19)?,
     })
 }
 
@@ -2504,7 +3085,18 @@ fn remember_mode_to_str(mode: &RememberMode) -> &'static str {
     match mode {
         RememberMode::Exact => "exact",
         RememberMode::CleanUp => "cleanUp",
+        RememberMode::Summarize => "summarize",
+        RememberMode::Outline => "outline",
+        RememberMode::ActionItems => "actionItems",
+        RememberMode::Decisions => "decisions",
+        RememberMode::MeetingNotes => "meetingNotes",
+        RememberMode::Evergreen => "evergreen",
+        RememberMode::Retitle => "retitle",
+        RememberMode::StudyGuide => "studyGuide",
+        RememberMode::SplitUp => "splitUp",
         RememberMode::Integrate => "integrate",
+        RememberMode::CustomSingleNote => "customSingleNote",
+        RememberMode::CustomAdvanced => "customAdvanced",
     }
 }
 
@@ -2512,7 +3104,18 @@ fn str_to_remember_mode(value: &str) -> Result<RememberMode, String> {
     match value {
         "exact" => Ok(RememberMode::Exact),
         "cleanUp" => Ok(RememberMode::CleanUp),
+        "summarize" => Ok(RememberMode::Summarize),
+        "outline" => Ok(RememberMode::Outline),
+        "actionItems" => Ok(RememberMode::ActionItems),
+        "decisions" => Ok(RememberMode::Decisions),
+        "meetingNotes" => Ok(RememberMode::MeetingNotes),
+        "evergreen" => Ok(RememberMode::Evergreen),
+        "retitle" => Ok(RememberMode::Retitle),
+        "studyGuide" => Ok(RememberMode::StudyGuide),
+        "splitUp" => Ok(RememberMode::SplitUp),
         "integrate" => Ok(RememberMode::Integrate),
+        "customSingleNote" => Ok(RememberMode::CustomSingleNote),
+        "customAdvanced" => Ok(RememberMode::CustomAdvanced),
         _ => Err(format!("Unknown remember mode: {value}")),
     }
 }
@@ -2590,6 +3193,7 @@ fn build_ai_diagnostics_metrics(jobs: &[StoredAiJob]) -> AiDiagnosticsMetrics {
         if should_replace_last_run {
             metrics.last_run = Some(AiDiagnosticsLastRun {
                 kind: job.kind.clone(),
+                action_label: job.action_label.clone(),
                 status: job.status.clone(),
                 model: job.model.clone(),
                 prompt_tokens: run_metrics.prompt_tokens,
@@ -2637,6 +3241,9 @@ mod tests {
         let job = StoredAiJob {
             id: 1,
             kind: RememberMode::Integrate,
+            action_id: "integrate".to_string(),
+            action_label: "Integrate".to_string(),
+            action_prompt: None,
             status: AiJobStatus::Running,
             source: SourceSnapshot {
                 path: "/notes/Character.md".to_string(),
@@ -2714,6 +3321,9 @@ mod tests {
         let job = StoredAiJob {
             id: 1,
             kind: RememberMode::CleanUp,
+            action_id: "cleanUp".to_string(),
+            action_label: "Clean Up".to_string(),
+            action_prompt: None,
             status: AiJobStatus::Queued,
             source: SourceSnapshot {
                 path: "/tmp/Source.md".to_string(),
@@ -2748,6 +3358,9 @@ mod tests {
         let job = StoredAiJob {
             id: 1,
             kind: RememberMode::Integrate,
+            action_id: "integrate".to_string(),
+            action_label: "Integrate".to_string(),
+            action_prompt: None,
             status: AiJobStatus::PendingApproval,
             source: SourceSnapshot {
                 path: "/notes/source.md".to_string(),
@@ -2789,6 +3402,9 @@ mod tests {
         let job = StoredAiJob {
             id: 1,
             kind: RememberMode::Integrate,
+            action_id: "integrate".to_string(),
+            action_label: "Integrate".to_string(),
+            action_prompt: None,
             status: AiJobStatus::PendingApproval,
             source: SourceSnapshot {
                 path: "/notes/source.md".to_string(),
