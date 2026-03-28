@@ -27,7 +27,7 @@ use std::{
 use store::{ensure_schema, ensure_sync_state_row, open_database};
 use tauri::AppHandle;
 
-const SYNC_DB_FILE_NAME: &str = "sync.sqlite3";
+pub(crate) const SYNC_DB_FILE_NAME: &str = "sync.sqlite3";
 pub(crate) const VAULT_NOTE_CHANGED_EVENT: &str = "vault-note-changed";
 const SYNC_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SYNC_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

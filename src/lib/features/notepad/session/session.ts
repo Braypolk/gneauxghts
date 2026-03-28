@@ -11,6 +11,7 @@ import type { VaultInfo } from '$lib/types/sync';
 export interface ForgottenNote {
   title: string;
   bodyMarkdown: string;
+  currentNoteId: string | null;
   currentNotePath: string | null;
   forgottenPath: string | null;
 }
@@ -18,12 +19,14 @@ export interface ForgottenNote {
 export interface Draft {
   title: string;
   bodyMarkdown: string;
+  currentNoteId: string | null;
   currentNotePath: string | null;
 }
 
 export interface SessionSnapshot extends Draft {
   lastSavedTitle: string;
   lastSavedMarkdown: string;
+  lastSavedNoteId: string | null;
   lastSavedPath: string | null;
 }
 
@@ -33,15 +36,22 @@ export function createEmptySessionSnapshot(): SessionSnapshot {
   return {
     title: '',
     bodyMarkdown: '',
+    currentNoteId: null,
     currentNotePath: null,
     lastSavedTitle: '',
     lastSavedMarkdown: '',
+    lastSavedNoteId: null,
     lastSavedPath: null
   };
 }
 
 export function hasContent(draft: Draft) {
-  return draft.title.trim() !== '' || draft.bodyMarkdown.trim() !== '' || draft.currentNotePath !== null;
+  return (
+    draft.title.trim() !== '' ||
+    draft.bodyMarkdown.trim() !== '' ||
+    draft.currentNoteId !== null ||
+    draft.currentNotePath !== null
+  );
 }
 
 export function createForgottenNote(
@@ -51,6 +61,7 @@ export function createForgottenNote(
   return {
     title: draft.title,
     bodyMarkdown: draft.bodyMarkdown,
+    currentNoteId: draft.currentNoteId,
     currentNotePath: draft.currentNotePath,
     forgottenPath
   };
@@ -60,9 +71,11 @@ export function createSessionSnapshot(session: NoteSession): SessionSnapshot {
   return {
     title: session.title,
     bodyMarkdown: session.markdown,
+    currentNoteId: session.noteId,
     currentNotePath: session.path,
     lastSavedTitle: session.title,
     lastSavedMarkdown: session.markdown,
+    lastSavedNoteId: session.noteId,
     lastSavedPath: session.path
   };
 }
@@ -70,12 +83,14 @@ export function createSessionSnapshot(session: NoteSession): SessionSnapshot {
 export function shouldSkipAutosave(
   title: string,
   markdown: string,
+  currentNoteId: string | null,
   currentNotePath: string | null,
-  snapshot: Pick<SessionSnapshot, 'lastSavedTitle' | 'lastSavedMarkdown' | 'lastSavedPath'>
+  snapshot: Pick<SessionSnapshot, 'lastSavedTitle' | 'lastSavedMarkdown' | 'lastSavedNoteId' | 'lastSavedPath'>
 ) {
   return (
     title === snapshot.lastSavedTitle &&
     markdown === snapshot.lastSavedMarkdown &&
+    currentNoteId === snapshot.lastSavedNoteId &&
     currentNotePath === snapshot.lastSavedPath
   );
 }
@@ -93,13 +108,13 @@ export function resolveAssetRootPath(vaultPath: string) {
   return `${vaultPath.replace(/[\\/]+$/u, '')}${vaultPath.includes('\\') ? '\\' : '/'}assets`;
 }
 
-export async function openNoteSession(notePath: string) {
-  const session = await invoke<NoteSession>('open_note', { path: notePath });
+export async function openNoteSession(noteId: string | null, notePath: string | null) {
+  const session = await invoke<NoteSession>('open_note', { noteId, path: notePath });
   return createSessionSnapshot(session);
 }
 
-export async function readNoteSession(notePath: string) {
-  const session = await invoke<NoteSession>('read_note', { path: notePath });
+export async function readNoteSession(noteId: string | null, notePath: string | null) {
+  const session = await invoke<NoteSession>('read_note', { noteId, path: notePath });
   return createSessionSnapshot(session);
 }
 

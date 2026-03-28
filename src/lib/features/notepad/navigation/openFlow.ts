@@ -7,35 +7,41 @@ import type { RecentTaskItem, ResolvedNoteLink } from '$lib/features/notepad/mod
 export interface NavigationContext {
   editorRoot: HTMLDivElement | null;
   titleShell: HTMLDivElement | null;
+  currentNoteId: string | null;
   currentNotePath: string | null;
   focusTitleAtEnd: () => void;
 }
 
 export interface OpenContext {
+  currentNoteId: string | null;
   currentNotePath: string | null;
   stopPendingAutosave: () => void;
   enqueueAutosave: () => Promise<void>;
   clearSearch: () => void;
   openNotePath: (
-    notePath: string,
+    noteId: string | null,
+    notePath: string | null,
     options?: { currentNoteAlreadySaved?: boolean }
   ) => Promise<void>;
 }
 
 async function ensureNoteContext(
-  { currentNotePath, stopPendingAutosave, enqueueAutosave, openNotePath }: OpenContext,
+  { currentNoteId, currentNotePath, stopPendingAutosave, enqueueAutosave, openNotePath }: OpenContext,
+  nextNoteId: string | null,
   nextNotePath: string | null
 ) {
-  const shouldOpenDifferentNote = !!nextNotePath && nextNotePath !== currentNotePath;
+  const shouldOpenDifferentNote =
+    (!!nextNoteId && nextNoteId !== currentNoteId) ||
+    (!!nextNotePath && nextNotePath !== currentNotePath);
 
   stopPendingAutosave();
 
-  if (!shouldOpenDifferentNote || !nextNotePath) {
+  if (!shouldOpenDifferentNote || (!nextNoteId && !nextNotePath)) {
     return false;
   }
 
   await enqueueAutosave();
-  await openNotePath(nextNotePath, { currentNoteAlreadySaved: true });
+  await openNotePath(nextNoteId, nextNotePath, { currentNoteAlreadySaved: true });
   return true;
 }
 
@@ -72,10 +78,13 @@ export async function navigateToSectionTarget(
 }
 
 export async function navigateToPendingTaskTarget(
-  { currentNotePath, editorRoot }: NavigationContext,
+  { currentNoteId, currentNotePath, editorRoot }: NavigationContext,
   target: PendingTaskTarget
 ) {
-  if (!currentNotePath || currentNotePath !== target.notePath) {
+  if (
+    (currentNoteId && currentNoteId !== target.noteId) ||
+    (!currentNoteId && (!currentNotePath || currentNotePath !== target.notePath))
+  ) {
     return;
   }
 
@@ -92,7 +101,7 @@ export async function openSearchResult(
   navigationContext: NavigationContext,
   result: SearchItem
 ) {
-  await ensureNoteContext(openContext, result.notePath ?? null);
+  await ensureNoteContext(openContext, result.noteId ?? null, result.notePath ?? null);
   openContext.clearSearch();
 
   await navigateToSectionTarget(
@@ -108,10 +117,11 @@ export async function openRecentTask(
   navigationContext: NavigationContext,
   task: RecentTaskItem
 ) {
-  await ensureNoteContext(openContext, task.notePath);
+  await ensureNoteContext(openContext, task.noteId, task.notePath);
   openContext.clearSearch();
 
   await navigateToPendingTaskTarget(navigationContext, {
+    noteId: task.noteId,
     notePath: task.notePath,
     text: task.text,
     lineNumber: task.lineNumber,
@@ -129,6 +139,7 @@ export async function openResolvedNoteLink(
       ...openContext,
       clearSearch: () => {}
     },
+    target.noteId,
     target.notePath
   );
 

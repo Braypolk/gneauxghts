@@ -43,7 +43,7 @@
         continue;
       }
 
-      const existingGroup = groups.get(task.notePath);
+      const existingGroup = groups.get(task.noteId);
       if (existingGroup) {
         existingGroup.noteHidden = task.noteHidden;
         existingGroup.noteCollapsed = task.noteCollapsed;
@@ -59,7 +59,8 @@
         continue;
       }
 
-      groups.set(task.notePath, {
+      groups.set(task.noteId, {
+        noteId: task.noteId,
         notePath: task.notePath,
         noteTitle: task.noteTitle,
         fileName: task.fileName,

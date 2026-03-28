@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { storePendingTaskTarget } from '$lib/taskNavigation';
 
 export interface TaskItem {
+  noteId: string;
   taskKey: string;
   notePath: string;
   fileName: string;
@@ -20,6 +21,7 @@ export interface TaskItem {
 }
 
 export interface TaskGroup {
+  noteId: string;
   notePath: string;
   noteTitle: string;
   fileName: string;
@@ -140,13 +142,13 @@ export function createTaskListController({
   async function toggleNoteCollapsed(group: TaskGroup) {
     const previousTasks = updateTasksOptimistically((tasks) =>
       tasks.map((candidate) =>
-        candidate.notePath === group.notePath ? { ...candidate, noteCollapsed: !group.noteCollapsed } : candidate
+        candidate.noteId === group.noteId ? { ...candidate, noteCollapsed: !group.noteCollapsed } : candidate
       )
     );
 
     try {
       await invoke('set_note_collapsed', {
-        notePath: group.notePath,
+        noteId: group.noteId,
         collapsed: !group.noteCollapsed
       });
       setErrorMessage('');
@@ -202,13 +204,13 @@ export function createTaskListController({
   async function setNoteHidden(group: TaskGroup, hidden: boolean) {
     const previousTasks = updateTasksOptimistically((tasks) =>
       tasks.map((candidate) =>
-        candidate.notePath === group.notePath ? { ...candidate, noteHidden: hidden } : candidate
+        candidate.noteId === group.noteId ? { ...candidate, noteHidden: hidden } : candidate
       )
     );
 
     try {
       await invoke('set_note_hidden', {
-        notePath: group.notePath,
+        noteId: group.noteId,
         hidden
       });
       setErrorMessage('');
@@ -220,21 +222,21 @@ export function createTaskListController({
   }
 
   function buildNoteOrder() {
-    const notePaths = [];
+    const noteIds = [];
     const seen = new Set<string>();
 
     for (const task of getTasks()) {
-      if (seen.has(task.notePath)) continue;
-      seen.add(task.notePath);
-      notePaths.push(task.notePath);
+      if (seen.has(task.noteId)) continue;
+      seen.add(task.noteId);
+      noteIds.push(task.noteId);
     }
 
-    return notePaths;
+    return noteIds;
   }
 
   async function moveNote(group: TaskGroup, direction: 'up' | 'down') {
     const noteOrder = buildNoteOrder();
-    const currentIndex = noteOrder.indexOf(group.notePath);
+    const currentIndex = noteOrder.indexOf(group.noteId);
     if (currentIndex === -1) return;
 
     const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
@@ -243,18 +245,18 @@ export function createTaskListController({
     [noteOrder[currentIndex], noteOrder[targetIndex]] = [noteOrder[targetIndex], noteOrder[currentIndex]];
 
     const previousTasks = getTasks();
-    const noteRank = new Map(noteOrder.map((notePath, index) => [notePath, index]));
+    const noteRank = new Map(noteOrder.map((noteId, index) => [noteId, index]));
     setTasks(
       [...getTasks()].sort((left, right) => {
-        const leftRank = noteRank.get(left.notePath) ?? Number.MAX_SAFE_INTEGER;
-        const rightRank = noteRank.get(right.notePath) ?? Number.MAX_SAFE_INTEGER;
+        const leftRank = noteRank.get(left.noteId) ?? Number.MAX_SAFE_INTEGER;
+        const rightRank = noteRank.get(right.noteId) ?? Number.MAX_SAFE_INTEGER;
 
         return leftRank - rightRank || left.lineNumber - right.lineNumber || left.text.localeCompare(right.text);
       })
     );
 
     try {
-      await invoke('set_note_order', { notePaths: noteOrder });
+      await invoke('set_note_order', { noteIds: noteOrder });
       setErrorMessage('');
     } catch (error) {
       console.error('Failed to save note order:', error);
@@ -265,8 +267,9 @@ export function createTaskListController({
 
   async function openTask(task: TaskItem) {
     try {
-      await invoke('open_note', { path: task.notePath });
+      await invoke('open_note', { noteId: task.noteId, path: task.notePath });
       storePendingTaskTarget({
+        noteId: task.noteId,
         notePath: task.notePath,
         text: task.text,
         lineNumber: task.lineNumber,

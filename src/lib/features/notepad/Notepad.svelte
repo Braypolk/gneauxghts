@@ -83,9 +83,11 @@
   let isEditorReady = $state(false);
   let title = $state('');
   let bodyMarkdown = $state('');
+  let currentNoteId = $state<string | null>(null);
   let currentNotePath = $state<string | null>(null);
   let lastSavedTitle = '';
   let lastSavedMarkdown = '';
+  let lastSavedNoteId: string | null = null;
   let lastSavedPath: string | null = null;
   let canUnforget = $state(false);
   let forgottenNote: ForgottenNote | null = null;
@@ -123,9 +125,11 @@
   function applySessionSnapshot(snapshot: SessionSnapshot) {
     title = snapshot.title;
     bodyMarkdown = snapshot.bodyMarkdown;
+    currentNoteId = snapshot.currentNoteId;
     currentNotePath = snapshot.currentNotePath;
     lastSavedTitle = snapshot.lastSavedTitle;
     lastSavedMarkdown = snapshot.lastSavedMarkdown;
+    lastSavedNoteId = snapshot.lastSavedNoteId;
     lastSavedPath = snapshot.lastSavedPath;
   }
 
@@ -174,6 +178,7 @@
     return {
       editorRoot,
       titleShell,
+      currentNoteId,
       currentNotePath,
       focusTitleAtEnd
     };
@@ -181,11 +186,12 @@
 
   function getOpenContext(): OpenContext {
     return {
+      currentNoteId,
       currentNotePath,
       stopPendingAutosave: cancelPendingAutosave,
       enqueueAutosave: () => enqueueSave('autosave'),
       clearSearch,
-      openNotePath
+      openNotePath: async (noteId, notePath, options) => openNotePath(notePath, { noteId, ...options })
     };
   }
 
@@ -210,6 +216,7 @@
 
   async function handleRelatedItemSelect(item: RelatedNoteItem) {
     await openSearchResult(getOpenContext(), getNavigationContext(), {
+      noteId: item.noteId,
       notePath: item.notePath,
       fileName: item.noteTitle,
       sectionLabel: item.sectionLabel,
@@ -359,7 +366,7 @@
     },
     openSearchResult: handleSearchResultSelect,
     openRecentTask: handleRecentTaskSelect,
-    openNotePath: async (notePath) => openNotePath(notePath)
+    openNote: async (noteId, notePath) => openNotePath(notePath, { noteId })
   });
 
   const relatedController = createRelatedController({
@@ -452,6 +459,10 @@
     getTitle: () => title,
     getBodyMarkdown: () => bodyMarkdown,
     getCurrentMarkdown,
+    getCurrentNoteId: () => currentNoteId,
+    setCurrentNoteId: (value) => {
+      currentNoteId = value;
+    },
     getCurrentPath: () => currentNotePath,
     setCurrentPath: (value) => {
       currentNotePath = value;
@@ -463,6 +474,10 @@
     getLastSavedMarkdown: () => lastSavedMarkdown,
     setLastSavedMarkdown: (value) => {
       lastSavedMarkdown = value;
+    },
+    getLastSavedNoteId: () => lastSavedNoteId,
+    setLastSavedNoteId: (value) => {
+      lastSavedNoteId = value;
     },
     getLastSavedPath: () => lastSavedPath,
     setLastSavedPath: (value) => {
@@ -506,13 +521,14 @@
     setState: (value) => {
       wikilinkAutocomplete = value;
     },
+    getCurrentNoteId: () => currentNoteId,
     getCurrentPath: () => currentNotePath,
     getCurrentTitle: () => title,
     getCurrentMarkdown,
     getEditorController: () => crepe,
     cancelPendingAutosave,
     enqueueAutosave: () => enqueueSave('autosave'),
-    openNotePath,
+    openNotePath: async (noteId, notePath, options) => openNotePath(notePath, { noteId, ...options }),
     getNavigationContext,
     saveCursorPositionForNote
   });
@@ -615,10 +631,10 @@
   }
 
   async function openNotePath(
-    notePath: string,
-    options: { currentNoteAlreadySaved?: boolean } = {}
+    notePath: string | null,
+    options: { noteId?: string | null; currentNoteAlreadySaved?: boolean } = {}
   ) {
-    await sessionController.openNotePath(notePath, {
+    await sessionController.openNotePath(options.noteId ?? null, notePath, {
       currentNoteAlreadySaved: options.currentNoteAlreadySaved ?? hasCurrentProposalReview
     });
   }

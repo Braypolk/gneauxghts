@@ -25,7 +25,7 @@ interface SearchControllerDeps {
   bumpSearchFocusRequest: () => void;
   openSearchResult: (result: SearchItem) => Promise<void>;
   openRecentTask: (task: RecentTaskItem) => Promise<void>;
-  openNotePath: (notePath: string) => Promise<void>;
+  openNote: (noteId: string | null, notePath: string | null) => Promise<void>;
 }
 
 export function createSearchController({
@@ -45,7 +45,7 @@ export function createSearchController({
   bumpSearchFocusRequest,
   openSearchResult,
   openRecentTask,
-  openNotePath
+  openNote
 }: SearchControllerDeps) {
   let searchTimer: ReturnType<typeof window.setTimeout> | null = null;
   let activeSearchRequest = 0;
@@ -223,7 +223,7 @@ export function createSearchController({
     await openRecentNoteListItem(note, {
       clearSearch,
       handleSearchResultSelect: openSearchResult,
-      openNotePath: async (notePath) => openNotePath(notePath)
+      openNote: async (noteId, notePath) => openNote(noteId, notePath)
     });
   }
 

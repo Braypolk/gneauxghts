@@ -15,6 +15,8 @@ pub(crate) struct TextRange {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteSearchResult {
+    #[serde(default)]
+    pub(crate) note_id: Option<String>,
     pub(crate) note_path: Option<String>,
     pub(crate) file_name: String,
     pub(crate) section_label: String,
@@ -89,6 +91,7 @@ pub(crate) fn build_recent_result(
         .unwrap_or_else(|| ("Title".to_string(), String::new()));
 
     NoteSearchResult {
+        note_id: Some(note.note_id.clone()),
         note_path: note_path.map(|path| path.to_string_lossy().into_owned()),
         file_name: note.file_name.clone(),
         section_label,
@@ -163,6 +166,7 @@ fn score_search_candidate(
     Some(ScoredSearchResult {
         score,
         result: NoteSearchResult {
+            note_id: Some(candidate.note.note_id.clone()),
             note_path: candidate
                 .note_path
                 .map(|path| path.to_string_lossy().into_owned()),

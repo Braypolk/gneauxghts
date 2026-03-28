@@ -5,13 +5,12 @@ use crate::{
         build_recent_result, search_note, NoteSearchResult, ScoredSearchResult, MAX_SEARCH_RESULTS,
     },
     semantic::{RelatedNotesResponse, SemanticChunkMatch},
-    state::{prune_recent_paths, read_state, validate_current_path, write_state},
+    state::{
+        prune_recent_note_ids, read_state, resolve_note_id_from_path, validate_current_path,
+        write_state,
+    },
 };
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    time::Instant,
-};
+use std::{collections::HashMap, path::Path, time::Instant};
 use tauri::State;
 
 #[derive(Clone)]
@@ -36,7 +35,7 @@ pub(crate) fn list_recent_notes(
     let _ = current_title;
     let _ = current_markdown;
     let mut persisted_state = read_state(&notes_dir)?;
-    prune_recent_paths(&mut persisted_state, &notes_dir);
+    prune_recent_note_ids(&mut persisted_state, &notes_dir);
     write_state(&notes_dir, &persisted_state)?;
 
     let mut index = state
@@ -46,28 +45,31 @@ pub(crate) fn list_recent_notes(
     index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
 
     Ok(collect_recent_note_results(
-        &persisted_state.recent_paths,
-        current_path.as_deref(),
+        &persisted_state.recent_note_ids,
+        current_path
+            .as_deref()
+            .map(resolve_note_id_from_path)
+            .transpose()?
+            .as_deref(),
         &index,
         limit,
     ))
 }
 
 pub(super) fn collect_recent_note_results(
-    recent_paths: &[String],
-    current_path: Option<&Path>,
+    recent_note_ids: &[String],
+    current_note_id: Option<&str>,
     index: &NotesIndex,
     limit: usize,
 ) -> Vec<NoteSearchResult> {
-    recent_paths
+    recent_note_ids
         .iter()
-        .filter_map(|raw_path| {
-            let path = PathBuf::from(raw_path);
-            if current_path == Some(path.as_path()) {
+        .filter_map(|note_id| {
+            if current_note_id == Some(note_id.as_str()) {
                 return None;
             }
 
-            let note = index.entries.get(&path)?;
+            let (path, note) = index.get_note_by_note_id(note_id)?;
             Some(build_recent_result(Some(path.as_path()), note))
         })
         .take(limit)
@@ -406,6 +408,7 @@ pub(super) fn merge_hybrid_candidates(
             semantic_score: 0.0,
             structural_boost,
             result: NoteSearchResult {
+                note_id: None,
                 note_path: Some(semantic_match.note_path.clone()),
                 file_name,
                 section_label: semantic_match.section_label.clone(),

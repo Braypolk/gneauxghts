@@ -66,6 +66,7 @@ pub(crate) struct IndexedTask {
 #[derive(Clone)]
 pub(crate) struct IndexedNote {
     signature: FileSignature,
+    pub(crate) note_id: String,
     pub(crate) modified_millis: u64,
     pub(crate) title: String,
     pub(crate) title_lower: String,
@@ -129,6 +130,12 @@ impl NotesIndex {
         self.entries.remove(path);
         self.last_refresh_at = Some(Instant::now());
     }
+
+    pub(crate) fn get_note_by_note_id(&self, note_id: &str) -> Option<(&PathBuf, &IndexedNote)> {
+        self.entries
+            .iter()
+            .find(|(_, note)| note.note_id == note_id)
+    }
 }
 
 pub(crate) fn is_note_file(path: &Path) -> bool {
@@ -169,10 +176,10 @@ pub(crate) fn build_indexed_note(path: &Path, markdown: &str, modified_millis: u
     )
 }
 
-pub(crate) fn task_key(note_path: &Path, task: &IndexedTask) -> String {
+pub(crate) fn task_key(note_id: &str, task: &IndexedTask) -> String {
     format!(
         "{}::{}::{}::{}",
-        note_path.to_string_lossy(),
+        note_id,
         task.line_number,
         task.section_label.as_deref().unwrap_or_default(),
         task.text.to_lowercase()
@@ -308,9 +315,12 @@ fn build_indexed_note_with_signature(
 
     let (title, body) = note::extract_file_name_title_and_body(markdown, &fallback_file_name);
     let file_name = fallback_file_name;
+    let note_id =
+        note::note_id_from_path_or_markdown(path, markdown).unwrap_or_else(|| file_name.clone());
 
     IndexedNote {
         signature,
+        note_id,
         modified_millis,
         title: title.clone(),
         title_lower: title.to_lowercase(),
@@ -344,9 +354,12 @@ fn build_current_override_with_signature(
     } else {
         title
     };
+    let note_id =
+        note::note_id_from_path_or_markdown(path, markdown).unwrap_or_else(|| file_name.clone());
 
     IndexedNote {
         signature,
+        note_id,
         modified_millis,
         title: effective_title.clone(),
         title_lower: effective_title.to_lowercase(),

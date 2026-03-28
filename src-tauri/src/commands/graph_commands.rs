@@ -167,14 +167,17 @@ pub(crate) fn get_graph_data(
                     .unwrap_or_else(|| "Embedding model is not ready".to_string())
             });
         let message = if is_loading {
-            format!("Map calculations are waiting for the embedding model to finish loading. {reason}")
+            format!(
+                "Map calculations are waiting for the embedding model to finish loading. {reason}"
+            )
         } else {
             format!("Map calculations are unavailable because the embedding model is not ready. {reason}")
         };
         return Err(message);
     }
     let semantic_revision = state.semantic.current_index_revision();
-    let cached_clusters = lookup_graph_cluster_cache(semantic_revision, requested_color_group_count)?;
+    let cached_clusters =
+        lookup_graph_cluster_cache(semantic_revision, requested_color_group_count)?;
     let (path_to_cluster, mut clusters) = if let Some(cached) = cached_clusters {
         (cached.assignments, cached.clusters)
     } else {
@@ -222,14 +225,12 @@ pub(crate) fn get_graph_data(
             .filter(|cluster| cluster.note_count > 0)
             .collect::<Vec<_>>();
 
-        store_graph_cluster_cache(
-            GraphClusterCacheEntry {
-                revision: semantic_revision,
-                color_group_count: requested_color_group_count,
-                assignments: assignments.clone(),
-                clusters: clusters.clone(),
-            },
-        )?;
+        store_graph_cluster_cache(GraphClusterCacheEntry {
+            revision: semantic_revision,
+            color_group_count: requested_color_group_count,
+            assignments: assignments.clone(),
+            clusters: clusters.clone(),
+        })?;
 
         (assignments, clusters)
     };
@@ -395,9 +396,7 @@ fn lookup_graph_cluster_cache(
         .map_err(|_| "Graph cache lock poisoned".to_string())?;
     Ok(cache
         .iter()
-        .find(|entry| {
-            entry.revision == revision && entry.color_group_count == color_group_count
-        })
+        .find(|entry| entry.revision == revision && entry.color_group_count == color_group_count)
         .cloned())
 }
 

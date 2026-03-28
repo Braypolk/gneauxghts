@@ -11,8 +11,9 @@ use crate::{
     note,
     semantic::{debug::SemanticDebugSnapshot, SemanticSettings, SemanticStatus},
     state::{
-        current_vault_info, is_valid_note_path, notes_root, read_state, set_notes_root,
-        touch_recent_path, validate_current_path, write_state, VaultInfo,
+        current_vault_info, is_valid_note_path, notes_root, read_state, resolve_note_id_from_path,
+        resolve_note_path_by_id, set_notes_root, touch_recent_note_id, validate_current_path,
+        write_state, VaultInfo,
     },
     sync::{self, SyncConflict, SyncConflictDetail, SyncStatus},
     time::current_time_millis,
@@ -42,6 +43,7 @@ const DEFAULT_PASTED_IMAGE_NAME: &str = "Pasted image";
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteSession {
+    note_id: Option<String>,
     title: String,
     markdown: String,
     path: Option<String>,
@@ -50,6 +52,7 @@ pub(crate) struct NoteSession {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResolvedNoteLink {
+    note_id: String,
     note_path: String,
     section_label: String,
     match_text: String,
@@ -89,6 +92,7 @@ pub(crate) enum TaskFilter {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TaskListItem {
+    note_id: String,
     task_key: String,
     note_path: String,
     file_name: String,
@@ -108,6 +112,7 @@ pub(crate) struct TaskListItem {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecentTaskItem {
+    note_id: String,
     task_key: String,
     note_path: String,
     note_title: String,
@@ -152,17 +157,22 @@ pub(crate) fn load_note_session() -> Result<NoteSession, String> {
 }
 
 #[tauri::command]
-pub(crate) fn open_note(path: String) -> Result<NoteSession, String> {
+pub(crate) fn open_note(
+    note_id: Option<String>,
+    path: Option<String>,
+) -> Result<NoteSession, String> {
     let notes_dir = prepare_notes_dir(true)?;
-    open_note_from_notes_dir(&notes_dir, path)
+    open_note_from_notes_dir(&notes_dir, note_id, path)
 }
 
 #[tauri::command]
-pub(crate) fn read_note(path: String) -> Result<NoteSession, String> {
+pub(crate) fn read_note(
+    note_id: Option<String>,
+    path: Option<String>,
+) -> Result<NoteSession, String> {
     let notes_dir = prepare_notes_dir(true)?;
 
-    let note_path = validate_current_path(Some(path), &notes_dir)?
-        .ok_or_else(|| "Missing note path".to_string())?;
+    let note_path = resolve_note_path_input(&notes_dir, note_id, path)?;
 
     read_note_session_from_path(&note_path)
 }
@@ -321,18 +331,18 @@ pub(crate) fn set_task_hidden(task_key: String, hidden: bool) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub(crate) fn set_note_hidden(note_path: String, hidden: bool) -> Result<(), String> {
-    set_note_hidden_impl(note_path, hidden)
+pub(crate) fn set_note_hidden(note_id: String, hidden: bool) -> Result<(), String> {
+    set_note_hidden_impl(note_id, hidden)
 }
 
 #[tauri::command]
-pub(crate) fn set_note_collapsed(note_path: String, collapsed: bool) -> Result<(), String> {
-    set_note_collapsed_impl(note_path, collapsed)
+pub(crate) fn set_note_collapsed(note_id: String, collapsed: bool) -> Result<(), String> {
+    set_note_collapsed_impl(note_id, collapsed)
 }
 
 #[tauri::command]
-pub(crate) fn set_note_order(note_paths: Vec<String>) -> Result<(), String> {
-    set_note_order_impl(note_paths)
+pub(crate) fn set_note_order(note_ids: Vec<String>) -> Result<(), String> {
+    set_note_order_impl(note_ids)
 }
 
 #[tauri::command]
@@ -415,40 +425,58 @@ pub(crate) fn clear_semantic_debug_metrics(state: State<'_, AppState>) -> Result
 
 fn load_note_session_from_notes_dir(notes_dir: &Path) -> Result<NoteSession, String> {
     let mut state = read_state(notes_dir)?;
-    let Some(last_opened_path) = state.last_opened_path.clone() else {
+    let Some(last_opened_note_id) = state.last_opened_note_id.clone() else {
         return Ok(NoteSession {
+            note_id: None,
             title: String::new(),
             markdown: String::new(),
             path: None,
         });
     };
 
-    let note_path = PathBuf::from(last_opened_path);
-    if !is_valid_note_path(&note_path, notes_dir) {
-        state.last_opened_path = None;
+    let Some(note_path) = resolve_note_path_by_id(notes_dir, &last_opened_note_id)? else {
+        state.last_opened_note_id = None;
         state
-            .recent_paths
-            .retain(|path| PathBuf::from(path) != note_path);
+            .recent_note_ids
+            .retain(|note_id| note_id != &last_opened_note_id);
         write_state(notes_dir, &state)?;
         return Ok(NoteSession {
+            note_id: None,
+            title: String::new(),
+            markdown: String::new(),
+            path: None,
+        });
+    };
+    if !is_valid_note_path(&note_path, notes_dir) {
+        state.last_opened_note_id = None;
+        state
+            .recent_note_ids
+            .retain(|note_id| note_id != &last_opened_note_id);
+        write_state(notes_dir, &state)?;
+        return Ok(NoteSession {
+            note_id: None,
             title: String::new(),
             markdown: String::new(),
             path: None,
         });
     }
 
-    touch_recent_path(&mut state, &note_path);
+    touch_recent_note_id(&mut state, last_opened_note_id);
     write_state(notes_dir, &state)?;
     read_note_session_from_path(&note_path)
 }
 
-fn open_note_from_notes_dir(notes_dir: &Path, path: String) -> Result<NoteSession, String> {
-    let note_path = validate_current_path(Some(path), notes_dir)?
-        .ok_or_else(|| "Missing note path".to_string())?;
+fn open_note_from_notes_dir(
+    notes_dir: &Path,
+    note_id: Option<String>,
+    path: Option<String>,
+) -> Result<NoteSession, String> {
+    let note_path = resolve_note_path_input(notes_dir, note_id, path)?;
+    let resolved_note_id = resolve_note_id_from_path(&note_path)?;
 
     let mut state = read_state(notes_dir)?;
-    state.last_opened_path = Some(note_path.to_string_lossy().into_owned());
-    touch_recent_path(&mut state, &note_path);
+    state.last_opened_note_id = Some(resolved_note_id.clone());
+    touch_recent_note_id(&mut state, resolved_note_id);
     write_state(notes_dir, &state)?;
 
     read_note_session_from_path(&note_path)
@@ -462,11 +490,28 @@ fn read_note_session_from_path(note_path: &Path) -> Result<NoteSession, String> 
         .to_string_lossy()
         .into_owned();
     let (title, body) = note::extract_file_name_title_and_body(&markdown, &fallback_title);
+    let note_id = note::note_id_from_path_or_markdown(Some(note_path), &markdown);
     Ok(NoteSession {
+        note_id,
         title,
         markdown: body,
         path: Some(note_path.to_string_lossy().into_owned()),
     })
+}
+
+fn resolve_note_path_input(
+    notes_dir: &Path,
+    note_id: Option<String>,
+    path: Option<String>,
+) -> Result<PathBuf, String> {
+    if let Some(note_id) = note_id.filter(|note_id| !note_id.trim().is_empty()) {
+        return resolve_note_path_by_id(notes_dir, &note_id)?
+            .ok_or_else(|| "Missing note path".to_string());
+    }
+
+    let note_path =
+        validate_current_path(path, notes_dir)?.ok_or_else(|| "Missing note path".to_string())?;
+    Ok(note_path)
 }
 
 fn read_modified_millis(path: &Path) -> Result<u64, String> {
@@ -531,6 +576,7 @@ mod tests {
     };
     use crate::{
         index::{build_indexed_note, task_key, NotesIndex},
+        note,
         search::{NoteSearchResult, ScoredSearchResult},
         state::initialize_app_data_dir,
         state::{read_state, write_state, PersistedState, PersistedTaskTimestamps},
@@ -546,12 +592,12 @@ mod tests {
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-load-session");
         let notes_dir = temp.path();
-        let stale_path = notes_dir.join("Missing.md");
+        let stale_note_id = "missing-note".to_string();
         write_state(
             notes_dir,
             &PersistedState {
-                last_opened_path: Some(stale_path.to_string_lossy().into_owned()),
-                recent_paths: vec![stale_path.to_string_lossy().into_owned()],
+                last_opened_note_id: Some(stale_note_id.clone()),
+                recent_note_ids: vec![stale_note_id],
                 ..PersistedState::default()
             },
         )
@@ -562,9 +608,10 @@ mod tests {
 
         assert_eq!(session.title, "");
         assert_eq!(session.markdown, "");
+        assert_eq!(session.note_id, None);
         assert_eq!(session.path, None);
-        assert_eq!(state.last_opened_path, None);
-        assert!(state.recent_paths.is_empty());
+        assert_eq!(state.last_opened_note_id, None);
+        assert!(state.recent_note_ids.is_empty());
     }
 
     #[test]
@@ -577,21 +624,20 @@ mod tests {
         let note_path = notes_dir.join("Open Me.md");
         fs::write(&note_path, "# Open Me\n\nBody").expect("write note");
 
-        let session = open_note_from_notes_dir(notes_dir, note_path.to_string_lossy().into_owned())
+        let indexed_note = build_indexed_note(&note_path, "# Open Me\n\nBody", 10);
+        let session = open_note_from_notes_dir(notes_dir, Some(indexed_note.note_id.clone()), None)
             .expect("open note");
         let state = read_state(notes_dir).expect("read state");
 
+        assert_eq!(session.note_id, Some(indexed_note.note_id.clone()));
         assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
         assert_eq!(session.title, "Open Me");
         assert_eq!(session.markdown, "Body");
         assert_eq!(
-            state.last_opened_path,
-            Some(note_path.to_string_lossy().into_owned())
+            state.last_opened_note_id,
+            Some(indexed_note.note_id.clone())
         );
-        assert_eq!(
-            state.recent_paths,
-            vec![note_path.to_string_lossy().into_owned()]
-        );
+        assert_eq!(state.recent_note_ids, vec![indexed_note.note_id]);
     }
 
     #[test]
@@ -605,11 +651,12 @@ mod tests {
         let existing_open_path = notes_dir.join("Already Open.md");
         fs::write(&note_path, "# Read Me\n\nBody").expect("write note");
         fs::write(&existing_open_path, "# Already Open\n\nBody").expect("write open note");
+        let existing_note = build_indexed_note(&existing_open_path, "# Already Open\n\nBody", 10);
         write_state(
             notes_dir,
             &PersistedState {
-                last_opened_path: Some(existing_open_path.to_string_lossy().into_owned()),
-                recent_paths: vec![existing_open_path.to_string_lossy().into_owned()],
+                last_opened_note_id: Some(existing_note.note_id.clone()),
+                recent_note_ids: vec![existing_note.note_id.clone()],
                 ..PersistedState::default()
             },
         )
@@ -618,17 +665,21 @@ mod tests {
         let session = read_note_session_from_path(&note_path).expect("read note");
         let state = read_state(notes_dir).expect("read state");
 
+        assert_eq!(
+            session.note_id,
+            note::note_id_from_path_or_markdown(
+                Some(note_path.as_path()),
+                &fs::read_to_string(&note_path).expect("read note markdown")
+            )
+        );
         assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
         assert_eq!(session.title, "Read Me");
         assert_eq!(session.markdown, "Body");
         assert_eq!(
-            state.last_opened_path,
-            Some(existing_open_path.to_string_lossy().into_owned())
+            state.last_opened_note_id,
+            Some(existing_note.note_id.clone())
         );
-        assert_eq!(
-            state.recent_paths,
-            vec![existing_open_path.to_string_lossy().into_owned()]
-        );
+        assert_eq!(state.recent_note_ids, vec![existing_note.note_id]);
     }
 
     #[test]
@@ -647,10 +698,10 @@ mod tests {
 
         let results = collect_recent_note_results(
             &[
-                current_path.to_string_lossy().into_owned(),
-                other_path.to_string_lossy().into_owned(),
+                index.entries[&current_path].note_id.clone(),
+                index.entries[&other_path].note_id.clone(),
             ],
-            Some(current_path.as_path()),
+            Some(index.entries[&current_path].note_id.as_str()),
             &index,
             12,
         );
@@ -670,10 +721,10 @@ mod tests {
         let next_markdown = "# Project\n\n- [ ] Beta\n- [ ] Alpha\n";
         let previous_note = build_indexed_note(&note_path, previous_markdown, 10);
         let next_note = build_indexed_note(&note_path, next_markdown, 20);
-        let previous_alpha = task_key(&note_path, &previous_note.tasks[0]);
-        let previous_beta = task_key(&note_path, &previous_note.tasks[1]);
-        let next_beta = task_key(&note_path, &next_note.tasks[0]);
-        let next_alpha = task_key(&note_path, &next_note.tasks[1]);
+        let previous_alpha = task_key(&previous_note.note_id, &previous_note.tasks[0]);
+        let previous_beta = task_key(&previous_note.note_id, &previous_note.tasks[1]);
+        let next_beta = task_key(&next_note.note_id, &next_note.tasks[0]);
+        let next_alpha = task_key(&next_note.note_id, &next_note.tasks[1]);
 
         let mut state = PersistedState {
             task_timestamps: HashMap::from([
@@ -715,8 +766,8 @@ mod tests {
         let note_path = PathBuf::from("/tmp/project.md");
         let previous_note = build_indexed_note(&note_path, "# Project\n\n- [ ] Ship beta\n", 10);
         let next_note = build_indexed_note(&note_path, "# Project\n\n- [x] Ship beta\n", 20);
-        let previous_key = task_key(&note_path, &previous_note.tasks[0]);
-        let next_key = task_key(&note_path, &next_note.tasks[0]);
+        let previous_key = task_key(&previous_note.note_id, &previous_note.tasks[0]);
+        let next_key = task_key(&next_note.note_id, &next_note.tasks[0]);
 
         let mut state = PersistedState {
             task_timestamps: HashMap::from([(
@@ -755,8 +806,8 @@ mod tests {
         let nearest =
             find_task_key_for_line(&note_path, &note, 99, "Duplicate").expect("nearest key");
 
-        assert_eq!(exact, task_key(&note_path, &note.tasks[2]));
-        assert_eq!(nearest, task_key(&note_path, &note.tasks[2]));
+        assert_eq!(exact, task_key(&note.note_id, &note.tasks[2]));
+        assert_eq!(nearest, task_key(&note.note_id, &note.tasks[2]));
     }
 
     #[test]
@@ -765,6 +816,7 @@ mod tests {
             ScoredSearchResult {
                 score: 100,
                 result: NoteSearchResult {
+                    note_id: Some("note-a".to_string()),
                     note_path: Some("/notes/a.md".to_string()),
                     file_name: "a".to_string(),
                     section_label: "Paragraph 1".to_string(),
@@ -781,6 +833,7 @@ mod tests {
             ScoredSearchResult {
                 score: 40,
                 result: NoteSearchResult {
+                    note_id: Some("note-b".to_string()),
                     note_path: Some("/notes/b.md".to_string()),
                     file_name: "b".to_string(),
                     section_label: "Paragraph 1".to_string(),
@@ -939,16 +992,19 @@ mod tests {
     #[test]
     fn command_payload_json_contracts_remain_stable() {
         let session = NoteSession {
+            note_id: Some("note-1".to_string()),
             title: "Title".to_string(),
             markdown: "Body".to_string(),
             path: Some("/notes/title.md".to_string()),
         };
         let resolved_note_link = ResolvedNoteLink {
+            note_id: "note-1".to_string(),
             note_path: "/notes/title.md".to_string(),
             section_label: "Paragraph 2".to_string(),
             match_text: "Ship beta".to_string(),
         };
         let task = TaskListItem {
+            note_id: "note-1".to_string(),
             task_key: "task-key".to_string(),
             note_path: "/notes/title.md".to_string(),
             file_name: "title".to_string(),
@@ -965,6 +1021,7 @@ mod tests {
             updated_at_millis: 222,
         };
         let recent_task = RecentTaskItem {
+            note_id: "note-1".to_string(),
             task_key: "recent-task".to_string(),
             note_path: "/notes/title.md".to_string(),
             note_title: "Title".to_string(),
@@ -976,6 +1033,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(session).expect("serialize note session"),
             json!({
+                "noteId": "note-1",
                 "title": "Title",
                 "markdown": "Body",
                 "path": "/notes/title.md",
@@ -984,6 +1042,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(task).expect("serialize task item"),
             json!({
+                "noteId": "note-1",
                 "taskKey": "task-key",
                 "notePath": "/notes/title.md",
                 "fileName": "title",
@@ -1003,6 +1062,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(resolved_note_link).expect("serialize resolved note link"),
             json!({
+                "noteId": "note-1",
                 "notePath": "/notes/title.md",
                 "sectionLabel": "Paragraph 2",
                 "matchText": "Ship beta",
@@ -1011,6 +1071,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(recent_task).expect("serialize recent task"),
             json!({
+                "noteId": "note-1",
                 "taskKey": "recent-task",
                 "notePath": "/notes/title.md",
                 "noteTitle": "Title",

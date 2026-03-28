@@ -5,7 +5,7 @@ use super::{
 use crate::{
     index::{build_indexed_note, AppState},
     note,
-    state::{persist_note, read_state, touch_recent_path, validate_current_path, write_state},
+    state::{persist_note, read_state, touch_recent_note_id, validate_current_path, write_state},
     sync,
 };
 use std::path::{Path, PathBuf};
@@ -81,12 +81,12 @@ pub(crate) fn persist_note_session_with_outcome(
     };
 
     let mut persisted_state = read_state(&notes_dir)?;
-    persisted_state.last_opened_path = match mode {
-        NotePersistenceMode::Save => persisted_path.clone(),
+    persisted_state.last_opened_note_id = match mode {
+        NotePersistenceMode::Save => next_note.as_ref().map(|note| note.note_id.clone()),
         NotePersistenceMode::Remember => None,
     };
-    if let Some(path) = persisted_path.as_ref() {
-        touch_recent_path(&mut persisted_state, Path::new(path));
+    if let Some(note) = next_note.as_ref() {
+        touch_recent_note_id(&mut persisted_state, note.note_id.clone());
     }
     super::reconcile_note_task_timestamps(
         &mut persisted_state,
@@ -136,6 +136,7 @@ pub(crate) fn persist_note_session_with_outcome(
 
     let session = match mode {
         NotePersistenceMode::Save => Some(NoteSession {
+            note_id: next_note.as_ref().map(|note| note.note_id.clone()),
             title: persisted_path
                 .as_deref()
                 .and_then(|path| Path::new(path).file_stem())

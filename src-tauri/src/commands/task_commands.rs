@@ -8,7 +8,7 @@ use crate::{
         toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
     },
     state::{
-        is_valid_note_path, push_unique, read_state, validate_current_path, write_state,
+        push_unique, read_state, resolve_note_path_by_id, validate_current_path, write_state,
         PersistedState, PersistedTaskTimestamps,
     },
     sync,
@@ -76,8 +76,8 @@ pub(super) fn list_recent_tasks(
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let hidden_note_paths = persisted_state
-        .hidden_note_paths
+    let hidden_note_ids = persisted_state
+        .hidden_note_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
@@ -93,7 +93,7 @@ pub(super) fn list_recent_tasks(
 
     for (path, note) in &index.entries {
         let raw_path = path.to_string_lossy().into_owned();
-        if hidden_note_paths.contains(&raw_path) {
+        if hidden_note_ids.contains(&note.note_id) {
             continue;
         }
 
@@ -102,7 +102,7 @@ pub(super) fn list_recent_tasks(
                 continue;
             }
 
-            let task_key = task_key(path, task);
+            let task_key = task_key(&note.note_id, task);
             if hidden_task_keys.contains(&task_key) {
                 continue;
             }
@@ -114,6 +114,7 @@ pub(super) fn list_recent_tasks(
                 .unwrap_or(note.modified_millis);
 
             tasks.push(SortableRecentTaskItem::new(RecentTaskItem {
+                note_id: note.note_id.clone(),
                 task_key,
                 note_path: raw_path.clone(),
                 note_title: note.title.clone(),
@@ -153,17 +154,17 @@ pub(super) fn list_tasks(
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let hidden_note_paths = persisted_state
-        .hidden_note_paths
+    let hidden_note_ids = persisted_state
+        .hidden_note_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let collapsed_note_paths = persisted_state
-        .collapsed_note_paths
+    let collapsed_note_ids = persisted_state
+        .collapsed_note_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let note_order = persisted_state.note_order.clone();
+    let note_order = persisted_state.note_order_note_ids.clone();
 
     let mut index = state
         .notes_index
@@ -176,8 +177,8 @@ pub(super) fn list_tasks(
 
     for (path, note) in &index.entries {
         let raw_path = path.to_string_lossy().into_owned();
-        let note_hidden = hidden_note_paths.contains(&raw_path);
-        let note_collapsed = collapsed_note_paths.contains(&raw_path);
+        let note_hidden = hidden_note_ids.contains(&note.note_id);
+        let note_collapsed = collapsed_note_ids.contains(&note.note_id);
         for task in &note.tasks {
             let matches_filter = match filter {
                 TaskFilter::Open => !task.completed,
@@ -189,7 +190,7 @@ pub(super) fn list_tasks(
                 continue;
             }
 
-            let task_key = task_key(path, task);
+            let task_key = task_key(&note.note_id, task);
             let timestamps = persisted_state
                 .task_timestamps
                 .get(&task_key)
@@ -200,6 +201,7 @@ pub(super) fn list_tasks(
                 });
 
             tasks.push(SortableTaskListItem::new(TaskListItem {
+                note_id: note.note_id.clone(),
                 task_key: task_key.clone(),
                 note_path: raw_path.clone(),
                 file_name: note.file_name.clone(),
@@ -226,13 +228,13 @@ pub(super) fn list_tasks(
     let note_order_index = note_order
         .iter()
         .enumerate()
-        .map(|(index, path)| (path.as_str(), index))
+        .map(|(index, note_id)| (note_id.as_str(), index))
         .collect::<HashMap<_, _>>();
 
     tasks.sort_by_cached_key(|task| {
         (
             note_order_index
-                .get(task.item.note_path.as_str())
+                .get(task.item.note_id.as_str())
                 .copied()
                 .map_or((1usize, usize::MAX), |rank| (0usize, rank)),
             task.note_title_lower.clone(),
@@ -258,65 +260,52 @@ pub(super) fn set_task_hidden(task_key: String, hidden: bool) -> Result<(), Stri
     write_state(&notes_dir, &state)
 }
 
-pub(super) fn set_note_hidden(note_path: String, hidden: bool) -> Result<(), String> {
+pub(super) fn set_note_hidden(note_id: String, hidden: bool) -> Result<(), String> {
     let notes_dir = prepare_notes_dir(false)?;
-
-    let validated_path = validate_current_path(Some(note_path), &notes_dir)?
-        .ok_or_else(|| "Missing note path".to_string())?;
-    let raw_path = validated_path.to_string_lossy().into_owned();
 
     let mut state = read_state(&notes_dir)?;
     if hidden {
-        push_unique(&mut state.hidden_note_paths, raw_path);
+        push_unique(&mut state.hidden_note_ids, note_id);
     } else {
         state
-            .hidden_note_paths
-            .retain(|existing_path| existing_path != &raw_path);
+            .hidden_note_ids
+            .retain(|existing_note_id| existing_note_id != &note_id);
     }
     write_state(&notes_dir, &state)
 }
 
-pub(super) fn set_note_collapsed(note_path: String, collapsed: bool) -> Result<(), String> {
+pub(super) fn set_note_collapsed(note_id: String, collapsed: bool) -> Result<(), String> {
     let notes_dir = prepare_notes_dir(false)?;
-
-    let validated_path = validate_current_path(Some(note_path), &notes_dir)?
-        .ok_or_else(|| "Missing note path".to_string())?;
-    let raw_path = validated_path.to_string_lossy().into_owned();
 
     let mut state = read_state(&notes_dir)?;
     if collapsed {
-        push_unique(&mut state.collapsed_note_paths, raw_path);
+        push_unique(&mut state.collapsed_note_ids, note_id);
     } else {
         state
-            .collapsed_note_paths
-            .retain(|existing_path| existing_path != &raw_path);
+            .collapsed_note_ids
+            .retain(|existing_note_id| existing_note_id != &note_id);
     }
     write_state(&notes_dir, &state)
 }
 
-pub(super) fn set_note_order(note_paths: Vec<String>) -> Result<(), String> {
+pub(super) fn set_note_order(note_ids: Vec<String>) -> Result<(), String> {
     let notes_dir = prepare_notes_dir(false)?;
 
-    let mut normalized_paths = Vec::new();
+    let mut normalized_note_ids = Vec::new();
     let mut seen = HashSet::new();
 
-    for note_path in note_paths {
-        let Some(validated_path) = validate_current_path(Some(note_path), &notes_dir)? else {
+    for note_id in note_ids {
+        let Some(_validated_path) = resolve_note_path_by_id(&notes_dir, &note_id)? else {
             continue;
         };
 
-        if !is_valid_note_path(&validated_path, &notes_dir) {
-            continue;
-        }
-
-        let raw_path = validated_path.to_string_lossy().into_owned();
-        if seen.insert(raw_path.clone()) {
-            normalized_paths.push(raw_path);
+        if seen.insert(note_id.clone()) {
+            normalized_note_ids.push(note_id);
         }
     }
 
     let mut state = read_state(&notes_dir)?;
-    state.note_order = normalized_paths;
+    state.note_order_note_ids = normalized_note_ids;
     write_state(&notes_dir, &state)
 }
 
@@ -454,9 +443,9 @@ pub(super) fn sync_task_timestamps_from_index(
     let mut changed = false;
     let mut active_task_keys = HashSet::new();
 
-    for (path, note) in &index.entries {
+    for note in index.entries.values() {
         for task in &note.tasks {
-            let task_key = task_key(path, task);
+            let task_key = task_key(&note.note_id, task);
             active_task_keys.insert(task_key.clone());
             state.task_timestamps.entry(task_key).or_insert_with(|| {
                 changed = true;
@@ -476,7 +465,7 @@ pub(super) fn sync_task_timestamps_from_index(
 }
 
 pub(super) fn find_task_key_for_line(
-    note_path: &Path,
+    _note_path: &Path,
     note: &IndexedNote,
     line_number: usize,
     task_text: &str,
@@ -495,17 +484,17 @@ pub(super) fn find_task_key_for_line(
                 .filter(|task| normalize_search_text(&task.text) == normalized_task_text)
                 .min_by_key(|task| task.line_number.abs_diff(line_number))
         })
-        .map(|task| task_key(note_path, task))
+        .map(|task| task_key(&note.note_id, task))
 }
 
 fn collect_task_timestamp_candidates(
-    note_path: &Path,
+    _note_path: &Path,
     note: &IndexedNote,
 ) -> Vec<TaskTimestampCandidate> {
     note.tasks
         .iter()
         .map(|task| TaskTimestampCandidate {
-            key: task_key(note_path, task),
+            key: task_key(&note.note_id, task),
             text_lower: normalize_search_text(&task.text),
             section_label: task.section_label.clone(),
             completed: task.completed,

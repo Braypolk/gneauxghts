@@ -1,4 +1,5 @@
 export interface NoteSession {
+  noteId: string | null;
   title: string;
   markdown: string;
   path: string | null;
@@ -10,6 +11,7 @@ export interface StoredImageAsset {
 }
 
 export interface RecentTaskItem {
+  noteId: string;
   taskKey: string;
   notePath: string;
   noteTitle: string;
@@ -19,6 +21,7 @@ export interface RecentTaskItem {
 }
 
 export interface ResolvedNoteLink {
+  noteId: string;
   notePath: string;
   sectionLabel: string;
   matchText: string;

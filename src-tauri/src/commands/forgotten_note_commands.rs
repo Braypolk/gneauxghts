@@ -65,12 +65,17 @@ pub(crate) fn forget_note(
             current_time_millis()?,
         );
         let raw_path = note_path.to_string_lossy().into_owned();
-        if persisted_state.last_opened_path.as_deref() == Some(raw_path.as_str()) {
-            persisted_state.last_opened_path = None;
+        let note_id = previous_note
+            .as_ref()
+            .map(|note| note.note_id.clone())
+            .or_else(|| note::note_id_from_path_or_markdown(Some(note_path), &note_markdown))
+            .unwrap_or_default();
+        if persisted_state.last_opened_note_id.as_deref() == Some(note_id.as_str()) {
+            persisted_state.last_opened_note_id = None;
         }
         persisted_state
-            .recent_paths
-            .retain(|path| path != &raw_path);
+            .recent_note_ids
+            .retain(|existing_note_id| existing_note_id != &note_id);
         persisted_state
             .forgotten_notes
             .push(PersistedForgottenNote {

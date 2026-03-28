@@ -31,12 +31,16 @@ interface SessionControllerDeps {
   getTitle: () => string;
   getBodyMarkdown: () => string;
   getCurrentMarkdown: () => string;
+  getCurrentNoteId: () => string | null;
+  setCurrentNoteId: (value: string | null) => void;
   getCurrentPath: () => string | null;
   setCurrentPath: (value: string | null) => void;
   getLastSavedTitle: () => string;
   setLastSavedTitle: (value: string) => void;
   getLastSavedMarkdown: () => string;
   setLastSavedMarkdown: (value: string) => void;
+  getLastSavedNoteId: () => string | null;
+  setLastSavedNoteId: (value: string | null) => void;
   getLastSavedPath: () => string | null;
   setLastSavedPath: (value: string | null) => void;
   applySessionSnapshot: (snapshot: SessionSnapshot) => void;
@@ -74,12 +78,16 @@ export function createSessionController({
   getTitle,
   getBodyMarkdown,
   getCurrentMarkdown,
+  getCurrentNoteId,
+  setCurrentNoteId,
   getCurrentPath,
   setCurrentPath,
   getLastSavedTitle,
   setLastSavedTitle,
   getLastSavedMarkdown,
   setLastSavedMarkdown,
+  getLastSavedNoteId,
+  setLastSavedNoteId,
   getLastSavedPath,
   setLastSavedPath,
   applySessionSnapshot,
@@ -110,9 +118,10 @@ export function createSessionController({
   let saveQueue: Promise<void> = Promise.resolve();
 
   function hasCleanBuffer() {
-    return shouldSkipAutosave(getTitle(), getCurrentMarkdown(), getCurrentPath(), {
+    return shouldSkipAutosave(getTitle(), getCurrentMarkdown(), getCurrentNoteId(), getCurrentPath(), {
       lastSavedTitle: getLastSavedTitle(),
       lastSavedMarkdown: getLastSavedMarkdown(),
+      lastSavedNoteId: getLastSavedNoteId(),
       lastSavedPath: getLastSavedPath()
     });
   }
@@ -145,15 +154,16 @@ export function createSessionController({
     setIsRefreshingFromDisk(true);
 
     try {
-      const session = await readNoteSession(currentPath);
+      const session = await readNoteSession(getCurrentNoteId(), currentPath);
 
-      if (!hasCleanBuffer() || session.currentNotePath !== getCurrentPath()) {
+      if (!hasCleanBuffer() || session.currentNoteId !== getCurrentNoteId()) {
         return;
       }
 
       if (
         session.lastSavedTitle === getLastSavedTitle() &&
         session.lastSavedMarkdown === getLastSavedMarkdown() &&
+        session.lastSavedNoteId === getLastSavedNoteId() &&
         session.lastSavedPath === getLastSavedPath()
       ) {
         return;
@@ -188,9 +198,10 @@ export function createSessionController({
 
     if (
       mode === 'autosave' &&
-      shouldSkipAutosave(title, markdown, getCurrentPath(), {
+      shouldSkipAutosave(title, markdown, getCurrentNoteId(), getCurrentPath(), {
         lastSavedTitle: getLastSavedTitle(),
         lastSavedMarkdown: getLastSavedMarkdown(),
+        lastSavedNoteId: getLastSavedNoteId(),
         lastSavedPath: getLastSavedPath()
       })
     ) {
@@ -248,6 +259,7 @@ export function createSessionController({
     const draft = {
       title: getTitle(),
       bodyMarkdown: getBodyMarkdown(),
+      currentNoteId: getCurrentNoteId(),
       currentNotePath: getCurrentPath()
     };
     const hasDraftContent = hasContent(draft);
@@ -292,7 +304,7 @@ export function createSessionController({
           return;
         }
 
-        applySessionSnapshot(await openNoteSession(restoredPath));
+        applySessionSnapshot(await openNoteSession(null, restoredPath));
         setCanUnforget(false);
         setForgottenNote(null);
         await replaceEditorContent(getBodyMarkdown());
@@ -312,6 +324,7 @@ export function createSessionController({
       ...forgottenNote,
       lastSavedTitle: '',
       lastSavedMarkdown: '',
+      lastSavedNoteId: null,
       lastSavedPath: null
     });
     setCanUnforget(false);
@@ -337,9 +350,11 @@ export function createSessionController({
     const markdown = getCurrentMarkdown();
     await rememberWithAction(action, cleanUpApplyPolicy, title, markdown, getCurrentPath());
     scheduleAutoSync('note-remembered', 400);
+    setCurrentNoteId(null);
     setCurrentPath(null);
     setLastSavedTitle('');
     setLastSavedMarkdown('');
+    setLastSavedNoteId(null);
     setLastSavedPath(null);
     setForgottenNote(null);
     discardEditorStateForNote(rememberedPath);
@@ -348,18 +363,23 @@ export function createSessionController({
   }
 
   async function openNotePath(
-    notePath: string,
+    noteId: string | null,
+    notePath: string | null,
     { currentNoteAlreadySaved = false }: { currentNoteAlreadySaved?: boolean } = {}
   ) {
+    if (!noteId && !notePath) {
+      return;
+    }
     const previousPath = getCurrentPath();
+    const previousNoteId = getCurrentNoteId();
     saveCursorPositionForNote();
     saveEditorStateForNote();
-    if (!currentNoteAlreadySaved && previousPath && previousPath !== notePath) {
+    if (!currentNoteAlreadySaved && previousPath && (previousNoteId !== noteId || previousPath !== notePath)) {
       cancelPendingAutosave();
       await enqueueSave('autosave');
     }
 
-    const session = await openNoteSession(notePath);
+    const session = await openNoteSession(noteId, notePath);
     applySessionSnapshot(session);
     setCanUnforget(false);
     setForgottenNote(null);

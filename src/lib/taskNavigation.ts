@@ -1,6 +1,7 @@
 const PENDING_TASK_TARGET_KEY = 'gneauxghts.pending-task-target';
 
 export interface PendingTaskTarget {
+  noteId: string;
   notePath: string;
   text: string;
   lineNumber: number;

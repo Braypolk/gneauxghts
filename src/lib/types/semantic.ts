@@ -130,6 +130,7 @@ export interface SemanticDebugSnapshot {
 }
 
 export interface SearchItem {
+  noteId: string | null;
   notePath: string | null;
   fileName: string;
   sectionLabel: string;
@@ -144,6 +145,7 @@ export interface SearchItem {
 }
 
 export interface RelatedNoteItem {
+  noteId: string | null;
   notePath: string;
   noteTitle: string;
   sectionLabel: string;

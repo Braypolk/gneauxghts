@@ -67,11 +67,11 @@ export async function openRecentNoteItem(
   {
     clearSearch,
     handleSearchResultSelect,
-    openNotePath
+    openNote
   }: {
     clearSearch: () => void;
     handleSearchResultSelect: (result: SearchItem) => Promise<void>;
-    openNotePath: (notePath: string) => Promise<void>;
+    openNote: (noteId: string | null, notePath: string | null) => Promise<void>;
   }
 ) {
   clearSearch();
@@ -81,5 +81,5 @@ export async function openRecentNoteItem(
     return;
   }
 
-  await openNotePath(note.notePath);
+  await openNote(note.noteId, note.notePath);
 }

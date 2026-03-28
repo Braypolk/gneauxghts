@@ -18,6 +18,7 @@ import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 interface WikilinkControllerDeps {
   getState: () => WikilinkAutocompleteState;
   setState: (value: WikilinkAutocompleteState) => void;
+  getCurrentNoteId: () => string | null;
   getCurrentPath: () => string | null;
   getCurrentTitle: () => string;
   getCurrentMarkdown: () => string;
@@ -25,7 +26,8 @@ interface WikilinkControllerDeps {
   cancelPendingAutosave: () => void;
   enqueueAutosave: () => Promise<void>;
   openNotePath: (
-    notePath: string,
+    noteId: string | null,
+    notePath: string | null,
     options?: { currentNoteAlreadySaved?: boolean }
   ) => Promise<void>;
   getNavigationContext: () => NavigationContext;
@@ -35,6 +37,7 @@ interface WikilinkControllerDeps {
 export function createWikilinkController({
   getState,
   setState,
+  getCurrentNoteId,
   getCurrentPath,
   getCurrentTitle,
   getCurrentMarkdown,
@@ -153,6 +156,7 @@ export function createWikilinkController({
 
       await openResolvedNoteLink(
         {
+          currentNoteId: getCurrentNoteId(),
           currentNotePath: getCurrentPath(),
           stopPendingAutosave: cancelPendingAutosave,
           enqueueAutosave: () => enqueueAutosave(),

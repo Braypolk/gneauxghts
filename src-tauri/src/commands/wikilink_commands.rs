@@ -432,6 +432,7 @@ pub(super) fn resolve_note_link_target(
     section_reference: Option<&str>,
 ) -> ResolvedNoteLink {
     let fallback = ResolvedNoteLink {
+        note_id: note.note_id.clone(),
         note_path: note_path.to_string_lossy().into_owned(),
         section_label: "Title".to_string(),
         match_text: note.title.clone(),
@@ -476,6 +477,7 @@ pub(super) fn resolve_note_link_target(
         });
 
     matched_paragraph.map_or(fallback, |paragraph| ResolvedNoteLink {
+        note_id: note.note_id.clone(),
         note_path: note_path.to_string_lossy().into_owned(),
         section_label: paragraph.section_label.clone(),
         match_text: paragraph.text.clone(),
