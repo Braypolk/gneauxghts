@@ -14,6 +14,7 @@
   };
 
   let {
+    embedded = false,
     syncStatus,
     syncConflicts,
     syncBaseUrlInput = $bindable(''),
@@ -44,6 +45,7 @@
     buildConflictDiffRows,
     conflictRowClass
   }: {
+    embedded?: boolean;
     syncStatus: SyncStatus | null;
     syncConflicts: SyncConflict[];
     syncBaseUrlInput: string;
@@ -76,14 +78,16 @@
   } = $props();
 </script>
 
-<div class="border-t border-border/70 px-6 py-5">
+<div class={embedded ? 'px-0 py-0' : 'border-t border-border/70 px-6 py-5'}>
   <div class="flex flex-col gap-4">
-    <div>
-      <p class="text-sm font-medium">Sync</p>
-      <p class="mt-0.5 text-xs text-muted-foreground">
-        Connect this device to a hosted or self-hosted sync server. Desktop now syncs in the background, but manual sync is still available as a direct override.
-      </p>
-    </div>
+    {#if !embedded}
+      <div>
+        <p class="text-sm font-medium">Sync</p>
+        <p class="mt-0.5 text-xs text-muted-foreground">
+          Connect this device to a hosted or self-hosted sync server. Desktop now syncs in the background, but manual sync is still available as a direct override.
+        </p>
+      </div>
+    {/if}
 
     <div class="grid gap-4 md:grid-cols-2">
       <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">

@@ -368,7 +368,12 @@ export async function createEditor({
       ctx.set(rootCtx, editorRoot);
       ctx.set(defaultValueCtx, initialValue);
       ctx.set(editorViewOptionsCtx, {
-        editable: () => true
+        editable: () => true,
+        attributes: {
+          spellcheck: 'true',
+          autocorrect: 'on',
+          autocapitalize: 'sentences'
+        }
       });
       ctx.update(dropIndicatorConfig.key, (): DropIndicatorOptions => ({
         class: 'crepe-drop-cursor',

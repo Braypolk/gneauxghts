@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Monitor, Moon, RefreshCcw, Sun } from 'lucide-svelte';
   import { onDestroy, onMount } from 'svelte';
+  import AiRememberSettingsPanel from '$lib/features/settings/AiRememberSettingsPanel.svelte';
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
   import SyncSettingsPanel from '$lib/features/settings/SyncSettingsPanel.svelte';
@@ -24,31 +24,13 @@
   } from '$lib/features/settings/syncSettingsController';
   import { runAutoSyncNow, scheduleAutoSync, cancelScheduledAutoSync } from '$lib/sync/autoSync';
   import {
-    cleanUpApplyPolicyOptions,
-    cleanUpApplyPolicyPreference,
-    defaultRememberActionPreference,
     forgetButtonDurationOptions,
     forgetButtonDurationPreference,
     forgottenNoteRetentionOptions,
     forgottenNoteRetentionPreference,
-    rememberActions,
-    rememberActionOptions,
-    setCleanUpApplyPolicyPreference,
-    setDefaultRememberActionPreference,
-    setRememberActions,
     setForgottenNoteRetentionPreference,
     setForgetButtonDurationPreference
   } from '$lib/appSettings';
-  import type {
-    AiDiagnosticsSnapshot,
-    AiModelOption,
-    AiProviderKind,
-    AiSettings,
-    AiSettingsUpdate,
-    EditableRememberAction,
-    CustomRememberActionKind,
-    EditableRememberActionFamily
-  } from '$lib/types/ai';
   import {
     setThemePreference,
     themeOptions,
@@ -68,6 +50,24 @@
   import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
 
   type SettingsTab = 'general' | 'forgotten';
+  type GeneralSection = 'appearance' | 'forgetting' | 'ai' | 'vault' | 'sync' | 'search';
+
+  const generalSectionsNav: {
+    id: GeneralSection;
+    label: string;
+    description: string;
+  }[] = [
+    { id: 'appearance', label: 'Appearance', description: 'Theme and display' },
+    {
+      id: 'forgetting',
+      label: 'Forgetting',
+      description: 'Forget button timing and trash retention'
+    },
+    { id: 'ai', label: 'AI & Remember', description: 'Connection, defaults, and token usage' },
+    { id: 'vault', label: 'Vault', description: 'Where your notes are stored' },
+    { id: 'sync', label: 'Sync', description: 'Account, server, and conflicts' },
+    { id: 'search', label: 'Semantic search', description: 'Local index and embeddings' }
+  ];
 
   const themeIcons: Record<ThemePreference, typeof Monitor> = {
     auto: Monitor,
@@ -100,26 +100,16 @@
   let syncUiError = $state<string | null>(null);
   let syncUiMessage = $state<string | null>(null);
   let activeTab = $state<SettingsTab>('general');
+  let activeGeneralSection = $state<GeneralSection>('appearance');
+  const activeSectionMeta = $derived(
+    generalSectionsNav.find((s) => s.id === activeGeneralSection) ?? generalSectionsNav[0]
+  );
   let forgottenNotes = $state<ForgottenNoteSummary[]>([]);
   let selectedForgottenPaths = $state<string[]>([]);
   let isLoadingForgottenNotes = $state(false);
   let isUpdatingForgottenNotes = $state(false);
   let isSaving = $state(false);
   let isRunningAction = $state(false);
-  let aiSettings = $state<AiSettings | null>(null);
-  let aiProviderKindInput = $state<AiProviderKind>('openAiCompatible');
-  let aiBaseUrlInput = $state('');
-  let aiModelInput = $state('');
-  let aiApiKeyInput = $state('');
-  let aiModels = $state<AiModelOption[]>([]);
-  let aiModelsError = $state('');
-  let isLoadingAiModels = $state(false);
-  let isSavingAiSettings = $state(false);
-  let rememberActionDrafts = $state<EditableRememberAction[]>([]);
-  let isSavingRememberActions = $state(false);
-  let aiDiagnostics = $state<AiDiagnosticsSnapshot | null>(null);
-  let isLoadingAiDiagnostics = $state(false);
-  let isClearingAiDiagnostics = $state(false);
   let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
   let allForgottenSelected = $derived(
@@ -220,7 +210,6 @@
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
       void loadSemanticStatus();
-      void loadAiSettings();
       void runAutoSyncNow('settings-visible').then(() => loadSemanticState());
       syncSemanticPolling();
       return;
@@ -229,206 +218,9 @@
     stopSemanticPolling();
   }
 
-  async function loadAiSettings() {
-    try {
-      const settings = await invoke<AiSettings>('get_ai_settings');
-      aiSettings = settings;
-      aiProviderKindInput = settings.providerKind;
-      aiBaseUrlInput = settings.baseUrl;
-      aiModelInput = settings.model;
-      await loadAiDiagnostics();
-      await loadAiModels();
-      rememberActionDrafts = $rememberActions.map((action) => ({ ...action }));
-    } catch (error) {
-      console.error('Failed to load AI settings:', error);
-    }
-  }
-
-  async function loadAiDiagnostics() {
-    isLoadingAiDiagnostics = true;
-    try {
-      aiDiagnostics = await invoke<AiDiagnosticsSnapshot>('get_ai_diagnostics');
-    } catch (error) {
-      console.error('Failed to load AI diagnostics:', error);
-    } finally {
-      isLoadingAiDiagnostics = false;
-    }
-  }
-
-  async function loadAiModels() {
-    if (aiProviderKindInput !== 'openAiCompatible') {
-      aiModels = [];
-      aiModelsError = '';
-      return;
-    }
-
-    isLoadingAiModels = true;
-    try {
-      const models = await invoke<AiModelOption[]>('list_ai_models', {
-        baseUrl: aiBaseUrlInput,
-        apiKey: aiApiKeyInput.trim() === '' ? null : aiApiKeyInput
-      });
-      aiModels = models;
-      aiModelsError = '';
-      if (
-        aiModelInput.trim() !== '' &&
-        !models.some((model) => model.id === aiModelInput)
-      ) {
-        aiModels = [{ id: aiModelInput }, ...models];
-      }
-    } catch (error) {
-      console.error('Failed to load AI models:', error);
-      aiModelsError = 'Unable to load models from /v1/models.';
-      if (aiModelInput.trim() !== '') {
-        aiModels = [{ id: aiModelInput }];
-      } else {
-        aiModels = [];
-      }
-    } finally {
-      isLoadingAiModels = false;
-    }
-  }
-
-  async function saveAiSettings() {
-    const nextSettings: AiSettingsUpdate = {
-      providerKind: aiProviderKindInput,
-      baseUrl: aiBaseUrlInput,
-      model: aiModelInput,
-      apiKey: aiApiKeyInput.trim() === '' ? null : aiApiKeyInput
-    };
-    isSavingAiSettings = true;
-    try {
-      aiSettings = await invoke<AiSettings>('set_ai_settings', { settings: nextSettings });
-      aiProviderKindInput = aiSettings.providerKind;
-      aiBaseUrlInput = aiSettings.baseUrl;
-      aiModelInput = aiSettings.model;
-      aiApiKeyInput = '';
-      await loadAiModels();
-    } catch (error) {
-      console.error('Failed to save AI settings:', error);
-    } finally {
-      isSavingAiSettings = false;
-    }
-  }
-
-  async function clearAiDiagnostics() {
-    isClearingAiDiagnostics = true;
-    try {
-      await invoke('clear_ai_diagnostics');
-      await loadAiDiagnostics();
-    } catch (error) {
-      console.error('Failed to clear AI diagnostics:', error);
-    } finally {
-      isClearingAiDiagnostics = false;
-    }
-  }
-
-  function formatCount(value: number | null | undefined) {
-    return (value ?? 0).toLocaleString();
-  }
-
-  function defaultFamilyForKind(
-    kind: CustomRememberActionKind
-  ): EditableRememberActionFamily {
-    return kind === 'singleNote' ? 'edit' : 'organize';
-  }
-
-  function createBlankRememberAction(kind: CustomRememberActionKind): EditableRememberAction {
-    return {
-      id: `custom-${crypto.randomUUID()}`,
-      label: '',
-      description: '',
-      prompt: '',
-      kind,
-      family: defaultFamilyForKind(kind),
-      visible: true
-    };
-  }
-
-  function addRememberAction(kind: CustomRememberActionKind) {
-    rememberActionDrafts = [...rememberActionDrafts, createBlankRememberAction(kind)];
-  }
-
-  function updateRememberAction(
-    id: string,
-    field: keyof Pick<
-      EditableRememberAction,
-      'label' | 'description' | 'prompt' | 'kind' | 'family' | 'visible'
-    >,
-    value: string | boolean
-  ) {
-    rememberActionDrafts = rememberActionDrafts.map((action) => {
-      if (action.id !== id) {
-        return action;
-      }
-
-      const nextAction = { ...action, [field]: value } as EditableRememberAction;
-      if (field === 'kind') {
-        nextAction.family =
-          value === 'singleNote'
-            ? 'edit'
-            : nextAction.family === 'edit'
-              ? 'organize'
-              : nextAction.family;
-      }
-      if (nextAction.kind === 'singleNote') {
-        nextAction.family = 'edit';
-      }
-      return nextAction;
-    });
-  }
-
-  function removeRememberAction(id: string) {
-    rememberActionDrafts = rememberActionDrafts.filter((action) => action.id !== id);
-    if ($defaultRememberActionPreference === id) {
-      setDefaultRememberActionPreference('exact');
-    }
-  }
-
-  function canSaveRememberActions() {
-    return rememberActionDrafts.every(
-      (action) =>
-        action.label.trim() !== '' &&
-        action.prompt.trim() !== '' &&
-        (action.kind === 'singleNote' ||
-          action.family === 'organize' ||
-          action.family === 'integrate')
-    );
-  }
-
-  async function saveRememberActions() {
-    if (!canSaveRememberActions()) {
-      return;
-    }
-
-    isSavingRememberActions = true;
-    try {
-      const sanitized = rememberActionDrafts.map((action) => ({
-        ...action,
-        label: action.label.trim(),
-        description: action.description.trim(),
-        prompt: action.prompt.trim(),
-        family: action.kind === 'singleNote' ? 'edit' : action.family
-      }));
-      setRememberActions(sanitized);
-      rememberActionDrafts = sanitized.map((action) => ({ ...action }));
-      if (
-        $defaultRememberActionPreference !== 'exact' &&
-        !sanitized.some(
-          (action) => action.id === $defaultRememberActionPreference && action.visible
-        )
-      ) {
-        setDefaultRememberActionPreference('exact');
-      }
-    } finally {
-      isSavingRememberActions = false;
-    }
-  }
-
   onMount(() => {
     void loadSemanticState();
     void loadForgottenNotes();
-    void loadAiSettings();
     void listen('vault-note-changed', () => {
       scheduleAutoSync('settings-vault-note-change', 1200);
       void loadForgottenNotes();
@@ -450,7 +242,7 @@
 <svelte:document onvisibilitychange={handleVisibilityChange} />
 
 <div class="h-full w-full overflow-auto bg-background text-foreground">
-  <main class="mx-auto flex min-h-full w-full max-w-4xl items-start justify-center px-0 pb-6 sm:px-2 sm:pb-10">
+  <main class="mx-auto flex min-h-full w-full max-w-6xl items-start justify-center px-0 pb-6 sm:px-2 sm:pb-10">
     <section class="mt-0 w-full overflow-hidden border-y border-border/80 bg-card/80 shadow-sm backdrop-blur-md sm:mt-2 sm:rounded-[1.75rem] sm:border">
       <div class="px-4 py-4 sm:px-6 sm:py-5">
         <p class="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">Settings</p>
@@ -487,491 +279,180 @@
       </div>
 
       {#if activeTab === 'general'}
-      <div class="border-t border-border/70 px-6 py-5">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <p class="text-sm font-medium">Theme</p>
-            <p class="mt-0.5 text-xs text-muted-foreground">Auto follows your system appearance.</p>
-          </div>
-
-          <fieldset class="flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
-            <legend class="sr-only">Theme preference</legend>
-
-            {#each themeOptions as option}
-              {@const Icon = themeIcons[option.id]}
-              <label
-                title={option.description}
-                class={`flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                  $themePreference === option.id
-                    ? 'bg-foreground text-background shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
+      <div class="border-t border-border/70">
+        <div
+          class="flex flex-col lg:grid lg:grid-cols-[minmax(10.5rem,13.5rem)_minmax(0,1fr)] lg:items-start lg:divide-x lg:divide-border/70"
+        >
+          <nav
+            class="flex gap-2 overflow-x-auto overscroll-x-contain border-b border-border/70 px-4 py-3 [-ms-overflow-style:none] [scrollbar-width:none] sm:px-6 lg:sticky lg:top-4 lg:z-10 lg:max-h-[min(100vh-5rem,52rem)] lg:flex-col lg:overflow-y-auto lg:overflow-x-visible lg:border-b-0 lg:bg-card/90 lg:px-3 lg:py-6 lg:backdrop-blur-sm xl:px-4 [&::-webkit-scrollbar]:hidden"
+            aria-label="Settings categories"
+          >
+            {#each generalSectionsNav as item}
+              <button
+                type="button"
+                class={`shrink-0 rounded-xl border px-3 py-2 text-left transition-colors lg:w-full lg:px-3.5 lg:py-2.5 ${
+                  activeGeneralSection === item.id
+                    ? 'border-border bg-foreground text-background shadow-sm'
+                    : 'border-transparent bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
                 }`}
+                aria-current={activeGeneralSection === item.id ? 'page' : undefined}
+                onclick={() => (activeGeneralSection = item.id)}
               >
-                <input
-                  class="sr-only"
-                  type="radio"
-                  name="theme-preference"
-                  value={option.id}
-                  checked={$themePreference === option.id}
-                  onchange={() => void setThemePreference(option.id)}
-                />
-                <Icon class="h-3.5 w-3.5" />
-                <span>{option.label}</span>
-              </label>
+                <span class="block text-sm font-medium">{item.label}</span>
+                <span
+                  class={`mt-0.5 hidden text-xs leading-snug sm:block lg:mt-1 ${
+                    activeGeneralSection === item.id ? 'text-background/75' : ''
+                  }`}
+                >
+                  {item.description}
+                </span>
+              </button>
             {/each}
-          </fieldset>
-        </div>
-      </div>
+          </nav>
 
-      <div class="border-t border-border/70 px-6 py-5">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <p class="text-sm font-medium">Forget Button Duration</p>
-            <p class="mt-0.5 text-xs text-muted-foreground">
-              Choose whether forgetting happens instantly or after a hold.
-            </p>
-          </div>
+          <div class="min-w-0 px-4 pb-10 pt-5 sm:px-6 lg:px-8 lg:pb-12 lg:pt-8">
+            <header class="mb-6 border-b border-border/60 pb-5">
+              <h2 class="text-lg font-semibold tracking-tight">{activeSectionMeta.label}</h2>
+              <p class="mt-1 text-sm text-muted-foreground">{activeSectionMeta.description}</p>
+            </header>
 
-          <fieldset class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
-            <legend class="sr-only">Forget button duration</legend>
+            {#if activeGeneralSection === 'appearance'}
+              <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
+                <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p class="text-sm font-medium">Theme</p>
+                    <p class="mt-0.5 text-xs text-muted-foreground">Auto follows your system appearance.</p>
+                  </div>
 
-            {#each forgetButtonDurationOptions as option}
-              <label
-                title={option.description}
-                class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                  $forgetButtonDurationPreference === option.id
-                    ? 'bg-foreground text-background shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <input
-                  class="sr-only"
-                  type="radio"
-                  name="forget-button-duration"
-                  value={option.id}
-                  checked={$forgetButtonDurationPreference === option.id}
-                  onchange={() => setForgetButtonDurationPreference(option.id)}
-                />
-                <span>{option.label}</span>
-              </label>
-            {/each}
-          </fieldset>
-        </div>
-      </div>
-
-      <div class="border-t border-border/70 px-6 py-5">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <p class="text-sm font-medium">Forgotten Note Retention</p>
-            <p class="mt-0.5 text-xs text-muted-foreground">
-              Forgotten notes move into `.forgotten` before they are permanently deleted.
-            </p>
-          </div>
-
-          <fieldset class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
-            <legend class="sr-only">Forgotten note retention</legend>
-
-            {#each forgottenNoteRetentionOptions as option}
-              <label
-                title={option.description}
-                class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                  $forgottenNoteRetentionPreference === option.id
-                    ? 'bg-foreground text-background shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <input
-                  class="sr-only"
-                  type="radio"
-                  name="forgotten-note-retention"
-                  value={option.id}
-                  checked={$forgottenNoteRetentionPreference === option.id}
-                  onchange={() => setForgottenNoteRetentionPreference(option.id)}
-                />
-                <span>{option.label}</span>
-              </label>
-            {/each}
-          </fieldset>
-        </div>
-      </div>
-
-      <div class="border-t border-border/70 px-6 py-5">
-        <div class="flex flex-col gap-4">
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <p class="text-sm font-medium">AI Remember</p>
-              <p class="mt-0.5 text-xs text-muted-foreground">
-                Choose the default remember action and configure the generation provider used for note transforms and vault integration.
-              </p>
-            </div>
-            <button
-              class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
-              type="button"
-              disabled={isSavingAiSettings}
-              onclick={() => void saveAiSettings()}
-            >
-              {isSavingAiSettings ? 'Saving…' : 'Save AI settings'}
-            </button>
-          </div>
-
-          <div class="grid gap-4 md:grid-cols-2">
-            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Default remember action</p>
-              <fieldset class="mt-3 flex flex-wrap gap-2">
-                <legend class="sr-only">Default remember action</legend>
-                {#each $rememberActionOptions as option}
-                  <label
-                    title={option.description}
-                    class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                      $defaultRememberActionPreference === option.id
-                        ? 'bg-foreground text-background shadow-sm'
-                        : 'bg-card text-muted-foreground hover:text-foreground'
-                    }`}
+                  <fieldset
+                    class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1"
                   >
-                    <input
-                      class="sr-only"
-                      type="radio"
-                      name="default-remember-action"
-                      value={option.id}
-                      checked={$defaultRememberActionPreference === option.id}
-                      onchange={() => setDefaultRememberActionPreference(option.id)}
-                    />
-                    <span>{option.label}</span>
-                  </label>
-                {/each}
-              </fieldset>
-              <p class="mt-3 text-xs text-muted-foreground">
-                Hidden actions stay editable in Settings but do not appear in the note UI.
-              </p>
-            </div>
+                    <legend class="sr-only">Theme preference</legend>
 
-            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">AI edit apply policy</p>
-              <fieldset class="mt-3 flex flex-wrap gap-2">
-                <legend class="sr-only">AI edit apply policy</legend>
-                {#each cleanUpApplyPolicyOptions as option}
-                  <label
-                    title={option.description}
-                    class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                      $cleanUpApplyPolicyPreference === option.id
-                        ? 'bg-foreground text-background shadow-sm'
-                        : 'bg-card text-muted-foreground hover:text-foreground'
-                    }`}
-                  >
-                    <input
-                      class="sr-only"
-                      type="radio"
-                      name="cleanup-apply-policy"
-                      value={option.id}
-                      checked={$cleanUpApplyPolicyPreference === option.id}
-                      onchange={() => setCleanUpApplyPolicyPreference(option.id)}
-                    />
-                    <span>{option.label}</span>
-                  </label>
-                {/each}
-              </fieldset>
-              <p class="mt-3 text-xs text-muted-foreground">
-                Advanced actions always require Inbox approval in v1, even when single-note AI transforms auto-apply.
-              </p>
-            </div>
-          </div>
-
-          <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">AI actions</p>
-                <p class="mt-2 text-sm font-medium">Visible, editable remember actions</p>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  Every AI action except `Remember Exact` lives here. You can rename, rewrite, hide, remove, or add your own.
-                </p>
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <button
-                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
-                  type="button"
-                  onclick={() => addRememberAction('singleNote')}
-                >
-                  Add single-note action
-                </button>
-                <button
-                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
-                  type="button"
-                  onclick={() => addRememberAction('advanced')}
-                >
-                  Add advanced action
-                </button>
-                <button
-                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
-                  type="button"
-                  disabled={isSavingRememberActions || !canSaveRememberActions()}
-                  onclick={() => void saveRememberActions()}
-                >
-                  {isSavingRememberActions ? 'Saving…' : 'Save actions'}
-                </button>
-              </div>
-            </div>
-
-            <div class="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
-              Customizing AI actions can have unintended outcomes. Single-note actions are safer. Advanced actions may create notes, update existing notes, or otherwise reorganize your vault depending on the prompt.
-            </div>
-
-            {#if rememberActionDrafts.length === 0}
-              <p class="mt-4 text-sm text-muted-foreground">No AI actions configured.</p>
-            {:else}
-              <div class="mt-4 space-y-4">
-                {#each rememberActionDrafts as action (action.id)}
-                  <div class="rounded-2xl border border-border/70 bg-card/70 p-4">
-                    <div class="grid gap-4 md:grid-cols-[1fr_12rem_12rem_auto]">
-                      <label class="rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
-                        <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Label</span>
+                    {#each themeOptions as option}
+                      {@const Icon = themeIcons[option.id]}
+                      <label
+                        title={option.description}
+                        class={`flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                          $themePreference === option.id
+                            ? 'bg-foreground text-background shadow-sm'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
                         <input
-                          class="mt-2 w-full bg-transparent text-sm font-medium outline-none"
-                          value={action.label}
-                          placeholder="Button label"
-                          oninput={(event) => updateRememberAction(action.id, 'label', (event.currentTarget as HTMLInputElement).value)}
+                          class="sr-only"
+                          type="radio"
+                          name="theme-preference"
+                          value={option.id}
+                          checked={$themePreference === option.id}
+                          onchange={() => void setThemePreference(option.id)}
                         />
+                        <Icon class="h-3.5 w-3.5" />
+                        <span>{option.label}</span>
                       </label>
-
-                      <label class="rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
-                        <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Kind</span>
-                        <select
-                          class="mt-2 w-full bg-transparent text-sm font-medium outline-none"
-                          value={action.kind}
-                          onchange={(event) => updateRememberAction(action.id, 'kind', (event.currentTarget as HTMLSelectElement).value)}
-                        >
-                          <option value="singleNote">Single note</option>
-                          <option value="advanced">Advanced</option>
-                        </select>
-                      </label>
-
-                      <label class="rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
-                        <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Section</span>
-                        <select
-                          class="mt-2 w-full bg-transparent text-sm font-medium outline-none"
-                          value={action.family}
-                          disabled={action.kind === 'singleNote'}
-                          onchange={(event) => updateRememberAction(action.id, 'family', (event.currentTarget as HTMLSelectElement).value)}
-                        >
-                          <option value="edit">Transform note</option>
-                          <option value="organize">Split or organize</option>
-                          <option value="integrate">Integrate into vault</option>
-                        </select>
-                      </label>
-
-                      <div class="flex items-center justify-end">
-                        <button
-                          class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
-                          type="button"
-                          onclick={() => removeRememberAction(action.id)}
-                        >
-                          Remove
-                        </button>
-                      </div>
+                    {/each}
+                  </fieldset>
+                </div>
+              </div>
+            {:else if activeGeneralSection === 'forgetting'}
+              <div class="space-y-5">
+                <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
+                  <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p class="text-sm font-medium">Forget button duration</p>
+                      <p class="mt-0.5 text-xs text-muted-foreground">
+                        Choose whether forgetting happens instantly or after a hold.
+                      </p>
                     </div>
 
-                    <label class="mt-4 flex items-center justify-between rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
-                      <div>
-                        <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Visibility</span>
-                        <p class="mt-1 text-sm font-medium text-foreground">
-                          {action.visible ? 'Shown in the note UI' : 'Hidden from the note UI'}
-                        </p>
-                      </div>
-                      <input
-                        class="h-4 w-4"
-                        type="checkbox"
-                        checked={action.visible}
-                        onchange={(event) => updateRememberAction(action.id, 'visible', (event.currentTarget as HTMLInputElement).checked)}
-                      />
-                    </label>
+                    <fieldset
+                      class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1"
+                    >
+                      <legend class="sr-only">Forget button duration</legend>
 
-                    <label class="mt-4 block rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
-                      <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Description</span>
-                      <input
-                        class="mt-2 w-full bg-transparent text-sm font-medium outline-none"
-                        value={action.description}
-                        placeholder="Short description for the menu"
-                        oninput={(event) => updateRememberAction(action.id, 'description', (event.currentTarget as HTMLInputElement).value)}
-                      />
-                    </label>
-
-                    <label class="mt-4 block rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
-                      <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Prompt</span>
-                      <textarea
-                        class="mt-2 min-h-32 w-full resize-y bg-transparent text-sm font-medium outline-none"
-                        placeholder="Describe what the action should do."
-                        value={action.prompt}
-                        oninput={(event) => updateRememberAction(action.id, 'prompt', (event.currentTarget as HTMLTextAreaElement).value)}
-                      ></textarea>
-                    </label>
+                      {#each forgetButtonDurationOptions as option}
+                        <label
+                          title={option.description}
+                          class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                            $forgetButtonDurationPreference === option.id
+                              ? 'bg-foreground text-background shadow-sm'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <input
+                            class="sr-only"
+                            type="radio"
+                            name="forget-button-duration"
+                            value={option.id}
+                            checked={$forgetButtonDurationPreference === option.id}
+                            onchange={() => setForgetButtonDurationPreference(option.id)}
+                          />
+                          <span>{option.label}</span>
+                        </label>
+                      {/each}
+                    </fieldset>
                   </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
+                </div>
 
-          <div class="grid gap-4 md:grid-cols-2">
-            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Provider</span>
-              <select
-                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-                disabled={isSavingAiSettings}
-                bind:value={aiProviderKindInput}
-              >
-                <option value="openAiCompatible">OpenAI-compatible HTTP</option>
-                <option value="llamaServer" disabled>llama-server (coming later)</option>
-              </select>
-            </label>
+                <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
+                  <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p class="text-sm font-medium">Forgotten note retention</p>
+                      <p class="mt-0.5 text-xs text-muted-foreground">
+                        Forgotten notes move into `.forgotten` before they are permanently deleted.
+                      </p>
+                    </div>
 
-            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Base URL</span>
-              <input
-                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-                bind:value={aiBaseUrlInput}
-                placeholder="https://api.openai.com/v1"
-                disabled={isSavingAiSettings}
-              />
-            </label>
+                    <fieldset
+                      class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1"
+                    >
+                      <legend class="sr-only">Forgotten note retention</legend>
 
-            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <div class="flex items-start justify-between gap-3">
-                <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Model</span>
-                <button
-                  class="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
-                  type="button"
-                  disabled={isSavingAiSettings || isLoadingAiModels || aiProviderKindInput !== 'openAiCompatible'}
-                  onclick={() => void loadAiModels()}
-                >
-                  {isLoadingAiModels ? 'Loading…' : 'Refresh models'}
-                </button>
-              </div>
-              <select
-                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-                bind:value={aiModelInput}
-                disabled={isSavingAiSettings || isLoadingAiModels || aiProviderKindInput !== 'openAiCompatible'}
-              >
-                {#if aiModels.length === 0}
-                  <option value="">
-                    {aiModelsError || 'Load models from /v1/models'}
-                  </option>
-                {/if}
-                {#each aiModels as model}
-                  <option value={model.id}>{model.id}</option>
-                {/each}
-              </select>
-              <p class="mt-2 text-xs text-muted-foreground">
-                The dropdown is populated from `{aiBaseUrlInput || 'https://api.openai.com/v1'}/models`.
-              </p>
-            </div>
+                      {#each forgottenNoteRetentionOptions as option}
+                        <label
+                          title={option.description}
+                          class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                            $forgottenNoteRetentionPreference === option.id
+                              ? 'bg-foreground text-background shadow-sm'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <input
+                            class="sr-only"
+                            type="radio"
+                            name="forgotten-note-retention"
+                            value={option.id}
+                            checked={$forgottenNoteRetentionPreference === option.id}
+                            onchange={() => setForgottenNoteRetentionPreference(option.id)}
+                          />
+                          <span>{option.label}</span>
+                        </label>
+                      {/each}
+                    </fieldset>
+                  </div>
+                </div>
 
-            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">API key</span>
-              <input
-                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-                type="password"
-                bind:value={aiApiKeyInput}
-                placeholder={aiSettings?.apiKeyConfigured ? 'Stored; enter a new key to replace it' : 'Paste API key'}
-                disabled={isSavingAiSettings}
-              />
-              <p class="mt-2 text-xs text-muted-foreground">
-                Stored in app data. Current status: {aiSettings?.apiKeyConfigured ? 'configured' : 'missing'}.
-              </p>
-            </label>
-          </div>
-
-          <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Diagnostics</p>
-                <p class="mt-2 text-sm font-medium">AI token usage</p>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  {#if aiDiagnostics}
-                    Captured {formatTimestamp(aiDiagnostics.capturedAtMillis)}
-                  {:else}
-                    Tracks prompt and completion token usage from AI remember jobs.
-                  {/if}
+                <p class="text-center text-sm text-muted-foreground">
+                  To restore or permanently delete notes in
+                  <code class="rounded bg-muted/50 px-1 py-0.5 text-xs">.forgotten</code>
+                  , open the
+                  <button
+                    type="button"
+                    class="font-medium text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
+                    onclick={() => {
+                      activeTab = 'forgotten';
+                      void loadForgottenNotes();
+                    }}
+                  >
+                    Forgotten Notes
+                  </button>
+                  tab.
                 </p>
               </div>
-
-              <div class="flex flex-wrap items-center gap-2">
-                <button
-                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
-                  type="button"
-                  disabled={isLoadingAiDiagnostics}
-                  onclick={() => void loadAiDiagnostics()}
-                >
-                  {isLoadingAiDiagnostics ? 'Loading…' : 'Refresh diagnostics'}
-                </button>
-                <button
-                  class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-60"
-                  type="button"
-                  disabled={isClearingAiDiagnostics}
-                  onclick={() => void clearAiDiagnostics()}
-                >
-                  {isClearingAiDiagnostics ? 'Clearing…' : 'Clear diagnostics'}
-                </button>
-              </div>
-            </div>
-
-            {#if aiDiagnostics}
-              {@const metrics = aiDiagnostics.metrics}
-              <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Totals</p>
-                  <p class="mt-2 text-sm font-medium">{formatCount(metrics.totalTokensTotal)} total</p>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    input {formatCount(metrics.promptTokensTotal)} · output {formatCount(metrics.completionTokensTotal)}
-                  </p>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    runs {formatCount(metrics.runCount)}
-                  </p>
-                </div>
-
-                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Average Per Run</p>
-                  <p class="mt-2 text-sm font-medium">
-                    {formatCount(metrics.runCount ? Math.round(metrics.totalTokensTotal / metrics.runCount) : 0)} total
-                  </p>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    input {formatCount(metrics.runCount ? Math.round(metrics.promptTokensTotal / metrics.runCount) : 0)}
-                    · output {formatCount(metrics.runCount ? Math.round(metrics.completionTokensTotal / metrics.runCount) : 0)}
-                  </p>
-                </div>
-
-                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Largest Run</p>
-                  <p class="mt-2 text-sm font-medium">{formatCount(metrics.totalTokensMax)} total</p>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    input {formatCount(metrics.promptTokensMax)} · output {formatCount(metrics.completionTokensMax)}
-                  </p>
-                </div>
-
-                <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-                  <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Latest Run</p>
-                  {#if metrics.lastRun}
-                    <p class="mt-2 text-sm font-medium">
-                      {formatCount(metrics.lastRun.totalTokens)} total
-                    </p>
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      input {formatCount(metrics.lastRun.promptTokens)} · output {formatCount(metrics.lastRun.completionTokens)}
-                    </p>
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      {metrics.lastRun.actionLabel} · {metrics.lastRun.status} · {formatMillis(metrics.lastRun.elapsedMillis)}
-                    </p>
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      {metrics.lastRun.model ?? 'Unknown model'} · {formatTimestamp(metrics.lastRun.updatedAtMillis)}
-                    </p>
-                  {:else}
-                    <p class="mt-2 text-sm text-muted-foreground">No AI runs captured yet.</p>
-                  {/if}
-                </div>
-              </div>
-            {/if}
-          </div>
-        </div>
-      </div>
-
-      <div class="border-t border-border/70 px-6 py-5">
-          <div class="flex flex-col gap-4">
+            {:else if activeGeneralSection === 'ai'}
+              <AiRememberSettingsPanel />
+            {:else if activeGeneralSection === 'vault'}
+              <div class="flex flex-col gap-4">
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-sm font-medium">Vault Directory</p>
@@ -1045,9 +526,9 @@
             </div>
           {/if}
         </div>
-      </div>
-
+            {:else if activeGeneralSection === 'sync'}
       <SyncSettingsPanel
+        embedded
         {syncStatus}
         {syncConflicts}
         bind:syncBaseUrlInput
@@ -1079,7 +560,9 @@
         {conflictRowClass}
       />
 
+            {:else if activeGeneralSection === 'search'}
       <SemanticSettingsPanel
+        embedded
         {semanticSettings}
         {semanticStatus}
         {semanticDebug}
@@ -1093,6 +576,10 @@
         {formatMillis}
         {averageDuration}
       />
+            {/if}
+          </div>
+        </div>
+      </div>
       {:else}
         <ForgottenNotesPanel
           {forgottenNotes}

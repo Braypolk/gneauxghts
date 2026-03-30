@@ -9,6 +9,7 @@
     | 'prepare_semantic_model';
 
   let {
+    embedded = false,
     semanticSettings,
     semanticStatus,
     semanticDebug,
@@ -22,6 +23,7 @@
     formatMillis,
     averageDuration
   }: {
+    embedded?: boolean;
     semanticSettings: SemanticSettings | null;
     semanticStatus: SemanticStatus | null;
     semanticDebug: SemanticDebugSnapshot | null;
@@ -40,17 +42,19 @@
   } = $props();
 </script>
 
-<div class="border-t border-border/70 px-6 py-5">
-  <div class="flex items-start justify-between gap-4">
-    <div>
-      <p class="text-sm font-medium">Semantic Layer</p>
-      <p class="mt-0.5 text-xs text-muted-foreground">
-        Local-first semantic indexing stays on top of your markdown files instead of replacing them.
-      </p>
-    </div>
+<div class={embedded ? 'px-0 py-0' : 'border-t border-border/70 px-6 py-5'}>
+  <div class={`flex items-start justify-between gap-4 ${embedded ? 'justify-end' : ''}`}>
+    {#if !embedded}
+      <div>
+        <p class="text-sm font-medium">Semantic Layer</p>
+        <p class="mt-0.5 text-xs text-muted-foreground">
+          Local-first semantic indexing stays on top of your markdown files instead of replacing them.
+        </p>
+      </div>
+    {/if}
 
     <button
-      class="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+      class="inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
       type="button"
       onclick={() => void loadSemanticState()}
     >

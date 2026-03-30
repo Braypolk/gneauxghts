@@ -1,6 +1,7 @@
 import { editorViewCtx } from '@milkdown/kit/core';
 import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
 import { TextSelection } from '@milkdown/kit/prose/state';
+import { on } from 'svelte/events';
 import {
   applyBlockTypeSelection,
   blockTypeIcons,
@@ -192,6 +193,7 @@ export function setupBlockHandleTypeMenu(
   const menuRoot = documentRoot.createElement('div');
   menuRoot.className = 'notepad-block-type-menu';
   menuRoot.dataset.open = 'false';
+  const cleanupFns: Array<() => void> = [];
 
   const buttonsById = new Map<string, HTMLButtonElement>();
   let activeTargetPos: number | null = null;
@@ -224,10 +226,10 @@ export function setupBlockHandleTypeMenu(
   for (const group of blockTypeMenuGroups) {
     const tab = documentRoot.createElement('li');
     tab.textContent = group.label;
-    tab.addEventListener('pointerdown', (event) => {
+    cleanupFns.push(on(tab, 'pointerdown', (event) => {
       event.preventDefault();
       selectTab(group.key);
-    });
+    }));
     tabsByKey.set(group.key, tab);
     tabList.appendChild(tab);
   }
@@ -254,11 +256,11 @@ export function setupBlockHandleTypeMenu(
       button.className = 'notepad-block-type-menu-item';
       button.dataset.option = option.id;
       button.innerHTML = `${blockTypeIcons[option.id] ?? ''}<span>${option.label}</span>`;
-      button.addEventListener('click', () => {
+      cleanupFns.push(on(button, 'click', () => {
         if (activeTargetPos === null) return;
         applyBlockTypeMenuSelection(controller, activeTargetPos, option, activeSelection);
         closeMenu();
-      });
+      }));
 
       buttonsById.set(option.id, button);
       groupElement.appendChild(button);
@@ -282,7 +284,7 @@ export function setupBlockHandleTypeMenu(
       }
     }
   };
-  menuGroups.addEventListener('scroll', updateActiveTab);
+  cleanupFns.push(on(menuGroups, 'scroll', updateActiveTab));
 
   menuRoot.appendChild(menuGroups);
   documentRoot.body.appendChild(menuRoot);
@@ -319,8 +321,6 @@ export function setupBlockHandleTypeMenu(
         selection: preservedSelection
       };
     });
-
-    event.preventDefault();
   };
 
   const onWindowPointerMove = (event: PointerEvent) => {
@@ -410,23 +410,19 @@ export function setupBlockHandleTypeMenu(
     if (menuRoot.dataset.open === 'true') closeMenu();
   };
 
-  editorRoot.addEventListener('pointerdown', onTrackedPointerDown, true);
-  window.addEventListener('pointermove', onWindowPointerMove, true);
-  window.addEventListener('pointerup', onWindowPointerUp, true);
-  window.addEventListener('pointercancel', onWindowPointerCancel, true);
-  documentRoot.addEventListener('pointerdown', onDocumentPointerDown, true);
-  window.addEventListener('keydown', onWindowKeyDown, true);
-  window.addEventListener('resize', onWindowResize);
+  cleanupFns.push(on(editorRoot, 'pointerdown', onTrackedPointerDown, { capture: true }));
+  cleanupFns.push(on(window, 'pointermove', onWindowPointerMove, { capture: true }));
+  cleanupFns.push(on(window, 'pointerup', onWindowPointerUp, { capture: true }));
+  cleanupFns.push(on(window, 'pointercancel', onWindowPointerCancel, { capture: true }));
+  cleanupFns.push(on(documentRoot, 'pointerdown', onDocumentPointerDown, { capture: true }));
+  cleanupFns.push(on(window, 'keydown', onWindowKeyDown, { capture: true }));
+  cleanupFns.push(on(window, 'resize', onWindowResize));
 
   return () => {
     closeMenu();
-    editorRoot.removeEventListener('pointerdown', onTrackedPointerDown, true);
-    window.removeEventListener('pointermove', onWindowPointerMove, true);
-    window.removeEventListener('pointerup', onWindowPointerUp, true);
-    window.removeEventListener('pointercancel', onWindowPointerCancel, true);
-    documentRoot.removeEventListener('pointerdown', onDocumentPointerDown, true);
-    window.removeEventListener('keydown', onWindowKeyDown, true);
-    window.removeEventListener('resize', onWindowResize);
+    for (const cleanup of cleanupFns) {
+      cleanup();
+    }
     menuRoot.remove();
   };
 }

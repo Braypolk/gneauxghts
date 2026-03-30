@@ -504,14 +504,16 @@ fn resolve_note_path_input(
     note_id: Option<String>,
     path: Option<String>,
 ) -> Result<PathBuf, String> {
+    if let Some(note_path) = validate_current_path(path, notes_dir)? {
+        return Ok(note_path);
+    }
+
     if let Some(note_id) = note_id.filter(|note_id| !note_id.trim().is_empty()) {
         return resolve_note_path_by_id(notes_dir, &note_id)?
             .ok_or_else(|| "Missing note path".to_string());
     }
 
-    let note_path =
-        validate_current_path(path, notes_dir)?.ok_or_else(|| "Missing note path".to_string())?;
-    Ok(note_path)
+    Err("Missing note path".to_string())
 }
 
 fn read_modified_millis(path: &Path) -> Result<u64, String> {

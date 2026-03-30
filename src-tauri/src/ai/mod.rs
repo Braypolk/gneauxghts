@@ -649,31 +649,37 @@ pub(crate) fn clear_ai_diagnostics(ai: State<'_, AiState>) -> Result<(), String>
 }
 
 #[tauri::command]
-pub(crate) fn list_ai_models(
+pub(crate) async fn list_ai_models(
     ai: State<'_, AiState>,
     base_url: Option<String>,
     api_key: Option<String>,
 ) -> Result<Vec<AiModelOption>, String> {
-    let connection = ai.connection()?;
-    let settings = load_settings(&connection)?;
-    let provider_kind = settings.provider_kind.clone();
-    if provider_kind != AiProviderKind::OpenAiCompatible {
-        return Err(
-            "Model discovery is only available for OpenAI-compatible providers.".to_string(),
-        );
-    }
+    let db_path = ai.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let connection = open_database(&db_path)?;
+        ensure_schema(&connection)?;
+        ensure_default_settings(&connection)?;
+        let settings = load_settings(&connection)?;
+        let provider_kind = settings.provider_kind.clone();
+        if provider_kind != AiProviderKind::OpenAiCompatible {
+            return Err(
+                "Model discovery is only available for OpenAI-compatible providers.".to_string(),
+            );
+        }
 
-    let resolved_base_url =
-        normalize_base_url(base_url.as_deref().unwrap_or(settings.base_url.as_str()));
-    let resolved_api_key = api_key
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .or(settings.api_key)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "Set an API key before loading models.".to_string())?;
+        let resolved_base_url =
+            normalize_base_url(base_url.as_deref().unwrap_or(settings.base_url.as_str()));
+        let resolved_api_key = api_key
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or(settings.api_key)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "Set an API key before loading models.".to_string())?;
 
-    let models = fetch_openai_compatible_models(&resolved_base_url, &resolved_api_key)?;
-    Ok(models)
+        fetch_openai_compatible_models(&resolved_base_url, &resolved_api_key)
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 #[tauri::command]
