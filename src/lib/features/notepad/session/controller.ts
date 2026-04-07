@@ -21,6 +21,7 @@ import {
   type SaveMode,
   type SessionSnapshot
 } from '$lib/features/notepad/session/session';
+import type { DocumentSession } from '$lib/features/notepad/session/documentSession';
 
 interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
@@ -28,22 +29,11 @@ interface ReplaceEditorContentOptions {
 }
 
 interface SessionControllerDeps {
-  getTitle: () => string;
-  getBodyMarkdown: () => string;
-  getCurrentMarkdown: () => string;
-  getCurrentNoteId: () => string | null;
-  setCurrentNoteId: (value: string | null) => void;
-  getCurrentPath: () => string | null;
-  setCurrentPath: (value: string | null) => void;
-  getLastSavedTitle: () => string;
-  setLastSavedTitle: (value: string) => void;
-  getLastSavedMarkdown: () => string;
-  setLastSavedMarkdown: (value: string) => void;
-  getLastSavedNoteId: () => string | null;
-  setLastSavedNoteId: (value: string | null) => void;
-  getLastSavedPath: () => string | null;
-  setLastSavedPath: (value: string | null) => void;
-  applySessionSnapshot: (snapshot: SessionSnapshot) => void;
+  getDocumentSession: () => DocumentSession;
+  activateDocumentSession: (snapshot: SessionSnapshot) => DocumentSession;
+  syncActiveDocumentSession: (snapshot: SessionSnapshot) => DocumentSession;
+  resetActiveDocumentSession: () => DocumentSession;
+  discardDocumentSession: (noteId: string | null, notePath: string | null) => void;
   isEditorReady: () => boolean;
   getIsRefreshingFromDisk: () => boolean;
   setIsRefreshingFromDisk: (value: boolean) => void;
@@ -51,19 +41,19 @@ interface SessionControllerDeps {
   setForgottenNote: (value: ForgottenNote | null) => void;
   setCanUnforget: (value: boolean) => void;
   getForgottenRetentionDays: () => 1 | 7 | 30;
-  saveCursorPositionForNote: () => void;
-  saveEditorStateForNote: () => void;
-  discardEditorStateForNote: (notePath: string | null) => void;
+  saveCursorPositionForDocument: (document?: DocumentSession) => void;
+  saveEditorStateForDocument: (document?: DocumentSession) => void;
+  discardEditorStateForDocument: (document: DocumentSession) => void;
   replaceEditorContent: (
     nextMarkdown: string,
     options?: ReplaceEditorContentOptions
   ) => Promise<void>;
   replaceEditorContentInPlace: (nextMarkdown: string) => Promise<void>;
-  replaceEditorContentInPlaceForNote: (
+  replaceEditorContentInPlaceForDocument: (
     nextMarkdown: string,
-    notePath: string | null
+    document: DocumentSession
   ) => Promise<void>;
-  restoreEditorStateForNote: (notePath: string | null) => Promise<boolean>;
+  restoreEditorStateForDocument: (document: DocumentSession) => Promise<boolean>;
   clearSelectedRelatedText: () => void;
   clearSearch: () => void;
   scheduleSearch: () => void;
@@ -75,22 +65,11 @@ interface SessionControllerDeps {
 }
 
 export function createSessionController({
-  getTitle,
-  getBodyMarkdown,
-  getCurrentMarkdown,
-  getCurrentNoteId,
-  setCurrentNoteId,
-  getCurrentPath,
-  setCurrentPath,
-  getLastSavedTitle,
-  setLastSavedTitle,
-  getLastSavedMarkdown,
-  setLastSavedMarkdown,
-  getLastSavedNoteId,
-  setLastSavedNoteId,
-  getLastSavedPath,
-  setLastSavedPath,
-  applySessionSnapshot,
+  getDocumentSession,
+  activateDocumentSession,
+  syncActiveDocumentSession,
+  resetActiveDocumentSession,
+  discardDocumentSession,
   isEditorReady,
   getIsRefreshingFromDisk,
   setIsRefreshingFromDisk,
@@ -98,13 +77,13 @@ export function createSessionController({
   setForgottenNote,
   setCanUnforget,
   getForgottenRetentionDays,
-  saveCursorPositionForNote,
-  saveEditorStateForNote,
-  discardEditorStateForNote,
+  saveCursorPositionForDocument,
+  saveEditorStateForDocument,
+  discardEditorStateForDocument,
   replaceEditorContent,
   replaceEditorContentInPlace,
-  replaceEditorContentInPlaceForNote,
-  restoreEditorStateForNote,
+  replaceEditorContentInPlaceForDocument,
+  restoreEditorStateForDocument,
   clearSelectedRelatedText,
   clearSearch,
   scheduleSearch,
@@ -114,24 +93,23 @@ export function createSessionController({
   closeWikilinkAutocomplete,
   setAssetRootPath
 }: SessionControllerDeps) {
-  let saveTimer: ReturnType<typeof window.setTimeout> | null = null;
-  let saveQueue: Promise<void> = Promise.resolve();
-
   function hasCleanBuffer() {
-    return shouldSkipAutosave(getTitle(), getCurrentMarkdown(), getCurrentNoteId(), getCurrentPath(), {
-      lastSavedTitle: getLastSavedTitle(),
-      lastSavedMarkdown: getLastSavedMarkdown(),
-      lastSavedNoteId: getLastSavedNoteId(),
-      lastSavedPath: getLastSavedPath()
-    });
+    const document = getDocumentSession();
+    return shouldSkipAutosave(
+      document.title,
+      document.bodyMarkdown,
+      document.currentNoteId,
+      document.currentNotePath,
+      document
+    );
   }
 
   async function loadSavedNote() {
     try {
-      applySessionSnapshot(await loadSavedNoteSession());
+      activateDocumentSession(await loadSavedNoteSession());
     } catch (error) {
       console.error('Failed to load saved note:', error);
-      applySessionSnapshot(createEmptySessionSnapshot());
+      activateDocumentSession(createEmptySessionSnapshot());
     }
   }
 
@@ -146,7 +124,8 @@ export function createSessionController({
   }
 
   async function refreshCurrentNoteIfChanged() {
-    const currentPath = getCurrentPath();
+    const document = getDocumentSession();
+    const currentPath = document.currentNotePath;
     if (!currentPath || !isEditorReady() || getIsRefreshingFromDisk() || !hasCleanBuffer()) {
       return;
     }
@@ -154,22 +133,22 @@ export function createSessionController({
     setIsRefreshingFromDisk(true);
 
     try {
-      const session = await readNoteSession(getCurrentNoteId(), currentPath);
+      const session = await readNoteSession(document.currentNoteId, currentPath);
 
-      if (!hasCleanBuffer() || session.currentNoteId !== getCurrentNoteId()) {
+      if (getDocumentSession() !== document || !hasCleanBuffer()) {
         return;
       }
 
       if (
-        session.lastSavedTitle === getLastSavedTitle() &&
-        session.lastSavedMarkdown === getLastSavedMarkdown() &&
-        session.lastSavedNoteId === getLastSavedNoteId() &&
-        session.lastSavedPath === getLastSavedPath()
+        session.lastSavedTitle === document.lastSavedTitle &&
+        session.lastSavedMarkdown === document.lastSavedMarkdown &&
+        session.lastSavedNoteId === document.lastSavedNoteId &&
+        session.lastSavedPath === document.lastSavedPath
       ) {
         return;
       }
 
-      applySessionSnapshot(session);
+      syncActiveDocumentSession(session);
       setCanUnforget(false);
       setForgottenNote(null);
       await replaceEditorContentInPlace(session.bodyMarkdown);
@@ -183,84 +162,90 @@ export function createSessionController({
     }
   }
 
-  function cancelPendingAutosave() {
-    if (!saveTimer) {
+  function cancelPendingAutosave(document: DocumentSession = getDocumentSession()) {
+    if (!document.saveTimer) {
       return;
     }
 
-    window.clearTimeout(saveTimer);
-    saveTimer = null;
+    window.clearTimeout(document.saveTimer);
+    document.saveTimer = null;
   }
 
-  async function persistNote(mode: SaveMode) {
-    const title = getTitle();
-    const markdown = getCurrentMarkdown();
+  async function persistNote(document: DocumentSession, mode: SaveMode) {
+    const title = document.title;
+    const markdown = document.bodyMarkdown;
 
     if (
       mode === 'autosave' &&
-      shouldSkipAutosave(title, markdown, getCurrentNoteId(), getCurrentPath(), {
-        lastSavedTitle: getLastSavedTitle(),
-        lastSavedMarkdown: getLastSavedMarkdown(),
-        lastSavedNoteId: getLastSavedNoteId(),
-        lastSavedPath: getLastSavedPath()
-      })
+      shouldSkipAutosave(title, markdown, document.currentNoteId, document.currentNotePath, document)
     ) {
       return;
     }
 
     if (mode === 'remember') {
-      await rememberWithAction(EXACT_REMEMBER_ACTION, 'autoApply', title, markdown, getCurrentPath());
+      await rememberWithAction(
+        EXACT_REMEMBER_ACTION,
+        'autoApply',
+        title,
+        markdown,
+        document.currentNotePath
+      );
       scheduleAutoSync('note-remembered', 400);
       return;
     }
 
-    applySessionSnapshot(await saveNoteSession(title, markdown, getCurrentPath()));
+    syncActiveDocumentSession(
+      await saveNoteSession(title, markdown, document.currentNotePath)
+    );
     scheduleAutoSync('note-saved', 600);
   }
 
-  async function enqueueSave(mode: SaveMode) {
-    saveQueue = saveQueue
-      .then(() => persistNote(mode))
+  async function enqueueSave(mode: SaveMode, document: DocumentSession = getDocumentSession()) {
+    document.saveQueue = document.saveQueue
+      .then(() => persistNote(document, mode))
       .catch((error) => {
         console.error(`Failed to ${mode} note:`, error);
       });
 
-    return saveQueue;
+    return document.saveQueue;
   }
 
   function scheduleAutosave() {
-    cancelPendingAutosave();
-    saveTimer = window.setTimeout(() => {
-      saveTimer = null;
-      void enqueueSave('autosave');
+    const document = getDocumentSession();
+    cancelPendingAutosave(document);
+    document.saveTimer = window.setTimeout(() => {
+      document.saveTimer = null;
+      void enqueueSave('autosave', document);
     }, 1000);
   }
 
   function flushPendingAutosave() {
-    if (!saveTimer) {
+    const document = getDocumentSession();
+    if (!document.saveTimer) {
       return;
     }
 
-    window.clearTimeout(saveTimer);
-    saveTimer = null;
-    void enqueueSave('autosave');
+    window.clearTimeout(document.saveTimer);
+    document.saveTimer = null;
+    void enqueueSave('autosave', document);
   }
 
   async function clearNotepad({ canRestore = true }: { canRestore?: boolean } = {}) {
-    const notePathToClear = getCurrentPath();
+    const document = getDocumentSession();
+    const notePathToClear = document.currentNotePath;
 
     if (notePathToClear) {
-      saveCursorPositionForNote();
-      saveEditorStateForNote();
-      cancelPendingAutosave();
-      await enqueueSave('autosave');
+      saveCursorPositionForDocument(document);
+      saveEditorStateForDocument(document);
+      cancelPendingAutosave(document);
+      await enqueueSave('autosave', document);
     }
 
     const draft = {
-      title: getTitle(),
-      bodyMarkdown: getBodyMarkdown(),
-      currentNoteId: getCurrentNoteId(),
-      currentNotePath: getCurrentPath()
+      title: document.title,
+      bodyMarkdown: document.bodyMarkdown,
+      currentNoteId: document.currentNoteId,
+      currentNotePath: document.currentNotePath
     };
     const hasDraftContent = hasContent(draft);
     let forgottenPath: string | null = null;
@@ -279,11 +264,12 @@ export function createSessionController({
     }
 
     setForgottenNote(canRestore && hasDraftContent ? createForgottenNote(draft, forgottenPath) : null);
-    applySessionSnapshot(createEmptySessionSnapshot());
+    discardDocumentSession(document.currentNoteId, document.currentNotePath);
+    discardEditorStateForDocument(document);
+    resetActiveDocumentSession();
     setCanUnforget(canRestore && hasDraftContent);
     await replaceEditorContent('');
     clearSelectedRelatedText();
-    discardEditorStateForNote(notePathToClear);
     scheduleSearch();
     scheduleRelated({ immediate: true });
     void loadRecentNotes();
@@ -304,10 +290,10 @@ export function createSessionController({
           return;
         }
 
-        applySessionSnapshot(await openNoteSession(null, restoredPath));
+        activateDocumentSession(await openNoteSession(null, restoredPath));
         setCanUnforget(false);
         setForgottenNote(null);
-        await replaceEditorContent(getBodyMarkdown());
+        await replaceEditorContent(getDocumentSession().bodyMarkdown);
         clearSelectedRelatedText();
         scheduleSearch();
         scheduleRelated({ immediate: true });
@@ -320,7 +306,7 @@ export function createSessionController({
       }
     }
 
-    applySessionSnapshot({
+    const restoredDocument = syncActiveDocumentSession({
       ...forgottenNote,
       lastSavedTitle: '',
       lastSavedMarkdown: '',
@@ -328,7 +314,7 @@ export function createSessionController({
       lastSavedPath: null
     });
     setCanUnforget(false);
-    await replaceEditorContent(forgottenNote.bodyMarkdown);
+    await replaceEditorContent(restoredDocument.bodyMarkdown);
     setForgottenNote(null);
     clearSelectedRelatedText();
     scheduleAutosave();
@@ -342,24 +328,30 @@ export function createSessionController({
     action: RememberActionOption,
     cleanUpApplyPolicy: CleanUpApplyPolicy
   ) {
-    const rememberedPath = getCurrentPath();
-    saveCursorPositionForNote();
-    saveEditorStateForNote();
-    cancelPendingAutosave();
-    const title = getTitle();
-    const markdown = getCurrentMarkdown();
-    await rememberWithAction(action, cleanUpApplyPolicy, title, markdown, getCurrentPath());
+    const document = getDocumentSession();
+    const rememberedPath = document.currentNotePath;
+    saveCursorPositionForDocument(document);
+    saveEditorStateForDocument(document);
+    cancelPendingAutosave(document);
+    await rememberWithAction(
+      action,
+      cleanUpApplyPolicy,
+      document.title,
+      document.bodyMarkdown,
+      document.currentNotePath
+    );
     scheduleAutoSync('note-remembered', 400);
-    setCurrentNoteId(null);
-    setCurrentPath(null);
-    setLastSavedTitle('');
-    setLastSavedMarkdown('');
-    setLastSavedNoteId(null);
-    setLastSavedPath(null);
     setForgottenNote(null);
-    discardEditorStateForNote(rememberedPath);
+    setCanUnforget(false);
+    discardDocumentSession(document.currentNoteId, rememberedPath);
+    discardEditorStateForDocument(document);
+    resetActiveDocumentSession();
     clearSearch();
-    await clearNotepad({ canRestore: false });
+    await replaceEditorContent('');
+    clearSelectedRelatedText();
+    scheduleSearch();
+    scheduleRelated({ immediate: true });
+    void loadRecentNotes();
   }
 
   async function openNotePath(
@@ -370,28 +362,33 @@ export function createSessionController({
     if (!noteId && !notePath) {
       return;
     }
-    const previousPath = getCurrentPath();
-    const previousNoteId = getCurrentNoteId();
-    saveCursorPositionForNote();
-    saveEditorStateForNote();
-    if (!currentNoteAlreadySaved && previousPath && (previousNoteId !== noteId || previousPath !== notePath)) {
-      cancelPendingAutosave();
-      await enqueueSave('autosave');
+    const previousDocument = getDocumentSession();
+    const previousPath = previousDocument.currentNotePath;
+    const previousNoteId = previousDocument.currentNoteId;
+    saveCursorPositionForDocument(previousDocument);
+    saveEditorStateForDocument(previousDocument);
+    if (
+      !currentNoteAlreadySaved &&
+      previousPath &&
+      (previousNoteId !== noteId || previousPath !== notePath)
+    ) {
+      cancelPendingAutosave(previousDocument);
+      await enqueueSave('autosave', previousDocument);
     }
 
     const session = await openNoteSession(noteId, notePath);
-    applySessionSnapshot(session);
+    const document = activateDocumentSession(session);
     setCanUnforget(false);
     setForgottenNote(null);
     closeWikilinkAutocomplete();
     clearSelectedRelatedText();
 
-    if (await restoreEditorStateForNote(session.currentNotePath)) {
+    if (await restoreEditorStateForDocument(document)) {
       scheduleRelated({ immediate: true });
       return;
     }
 
-    await replaceEditorContentInPlaceForNote(session.bodyMarkdown, session.currentNotePath);
+    await replaceEditorContentInPlaceForDocument(session.bodyMarkdown, document);
     scheduleRelated({ immediate: true });
   }
 

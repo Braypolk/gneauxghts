@@ -16,6 +16,7 @@ import {
 } from '$lib/features/notepad/editor/editor';
 import { waitForEditorPaint } from '$lib/features/notepad/navigation/navigation';
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
+import type { DocumentSession } from '$lib/features/notepad/session/documentSession';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 
 interface ReplaceEditorContentOptions {
@@ -31,12 +32,11 @@ interface EditorLifecycleControllerDeps {
   getEditorShell: () => HTMLDivElement | null;
   getEditorRoot: () => HTMLDivElement | null;
   getSlashMenuPortal: () => HTMLDivElement | null;
-  getCurrentPath: () => string | null;
   getAssetRootPath: () => string | null;
-  setBodyMarkdown: (value: string) => void;
+  getDocumentSession: () => DocumentSession;
   setIsEditorReady: (value: boolean) => void;
   setIsApplyingExternalContent: (value: boolean) => void;
-  handleEditorMarkdownChange: (nextMarkdown: string) => void;
+  handleEditorMarkdownChange: (document: DocumentSession, nextMarkdown: string) => void;
   onOpenLink: (rawTarget: string) => void;
   onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
   onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
@@ -50,9 +50,8 @@ export function createEditorLifecycleController({
   getEditorShell,
   getEditorRoot,
   getSlashMenuPortal,
-  getCurrentPath,
   getAssetRootPath,
-  setBodyMarkdown,
+  getDocumentSession,
   setIsEditorReady,
   setIsApplyingExternalContent,
   handleEditorMarkdownChange,
@@ -62,7 +61,6 @@ export function createEditorLifecycleController({
   closeTransientUi
 }: EditorLifecycleControllerDeps) {
   let slashMenuPortalCleanup: (() => void) | null = null;
-  const editorStateByNotePath = new Map<string, { generation: number; state: EditorState }>();
   let editorStateGeneration = 0;
 
   async function destroyEditor() {
@@ -86,6 +84,7 @@ export function createEditorLifecycleController({
 
   async function createEditor(initialValue: string) {
     const editorRoot = getEditorRoot();
+    const document = getDocumentSession();
     if (!(await prepareEditor(editorRoot)) || !editorRoot) {
       return;
     }
@@ -100,8 +99,8 @@ export function createEditorLifecycleController({
         },
         onActiveWikilinkChange,
         onMarkdownChange: (nextMarkdown) => {
-          handleEditorMarkdownChange(nextMarkdown);
-          saveEditorStateForNote();
+          handleEditorMarkdownChange(document, nextMarkdown);
+          saveEditorStateForDocument(document);
         },
         onStorePastedImage
       })
@@ -111,57 +110,46 @@ export function createEditorLifecycleController({
     setIsEditorReady(true);
   }
 
-  function saveCursorPositionForNote(
-    notePath: string | null = getCurrentPath(),
+  function saveCursorPositionForDocument(
+    document: DocumentSession = getDocumentSession(),
     position: CursorPosition | null = readCursorPosition(getController())
   ) {
-    if (!notePath || !position) {
+    if (!document.currentNotePath || !position) {
       return;
     }
 
-    saveCursorPosition(notePath, position);
+    saveCursorPosition(document.currentNotePath, position);
   }
 
-  function saveEditorStateForNote(
-    notePath: string | null = getCurrentPath(),
+  function saveEditorStateForDocument(
+    document: DocumentSession = getDocumentSession(),
     editorState: EditorState | null = readEditorState(getController())
   ) {
-    if (!notePath || !editorState) {
-      return;
-    }
-
-    editorStateByNotePath.set(notePath, {
-      generation: editorStateGeneration,
-      state: editorState
-    });
+    document.editorState = editorState;
+    document.editorStateGeneration = editorState ? editorStateGeneration : 0;
   }
 
-  function getEditorStateForNote(notePath: string | null) {
-    if (!notePath) {
+  function getEditorStateForDocument(document: DocumentSession) {
+    if (
+      !document.editorState ||
+      document.editorStateGeneration !== editorStateGeneration
+    ) {
       return null;
     }
 
-    const cachedState = editorStateByNotePath.get(notePath);
-    if (!cachedState || cachedState.generation !== editorStateGeneration) {
-      return null;
-    }
-
-    return cachedState.state;
+    return document.editorState;
   }
 
-  function discardEditorStateForNote(notePath: string | null) {
-    if (!notePath) {
-      return;
-    }
-
-    editorStateByNotePath.delete(notePath);
+  function discardEditorStateForDocument(document: DocumentSession) {
+    document.editorState = null;
+    document.editorStateGeneration = 0;
   }
 
-  function restoreCursorPositionForNote(
-    notePath: string | null = getCurrentPath(),
-    position: CursorPosition | null = loadCursorPosition(notePath)
+  function restoreCursorPositionForDocument(
+    document: DocumentSession = getDocumentSession(),
+    position: CursorPosition | null = loadCursorPosition(document.currentNotePath)
   ) {
-    if (!notePath || !position) {
+    if (!document.currentNotePath || !position) {
       return false;
     }
 
@@ -178,18 +166,19 @@ export function createEditorLifecycleController({
   ) {
     const editorShell = getEditorShell();
     const scrollTop = preserveScroll ? (editorShell?.scrollTop ?? 0) : 0;
+    const document = getDocumentSession();
 
     setIsEditorReady(false);
     await destroyEditor();
-    setBodyMarkdown(nextMarkdown);
+    document.bodyMarkdown = nextMarkdown;
     await createEditor(nextMarkdown);
 
     if (restoreCursor) {
       await waitForEditorPaint();
       if (cursorPosition === undefined) {
-        restoreCursorPositionForNote(getCurrentPath());
+        restoreCursorPositionForDocument(document);
       } else {
-        restoreCursorPositionForNote(getCurrentPath(), cursorPosition);
+        restoreCursorPositionForDocument(document, cursorPosition);
       }
     }
 
@@ -202,6 +191,7 @@ export function createEditorLifecycleController({
 
   async function replaceEditorContentInPlace(nextMarkdown: string) {
     const controller = getController();
+    const document = getDocumentSession();
     const cursorPosition = readCursorPosition(controller);
     const scrollTop = getEditorShell()?.scrollTop ?? 0;
 
@@ -217,7 +207,8 @@ export function createEditorLifecycleController({
         return;
       }
 
-      setBodyMarkdown(nextMarkdown);
+      document.bodyMarkdown = nextMarkdown;
+      saveEditorStateForDocument(document);
       closeTransientUi();
       restoreCursorPosition(controller, cursorPosition);
       await tick();
@@ -231,9 +222,12 @@ export function createEditorLifecycleController({
     }
   }
 
-  async function replaceEditorContentInPlaceForNote(nextMarkdown: string, notePath: string | null) {
+  async function replaceEditorContentInPlaceForDocument(
+    nextMarkdown: string,
+    document: DocumentSession
+  ) {
     const controller = getController();
-    const cursorPosition = loadCursorPosition(notePath) ?? { anchor: 1, head: 1 };
+    const cursorPosition = loadCursorPosition(document.currentNotePath) ?? { anchor: 1, head: 1 };
 
     setIsApplyingExternalContent(true);
     try {
@@ -246,18 +240,18 @@ export function createEditorLifecycleController({
         return;
       }
 
-      setBodyMarkdown(nextMarkdown);
+      document.bodyMarkdown = nextMarkdown;
+      saveEditorStateForDocument(document);
       closeTransientUi();
       restoreCursorPosition(controller, cursorPosition);
       await tick();
-      saveEditorStateForNote(notePath);
     } finally {
       setIsApplyingExternalContent(false);
     }
   }
 
-  async function restoreCachedEditorState(notePath: string | null) {
-    if (!replaceEditorState(getController(), getEditorStateForNote(notePath))) {
+  async function restoreCachedEditorState(document: DocumentSession) {
+    if (!replaceEditorState(getController(), getEditorStateForDocument(document))) {
       return false;
     }
 
@@ -268,19 +262,18 @@ export function createEditorLifecycleController({
   function dispose() {
     slashMenuPortalCleanup?.();
     slashMenuPortalCleanup = null;
-    editorStateByNotePath.clear();
   }
 
   return {
     destroyEditor,
     createEditor,
-    saveCursorPositionForNote,
-    saveEditorStateForNote,
-    discardEditorStateForNote,
-    restoreCursorPositionForNote,
+    saveCursorPositionForDocument,
+    saveEditorStateForDocument,
+    discardEditorStateForDocument,
+    restoreCursorPositionForDocument,
     replaceEditorContent,
     replaceEditorContentInPlace,
-    replaceEditorContentInPlaceForNote,
+    replaceEditorContentInPlaceForDocument,
     restoreCachedEditorState,
     dispose
   };
