@@ -9,6 +9,11 @@ interface StoredCursorEntry extends CursorPosition {
 
 const STORAGE_KEY = 'gneauxghts:notepad-cursors:v1';
 const MAX_STORED_CURSORS = 200;
+const DEFAULT_PANE_CURSOR_SCOPE = 'default';
+
+function getCursorStorageKey(notePath: string, paneId: string | null = null) {
+  return `${paneId ?? DEFAULT_PANE_CURSOR_SCOPE}::${notePath}`;
+}
 
 function canUseStorage() {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
@@ -72,12 +77,15 @@ function writeStoredCursorMap(cursorMap: Map<string, StoredCursorEntry>) {
   }
 }
 
-export function loadCursorPosition(notePath: string | null) {
+export function loadCursorPosition(notePath: string | null, paneId: string | null = null) {
   if (!notePath) {
     return null;
   }
 
-  const entry = readStoredCursorMap().get(notePath);
+  const cursorMap = readStoredCursorMap();
+  const entry =
+    cursorMap.get(getCursorStorageKey(notePath, paneId)) ??
+    cursorMap.get(notePath);
   if (!entry) {
     return null;
   }
@@ -90,14 +98,15 @@ export function loadCursorPosition(notePath: string | null) {
 
 export function saveCursorPosition(
   notePath: string | null,
-  position: CursorPosition | null
+  position: CursorPosition | null,
+  paneId: string | null = null
 ) {
   if (!notePath || !position) {
     return;
   }
 
   const cursorMap = readStoredCursorMap();
-  cursorMap.set(notePath, {
+  cursorMap.set(getCursorStorageKey(notePath, paneId), {
     anchor: position.anchor,
     head: position.head,
     updatedAtMillis: Date.now()

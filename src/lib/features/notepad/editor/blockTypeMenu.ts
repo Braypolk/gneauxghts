@@ -1,6 +1,5 @@
-import { editorViewCtx } from '@milkdown/kit/core';
-import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
-import { TextSelection } from '@milkdown/kit/prose/state';
+import type { Node as ProseMirrorNode } from 'prosemirror-model';
+import { TextSelection } from 'prosemirror-state';
 import { on } from 'svelte/events';
 import {
   applyBlockTypeSelection,
@@ -20,90 +19,60 @@ function getBlockHandleDragButton(target: EventTarget | null) {
   if (!(target instanceof Element)) return null;
 
   const operationItem = target.closest('.operation-item');
-  const blockHandle = operationItem?.closest('.milkdown-block-handle');
+  if (!(operationItem instanceof HTMLElement)) return null;
 
-  if (!(operationItem instanceof HTMLElement) || !(blockHandle instanceof HTMLElement)) return null;
-
-  return operationItem === blockHandle.lastElementChild ? operationItem : null;
+  return operationItem.dataset.role === 'drag' ? operationItem : null;
 }
 
 function resolveBlockContext(
   controller: EditorController,
-  editorRoot: HTMLDivElement,
+  _editorRoot: HTMLDivElement,
   handleButton: HTMLElement
 ): BlockContext | null {
-  const rect = handleButton.getBoundingClientRect();
-  const probeY = Math.round(
-    Math.min(window.innerHeight - 1, Math.max(0, rect.top + rect.height / 2))
-  );
+  const blockHandle = handleButton.closest<HTMLElement>('.milkdown-block-handle');
+  const blockPos = Number(blockHandle?.dataset.blockPos);
+  if (!Number.isFinite(blockPos)) return null;
 
-  let hitElement: HTMLElement | null = null;
-  for (const offset of [32, 64, 96, 128]) {
-    const probeX = Math.round(Math.min(window.innerWidth - 1, Math.max(0, rect.right + offset)));
-    const candidate = document.elementFromPoint(probeX, probeY);
-    if (candidate instanceof HTMLElement && editorRoot.contains(candidate)) {
-      hitElement = candidate;
-      break;
+  const view = controller.view;
+  const node = view.state.doc.nodeAt(blockPos);
+  if (!node) return null;
+
+  if (node.type.name === 'heading') {
+    return { targetPos: blockPos + node.nodeSize - 1, currentTypeId: `heading${node.attrs.level}` };
+  }
+
+  if (node.type.name === 'code_block') {
+    return { targetPos: blockPos + 1, currentTypeId: 'code' };
+  }
+
+  if (node.type.name === 'list_item') {
+    const $pos = view.state.doc.resolve(Math.min(blockPos + 1, view.state.doc.nodeSize - 2));
+    for (let depth = $pos.depth; depth >= 1; depth -= 1) {
+      if ($pos.before(depth) !== blockPos || $pos.node(depth).type.name !== 'list_item') {
+        continue;
+      }
+
+      const innerPos = $pos.start(depth);
+      if (depth >= 2) {
+        const listNode = $pos.node(depth - 1);
+        if (listNode.type.name === 'ordered_list') {
+          return { targetPos: innerPos, currentTypeId: 'orderedList' };
+        }
+      }
+
+      if (node.attrs.checked != null) {
+        return { targetPos: innerPos, currentTypeId: 'taskList' };
+      }
+
+      return { targetPos: innerPos, currentTypeId: 'bulletList' };
     }
   }
 
-  if (!hitElement) return null;
+  if (node.type.name === 'paragraph') {
+    return { targetPos: blockPos + node.nodeSize - 1, currentTypeId: 'paragraph' };
+  }
 
-  let result: BlockContext | null = null;
-  controller.editor.action((ctx) => {
-    const view = ctx.get(editorViewCtx);
-    try {
-      const pos = view.posAtDOM(hitElement!, 0);
-      const $pos = view.state.doc.resolve(pos);
-
-      for (let depth = $pos.depth; depth >= 1; depth -= 1) {
-        const node = $pos.node(depth);
-        const name = node.type.name;
-
-        if (name === 'heading') {
-          result = { targetPos: $pos.end(depth), currentTypeId: `heading${node.attrs.level}` };
-          return;
-        }
-        if (name === 'code_block') {
-          result = { targetPos: $pos.start(depth) + 1, currentTypeId: 'code' };
-          return;
-        }
-        if (name === 'blockquote') {
-          const innerPos = $pos.parent.isTextblock ? $pos.end() : $pos.start(depth) + 1;
-          result = { targetPos: innerPos, currentTypeId: 'quote' };
-          return;
-        }
-        if (name === 'list_item') {
-          const innerPos = $pos.parent.isTextblock ? $pos.end() : $pos.start(depth) + 1;
-          if (depth >= 2) {
-            const listNode = $pos.node(depth - 1);
-            if (listNode.type.name === 'ordered_list') {
-              result = { targetPos: innerPos, currentTypeId: 'orderedList' };
-              return;
-            }
-            if (node.attrs.checked != null) {
-              result = { targetPos: innerPos, currentTypeId: 'taskList' };
-              return;
-            }
-            result = { targetPos: innerPos, currentTypeId: 'bulletList' };
-            return;
-          }
-        }
-        if (name === 'paragraph') {
-          result = { targetPos: $pos.end(depth), currentTypeId: 'paragraph' };
-          return;
-        }
-      }
-
-      if ($pos.parent.isTextblock) {
-        result = { targetPos: $pos.end(), currentTypeId: null };
-      }
-    } catch {
-      result = null;
-    }
-  });
-
-  return result;
+  return { targetPos: Math.min(blockPos + 1, view.state.doc.nodeSize - 2), currentTypeId: null };
 }
 
 function applyBlockTypeMenuSelection(
@@ -112,24 +81,22 @@ function applyBlockTypeMenuSelection(
   option: EditorMenuOption,
   preservedSelection: CursorPosition | null = null
 ) {
-  controller.editor.action((ctx) => {
-    const view = ctx.get(editorViewCtx);
-    const maxPos = Math.max(1, view.state.doc.nodeSize - 2);
-    const selectionPos = Math.max(1, Math.min(targetPos, maxPos));
-    const nextAnchor = preservedSelection
-      ? Math.max(1, Math.min(preservedSelection.anchor, maxPos))
-      : selectionPos;
-    const nextHead = preservedSelection
-      ? Math.max(1, Math.min(preservedSelection.head, maxPos))
-      : selectionPos;
-    const transaction = view.state.tr
-      .setSelection(TextSelection.create(view.state.doc, nextAnchor, nextHead))
-      .scrollIntoView();
+  const view = controller.view;
+  const maxPos = Math.max(1, view.state.doc.nodeSize - 2);
+  const selectionPos = Math.max(1, Math.min(targetPos, maxPos));
+  const nextAnchor = preservedSelection
+    ? Math.max(1, Math.min(preservedSelection.anchor, maxPos))
+    : selectionPos;
+  const nextHead = preservedSelection
+    ? Math.max(1, Math.min(preservedSelection.head, maxPos))
+    : selectionPos;
+  const transaction = view.state.tr
+    .setSelection(TextSelection.create(view.state.doc, nextAnchor, nextHead))
+    .scrollIntoView();
 
-    view.dispatch(transaction);
-    view.focus();
-    applyBlockTypeSelection(ctx, view, option.id);
-  });
+  view.dispatch(transaction);
+  view.focus();
+  applyBlockTypeSelection(view, option.id);
 }
 
 function getTextblockRangeAtPos(doc: ProseMirrorNode, pos: number) {
@@ -302,25 +269,23 @@ export function setupBlockHandleTypeMenu(
     const handleButton = getBlockHandleDragButton(event.target);
     if (!handleButton) return;
 
-    controller.editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      const { selection } = view.state;
-      const preservedSelection = !selection.empty
-        ? {
-            anchor: selection.anchor,
-            head: selection.head
-          }
-        : null;
+    const view = controller.view;
+    const { selection } = view.state;
+    const preservedSelection = !selection.empty
+      ? {
+          anchor: selection.anchor,
+          head: selection.head
+        }
+      : null;
 
-      pointerState = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        handleButton,
-        moved: false,
-        selection: preservedSelection
-      };
-    });
+    pointerState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      handleButton,
+      moved: false,
+      selection: preservedSelection
+    };
   };
 
   const onWindowPointerMove = (event: PointerEvent) => {
@@ -350,12 +315,10 @@ export function setupBlockHandleTypeMenu(
 
     activeTargetPos = context.targetPos;
     if (captured.selection) {
-      controller.editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
-        activeSelection = selectionTouchesBlock(view.state.doc, captured.selection!, context.targetPos)
-          ? captured.selection
-          : null;
-      });
+      const view = controller.view;
+      activeSelection = selectionTouchesBlock(view.state.doc, captured.selection!, context.targetPos)
+        ? captured.selection
+        : null;
     } else {
       activeSelection = null;
     }

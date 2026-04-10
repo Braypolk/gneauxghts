@@ -1,4 +1,4 @@
-import type { EditorState } from '@milkdown/kit/prose/state';
+import type { EditorState } from 'prosemirror-state';
 import { tick } from 'svelte';
 import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
 import { loadCursorPosition, saveCursorPosition } from '$lib/features/notepad/editor/cursorState';
@@ -27,6 +27,7 @@ interface ReplaceEditorContentOptions {
 
 interface EditorLifecycleControllerDeps {
   getController: () => EditorController | null;
+  getPaneId: () => string;
   setController: (value: EditorController | null) => void;
   getShellElement: () => HTMLDivElement | null;
   getEditorShell: () => HTMLDivElement | null;
@@ -37,6 +38,7 @@ interface EditorLifecycleControllerDeps {
   setIsEditorReady: (value: boolean) => void;
   setIsApplyingExternalContent: (value: boolean) => void;
   handleEditorMarkdownChange: (document: DocumentSession, nextMarkdown: string) => void;
+  onTaskListToggle: () => void;
   onOpenLink: (rawTarget: string) => void;
   onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
   onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
@@ -45,6 +47,7 @@ interface EditorLifecycleControllerDeps {
 
 export function createEditorLifecycleController({
   getController,
+  getPaneId,
   setController,
   getShellElement,
   getEditorShell,
@@ -55,13 +58,14 @@ export function createEditorLifecycleController({
   setIsEditorReady,
   setIsApplyingExternalContent,
   handleEditorMarkdownChange,
+  onTaskListToggle,
   onOpenLink,
   onActiveWikilinkChange,
   onStorePastedImage,
   closeTransientUi
 }: EditorLifecycleControllerDeps) {
   let slashMenuPortalCleanup: (() => void) | null = null;
-  let editorStateGeneration = 0;
+  let sharedEditorStateGeneration = 0;
 
   async function destroyEditor() {
     slashMenuPortalCleanup = resetSlashMenuPortal({
@@ -84,7 +88,6 @@ export function createEditorLifecycleController({
 
   async function createEditor(initialValue: string) {
     const editorRoot = getEditorRoot();
-    const document = getDocumentSession();
     if (!(await prepareEditor(editorRoot)) || !editorRoot) {
       return;
     }
@@ -99,13 +102,15 @@ export function createEditorLifecycleController({
         },
         onActiveWikilinkChange,
         onMarkdownChange: (nextMarkdown) => {
+          const document = getDocumentSession();
           handleEditorMarkdownChange(document, nextMarkdown);
-          saveEditorStateForDocument(document);
+          saveSharedEditorStateForDocument(document);
         },
+        onTaskListToggle,
         onStorePastedImage
       })
     );
-    editorStateGeneration += 1;
+    sharedEditorStateGeneration += 1;
     setupSlashMenuPortal();
     setIsEditorReady(true);
   }
@@ -118,36 +123,36 @@ export function createEditorLifecycleController({
       return;
     }
 
-    saveCursorPosition(document.currentNotePath, position);
+    saveCursorPosition(document.currentNotePath, position, getPaneId());
   }
 
-  function saveEditorStateForDocument(
+  function saveSharedEditorStateForDocument(
     document: DocumentSession = getDocumentSession(),
     editorState: EditorState | null = readEditorState(getController())
   ) {
-    document.editorState = editorState;
-    document.editorStateGeneration = editorState ? editorStateGeneration : 0;
+    document.sharedEditorState = editorState;
+    document.sharedEditorStateGeneration = editorState ? sharedEditorStateGeneration : 0;
   }
 
-  function getEditorStateForDocument(document: DocumentSession) {
+  function getSharedEditorStateForDocument(document: DocumentSession) {
     if (
-      !document.editorState ||
-      document.editorStateGeneration !== editorStateGeneration
+      !document.sharedEditorState ||
+      document.sharedEditorStateGeneration !== sharedEditorStateGeneration
     ) {
       return null;
     }
 
-    return document.editorState;
+    return document.sharedEditorState;
   }
 
-  function discardEditorStateForDocument(document: DocumentSession) {
-    document.editorState = null;
-    document.editorStateGeneration = 0;
+  function discardSharedEditorStateForDocument(document: DocumentSession) {
+    document.sharedEditorState = null;
+    document.sharedEditorStateGeneration = 0;
   }
 
   function restoreCursorPositionForDocument(
     document: DocumentSession = getDocumentSession(),
-    position: CursorPosition | null = loadCursorPosition(document.currentNotePath)
+    position: CursorPosition | null = loadCursorPosition(document.currentNotePath, getPaneId())
   ) {
     if (!document.currentNotePath || !position) {
       return false;
@@ -208,7 +213,7 @@ export function createEditorLifecycleController({
       }
 
       document.bodyMarkdown = nextMarkdown;
-      saveEditorStateForDocument(document);
+      saveSharedEditorStateForDocument(document);
       closeTransientUi();
       restoreCursorPosition(controller, cursorPosition);
       await tick();
@@ -227,7 +232,8 @@ export function createEditorLifecycleController({
     document: DocumentSession
   ) {
     const controller = getController();
-    const cursorPosition = loadCursorPosition(document.currentNotePath) ?? { anchor: 1, head: 1 };
+    const cursorPosition =
+      loadCursorPosition(document.currentNotePath, getPaneId()) ?? { anchor: 1, head: 1 };
 
     setIsApplyingExternalContent(true);
     try {
@@ -241,7 +247,7 @@ export function createEditorLifecycleController({
       }
 
       document.bodyMarkdown = nextMarkdown;
-      saveEditorStateForDocument(document);
+      saveSharedEditorStateForDocument(document);
       closeTransientUi();
       restoreCursorPosition(controller, cursorPosition);
       await tick();
@@ -250,11 +256,17 @@ export function createEditorLifecycleController({
     }
   }
 
-  async function restoreCachedEditorState(document: DocumentSession) {
-    if (!replaceEditorState(getController(), getEditorStateForDocument(document))) {
+  async function restoreSharedEditorStateForDocument(document: DocumentSession) {
+    if (
+      !replaceEditorState(getController(), getSharedEditorStateForDocument(document), {
+        focus: false,
+        scrollSelectionIntoView: false
+      })
+    ) {
       return false;
     }
 
+    restoreCursorPositionForDocument(document);
     await tick();
     return true;
   }
@@ -268,13 +280,13 @@ export function createEditorLifecycleController({
     destroyEditor,
     createEditor,
     saveCursorPositionForDocument,
-    saveEditorStateForDocument,
-    discardEditorStateForDocument,
+    saveSharedEditorStateForDocument,
+    discardSharedEditorStateForDocument,
     restoreCursorPositionForDocument,
     replaceEditorContent,
     replaceEditorContentInPlace,
     replaceEditorContentInPlaceForDocument,
-    restoreCachedEditorState,
+    restoreSharedEditorStateForDocument,
     dispose
   };
 }

@@ -1,7 +1,6 @@
-import { EditorState, Plugin, PluginKey, type Transaction } from '@milkdown/kit/prose/state';
-import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { $prose } from '@milkdown/kit/utils';
-import { imagesConfig } from '$lib/features/notepad/images/imageConfig';
+import { EditorState, Plugin, PluginKey, type Transaction } from 'prosemirror-state';
+import { Decoration, DecorationSet } from 'prosemirror-view';
+import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 
 interface ImageUploadAction {
   add?: { id: symbol; pos: number };
@@ -29,7 +28,7 @@ function createUploadPlaceholder() {
   return placeholder;
 }
 
-export const imagePastePlugin = $prose((ctx) => {
+export function createImagePastePlugin(config: ImagesConfig) {
   const key = new PluginKey<DecorationSet>('NOTEPAD_PASTED_IMAGES');
 
   return new Plugin({
@@ -89,7 +88,7 @@ export const imagePastePlugin = $prose((ctx) => {
         const insertPos = transaction.selection.from;
         view.dispatch(transaction.setMeta(key, { add: { id: placeholderId, pos: insertPos } }));
 
-        const { storePastedImage } = ctx.get(imagesConfig.key);
+        const { storePastedImage } = config;
         void Promise.all(imageFiles.map((file) => storePastedImage(file)))
           .then((assets) => {
             const placeholderPos = findUploadPlaceholder(key, view.state, placeholderId);
@@ -119,4 +118,4 @@ export const imagePastePlugin = $prose((ctx) => {
       }
     }
   });
-});
+}

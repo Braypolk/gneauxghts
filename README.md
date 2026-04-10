@@ -39,7 +39,7 @@ This means your notes stay easy to back up, sync, or edit outside the app.
 - SvelteKit 2 / Svelte 5
 - TypeScript
 - Rust
-- Milkdown Crepe editor
+- ProseMirror editor
 - SQLite + HNSW-based ANN index for semantic retrieval
 
 ## Development

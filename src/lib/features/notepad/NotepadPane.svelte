@@ -24,6 +24,7 @@
   import type { EditorController } from '$lib/features/notepad/editor/editor';
   import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
   import { focusEditorAtEnd, focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
+  import { registerPendingNoteSaveHandler } from '$lib/features/notepad/navigation/pendingNoteSave';
   import {
     navigateToPendingTaskTarget,
     openRecentTask,
@@ -45,9 +46,11 @@
     activateDocumentSession as activateSharedDocumentSession,
     createDocumentSessionStore,
     discardDocumentSession as discardSharedDocumentSession,
+    getActivePaneSession,
     resetActiveDocumentSession as resetSharedActiveDocumentSession,
     syncActiveDocumentSession as syncSharedActiveDocumentSession,
-    type DocumentSession
+    type DocumentSession,
+    type PaneSession
   } from '$lib/features/notepad/session/documentSession';
   import {
     createWikilinkAutocompleteState,
@@ -90,7 +93,8 @@
   let titleShell: HTMLDivElement | null = null;
   let isEditorReady = $state(false);
   const documentSessionStore = createDocumentSessionStore();
-  let documentSession = $state<DocumentSession>(documentSessionStore.activeDocument);
+  let paneSession = $state<PaneSession>(documentSessionStore.activePane);
+  let documentSession = $state<DocumentSession>(documentSessionStore.activePane.document);
   let canUnforget = $state(false);
   let forgottenNote: ForgottenNote | null = null;
   let searchMode = $state<SearchMode>('all');
@@ -128,18 +132,28 @@
     return documentSession;
   }
 
+  function getPaneId() {
+    return paneSession.paneId;
+  }
+
   function activateDocumentSession(snapshot: SessionSnapshot) {
-    documentSession = activateSharedDocumentSession(documentSessionStore, snapshot);
+    activateSharedDocumentSession(documentSessionStore, snapshot);
+    paneSession = getActivePaneSession(documentSessionStore);
+    documentSession = paneSession.document;
     return documentSession;
   }
 
   function syncActiveDocumentSession(snapshot: SessionSnapshot) {
-    documentSession = syncSharedActiveDocumentSession(documentSessionStore, snapshot);
+    syncSharedActiveDocumentSession(documentSessionStore, snapshot);
+    paneSession = getActivePaneSession(documentSessionStore);
+    documentSession = paneSession.document;
     return documentSession;
   }
 
   function resetActiveDocumentSession() {
-    documentSession = resetSharedActiveDocumentSession(documentSessionStore);
+    resetSharedActiveDocumentSession(documentSessionStore);
+    paneSession = getActivePaneSession(documentSessionStore);
+    documentSession = paneSession.document;
     return documentSession;
   }
 
@@ -318,7 +332,7 @@
     } else if (payload.deleted) {
       const deletedDocument = documentSessionStore.documentsByKey.get(`path:${payload.notePath}`);
       if (deletedDocument) {
-        discardEditorStateForDocument(deletedDocument);
+        discardSharedEditorStateForDocument(deletedDocument);
       }
       discardDocumentSession(null, payload.notePath);
     }
@@ -448,6 +462,7 @@
 
   const editorLifecycleController = createEditorLifecycleController({
     getController: () => crepe,
+    getPaneId,
     setController: (value) => {
       crepe = value;
     },
@@ -464,6 +479,9 @@
       isApplyingExternalContent = value;
     },
     handleEditorMarkdownChange,
+    onTaskListToggle: () => {
+      flushPendingAutosave();
+    },
     onOpenLink: (rawTarget) => {
       void openWikilink(rawTarget);
     },
@@ -492,12 +510,12 @@
     },
     getForgottenRetentionDays: () => $forgottenNoteRetentionPreference,
     saveCursorPositionForDocument,
-    saveEditorStateForDocument,
-    discardEditorStateForDocument,
+    saveSharedEditorStateForDocument,
+    discardSharedEditorStateForDocument,
     replaceEditorContent,
     replaceEditorContentInPlace,
     replaceEditorContentInPlaceForDocument,
-    restoreEditorStateForDocument,
+    restoreSharedEditorStateForDocument,
     clearSelectedRelatedText,
     clearSearch,
     scheduleSearch,
@@ -543,16 +561,16 @@
     editorLifecycleController.saveCursorPositionForDocument(document);
   }
 
-  function saveEditorStateForNote() {
-    editorLifecycleController.saveEditorStateForDocument();
+  function saveSharedEditorStateForNote() {
+    editorLifecycleController.saveSharedEditorStateForDocument();
   }
 
-  function saveEditorStateForDocument(document?: DocumentSession) {
-    editorLifecycleController.saveEditorStateForDocument(document);
+  function saveSharedEditorStateForDocument(document?: DocumentSession) {
+    editorLifecycleController.saveSharedEditorStateForDocument(document);
   }
 
-  function discardEditorStateForDocument(document: DocumentSession) {
-    editorLifecycleController.discardEditorStateForDocument(document);
+  function discardSharedEditorStateForDocument(document: DocumentSession) {
+    editorLifecycleController.discardSharedEditorStateForDocument(document);
   }
 
   function restoreCursorPositionForNote() {
@@ -631,8 +649,8 @@
     );
   }
 
-  async function restoreEditorStateForDocument(document: DocumentSession) {
-    return editorLifecycleController.restoreCachedEditorState(document);
+  async function restoreSharedEditorStateForDocument(document: DocumentSession) {
+    return editorLifecycleController.restoreSharedEditorStateForDocument(document);
   }
 
   async function openNotePath(
@@ -764,6 +782,10 @@
 
   onMount(() => {
     let mounted = true;
+    const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(async () => {
+      cancelPendingAutosave();
+      await enqueueSave('autosave');
+    });
     const shellResizeObserver =
       typeof ResizeObserver === 'undefined'
         ? null
@@ -806,13 +828,14 @@
       mounted = false;
       isEditorReady = false;
       saveCursorPositionForNote();
-      saveEditorStateForNote();
+      saveSharedEditorStateForNote();
       flushPendingAutosave();
       editorLifecycleController.dispose();
       sessionController.dispose();
       cancelScheduledAutoSync();
       searchController.dispose();
       relatedController.dispose();
+      unregisterPendingNoteSaveHandler();
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
       shellResizeObserver?.disconnect();
@@ -1066,7 +1089,7 @@
       </div>
     </div>
   {/if}
-  <div bind:this={slashMenuPortal} class="notepad-slash-portal milkdown fixed inset-0 z-40 pointer-events-none"></div>
+  <div bind:this={slashMenuPortal} class="notepad-slash-portal fixed inset-0 z-40 pointer-events-none"></div>
   <WikilinkAutocomplete
     active={wikilinkAutocomplete.active}
     activeWikilink={wikilinkAutocomplete.activeWikilink}
@@ -1173,7 +1196,7 @@
   }
 
   .notepad-shell,
-  .notepad-editor-shell :global(.milkdown),
+  .notepad-editor-shell :global(.gn-editor-root),
   .notepad-slash-portal {
     --crepe-color-background: var(--card);
     --crepe-color-on-background: var(--foreground);
@@ -1194,9 +1217,32 @@
     --crepe-color-inline-area: color-mix(in oklab, var(--muted) 80%, var(--background));
     --gn-editor-selection-background: color-mix(in oklab, var(--foreground) 42%, var(--background));
     --gn-editor-selection-color: var(--background);
+    --gn-task-checkbox-border: color-mix(in oklab, var(--foreground) 20%, var(--card) 80%);
+    --gn-task-checkbox-bg: color-mix(in oklab, var(--card) 92%, var(--muted) 8%);
+    --gn-task-checkbox-checked-border: color-mix(
+      in oklab,
+      var(--foreground) 28%,
+      var(--card) 72%
+    );
+    --gn-task-checkbox-checked-bg: color-mix(
+      in oklab,
+      var(--foreground) 18%,
+      var(--card) 82%
+    );
+    --gn-task-checkbox-check: color-mix(in oklab, var(--foreground) 88%, white 12%);
   }
 
-  .notepad-editor-shell :global(.milkdown) {
+  :global(.dark) .notepad-shell,
+  :global(.dark) .notepad-editor-shell :global(.gn-editor-root),
+  :global(.dark) .notepad-slash-portal {
+    --gn-task-checkbox-border: color-mix(in oklab, white 26%, var(--card) 74%);
+    --gn-task-checkbox-bg: color-mix(in oklab, white 12%, var(--card) 88%);
+    --gn-task-checkbox-checked-border: color-mix(in oklab, white 42%, var(--card) 58%);
+    --gn-task-checkbox-checked-bg: color-mix(in oklab, white 26%, var(--card) 74%);
+    --gn-task-checkbox-check: color-mix(in oklab, white 96%, var(--card) 4%);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root) {
     min-height: 100%;
     width: 100%;
     max-width: 100%;
@@ -1204,11 +1250,11 @@
   }
 
   /* Hide the + button that adds a new line in the block handle */
-  .notepad-editor-shell :global(.milkdown .milkdown-block-handle .operation-item:first-child) {
+  .notepad-editor-shell :global(.gn-editor-root .milkdown-block-handle .operation-item:first-child) {
     display: none;
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror) {
     box-sizing: border-box;
     min-height: 100%;
     max-width: 100%;
@@ -1225,21 +1271,197 @@
     position: relative;
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror > *) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror > *) {
     max-width: 100%;
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror *::selection) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror) {
+    color: var(--foreground);
+    line-height: 1.75;
+    outline: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror p),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ol),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror blockquote),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror pre),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror table) {
+    margin: 0.65rem 0;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h1),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h2),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h3),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h4),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h5),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h6) {
+    margin: 1.15rem 0 0.45rem;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h1) {
+    font-size: 2rem;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h2) {
+    font-size: 1.6rem;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h3) {
+    font-size: 1.32rem;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h4),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h5),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h6) {
+    font-size: 1.08rem;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror blockquote) {
+    padding-left: 1rem;
+    border-left: 3px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
+    color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror pre) {
+    overflow-x: auto;
+    padding: 0.95rem 1rem;
+    border-radius: 1rem;
+    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+    background: color-mix(in oklab, var(--muted) 76%, var(--background));
+    font-family: var(--font-mono);
+    font-size: 0.92rem;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror code) {
+    font-family: var(--font-mono);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror p code),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li code),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror blockquote code) {
+    padding: 0.12rem 0.35rem;
+    border-radius: 0.4rem;
+    background: color-mix(in oklab, var(--muted) 80%, var(--background));
+    color: var(--destructive);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror hr) {
+    margin: 1.25rem 0;
+    border: 0;
+    border-top: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror table) {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror th),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror td) {
+    padding: 0.55rem 0.7rem;
+    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+    vertical-align: top;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror th) {
+    background: color-mix(in oklab, var(--muted) 72%, var(--background));
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul),
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ol) {
+    padding-left: 1.4rem;
+    list-style-position: outside;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul) {
+    list-style-type: disc;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ol) {
+    list-style-type: decimal;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul ul) {
+    list-style-type: circle;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul ul ul) {
+    list-style-type: square;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul[data-task-list='true']) {
+    padding-left: 0;
+    list-style: none;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li[data-checked]) {
+    position: relative;
+    padding-left: 2.08rem;
+    list-style: none;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li[data-checked]::before) {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.28rem;
+    width: 1.28rem;
+    height: 1.28rem;
+    border-radius: 0.24rem;
+    border: 1px solid var(--gn-task-checkbox-border);
+    background: var(--gn-task-checkbox-bg);
+    cursor: pointer;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      box-shadow 120ms ease,
+      transform 120ms ease;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li[data-checked='true']::before) {
+    border-color: var(--gn-task-checkbox-checked-border);
+    background: var(--gn-task-checkbox-checked-bg);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li[data-checked='true']::after) {
+    content: '';
+    position: absolute;
+    left: 0.35rem;
+    top: 0.69rem;
+    width: 0.6rem;
+    height: 0.34rem;
+    border-left: 2px solid var(--gn-task-checkbox-check);
+    border-bottom: 2px solid var(--gn-task-checkbox-check);
+    transform: rotate(-45deg);
+    transform-origin: center;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .crepe-placeholder::before) {
+    content: attr(data-placeholder);
+    position: absolute;
+    color: color-mix(in oklab, var(--muted-foreground) 82%, transparent);
+    pointer-events: none;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror *::selection) {
     background: var(--gn-editor-selection-background);
     color: var(--gn-editor-selection-color);
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror *::-moz-selection) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror *::-moz-selection) {
     background: var(--gn-editor-selection-background);
     color: var(--gn-editor-selection-color);
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-wikilink) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-wikilink) {
     border-radius: 0.35rem;
     background: color-mix(in oklab, var(--accent) 54%, transparent);
     color: color-mix(in oklab, var(--foreground) 88%, var(--accent-foreground) 12%);
@@ -1249,15 +1471,15 @@
     text-underline-offset: 0.14em;
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-wikilink:hover) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-wikilink:hover) {
     background: color-mix(in oklab, var(--accent) 72%, transparent);
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed-source) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-image-embed-source) {
     display: none;
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-image-embed) {
     display: block;
     position: relative;
     max-width: min(100%, 42rem);
@@ -1265,7 +1487,7 @@
     cursor: text;
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed img) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-image-embed img) {
     display: block;
     width: auto;
     max-width: 100%;
@@ -1278,7 +1500,7 @@
       0 4px 12px -8px color-mix(in oklab, var(--foreground) 18%, transparent);
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed-resize-handle) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-image-embed-resize-handle) {
     position: absolute;
     right: 0.5rem;
     bottom: 0.5rem;
@@ -1293,16 +1515,16 @@
     transition: opacity 120ms ease;
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed:hover .gn-image-embed-resize-handle) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-image-embed:hover .gn-image-embed-resize-handle) {
     opacity: 1;
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-embed[data-broken='true'] img) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-image-embed[data-broken='true'] img) {
     opacity: 0.45;
     filter: grayscale(1);
   }
 
-  .notepad-editor-shell :global(.milkdown .ProseMirror .gn-image-upload-placeholder) {
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-image-upload-placeholder) {
     display: inline-flex;
     align-items: center;
     padding: 0.45rem 0.7rem;
@@ -1317,7 +1539,70 @@
     caret-color: transparent;
   }
 
-  :global(.dark) .notepad-editor-shell :global(.milkdown .ProseMirror-focused) {
+  /* Below title (z-20) and bottom bar (z-30) so scrolling doesn’t paint the handle over chrome. */
+  .notepad-editor-shell :global(.gn-editor-root .milkdown-block-handle) {
+    position: fixed;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .milkdown-block-handle[data-show='false']) {
+    display: none;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .milkdown-block-handle .operation-item) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.9rem;
+    height: 1.9rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
+    background: color-mix(in oklab, var(--card) 94%, var(--background));
+    box-shadow: 0 12px 24px -20px color-mix(in oklab, var(--foreground) 32%, transparent);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .milkdown-block-handle .operation-item:last-child) {
+    cursor: grab;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .milkdown-block-handle[data-dragging='true'] .operation-item:last-child) {
+    cursor: grabbing;
+  }
+
+  /* Let hit-testing see blocks under the fixed handle while dragging (Milkdown-style). */
+  .notepad-editor-shell :global(.gn-editor-root .milkdown-block-handle[data-dragging='true']) {
+    pointer-events: none;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .milkdown-block-handle .operation-item.active) {
+    background: color-mix(in oklab, var(--accent) 88%, var(--background));
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .gn-block-drop-indicator) {
+    position: fixed;
+    z-index: 7;
+    height: 0;
+    border-top: 3px solid color-mix(in oklab, var(--accent) 88%, var(--foreground) 12%);
+    border-radius: 999px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 90ms ease;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .gn-block-drop-indicator[data-show='true']) {
+    opacity: 1;
+  }
+
+  :global(body.gn-block-dragging) {
+    cursor: grabbing;
+    user-select: none;
+  }
+
+  :global(.dark) .notepad-editor-shell :global(.gn-editor-root .ProseMirror-focused) {
     --prosemirror-virtual-cursor-color: color-mix(
       in oklab,
       var(--foreground) 88%,
@@ -1328,10 +1613,94 @@
   .notepad-slash-portal :global(.milkdown-slash-menu) {
     pointer-events: auto;
     z-index: 60;
+    width: min(26rem, calc(100vw - 2rem));
+    border-radius: 1rem;
+    border: 1px solid color-mix(in oklab, var(--border) 84%, var(--foreground) 16%);
+    background: color-mix(in oklab, var(--card) 94%, var(--background));
+    box-shadow:
+      0 16px 40px -28px color-mix(in oklab, var(--foreground) 42%, transparent),
+      0 8px 18px -16px color-mix(in oklab, var(--foreground) 18%, transparent);
+    overflow: hidden;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu[data-show='false']) {
+    display: none;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu .tab-group) {
+    border-bottom: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+    background: color-mix(in oklab, var(--muted) 66%, var(--background));
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu .tab-group ul) {
+    display: flex;
+    gap: 0.2rem;
+    margin: 0;
+    padding: 0.45rem 0.45rem 0.35rem;
+    list-style: none;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu .tab-group li) {
+    padding: 0.28rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu .tab-group li.selected) {
+    background: color-mix(in oklab, var(--accent) 88%, var(--background));
+    color: var(--foreground);
   }
 
   .notepad-slash-portal :global(.milkdown-slash-menu .menu-groups) {
     max-height: min(420px, var(--notepad-slash-menu-max-height, calc(100vh - 2rem)));
+    overflow-y: auto;
+    padding: 0.45rem;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu .menu-group + .menu-group) {
+    margin-top: 0.45rem;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu .menu-group h6) {
+    margin: 0 0 0.35rem;
+    padding: 0 0.4rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu .menu-group ul) {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu li[data-index]) {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.65rem 0.7rem;
+    border-radius: 0.85rem;
+    color: var(--foreground);
+    cursor: pointer;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu li[data-index] svg) {
+    width: 1.2rem;
+    height: 1.2rem;
+    flex: 0 0 auto;
+  }
+
+  .notepad-slash-portal :global(.milkdown-slash-menu li[data-index].hover),
+  .notepad-slash-portal :global(.milkdown-slash-menu li[data-index].active) {
+    background: color-mix(in oklab, var(--accent) 88%, var(--background));
   }
 
   :global(.notepad-block-type-menu) {

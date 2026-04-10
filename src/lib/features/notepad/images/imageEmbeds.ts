@@ -3,10 +3,9 @@ import {
   PluginKey,
   type Selection,
   type Transaction
-} from '@milkdown/kit/prose/state';
-import { DecorationSet } from '@milkdown/kit/prose/view';
-import { $prose } from '@milkdown/kit/utils';
-import { imagesConfig } from '$lib/features/notepad/images/imageConfig';
+} from 'prosemirror-state';
+import { DecorationSet } from 'prosemirror-view';
+import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 import {
   findTouchedImageEmbedKey,
   isInCodeContext,
@@ -19,21 +18,21 @@ interface ImageEmbedDecorationsState {
   activeWidgetKey: string | null;
 }
 
-export const imageEmbedsPlugin = $prose((ctx) => {
+export function createImageEmbedsPlugin(config: ImagesConfig) {
   const key = new PluginKey<ImageEmbedDecorationsState>('NOTEPAD_IMAGE_EMBEDS');
 
   return new Plugin({
     key,
     state: {
       init(_, state) {
-        const assetRootPath = ctx.get(imagesConfig.key).assetRootPath;
+        const { assetRootPath } = config;
         return {
           decorations: buildImageEmbedDecorations(state.doc, state.selection, assetRootPath),
           activeWidgetKey: findTouchedImageEmbedKey(state.doc, state.selection)
         };
       },
       apply(transaction, pluginState, oldState, newState) {
-        const assetRootPath = ctx.get(imagesConfig.key).assetRootPath;
+        const { assetRootPath } = config;
         if (!assetRootPath || isInCodeContext(newState.selection)) {
           return {
             decorations: DecorationSet.empty,
@@ -70,4 +69,4 @@ export const imageEmbedsPlugin = $prose((ctx) => {
       decorations: (state) => key.getState(state)?.decorations ?? DecorationSet.empty
     }
   });
-});
+}

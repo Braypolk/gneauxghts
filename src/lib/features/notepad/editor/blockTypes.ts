@@ -1,24 +1,15 @@
-import type { Ctx } from '@milkdown/kit/ctx';
-import { type CommandManager, commandsCtx } from '@milkdown/kit/core';
+import { setBlockType, wrapIn } from 'prosemirror-commands';
 import {
-  addBlockTypeCommand,
-  blockquoteSchema,
-  bulletListSchema,
-  codeBlockSchema,
-  headingSchema,
-  hrSchema,
-  orderedListSchema,
-  paragraphSchema,
-  setBlockTypeCommand,
-  wrapInBlockTypeCommand
-} from '@milkdown/kit/preset/commonmark';
-import type { Selection } from '@milkdown/kit/prose/state';
-import { TextSelection } from '@milkdown/kit/prose/state';
-import type { EditorView } from '@milkdown/kit/prose/view';
-import { findParent } from '@milkdown/kit/prose';
-import { Fragment, type Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
-import { wrapInList } from '@milkdown/kit/prose/schema-list';
-import { liftTarget } from '@milkdown/kit/prose/transform';
+  Fragment,
+  type Node as ProseMirrorNode,
+  type NodeType,
+  type ResolvedPos
+} from 'prosemirror-model';
+import type { Selection } from 'prosemirror-state';
+import { TextSelection } from 'prosemirror-state';
+import type { EditorView } from 'prosemirror-view';
+import { wrapInList } from 'prosemirror-schema-list';
+import { liftTarget } from 'prosemirror-transform';
 
 export interface EditorMenuOption {
   id: string;
@@ -38,8 +29,6 @@ interface ListSelectionRangeInfo {
   startIndex: number;
   endIndex: number;
 }
-
-type CommandRunner = Pick<CommandManager, 'call'>;
 
 const wikilinkSlashIcon = `
   <svg
@@ -160,6 +149,25 @@ function readNumberAttr(value: unknown, fallback: number) {
   return fallback;
 }
 
+function findParent(
+  $pos: ResolvedPos,
+  predicate: (node: ProseMirrorNode) => boolean
+) {
+  for (let depth = $pos.depth; depth >= 0; depth -= 1) {
+    const node = $pos.node(depth);
+    if (predicate(node)) {
+      return {
+        node,
+        depth,
+        start: depth > 0 ? $pos.start(depth) : 0,
+        pos: depth > 0 ? $pos.before(depth) : 0
+      };
+    }
+  }
+
+  return null;
+}
+
 function getNearestListAncestor($pos: Selection['$from']) {
   for (let depth = $pos.depth; depth >= 1; depth -= 1) {
     const node = $pos.node(depth);
@@ -225,20 +233,18 @@ function liftSelectionOutOfBlockquote(view: EditorView) {
 
 function ensureParagraphSelection(
   view: EditorView,
-  commands: CommandRunner,
-  paragraphType: ReturnType<typeof paragraphSchema.type>
+  paragraphType: NodeType
 ) {
   if (view.state.selection.$from.parent.type.name === 'paragraph') {
     return true;
   }
 
-  return commands.call(setBlockTypeCommand.key, { nodeType: paragraphType });
+  return setBlockType(paragraphType)(view.state, view.dispatch);
 }
 
 function normalizeSelectionForList(
   view: EditorView,
-  commands: CommandRunner,
-  paragraphType: ReturnType<typeof paragraphSchema.type>
+  paragraphType: NodeType
 ) {
   let lifted = false;
   while (liftSelectionOutOfBlockquote(view)) {
@@ -247,7 +253,7 @@ function normalizeSelectionForList(
 
   const parentTypeName = view.state.selection.$from.parent.type.name;
   if (parentTypeName !== 'paragraph') {
-    return ensureParagraphSelection(view, commands, paragraphType) || lifted;
+    return ensureParagraphSelection(view, paragraphType) || lifted;
   }
 
   return lifted;
@@ -333,8 +339,8 @@ function isListSelectionAlreadyTargeted(
 
 function convertCurrentList(
   view: EditorView,
-  bulletListType: ReturnType<typeof bulletListSchema.type>,
-  orderedListType: ReturnType<typeof orderedListSchema.type>,
+  bulletListType: NodeType,
+  orderedListType: NodeType,
   targetId: 'bulletList' | 'orderedList' | 'taskList'
 ) {
   const selectionRange = resolveListSelectionRange(view);
@@ -423,8 +429,8 @@ function convertCurrentList(
 
 function wrapSelectionInList(
   view: EditorView,
-  bulletListType: ReturnType<typeof bulletListSchema.type>,
-  orderedListType: ReturnType<typeof orderedListSchema.type>,
+  bulletListType: NodeType,
+  orderedListType: NodeType,
   targetId: 'bulletList' | 'orderedList' | 'taskList'
 ) {
   const listType = targetId === 'orderedList' ? orderedListType : bulletListType;
@@ -452,52 +458,51 @@ function insertWikilinkAtSelection(view: EditorView) {
 }
 
 export function applyBlockTypeSelection(
-  ctx: Ctx,
   view: EditorView,
   id: string
 ) {
-  const commands = ctx.get(commandsCtx);
+  const { schema } = view.state;
 
   if (id === 'paragraph') {
-    commands.call(setBlockTypeCommand.key, { nodeType: paragraphSchema.type(ctx) });
+    setBlockType(schema.nodes.paragraph)(view.state, view.dispatch);
     return;
   }
 
   if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
-    const bulletListType = bulletListSchema.type(ctx);
-    const orderedListType = orderedListSchema.type(ctx);
-    const paragraphType = paragraphSchema.type(ctx);
+    const bulletListType = schema.nodes.bullet_list;
+    const orderedListType = schema.nodes.ordered_list;
+    const paragraphType = schema.nodes.paragraph;
 
     if (convertCurrentList(view, bulletListType, orderedListType, id)) {
       return;
     }
 
-    normalizeSelectionForList(view, commands, paragraphType);
+    normalizeSelectionForList(view, paragraphType);
     wrapSelectionInList(view, bulletListType, orderedListType, id);
     return;
   }
 
   if (id.startsWith('heading')) {
     const level = parseInt(id.replace('heading', ''), 10);
-    commands.call(setBlockTypeCommand.key, {
-      nodeType: headingSchema.type(ctx),
-      attrs: { level }
-    });
+    setBlockType(schema.nodes.heading, { level })(view.state, view.dispatch);
     return;
   }
 
   if (id === 'quote') {
-    commands.call(wrapInBlockTypeCommand.key, { nodeType: blockquoteSchema.type(ctx) });
+    wrapIn(schema.nodes.blockquote)(view.state, view.dispatch);
     return;
   }
 
   if (id === 'code') {
-    commands.call(setBlockTypeCommand.key, { nodeType: codeBlockSchema.type(ctx) });
+    setBlockType(schema.nodes.code_block)(view.state, view.dispatch);
     return;
   }
 
   if (id === 'divider') {
-    commands.call(addBlockTypeCommand.key, { nodeType: hrSchema.type(ctx) });
+    const transaction = view.state.tr.replaceSelectionWith(
+      schema.nodes.horizontal_rule.create()
+    );
+    view.dispatch(transaction.scrollIntoView());
     return;
   }
 

@@ -1,5 +1,5 @@
-import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
-import type { Selection } from '@milkdown/kit/prose/state';
+import type { Node as ProseMirrorNode } from 'prosemirror-model';
+import type { Selection } from 'prosemirror-state';
 
 export function isDocEmpty(doc: ProseMirrorNode) {
   return doc.childCount <= 1 && !doc.firstChild?.content.size;

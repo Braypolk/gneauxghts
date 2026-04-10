@@ -1,8 +1,6 @@
-import type { Editor } from '@milkdown/kit/core';
-import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
-import { Plugin, PluginKey, TextSelection } from '@milkdown/kit/prose/state';
-import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
-import { $ctx, $prose } from '@milkdown/kit/utils';
+import type { Node as ProseMirrorNode } from 'prosemirror-model';
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
+import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 
 const WIKILINK_PATTERN = /\[\[([^\[\]\n]+?)\]\]/g;
 
@@ -20,13 +18,10 @@ export interface ActiveWikilink {
   bottom: number;
 }
 
-const wikilinkConfig = $ctx<WikilinkConfig, 'wikilinkConfig'>(
-  {
-    onOpenLink: () => {},
-    onActiveWikilinkChange: () => {}
-  },
-  'wikilinkConfig'
-);
+const defaultWikilinkConfig: WikilinkConfig = {
+  onOpenLink: () => {},
+  onActiveWikilinkChange: () => {}
+};
 
 function isInCodeContext(view: EditorView) {
   const { $from } = view.state.selection;
@@ -123,14 +118,18 @@ function getActiveWikilink(view: EditorView): ActiveWikilink | null {
   };
 }
 
-export const wikilinksPlugin = $prose((ctx) => {
-  const config = ctx.get(wikilinkConfig.key);
-
+export function createWikilinksPlugin(
+  config: Partial<WikilinkConfig> = {}
+) {
+  const resolvedConfig = {
+    ...defaultWikilinkConfig,
+    ...config
+  };
   return new Plugin({
     key: new PluginKey('NOTEPAD_WIKILINKS'),
     view: (view) => {
       const report = () => {
-        config.onActiveWikilinkChange(getActiveWikilink(view));
+        resolvedConfig.onActiveWikilinkChange(getActiveWikilink(view));
       };
 
       report();
@@ -140,7 +139,7 @@ export const wikilinksPlugin = $prose((ctx) => {
           report();
         },
         destroy: () => {
-          config.onActiveWikilinkChange(null);
+          resolvedConfig.onActiveWikilinkChange(null);
         }
       };
     },
@@ -175,24 +174,9 @@ export const wikilinksPlugin = $prose((ctx) => {
         }
 
         event.preventDefault();
-        config.onOpenLink(rawTarget);
+        resolvedConfig.onOpenLink(rawTarget);
         return true;
       }
     }
   });
-});
-
-export function useWikilinks(
-  editor: Editor,
-  config: Partial<WikilinkConfig> = {}
-) {
-  editor
-    .config((ctx) => {
-      ctx.update(wikilinkConfig.key, (previous) => ({
-        ...previous,
-        ...config
-      }));
-    })
-    .use(wikilinkConfig)
-    .use(wikilinksPlugin);
 }

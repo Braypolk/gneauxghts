@@ -1,27 +1,15 @@
 import { ChangeSet, simplifyChanges } from 'prosemirror-changeset';
-import {
-  defaultValueCtx,
-  Editor,
-  editorViewOptionsCtx,
-  parserCtx,
-  rootCtx
-} from '@milkdown/kit/core';
-import { gfm } from '@milkdown/kit/preset/gfm';
-import { commonmark } from '@milkdown/kit/preset/commonmark';
-import {
-  DOMSerializer,
-  type Node as ProseMirrorNode,
-  type Slice as ProseMirrorSlice
-} from '@milkdown/kit/prose/model';
-import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
-import { StepMap } from '@milkdown/kit/prose/transform';
-import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { $prose } from '@milkdown/kit/utils';
+import { DOMSerializer, type Node as ProseMirrorNode, type Slice as ProseMirrorSlice } from 'prosemirror-model';
+import { EditorState, Plugin, PluginKey } from 'prosemirror-state';
+import { StepMap } from 'prosemirror-transform';
+import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
+import { parseMarkdown } from '$lib/features/notepad/editor/markdown';
+import { notepadSchema } from '$lib/features/notepad/editor/schema';
 
 const inlineDiffPluginKey = new PluginKey('proposal-inline-diff');
 
 export interface InlineDiffEditorController {
-  editor: Editor;
+  view: EditorView;
 }
 
 interface CreateInlineDiffEditorOptions {
@@ -31,30 +19,35 @@ interface CreateInlineDiffEditorOptions {
   showRemovedContent?: boolean;
 }
 
+function createEditorDocument(markdown: string) {
+  const normalized = markdown.trim() === '' ? '\n' : markdown;
+  const doc = parseMarkdown(normalized);
+  if (doc.childCount > 0) {
+    return doc;
+  }
+
+  return notepadSchema.node('doc', null, [notepadSchema.node('paragraph')]);
+}
+
 export async function createInlineDiffEditor({
   editorRoot,
   currentMarkdown,
   proposedMarkdown,
   showRemovedContent = true
 }: CreateInlineDiffEditorOptions) {
-  const editor = Editor.make();
+  const state = EditorState.create({
+    schema: notepadSchema,
+    doc: createEditorDocument(proposedMarkdown),
+    plugins: [createInlineDiffPlugin(currentMarkdown, showRemovedContent)]
+  });
 
-  editor
-    .config((ctx) => {
-      ctx.set(rootCtx, editorRoot);
-      ctx.set(defaultValueCtx, proposedMarkdown);
-      ctx.set(editorViewOptionsCtx, {
-        editable: () => false
-      });
-    })
-    .use(commonmark)
-    .use(gfm)
-    .use(createInlineDiffPlugin(currentMarkdown, showRemovedContent));
-
-  await editor.create();
+  const view = new EditorView(editorRoot, {
+    state,
+    editable: () => false
+  });
 
   return {
-    editor
+    view
   } satisfies InlineDiffEditorController;
 }
 
@@ -65,45 +58,28 @@ export async function destroyInlineDiffEditor(
     return null;
   }
 
-  await controller.editor.destroy();
+  controller.view.destroy();
   return null;
 }
 
 function createInlineDiffPlugin(currentMarkdown: string, showRemovedContent: boolean) {
-  return $prose((ctx) => {
-    let currentDoc: ProseMirrorNode | null = null;
+  const currentDoc = createEditorDocument(currentMarkdown);
 
-    const getCurrentDoc = () => {
-      if (currentDoc) {
-        return currentDoc;
+  return new Plugin({
+    key: inlineDiffPluginKey,
+    props: {
+      decorations: (state) => {
+        const decorations = buildInlineDiffDecorations(
+          currentDoc,
+          state.doc,
+          showRemovedContent
+        );
+
+        return decorations.length === 0
+          ? DecorationSet.empty
+          : DecorationSet.create(state.doc, decorations);
       }
-
-      const parser = ctx.get(parserCtx);
-      currentDoc = parser(currentMarkdown);
-      return currentDoc;
-    };
-
-    return new Plugin({
-      key: inlineDiffPluginKey,
-      props: {
-        decorations: (state) => {
-          const baseDoc = getCurrentDoc();
-          if (!baseDoc) {
-            return DecorationSet.empty;
-          }
-
-          const decorations = buildInlineDiffDecorations(
-            baseDoc,
-            state.doc,
-            showRemovedContent
-          );
-
-          return decorations.length === 0
-            ? DecorationSet.empty
-            : DecorationSet.create(state.doc, decorations);
-        }
-      }
-    });
+    }
   });
 }
 

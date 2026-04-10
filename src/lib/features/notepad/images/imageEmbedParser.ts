@@ -1,5 +1,5 @@
-import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
-import type { Selection, Transaction } from '@milkdown/kit/prose/state';
+import type { Node as ProseMirrorNode } from 'prosemirror-model';
+import type { Selection, Transaction } from 'prosemirror-state';
 
 const IMAGE_EMBED_PATTERN = /!\[\[([^\[\]\n]+?)\]\]/g;
 const COMPLETE_IMAGE_EMBED_PATTERN = /!\[\[[^\[\]\n]+?\]\]/;

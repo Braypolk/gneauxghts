@@ -42,8 +42,8 @@ interface SessionControllerDeps {
   setCanUnforget: (value: boolean) => void;
   getForgottenRetentionDays: () => 1 | 7 | 30;
   saveCursorPositionForDocument: (document?: DocumentSession) => void;
-  saveEditorStateForDocument: (document?: DocumentSession) => void;
-  discardEditorStateForDocument: (document: DocumentSession) => void;
+  saveSharedEditorStateForDocument: (document?: DocumentSession) => void;
+  discardSharedEditorStateForDocument: (document: DocumentSession) => void;
   replaceEditorContent: (
     nextMarkdown: string,
     options?: ReplaceEditorContentOptions
@@ -53,7 +53,7 @@ interface SessionControllerDeps {
     nextMarkdown: string,
     document: DocumentSession
   ) => Promise<void>;
-  restoreEditorStateForDocument: (document: DocumentSession) => Promise<boolean>;
+  restoreSharedEditorStateForDocument: (document: DocumentSession) => Promise<boolean>;
   clearSelectedRelatedText: () => void;
   clearSearch: () => void;
   scheduleSearch: () => void;
@@ -78,12 +78,12 @@ export function createSessionController({
   setCanUnforget,
   getForgottenRetentionDays,
   saveCursorPositionForDocument,
-  saveEditorStateForDocument,
-  discardEditorStateForDocument,
+  saveSharedEditorStateForDocument,
+  discardSharedEditorStateForDocument,
   replaceEditorContent,
   replaceEditorContentInPlace,
   replaceEditorContentInPlaceForDocument,
-  restoreEditorStateForDocument,
+  restoreSharedEditorStateForDocument,
   clearSelectedRelatedText,
   clearSearch,
   scheduleSearch,
@@ -236,7 +236,7 @@ export function createSessionController({
 
     if (notePathToClear) {
       saveCursorPositionForDocument(document);
-      saveEditorStateForDocument(document);
+      saveSharedEditorStateForDocument(document);
       cancelPendingAutosave(document);
       await enqueueSave('autosave', document);
     }
@@ -265,7 +265,7 @@ export function createSessionController({
 
     setForgottenNote(canRestore && hasDraftContent ? createForgottenNote(draft, forgottenPath) : null);
     discardDocumentSession(document.currentNoteId, document.currentNotePath);
-    discardEditorStateForDocument(document);
+    discardSharedEditorStateForDocument(document);
     resetActiveDocumentSession();
     setCanUnforget(canRestore && hasDraftContent);
     await replaceEditorContent('');
@@ -331,7 +331,7 @@ export function createSessionController({
     const document = getDocumentSession();
     const rememberedPath = document.currentNotePath;
     saveCursorPositionForDocument(document);
-    saveEditorStateForDocument(document);
+    saveSharedEditorStateForDocument(document);
     cancelPendingAutosave(document);
     await rememberWithAction(
       action,
@@ -344,7 +344,7 @@ export function createSessionController({
     setForgottenNote(null);
     setCanUnforget(false);
     discardDocumentSession(document.currentNoteId, rememberedPath);
-    discardEditorStateForDocument(document);
+    discardSharedEditorStateForDocument(document);
     resetActiveDocumentSession();
     clearSearch();
     await replaceEditorContent('');
@@ -366,7 +366,7 @@ export function createSessionController({
     const previousPath = previousDocument.currentNotePath;
     const previousNoteId = previousDocument.currentNoteId;
     saveCursorPositionForDocument(previousDocument);
-    saveEditorStateForDocument(previousDocument);
+    saveSharedEditorStateForDocument(previousDocument);
     if (
       !currentNoteAlreadySaved &&
       previousPath &&
@@ -383,7 +383,7 @@ export function createSessionController({
     closeWikilinkAutocomplete();
     clearSelectedRelatedText();
 
-    if (await restoreEditorStateForDocument(document)) {
+    if (await restoreSharedEditorStateForDocument(document)) {
       scheduleRelated({ immediate: true });
       return;
     }

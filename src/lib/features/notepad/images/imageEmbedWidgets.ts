@@ -1,6 +1,6 @@
-import type { Node as ProseMirrorNode } from '@milkdown/kit/prose/model';
-import { TextSelection, type Selection } from '@milkdown/kit/prose/state';
-import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
+import type { Node as ProseMirrorNode } from 'prosemirror-model';
+import { TextSelection, type Selection } from 'prosemirror-state';
+import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import { invoke } from '@tauri-apps/api/core';
 import {
   forEachImageEmbed,

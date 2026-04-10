@@ -1,10 +1,5 @@
-import type { Ctx } from '@milkdown/kit/ctx';
-import { $ctx } from '@milkdown/kit/utils';
-import type { PluginView, Selection } from '@milkdown/kit/prose/state';
-import { TextSelection } from '@milkdown/kit/prose/state';
-import type { EditorView } from '@milkdown/kit/prose/view';
-import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
-import { bulletListSchema, listItemSchema, paragraphSchema } from '@milkdown/kit/preset/commonmark';
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
+import type { EditorView } from 'prosemirror-view';
 import {
   applyBlockTypeSelection,
   blockTypeIcons,
@@ -30,19 +25,10 @@ interface SlashMenuState {
   size: number;
 }
 
-interface SlashMenuAPI {
+export interface SlashMenuAPI {
   show: (pos: number) => void;
   hide: () => void;
 }
-
-export const slashMenu = slashFactory('NOTEPAD_SLASH_MENU');
-export const slashMenuAPI = $ctx<SlashMenuAPI, 'slashMenuAPI'>(
-  {
-    show: () => {},
-    hide: () => {}
-  },
-  'slashMenuAPI'
-);
 
 function escapeHtml(value: string) {
   return value
@@ -90,16 +76,19 @@ function getSlashMenuState(filter = ''): SlashMenuState {
   };
 }
 
-function isSelectionAtEndOfNode(selection: Selection) {
-  if (!(selection instanceof TextSelection)) return false;
+function isSelectionAtEndOfNode(view: EditorView) {
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection)) {
+    return false;
+  }
 
   const { $head } = selection;
   return $head.parentOffset === $head.parent.content.size;
 }
 
-function replaceCurrentBlockWithTaskList(ctx: Ctx, view: EditorView) {
-  const { selection } = view.state;
-  if (!(selection instanceof TextSelection) || !selection.empty || !isSelectionAtEndOfNode(selection)) {
+function replaceCurrentBlockWithTaskList(view: EditorView) {
+  const { selection, schema } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty || !isSelectionAtEndOfNode(view)) {
     return false;
   }
 
@@ -110,30 +99,21 @@ function replaceCurrentBlockWithTaskList(ctx: Ctx, view: EditorView) {
   }
 
   const blockPos = $from.before();
-  const paragraph = paragraphSchema.type(ctx).create();
-  const listItem = listItemSchema.type(ctx).create(
-    {
-      label: '•',
-      listType: 'bullet',
-      spread: true,
-      checked: false
-    },
-    paragraph
-  );
-  const taskList = bulletListSchema.type(ctx).create({ spread: false }, listItem);
+  const paragraph = schema.nodes.paragraph.create();
+  const listItem = schema.nodes.list_item.create({ checked: false }, paragraph);
+  const taskList = schema.nodes.bullet_list.create({ bullet: '-', tight: false }, listItem);
   const transaction = view.state.tr.replaceWith(blockPos, blockPos + parent.nodeSize, taskList);
-
   transaction.setSelection(TextSelection.create(transaction.doc, blockPos + 3));
   view.dispatch(transaction.scrollIntoView());
   return true;
 }
 
-function runSlashMenuSelection(ctx: Ctx, view: EditorView, optionId: string) {
+function runSlashMenuSelection(view: EditorView, optionId: string) {
   if (!slashMenuOptionIds.has(optionId)) {
     return;
   }
 
-  if (optionId === 'taskList' && replaceCurrentBlockWithTaskList(ctx, view)) {
+  if (optionId === 'taskList' && replaceCurrentBlockWithTaskList(view)) {
     return;
   }
 
@@ -142,7 +122,7 @@ function runSlashMenuSelection(ctx: Ctx, view: EditorView, optionId: string) {
     const { $from } = selection;
     const parent = $from.parent;
     if (
-      isSelectionAtEndOfNode(selection) &&
+      isSelectionAtEndOfNode(view) &&
       (parent.type.name === 'paragraph' || parent.type.name === 'heading')
     ) {
       const from = $from.start();
@@ -153,7 +133,7 @@ function runSlashMenuSelection(ctx: Ctx, view: EditorView, optionId: string) {
     }
   }
 
-  applyBlockTypeSelection(ctx, view, optionId);
+  applyBlockTypeSelection(view, optionId);
 }
 
 function consumeKeyEvent(event: KeyboardEvent) {
@@ -162,115 +142,139 @@ function consumeKeyEvent(event: KeyboardEvent) {
   event.stopImmediatePropagation();
 }
 
-class SlashMenuView implements PluginView {
-  readonly #ctx: Ctx;
+function getCurrentText(view: EditorView) {
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection)) {
+    return null;
+  }
+
+  const parent = selection.$from.parent;
+  if (parent.type.name !== 'paragraph' && parent.type.name !== 'heading') {
+    return null;
+  }
+
+  return parent.textBetween(0, parent.content.size, '\n', '\0');
+}
+
+class SlashMenuView {
   readonly #content: HTMLElement;
-  readonly #provider: SlashProvider;
   #filter = '';
   #hoverIndex = 0;
   #view: EditorView;
   #programmaticPos: number | null = null;
   #menuState: SlashMenuState = getSlashMenuState();
 
-  constructor(ctx: Ctx, view: EditorView) {
-    this.#ctx = ctx;
+  constructor(view: EditorView, api: SlashMenuAPI) {
     this.#view = view;
 
     const content = document.createElement('div');
     content.className = 'milkdown-slash-menu';
     content.dataset.show = 'false';
+    content.style.position = 'fixed';
+    content.style.left = '0px';
+    content.style.top = '0px';
     content.addEventListener('pointerdown', this.handlePointerDown);
     content.addEventListener('pointermove', this.handlePointerMove);
     content.addEventListener('pointerup', this.handlePointerUp);
     this.#content = content;
 
-    this.#provider = new SlashProvider({
-      content,
-      debounce: 20,
-      shouldShow: (nextView) => {
-        if (isInCodeContext(nextView.state.selection) || isInList(nextView.state.selection)) {
-          return false;
-        }
+    const mountRoot = view.dom.parentElement ?? view.dom;
+    mountRoot.appendChild(content);
 
-        const currentText = this.#provider.getContent(nextView, (node) =>
-          node.type.name === 'paragraph' || node.type.name === 'heading'
-        );
-
-        if (currentText == null || !isSelectionAtEndOfNode(nextView.state.selection)) {
-          return false;
-        }
-
-        this.#filter = currentText.startsWith('/') ? currentText.slice(1) : currentText;
-        this.#menuState = getSlashMenuState(this.#filter);
-        this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
-
-        const pos = this.#programmaticPos;
-        if (typeof pos === 'number') {
-          const maxSize = nextView.state.doc.nodeSize - 2;
-          const validPos = Math.min(pos, maxSize);
-          if (
-            nextView.state.doc.resolve(validPos).node() !==
-            nextView.state.doc.resolve(nextView.state.selection.from).node()
-          ) {
-            this.#programmaticPos = null;
-            return false;
-          }
-
-          return true;
-        }
-
-        return currentText.startsWith('/');
-      },
-      offset: 10
-    });
-
-    this.#provider.onShow = () => {
-      this.render();
-    };
-    this.#provider.onHide = () => {
-      this.#content.dataset.show = 'false';
-    };
-
-    ctx.set(slashMenuAPI.key, {
-      show: (pos) => this.show(pos),
-      hide: () => this.hide()
-    });
+    api.show = (pos) => this.show(pos);
+    api.hide = () => this.hide();
 
     window.addEventListener('keydown', this.handleWindowKeydown, true);
+    window.addEventListener('resize', this.handleWindowResize, true);
     this.update(view);
   }
 
-  update = (view: EditorView) => {
+  update(view: EditorView) {
     this.#view = view;
-    this.#provider.update(view);
-    if (this.#content.dataset.show === 'true') {
-      this.render();
+    const shouldShow = this.shouldShow();
+    if (!shouldShow) {
+      this.hide();
+      return;
     }
-  };
 
-  show = (pos: number) => {
+    if (this.#content.dataset.show !== 'true') {
+      this.#content.dataset.show = 'true';
+    }
+
+    this.render();
+    this.position();
+  }
+
+  show(pos: number) {
     this.#programmaticPos = pos;
     this.#filter = '';
     this.#menuState = getSlashMenuState('');
     this.#hoverIndex = 0;
-    this.#provider.update(this.#view);
-    this.#provider.show();
-    this.render();
-  };
+    this.update(this.#view);
+  }
 
-  hide = () => {
+  hide() {
     this.#programmaticPos = null;
-    this.#provider.hide();
-  };
+    this.#content.dataset.show = 'false';
+  }
 
-  destroy = () => {
+  destroy() {
     window.removeEventListener('keydown', this.handleWindowKeydown, true);
-    this.#provider.destroy();
+    window.removeEventListener('resize', this.handleWindowResize, true);
     this.#content.removeEventListener('pointerdown', this.handlePointerDown);
     this.#content.removeEventListener('pointermove', this.handlePointerMove);
     this.#content.removeEventListener('pointerup', this.handlePointerUp);
     this.#content.remove();
-  };
+  }
+
+  private shouldShow() {
+    if (isInCodeContext(this.#view.state.selection) || isInList(this.#view.state.selection)) {
+      return false;
+    }
+
+    if (!isSelectionAtEndOfNode(this.#view)) {
+      return false;
+    }
+
+    const currentText = getCurrentText(this.#view);
+    if (currentText == null) {
+      return false;
+    }
+
+    if (typeof this.#programmaticPos === 'number') {
+      const maxSize = this.#view.state.doc.nodeSize - 2;
+      const validPos = Math.min(this.#programmaticPos, maxSize);
+      const targetParent = this.#view.state.doc.resolve(validPos).parent;
+      const activeParent = this.#view.state.selection.$from.parent;
+      if (targetParent !== activeParent) {
+        this.#programmaticPos = null;
+        return false;
+      }
+
+      this.#filter = '';
+      this.#menuState = getSlashMenuState('');
+      this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
+      return true;
+    }
+
+    if (!currentText.startsWith('/')) {
+      return false;
+    }
+
+    this.#filter = currentText.slice(1);
+    this.#menuState = getSlashMenuState(this.#filter);
+    this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
+    return true;
+  }
+
+  private position() {
+    const anchorPos = this.#programmaticPos ?? this.#view.state.selection.from;
+    const coords = this.#view.coordsAtPos(anchorPos);
+    const left = Math.round(coords.left);
+    const top = Math.round(coords.bottom + 10);
+    this.#content.style.left = `${left}px`;
+    this.#content.style.top = `${top}px`;
+  }
 
   private render() {
     if (this.#menuState.size === 0) {
@@ -287,7 +291,11 @@ class SlashMenuView implements PluginView {
               (group) => `
                 <li
                   data-tab-group="${escapeHtml(group.key)}"
-                  class="${this.#hoverIndex >= group.range[0] && this.#hoverIndex < group.range[1] ? 'selected' : ''}"
+                  class="${
+                    this.#hoverIndex >= group.range[0] && this.#hoverIndex < group.range[1]
+                      ? 'selected'
+                      : ''
+                  }"
                 >
                   ${escapeHtml(group.label)}
                 </li>
@@ -334,7 +342,7 @@ class SlashMenuView implements PluginView {
       return;
     }
 
-    runSlashMenuSelection(this.#ctx, this.#view, item.id);
+    runSlashMenuSelection(this.#view, item.id);
     if (hideMenu) {
       this.hide();
     }
@@ -480,10 +488,27 @@ class SlashMenuView implements PluginView {
       });
     }
   };
+
+  private handleWindowResize = () => {
+    if (this.#content.dataset.show === 'true') {
+      this.position();
+    }
+  };
 }
 
-export function configureSlashMenu(ctx: Ctx) {
-  ctx.set(slashMenu.key, {
-    view: (view) => new SlashMenuView(ctx, view)
+export function createSlashMenuPlugin() {
+  const api: SlashMenuAPI = {
+    show: () => {},
+    hide: () => {}
+  };
+
+  const plugin = new Plugin({
+    key: new PluginKey('NOTEPAD_SLASH_MENU'),
+    view: (view) => new SlashMenuView(view, api)
   });
+
+  return {
+    plugin,
+    api
+  };
 }

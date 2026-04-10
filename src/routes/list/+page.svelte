@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { afterNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
   import {
     ArrowDown,
@@ -127,6 +128,10 @@
     }
 
     void loadTasks();
+  });
+
+  afterNavigate(() => {
+    void loadTasks({ background: tasks.length > 0 });
   });
 </script>
 

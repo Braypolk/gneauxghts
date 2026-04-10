@@ -8,6 +8,7 @@
   import MailboxEmpty from './icons/MailboxEmpty.svelte';
   import MailboxFull from './icons/MailboxFull.svelte';
   import { onDestroy, onMount } from 'svelte';
+  import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
   import type { InboxListItem } from '$lib/types/ai';
 
   const navLinks = [
@@ -53,6 +54,28 @@
     await getCurrentWindow().startDragging();
   }
 
+  function shouldBypassAppNavigation(event: MouseEvent) {
+    return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+  }
+
+  async function navigateToHref(href: string) {
+    if ($page.url.pathname === href) {
+      return;
+    }
+
+    await awaitPendingNoteSave();
+    await goto(href);
+  }
+
+  async function handleNavClick(event: MouseEvent, href: string) {
+    if (shouldBypassAppNavigation(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    await navigateToHref(href);
+  }
+
   function handleGlobalShortcut(event: KeyboardEvent) {
     if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
       return;
@@ -60,7 +83,7 @@
 
     if (event.code === 'Comma') {
       event.preventDefault();
-      void goto(settingsHref);
+      void navigateToHref(settingsHref);
       return;
     }
 
@@ -76,7 +99,7 @@
     }
 
     event.preventDefault();
-    void goto(targetLink.href);
+    void navigateToHref(targetLink.href);
   }
 
   function nextInboxStatusIndicator(items: InboxListItem[]): 'running' | 'pendingApproval' | null {
@@ -133,7 +156,12 @@
     <nav class="flex items-center gap-1 rounded-full border border-border/80 bg-card/70 p-1 shadow-sm backdrop-blur-md sm:gap-0 sm:p-0">
       {#each navLinks as { href, label, icon }}
         {@const Icon = icon}
-        <a href={href} class={linkClass(href)} aria-label={label}>
+        <a
+          href={href}
+          class={linkClass(href)}
+          aria-label={label}
+          onclick={(event) => void handleNavClick(event, href)}
+        >
           {#if href === '/inbox'}
             {#if inboxStatusIndicator === 'running'}
               <FeatherWriting class="h-4 w-4 shrink-0" />
@@ -156,6 +184,7 @@
       href={settingsHref}
       class={settingsButtonClass()}
       aria-label="Settings"
+      onclick={(event) => void handleNavClick(event, settingsHref)}
     >
       <Settings class="w-5 h-5" />
     </a>
