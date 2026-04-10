@@ -24,7 +24,6 @@ interface WikilinkControllerDeps {
   getCurrentMarkdown: () => string;
   getEditorController: () => EditorController | null;
   cancelPendingAutosave: () => void;
-  enqueueAutosave: () => Promise<void>;
   openNotePath: (
     noteId: string | null,
     notePath: string | null,
@@ -43,7 +42,6 @@ export function createWikilinkController({
   getCurrentMarkdown,
   getEditorController,
   cancelPendingAutosave,
-  enqueueAutosave,
   openNotePath,
   getNavigationContext,
   saveCursorPositionForNote
@@ -159,7 +157,6 @@ export function createWikilinkController({
           currentNoteId: getCurrentNoteId(),
           currentNotePath: getCurrentPath(),
           stopPendingAutosave: cancelPendingAutosave,
-          enqueueAutosave: () => enqueueAutosave(),
           openNotePath
         },
         getNavigationContext(),

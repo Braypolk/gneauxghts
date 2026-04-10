@@ -32,6 +32,11 @@ interface SessionControllerDeps {
   getDocumentSession: () => DocumentSession;
   activateDocumentSession: (snapshot: SessionSnapshot) => DocumentSession;
   syncActiveDocumentSession: (snapshot: SessionSnapshot) => DocumentSession;
+  syncDocumentSession: (
+    document: DocumentSession,
+    snapshot: SessionSnapshot,
+    options?: { preserveDraft?: boolean }
+  ) => DocumentSession;
   resetActiveDocumentSession: () => DocumentSession;
   discardDocumentSession: (noteId: string | null, notePath: string | null) => void;
   isEditorReady: () => boolean;
@@ -68,6 +73,7 @@ export function createSessionController({
   getDocumentSession,
   activateDocumentSession,
   syncActiveDocumentSession,
+  syncDocumentSession,
   resetActiveDocumentSession,
   discardDocumentSession,
   isEditorReady,
@@ -174,10 +180,12 @@ export function createSessionController({
   async function persistNote(document: DocumentSession, mode: SaveMode) {
     const title = document.title;
     const markdown = document.bodyMarkdown;
+    const currentNoteId = document.currentNoteId;
+    const currentNotePath = document.currentNotePath;
 
     if (
       mode === 'autosave' &&
-      shouldSkipAutosave(title, markdown, document.currentNoteId, document.currentNotePath, document)
+      shouldSkipAutosave(title, markdown, currentNoteId, currentNotePath, document)
     ) {
       return;
     }
@@ -194,9 +202,13 @@ export function createSessionController({
       return;
     }
 
-    syncActiveDocumentSession(
-      await saveNoteSession(title, markdown, document.currentNotePath)
-    );
+    const savedSession = await saveNoteSession(title, markdown, currentNotePath);
+    const preserveDraft =
+      document.title !== title ||
+      document.bodyMarkdown !== markdown ||
+      document.currentNoteId !== currentNoteId ||
+      document.currentNotePath !== currentNotePath;
+    syncDocumentSession(document, savedSession, { preserveDraft });
     scheduleAutoSync('note-saved', 600);
   }
 
@@ -373,7 +385,7 @@ export function createSessionController({
       (previousNoteId !== noteId || previousPath !== notePath)
     ) {
       cancelPendingAutosave(previousDocument);
-      await enqueueSave('autosave', previousDocument);
+      void enqueueSave('autosave', previousDocument);
     }
 
     const session = await openNoteSession(noteId, notePath);

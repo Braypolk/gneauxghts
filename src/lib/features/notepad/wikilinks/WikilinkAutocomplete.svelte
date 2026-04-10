@@ -1,13 +1,6 @@
 <script lang="ts">
-  import {
-    autoUpdate,
-    computePosition,
-    flip,
-    offset,
-    shift,
-    size,
-    type VirtualElement
-  } from '@floating-ui/dom';
+  import * as floatingUi from '@floating-ui/dom';
+  import type { VirtualElement } from '@floating-ui/dom';
   import { tick } from 'svelte';
   import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
   import type { NoteLinkSuggestion } from '$lib/features/notepad/model/types';
@@ -57,22 +50,22 @@
       return;
     }
 
-    const { x, y, middlewareData } = await computePosition(
+    const { x, y, middlewareData } = await floatingUi.computePosition(
       buildWikilinkReference(activeWikilink),
       popupElement,
       {
         strategy: 'fixed',
         placement: 'bottom-start',
         middleware: [
-          offset(10),
-          flip({
+          floatingUi.offset(10),
+          floatingUi.flip({
             fallbackPlacements: ['top-start', 'bottom-end', 'top-end'],
             padding: 16
           }),
-          shift({
+          floatingUi.shift({
             padding: 16
           }),
-          size({
+          floatingUi.size({
             padding: 16,
             apply({ availableHeight, elements }) {
               elements.floating.style.maxHeight = `${Math.max(120, Math.floor(availableHeight))}px`;
@@ -101,9 +94,13 @@
 
     void updatePosition();
 
-    return autoUpdate(buildWikilinkReference(currentActiveWikilink), currentPopupElement, () => {
-      void updatePosition();
-    });
+    return floatingUi.autoUpdate(
+      buildWikilinkReference(currentActiveWikilink),
+      currentPopupElement,
+      () => {
+        void updatePosition();
+      }
+    );
   });
 
   $effect(() => {

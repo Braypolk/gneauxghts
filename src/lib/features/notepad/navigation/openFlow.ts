@@ -16,7 +16,6 @@ export interface OpenContext {
   currentNoteId: string | null;
   currentNotePath: string | null;
   stopPendingAutosave: () => void;
-  enqueueAutosave: () => Promise<void>;
   clearSearch: () => void;
   openNotePath: (
     noteId: string | null,
@@ -26,7 +25,7 @@ export interface OpenContext {
 }
 
 async function ensureNoteContext(
-  { currentNoteId, currentNotePath, stopPendingAutosave, enqueueAutosave, openNotePath }: OpenContext,
+  { currentNoteId, currentNotePath, stopPendingAutosave, openNotePath }: OpenContext,
   nextNoteId: string | null,
   nextNotePath: string | null
 ) {
@@ -34,14 +33,12 @@ async function ensureNoteContext(
     (!!nextNoteId && nextNoteId !== currentNoteId) ||
     (!!nextNotePath && nextNotePath !== currentNotePath);
 
-  stopPendingAutosave();
-
   if (!shouldOpenDifferentNote || (!nextNoteId && !nextNotePath)) {
     return false;
   }
 
-  await enqueueAutosave();
-  await openNotePath(nextNoteId, nextNotePath, { currentNoteAlreadySaved: true });
+  stopPendingAutosave();
+  await openNotePath(nextNoteId, nextNotePath);
   return true;
 }
 

@@ -3,6 +3,7 @@ import type { EditorView } from 'prosemirror-view';
 import {
   applyBlockTypeSelection,
   blockTypeIcons,
+  createTaskListTransaction,
   slashMenuGroups,
   slashMenuOptionIds,
   type EditorMenuOption
@@ -86,35 +87,20 @@ function isSelectionAtEndOfNode(view: EditorView) {
   return $head.parentOffset === $head.parent.content.size;
 }
 
-function replaceCurrentBlockWithTaskList(view: EditorView) {
-  const { selection, schema } = view.state;
-  if (!(selection instanceof TextSelection) || !selection.empty || !isSelectionAtEndOfNode(view)) {
-    return false;
-  }
-
-  const { $from } = selection;
-  const parent = $from.parent;
-  if (parent.type.name !== 'paragraph' && parent.type.name !== 'heading') {
-    return false;
-  }
-
-  const blockPos = $from.before();
-  const paragraph = schema.nodes.paragraph.create();
-  const listItem = schema.nodes.list_item.create({ checked: false }, paragraph);
-  const taskList = schema.nodes.bullet_list.create({ bullet: '-', tight: false }, listItem);
-  const transaction = view.state.tr.replaceWith(blockPos, blockPos + parent.nodeSize, taskList);
-  transaction.setSelection(TextSelection.create(transaction.doc, blockPos + 3));
-  view.dispatch(transaction.scrollIntoView());
-  return true;
-}
-
 function runSlashMenuSelection(view: EditorView, optionId: string) {
   if (!slashMenuOptionIds.has(optionId)) {
     return;
   }
 
-  if (optionId === 'taskList' && replaceCurrentBlockWithTaskList(view)) {
-    return;
+  if (optionId === 'taskList') {
+    const transaction = createTaskListTransaction(view.state, {
+      requireSelectionAtEnd: true,
+      scrollIntoView: true
+    });
+    if (transaction) {
+      view.dispatch(transaction);
+      return;
+    }
   }
 
   const selection = view.state.selection;

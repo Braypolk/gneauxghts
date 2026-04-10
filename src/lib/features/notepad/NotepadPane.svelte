@@ -49,6 +49,7 @@
     getActivePaneSession,
     resetActiveDocumentSession as resetSharedActiveDocumentSession,
     syncActiveDocumentSession as syncSharedActiveDocumentSession,
+    syncDocumentSession as syncSharedDocumentSession,
     type DocumentSession,
     type PaneSession
   } from '$lib/features/notepad/session/documentSession';
@@ -74,6 +75,7 @@
   import { createSearchController } from '$lib/features/notepad/search/controller';
   import { createRelatedController } from '$lib/features/notepad/related/controller';
   import { createSessionController } from '$lib/features/notepad/session/controller';
+  import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
   import { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
   import { createWikilinkController } from '$lib/features/notepad/wikilinks/controller';
   import {
@@ -122,6 +124,7 @@
   let proposalPreviewPath = $state<string | null>(null);
   let isSyncingProposalPreview = false;
   let proposalErrorMessage = $state('');
+  const proseMirrorInteractionEvents = ['keyup', 'mouseup', 'touchend', 'focusout'] as const;
 
   interface VaultNoteChangeEvent {
     notePath: string;
@@ -148,6 +151,17 @@
     paneSession = getActivePaneSession(documentSessionStore);
     documentSession = paneSession.document;
     return documentSession;
+  }
+
+  function syncDocumentSession(
+    document: DocumentSession,
+    snapshot: SessionSnapshot,
+    options?: { preserveDraft?: boolean }
+  ) {
+    syncSharedDocumentSession(documentSessionStore, document, snapshot, options);
+    paneSession = getActivePaneSession(documentSessionStore);
+    documentSession = paneSession.document;
+    return document;
   }
 
   function resetActiveDocumentSession() {
@@ -219,7 +233,6 @@
       currentNoteId: documentSession.currentNoteId,
       currentNotePath: documentSession.currentNotePath,
       stopPendingAutosave: cancelPendingAutosave,
-      enqueueAutosave: () => enqueueSave('autosave'),
       clearSearch,
       openNotePath: async (noteId, notePath, options) => openNotePath(notePath, { noteId, ...options })
     };
@@ -494,6 +507,7 @@
     getDocumentSession,
     activateDocumentSession,
     syncActiveDocumentSession,
+    syncDocumentSession,
     resetActiveDocumentSession,
     discardDocumentSession,
     isEditorReady: () => isEditorReady,
@@ -539,7 +553,6 @@
     getCurrentMarkdown,
     getEditorController: () => crepe,
     cancelPendingAutosave,
-    enqueueAutosave: () => enqueueSave('autosave'),
     openNotePath: async (noteId, notePath, options) => openNotePath(notePath, { noteId, ...options }),
     getNavigationContext,
     saveCursorPositionForNote
@@ -785,6 +798,11 @@
     const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(async () => {
       cancelPendingAutosave();
       await enqueueSave('autosave');
+      const pendingDocuments = new Set<DocumentSession>([
+        documentSessionStore.activePane.document,
+        ...documentSessionStore.documentsByKey.values()
+      ]);
+      await Promise.all([...pendingDocuments].map((document) => document.saveQueue));
     });
     const shellResizeObserver =
       typeof ResizeObserver === 'undefined'
@@ -848,7 +866,7 @@
       return;
     }
 
-    const proseMirror = editorRoot.querySelector('.ProseMirror');
+    const proseMirror = findProseMirrorElement(editorRoot);
     if (!(proseMirror instanceof HTMLElement)) {
       return;
     }
@@ -861,25 +879,17 @@
       updateSelectedRelatedText();
     };
 
-    proseMirror.addEventListener('keyup', persistCursorPosition);
-    proseMirror.addEventListener('mouseup', persistCursorPosition);
-    proseMirror.addEventListener('touchend', persistCursorPosition);
-    proseMirror.addEventListener('focusout', persistCursorPosition);
-    proseMirror.addEventListener('keyup', handleSelectionChange);
-    proseMirror.addEventListener('mouseup', handleSelectionChange);
-    proseMirror.addEventListener('touchend', handleSelectionChange);
-    proseMirror.addEventListener('focusout', handleSelectionChange);
+    for (const eventName of proseMirrorInteractionEvents) {
+      proseMirror.addEventListener(eventName, persistCursorPosition);
+      proseMirror.addEventListener(eventName, handleSelectionChange);
+    }
     document.addEventListener('selectionchange', handleSelectionChange);
 
     return () => {
-      proseMirror.removeEventListener('keyup', persistCursorPosition);
-      proseMirror.removeEventListener('mouseup', persistCursorPosition);
-      proseMirror.removeEventListener('touchend', persistCursorPosition);
-      proseMirror.removeEventListener('focusout', persistCursorPosition);
-      proseMirror.removeEventListener('keyup', handleSelectionChange);
-      proseMirror.removeEventListener('mouseup', handleSelectionChange);
-      proseMirror.removeEventListener('touchend', handleSelectionChange);
-      proseMirror.removeEventListener('focusout', handleSelectionChange);
+      for (const eventName of proseMirrorInteractionEvents) {
+        proseMirror.removeEventListener(eventName, persistCursorPosition);
+        proseMirror.removeEventListener(eventName, handleSelectionChange);
+      }
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
   });

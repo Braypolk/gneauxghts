@@ -2,11 +2,9 @@ import { setBlockType, wrapIn } from 'prosemirror-commands';
 import {
   Fragment,
   type Node as ProseMirrorNode,
-  type NodeType,
-  type ResolvedPos
+  type NodeType
 } from 'prosemirror-model';
-import type { Selection } from 'prosemirror-state';
-import { TextSelection } from 'prosemirror-state';
+import { EditorState, TextSelection, type Selection, type Transaction } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { wrapInList } from 'prosemirror-schema-list';
 import { liftTarget } from 'prosemirror-transform';
@@ -149,23 +147,41 @@ function readNumberAttr(value: unknown, fallback: number) {
   return fallback;
 }
 
-function findParent(
-  $pos: ResolvedPos,
-  predicate: (node: ProseMirrorNode) => boolean
-) {
-  for (let depth = $pos.depth; depth >= 0; depth -= 1) {
-    const node = $pos.node(depth);
-    if (predicate(node)) {
-      return {
-        node,
-        depth,
-        start: depth > 0 ? $pos.start(depth) : 0,
-        pos: depth > 0 ? $pos.before(depth) : 0
-      };
-    }
+export function createTaskListTransaction(
+  state: EditorState,
+  {
+    checked = false,
+    requireSelectionAtEnd = false,
+    scrollIntoView = false
+  }: {
+    checked?: boolean;
+    requireSelectionAtEnd?: boolean;
+    scrollIntoView?: boolean;
+  } = {}
+): Transaction | null {
+  const { selection, schema } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) {
+    return null;
   }
 
-  return null;
+  const { $from } = selection;
+  if (requireSelectionAtEnd && $from.parentOffset !== $from.parent.content.size) {
+    return null;
+  }
+
+  const parent = $from.parent;
+  if (parent.type.name !== 'paragraph' && parent.type.name !== 'heading') {
+    return null;
+  }
+
+  const blockPos = $from.before();
+  const paragraph = schema.nodes.paragraph.create();
+  const listItem = schema.nodes.list_item.create({ checked }, paragraph);
+  const taskList = schema.nodes.bullet_list.create({ bullet: '-', tight: false }, listItem);
+  const transaction = state.tr.replaceWith(blockPos, blockPos + parent.nodeSize, taskList);
+  transaction.setSelection(TextSelection.create(transaction.doc, blockPos + 3));
+
+  return scrollIntoView ? transaction.scrollIntoView() : transaction;
 }
 
 function getNearestListAncestor($pos: Selection['$from']) {

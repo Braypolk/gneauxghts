@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
 
 function findLastSelectionPoint(node: Node): { node: Node; offset: number } | null {
   if (node.nodeType === Node.TEXT_NODE) {
@@ -26,7 +27,7 @@ export function focusInputAtEnd(input: HTMLInputElement | null) {
 }
 
 export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLElement) {
-  const proseMirror = editorRoot?.querySelector('.ProseMirror');
+  const proseMirror = findProseMirrorElement(editorRoot);
   if (!(proseMirror instanceof HTMLElement)) return;
 
   const point = findLastSelectionPoint(target);
@@ -52,7 +53,7 @@ export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLEl
 export async function focusEditorAtEnd(editorRoot: HTMLElement | null) {
   await tick();
 
-  const proseMirror = editorRoot?.querySelector('.ProseMirror');
+  const proseMirror = findProseMirrorElement(editorRoot);
   if (!(proseMirror instanceof HTMLElement)) return;
 
   proseMirror.focus();
@@ -88,8 +89,20 @@ function normalizePlainText(value: string) {
     .toLowerCase();
 }
 
+interface NormalizedEditorTarget {
+  node: HTMLElement;
+  text: string;
+}
+
+function normalizeTargets(nodes: readonly HTMLElement[]): NormalizedEditorTarget[] {
+  return nodes.map((node) => ({
+    node,
+    text: normalizePlainText(node.textContent ?? '')
+  }));
+}
+
 function getEditorBlocks(editorRoot: HTMLElement | null) {
-  const proseMirror = editorRoot?.querySelector('.ProseMirror');
+  const proseMirror = findProseMirrorElement(editorRoot);
   if (!proseMirror) return [];
 
   return Array.from(proseMirror.children).filter(
@@ -98,19 +111,21 @@ function getEditorBlocks(editorRoot: HTMLElement | null) {
 }
 
 function getEditorTargets(editorRoot: HTMLElement | null) {
-  const proseMirror = editorRoot?.querySelector('.ProseMirror');
+  const proseMirror = findProseMirrorElement(editorRoot);
   if (!proseMirror) return [];
 
-  const matches = Array.from(
-    proseMirror.querySelectorAll('li, p, h1, h2, h3, h4, h5, h6, blockquote, pre')
-  ).filter((node): node is HTMLElement => node instanceof HTMLElement);
+  const matches = normalizeTargets(
+    Array.from(
+      proseMirror.querySelectorAll('li, p, h1, h2, h3, h4, h5, h6, blockquote, pre')
+    ).filter((node): node is HTMLElement => node instanceof HTMLElement)
+  );
 
-  const nonEmptyMatches = matches.filter((node) => normalizePlainText(node.textContent ?? '') !== '');
+  const nonEmptyMatches = matches.filter(({ text }) => text !== '');
   if (nonEmptyMatches.length > 0) {
     return nonEmptyMatches;
   }
 
-  return getEditorBlocks(editorRoot);
+  return normalizeTargets(getEditorBlocks(editorRoot));
 }
 
 export function findBestEditorTarget(
@@ -122,37 +137,31 @@ export function findBestEditorTarget(
   if (!normalizedNeedle) return null;
 
   if (preferredBlockIndex !== undefined) {
-    const blocks = getEditorBlocks(editorRoot);
+    const blocks = normalizeTargets(getEditorBlocks(editorRoot));
     const directMatch = blocks[preferredBlockIndex];
-    if (directMatch && normalizePlainText(directMatch.textContent ?? '').includes(normalizedNeedle)) {
-      return directMatch;
+    if (directMatch?.text.includes(normalizedNeedle)) {
+      return directMatch.node;
     }
   }
 
   const targets = getEditorTargets(editorRoot);
-  const exactMatch =
-    targets.find((target) => normalizePlainText(target.textContent ?? '') === normalizedNeedle) ??
-    null;
+  const exactMatch = targets.find((target) => target.text === normalizedNeedle)?.node ?? null;
 
   if (exactMatch) {
     return exactMatch;
   }
 
-  const partialMatches = targets.filter((target) =>
-    normalizePlainText(target.textContent ?? '').includes(normalizedNeedle)
-  );
+  const partialMatches = targets.filter((target) => target.text.includes(normalizedNeedle));
 
   if (partialMatches.length === 0) {
     return null;
   }
 
   partialMatches.sort((left, right) => {
-    const leftLength = normalizePlainText(left.textContent ?? '').length;
-    const rightLength = normalizePlainText(right.textContent ?? '').length;
-    return leftLength - rightLength;
+    return left.text.length - right.text.length;
   });
 
-  return partialMatches[0] ?? null;
+  return partialMatches[0]?.node ?? null;
 }
 
 export async function waitForEditorPaint() {

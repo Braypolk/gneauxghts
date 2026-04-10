@@ -105,12 +105,9 @@
   }
 
   .proposal-inline-diff :global(.ProseMirror) {
-    background: transparent;
-  }
-
-  .proposal-inline-diff :global(.ProseMirror) {
     min-height: 0;
     padding: 1rem 0;
+    background: transparent;
     color: var(--foreground);
     line-height: 1.75;
     cursor: default;

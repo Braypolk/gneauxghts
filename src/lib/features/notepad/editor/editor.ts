@@ -17,7 +17,7 @@ import {
   wrappingInputRule
 } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
-import type { Node as ProseMirrorNode, ResolvedPos } from 'prosemirror-model';
+import type { Node as ProseMirrorNode } from 'prosemirror-model';
 import {
   EditorState,
   Plugin,
@@ -30,9 +30,16 @@ import { liftListItem, sinkListItem, splitListItemKeepMarks } from 'prosemirror-
 import { tableEditing } from 'prosemirror-tables';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { tick } from 'svelte';
+import { createTaskListTransaction } from '$lib/features/notepad/editor/blockTypes';
 import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
+import { getEditorProseSurface } from '$lib/features/notepad/editor/editorDom';
 import { setupBlockHandleTypeMenu } from '$lib/features/notepad/editor/blockTypeMenu';
-import { isDocEmpty, isInCodeContext, isInList } from '$lib/features/notepad/editor/editorSelection';
+import {
+  findAncestorNode,
+  isDocEmpty,
+  isInCodeContext,
+  isInList
+} from '$lib/features/notepad/editor/editorSelection';
 import { parseMarkdown, serializeMarkdown } from '$lib/features/notepad/editor/markdown';
 import { notepadSchema } from '$lib/features/notepad/editor/schema';
 import { createSlashMenuPlugin, type SlashMenuAPI } from '$lib/features/notepad/editor/slashMenu';
@@ -119,20 +126,6 @@ interface PlaceholderConfig {
   mode: 'doc' | 'block';
 }
 
-function findParent(
-  $pos: ResolvedPos,
-  predicate: (node: ProseMirrorNode) => boolean
-) {
-  for (let depth = $pos.depth; depth >= 0; depth -= 1) {
-    const node = $pos.node(depth);
-    if (predicate(node)) {
-      return { node, depth };
-    }
-  }
-
-  return null;
-}
-
 function createPlaceholderDecoration(
   state: EditorState,
   placeholderText: string
@@ -144,7 +137,7 @@ function createPlaceholderDecoration(
   const node = $pos.parent;
   if (node.content.size > 0) return null;
 
-  const inTable = findParent($pos, (candidate) => candidate.type.name === 'table');
+  const inTable = findAncestorNode($pos, (candidate) => candidate.type.name === 'table');
   if (inTable) return null;
 
   const before = $pos.before();
@@ -211,11 +204,11 @@ function createTaskListInteractionPlugin(onTaskListToggle: () => void) {
           try {
             const pos = view.posAtDOM(listItem, 0);
             const $pos = view.state.doc.resolve(pos);
-            const listItemParent = findParent($pos, (node) => node.type.name === 'list_item');
+            const listItemParent = findAncestorNode($pos, (node) => node.type.name === 'list_item');
             if (!listItemParent) {
               return false;
             }
-            const listItemPos = listItemParent.depth > 0 ? $pos.before(listItemParent.depth) : 0;
+            const listItemPos = listItemParent.pos;
 
             const currentChecked = listItemParent.node.attrs.checked;
             if (currentChecked == null) {
@@ -265,29 +258,11 @@ function createEditorDocument(markdown: string) {
 }
 
 function createTaskListInputRule() {
-  return new InputRule(/^([-+*])\s\[( |x|X)\]\s$/, (state) => {
-    const { selection, schema } = state;
-    if (!(selection instanceof TextSelection) || !selection.empty) {
-      return null;
-    }
-
-    const { $from } = selection;
-    const parent = $from.parent;
-    if (parent.type.name !== 'paragraph' && parent.type.name !== 'heading') {
-      return null;
-    }
-
-    const blockPos = $from.before();
-    const paragraph = schema.nodes.paragraph.create();
-    const listItem = schema.nodes.list_item.create(
-      { checked: parent.textContent.trim().endsWith('[x]') || parent.textContent.trim().endsWith('[X]') },
-      paragraph
-    );
-    const taskList = schema.nodes.bullet_list.create({ bullet: '-', tight: false }, listItem);
-    const transaction = state.tr.replaceWith(blockPos, blockPos + parent.nodeSize, taskList);
-    transaction.setSelection(TextSelection.create(transaction.doc, blockPos + 3));
-    return transaction;
-  });
+  return new InputRule(/^([-+*])\s\[( |x|X)\]\s$/, (state, match) =>
+    createTaskListTransaction(state, {
+      checked: match[2].toLowerCase() === 'x'
+    })
+  );
 }
 
 function createHorizontalRuleInputRule() {
@@ -542,34 +517,22 @@ function getListItemBlockHandleAnchorLeft(li: HTMLElement): number {
   return li.getBoundingClientRect().left;
 }
 
-/** The content column (`.ProseMirror`); `view.dom` may be a wider wrapper in some setups. */
-function getEditorProseSurface(view: EditorView): HTMLElement {
-  const dom = view.dom as HTMLElement;
-  if (dom.classList.contains('ProseMirror')) {
-    return dom;
-  }
-
-  const inner = dom.querySelector('.ProseMirror');
-  return inner instanceof HTMLElement ? inner : dom;
-}
-
 function resolveBlockContextFromElement(view: EditorView, element: HTMLElement) {
   const pos = view.posAtDOM(element, 0);
   const maxResolvedPos = Math.max(1, view.state.doc.nodeSize - 2);
   const $pos = view.state.doc.resolve(Math.max(1, Math.min(pos, maxResolvedPos)));
 
   if (element.matches('li')) {
-    const listItem = findParent($pos, (node) => node.type.name === 'list_item');
+    const listItem = findAncestorNode($pos, (node) => node.type.name === 'list_item');
     if (listItem) {
-      const listItemPos = listItem.depth > 0 ? $pos.before(listItem.depth) : 0;
       return {
         node: listItem.node,
-        pos: listItemPos
+        pos: listItem.pos
       };
     }
   }
 
-  const block = findParent($pos, (node) =>
+  const block = findAncestorNode($pos, (node) =>
     ['paragraph', 'heading', 'code_block', 'horizontal_rule', 'list_item'].includes(
       node.type.name
     )
@@ -579,10 +542,9 @@ function resolveBlockContextFromElement(view: EditorView, element: HTMLElement) 
     return null;
   }
 
-  const blockPos = block.depth > 0 ? $pos.before(block.depth) : 0;
   return {
     node: block.node,
-    pos: blockPos
+    pos: block.pos
   };
 }
 
@@ -623,8 +585,8 @@ function expandDeleteRangeForListItem(
   }
 
   const $p = doc.resolve(sourcePos + 1);
-  const listItemBlock = findParent($p, (node) => node.type.name === 'list_item');
-  if (!listItemBlock || $p.before(listItemBlock.depth) !== sourcePos) {
+  const listItemBlock = findAncestorNode($p, (node) => node.type.name === 'list_item');
+  if (!listItemBlock || listItemBlock.pos !== sourcePos) {
     return { from, to };
   }
 
@@ -938,7 +900,7 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
         }
 
         const $pos = this.#view.state.doc.resolve(context.pos + 1);
-        if (findParent($pos, (node) => ['table', 'blockquote'].includes(node.type.name))) {
+        if (findAncestorNode($pos, (node) => ['table', 'blockquote'].includes(node.type.name))) {
           this.hide();
           return;
         }

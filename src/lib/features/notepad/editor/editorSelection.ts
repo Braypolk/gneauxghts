@@ -1,5 +1,31 @@
-import type { Node as ProseMirrorNode } from 'prosemirror-model';
+import type { Node as ProseMirrorNode, ResolvedPos } from 'prosemirror-model';
 import type { Selection } from 'prosemirror-state';
+
+interface AncestorNodeMatch {
+  node: ProseMirrorNode;
+  depth: number;
+  start: number;
+  pos: number;
+}
+
+export function findAncestorNode(
+  $pos: ResolvedPos,
+  predicate: (node: ProseMirrorNode) => boolean
+): AncestorNodeMatch | null {
+  for (let depth = $pos.depth; depth >= 0; depth -= 1) {
+    const node = $pos.node(depth);
+    if (predicate(node)) {
+      return {
+        node,
+        depth,
+        start: depth > 0 ? $pos.start(depth) : 0,
+        pos: depth > 0 ? $pos.before(depth) : 0
+      };
+    }
+  }
+
+  return null;
+}
 
 export function isDocEmpty(doc: ProseMirrorNode) {
   return doc.childCount <= 1 && !doc.firstChild?.content.size;

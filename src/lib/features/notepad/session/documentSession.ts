@@ -118,6 +118,15 @@ export function syncActiveDocumentSession(
   snapshot: SessionSnapshot
 ) {
   const document = store.activePane.document;
+  return syncDocumentSession(store, document, snapshot);
+}
+
+export function syncDocumentSession(
+  store: DocumentSessionStore,
+  document: DocumentSession,
+  snapshot: SessionSnapshot,
+  { preserveDraft = false }: { preserveDraft?: boolean } = {}
+) {
   const previousKey = getDocumentKey(document.currentNoteId, document.currentNotePath);
   const nextKey = getDocumentKey(snapshot.currentNoteId, snapshot.currentNotePath);
 
@@ -125,7 +134,16 @@ export function syncActiveDocumentSession(
     store.documentsByKey.delete(previousKey);
   }
 
-  applySnapshotToDocument(document, snapshot);
+  if (preserveDraft) {
+    document.currentNoteId = snapshot.currentNoteId;
+    document.currentNotePath = snapshot.currentNotePath;
+    document.lastSavedTitle = snapshot.lastSavedTitle;
+    document.lastSavedMarkdown = snapshot.lastSavedMarkdown;
+    document.lastSavedNoteId = snapshot.lastSavedNoteId;
+    document.lastSavedPath = snapshot.lastSavedPath;
+  } else {
+    applySnapshotToDocument(document, snapshot);
+  }
 
   if (nextKey) {
     store.documentsByKey.set(nextKey, document);
