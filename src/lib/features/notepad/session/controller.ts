@@ -99,6 +99,8 @@ export function createSessionController({
   closeWikilinkAutocomplete,
   setAssetRootPath
 }: SessionControllerDeps) {
+  let openNoteRequestGeneration = 0;
+
   function hasCleanBuffer() {
     const document = getDocumentSession();
     return shouldSkipAutosave(
@@ -381,14 +383,18 @@ export function createSessionController({
     saveSharedEditorStateForDocument(previousDocument);
     if (
       !currentNoteAlreadySaved &&
-      previousPath &&
       (previousNoteId !== noteId || previousPath !== notePath)
     ) {
       cancelPendingAutosave(previousDocument);
       void enqueueSave('autosave', previousDocument);
     }
 
+    const requestGeneration = ++openNoteRequestGeneration;
     const session = await openNoteSession(noteId, notePath);
+    if (requestGeneration !== openNoteRequestGeneration) {
+      return;
+    }
+
     const document = activateDocumentSession(session);
     setCanUnforget(false);
     setForgottenNote(null);
@@ -396,11 +402,25 @@ export function createSessionController({
     clearSelectedRelatedText();
 
     if (await restoreSharedEditorStateForDocument(document)) {
+      if (
+        requestGeneration !== openNoteRequestGeneration ||
+        getDocumentSession() !== document
+      ) {
+        return;
+      }
       scheduleRelated({ immediate: true });
       return;
     }
 
+    if (requestGeneration !== openNoteRequestGeneration || getDocumentSession() !== document) {
+      return;
+    }
+
     await replaceEditorContentInPlaceForDocument(session.bodyMarkdown, document);
+    if (requestGeneration !== openNoteRequestGeneration || getDocumentSession() !== document) {
+      return;
+    }
+
     scheduleRelated({ immediate: true });
   }
 

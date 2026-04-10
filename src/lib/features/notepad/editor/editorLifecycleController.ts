@@ -23,6 +23,7 @@ interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
   restoreCursor?: boolean;
   cursorPosition?: CursorPosition | null | undefined;
+  expectedDocument?: DocumentSession | null;
 }
 
 interface EditorLifecycleControllerDeps {
@@ -166,19 +167,33 @@ export function createEditorLifecycleController({
     {
       preserveScroll = false,
       restoreCursor = false,
-      cursorPosition = undefined
+      cursorPosition = undefined,
+      expectedDocument = null
     }: ReplaceEditorContentOptions = {}
   ) {
+    if (expectedDocument && getDocumentSession() !== expectedDocument) {
+      return;
+    }
+
     const editorShell = getEditorShell();
     const scrollTop = preserveScroll ? (editorShell?.scrollTop ?? 0) : 0;
     const document = getDocumentSession();
 
     setIsEditorReady(false);
     await destroyEditor();
+
+    if (expectedDocument && getDocumentSession() !== expectedDocument) {
+      return;
+    }
+
     document.bodyMarkdown = nextMarkdown;
     await createEditor(nextMarkdown);
 
     if (restoreCursor) {
+      if (expectedDocument && getDocumentSession() !== expectedDocument) {
+        return;
+      }
+
       await waitForEditorPaint();
       if (cursorPosition === undefined) {
         restoreCursorPositionForDocument(document);
@@ -231,6 +246,10 @@ export function createEditorLifecycleController({
     nextMarkdown: string,
     document: DocumentSession
   ) {
+    if (getDocumentSession() !== document) {
+      return;
+    }
+
     const controller = getController();
     const cursorPosition =
       loadCursorPosition(document.currentNotePath, getPaneId()) ?? { anchor: 1, head: 1 };
@@ -238,11 +257,20 @@ export function createEditorLifecycleController({
     setIsApplyingExternalContent(true);
     try {
       if (!replaceEditorBuffer(controller, nextMarkdown, { flushHistory: true })) {
+        if (getDocumentSession() !== document) {
+          return;
+        }
+
         setIsApplyingExternalContent(false);
         await replaceEditorContent(nextMarkdown, {
           restoreCursor: true,
-          cursorPosition
+          cursorPosition,
+          expectedDocument: document
         });
+        return;
+      }
+
+      if (getDocumentSession() !== document) {
         return;
       }
 
@@ -257,6 +285,10 @@ export function createEditorLifecycleController({
   }
 
   async function restoreSharedEditorStateForDocument(document: DocumentSession) {
+    if (getDocumentSession() !== document) {
+      return false;
+    }
+
     if (
       !replaceEditorState(getController(), getSharedEditorStateForDocument(document), {
         focus: false,
@@ -266,9 +298,13 @@ export function createEditorLifecycleController({
       return false;
     }
 
+    if (getDocumentSession() !== document) {
+      return false;
+    }
+
     restoreCursorPositionForDocument(document);
     await tick();
-    return true;
+    return getDocumentSession() === document;
   }
 
   function dispose() {

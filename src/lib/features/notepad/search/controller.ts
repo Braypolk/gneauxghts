@@ -230,6 +230,8 @@ export function createSearchController({
   function handleSearchInput(value: string) {
     setSearchQuery(value);
     if (value.trim() === '') {
+      activeSearchRequest += 1;
+      clearPendingSearchTimer();
       setSearchResults([]);
       setIsSearching(false);
       return;
@@ -240,6 +242,7 @@ export function createSearchController({
 
   async function handleSearchModeChange(mode: SearchMode) {
     setSearchMode(mode);
+    clearPendingSearchTimer();
     if (getSearchQuery().trim() !== '') {
       await runSearch(getSearchQuery());
     }
