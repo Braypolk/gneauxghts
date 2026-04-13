@@ -11,6 +11,7 @@ export interface DocumentSession extends SessionSnapshot {
   sharedEditorStateGeneration: number;
   saveTimer: ReturnType<typeof window.setTimeout> | null;
   saveQueue: Promise<void>;
+  operationRevision: number;
 }
 
 export interface PaneSession {
@@ -45,7 +46,8 @@ export function createDocumentSession(
     sharedEditorState: null,
     sharedEditorStateGeneration: 0,
     saveTimer: null,
-    saveQueue: Promise.resolve()
+    saveQueue: Promise.resolve(),
+    operationRevision: 0
   };
 }
 

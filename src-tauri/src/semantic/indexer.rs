@@ -10,7 +10,10 @@ use super::{
     embed::{EmbeddingInputKind, EmbeddingProvider},
     RuntimeState,
 };
-use crate::{index::is_note_file, note, state::derive_file_stem, time::current_time_millis};
+use crate::{
+    note, path_utils::collect_markdown_files_recursively, state::derive_file_stem,
+    time::current_time_millis,
+};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -333,13 +336,7 @@ fn process_full_scan(
     let mut embedded_count = 0usize;
     let mut deleted_count = 0usize;
 
-    for entry in fs::read_dir(notes_dir).map_err(|err| err.to_string())? {
-        let entry = entry.map_err(|err| err.to_string())?;
-        let path = entry.path();
-        if !is_note_file(&path) {
-            continue;
-        }
-
+    for path in collect_markdown_files_recursively(notes_dir)? {
         let raw_path = path.to_string_lossy().into_owned();
         seen_paths.insert(raw_path.clone());
         let modified_millis = read_modified_millis(&path)?;
@@ -631,6 +628,39 @@ mod tests {
             .search(&[1.0, 0.0, 0.0], 8)
             .expect("ann search")
             .is_empty());
+    }
+
+    #[test]
+    fn full_scan_indexes_nested_notes() {
+        let temp = TestDir::new("indexer-nested");
+        let semantic_dir = temp.path().join("semantic");
+        let notes_dir = temp.path().join("notes");
+        let nested_dir = notes_dir.join("Projects");
+        let hidden_dir = notes_dir.join(".obsidian");
+        fs::create_dir_all(&nested_dir).expect("create nested dir");
+        fs::create_dir_all(&hidden_dir).expect("create hidden dir");
+
+        fs::write(
+            nested_dir.join("Roadmap.md"),
+            "# Roadmap\n\nParagraph one.\n\nParagraph two.",
+        )
+        .expect("write nested note");
+        fs::write(hidden_dir.join("Ignore.md"), "# Ignore\n\nConfig").expect("write hidden note");
+
+        let db_path = semantic_dir.join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
+        let ann = Arc::new(
+            AnnIndexState::new(semantic_dir, 3, Arc::new(SemanticDebugState::new()))
+                .expect("create ann"),
+        );
+
+        let outcome =
+            process_full_scan(&mut connection, &notes_dir, &provider, &ann, true).expect("scan");
+
+        assert_eq!(outcome.scanned_count, 1);
+        assert!(outcome.embedded_count > 0);
     }
 
     struct MockEmbeddingProvider;

@@ -1,4 +1,7 @@
-use crate::{index::is_note_file, note, sync::SYNC_DB_FILE_NAME};
+use crate::{
+    index::is_note_file, note, path_utils::collect_markdown_files_recursively,
+    sync::SYNC_DB_FILE_NAME,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -238,12 +241,7 @@ pub(crate) fn current_vault_info() -> Result<VaultInfo, String> {
     fs::create_dir_all(&current_path).map_err(|err| err.to_string())?;
     let default_path = default_notes_root()?;
     let forgotten_path = forgotten_notes_root(&current_path);
-    let note_count = fs::read_dir(&current_path)
-        .map_err(|err| err.to_string())?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| is_note_file(path))
-        .count();
+    let note_count = collect_markdown_files_recursively(&current_path)?.len();
 
     Ok(VaultInfo {
         current_path: current_path.to_string_lossy().into_owned(),
@@ -364,13 +362,10 @@ pub(crate) fn resolve_note_path_by_id(
     notes_dir: &Path,
     note_id: &str,
 ) -> Result<Option<PathBuf>, String> {
-    for entry in fs::read_dir(notes_dir).map_err(|err| err.to_string())? {
-        let entry = entry.map_err(|err| err.to_string())?;
-        let path = entry.path();
+    for path in collect_markdown_files_recursively(notes_dir)? {
         if !is_valid_note_path(&path, notes_dir) {
             continue;
         }
-
         let Ok(markdown) = fs::read_to_string(&path) else {
             continue;
         };
@@ -1107,7 +1102,11 @@ fn resolve_target_path(
     }
 
     let file_stem = derive_file_stem_from_title_and_markdown(title, markdown);
-    let preferred_path = notes_dir.join(format!("{file_stem}.md"));
+    let target_dir = current_path
+        .and_then(Path::parent)
+        .filter(|parent| parent.starts_with(notes_dir))
+        .unwrap_or(notes_dir);
+    let preferred_path = target_dir.join(format!("{file_stem}.md"));
 
     if current_path.is_some_and(|path| path == preferred_path) || !preferred_path.exists() {
         return Ok(Some(preferred_path));
@@ -1120,7 +1119,7 @@ fn resolve_target_path(
     }
 
     for suffix in 2.. {
-        let candidate = notes_dir.join(format!("{file_stem} {suffix}.md"));
+        let candidate = target_dir.join(format!("{file_stem} {suffix}.md"));
         if current_path.is_some_and(|path| path == candidate) || !candidate.exists() {
             return Ok(Some(candidate));
         }
@@ -1192,6 +1191,56 @@ mod tests {
         let saved_markdown = fs::read_to_string(&renamed_path).expect("read renamed note");
         assert!(saved_markdown.contains("gneauxghts:"));
         assert!(saved_markdown.ends_with("Fresh content"));
+    }
+
+    #[test]
+    fn persist_note_keeps_existing_nested_folder_when_title_changes() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let app_data_dir = TestDir::new("state-app-data-persist-nested");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        let temp = TestDir::new("state-persist-note-nested");
+        let notes_dir = temp.path();
+        let nested_dir = notes_dir.join("Projects");
+        fs::create_dir_all(&nested_dir).expect("create nested dir");
+        let original_path = nested_dir.join("First Note.md");
+        fs::write(&original_path, "Old content").expect("write original note");
+
+        let saved_path = persist_note(
+            notes_dir,
+            "Second Note",
+            "Fresh content",
+            Some(original_path.as_path()),
+        )
+        .expect("persist note")
+        .expect("saved path");
+
+        let renamed_path = nested_dir.join("Second Note.md");
+        assert_eq!(saved_path, renamed_path.to_string_lossy());
+        assert!(!original_path.exists());
+        assert!(renamed_path.exists());
+    }
+
+    #[test]
+    fn resolve_note_path_by_id_finds_nested_notes() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let app_data_dir = TestDir::new("state-app-data-resolve-nested");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        let temp = TestDir::new("state-resolve-note-nested");
+        let notes_dir = temp.path();
+        let nested_dir = notes_dir.join("Projects");
+        let hidden_dir = notes_dir.join(".obsidian");
+        fs::create_dir_all(&nested_dir).expect("create nested dir");
+        fs::create_dir_all(&hidden_dir).expect("create hidden dir");
+
+        let nested_note = nested_dir.join("Roadmap.md");
+        let hidden_note = hidden_dir.join("Ignore.md");
+        fs::write(&nested_note, "# Roadmap\n\nBody").expect("write nested note");
+        fs::write(&hidden_note, "# Ignore\n\nBody").expect("write hidden note");
+        let note_id = resolve_note_id_from_path(&nested_note).expect("note id");
+
+        let resolved = super::resolve_note_path_by_id(notes_dir, &note_id).expect("resolve path");
+
+        assert_eq!(resolved, Some(nested_note));
     }
 
     #[test]

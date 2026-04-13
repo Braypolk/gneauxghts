@@ -1,6 +1,8 @@
 use crate::state::AppState;
 use anyhow::Result;
-use sqlx::{Executor, FromRow, PgPool};
+use sqlx::{Executor, FromRow, PgPool, Postgres, Transaction};
+use std::{path::Path, time::Duration};
+use tokio::fs;
 
 pub async fn create_pool(database_url: &str) -> Result<PgPool> {
     Ok(PgPool::connect(database_url).await?)
@@ -84,10 +86,26 @@ pub async fn ensure_schema(pool: &PgPool) -> Result<()> {
             trashed_at TIMESTAMPTZ,
             updated_at TIMESTAMPTZ NOT NULL
         );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS notes_live_path_unique
+        ON notes (vault_id, current_relative_path)
+        WHERE trashed_at IS NULL;
+
+        CREATE INDEX IF NOT EXISTS sync_changes_vault_seq_idx
+        ON sync_changes (vault_id, seq);
         "#,
     )
     .await?;
     Ok(())
+}
+
+#[derive(Debug, Default)]
+pub struct MaintenanceStats {
+    pub deleted_magic_link_tokens: usize,
+    pub deleted_sessions: usize,
+    pub deleted_sync_changes: usize,
+    pub deleted_note_revisions: usize,
+    pub deleted_blob_files: usize,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -128,11 +146,14 @@ pub async fn find_or_create_user(pool: &PgPool, email: &str) -> Result<UserRow> 
     })
 }
 
-pub async fn find_or_create_vault(pool: &PgPool, user_id: uuid::Uuid) -> Result<VaultRow> {
+pub async fn find_or_create_vault_tx(
+    transaction: &mut Transaction<'_, Postgres>,
+    user_id: uuid::Uuid,
+) -> Result<VaultRow> {
     if let Some(vault) =
         sqlx::query_as::<_, VaultRow>("SELECT id, user_id FROM vaults WHERE user_id = $1")
             .bind(user_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut **transaction)
             .await?
     {
         return Ok(vault);
@@ -142,14 +163,14 @@ pub async fn find_or_create_vault(pool: &PgPool, user_id: uuid::Uuid) -> Result<
     sqlx::query("INSERT INTO vaults (id, user_id) VALUES ($1, $2)")
         .bind(id)
         .bind(user_id)
-        .execute(pool)
+        .execute(&mut **transaction)
         .await?;
 
     Ok(VaultRow { id })
 }
 
-pub async fn touch_device(
-    pool: &PgPool,
+pub async fn touch_device_tx(
+    transaction: &mut Transaction<'_, Postgres>,
     vault_id: uuid::Uuid,
     device_id: &str,
     device_name: Option<&str>,
@@ -161,7 +182,7 @@ pub async fn touch_device(
     )
     .bind(vault_id)
     .bind(device_id)
-    .fetch_one(pool)
+    .fetch_one(&mut **transaction)
     .await?;
 
     if existing {
@@ -172,7 +193,7 @@ pub async fn touch_device(
         .bind(vault_id)
         .bind(device_id)
         .bind(device_name)
-        .execute(pool)
+        .execute(&mut **transaction)
         .await?;
         return Ok(());
     }
@@ -184,7 +205,7 @@ pub async fn touch_device(
     .bind(vault_id)
     .bind(device_id)
     .bind(device_name)
-    .execute(pool)
+    .execute(&mut **transaction)
     .await?;
     Ok(())
 }
@@ -211,4 +232,99 @@ pub async fn authenticate_session(
     .fetch_optional(&state.pool)
     .await?;
     Ok(session)
+}
+
+pub async fn run_maintenance(state: &AppState) -> Result<MaintenanceStats> {
+    let mut stats = MaintenanceStats::default();
+
+    stats.deleted_magic_link_tokens = sqlx::query_scalar::<_, i64>(
+        "WITH deleted AS (
+            DELETE FROM magic_link_tokens
+            WHERE consumed_at IS NOT NULL OR expires_at <= NOW()
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM deleted",
+    )
+    .fetch_one(&state.pool)
+    .await? as usize;
+
+    stats.deleted_sessions = sqlx::query_scalar::<_, i64>(
+        "WITH deleted AS (
+            DELETE FROM sessions
+            WHERE expires_at <= NOW()
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM deleted",
+    )
+    .fetch_one(&state.pool)
+    .await? as usize;
+
+    stats.deleted_sync_changes = sqlx::query_scalar::<_, i64>(
+        "WITH deleted AS (
+            DELETE FROM sync_changes
+            WHERE updated_at < NOW() - make_interval(days => $1::int)
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM deleted",
+    )
+    .bind(state.config.sync_change_retention_days)
+    .fetch_one(&state.pool)
+    .await? as usize;
+
+    let stale_blob_paths = sqlx::query_scalar::<_, String>(
+        "DELETE FROM note_revisions
+         USING notes
+         WHERE note_revisions.note_row_id = notes.id
+           AND note_revisions.revision <> notes.current_revision
+           AND note_revisions.created_at < NOW() - make_interval(days => $1::int)
+         RETURNING note_revisions.blob_path",
+    )
+    .bind(state.config.note_revision_retention_days)
+    .fetch_all(&state.pool)
+    .await?;
+    stats.deleted_note_revisions = stale_blob_paths.len();
+
+    for relative_path in stale_blob_paths {
+        let full_path = state.config.blob_root.join(&relative_path);
+        match fs::remove_file(&full_path).await {
+            Ok(()) => {
+                stats.deleted_blob_files += 1;
+                remove_empty_blob_parents(&state.config.blob_root, &full_path).await?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+
+    Ok(stats)
+}
+
+async fn remove_empty_blob_parents(blob_root: &Path, file_path: &Path) -> Result<()> {
+    let mut current = file_path.parent();
+    while let Some(directory) = current {
+        if directory == blob_root {
+            break;
+        }
+
+        match fs::remove_dir(directory).await {
+            Ok(()) => current = directory.parent(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                current = directory.parent()
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+pub fn maintenance_interval(state: &AppState) -> Duration {
+    Duration::from_secs(state.config.maintenance_interval_minutes.saturating_mul(60))
 }

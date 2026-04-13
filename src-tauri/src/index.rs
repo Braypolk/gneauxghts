@@ -1,5 +1,6 @@
 use crate::{
     note,
+    path_utils::collect_markdown_files_recursively,
     semantic::SemanticState,
     state::{derive_file_stem, derive_file_stem_from_title_and_markdown},
 };
@@ -80,13 +81,7 @@ impl NotesIndex {
     pub(crate) fn refresh(&mut self, notes_dir: &Path) -> Result<(), String> {
         let mut seen_paths = HashSet::new();
 
-        for entry in fs::read_dir(notes_dir).map_err(|err| err.to_string())? {
-            let entry = entry.map_err(|err| err.to_string())?;
-            let path = entry.path();
-            if !is_note_file(&path) {
-                continue;
-            }
-
+        for path in collect_markdown_files_recursively(notes_dir)? {
             seen_paths.insert(path.clone());
             let signature = read_file_signature(&path)?;
             let should_reload = self
@@ -572,9 +567,10 @@ fn toggle_task_line(line: &mut String) -> Option<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_indexed_note, toggle_task_in_markdown};
-    use crate::test_support::{fixture_path, load_fixture, load_json_fixture};
+    use super::{build_indexed_note, toggle_task_in_markdown, NotesIndex};
+    use crate::test_support::{fixture_path, load_fixture, load_json_fixture, TestDir};
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn build_indexed_note_matches_project_atlas_fixture() {
@@ -621,5 +617,26 @@ mod tests {
         let fallback_lines = fallback_toggle.lines().collect::<Vec<_>>();
         assert_eq!(fallback_lines[2], "- [ ] Review search ranking");
         assert_eq!(fallback_lines[4], "- [x] Review search ranking");
+    }
+
+    #[test]
+    fn refresh_discovers_nested_notes_and_skips_hidden_directories() {
+        let temp = TestDir::new("index-refresh-nested");
+        let nested_dir = temp.path().join("Projects");
+        let hidden_dir = temp.path().join(".obsidian");
+        fs::create_dir_all(&nested_dir).expect("create nested dir");
+        fs::create_dir_all(&hidden_dir).expect("create hidden dir");
+
+        let nested_note = nested_dir.join("Roadmap.md");
+        let hidden_note = hidden_dir.join("Hidden.md");
+        fs::write(&nested_note, "# Roadmap\n\nBody").expect("write nested note");
+        fs::write(&hidden_note, "# Hidden\n\nBody").expect("write hidden note");
+
+        let mut index = NotesIndex::default();
+        index.refresh(temp.path()).expect("refresh index");
+
+        assert_eq!(index.entries.len(), 1);
+        assert!(index.entries.contains_key(&nested_note));
+        assert!(!index.entries.contains_key(&hidden_note));
     }
 }

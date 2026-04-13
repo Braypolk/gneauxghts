@@ -767,6 +767,38 @@ mod tests {
     }
 
     #[test]
+    fn import_existing_local_notes_finds_nested_notes_and_skips_hidden_directories() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let app_data_dir = TestDir::new("sync-import-nested-app-data");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        initialize().expect("initialize sync db");
+
+        let note_dir = TestDir::new("sync-import-nested-note-dir");
+        let nested_dir = note_dir.path().join("Projects");
+        let hidden_dir = note_dir.path().join(".obsidian");
+        std::fs::create_dir_all(&nested_dir).expect("create nested dir");
+        std::fs::create_dir_all(&hidden_dir).expect("create hidden dir");
+
+        let nested_note = nested_dir.join("Legacy.md");
+        let hidden_note = hidden_dir.join("Ignore.md");
+        std::fs::write(&nested_note, "# Legacy\n\nBody").expect("write nested note");
+        std::fs::write(&hidden_note, "# Ignore\n\nBody").expect("write hidden note");
+
+        import_existing_local_notes(note_dir.path()).expect("import notes");
+
+        let upgraded = std::fs::read_to_string(&nested_note).expect("read upgraded note");
+        assert!(upgraded.contains("gneauxghts:"));
+        assert!(note::parse_note(&upgraded).frontmatter.managed.is_some());
+        assert!(!std::fs::read_to_string(&hidden_note)
+            .expect("read hidden note")
+            .contains("gneauxghts:"));
+
+        let status = get_sync_status().expect("get sync status");
+        assert_eq!(status.tracked_note_count, 1);
+        assert_eq!(status.dirty_note_count, 1);
+    }
+
+    #[test]
     fn conflict_flag_persists_until_explicitly_dismissed() {
         let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
         let app_data_dir = TestDir::new("sync-conflict-app-data");

@@ -21,7 +21,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sync/manifest", get(read_routes::get_manifest))
         .route("/v1/sync/changes", get(read_routes::pull_changes))
         .route("/v1/sync/notes/batch", post(read_routes::get_notes_batch))
-        .route("/v1/sync/notes/:note_id", get(read_routes::get_note))
+        .route("/v1/sync/notes/{note_id}", get(read_routes::get_note))
         .route("/v1/sync/notes", post(write_routes::push_note_snapshot))
         .route("/v1/sync/trash", post(write_routes::push_trash_event))
         .with_state(state)

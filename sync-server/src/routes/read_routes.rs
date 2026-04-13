@@ -1,4 +1,4 @@
-use super::shared::{load_remote_head, ExistingNoteRow};
+use super::shared::{load_remote_head, validate_note_id, ExistingNoteRow};
 use crate::{
     auth::{internal_error, AuthenticatedSession},
     db,
@@ -15,7 +15,9 @@ use gneauxghts_sync_contract::{
 };
 use serde::Deserialize;
 use sqlx::FromRow;
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
+
+const MAX_NOTES_BATCH_SIZE: usize = 200;
 
 pub(super) async fn get_manifest(
     State(state): State<Arc<AppState>>,
@@ -122,6 +124,8 @@ pub(super) async fn get_note(
     session: AuthenticatedSession,
     Path(note_id): Path<String>,
 ) -> Result<Json<GetNoteResponse>, (StatusCode, String)> {
+    validate_note_id(&note_id)?;
+
     let existing = sqlx::query_as::<_, ExistingNoteRow>(
         "SELECT
             id,
@@ -155,36 +159,64 @@ pub(super) async fn get_notes_batch(
     if request.note_ids.is_empty() {
         return Ok(Json(GetNotesResponse { notes: Vec::new() }));
     }
+    if request.note_ids.len() > MAX_NOTES_BATCH_SIZE {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("noteIds batch limit is {MAX_NOTES_BATCH_SIZE}"),
+        ));
+    }
 
-    let mut notes = Vec::new();
     let mut seen_note_ids = HashSet::new();
+    let mut note_ids = Vec::new();
 
     for note_id in request.note_ids {
+        validate_note_id(&note_id)?;
         if !seen_note_ids.insert(note_id.clone()) {
             continue;
         }
+        note_ids.push(note_id);
+    }
 
-        let existing = sqlx::query_as::<_, ExistingNoteRow>(
-            "SELECT
-                id,
-                current_revision,
-                current_relative_path,
-                current_content_hash,
-                CASE
-                    WHEN trashed_at IS NULL THEN NULL
-                    ELSE to_char(trashed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
-                END AS trashed_at,
-                to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS updated_at
-             FROM notes
-             WHERE vault_id = $1 AND note_id = $2",
-        )
-        .bind(session.vault_id)
-        .bind(&note_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(internal_error)?;
+    let existing_rows = sqlx::query_as::<_, BatchNoteRow>(
+        "SELECT
+            note_id,
+            id,
+            current_revision,
+            current_relative_path,
+            current_content_hash,
+            CASE
+                WHEN trashed_at IS NULL THEN NULL
+                ELSE to_char(trashed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
+            END AS trashed_at,
+            to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS updated_at
+         FROM notes
+         WHERE vault_id = $1 AND note_id = ANY($2)",
+    )
+    .bind(session.vault_id)
+    .bind(&note_ids)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(internal_error)?;
+    let mut rows_by_note_id = existing_rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.note_id,
+                ExistingNoteRow {
+                    id: row.id,
+                    current_revision: row.current_revision,
+                    current_relative_path: row.current_relative_path,
+                    current_content_hash: row.current_content_hash,
+                    trashed_at: row.trashed_at,
+                    updated_at: row.updated_at,
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
 
-        let Some(existing) = existing else {
+    let mut notes = Vec::new();
+    for note_id in note_ids {
+        let Some(existing) = rows_by_note_id.remove(&note_id) else {
             continue;
         };
 
@@ -221,6 +253,17 @@ struct ChangeRow {
     revision: Option<i64>,
     relative_path: Option<String>,
     content_hash: Option<String>,
+    trashed_at: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Debug, FromRow)]
+struct BatchNoteRow {
+    note_id: String,
+    id: uuid::Uuid,
+    current_revision: i64,
+    current_relative_path: String,
+    current_content_hash: String,
     trashed_at: Option<String>,
     updated_at: String,
 }

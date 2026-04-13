@@ -29,9 +29,12 @@ Common defaults:
 - `BLOB_ROOT=/var/lib/gneauxghts-sync/blobs`
 - `MAGIC_LINK_TTL_MINUTES=15`
 - `SESSION_TTL_DAYS=30`
-- `ALLOW_INSECURE_TOKEN_RESPONSE=true`
+- `ALLOW_INSECURE_TOKEN_RESPONSE=false`
+- `MAINTENANCE_INTERVAL_MINUTES=60`
+- `SYNC_CHANGE_RETENTION_DAYS=30`
+- `NOTE_REVISION_RETENTION_DAYS=30`
 
-`ALLOW_INSECURE_TOKEN_RESPONSE=true` is useful for local development because the server returns the raw magic-link token in the response. For a hosted deployment, set it to `false` and replace the current dev-only delivery behavior with real email sending.
+`ALLOW_INSECURE_TOKEN_RESPONSE=true` is useful for local development because the server returns the raw magic-link token in the response. The server now defaults this setting to `false`, so explicitly enable it in `.env` for local dev. For a hosted deployment, leave it disabled and replace the current dev-only delivery behavior with real email sending.
 
 ## Run Locally
 

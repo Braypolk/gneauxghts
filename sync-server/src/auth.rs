@@ -1,6 +1,5 @@
 use crate::{db, state::AppState};
 use axum::{
-    async_trait,
     extract::FromRequestParts,
     http::{header::AUTHORIZATION, request::Parts, StatusCode},
 };
@@ -11,7 +10,6 @@ pub struct AuthenticatedSession {
     pub vault_id: uuid::Uuid,
 }
 
-#[async_trait]
 impl FromRequestParts<Arc<AppState>> for AuthenticatedSession {
     type Rejection = (StatusCode, String);
 

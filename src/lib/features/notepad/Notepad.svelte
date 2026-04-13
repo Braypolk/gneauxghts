@@ -158,6 +158,7 @@
 
   const documentSessionStore = createDocumentSessionStore();
   let documentSession = $state<DocumentSession>(documentSessionStore.activePane.document);
+  let documentSessionRevision = $state(0);
   const sharedEditorResourcesByDocument = new WeakMap<DocumentSession, ReturnType<typeof createSharedEditorResources>>();
   const cursorSaveTimers = new Map<PaneId, ReturnType<typeof window.setTimeout>>();
   const documentSyncFrameIds = new Map<DocumentSession, number>();
@@ -292,6 +293,10 @@
     documentSession = document;
   }
 
+  function invalidateDocumentSessions() {
+    documentSessionRevision += 1;
+  }
+
   function ensurePaneSession(
     paneId: PaneId,
     document: DocumentSession = getDocumentSession()
@@ -306,6 +311,7 @@
   }
 
   function getPaneDocumentSession(paneId: PaneId) {
+    documentSessionRevision;
     return ensurePaneSession(paneId).document;
   }
 
@@ -316,6 +322,7 @@
       documentSessionStore.activePane = paneSession;
       setCurrentDocument(document);
     }
+    invalidateDocumentSessions();
     return paneSession;
   }
 
@@ -337,12 +344,14 @@
   function activateDocumentSession(snapshot: SessionSnapshot) {
     activateSharedDocumentSession(documentSessionStore, snapshot);
     setCurrentDocument(getActivePaneSession(documentSessionStore).document);
+    invalidateDocumentSessions();
     return documentSession;
   }
 
   function syncActiveDocumentSession(snapshot: SessionSnapshot) {
     syncSharedActiveDocumentSession(documentSessionStore, snapshot);
     setCurrentDocument(getActivePaneSession(documentSessionStore).document);
+    invalidateDocumentSessions();
     return documentSession;
   }
 
@@ -353,17 +362,20 @@
   ) {
     syncSharedDocumentSession(documentSessionStore, document, snapshot, options);
     setCurrentDocument(getActivePaneSession(documentSessionStore).document);
+    invalidateDocumentSessions();
     return document;
   }
 
   function resetActiveDocumentSession() {
     resetSharedActiveDocumentSession(documentSessionStore);
     setCurrentDocument(getActivePaneSession(documentSessionStore).document);
+    invalidateDocumentSessions();
     return documentSession;
   }
 
   function discardDocumentSession(noteId: string | null, notePath: string | null) {
     discardSharedDocumentSession(documentSessionStore, noteId, notePath);
+    invalidateDocumentSessions();
   }
 
   function getCurrentMarkdown() {
@@ -693,8 +705,28 @@
     saveCursorPositionForDocument();
   }
 
-  function handleGlobalKeydown(event: KeyboardEvent) {
+  async function handleGlobalKeydown(event: KeyboardEvent) {
     if (handleWikilinkKeydown(event)) {
+      return;
+    }
+
+    const lowerKey = event.key.toLowerCase();
+
+    if (
+      event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.code === 'Slash'
+    ) {
+      if (event.repeat || paneOrder.length > 1) {
+        return;
+      }
+
+      const preferTitle = document.activeElement === getPaneTitleInput(activePaneId);
+      event.preventDefault();
+      await splitWorkspace();
+      focusPaneAfterShortcut(activePaneId, { preferTitle });
       return;
     }
 
@@ -703,7 +735,51 @@
       !event.ctrlKey &&
       !event.altKey &&
       !event.shiftKey &&
-      event.key.toLowerCase() === 'r'
+      lowerKey === 'w'
+    ) {
+      if (event.repeat || paneOrder.length < 2) {
+        return;
+      }
+
+      const preferTitle = document.activeElement === getPaneTitleInput(activePaneId);
+      event.preventDefault();
+      await closePane(activePaneId);
+      focusPaneAfterShortcut(activePaneId, { preferTitle });
+      return;
+    }
+
+    if (
+      event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      lowerKey === 's'
+    ) {
+      if (event.repeat) {
+        return;
+      }
+
+      event.preventDefault();
+      await rememberCurrentNote(defaultRememberShortcutAction);
+      return;
+    }
+
+    if (event.ctrlKey && !event.metaKey && !event.altKey && lowerKey === 'tab') {
+      if (event.repeat || paneOrder.length < 2) {
+        return;
+      }
+
+      event.preventDefault();
+      await switchActivePane();
+      return;
+    }
+
+    if (
+      event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      lowerKey === 'r'
     ) {
       event.preventDefault();
       toggleRelatedPanel();
@@ -715,14 +791,14 @@
       !event.ctrlKey &&
       !event.altKey &&
       !event.shiftKey &&
-      event.key.toLowerCase() === 'l'
+      lowerKey === 'l'
     ) {
       event.preventDefault();
       void openRecentNoteByIndex(0, { forceReload: true });
       return;
     }
 
-    if (!event.metaKey || event.key.toLowerCase() !== 'f') return;
+    if (!event.metaKey || lowerKey !== 'f') return;
 
     event.preventDefault();
     requestSearchFocus(event.shiftKey ? 'all' : 'current');
@@ -1042,6 +1118,10 @@
     return $rememberActionOptions.find((option) => option.id === actionId) ?? EXACT_REMEMBER_ACTION;
   }
 
+  const defaultRememberShortcutAction = $derived.by(() =>
+    resolveRememberAction($defaultRememberActionPreference)
+  );
+
   async function rememberCurrentNote(action: RememberActionOption) {
     flushAllPendingDocumentSyncs();
     flushAllPendingCursorSaves();
@@ -1281,6 +1361,49 @@
 
     activatePaneSession((paneOrder[0] ?? PRIMARY_PANE_ID) as PaneId);
     updateSelectedRelatedText();
+  }
+
+  function getNextPaneId(paneId: PaneId = activePaneId, direction: 1 | -1 = 1) {
+    if (paneOrder.length < 2) {
+      return null;
+    }
+
+    const currentIndex = paneOrder.indexOf(paneId);
+    if (currentIndex === -1) {
+      return paneOrder[0] ?? null;
+    }
+
+    const nextIndex = (currentIndex + direction + paneOrder.length) % paneOrder.length;
+    return paneOrder[nextIndex] ?? null;
+  }
+
+  function focusPaneAfterShortcut(paneId: PaneId, options: { preferTitle?: boolean } = {}) {
+    const titleInput = getPaneTitleInput(paneId);
+    if (options.preferTitle && titleInput) {
+      focusInputAtEnd(titleInput);
+      return;
+    }
+
+    const proseMirror = findProseMirrorElement(getPaneEditorRoot(paneId));
+    if (proseMirror instanceof HTMLElement) {
+      proseMirror.focus({ preventScroll: true });
+      return;
+    }
+
+    titleInput?.focus();
+  }
+
+  async function switchActivePane(direction: 1 | -1 = 1) {
+    const currentPaneId = activePaneId;
+    const nextPaneId = getNextPaneId(currentPaneId, direction);
+    if (!nextPaneId) {
+      return;
+    }
+
+    const preferTitle = document.activeElement === getPaneTitleInput(currentPaneId);
+    activatePane(nextPaneId);
+    await tick();
+    focusPaneAfterShortcut(nextPaneId, { preferTitle });
   }
 
   async function setPaneKind(paneId: PaneId, kind: PaneKind) {

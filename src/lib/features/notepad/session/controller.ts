@@ -101,6 +101,10 @@ export function createSessionController({
 }: SessionControllerDeps) {
   let openNoteRequestGeneration = 0;
 
+  function invalidatePendingSaveResults(document: DocumentSession = getDocumentSession()) {
+    document.operationRevision += 1;
+  }
+
   function hasCleanBuffer() {
     const document = getDocumentSession();
     return shouldSkipAutosave(
@@ -180,6 +184,7 @@ export function createSessionController({
   }
 
   async function persistNote(document: DocumentSession, mode: SaveMode) {
+    const operationRevision = document.operationRevision;
     const title = document.title;
     const markdown = document.bodyMarkdown;
     const currentNoteId = document.currentNoteId;
@@ -200,11 +205,17 @@ export function createSessionController({
         markdown,
         document.currentNotePath
       );
+      if (document.operationRevision !== operationRevision) {
+        return;
+      }
       scheduleAutoSync('note-remembered', 400);
       return;
     }
 
     const savedSession = await saveNoteSession(title, markdown, currentNotePath);
+    if (document.operationRevision !== operationRevision) {
+      return;
+    }
     const preserveDraft =
       document.title !== title ||
       document.bodyMarkdown !== markdown ||
@@ -278,9 +289,10 @@ export function createSessionController({
     }
 
     setForgottenNote(canRestore && hasDraftContent ? createForgottenNote(draft, forgottenPath) : null);
+    invalidatePendingSaveResults(document);
     discardDocumentSession(document.currentNoteId, document.currentNotePath);
     discardSharedEditorStateForDocument(document);
-    resetActiveDocumentSession();
+    syncActiveDocumentSession(createEmptySessionSnapshot());
     setCanUnforget(canRestore && hasDraftContent);
     await replaceEditorContent('');
     clearSelectedRelatedText();
@@ -347,6 +359,7 @@ export function createSessionController({
     saveCursorPositionForDocument(document);
     saveSharedEditorStateForDocument(document);
     cancelPendingAutosave(document);
+    await document.saveQueue;
     await rememberWithAction(
       action,
       cleanUpApplyPolicy,
@@ -357,9 +370,10 @@ export function createSessionController({
     scheduleAutoSync('note-remembered', 400);
     setForgottenNote(null);
     setCanUnforget(false);
+    invalidatePendingSaveResults(document);
     discardDocumentSession(document.currentNoteId, rememberedPath);
     discardSharedEditorStateForDocument(document);
-    resetActiveDocumentSession();
+    syncActiveDocumentSession(createEmptySessionSnapshot());
     clearSearch();
     await replaceEditorContent('');
     clearSelectedRelatedText();

@@ -53,18 +53,21 @@ pub(super) async fn complete_magic_link(
         .to_hex()
         .to_string();
 
+    let mut transaction = state.pool.begin().await.map_err(internal_error)?;
     let user_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT users.id
+        "UPDATE magic_link_tokens
+         SET consumed_at = NOW()
          FROM users
-         INNER JOIN magic_link_tokens ON magic_link_tokens.user_id = users.id
-         WHERE users.email = $1
+         WHERE users.id = magic_link_tokens.user_id
+           AND users.email = $1
            AND magic_link_tokens.token_hash = $2
            AND magic_link_tokens.consumed_at IS NULL
-           AND magic_link_tokens.expires_at > NOW()",
+           AND magic_link_tokens.expires_at > NOW()
+         RETURNING magic_link_tokens.user_id",
     )
     .bind(&email)
     .bind(&token_hash)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *transaction)
     .await
     .map_err(internal_error)?
     .ok_or_else(|| {
@@ -74,19 +77,11 @@ pub(super) async fn complete_magic_link(
         )
     })?;
 
-    sqlx::query(
-        "UPDATE magic_link_tokens SET consumed_at = NOW() WHERE token_hash = $1 AND consumed_at IS NULL",
-    )
-    .bind(&token_hash)
-    .execute(&state.pool)
-    .await
-    .map_err(internal_error)?;
-
-    let vault = db::find_or_create_vault(&state.pool, user_id)
+    let vault = db::find_or_create_vault_tx(&mut transaction, user_id)
         .await
         .map_err(internal_error)?;
-    db::touch_device(
-        &state.pool,
+    db::touch_device_tx(
+        &mut transaction,
         vault.id,
         &request.device_id,
         request.device_name.as_deref(),
@@ -108,9 +103,10 @@ pub(super) async fn complete_magic_link(
     .bind(vault.id)
     .bind(session_token_hash)
     .bind(state.config.session_ttl_days)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *transaction)
     .await
     .map_err(internal_error)?;
+    transaction.commit().await.map_err(internal_error)?;
 
     Ok(Json(AuthSession {
         session_token: raw_session_token,

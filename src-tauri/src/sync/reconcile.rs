@@ -12,6 +12,7 @@ use crate::{
     index::{build_indexed_note, AppState},
     note,
     note::ManagedNoteMetadata,
+    path_utils::collect_markdown_files_recursively,
     semantic::db::content_hash,
     state::{
         forgotten_notes_root, is_forgotten_note_path, read_state, write_state,
@@ -163,22 +164,16 @@ pub(super) fn sync_now_inner(
 pub(super) fn import_existing_local_notes(notes_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(notes_dir).map_err(|err| err.to_string())?;
     let connection = open_database()?;
-    for entry in fs::read_dir(notes_dir).map_err(|err| err.to_string())? {
-        let path = entry.map_err(|err| err.to_string())?.path();
-        if path.is_file() && path.extension().is_some_and(|extension| extension == "md") {
-            let markdown = fs::read_to_string(&path).map_err(|err| err.to_string())?;
-            import_local_note(&connection, &path, &markdown, false)?;
-        }
+    for path in collect_markdown_files_recursively(notes_dir)? {
+        let markdown = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        import_local_note(&connection, &path, &markdown, false)?;
     }
 
     let forgotten_dir = forgotten_notes_root(notes_dir);
     if forgotten_dir.is_dir() {
-        for entry in fs::read_dir(&forgotten_dir).map_err(|err| err.to_string())? {
-            let path = entry.map_err(|err| err.to_string())?.path();
-            if path.is_file() && path.extension().is_some_and(|extension| extension == "md") {
-                let markdown = fs::read_to_string(&path).map_err(|err| err.to_string())?;
-                import_local_note(&connection, &path, &markdown, true)?;
-            }
+        for path in collect_markdown_files_recursively(&forgotten_dir)? {
+            let markdown = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+            import_local_note(&connection, &path, &markdown, true)?;
         }
     }
 

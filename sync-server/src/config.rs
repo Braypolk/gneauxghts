@@ -10,6 +10,9 @@ pub struct Config {
     pub magic_link_ttl_minutes: i64,
     pub session_ttl_days: i64,
     pub allow_insecure_token_response: bool,
+    pub maintenance_interval_minutes: u64,
+    pub sync_change_retention_days: i64,
+    pub note_revision_retention_days: i64,
 }
 
 impl Config {
@@ -35,7 +38,19 @@ impl Config {
         let allow_insecure_token_response = env::var("ALLOW_INSECURE_TOKEN_RESPONSE")
             .ok()
             .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(true);
+            .unwrap_or(false);
+        let maintenance_interval_minutes = env::var("MAINTENANCE_INTERVAL_MINUTES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(60);
+        let sync_change_retention_days = env::var("SYNC_CHANGE_RETENTION_DAYS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30);
+        let note_revision_retention_days = env::var("NOTE_REVISION_RETENTION_DAYS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30);
 
         Ok(Self {
             bind_addr,
@@ -45,6 +60,9 @@ impl Config {
             magic_link_ttl_minutes,
             session_ttl_days,
             allow_insecure_token_response,
+            maintenance_interval_minutes,
+            sync_change_retention_days,
+            note_revision_retention_days,
         })
     }
 }

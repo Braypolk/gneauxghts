@@ -281,6 +281,8 @@
     return preferred;
   }
 
+  const primaryRememberAction = $derived(resolvePrimaryRememberAction());
+
   function isRememberActionDisabled(action: RememberActionOption) {
     return rememberActionRequiresIntegrateSupport(action) && !integrateEnabled;
   }
@@ -511,11 +513,11 @@
         <button
           class="inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2"
           type="button"
-          onclick={() => handleRemember(resolvePrimaryRememberAction())}
-          aria-label={resolvePrimaryRememberAction().label}
-          title={resolvePrimaryRememberAction().label}
+          onclick={() => handleRemember(primaryRememberAction)}
+          aria-label={primaryRememberAction.label}
+          title={primaryRememberAction.label}
         >
-          <span class="hidden min-[700px]:inline">Remember</span>
+          <span class="hidden min-[700px]:inline">{primaryRememberAction.label}</span>
           <Brain class="h-5 w-5 min-[700px]:hidden" />
         </button>
         <button

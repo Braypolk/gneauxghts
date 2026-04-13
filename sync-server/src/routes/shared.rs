@@ -2,7 +2,7 @@ use crate::auth::internal_error;
 use axum::http::StatusCode;
 use gneauxghts_sync_contract::RemoteHead;
 use sqlx::{FromRow, PgPool};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -55,6 +55,55 @@ pub(super) async fn load_remote_head(
         trashed_at: existing.trashed_at,
         updated_at: existing.updated_at,
     })
+}
+
+pub(super) fn validate_note_id(note_id: &str) -> Result<(), (StatusCode, String)> {
+    let trimmed = note_id.trim();
+    if trimmed.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "noteId is required".to_string()));
+    }
+
+    let path = Path::new(trimmed);
+    let mut components = path.components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            "noteId must be a single path-safe component".to_string(),
+        )),
+    }
+}
+
+pub(super) fn validate_relative_path(relative_path: &str) -> Result<(), (StatusCode, String)> {
+    let trimmed = relative_path.trim();
+    if trimmed.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "relativePath is required".to_string(),
+        ));
+    }
+
+    let candidate = Path::new(trimmed);
+    if candidate.is_absolute() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "relativePath must not be absolute".to_string(),
+        ));
+    }
+
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "relativePath is invalid".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, FromRow)]
