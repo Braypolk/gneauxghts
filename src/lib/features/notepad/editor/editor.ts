@@ -32,8 +32,9 @@ import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
 import { tick } from 'svelte';
 import { createTaskListTransaction } from '$lib/features/notepad/editor/blockTypes';
 import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
+import { resolveBlockContext, selectionTouchesBlock } from '$lib/features/notepad/editor/blockTypeMenu';
 import { getEditorProseSurface } from '$lib/features/notepad/editor/editorDom';
-import { setupBlockHandleTypeMenu } from '$lib/features/notepad/editor/blockTypeMenu';
+import { setSlashMenuFloatingReference } from '$lib/features/notepad/editor/slashMenu';
 import {
   findAncestorNode,
   isDocEmpty,
@@ -42,8 +43,8 @@ import {
 } from '$lib/features/notepad/editor/editorSelection';
 import { parseMarkdown, serializeMarkdown } from '$lib/features/notepad/editor/markdown';
 import { notepadSchema } from '$lib/features/notepad/editor/schema';
+import { mountBlockHandle } from '$lib/features/notepad/editor/blockHandleMount';
 import { createSlashMenuPlugin, type SlashMenuAPI } from '$lib/features/notepad/editor/slashMenu';
-import { setupSlashMenuPortal } from '$lib/features/notepad/editor/slashMenuPortal';
 import { createImageEmbedsPlugin } from '$lib/features/notepad/images/imageEmbeds';
 import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 import { createImagePastePlugin } from '$lib/features/notepad/images/imagePaste';
@@ -51,21 +52,13 @@ import type { StoredImageAsset } from '$lib/features/notepad/model/types';
 import { createWikilinksPlugin, type ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 
 interface CreateEditorOptions {
-  assetRootPath: string | null;
   editorRoot: HTMLDivElement;
   initialValue: string;
-  onOpenLink: (rawTarget: string) => void;
-  onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
   onMarkdownChange: (markdown: string) => void;
-  onTaskListToggle: () => void;
-  onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
-}
-
-interface ResetSlashMenuPortalOptions {
-  boundsElement: HTMLDivElement | null;
-  editorRoot: HTMLDivElement | null;
-  portalRoot: HTMLDivElement | null;
-  currentCleanup: (() => void) | null;
+  initialState?: EditorState | null;
+  onDispatchTransaction?: (controller: EditorController, transaction: Transaction) => void;
+  sharedResources?: SharedEditorResources | null;
+  viewCallbacks?: EditorViewCallbacks;
 }
 
 interface ReplaceEditorContentOptions {
@@ -77,49 +70,35 @@ interface ReplaceEditorStateOptions {
   scrollSelectionIntoView?: boolean;
 }
 
+interface ReplaceEditorDocumentOptions {
+  anchor?: number | null;
+  head?: number | null;
+  focus?: boolean;
+  scrollSelectionIntoView?: boolean;
+}
+
 export interface EditorController {
   view: EditorView;
   plugins: Plugin[];
-  slashMenuApi: SlashMenuAPI;
+  sharedResources: SharedEditorResources | null;
 }
 
-const addIcon = `
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="1.8"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  >
-    <path d="M12 5v14" />
-    <path d="M5 12h14" />
-  </svg>
-`;
+export interface EditorViewCallbacks {
+  onOpenLink: (rawTarget: string) => void;
+  onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
+}
 
-const dragHandleIcon = `
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="24"
-    height="24"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="1.8"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  >
-    <circle cx="7.25" cy="5.9" r="1.4" />
-    <circle cx="7.25" cy="12" r="1.4" />
-    <circle cx="7.25" cy="18.1" r="1.4" />
-    <circle cx="16.75" cy="5.9" r="1.4" />
-    <circle cx="16.75" cy="12" r="1.4" />
-    <circle cx="16.75" cy="18.1" r="1.4" />
-  </svg>
-`;
+export interface SharedEditorResources {
+  plugins: Plugin[];
+  registerViewCallbacks: (view: EditorView, callbacks: EditorViewCallbacks) => void;
+  unregisterViewCallbacks: (view: EditorView) => void;
+}
+
+interface CreateSharedEditorResourcesOptions {
+  assetRootPath: string | null;
+  onTaskListToggle: () => void;
+  onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
+}
 
 interface PlaceholderConfig {
   text: string;
@@ -331,24 +310,12 @@ function createMarkdownInputRules() {
   });
 }
 
-function createEditorPlugins(
-  editorRoot: HTMLDivElement,
-  slashMenuApi: SlashMenuAPI,
-  {
-    assetRootPath,
-    onOpenLink,
-    onActiveWikilinkChange,
-    onTaskListToggle,
-    onStorePastedImage
-  }: Pick<
-    CreateEditorOptions,
-    | 'assetRootPath'
-    | 'onOpenLink'
-    | 'onActiveWikilinkChange'
-    | 'onTaskListToggle'
-    | 'onStorePastedImage'
-  >
-) {
+export function createSharedEditorResources({
+  assetRootPath,
+  onTaskListToggle,
+  onStorePastedImage
+}: CreateSharedEditorResourcesOptions): SharedEditorResources {
+  const viewCallbacks = new WeakMap<EditorView, EditorViewCallbacks>();
   const imagesConfig: ImagesConfig = {
     assetRootPath,
     storePastedImage: onStorePastedImage
@@ -356,10 +323,7 @@ function createEditorPlugins(
 
   const listItemType = notepadSchema.nodes.list_item;
   const slashMenu = createSlashMenuPlugin();
-  slashMenuApi.show = slashMenu.api.show;
-  slashMenuApi.hide = slashMenu.api.hide;
-
-  return [
+  const plugins = [
     createMarkdownInputRules(),
     keymap({
       'Mod-z': undo,
@@ -392,14 +356,26 @@ function createEditorPlugins(
     }),
     createTaskListInteractionPlugin(onTaskListToggle),
     createWikilinksPlugin({
-      onOpenLink,
-      onActiveWikilinkChange
+      resolveCallbacks: (view) => viewCallbacks.get(view)
     }),
     createImageEmbedsPlugin(imagesConfig),
     createImagePastePlugin(imagesConfig),
     slashMenu.plugin,
-    createBlockHandlePlugin(editorRoot, slashMenu.api)
+    createBlockHandlePlugin((view, pos) => {
+      slashMenu.show(view, pos);
+    })
   ];
+
+  return {
+    plugins,
+    registerViewCallbacks(view, callbacks) {
+      viewCallbacks.set(view, callbacks);
+    },
+    unregisterViewCallbacks(view) {
+      viewCallbacks.delete(view);
+      slashMenu.hide(view);
+    }
+  };
 }
 
 function createEditorState(markdown: string, plugins: Plugin[]) {
@@ -408,28 +384,6 @@ function createEditorState(markdown: string, plugins: Plugin[]) {
     doc: createEditorDocument(markdown),
     plugins
   });
-}
-
-function getBlockHandleContent(documentRoot: Document) {
-  const content = documentRoot.createElement('div');
-  content.className = 'milkdown-block-handle';
-  content.dataset.show = 'false';
-  content.style.position = 'fixed';
-
-  const addButton = documentRoot.createElement('div');
-  addButton.className = 'operation-item';
-  addButton.dataset.role = 'add';
-  addButton.innerHTML = addIcon;
-
-  const dragButton = documentRoot.createElement('div');
-  dragButton.className = 'operation-item';
-  dragButton.dataset.role = 'drag';
-  dragButton.innerHTML = dragHandleIcon;
-
-  content.appendChild(addButton);
-  content.appendChild(dragButton);
-
-  return { content, addButton, dragButton };
 }
 
 interface ActiveBlockHandle {
@@ -640,15 +594,17 @@ function nodeToInsertAtBlockGap(
   return null;
 }
 
-function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: SlashMenuAPI) {
+function createBlockHandlePlugin(showSlashMenu: (view: EditorView, pos: number) => void) {
   const key = new PluginKey('NOTEPAD_BLOCK_HANDLE');
 
   class BlockHandleView {
     readonly #view: EditorView;
-    readonly #content: HTMLElement;
-    readonly #addButton: HTMLElement;
-    readonly #dragButton: HTMLElement;
+    readonly #editorRoot: HTMLDivElement;
+    #content!: HTMLElement;
+    #addButton!: HTMLElement;
+    #dragButton!: HTMLElement;
     readonly #dropIndicator: HTMLElement;
+    readonly #unmountBlockHandle: () => void;
     #activeBlock: ActiveBlockHandle | null = null;
     #scrollRoot: HTMLElement | null;
     #hideTimer: number | null = null;
@@ -667,19 +623,24 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
 
     constructor(view: EditorView) {
       this.#view = view;
-      const { content, addButton, dragButton } = getBlockHandleContent(document);
-      this.#content = content;
-      this.#addButton = addButton;
-      this.#dragButton = dragButton;
-      this.#scrollRoot = editorRoot.closest<HTMLElement>('.notepad-editor-shell');
+      const editorRoot = view.dom.parentElement;
+      if (!(editorRoot instanceof HTMLDivElement)) {
+        throw new Error('Editor root container is missing.');
+      }
+      this.#editorRoot = editorRoot;
+      this.#scrollRoot = this.#editorRoot.closest<HTMLElement>('.notepad-editor-shell');
+      this.#unmountBlockHandle = mountBlockHandle(this.#editorRoot, (refs) => {
+        this.#content = refs.content;
+        this.#addButton = refs.addButton;
+        this.#dragButton = refs.dragButton;
+      });
       this.#dropIndicator = document.createElement('div');
-      this.#dropIndicator.className = 'gn-block-drop-indicator';
+      this.#dropIndicator.className = 'notepad-block-drop-indicator';
       this.#dropIndicator.dataset.show = 'false';
-      editorRoot.appendChild(content);
-      editorRoot.appendChild(this.#dropIndicator);
+      this.#editorRoot.appendChild(this.#dropIndicator);
 
-      editorRoot.addEventListener('mousemove', this.handleEditorMouseMove, true);
-      editorRoot.addEventListener('mouseleave', this.handleEditorMouseLeave, true);
+      this.#editorRoot.addEventListener('mousemove', this.handleEditorMouseMove, true);
+      this.#editorRoot.addEventListener('mouseleave', this.handleEditorMouseLeave, true);
       this.#content.addEventListener('mouseenter', this.handleHandleMouseEnter);
       this.#content.addEventListener('mouseleave', this.handleHandleMouseLeave);
       this.#addButton.addEventListener('pointerdown', this.handleAddPointerDown);
@@ -706,8 +667,8 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
 
     destroy() {
       this.clearHideTimer();
-      editorRoot.removeEventListener('mousemove', this.handleEditorMouseMove, true);
-      editorRoot.removeEventListener('mouseleave', this.handleEditorMouseLeave, true);
+      this.#editorRoot.removeEventListener('mousemove', this.handleEditorMouseMove, true);
+      this.#editorRoot.removeEventListener('mouseleave', this.handleEditorMouseLeave, true);
       this.#content.removeEventListener('mouseenter', this.handleHandleMouseEnter);
       this.#content.removeEventListener('mouseleave', this.handleHandleMouseLeave);
       this.#addButton.removeEventListener('pointerdown', this.handleAddPointerDown);
@@ -717,8 +678,8 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
       window.removeEventListener('pointerup', this.handlePointerUp, true);
       window.removeEventListener('pointercancel', this.handlePointerCancel, true);
       this.#scrollRoot?.removeEventListener('scroll', this.handleScroll, true);
-      document.body.classList.remove('gn-block-dragging');
-      this.#content.remove();
+      document.body.classList.remove('notepad-block-dragging');
+      this.#unmountBlockHandle();
       this.#dropIndicator.remove();
     }
 
@@ -801,7 +762,8 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
       this.#view.dispatch(transaction.scrollIntoView());
 
       this.hide();
-      slashMenuApi.show(transaction.selection.from);
+      setSlashMenuFloatingReference(this.#view, null);
+      showSlashMenu(this.#view, transaction.selection.from);
     };
 
     private handleDragPointerDown = (event: PointerEvent) => {
@@ -842,7 +804,7 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
       if (!this.#dragState.started && delta > 6) {
         this.#dragState.started = true;
         this.#content.dataset.dragging = 'true';
-        document.body.classList.add('gn-block-dragging');
+        document.body.classList.add('notepad-block-dragging');
       }
 
       if (this.#dragState.started) {
@@ -863,6 +825,26 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
       }
     };
 
+    #openSlashMenuFromDragHandleTap(dragState: { sourcePos: number; sourceButton: HTMLElement }) {
+      const ctx = resolveBlockContext(this.#view, this.#editorRoot, dragState.sourceButton);
+      if (!ctx) {
+        return;
+      }
+
+      const state = this.#view.state;
+      if (!selectionTouchesBlock(state.doc, state.selection, dragState.sourcePos)) {
+        const tr = state.tr.setSelection(TextSelection.create(state.doc, ctx.targetPos));
+        this.#view.dispatch(tr.scrollIntoView());
+      }
+
+      if (!this.#view.hasFocus()) {
+        this.#view.focus();
+      }
+
+      setSlashMenuFloatingReference(this.#view, this.#content);
+      showSlashMenu(this.#view, ctx.targetPos);
+    }
+
     private handlePointerUp = (event: PointerEvent) => {
       if (!this.#dragState || event.pointerId !== this.#dragState.pointerId) {
         return;
@@ -872,7 +854,12 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
       this.#dragState = null;
       this.finishDragInteraction(dragState.pointerId, dragState.sourceButton);
 
-      if (!dragState.started || !dragState.dropTarget) {
+      if (!dragState.started) {
+        this.#openSlashMenuFromDragHandleTap(dragState);
+        return;
+      }
+
+      if (!dragState.dropTarget) {
         return;
       }
 
@@ -899,11 +886,6 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
           return;
         }
 
-        const $pos = this.#view.state.doc.resolve(context.pos + 1);
-        if (findAncestorNode($pos, (node) => ['table', 'blockquote'].includes(node.type.name))) {
-          this.hide();
-          return;
-        }
         this.#activeBlock = {
           node: context.node,
           pos: context.pos,
@@ -941,11 +923,11 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
       const elements = document
         .elementsFromPoint(clientX, clientY)
         .filter((candidate): candidate is HTMLElement => candidate instanceof HTMLElement)
-        .filter((candidate) => editorRoot.contains(candidate) && !this.#content.contains(candidate));
+        .filter((candidate) => this.#editorRoot.contains(candidate) && !this.#content.contains(candidate));
 
       const matchedBlocks = new Set<HTMLElement>();
       for (const candidate of elements) {
-        const block = resolveBlockRootElement(editorRoot, candidate);
+        const block = resolveBlockRootElement(this.#editorRoot, candidate);
         if (block) {
           matchedBlocks.add(block);
         }
@@ -967,7 +949,7 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
 
       const candidates = sortBlockElementsBySpecificity(
         Array.from(prose.querySelectorAll<HTMLElement>(BLOCK_HANDLE_SELECTOR))
-          .map((candidate) => resolveBlockRootElement(editorRoot, candidate))
+          .map((candidate) => resolveBlockRootElement(this.#editorRoot, candidate))
           .filter((candidate): candidate is HTMLElement => candidate !== null)
       );
 
@@ -1055,7 +1037,7 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
     private finishDragInteraction(pointerId: number, sourceButton: HTMLElement) {
       sourceButton.classList.remove('active');
       this.#content.dataset.dragging = 'false';
-      document.body.classList.remove('gn-block-dragging');
+      document.body.classList.remove('notepad-block-dragging');
       this.hideDropIndicator();
       try {
         if (sourceButton.hasPointerCapture(pointerId)) {
@@ -1154,8 +1136,6 @@ function createBlockHandlePlugin(editorRoot: HTMLDivElement, slashMenuApi: Slash
   });
 }
 
-const blockHandleMenuCleanupByEditor = new WeakMap<EditorController, () => void>();
-
 // ── Editor lifecycle ─────────────────────────────────────────────────
 
 export async function prepareEditor(editorRoot: HTMLDivElement | null) {
@@ -1166,30 +1146,28 @@ export async function prepareEditor(editorRoot: HTMLDivElement | null) {
 }
 
 export async function createEditor({
-  assetRootPath,
   editorRoot,
   initialValue,
-  onOpenLink,
-  onActiveWikilinkChange,
   onMarkdownChange,
-  onTaskListToggle,
-  onStorePastedImage
+  initialState = null,
+  onDispatchTransaction,
+  sharedResources = null,
+  viewCallbacks
 }: CreateEditorOptions) {
   editorRoot.classList.add('gn-editor-root');
 
-  const slashMenuApi: SlashMenuAPI = {
-    show: () => {},
-    hide: () => {}
-  };
-
-  const plugins = createEditorPlugins(editorRoot, slashMenuApi, {
-    assetRootPath,
-    onOpenLink,
-    onActiveWikilinkChange,
-    onTaskListToggle,
-    onStorePastedImage
-  });
-  const state = createEditorState(initialValue, plugins);
+  const resources =
+    sharedResources ??
+    createSharedEditorResources({
+      assetRootPath: null,
+      onTaskListToggle: () => {},
+      onStorePastedImage: async () => {
+        throw new Error('Image pasting is unavailable for this editor instance.');
+      }
+    });
+  const plugins = resources.plugins;
+  const state = initialState ?? createEditorState(initialValue, plugins);
+  let controller: EditorController;
 
   const view = new EditorView(editorRoot, {
     state,
@@ -1199,6 +1177,11 @@ export async function createEditor({
       autocapitalize: 'sentences'
     },
     dispatchTransaction(transaction) {
+      if (onDispatchTransaction) {
+        onDispatchTransaction(controller, transaction);
+        return;
+      }
+
       const nextState = view.state.apply(transaction);
       view.updateState(nextState);
       if (transaction.docChanged) {
@@ -1207,26 +1190,24 @@ export async function createEditor({
     }
   });
 
-  const controller: EditorController = {
+  resources.registerViewCallbacks(view, {
+    onOpenLink: viewCallbacks?.onOpenLink ?? (() => {}),
+    onActiveWikilinkChange: viewCallbacks?.onActiveWikilinkChange ?? (() => {})
+  });
+
+  controller = {
     view,
     plugins,
-    slashMenuApi
+    sharedResources: resources
   };
 
-  const menuCleanup = setupBlockHandleTypeMenu(controller, editorRoot);
-  blockHandleMenuCleanupByEditor.set(controller, menuCleanup);
   return controller;
 }
 
 export async function destroyEditor(controller: EditorController | null) {
   if (!controller) return null;
 
-  const menuCleanup = blockHandleMenuCleanupByEditor.get(controller);
-  if (menuCleanup) {
-    menuCleanup();
-    blockHandleMenuCleanupByEditor.delete(controller);
-  }
-
+  controller.sharedResources?.unregisterViewCallbacks(controller.view);
   controller.view.destroy();
   return null;
 }
@@ -1276,6 +1257,54 @@ export function replaceEditorState(
   return true;
 }
 
+export function replaceEditorDocument(
+  controller: EditorController | null,
+  doc: ProseMirrorNode | null,
+  {
+    anchor = null,
+    head = null,
+    focus = false,
+    scrollSelectionIntoView: shouldScrollSelectionIntoView = false
+  }: ReplaceEditorDocumentOptions = {}
+) {
+  if (!controller || !doc) {
+    return false;
+  }
+
+  const view = controller.view;
+  if (view.state.doc.eq(doc)) {
+    return true;
+  }
+
+  let transaction = view.state.tr
+    .replaceWith(0, view.state.doc.content.size, doc.content)
+    .setMeta('addToHistory', false);
+
+  const maxPos = Math.max(1, transaction.doc.nodeSize - 2);
+  const nextAnchor = Math.max(1, Math.min(anchor ?? view.state.selection.anchor, maxPos));
+  const nextHead = Math.max(1, Math.min(head ?? view.state.selection.head, maxPos));
+
+  transaction = transaction.setSelection(
+    TextSelection.between(
+      transaction.doc.resolve(nextAnchor),
+      transaction.doc.resolve(nextHead)
+    )
+  );
+
+  view.updateState(view.state.apply(transaction));
+
+  if (focus) {
+    view.focus();
+  }
+  if (shouldScrollSelectionIntoView) {
+    window.requestAnimationFrame(() => {
+      scrollSelectionIntoView(view);
+    });
+  }
+
+  return true;
+}
+
 export function readCursorPosition(
   controller: EditorController | null
 ): CursorPosition | null {
@@ -1311,27 +1340,6 @@ export function restoreCursorPosition(
     scrollSelectionIntoView(view);
   });
   return true;
-}
-
-export function resetSlashMenuPortal({
-  boundsElement,
-  editorRoot,
-  portalRoot,
-  currentCleanup
-}: ResetSlashMenuPortalOptions) {
-  if (currentCleanup) {
-    currentCleanup();
-  }
-
-  if (!boundsElement || !editorRoot || !portalRoot) {
-    return null;
-  }
-
-  return setupSlashMenuPortal({
-    boundsElement,
-    editorRoot,
-    portalRoot
-  });
 }
 
 export function insertWikilinkSuggestion(

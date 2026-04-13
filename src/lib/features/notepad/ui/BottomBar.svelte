@@ -42,6 +42,7 @@
     onRecentNoteShortcut: (index: number) => void | Promise<void>;
     onRecentTaskShortcut: (index: number) => void | Promise<void>;
     onSearchFocus: () => void;
+    onCommand?: (command: string) => boolean | Promise<boolean>;
     focusRequest: number;
   }
 
@@ -68,6 +69,7 @@
     onRecentNoteShortcut,
     onRecentTaskShortcut,
     onSearchFocus,
+    onCommand,
     focusRequest
   }: Props = $props();
 
@@ -156,7 +158,8 @@
     onRecentTaskSelect: (task) => onRecentTaskSelect(task),
     onRecentNoteShortcut: (index) => onRecentNoteShortcut(index),
     onRecentTaskShortcut: (index) => onRecentTaskShortcut(index),
-    onSearchFocus: () => onSearchFocus()
+    onSearchFocus: () => onSearchFocus(),
+    onCommand: (command) => onCommand?.(command) ?? false
   });
   const {
     resetActiveIndex,

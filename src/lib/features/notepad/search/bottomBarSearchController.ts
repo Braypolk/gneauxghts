@@ -35,6 +35,7 @@ interface BottomBarSearchControllerDeps {
   onRecentNoteShortcut: (index: number) => void | Promise<void>;
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
   onSearchFocus: () => void;
+  onCommand?: (command: string) => boolean | Promise<boolean>;
 }
 
 export function deriveBottomBarVisibleItems(
@@ -102,7 +103,8 @@ export function createBottomBarSearchController({
   onRecentTaskSelect,
   onRecentNoteShortcut,
   onRecentTaskShortcut,
-  onSearchFocus
+  onSearchFocus,
+  onCommand
 }: BottomBarSearchControllerDeps) {
   function resetActiveIndex() {
     setActiveIndex(0);
@@ -225,10 +227,16 @@ export function createBottomBarSearchController({
       return;
     }
 
-    if (!isPanelVisible || items.length === 0) {
-      if (event.key === 'Enter' && getSearchQuery().trim() === '') {
+    if (event.key === 'Enter') {
+      const trimmedQuery = getSearchQuery().trim();
+      if (trimmedQuery.startsWith('/')) {
         event.preventDefault();
+        void onCommand?.(trimmedQuery);
+        return;
       }
+    }
+
+    if (!isPanelVisible || items.length === 0) {
       return;
     }
 

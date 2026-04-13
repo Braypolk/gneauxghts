@@ -2,45 +2,67 @@ import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import {
   applyBlockTypeSelection,
-  blockTypeIcons,
   createTaskListTransaction,
   slashMenuGroups,
   slashMenuOptionIds,
   type EditorMenuOption
 } from '$lib/features/notepad/editor/blockTypes';
-import { isInCodeContext, isInList } from '$lib/features/notepad/editor/editorSelection';
+import { emitSlashMenuUpdate } from '$lib/features/notepad/editor/slashMenuBridge';
 
-interface SlashMenuItemWithIndex extends EditorMenuOption {
+/** When set, Floating UI anchors the slash menu to this element (e.g. block handle) instead of the caret. */
+const slashMenuFloatingReferenceByView = new WeakMap<EditorView, HTMLElement>();
+
+export function setSlashMenuFloatingReference(view: EditorView, element: HTMLElement | null): void {
+  if (element === null) {
+    slashMenuFloatingReferenceByView.delete(view);
+  } else {
+    slashMenuFloatingReferenceByView.set(view, element);
+  }
+}
+
+export function getSlashMenuFloatingReference(view: EditorView): HTMLElement | null {
+  const el = slashMenuFloatingReferenceByView.get(view);
+  if (!el?.isConnected) {
+    if (el) {
+      slashMenuFloatingReferenceByView.delete(view);
+    }
+    return null;
+  }
+  return el;
+}
+
+export interface SlashMenuItemWithIndex extends EditorMenuOption {
   index: number;
 }
 
-interface SlashMenuGroupWithItems {
+export interface SlashMenuGroupWithItems {
   key: string;
   label: string;
   range: readonly [number, number];
   items: SlashMenuItemWithIndex[];
 }
 
-interface SlashMenuState {
+interface SlashMenuModel {
   groups: SlashMenuGroupWithItems[];
   size: number;
 }
+
+export type SlashMenuSnapshot =
+  | { open: false }
+  | {
+      open: true;
+      /** Document position used with `view.coordsAtPos` for Floating UI reference. */
+      anchorPos: number;
+      groups: SlashMenuGroupWithItems[];
+      hoverIndex: number;
+    };
 
 export interface SlashMenuAPI {
   show: (pos: number) => void;
   hide: () => void;
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function getSlashMenuState(filter = ''): SlashMenuState {
+export function getSlashMenuState(filter = ''): SlashMenuModel {
   const normalizedFilter = filter.trim().toLowerCase();
   const groups: SlashMenuGroupWithItems[] = [];
   let index = 0;
@@ -77,14 +99,37 @@ function getSlashMenuState(filter = ''): SlashMenuState {
   };
 }
 
-function isSelectionAtEndOfNode(view: EditorView) {
+/** True when this block is a typed-slash line (`/…`), not a programmatic open from the handle / + button. */
+function isSlashTriggerLine(view: EditorView): boolean {
   const { selection } = view.state;
   if (!(selection instanceof TextSelection)) {
     return false;
   }
+  const { $from } = selection;
+  const parent = $from.parent;
+  if (!parent.isTextblock) {
+    return false;
+  }
+  const text = parent.textBetween(0, parent.content.size, '\n', '\0');
+  return text.startsWith('/');
+}
 
-  const { $head } = selection;
-  return $head.parentOffset === $head.parent.content.size;
+/** Removes `/…` on the current line before applying the chosen block type (typed-slash flow only). */
+function deleteSlashTriggerText(view: EditorView): void {
+  const selection = view.state.selection;
+  if (!(selection instanceof TextSelection)) {
+    return;
+  }
+  const { $from } = selection;
+  const parent = $from.parent;
+  if (!isSelectionAtEndOfNode(view) || !parent.isTextblock) {
+    return;
+  }
+  const from = $from.start();
+  const to = $from.end();
+  const transaction = view.state.tr.deleteRange(from, to);
+  transaction.setSelection(TextSelection.create(transaction.doc, from));
+  view.dispatch(transaction);
 }
 
 function runSlashMenuSelection(view: EditorView, optionId: string) {
@@ -92,31 +137,25 @@ function runSlashMenuSelection(view: EditorView, optionId: string) {
     return;
   }
 
+  const slashLine = isSlashTriggerLine(view);
+
   if (optionId === 'taskList') {
-    const transaction = createTaskListTransaction(view.state, {
-      requireSelectionAtEnd: true,
-      scrollIntoView: true
-    });
-    if (transaction) {
-      view.dispatch(transaction);
-      return;
+    if (slashLine) {
+      const transaction = createTaskListTransaction(view.state, {
+        requireSelectionAtEnd: true,
+        scrollIntoView: true
+      });
+      if (transaction) {
+        view.dispatch(transaction);
+        return;
+      }
     }
+    applyBlockTypeSelection(view, optionId);
+    return;
   }
 
-  const selection = view.state.selection;
-  if (selection instanceof TextSelection) {
-    const { $from } = selection;
-    const parent = $from.parent;
-    if (
-      isSelectionAtEndOfNode(view) &&
-      (parent.type.name === 'paragraph' || parent.type.name === 'heading')
-    ) {
-      const from = $from.start();
-      const to = $from.end();
-      const transaction = view.state.tr.deleteRange(from, to);
-      transaction.setSelection(TextSelection.create(transaction.doc, from));
-      view.dispatch(transaction);
-    }
+  if (slashLine) {
+    deleteSlashTriggerText(view);
   }
 
   applyBlockTypeSelection(view, optionId);
@@ -135,60 +174,52 @@ function getCurrentText(view: EditorView) {
   }
 
   const parent = selection.$from.parent;
-  if (parent.type.name !== 'paragraph' && parent.type.name !== 'heading') {
+  if (!parent.isTextblock) {
     return null;
   }
 
   return parent.textBetween(0, parent.content.size, '\n', '\0');
 }
 
-class SlashMenuView {
-  readonly #content: HTMLElement;
-  #filter = '';
-  #hoverIndex = 0;
-  #view: EditorView;
-  #programmaticPos: number | null = null;
-  #menuState: SlashMenuState = getSlashMenuState();
-
-  constructor(view: EditorView, api: SlashMenuAPI) {
-    this.#view = view;
-
-    const content = document.createElement('div');
-    content.className = 'milkdown-slash-menu';
-    content.dataset.show = 'false';
-    content.style.position = 'fixed';
-    content.style.left = '0px';
-    content.style.top = '0px';
-    content.addEventListener('pointerdown', this.handlePointerDown);
-    content.addEventListener('pointermove', this.handlePointerMove);
-    content.addEventListener('pointerup', this.handlePointerUp);
-    this.#content = content;
-
-    const mountRoot = view.dom.parentElement ?? view.dom;
-    mountRoot.appendChild(content);
-
-    api.show = (pos) => this.show(pos);
-    api.hide = () => this.hide();
-
-    window.addEventListener('keydown', this.handleWindowKeydown, true);
-    window.addEventListener('resize', this.handleWindowResize, true);
-    this.update(view);
+function isSelectionAtEndOfNode(view: EditorView) {
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection)) {
+    return false;
   }
 
-  update(view: EditorView) {
+  const { $head } = selection;
+  return $head.parentOffset === $head.parent.content.size;
+}
+
+const slashControllers = new WeakMap<EditorView, SlashMenuPluginController>();
+
+class SlashMenuPluginController {
+  readonly #view: EditorView;
+  #filter = '';
+  #hoverIndex = 0;
+  #programmaticPos: number | null = null;
+  #menuState: SlashMenuModel = getSlashMenuState();
+  #visible = false;
+
+  constructor(view: EditorView) {
     this.#view = view;
-    const shouldShow = this.shouldShow();
+    window.addEventListener('resize', this.handleWindowResize, true);
+    this.sync(this.#view);
+  }
+
+  sync(view: EditorView) {
+    const shouldShow = this.#shouldShow(view);
     if (!shouldShow) {
       this.hide();
       return;
     }
 
-    if (this.#content.dataset.show !== 'true') {
-      this.#content.dataset.show = 'true';
+    if (this.#menuState.size === 0) {
+      this.hide();
+      return;
     }
 
-    this.render();
-    this.position();
+    this.#emitOpen(view);
   }
 
   show(pos: number) {
@@ -196,131 +227,47 @@ class SlashMenuView {
     this.#filter = '';
     this.#menuState = getSlashMenuState('');
     this.#hoverIndex = 0;
-    this.update(this.#view);
+    this.sync(this.#view);
   }
 
   hide() {
     this.#programmaticPos = null;
-    this.#content.dataset.show = 'false';
+    this.#visible = false;
+    slashMenuFloatingReferenceByView.delete(this.#view);
+    emitSlashMenuUpdate(this.#view, { open: false });
   }
 
   destroy() {
-    window.removeEventListener('keydown', this.handleWindowKeydown, true);
     window.removeEventListener('resize', this.handleWindowResize, true);
-    this.#content.removeEventListener('pointerdown', this.handlePointerDown);
-    this.#content.removeEventListener('pointermove', this.handlePointerMove);
-    this.#content.removeEventListener('pointerup', this.handlePointerUp);
-    this.#content.remove();
+    this.#visible = false;
+    slashMenuFloatingReferenceByView.delete(this.#view);
+    emitSlashMenuUpdate(this.#view, { open: false });
   }
 
-  private shouldShow() {
-    if (isInCodeContext(this.#view.state.selection) || isInList(this.#view.state.selection)) {
-      return false;
-    }
-
-    if (!isSelectionAtEndOfNode(this.#view)) {
-      return false;
-    }
-
-    const currentText = getCurrentText(this.#view);
-    if (currentText == null) {
-      return false;
-    }
-
-    if (typeof this.#programmaticPos === 'number') {
-      const maxSize = this.#view.state.doc.nodeSize - 2;
-      const validPos = Math.min(this.#programmaticPos, maxSize);
-      const targetParent = this.#view.state.doc.resolve(validPos).parent;
-      const activeParent = this.#view.state.selection.$from.parent;
-      if (targetParent !== activeParent) {
-        this.#programmaticPos = null;
-        return false;
-      }
-
-      this.#filter = '';
-      this.#menuState = getSlashMenuState('');
-      this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
-      return true;
-    }
-
-    if (!currentText.startsWith('/')) {
-      return false;
-    }
-
-    this.#filter = currentText.slice(1);
-    this.#menuState = getSlashMenuState(this.#filter);
-    this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
-    return true;
-  }
-
-  private position() {
-    const anchorPos = this.#programmaticPos ?? this.#view.state.selection.from;
-    const coords = this.#view.coordsAtPos(anchorPos);
-    const left = Math.round(coords.left);
-    const top = Math.round(coords.bottom + 10);
-    this.#content.style.left = `${left}px`;
-    this.#content.style.top = `${top}px`;
-  }
-
-  private render() {
+  setHoverIndex(index: number) {
     if (this.#menuState.size === 0) {
-      this.hide();
       return;
     }
 
-    this.#content.dataset.show = 'true';
-    this.#content.innerHTML = `
-      <nav class="tab-group">
-        <ul>
-          ${this.#menuState.groups
-            .map(
-              (group) => `
-                <li
-                  data-tab-group="${escapeHtml(group.key)}"
-                  class="${
-                    this.#hoverIndex >= group.range[0] && this.#hoverIndex < group.range[1]
-                      ? 'selected'
-                      : ''
-                  }"
-                >
-                  ${escapeHtml(group.label)}
-                </li>
-              `
-            )
-            .join('')}
-        </ul>
-      </nav>
-      <div class="menu-groups">
-        ${this.#menuState.groups
-          .map(
-            (group) => `
-              <div class="menu-group" data-group="${escapeHtml(group.key)}">
-                <h6>${escapeHtml(group.label)}</h6>
-                <ul>
-                  ${group.items
-                    .map(
-                      (item) => `
-                        <li
-                          data-index="${item.index}"
-                          data-option="${escapeHtml(item.id)}"
-                          class="${item.index === this.#hoverIndex ? 'hover' : ''}"
-                        >
-                          ${blockTypeIcons[item.id] ?? ''}
-                          <span>${escapeHtml(item.label)}</span>
-                        </li>
-                      `
-                    )
-                    .join('')}
-                </ul>
-              </div>
-            `
-          )
-          .join('')}
-      </div>
-    `;
+    const nextIndex = Math.max(0, Math.min(index, this.#menuState.size - 1));
+    if (nextIndex === this.#hoverIndex) {
+      return;
+    }
+
+    this.#hoverIndex = nextIndex;
+    this.#emitOpen(this.#view);
   }
 
-  private runAtIndex(index: number, { hideMenu = true }: { hideMenu?: boolean } = {}) {
+  activateGroupTab(groupKey: string) {
+    const group = this.#menuState.groups.find((candidate) => candidate.key === groupKey);
+    if (!group) {
+      return;
+    }
+
+    this.setHoverIndex(group.range[0]);
+  }
+
+  runAtIndex(index: number, { hideMenu = true }: { hideMenu?: boolean } = {}) {
     const item = this.#menuState.groups
       .flatMap((group) => group.items)
       .find((candidate) => candidate.index === index);
@@ -334,82 +281,8 @@ class SlashMenuView {
     }
   }
 
-  private scrollToIndex(index: number) {
-    const target = this.#content.querySelector<HTMLElement>(`li[data-index="${index}"]`);
-    const scrollRoot = this.#content.querySelector<HTMLElement>('.menu-groups');
-    if (!target || !scrollRoot) {
-      return;
-    }
-
-    scrollRoot.scrollTop = target.offsetTop - scrollRoot.offsetTop;
-  }
-
-  private setHoverIndex(index: number) {
-    if (this.#menuState.size === 0) {
-      return;
-    }
-
-    const nextIndex = Math.max(0, Math.min(index, this.#menuState.size - 1));
-    if (nextIndex === this.#hoverIndex) {
-      return;
-    }
-
-    this.#hoverIndex = nextIndex;
-    this.render();
-    this.scrollToIndex(nextIndex);
-  }
-
-  private handlePointerDown = (event: PointerEvent) => {
-    event.preventDefault();
-    const target =
-      event.target instanceof Element ? event.target.closest<HTMLElement>('li[data-index]') : null;
-    target?.classList.add('active');
-  };
-
-  private handlePointerMove = (event: PointerEvent) => {
-    const target =
-      event.target instanceof Element ? event.target.closest<HTMLElement>('li[data-index]') : null;
-    if (!target) {
-      return;
-    }
-
-    const index = Number(target.dataset.index);
-    if (Number.isFinite(index)) {
-      this.setHoverIndex(index);
-    }
-  };
-
-  private handlePointerUp = (event: PointerEvent) => {
-    const target =
-      event.target instanceof Element ? event.target.closest<HTMLElement>('li[data-index]') : null;
-    if (target) {
-      target.classList.remove('active');
-      const index = Number(target.dataset.index);
-      if (Number.isFinite(index)) {
-        this.runAtIndex(index);
-        return;
-      }
-    }
-
-    const tab =
-      event.target instanceof Element
-        ? event.target.closest<HTMLElement>('li[data-tab-group]')
-        : null;
-    if (!tab) {
-      return;
-    }
-
-    const groupKey = tab.dataset.tabGroup;
-    const group = this.#menuState.groups.find((candidate) => candidate.key === groupKey);
-    if (!group) {
-      return;
-    }
-
-    this.setHoverIndex(group.range[0]);
-  };
-
-  private handleWindowKeydown = (event: KeyboardEvent) => {
-    if (this.#content.dataset.show !== 'true') {
+  handleKeydown(event: KeyboardEvent) {
+    if (!this.#visible) {
       return;
     }
 
@@ -473,28 +346,130 @@ class SlashMenuView {
         this.runAtIndex(index, { hideMenu: false });
       });
     }
-  };
+  }
+
+  #buildOpenSnapshot(view: EditorView): SlashMenuSnapshot {
+    const anchorPos = this.#programmaticPos ?? view.state.selection.from;
+    return {
+      open: true,
+      anchorPos,
+      groups: this.#menuState.groups,
+      hoverIndex: this.#hoverIndex
+    };
+  }
+
+  #emitOpen(view: EditorView) {
+    this.#visible = true;
+    emitSlashMenuUpdate(view, this.#buildOpenSnapshot(view));
+  }
+
+  #shouldShow(view: EditorView) {
+    if (typeof this.#programmaticPos === 'number') {
+      const maxSize = view.state.doc.nodeSize - 2;
+      const validPos = Math.min(this.#programmaticPos, maxSize);
+      const targetParent = view.state.doc.resolve(validPos).parent;
+      const activeParent = view.state.selection.$from.parent;
+      if (targetParent !== activeParent) {
+        this.#programmaticPos = null;
+        return false;
+      }
+
+      this.#filter = '';
+      this.#menuState = getSlashMenuState('');
+      this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
+      return true;
+    }
+
+    if (!isSelectionAtEndOfNode(view)) {
+      return false;
+    }
+
+    const currentText = getCurrentText(view);
+    if (currentText == null) {
+      return false;
+    }
+
+    if (!currentText.startsWith('/')) {
+      return false;
+    }
+
+    this.#filter = currentText.slice(1);
+    this.#menuState = getSlashMenuState(this.#filter);
+    this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
+    return true;
+  }
 
   private handleWindowResize = () => {
-    if (this.#content.dataset.show === 'true') {
-      this.position();
+    if (this.#visible) {
+      this.#emitOpen(this.#view);
     }
   };
 }
 
+/** Recompute anchor position after layout/viewport changes (handled by plugin resize; optional for Svelte). */
+export function refreshSlashMenuLayout(view: EditorView) {
+  const ctrl = slashControllers.get(view);
+  if (!ctrl) {
+    return;
+  }
+  ctrl.sync(view);
+}
+
+export function slashMenuHandleKeydownFromUi(view: EditorView, event: KeyboardEvent) {
+  slashControllers.get(view)?.handleKeydown(event);
+}
+
+export function slashMenuSetHoverFromUi(view: EditorView, index: number) {
+  slashControllers.get(view)?.setHoverIndex(index);
+}
+
+export function slashMenuActivateGroupFromUi(view: EditorView, groupKey: string) {
+  slashControllers.get(view)?.activateGroupTab(groupKey);
+}
+
+export function slashMenuPickFromUi(view: EditorView, index: number) {
+  slashControllers.get(view)?.runAtIndex(index);
+}
+
+export function slashMenuHideFromUi(view: EditorView) {
+  slashControllers.get(view)?.hide();
+}
+
 export function createSlashMenuPlugin() {
-  const api: SlashMenuAPI = {
-    show: () => {},
-    hide: () => {}
-  };
+  const apiByView = new WeakMap<EditorView, SlashMenuAPI>();
 
   const plugin = new Plugin({
     key: new PluginKey('NOTEPAD_SLASH_MENU'),
-    view: (view) => new SlashMenuView(view, api)
+    view: (view) => {
+      const api: SlashMenuAPI = {
+        show: () => {},
+        hide: () => {}
+      };
+      const controller = new SlashMenuPluginController(view);
+      slashControllers.set(view, controller);
+      api.show = (pos) => controller.show(pos);
+      api.hide = () => controller.hide();
+      apiByView.set(view, api);
+      return {
+        update(updatedView) {
+          controller.sync(updatedView);
+        },
+        destroy() {
+          apiByView.delete(view);
+          slashControllers.delete(view);
+          controller.destroy();
+        }
+      };
+    }
   });
 
   return {
     plugin,
-    api
+    show(view: EditorView, pos: number) {
+      apiByView.get(view)?.show(pos);
+    },
+    hide(view: EditorView) {
+      apiByView.get(view)?.hide();
+    }
   };
 }

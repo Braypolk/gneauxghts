@@ -5,6 +5,10 @@ import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 const WIKILINK_PATTERN = /\[\[([^\[\]\n]+?)\]\]/g;
 
 interface WikilinkConfig {
+  resolveCallbacks: (view: EditorView) => Partial<WikilinkCallbacks> | null | undefined;
+}
+
+interface WikilinkCallbacks {
   onOpenLink: (rawTarget: string) => void;
   onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
 }
@@ -18,7 +22,7 @@ export interface ActiveWikilink {
   bottom: number;
 }
 
-const defaultWikilinkConfig: WikilinkConfig = {
+const defaultWikilinkCallbacks: WikilinkCallbacks = {
   onOpenLink: () => {},
   onActiveWikilinkChange: () => {}
 };
@@ -118,18 +122,24 @@ function getActiveWikilink(view: EditorView): ActiveWikilink | null {
   };
 }
 
-export function createWikilinksPlugin(
-  config: Partial<WikilinkConfig> = {}
-) {
-  const resolvedConfig = {
-    ...defaultWikilinkConfig,
-    ...config
+function resolveCallbacks(
+  view: EditorView,
+  config: WikilinkConfig
+): WikilinkCallbacks {
+  return {
+    ...defaultWikilinkCallbacks,
+    ...config.resolveCallbacks(view)
   };
+}
+
+export function createWikilinksPlugin(
+  config: WikilinkConfig
+) {
   return new Plugin({
     key: new PluginKey('NOTEPAD_WIKILINKS'),
     view: (view) => {
       const report = () => {
-        resolvedConfig.onActiveWikilinkChange(getActiveWikilink(view));
+        resolveCallbacks(view, config).onActiveWikilinkChange(getActiveWikilink(view));
       };
 
       report();
@@ -139,7 +149,7 @@ export function createWikilinksPlugin(
           report();
         },
         destroy: () => {
-          resolvedConfig.onActiveWikilinkChange(null);
+          resolveCallbacks(view, config).onActiveWikilinkChange(null);
         }
       };
     },
@@ -165,7 +175,7 @@ export function createWikilinksPlugin(
         view.dispatch(transaction);
         return true;
       },
-      handleClick: (_view, _position, event) => {
+      handleClick: (view, _position, event) => {
         const wikilinkElement = findWikilinkElement(event.target);
         const rawTarget = wikilinkElement?.dataset.wikilinkTarget?.trim();
 
@@ -174,7 +184,7 @@ export function createWikilinksPlugin(
         }
 
         event.preventDefault();
-        resolvedConfig.onOpenLink(rawTarget);
+        resolveCallbacks(view, config).onOpenLink(rawTarget);
         return true;
       }
     }

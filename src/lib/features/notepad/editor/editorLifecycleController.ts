@@ -9,15 +9,18 @@ import {
   readCursorPosition,
   readEditorState,
   replaceEditorContent as replaceEditorBuffer,
-  replaceEditorState,
+  replaceEditorDocument,
   restoreCursorPosition,
-  resetSlashMenuPortal,
-  type EditorController
+  type EditorController,
+  type EditorViewCallbacks,
+  type SharedEditorResources
 } from '$lib/features/notepad/editor/editor';
+import {
+  bindSlashMenuViewToPane,
+  unbindSlashMenuView
+} from '$lib/features/notepad/editor/slashMenuBridge';
 import { waitForEditorPaint } from '$lib/features/notepad/navigation/navigation';
-import type { StoredImageAsset } from '$lib/features/notepad/model/types';
 import type { DocumentSession } from '$lib/features/notepad/session/documentSession';
-import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 
 interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
@@ -33,16 +36,19 @@ interface EditorLifecycleControllerDeps {
   getShellElement: () => HTMLDivElement | null;
   getEditorShell: () => HTMLDivElement | null;
   getEditorRoot: () => HTMLDivElement | null;
-  getSlashMenuPortal: () => HTMLDivElement | null;
-  getAssetRootPath: () => string | null;
   getDocumentSession: () => DocumentSession;
+  getSharedEditorState: (document: DocumentSession) => EditorState | null;
+  setSharedEditorState: (document: DocumentSession, editorState: EditorState | null) => void;
   setIsEditorReady: (value: boolean) => void;
   setIsApplyingExternalContent: (value: boolean) => void;
-  handleEditorMarkdownChange: (document: DocumentSession, nextMarkdown: string) => void;
-  onTaskListToggle: () => void;
-  onOpenLink: (rawTarget: string) => void;
-  onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
-  onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
+  handleEditorMarkdownChange: (
+    paneId: string,
+    document: DocumentSession,
+    nextMarkdown: string,
+    editorState: EditorState | null
+  ) => void;
+  getSharedEditorResources: (document: DocumentSession) => SharedEditorResources;
+  getViewCallbacks: () => EditorViewCallbacks;
   closeTransientUi: () => void;
 }
 
@@ -53,38 +59,22 @@ export function createEditorLifecycleController({
   getShellElement,
   getEditorShell,
   getEditorRoot,
-  getSlashMenuPortal,
-  getAssetRootPath,
   getDocumentSession,
+  getSharedEditorState,
+  setSharedEditorState,
   setIsEditorReady,
   setIsApplyingExternalContent,
   handleEditorMarkdownChange,
-  onTaskListToggle,
-  onOpenLink,
-  onActiveWikilinkChange,
-  onStorePastedImage,
+  getSharedEditorResources,
+  getViewCallbacks,
   closeTransientUi
 }: EditorLifecycleControllerDeps) {
-  let slashMenuPortalCleanup: (() => void) | null = null;
-  let sharedEditorStateGeneration = 0;
-
   async function destroyEditor() {
-    slashMenuPortalCleanup = resetSlashMenuPortal({
-      boundsElement: null,
-      editorRoot: null,
-      portalRoot: null,
-      currentCleanup: slashMenuPortalCleanup
-    });
-    setController(await destroyEditorInstance(getController()));
-  }
-
-  function setupSlashMenuPortal() {
-    slashMenuPortalCleanup = resetSlashMenuPortal({
-      boundsElement: getShellElement(),
-      editorRoot: getEditorRoot(),
-      portalRoot: getSlashMenuPortal(),
-      currentCleanup: slashMenuPortalCleanup
-    });
+    const controller = getController();
+    if (controller) {
+      unbindSlashMenuView(controller.view);
+    }
+    setController(await destroyEditorInstance(controller));
   }
 
   async function createEditor(initialValue: string) {
@@ -93,26 +83,22 @@ export function createEditorLifecycleController({
       return;
     }
 
-    setController(
-      await createEditorInstance({
-        assetRootPath: getAssetRootPath(),
-        editorRoot,
-        initialValue,
-        onOpenLink: (rawTarget) => {
-          void onOpenLink(rawTarget);
-        },
-        onActiveWikilinkChange,
-        onMarkdownChange: (nextMarkdown) => {
-          const document = getDocumentSession();
-          handleEditorMarkdownChange(document, nextMarkdown);
-          saveSharedEditorStateForDocument(document);
-        },
-        onTaskListToggle,
-        onStorePastedImage
-      })
-    );
-    sharedEditorStateGeneration += 1;
-    setupSlashMenuPortal();
+    const document = getDocumentSession();
+
+    const controller = await createEditorInstance({
+      editorRoot,
+      initialValue,
+      initialState: null,
+      sharedResources: getSharedEditorResources(document),
+      viewCallbacks: getViewCallbacks(),
+      onMarkdownChange: (nextMarkdown) => {
+        const editorState = readEditorState(getController());
+        handleEditorMarkdownChange(getPaneId(), document, nextMarkdown, editorState);
+        saveSharedEditorStateForDocument(document, editorState);
+      }
+    });
+    bindSlashMenuViewToPane(controller.view, getPaneId());
+    setController(controller);
     setIsEditorReady(true);
   }
 
@@ -131,24 +117,15 @@ export function createEditorLifecycleController({
     document: DocumentSession = getDocumentSession(),
     editorState: EditorState | null = readEditorState(getController())
   ) {
-    document.sharedEditorState = editorState;
-    document.sharedEditorStateGeneration = editorState ? sharedEditorStateGeneration : 0;
+    setSharedEditorState(document, editorState);
   }
 
   function getSharedEditorStateForDocument(document: DocumentSession) {
-    if (
-      !document.sharedEditorState ||
-      document.sharedEditorStateGeneration !== sharedEditorStateGeneration
-    ) {
-      return null;
-    }
-
-    return document.sharedEditorState;
+    return getSharedEditorState(document);
   }
 
   function discardSharedEditorStateForDocument(document: DocumentSession) {
-    document.sharedEditorState = null;
-    document.sharedEditorStateGeneration = 0;
+    setSharedEditorState(document, null);
   }
 
   function restoreCursorPositionForDocument(
@@ -289,8 +266,11 @@ export function createEditorLifecycleController({
       return false;
     }
 
+    const sharedEditorState = getSharedEditorStateForDocument(document);
     if (
-      !replaceEditorState(getController(), getSharedEditorStateForDocument(document), {
+      !replaceEditorDocument(getController(), sharedEditorState?.doc ?? null, {
+        anchor: loadCursorPosition(document.currentNotePath, getPaneId())?.anchor ?? null,
+        head: loadCursorPosition(document.currentNotePath, getPaneId())?.head ?? null,
         focus: false,
         scrollSelectionIntoView: false
       })
@@ -307,10 +287,45 @@ export function createEditorLifecycleController({
     return getDocumentSession() === document;
   }
 
-  function dispose() {
-    slashMenuPortalCleanup?.();
-    slashMenuPortalCleanup = null;
+  function applySharedEditorStateForDocument(document: DocumentSession) {
+    if (getDocumentSession() !== document) {
+      return false;
+    }
+
+    const sharedEditorState = getSharedEditorStateForDocument(document);
+    if (!sharedEditorState) {
+      return false;
+    }
+
+    const controller = getController();
+    const scrollTop = getEditorShell()?.scrollTop ?? 0;
+    const cursorPosition = readCursorPosition(controller);
+
+    setIsApplyingExternalContent(true);
+    try {
+      if (
+        !replaceEditorDocument(controller, sharedEditorState.doc, {
+          anchor: cursorPosition?.anchor ?? null,
+          head: cursorPosition?.head ?? null,
+          focus: false,
+          scrollSelectionIntoView: false
+        })
+      ) {
+        return false;
+      }
+
+      closeTransientUi();
+      const editorShell = getEditorShell();
+      if (editorShell) {
+        editorShell.scrollTop = Math.min(scrollTop, editorShell.scrollHeight);
+      }
+      return true;
+    } finally {
+      setIsApplyingExternalContent(false);
+    }
   }
+
+  function dispose() {}
 
   return {
     destroyEditor,
@@ -323,6 +338,7 @@ export function createEditorLifecycleController({
     replaceEditorContentInPlace,
     replaceEditorContentInPlaceForDocument,
     restoreSharedEditorStateForDocument,
+    applySharedEditorStateForDocument,
     dispose
   };
 }
