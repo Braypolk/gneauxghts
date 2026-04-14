@@ -92,12 +92,53 @@ export interface SharedEditorResources {
   plugins: Plugin[];
   registerViewCallbacks: (view: EditorView, callbacks: EditorViewCallbacks) => void;
   unregisterViewCallbacks: (view: EditorView) => void;
+  setCurrentSearchHighlightQuery: (query: string | null) => void;
 }
 
 interface CreateSharedEditorResourcesOptions {
   assetRootPath: string | null;
   onTaskListToggle: () => void;
   onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
+}
+
+interface CurrentSearchHighlightPluginState {
+  query: string;
+  decorations: DecorationSet;
+}
+
+interface CurrentSearchHighlightTextSegment {
+  from: number;
+  startOffset: number;
+  endOffset: number;
+}
+
+interface CurrentSearchHighlightUpdate {
+  query: string;
+}
+
+const CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY =
+  new PluginKey<CurrentSearchHighlightPluginState>('NOTEPAD_CURRENT_SEARCH_HIGHLIGHT');
+
+export function setEditorCurrentSearchHighlightQuery(
+  controller: EditorController | null,
+  query: string | null
+) {
+  if (!controller) {
+    return false;
+  }
+
+  const nextQuery = normalizeCurrentSearchHighlightQuery(query);
+  const currentState = CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY.getState(controller.view.state);
+  if (currentState?.query === nextQuery) {
+    return false;
+  }
+
+  controller.view.dispatch(
+    controller.view.state.tr
+      .setMeta(CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY, { query: nextQuery })
+      .setMeta('addToHistory', false)
+  );
+  return true;
 }
 
 interface PlaceholderConfig {
@@ -145,6 +186,114 @@ function createPlaceholderPlugin(config: PlaceholderConfig) {
         }
 
         return DecorationSet.create(state.doc, [decoration]);
+      }
+    }
+  });
+}
+
+function normalizeCurrentSearchHighlightQuery(query: string | null | undefined) {
+  return query?.trim().toLowerCase() ?? '';
+}
+
+function buildCurrentSearchHighlightDecorations(doc: ProseMirrorNode, query: string) {
+  if (query === '') {
+    return DecorationSet.empty;
+  }
+
+  const decorations: Decoration[] = [];
+
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock) {
+      return;
+    }
+
+    let blockText = '';
+    const textSegments: CurrentSearchHighlightTextSegment[] = [];
+
+    node.descendants((child, childPos) => {
+      if (!child.isText || !child.text) {
+        return;
+      }
+
+      const from = pos + 1 + childPos;
+      const startOffset = blockText.length;
+      blockText += child.text;
+      textSegments.push({
+        from,
+        startOffset,
+        endOffset: blockText.length
+      });
+    });
+
+    if (blockText === '') {
+      return;
+    }
+
+    const lowerBlockText = blockText.toLowerCase();
+    let searchFrom = 0;
+
+    while (searchFrom < lowerBlockText.length) {
+      const matchStart = lowerBlockText.indexOf(query, searchFrom);
+      if (matchStart === -1) {
+        break;
+      }
+
+      const matchEnd = matchStart + query.length;
+      for (const segment of textSegments) {
+        const overlapStart = Math.max(matchStart, segment.startOffset);
+        const overlapEnd = Math.min(matchEnd, segment.endOffset);
+        if (overlapStart >= overlapEnd) {
+          continue;
+        }
+
+        decorations.push(
+          Decoration.inline(
+            segment.from + (overlapStart - segment.startOffset),
+            segment.from + (overlapEnd - segment.startOffset),
+            { class: 'gn-current-search-highlight' }
+          )
+        );
+      }
+
+      searchFrom = matchStart + query.length;
+    }
+  });
+
+  return decorations.length > 0 ? DecorationSet.create(doc, decorations) : DecorationSet.empty;
+}
+
+function createCurrentSearchHighlightPlugin(getInitialQuery: () => string) {
+  return new Plugin<CurrentSearchHighlightPluginState>({
+    key: CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY,
+    state: {
+      init(_, state) {
+        const query = getInitialQuery();
+        return {
+          query,
+          decorations: buildCurrentSearchHighlightDecorations(state.doc, query)
+        };
+      },
+      apply(transaction, pluginState, _oldState, newState) {
+        const meta = transaction.getMeta(
+          CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY
+        ) as CurrentSearchHighlightUpdate | undefined;
+        const query = meta?.query ?? pluginState.query;
+
+        if (!transaction.docChanged && meta === undefined) {
+          return pluginState;
+        }
+
+        return {
+          query,
+          decorations: buildCurrentSearchHighlightDecorations(newState.doc, query)
+        };
+      }
+    },
+    props: {
+      decorations(state) {
+        return (
+          CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY.getState(state)?.decorations ?? DecorationSet.empty
+        );
       }
     }
   });
@@ -316,10 +465,12 @@ export function createSharedEditorResources({
   onStorePastedImage
 }: CreateSharedEditorResourcesOptions): SharedEditorResources {
   const viewCallbacks = new WeakMap<EditorView, EditorViewCallbacks>();
+  const registeredViews = new Set<EditorView>();
   const imagesConfig: ImagesConfig = {
     assetRootPath,
     storePastedImage: onStorePastedImage
   };
+  let currentSearchHighlightQuery = '';
 
   const listItemType = notepadSchema.nodes.list_item;
   const slashMenu = createSlashMenuPlugin();
@@ -354,6 +505,7 @@ export function createSharedEditorResources({
       text: 'Start writing',
       mode: 'doc'
     }),
+    createCurrentSearchHighlightPlugin(() => currentSearchHighlightQuery),
     createTaskListInteractionPlugin(onTaskListToggle),
     createWikilinksPlugin({
       resolveCallbacks: (view) => viewCallbacks.get(view)
@@ -369,11 +521,28 @@ export function createSharedEditorResources({
   return {
     plugins,
     registerViewCallbacks(view, callbacks) {
+      registeredViews.add(view);
       viewCallbacks.set(view, callbacks);
     },
     unregisterViewCallbacks(view) {
+      registeredViews.delete(view);
       viewCallbacks.delete(view);
       slashMenu.hide(view);
+    },
+    setCurrentSearchHighlightQuery(query) {
+      const nextQuery = normalizeCurrentSearchHighlightQuery(query);
+      if (currentSearchHighlightQuery === nextQuery) {
+        return;
+      }
+
+      currentSearchHighlightQuery = nextQuery;
+      for (const view of registeredViews) {
+        view.dispatch(
+          view.state.tr
+            .setMeta(CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY, { query: nextQuery })
+            .setMeta('addToHistory', false)
+        );
+      }
     }
   };
 }

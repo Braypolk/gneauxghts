@@ -156,12 +156,20 @@ export function createBottomBarState({
     patch({ activeIndex: 0 });
   }
 
+  function setSearchFocused(isSearchFocused: boolean) {
+    if (getState().isSearchFocused === isSearchFocused) {
+      return;
+    }
+
+    patch({ isSearchFocused });
+  }
+
   function handleSearchInput(event: Event) {
     onSearchInput((event.currentTarget as HTMLInputElement).value);
   }
 
   function handleSearchFocus() {
-    patch({ isSearchFocused: true });
+    setSearchFocused(true);
     onSearchFocus();
   }
 
@@ -175,12 +183,12 @@ export function createBottomBarState({
       return;
     }
 
-    patch({ isSearchFocused: false });
+    setSearchFocused(false);
     resetActiveIndex();
   }
 
   function closeSearchPanel() {
-    patch({ isSearchFocused: false });
+    setSearchFocused(false);
     resetActiveIndex();
     searchInput?.blur();
   }
@@ -306,10 +314,8 @@ export function createBottomBarState({
       return;
     }
 
-    patch({
-      isSearchFocused: true,
-      lastHandledFocusRequest: focusRequest
-    });
+    setSearchFocused(true);
+    patch({ lastHandledFocusRequest: focusRequest });
 
     tick().then(() => {
       searchInput?.focus();
@@ -420,6 +426,7 @@ export function createBottomBarState({
   }
 
   function dispose() {
+    setSearchFocused(false);
     resetForgetHold();
   }
 

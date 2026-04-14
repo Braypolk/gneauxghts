@@ -31,6 +31,7 @@ interface SearchStoreDeps {
   openSearchResult: (result: SearchItem) => Promise<void>;
   openRecentTask: (task: RecentTaskItem) => Promise<void>;
   openNote: (noteId: string | null, notePath: string | null) => Promise<void>;
+  onSearchStateChange?: (state: Pick<NotepadSearchState, 'searchMode' | 'searchQuery'>) => void;
 }
 
 function createInitialState(): NotepadSearchState {
@@ -51,7 +52,8 @@ export function createNotepadSearchStore({
   getCurrentPath,
   openSearchResult,
   openRecentTask,
-  openNote
+  openNote,
+  onSearchStateChange
 }: SearchStoreDeps) {
   const store = writable<NotepadSearchState>(createInitialState());
   const { subscribe, update } = store;
@@ -63,6 +65,14 @@ export function createNotepadSearchStore({
 
   function patch(partial: Partial<NotepadSearchState>) {
     update((state) => ({ ...state, ...partial }));
+  }
+
+  function emitSearchStateChange() {
+    const state = get(store);
+    onSearchStateChange?.({
+      searchMode: state.searchMode,
+      searchQuery: state.searchQuery
+    });
   }
 
   function clearPendingSearchTimer() {
@@ -80,6 +90,7 @@ export function createNotepadSearchStore({
       searchResults: [],
       isSearching: false
     });
+    emitSearchStateChange();
     activeSearchRequest += 1;
     clearPendingSearchTimer();
   }
@@ -241,6 +252,7 @@ export function createNotepadSearchStore({
 
   function handleSearchInput(value: string) {
     patch({ searchQuery: value });
+    emitSearchStateChange();
 
     if (value.trim() === '') {
       activeSearchRequest += 1;
@@ -257,6 +269,7 @@ export function createNotepadSearchStore({
 
   async function handleSearchModeChange(mode: SearchMode) {
     patch({ searchMode: mode });
+    emitSearchStateChange();
     clearPendingSearchTimer();
     if (get(store).searchQuery.trim() !== '') {
       await runSearch(get(store).searchQuery);
@@ -273,6 +286,7 @@ export function createNotepadSearchStore({
       searchMode: mode,
       focusRequest: get(store).focusRequest + 1
     });
+    emitSearchStateChange();
 
     if (get(store).searchQuery.trim() !== '') {
       void runSearch(get(store).searchQuery);

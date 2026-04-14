@@ -2,7 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Columns2, X } from 'lucide-svelte';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import {
     cleanUpApplyPolicyPreference,
     defaultRememberActionPreference,
@@ -25,7 +25,8 @@
   import type { EditorController } from '$lib/features/notepad/editor/editor';
   import {
     createSharedEditorResources,
-    readEditorState
+    readEditorState,
+    setEditorCurrentSearchHighlightQuery
   } from '$lib/features/notepad/editor/editor';
   import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
   import { focusEditorAtEnd, focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
@@ -198,6 +199,8 @@
   let assetRootPath = $state<string | null>(null);
   let semanticStatus = $state<SemanticStatus | null>(null);
   let proposalErrorMessage = $state('');
+  let currentSearchHighlightMode: SearchMode = 'all';
+  let currentSearchHighlightQuery = '';
 
   const searchState = createNotepadSearchStore({
     getCurrentTitle: () => documentSession.title,
@@ -205,7 +208,12 @@
     getCurrentPath: () => documentSession.currentNotePath,
     openSearchResult: handleSearchResultSelect,
     openRecentTask: handleRecentTaskSelect,
-    openNote: async (noteId, notePath) => openNotePath(notePath, { noteId })
+    openNote: async (noteId, notePath) => openNotePath(notePath, { noteId }),
+    onSearchStateChange: ({ searchMode, searchQuery }) => {
+      currentSearchHighlightMode = searchMode;
+      currentSearchHighlightQuery = searchQuery;
+      syncCurrentFileSearchHighlights(searchQuery, searchMode);
+    }
   });
 
   const relatedState = createRelatedNotesStore({
@@ -1037,6 +1045,47 @@
     toggleRelatedPanel: toggleRelatedPanelController,
     updateSelectedRelatedText: updateSelectedRelatedTextController
   } = relatedState;
+
+  function getCurrentFileSearchHighlightQuery(
+    query: string = currentSearchHighlightQuery,
+    mode: SearchMode = currentSearchHighlightMode
+  ) {
+    if (mode !== 'current') {
+      return null;
+    }
+
+    const trimmedQuery = query.trim();
+    if (trimmedQuery === '' || trimmedQuery.startsWith('/')) {
+      return null;
+    }
+
+    return trimmedQuery;
+  }
+
+  function syncCurrentFileSearchHighlights(
+    query: string = currentSearchHighlightQuery,
+    mode: SearchMode = currentSearchHighlightMode
+  ) {
+    for (const paneId of getEditorPaneIds()) {
+      setEditorCurrentSearchHighlightQuery(getPaneController(paneId), null);
+    }
+
+    const highlightQuery = getCurrentFileSearchHighlightQuery(query, mode);
+    if (!highlightQuery) {
+      return;
+    }
+
+    for (const paneId of getPaneIdsForDocument(documentSession)) {
+      setEditorCurrentSearchHighlightQuery(getPaneController(paneId), highlightQuery);
+    }
+  }
+
+  $effect(() => {
+    documentSession.key;
+    untrack(() => {
+      syncCurrentFileSearchHighlights();
+    });
+  });
 
   function updatePaneWikilinkState(paneId: PaneId, nextState: WikilinkAutocompleteState) {
     paneStates[paneId].wikilinkAutocomplete = nextState;
@@ -2071,6 +2120,7 @@
       paneControllers[PRIMARY_PANE_ID].editorLifecycleController.dispose();
       paneControllers[SECONDARY_PANE_ID].editorLifecycleController.dispose();
       cancelScheduledAutoSync();
+      syncCurrentFileSearchHighlights('', 'all');
       searchState.dispose();
       relatedState.dispose();
       unregisterPendingNoteSaveHandler();
@@ -2797,6 +2847,14 @@
   .notepad-editor-shell :global(.gn-editor-root .ProseMirror *::selection) {
     background: var(--gn-editor-selection-background);
     color: var(--gn-editor-selection-color);
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-current-search-highlight) {
+    border-radius: 0.28rem;
+    background: color-mix(in oklab, var(--accent) 76%, var(--foreground) 24%);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in oklab, var(--foreground) 18%, transparent),
+      0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent);
   }
 
   .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-wikilink) {
