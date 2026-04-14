@@ -1,15 +1,13 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { House, ListTodo, Map, Settings } from 'lucide-svelte';
   import FeatherWriting from './icons/FeatherWriting.svelte';
   import MailboxEmpty from './icons/MailboxEmpty.svelte';
   import MailboxFull from './icons/MailboxFull.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
-  import type { InboxListItem } from '$lib/types/ai';
+  import { createNavStatusStore } from '$lib/ui/navStatusStore';
 
   const navLinks = [
     { href: '/', label: 'Note', icon: House },
@@ -18,8 +16,7 @@
     { href: '/list', label: 'List', icon: ListTodo }
   ] as const;
   const settingsHref = '/settings';
-  let inboxUnlisten: UnlistenFn | null = null;
-  let inboxStatusIndicator = $state<'running' | 'pendingApproval' | null>(null);
+  const navStatusStore = createNavStatusStore();
 
   function isActive(href: string, pathname: string): boolean {
     if (href === '/') return pathname === '/';
@@ -102,40 +99,12 @@
     void navigateToHref(targetLink.href);
   }
 
-  function nextInboxStatusIndicator(items: InboxListItem[]): 'running' | 'pendingApproval' | null {
-    if (items.some((item) => item.status === 'pendingApproval')) {
-      return 'pendingApproval';
-    }
-
-    if (items.some((item) => item.status === 'queued' || item.status === 'running')) {
-      return 'running';
-    }
-
-    return null;
-  }
-
-  async function loadInboxStatusIndicator() {
-    try {
-      const items = await invoke<InboxListItem[]>('list_inbox_items');
-      inboxStatusIndicator = nextInboxStatusIndicator(items);
-    } catch (error) {
-      console.error('Failed to load inbox status indicator:', error);
-      inboxStatusIndicator = null;
-    }
-  }
-
   onMount(() => {
-    void loadInboxStatusIndicator();
-    void listen('inbox-changed', () => {
-      void loadInboxStatusIndicator();
-    }).then((unlisten) => {
-      inboxUnlisten = unlisten;
-    });
+    navStatusStore.initialize();
   });
 
   onDestroy(() => {
-    inboxUnlisten?.();
-    inboxUnlisten = null;
+    navStatusStore.dispose();
   });
 </script>
 
@@ -163,9 +132,9 @@
           onclick={(event) => void handleNavClick(event, href)}
         >
           {#if href === '/inbox'}
-            {#if inboxStatusIndicator === 'running'}
+            {#if $navStatusStore.inboxStatusIndicator === 'running'}
               <FeatherWriting class="h-4 w-4 shrink-0" />
-            {:else if inboxStatusIndicator === 'pendingApproval'}
+            {:else if $navStatusStore.inboxStatusIndicator === 'pendingApproval'}
               <MailboxFull class="h-4 w-4 shrink-0" />
             {:else}
               <MailboxEmpty class="h-4 w-4 shrink-0" />

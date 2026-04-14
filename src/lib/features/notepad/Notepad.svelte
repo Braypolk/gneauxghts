@@ -63,6 +63,7 @@
   } from '$lib/features/notepad/wikilinks/state';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
   import BottomBar from '$lib/features/notepad/ui/BottomBar.svelte';
+  import SplitPaneContentPicker from '$lib/features/notepad/SplitPaneContentPicker.svelte';
   import SlashMenu, {
     type PaneSlashMenuModel
   } from '$lib/features/notepad/editor/SlashMenu.svelte';
@@ -79,8 +80,8 @@
     getCardStyle,
     getRelatedDrawerStyle
   } from '$lib/features/notepad/related/layout';
-  import { createSearchController } from '$lib/features/notepad/search/controller';
-  import { createRelatedController } from '$lib/features/notepad/related/controller';
+  import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
+  import { createNotepadSearchStore } from '$lib/features/notepad/search/store';
   import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
   import { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
   import {
@@ -88,7 +89,7 @@
     setSlashMenuListener
   } from '$lib/features/notepad/editor/slashMenuBridge';
   import type { SlashMenuSnapshot } from '$lib/features/notepad/editor/slashMenu';
-  import { createWikilinkController } from '$lib/features/notepad/wikilinks/controller';
+  import { createWikilinkRuntime } from '$lib/features/notepad/wikilinks/runtime';
   import {
     activeProposalSession,
     getProposalChangesForPath,
@@ -193,26 +194,95 @@
   ]);
 
   let canUnforget = $derived(notepadState.recentlyForgotten !== null);
-  let searchMode = $state<SearchMode>('all');
-  let searchQuery = $state('');
-  let searchResults = $state<SearchItem[]>([]);
-  let recentNotes = $state<SearchItem[]>([]);
-  let recentTasks = $state<RecentTaskItem[]>([]);
-  let isSearching = $state(false);
-  let searchFocusRequest = $state(0);
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
   let assetRootPath = $state<string | null>(null);
-  let relatedItems = $state<RelatedNoteItem[]>([]);
-  let relatedStatus = $state<RelatedNotesResponse['status']>('insufficientContent');
-  let relatedReason = $state<string | null>(EMPTY_RELATED_REASON);
-  let relatedScope = $state<'note' | 'selection'>('note');
-  let relatedPanelPlacement = $state<'side' | 'bottom'>('side');
-  let isLoadingRelated = $state(false);
-  let selectedRelatedText = $state<string | null>(null);
-  let isRelatedPanelCollapsed = $state(true);
-  let relatedDrawerReservedWidth = $state(0);
   let semanticStatus = $state<SemanticStatus | null>(null);
   let proposalErrorMessage = $state('');
+
+  const searchState = createNotepadSearchStore({
+    getCurrentTitle: () => documentSession.title,
+    getCurrentMarkdown,
+    getCurrentPath: () => documentSession.currentNotePath,
+    openSearchResult: handleSearchResultSelect,
+    openRecentTask: handleRecentTaskSelect,
+    openNote: async (noteId, notePath) => openNotePath(notePath, { noteId })
+  });
+
+  const relatedState = createRelatedNotesStore({
+    getCurrentTitle: () => documentSession.title,
+    getCurrentMarkdown,
+    getCurrentPath: () => documentSession.currentNotePath
+  });
+
+  let splitPickerPaneId = $state<PaneId | null>(null);
+  let splitPickerSourceNoteKey = $state<NoteKey | null>(null);
+  let splitPickerHighlightedIndex = $state(0);
+  let splitPickerFocusEl = $state<HTMLElement | null>(null);
+
+  let splitPickerCurrentNoteLabel = $derived.by(() => {
+    if (!splitPickerSourceNoteKey) {
+      return 'Untitled note';
+    }
+
+    const note = notepadState.notesByKey[splitPickerSourceNoteKey];
+    if (!note) {
+      return 'Untitled note';
+    }
+
+    const trimmed = note.title.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+
+    const path = note.currentNotePath;
+    if (path) {
+      return path.split('/').pop()?.replace(/\.md$/i, '') ?? 'Untitled note';
+    }
+
+    return 'Untitled note';
+  });
+
+  function searchItemMatchesSplitSource(item: SearchItem, path: string | null, id: string | null) {
+    const itemPath = item.notePath ?? null;
+    const itemId = item.noteId ?? null;
+    if (path && itemPath) {
+      return path === itemPath;
+    }
+
+    if (!path && !itemPath) {
+      return (id ?? null) === (itemId ?? null);
+    }
+
+    return false;
+  }
+
+  let splitPickerPreviousItem = $derived.by((): SearchItem | null => {
+    if (splitPickerPaneId === null || !splitPickerSourceNoteKey) {
+      return null;
+    }
+
+    const source = notepadState.notesByKey[splitPickerSourceNoteKey];
+    const path = source?.currentNotePath ?? null;
+    const id = source?.currentNoteId ?? null;
+
+    for (const item of $searchState.recentNotes) {
+      if (searchItemMatchesSplitSource(item, path, id)) {
+        continue;
+      }
+
+      return item;
+    }
+
+    return null;
+  });
+
+  let splitPickerPreviousNoteLabel = $derived(
+    splitPickerPreviousItem
+      ? splitPickerPreviousItem.fileName?.trim() ||
+          splitPickerPreviousItem.notePath ||
+          'Recent note'
+      : null
+  );
 
   function getPaneKind(paneId: PaneId) {
     return getPaneState(notepadState, paneId).kind;
@@ -770,6 +840,10 @@
       return;
     }
 
+    if (handleSplitPickerGlobalKeydown(event)) {
+      return;
+    }
+
     const lowerKey = event.key.toLowerCase();
 
     if (
@@ -881,7 +955,7 @@
   function refreshDerivedViews() {
     void loadRecentNotes();
     void loadRecentTasks();
-    if (searchQuery.trim() !== '') {
+    if ($searchState.searchQuery.trim() !== '') {
       scheduleSearch();
     }
     scheduleRelated({ immediate: true });
@@ -941,74 +1015,6 @@
     return integrateDisabledReason() === null;
   }
 
-  const searchController = createSearchController({
-    getCurrentTitle: () => documentSession.title,
-    getCurrentMarkdown,
-    getCurrentPath: () => documentSession.currentNotePath,
-    getSearchMode: () => searchMode,
-    setSearchMode: (mode) => {
-      searchMode = mode;
-    },
-    getSearchQuery: () => searchQuery,
-    setSearchQuery: (query) => {
-      searchQuery = query;
-    },
-    setSearchResults: (results) => {
-      searchResults = results;
-    },
-    getRecentNotes: () => recentNotes,
-    setRecentNotes: (notes) => {
-      recentNotes = notes;
-    },
-    getRecentTasks: () => recentTasks,
-    setRecentTasks: (tasks) => {
-      recentTasks = tasks;
-    },
-    setIsSearching: (value) => {
-      isSearching = value;
-    },
-    bumpSearchFocusRequest: () => {
-      searchFocusRequest += 1;
-    },
-    openSearchResult: handleSearchResultSelect,
-    openRecentTask: handleRecentTaskSelect,
-    openNote: async (noteId, notePath) => openNotePath(notePath, { noteId })
-  });
-
-  const relatedController = createRelatedController({
-    getCurrentTitle: () => documentSession.title,
-    getCurrentMarkdown,
-    getCurrentPath: () => documentSession.currentNotePath,
-    getScope: () => relatedScope,
-    setScope: (scope) => {
-      relatedScope = scope;
-    },
-    getSelectedText: () => selectedRelatedText,
-    setSelectedText: (value) => {
-      selectedRelatedText = value;
-    },
-    isPanelCollapsed: () => isRelatedPanelCollapsed,
-    setPanelCollapsed: (value) => {
-      isRelatedPanelCollapsed = value;
-    },
-    setPanelLayout: (placement, reservedWidth) => {
-      relatedPanelPlacement = placement;
-      relatedDrawerReservedWidth = reservedWidth;
-    },
-    setItems: (items) => {
-      relatedItems = items;
-    },
-    setStatus: (status) => {
-      relatedStatus = status;
-    },
-    setReason: (reason) => {
-      relatedReason = reason;
-    },
-    setIsLoading: (value) => {
-      isLoadingRelated = value;
-    }
-  });
-
   const {
     clearSearch,
     scheduleSearch,
@@ -1021,7 +1027,7 @@
     handleSearchModeChange,
     handleSearchFocus,
     requestSearchFocus
-  } = searchController;
+  } = searchState;
 
   const {
     updateDrawerLayout: updateRelatedDrawerLayoutController,
@@ -1030,7 +1036,7 @@
     handleRelatedScopeChange,
     toggleRelatedPanel: toggleRelatedPanelController,
     updateSelectedRelatedText: updateSelectedRelatedTextController
-  } = relatedController;
+  } = relatedState;
 
   function updatePaneWikilinkState(paneId: PaneId, nextState: WikilinkAutocompleteState) {
     paneStates[paneId].wikilinkAutocomplete = nextState;
@@ -1074,7 +1080,7 @@
       closeTransientUi: () => closeWikilinkAutocomplete(paneId)
     });
 
-    const wikilinkController = createWikilinkController({
+    const wikilinkController = createWikilinkRuntime({
       getState: () => paneStates[paneId].wikilinkAutocomplete,
       setState: (value) => {
         updatePaneWikilinkState(paneId, value);
@@ -1412,7 +1418,11 @@
   }
 
   function resolveRememberAction(actionId: string): RememberActionOption {
-    return $rememberActionOptions.find((option) => option.id === actionId) ?? EXACT_REMEMBER_ACTION;
+    return (
+      $rememberActionOptions.find((option) => option.id === actionId) ??
+      $rememberActionOptions.find((option) => option.id === 'exact') ??
+      EXACT_REMEMBER_ACTION
+    );
   }
 
   const defaultRememberShortcutAction = $derived.by(() =>
@@ -1574,6 +1584,10 @@
   }
 
   function handleWikilinkKeydown(event: KeyboardEvent) {
+    if (splitPickerPaneId !== null) {
+      return false;
+    }
+
     return paneControllers[getNavigationPaneId()].wikilinkController.handleAutocompleteKeydown(event);
   }
 
@@ -1605,6 +1619,11 @@
   }
 
   function updateSelectedRelatedText(paneId: PaneId = getNavigationPaneId()) {
+    if (splitPickerPaneId === paneId) {
+      clearSelectedRelatedText();
+      return;
+    }
+
     if (getPaneKind(paneId) !== 'editor') {
       clearSelectedRelatedText();
       return;
@@ -1619,7 +1638,10 @@
 
   async function ensurePaneEditors() {
     for (const paneId of [PRIMARY_PANE_ID, SECONDARY_PANE_ID] as const) {
-      const shouldMount = paneOrder.includes(paneId) && getPaneKind(paneId) === 'editor';
+      const shouldMount =
+        paneOrder.includes(paneId) &&
+        getPaneKind(paneId) === 'editor' &&
+        splitPickerPaneId !== paneId;
       const controller = getPaneController(paneId);
       const paneDocument = getPaneDocumentSession(paneId);
 
@@ -1648,7 +1670,7 @@
     flushDocumentEditorSync(getPaneDocumentSession(paneId));
     activatePaneSession(paneId);
     updateSelectedRelatedText(paneId);
-    if (searchQuery.trim() !== '') {
+    if ($searchState.searchQuery.trim() !== '') {
       scheduleSearch();
     }
     scheduleRelated({ immediate: true });
@@ -1657,6 +1679,10 @@
   async function splitWorkspace() {
     if (paneOrder.length === 2) {
       activatePaneSession(SECONDARY_PANE_ID);
+      await tick();
+      focusPaneAfterShortcut(SECONDARY_PANE_ID, {
+        preferTitle: document.activeElement === getPaneTitleInput(activePaneId)
+      });
       return;
     }
 
@@ -1665,13 +1691,21 @@
       sourcePaneId === PRIMARY_PANE_ID ? SECONDARY_PANE_ID : PRIMARY_PANE_ID;
     const sharedDocument = getPaneDocumentSession(sourcePaneId);
 
+    await loadRecentNotes();
+
+    const placeholderDraft = createFreshDraftNote(notepadState);
     setStoredPaneKind(notepadState, targetPaneId, 'editor');
-    setPaneDocumentSession(targetPaneId, sharedDocument);
+    setPaneDocumentSession(targetPaneId, placeholderDraft);
+    splitPickerPaneId = targetPaneId;
+    splitPickerSourceNoteKey = sharedDocument.key;
+    splitPickerHighlightedIndex = 0;
+
     paneOrder = [PRIMARY_PANE_ID, SECONDARY_PANE_ID];
     activatePaneSession(targetPaneId);
     await tick();
     await ensurePaneEditors();
-    flushDocumentEditorSync(sharedDocument);
+    updateSelectedRelatedText(targetPaneId);
+    splitPickerFocusEl?.focus({ preventScroll: true });
   }
 
   async function closePane(paneId: PaneId) {
@@ -1679,7 +1713,25 @@
       return;
     }
 
+    const wasSplitPicker = splitPickerPaneId === paneId;
+    const orphanPlaceholderKey = wasSplitPicker ? getPaneDocumentSession(paneId).key : null;
+
     paneOrder = paneOrder.filter((candidate) => candidate !== paneId);
+
+    if (wasSplitPicker) {
+      splitPickerPaneId = null;
+      splitPickerSourceNoteKey = null;
+      splitPickerHighlightedIndex = 0;
+      splitPickerFocusEl = null;
+      const anchorPane = (paneOrder[0] ?? PRIMARY_PANE_ID) as PaneId;
+      setPaneDocumentSession(paneId, getPaneDocumentSession(anchorPane));
+      setStoredPaneKind(notepadState, paneId, 'editor');
+      if (orphanPlaceholderKey) {
+        removeNoteIfUnreferenced(notepadState, orphanPlaceholderKey);
+        cleanupNoteRuntime(orphanPlaceholderKey);
+      }
+    }
+
     if (getPaneController(paneId)) {
       await ensurePaneEditors();
     }
@@ -1703,6 +1755,11 @@
   }
 
   function focusPaneAfterShortcut(paneId: PaneId, options: { preferTitle?: boolean } = {}) {
+    if (splitPickerPaneId === paneId && splitPickerFocusEl) {
+      splitPickerFocusEl.focus({ preventScroll: true });
+      return;
+    }
+
     const titleInput = getPaneTitleInput(paneId);
     if (options.preferTitle && titleInput) {
       focusInputAtEnd(titleInput);
@@ -1716,6 +1773,180 @@
     }
 
     titleInput?.focus();
+  }
+
+  function moveSplitPickerHighlight(direction: 1 | -1) {
+    const hasPrev = splitPickerPreviousItem !== null;
+    const slots = hasPrev ? [0, 1, 2] : [0, 2];
+    const position = Math.max(0, slots.indexOf(splitPickerHighlightedIndex));
+    splitPickerHighlightedIndex =
+      slots[(position + direction + slots.length) % slots.length] ?? 0;
+  }
+
+  async function confirmSplitPickerChoiceByHighlight() {
+    const paneId = splitPickerPaneId;
+    if (!paneId) {
+      return;
+    }
+
+    const hasPrev = splitPickerPreviousItem !== null;
+    if (splitPickerHighlightedIndex === 0) {
+      await resolveSplitPickerChoice(paneId, 'current');
+    } else if (splitPickerHighlightedIndex === 1 && hasPrev) {
+      await resolveSplitPickerChoice(paneId, 'previous');
+    } else if (splitPickerHighlightedIndex === 2) {
+      await resolveSplitPickerChoice(paneId, 'chat');
+    }
+  }
+
+  function handleSplitPickerGlobalKeydown(event: KeyboardEvent): boolean {
+    if (splitPickerPaneId === null || activePaneId !== splitPickerPaneId || event.repeat) {
+      return false;
+    }
+
+    const target = event.target;
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement
+    ) {
+      return false;
+    }
+
+    if (target instanceof HTMLElement && target.closest('[data-notepad-bottom-bar]')) {
+      return false;
+    }
+
+    if (event.metaKey || event.ctrlKey || event.altKey) {
+      return false;
+    }
+
+    const hasPrev = splitPickerPreviousItem !== null;
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveSplitPickerHighlight(1);
+      return true;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveSplitPickerHighlight(-1);
+      return true;
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void confirmSplitPickerChoiceByHighlight();
+      return true;
+    }
+
+    if (event.key === '1') {
+      event.preventDefault();
+      void resolveSplitPickerChoice(splitPickerPaneId, 'current');
+      return true;
+    }
+
+    if (event.key === '2') {
+      if (!hasPrev) {
+        return false;
+      }
+
+      event.preventDefault();
+      void resolveSplitPickerChoice(splitPickerPaneId, 'previous');
+      return true;
+    }
+
+    if (event.key === '3') {
+      event.preventDefault();
+      void resolveSplitPickerChoice(splitPickerPaneId, 'chat');
+      return true;
+    }
+
+    return false;
+  }
+
+  async function resolveSplitPickerChoice(
+    paneId: PaneId,
+    choice: 'current' | 'previous' | 'chat'
+  ) {
+    if (splitPickerPaneId !== paneId) {
+      return;
+    }
+
+    const sourceKey = splitPickerSourceNoteKey;
+    const previousItem = splitPickerPreviousItem;
+    const placeholderKey = getPaneDocumentSession(paneId).key;
+
+    splitPickerPaneId = null;
+    splitPickerSourceNoteKey = null;
+    splitPickerHighlightedIndex = 0;
+    splitPickerFocusEl = null;
+
+    activatePaneSession(paneId);
+
+    if (choice === 'current') {
+      if (!sourceKey) {
+        return;
+      }
+
+      const shared = getNoteByKey(sourceKey);
+      if (!shared) {
+        return;
+      }
+
+      setStoredPaneKind(notepadState, paneId, 'editor');
+      setPaneDocumentSession(paneId, shared);
+      removeNoteIfUnreferenced(notepadState, placeholderKey);
+      cleanupNoteRuntime(placeholderKey);
+      await tick();
+      await ensurePaneEditors();
+      flushDocumentEditorSync(shared);
+      updateSelectedRelatedText(paneId);
+      if ($searchState.searchQuery.trim() !== '') {
+        scheduleSearch();
+      }
+
+      scheduleRelated({ immediate: true });
+      return;
+    }
+
+    if (choice === 'previous') {
+      if (!previousItem) {
+        return;
+      }
+
+      setStoredPaneKind(notepadState, paneId, 'editor');
+      if (previousItem.notePath) {
+        await openNotePath(previousItem.notePath, { noteId: previousItem.noteId ?? null });
+      } else {
+        await openSearchResult(getOpenContext(), getNavigationContext(paneId), previousItem);
+      }
+
+      await tick();
+      await ensurePaneEditors();
+      updateSelectedRelatedText(paneId);
+      if ($searchState.searchQuery.trim() !== '') {
+        scheduleSearch();
+      }
+
+      scheduleRelated({ immediate: true });
+      return;
+    }
+
+    setStoredPaneKind(notepadState, paneId, 'chat');
+    const chatDraft = createFreshDraftNote(notepadState);
+    setPaneDocumentSession(paneId, chatDraft);
+    removeNoteIfUnreferenced(notepadState, placeholderKey);
+    cleanupNoteRuntime(placeholderKey);
+    await tick();
+    await ensurePaneEditors();
+    updateSelectedRelatedText(paneId);
+    if ($searchState.searchQuery.trim() !== '') {
+      scheduleSearch();
+    }
+
+    scheduleRelated({ immediate: true });
   }
 
   async function switchActivePane(direction: 1 | -1 = 1) {
@@ -1840,8 +2071,8 @@
       paneControllers[PRIMARY_PANE_ID].editorLifecycleController.dispose();
       paneControllers[SECONDARY_PANE_ID].editorLifecycleController.dispose();
       cancelScheduledAutoSync();
-      searchController.dispose();
-      relatedController.dispose();
+      searchState.dispose();
+      relatedState.dispose();
       unregisterPendingNoteSaveHandler();
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
@@ -1906,7 +2137,7 @@
 <div bind:this={workspaceShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
   <div
     class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm sm:rounded-[2rem] sm:border"
-    style={getCardStyle(relatedPanelPlacement, relatedDrawerReservedWidth)}
+    style={getCardStyle($relatedState.panelPlacement, $relatedState.reservedWidth)}
   >
     <div class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"></div>
 
@@ -1947,7 +2178,8 @@
                       }`}
                       placeholder={getPaneTitlePlaceholder(getPaneKind(PRIMARY_PANE_ID))}
                       value={getPaneDisplayTitle(PRIMARY_PANE_ID)}
-                      readonly={isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID))}
+                      readonly={isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID)) ||
+                        splitPickerPaneId === PRIMARY_PANE_ID}
                       oninput={(event) => handleTitleInput(PRIMARY_PANE_ID, event)}
                       onblur={handleTitleBlur}
                       onkeydown={handleTitleKeydown}
@@ -1966,7 +2198,20 @@
               </div>
             </div>
 
-            {#if getPaneKind(PRIMARY_PANE_ID) === 'editor'}
+            {#if splitPickerPaneId === PRIMARY_PANE_ID}
+              <div class="flex min-h-0 flex-1">
+                <SplitPaneContentPicker
+                  bind:focusRoot={splitPickerFocusEl}
+                  highlightedIndex={splitPickerHighlightedIndex}
+                  currentNoteLabel={splitPickerCurrentNoteLabel}
+                  previousNoteLabel={splitPickerPreviousNoteLabel}
+                  onHighlightChange={(index) => {
+                    splitPickerHighlightedIndex = index;
+                  }}
+                  onChoose={(choice) => void resolveSplitPickerChoice(PRIMARY_PANE_ID, choice)}
+                />
+              </div>
+            {:else if getPaneKind(PRIMARY_PANE_ID) === 'editor'}
               <div class="flex-1 min-h-0">
                 <div
                   bind:this={primaryEditorShell}
@@ -2045,7 +2290,8 @@
                       }`}
                       placeholder={getPaneTitlePlaceholder(getPaneKind(SECONDARY_PANE_ID))}
                       value={getPaneDisplayTitle(SECONDARY_PANE_ID)}
-                      readonly={isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID))}
+                      readonly={isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID)) ||
+                        splitPickerPaneId === SECONDARY_PANE_ID}
                       oninput={(event) => handleTitleInput(SECONDARY_PANE_ID, event)}
                       onblur={handleTitleBlur}
                       onkeydown={handleTitleKeydown}
@@ -2064,7 +2310,20 @@
               </div>
             </div>
 
-            {#if getPaneKind(SECONDARY_PANE_ID) === 'editor'}
+            {#if splitPickerPaneId === SECONDARY_PANE_ID}
+              <div class="flex min-h-0 flex-1">
+                <SplitPaneContentPicker
+                  bind:focusRoot={splitPickerFocusEl}
+                  highlightedIndex={splitPickerHighlightedIndex}
+                  currentNoteLabel={splitPickerCurrentNoteLabel}
+                  previousNoteLabel={splitPickerPreviousNoteLabel}
+                  onHighlightChange={(index) => {
+                    splitPickerHighlightedIndex = index;
+                  }}
+                  onChoose={(choice) => void resolveSplitPickerChoice(SECONDARY_PANE_ID, choice)}
+                />
+              </div>
+            {:else if getPaneKind(SECONDARY_PANE_ID) === 'editor'}
               <div class="flex-1 min-h-0">
                 <div
                   bind:this={secondaryEditorShell}
@@ -2116,17 +2375,17 @@
     <div class="absolute bottom-0 left-0 right-0 z-30">
       <BottomBar
         {canUnforget}
-        {searchMode}
-        {searchQuery}
-        {searchResults}
-        {recentNotes}
-        {recentTasks}
-        {isSearching}
+        searchMode={$searchState.searchMode}
+        searchQuery={$searchState.searchQuery}
+        searchResults={$searchState.searchResults}
+        recentNotes={$searchState.recentNotes}
+        recentTasks={$searchState.recentTasks}
+        isSearching={$searchState.isSearching}
         rememberActions={$rememberActionOptions}
         defaultRememberActionId={$defaultRememberActionPreference}
         integrateEnabled={canIntegrate()}
         integrateDisabledReason={integrateDisabledReason()}
-        focusRequest={searchFocusRequest}
+        focusRequest={$searchState.focusRequest}
         onForget={() => void clearNotepad()}
         onUnforget={() => void unforgetNotepad()}
         onRemember={(action) => void rememberCurrentNote(action)}
@@ -2152,19 +2411,19 @@
     </div>
   </div>
 
-  {#if relatedPanelPlacement === 'side'}
+  {#if $relatedState.panelPlacement === 'side'}
     <aside
       class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch transition-[left] duration-300"
       aria-label="Related notes panel"
-      style={getRelatedDrawerStyle(relatedDrawerReservedWidth)}
+      style={getRelatedDrawerStyle($relatedState.reservedWidth)}
     >
       <div class="relative h-full min-h-0 w-full">
         <button
           type="button"
           class="related-drawer-handle group absolute -mx-4 top-1/2 left-0 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center"
-          aria-expanded={!isRelatedPanelCollapsed}
+          aria-expanded={!$relatedState.isPanelCollapsed}
           aria-controls="related-drawer-panel"
-          aria-label={isRelatedPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
+          aria-label={$relatedState.isPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
           onclick={toggleRelatedPanel}
         >
           <span class="related-drawer-handle-pill flex h-28 w-7 items-center justify-center rounded-full border border-border/70 bg-card/92 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground shadow-lg backdrop-blur-md transition group-hover:text-foreground">
@@ -2175,19 +2434,19 @@
         <div
           id="related-drawer-panel"
           class={`absolute inset-y-0 left-0 flex w-full min-h-0 pl-4 transition-[opacity,transform] duration-300 ease-out ${
-            isRelatedPanelCollapsed
+            $relatedState.isPanelCollapsed
               ? 'pointer-events-none translate-x-3 opacity-0'
               : 'pointer-events-auto translate-x-0 opacity-100'
           }`}
         >
           <div class="my-auto max-h-full w-full">
             <RelatedPanel
-              items={relatedItems}
-              scope={relatedScope}
-              status={relatedStatus}
-              reason={relatedReason}
-              loading={isLoadingRelated}
-              hasSelection={!!selectedRelatedText}
+              items={$relatedState.items}
+              scope={$relatedState.scope}
+              status={$relatedState.status}
+              reason={$relatedState.reason}
+              loading={$relatedState.isLoading}
+              hasSelection={!!$relatedState.selectedText}
               onScopeChange={handleRelatedScopeChange}
               onSelect={(item) =>
                 void handleRelatedItemSelect(item).catch((error) => {
@@ -2203,23 +2462,23 @@
       <div class="related-bottom-sheet-anchor pointer-events-none relative">
         <div
           aria-hidden="true"
-          class={`related-bottom-sheet-backdrop ${isRelatedPanelCollapsed ? 'hidden' : 'block'}`}
+          class={`related-bottom-sheet-backdrop ${$relatedState.isPanelCollapsed ? 'hidden' : 'block'}`}
         ></div>
         <div
           id="related-drawer-panel"
           class={`related-bottom-sheet-panel w-full overflow-hidden transition-[opacity,transform] duration-300 ease-out ${
-            isRelatedPanelCollapsed
+            $relatedState.isPanelCollapsed
               ? 'pointer-events-none translate-y-0 opacity-0'
               : 'pointer-events-auto translate-y-0 opacity-100'
           }`}
         >
           <RelatedPanel
-            items={relatedItems}
-            scope={relatedScope}
-            status={relatedStatus}
-            reason={relatedReason}
-            loading={isLoadingRelated}
-            hasSelection={!!selectedRelatedText}
+            items={$relatedState.items}
+            scope={$relatedState.scope}
+            status={$relatedState.status}
+            reason={$relatedState.reason}
+            loading={$relatedState.isLoading}
+            hasSelection={!!$relatedState.selectedText}
             onScopeChange={handleRelatedScopeChange}
             onSelect={(item) =>
               void handleRelatedItemSelect(item).catch((error) => {
@@ -2231,9 +2490,9 @@
         <button
           type="button"
           class="related-bottom-sheet-toggle pointer-events-auto inline-flex h-11 items-center gap-2 rounded-full border border-border/70 bg-card/92 px-4 py-2 text-[11px] font-semibold tracking-[0.16em] text-muted-foreground shadow-lg backdrop-blur-md transition hover:text-foreground"
-          aria-expanded={!isRelatedPanelCollapsed}
+          aria-expanded={!$relatedState.isPanelCollapsed}
           aria-controls="related-drawer-panel"
-          aria-label={isRelatedPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
+          aria-label={$relatedState.isPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
           onclick={toggleRelatedPanel}
         >
           RELATED

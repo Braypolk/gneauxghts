@@ -5,13 +5,12 @@
     forgetButtonDurationPreference,
     resolveForgetButtonDurationMs
   } from '$lib/appSettings';
-  import { createBottomBarForgetHoldController } from '$lib/features/notepad/ui/bottomBarForgetHold';
   import {
     buildHighlightedSegments,
-    createBottomBarSearchController,
+    createBottomBarState,
     deriveBottomBarVisibleItems,
     type BottomBarVisibleItem
-  } from '$lib/features/notepad/search/bottomBarSearchController';
+  } from '$lib/features/notepad/ui/bottomBarState';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
   import {
     rememberActionRequiresIntegrateSupport,
@@ -73,18 +72,9 @@
     focusRequest
   }: Props = $props();
 
-  let searchInput: HTMLInputElement | null = null;
+  let searchInput = $state<HTMLInputElement | null>(null);
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
   let rememberMenuShell = $state<HTMLDivElement | null>(null);
-  let isSearchFocused = $state(false);
-  let isRememberMenuOpen = $state(false);
-  let activeIndex = $state(0);
-  let lastHandledFocusRequest = 0;
-  let isHoldingForget = $state(false);
-  let forgetHoldProgress = $state(0);
-  let forgetHoldStartedAt = 0;
-  let forgetHoldFrame: number | null = null;
-  let forgetHoldTimeout: ReturnType<typeof window.setTimeout> | null = null;
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
   const rememberModeSections = $derived(
@@ -112,45 +102,15 @@
     deriveBottomBarVisibleItems(searchQuery, searchResults, recentNotes, recentTasks)
   );
 
-  const forgetHoldController = createBottomBarForgetHoldController({
-    getIsForgetHoldEnabled: () => isForgetHoldEnabled,
-    getIsHoldingForget: () => isHoldingForget,
-    setIsHoldingForget: (value) => (isHoldingForget = value),
-    getForgetHoldDurationMs: () => forgetHoldDurationMs,
-    getForgetHoldStartedAt: () => forgetHoldStartedAt,
-    setForgetHoldStartedAt: (value) => (forgetHoldStartedAt = value),
-    setForgetHoldProgress: (value) => (forgetHoldProgress = value),
-    getForgetHoldFrame: () => forgetHoldFrame,
-    setForgetHoldFrame: (value) => (forgetHoldFrame = value),
-    getForgetHoldTimeout: () => forgetHoldTimeout,
-    setForgetHoldTimeout: (value) => (forgetHoldTimeout = value),
-    onForget: () => onForget()
-  });
-  const {
-    resetForgetHold,
-    handleForgetPointerDown,
-    handleForgetKeyDown,
-    handleForgetKeyUp,
-    handleForgetClick,
-    cancelForgetHold,
-    getForgetButtonAriaLabel
-  } = forgetHoldController;
-
-  const searchController = createBottomBarSearchController({
-    getSearchInput: () => searchInput,
-    getSearchResultsViewport: () => searchResultsViewport,
+  const bottomBarState = createBottomBarState({
     getSearchMode: () => searchMode,
     getSearchQuery: () => searchQuery,
     getSearchResults: () => searchResults,
     getRecentNotes: () => recentNotes,
     getRecentTasks: () => recentTasks,
     getVisibleItems: () => visibleItems,
-    getIsSearchFocused: () => isSearchFocused,
-    setIsSearchFocused: (value) => (isSearchFocused = value),
-    getActiveIndex: () => activeIndex,
-    setActiveIndex: (value) => (activeIndex = value),
-    getLastHandledFocusRequest: () => lastHandledFocusRequest,
-    setLastHandledFocusRequest: (value) => (lastHandledFocusRequest = value),
+    getForgetHoldDurationMs: () => forgetHoldDurationMs,
+    isForgetHoldEnabled: () => isForgetHoldEnabled,
     onSearchInput: (value) => onSearchInput(value),
     onSearchModeChange: (mode) => onSearchModeChange(mode),
     onSearchSelect: (result) => onSearchSelect(result),
@@ -159,68 +119,62 @@
     onRecentNoteShortcut: (index) => onRecentNoteShortcut(index),
     onRecentTaskShortcut: (index) => onRecentTaskShortcut(index),
     onSearchFocus: () => onSearchFocus(),
-    onCommand: (command) => onCommand?.(command) ?? false
+    onCommand: (command) => onCommand?.(command) ?? false,
+    onForget: () => onForget()
   });
-  const {
-    resetActiveIndex,
-    handleSearchInput,
-    handleSearchFocus,
-    handleSearchBlur,
-    handleSearchModeClick,
-    getSearchPlaceholder,
-    handleSearchKeydown,
-    selectItem,
-    handleFocusRequest,
-    syncActiveItemIntoView
-  } = searchController;
 
   $effect(() => {
     visibleItems;
-    resetActiveIndex();
+    bottomBarState.resetActiveIndex();
   });
 
   $effect(() => {
     canUnforget;
     if (canUnforget) {
-      resetForgetHold();
+      bottomBarState.resetForgetHold();
     }
   });
 
   $effect(() => {
     $forgetButtonDurationPreference;
-    resetForgetHold();
+    bottomBarState.resetForgetHold();
   });
 
   $effect(() => {
     focusRequest;
-    handleFocusRequest(focusRequest);
+    bottomBarState.handleFocusRequest(focusRequest);
   });
 
   $effect(() => {
-    isSearchFocused;
-    activeIndex;
+    $bottomBarState.isSearchFocused;
+    $bottomBarState.activeIndex;
     visibleItems;
-    void syncActiveItemIntoView();
+    void bottomBarState.syncActiveItemIntoView();
+  });
+
+  $effect(() => {
+    bottomBarState.bindSearchInput(searchInput);
+    bottomBarState.bindSearchResultsViewport(searchResultsViewport);
   });
 
   onDestroy(() => {
-    resetForgetHold();
+    bottomBarState.dispose();
   });
 
   $effect(() => {
-    if (!isRememberMenuOpen || typeof window === 'undefined') {
+    if (!$bottomBarState.isRememberMenuOpen || typeof window === 'undefined') {
       return;
     }
 
     const handlePointerDown = (event: PointerEvent) => {
       if (!(event.target instanceof Node) || !rememberMenuShell?.contains(event.target)) {
-        isRememberMenuOpen = false;
+        bottomBarState.setRememberMenuOpen(false);
       }
     };
 
     const handleKeydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        isRememberMenuOpen = false;
+        bottomBarState.setRememberMenuOpen(false);
       }
     };
 
@@ -234,7 +188,7 @@
 
 
   function getRecentNotesViewportClass() {
-    return 'h-[8.25rem] overflow-y-auto';
+    return 'h-[8.25rem] overflow-y-auto lg:h-[9rem]';
   }
 
   function getRecentTasksViewportClass() {
@@ -291,12 +245,15 @@
     if (isRememberActionDisabled(action)) {
       return;
     }
-    isRememberMenuOpen = false;
+    bottomBarState.setRememberMenuOpen(false);
     onRemember(action);
   }
 </script>
 
-<div class="relative min-w-0 overflow-visible rounded-none shadow-none sm:rounded-2xl sm:shadow-lg">
+<div
+  data-notepad-bottom-bar
+  class="relative min-w-0 overflow-visible rounded-none shadow-none sm:rounded-2xl sm:shadow-lg"
+>
   <div
     class="absolute inset-0 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
     style="mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
@@ -316,19 +273,19 @@
       <button
         type="button"
         class={`relative isolate inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-[color,background-color,border-color,box-shadow] duration-200 hover:border-destructive/40 hover:text-muted-foreground active:text-destructive min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5 ${
-          isHoldingForget
+          $bottomBarState.isHoldingForget
             ? 'border-destructive/70 text-destructive animate-[forget-hold-pulse_0.95s_ease-in-out_infinite_alternate]'
             : ''
         }`}
-        style={`--forget-progress: ${forgetHoldProgress};`}
-        aria-label={getForgetButtonAriaLabel()}
-        onclick={handleForgetClick}
-        onpointerdown={handleForgetPointerDown}
-        onpointerup={cancelForgetHold}
-        onpointerleave={cancelForgetHold}
-        onpointercancel={cancelForgetHold}
-        onkeydown={handleForgetKeyDown}
-        onkeyup={handleForgetKeyUp}
+        style={`--forget-progress: ${$bottomBarState.forgetHoldProgress};`}
+        aria-label={bottomBarState.getForgetButtonAriaLabel()}
+        onclick={bottomBarState.handleForgetClick}
+        onpointerdown={bottomBarState.handleForgetPointerDown}
+        onpointerup={bottomBarState.cancelForgetHold}
+        onpointerleave={bottomBarState.cancelForgetHold}
+        onpointercancel={bottomBarState.cancelForgetHold}
+        onkeydown={bottomBarState.handleForgetKeyDown}
+        onkeyup={bottomBarState.handleForgetKeyUp}
       >
         <span
           class="absolute inset-0 z-0 origin-left rounded-[inherit] bg-destructive/35 transition-[transform,opacity] duration-150 ease-linear"
@@ -340,7 +297,7 @@
         </span>
         <Eraser
           class={`relative z-10 h-5 w-5 transition-transform duration-200 min-[700px]:hidden ${
-            isHoldingForget ? '-translate-y-px' : ''
+            $bottomBarState.isHoldingForget ? '-translate-y-px' : ''
           }`}
         />
       </button>
@@ -348,8 +305,8 @@
 
     <div
       class="search-bar search-bar-shell relative flex max-w-2xl flex-1 min-w-0 items-center gap-2 overflow-visible rounded-full border border-border/70 bg-background pl-3 pr-1 sm:gap-3 sm:pl-5"
-      onfocusin={handleSearchFocus}
-      onfocusout={handleSearchBlur}
+      onfocusin={bottomBarState.handleSearchFocus}
+      onfocusout={bottomBarState.handleSearchBlur}
     >
       <Search class="w-4 h-4 shrink-0 text-muted-foreground" />
       <div class="flex-1 min-w-0">
@@ -358,39 +315,37 @@
           type="text"
           autocomplete="off"
           class="search-bar-input w-full py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground sm:py-2"
-          placeholder={getSearchPlaceholder()}
+          placeholder={bottomBarState.getSearchPlaceholder()}
           value={searchQuery}
-          oninput={handleSearchInput}
-          onkeydown={handleSearchKeydown}
+          oninput={bottomBarState.handleSearchInput}
+          onkeydown={bottomBarState.handleSearchKeydown}
         />
       </div>
 
       <div class="search-mode-toggle flex shrink-0 items-center gap-1 rounded-full bg-card/80 p-1">
         <button
           type="button"
-          class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:h-9 sm:w-9"
-          class:bg-primary={isSearchFocused && searchMode === 'current'}
-          class:text-primary={isSearchFocused && searchMode === 'current'}
+          class="search-mode-button inline-flex h-8 w-8 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground sm:h-9 sm:w-9"
+          class:search-mode-button-active={$bottomBarState.isSearchFocused && searchMode === 'current'}
           onmousedown={(event) => event.preventDefault()}
-          onclick={() => handleSearchModeClick('current')}
+          onclick={() => bottomBarState.handleSearchModeClick('current')}
           aria-label="Current notes"
         >
           <StickyNote class="h-4 w-4" />
         </button>
         <button
           type="button"
-          class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:h-9 sm:w-9"
-          class:bg-primary={isSearchFocused && searchMode === 'all'}
-          class:text-primary={isSearchFocused && searchMode === 'all'}
+          class="search-mode-button inline-flex h-8 w-8 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground sm:h-9 sm:w-9"
+          class:search-mode-button-active={$bottomBarState.isSearchFocused && searchMode === 'all'}
           onmousedown={(event) => event.preventDefault()}
-          onclick={() => handleSearchModeClick('all')}
+          onclick={() => bottomBarState.handleSearchModeClick('all')}
           aria-label="All notes"
         >
           <BookOpen class="h-4 w-4" />
         </button>
       </div>
 
-      {#if isSearchFocused}
+      {#if $bottomBarState.isSearchFocused}
         <div class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]">
           {#if isSearching && searchQuery.trim() !== ''}
             <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
@@ -403,9 +358,12 @@
               {/if}
             </div>
           {:else if searchQuery.trim() === ''}
-            <div bind:this={searchResultsViewport} class="space-y-3">
+            <div
+              bind:this={searchResultsViewport}
+              class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
+            >
               {#if recentNotes.length > 0}
-                <section>
+                <section class="min-w-0 flex-1 lg:pr-3">
                   <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                     Recent Notes
                   </div>
@@ -413,11 +371,11 @@
                     {#each recentNotes as item, index (`note-${item.notePath ?? 'current'}-${item.fileName}-${index}`)}
                       <button
                         type="button"
-                        data-search-result-active={index === activeIndex ? 'true' : 'false'}
+                        data-search-result-active={index === $bottomBarState.activeIndex ? 'true' : 'false'}
                         class={getRecentNoteItemClass()}
-                        class:bg-accent={index === activeIndex}
+                        class:bg-accent={index === $bottomBarState.activeIndex}
                         onmousedown={(event) => event.preventDefault()}
-                        onclick={() => selectItem({ kind: 'note', item })}
+                        onclick={() => bottomBarState.selectItem({ kind: 'note', item })}
                       >
                         <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
                       </button>
@@ -427,7 +385,13 @@
               {/if}
 
               {#if recentTasks.length > 0}
-                <section class={recentNotes.length > 0 ? 'border-t border-border/70 pt-2' : ''}>
+                <section
+                  class={`min-w-0 flex-1 ${
+                    recentNotes.length > 0
+                      ? 'border-t border-border/70 pt-2 lg:border-t-0 lg:border-l lg:border-border/70 lg:pl-3 lg:pt-0'
+                      : ''
+                  }`}
+                >
                   <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                     Recent Tasks
                   </div>
@@ -436,11 +400,11 @@
                       {@const globalIndex = recentNotes.length + index}
                       <button
                         type="button"
-                        data-search-result-active={globalIndex === activeIndex ? 'true' : 'false'}
+                        data-search-result-active={globalIndex === $bottomBarState.activeIndex ? 'true' : 'false'}
                         class={getRecentTaskItemClass()}
-                        class:bg-accent={globalIndex === activeIndex}
+                        class:bg-accent={globalIndex === $bottomBarState.activeIndex}
                         onmousedown={(event) => event.preventDefault()}
-                        onclick={() => selectItem({ kind: 'task', item })}
+                        onclick={() => bottomBarState.selectItem({ kind: 'task', item })}
                       >
                         <Circle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <span class="min-w-0 flex-1 truncate text-sm font-medium text-popover-foreground">
@@ -460,11 +424,11 @@
               {#each searchResults as item, index (`${item.notePath ?? 'current'}-${item.sectionLabel}-${item.matchText}-${index}`)}
                 <button
                   type="button"
-                  data-search-result-active={index === activeIndex ? 'true' : 'false'}
+                  data-search-result-active={index === $bottomBarState.activeIndex ? 'true' : 'false'}
                   class={getSearchResultItemClass()}
-                  class:bg-accent={index === activeIndex}
+                  class:bg-accent={index === $bottomBarState.activeIndex}
                   onmousedown={(event) => event.preventDefault()}
-                  onclick={() => selectItem({ kind: 'search', item })}
+                  onclick={() => bottomBarState.selectItem({ kind: 'search', item })}
                 >
                   <div class={getSearchResultHeaderClass()}>
                     <div class="min-w-0">
@@ -523,16 +487,16 @@
         <button
           class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted/55 p-0 transition-colors hover:bg-accent hover:text-accent-foreground"
           type="button"
-          aria-expanded={isRememberMenuOpen}
+          aria-expanded={$bottomBarState.isRememberMenuOpen}
           aria-haspopup="menu"
           aria-label="Remember modes"
-          onclick={() => (isRememberMenuOpen = !isRememberMenuOpen)}
+          onclick={bottomBarState.toggleRememberMenu}
         >
-          <ChevronDown class={`h-4 w-4 transition-transform ${isRememberMenuOpen ? 'rotate-180' : ''}`} />
+          <ChevronDown class={`h-4 w-4 transition-transform ${$bottomBarState.isRememberMenuOpen ? 'rotate-180' : ''}`} />
         </button>
       </div>
 
-      {#if isRememberMenuOpen}
+      {#if $bottomBarState.isRememberMenuOpen}
         <div
           class="absolute bottom-[calc(100%+0.5rem)] right-0 z-40 max-h-[28rem] w-[22rem] overflow-y-auto rounded-[1.2rem] border border-border bg-popover/95 p-2 shadow-xl backdrop-blur-md"
           role="menu"
@@ -573,6 +537,21 @@
 </div>
 
 <style>
+  .search-mode-button {
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+
+  .search-mode-button-active {
+    background: color-mix(in oklab, var(--foreground) 18%, var(--background));
+    color: var(--foreground);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 16%, transparent);
+  }
+
+  .search-mode-button-active:hover {
+    background: color-mix(in oklab, var(--foreground) 22%, var(--background));
+    color: var(--foreground);
+  }
+
   .search-bar-input {
     text-shadow: none;
     -webkit-text-stroke: 0 transparent;

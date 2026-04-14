@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
   import {
     BarChart3,
     ChevronDown,
@@ -12,271 +11,44 @@
     cleanUpApplyPolicyOptions,
     cleanUpApplyPolicyPreference,
     defaultRememberActionPreference,
-    rememberActions,
+    exactRememberActionLabel,
     rememberActionOptions,
     setCleanUpApplyPolicyPreference,
     setDefaultRememberActionPreference,
-    setRememberActions
+    setExactRememberActionLabel
   } from '$lib/appSettings';
-  import { formatMillis, formatTimestamp } from '$lib/features/settings/semanticSettingsController';
-  import type {
-    AiDiagnosticsSnapshot,
-    AiModelOption,
-    AiProviderKind,
-    AiSettings,
-    AiSettingsUpdate,
-    EditableRememberAction,
-    CustomRememberActionKind,
-    EditableRememberActionFamily
+  import {
+    createAiRememberSettingsStore,
+    type AiSubTab
+  } from '$lib/features/settings/aiRememberSettingsStore';
+  import { formatMillis, formatTimestamp } from '$lib/features/settings/formatters';
+  import {
+    EXACT_REMEMBER_ACTION,
+    type AiProviderKind,
+    type EditableRememberAction,
   } from '$lib/types/ai';
-
-  type AiSubTab = 'connection' | 'remember' | 'usage';
 
   const subTabs: { id: AiSubTab; label: string; hint: string; Icon: typeof Link2 }[] = [
     { id: 'connection', label: 'Connection', hint: 'Endpoint and API key', Icon: Link2 },
     { id: 'remember', label: 'Remember', hint: 'Defaults and custom actions', Icon: Sparkles },
     { id: 'usage', label: 'Usage', hint: 'Token statistics', Icon: BarChart3 }
   ];
-
-  let aiSubTab = $state<AiSubTab>('connection');
-  let aiSettings = $state<AiSettings | null>(null);
-  let aiProviderKindInput = $state<AiProviderKind>('openAiCompatible');
-  let aiBaseUrlInput = $state('');
-  let aiModelInput = $state('');
-  let aiApiKeyInput = $state('');
-  let aiModels = $state<AiModelOption[]>([]);
-  let aiModelsError = $state('');
-  let isLoadingAiModels = $state(false);
-  let isSavingAiSettings = $state(false);
-  let rememberActionDrafts = $state<EditableRememberAction[]>([]);
-  let isSavingRememberActions = $state(false);
-  let aiDiagnostics = $state<AiDiagnosticsSnapshot | null>(null);
-  let isLoadingAiDiagnostics = $state(true);
-  let isClearingAiDiagnostics = $state(false);
-  let expandedActionId = $state<string | null>(null);
+  const aiRememberSettings = createAiRememberSettingsStore();
 
   function formatCount(value: number | null | undefined) {
     return (value ?? 0).toLocaleString();
-  }
-
-  async function loadAiSettings() {
-    try {
-      const settings = await invoke<AiSettings>('get_ai_settings');
-      aiSettings = settings;
-      aiProviderKindInput = settings.providerKind;
-      aiBaseUrlInput = settings.baseUrl;
-      aiModelInput = settings.model;
-      rememberActionDrafts = $rememberActions.map((action) => ({ ...action }));
-      aiModels = settings.model.trim() !== '' ? [{ id: settings.model }] : [];
-      aiModelsError = '';
-      void loadAiDiagnostics();
-      if (settings.providerKind === 'openAiCompatible' && settings.apiKeyConfigured) {
-        window.setTimeout(() => {
-          void loadAiModels();
-        }, 0);
-      }
-    } catch (error) {
-      console.error('Failed to load AI settings:', error);
-    }
-  }
-
-  async function loadAiDiagnostics() {
-    isLoadingAiDiagnostics = true;
-    try {
-      aiDiagnostics = await invoke<AiDiagnosticsSnapshot>('get_ai_diagnostics');
-    } catch (error) {
-      console.error('Failed to load AI diagnostics:', error);
-    } finally {
-      isLoadingAiDiagnostics = false;
-    }
-  }
-
-  async function loadAiModels() {
-    if (aiProviderKindInput !== 'openAiCompatible') {
-      aiModels = [];
-      aiModelsError = '';
-      return;
-    }
-
-    isLoadingAiModels = true;
-    try {
-      const models = await invoke<AiModelOption[]>('list_ai_models', {
-        baseUrl: aiBaseUrlInput,
-        apiKey: aiApiKeyInput.trim() === '' ? null : aiApiKeyInput
-      });
-      aiModels = models;
-      aiModelsError = '';
-      if (aiModelInput.trim() !== '' && !models.some((model) => model.id === aiModelInput)) {
-        aiModels = [{ id: aiModelInput }, ...models];
-      }
-    } catch (error) {
-      console.error('Failed to load AI models:', error);
-      aiModelsError = 'Unable to load models from /v1/models.';
-      if (aiModelInput.trim() !== '') {
-        aiModels = [{ id: aiModelInput }];
-      } else {
-        aiModels = [];
-      }
-    } finally {
-      isLoadingAiModels = false;
-    }
-  }
-
-  async function saveAiSettings() {
-    const nextSettings: AiSettingsUpdate = {
-      providerKind: aiProviderKindInput,
-      baseUrl: aiBaseUrlInput,
-      model: aiModelInput,
-      apiKey: aiApiKeyInput.trim() === '' ? null : aiApiKeyInput
-    };
-    isSavingAiSettings = true;
-    try {
-      aiSettings = await invoke<AiSettings>('set_ai_settings', { settings: nextSettings });
-      aiProviderKindInput = aiSettings.providerKind;
-      aiBaseUrlInput = aiSettings.baseUrl;
-      aiModelInput = aiSettings.model;
-      aiApiKeyInput = '';
-      await loadAiModels();
-    } catch (error) {
-      console.error('Failed to save AI settings:', error);
-    } finally {
-      isSavingAiSettings = false;
-    }
-  }
-
-  async function clearAiDiagnostics() {
-    isClearingAiDiagnostics = true;
-    try {
-      await invoke('clear_ai_diagnostics');
-      await loadAiDiagnostics();
-    } catch (error) {
-      console.error('Failed to clear AI diagnostics:', error);
-    } finally {
-      isClearingAiDiagnostics = false;
-    }
-  }
-
-  function defaultFamilyForKind(kind: CustomRememberActionKind): EditableRememberActionFamily {
-    return kind === 'singleNote' ? 'edit' : 'organize';
-  }
-
-  function createBlankRememberAction(kind: CustomRememberActionKind): EditableRememberAction {
-    return {
-      id: `custom-${crypto.randomUUID()}`,
-      label: '',
-      description: '',
-      prompt: '',
-      kind,
-      family: defaultFamilyForKind(kind),
-      visible: true
-    };
-  }
-
-  function addRememberAction(kind: CustomRememberActionKind) {
-    const next = createBlankRememberAction(kind);
-    rememberActionDrafts = [...rememberActionDrafts, next];
-    expandedActionId = next.id;
-  }
-
-  function updateRememberAction(
-    id: string,
-    field: keyof Pick<
-      EditableRememberAction,
-      'label' | 'description' | 'prompt' | 'kind' | 'family' | 'visible'
-    >,
-    value: string | boolean
-  ) {
-    rememberActionDrafts = rememberActionDrafts.map((action) => {
-      if (action.id !== id) {
-        return action;
-      }
-
-      const nextAction = { ...action, [field]: value } as EditableRememberAction;
-      if (field === 'kind') {
-        nextAction.family =
-          value === 'singleNote'
-            ? 'edit'
-            : nextAction.family === 'edit'
-              ? 'organize'
-              : nextAction.family;
-      }
-      if (nextAction.kind === 'singleNote') {
-        nextAction.family = 'edit';
-      }
-      return nextAction;
-    });
-  }
-
-  function removeRememberAction(id: string) {
-    rememberActionDrafts = rememberActionDrafts.filter((action) => action.id !== id);
-    if ($defaultRememberActionPreference === id) {
-      setDefaultRememberActionPreference('exact');
-    }
-    if (expandedActionId === id) {
-      expandedActionId = null;
-    }
-  }
-
-  function canSaveRememberActions() {
-    return rememberActionDrafts.every(
-      (action) =>
-        action.label.trim() !== '' &&
-        action.prompt.trim() !== '' &&
-        (action.kind === 'singleNote' ||
-          action.family === 'organize' ||
-          action.family === 'integrate')
-    );
-  }
-
-  async function saveRememberActions() {
-    if (!canSaveRememberActions()) {
-      return;
-    }
-
-    isSavingRememberActions = true;
-    try {
-      const sanitized = rememberActionDrafts.map((action) => ({
-        ...action,
-        label: action.label.trim(),
-        description: action.description.trim(),
-        prompt: action.prompt.trim(),
-        family: action.kind === 'singleNote' ? 'edit' : action.family
-      }));
-      setRememberActions(sanitized);
-      rememberActionDrafts = sanitized.map((action) => ({ ...action }));
-      if (
-        $defaultRememberActionPreference !== 'exact' &&
-        !sanitized.some(
-          (action) => action.id === $defaultRememberActionPreference && action.visible
-        )
-      ) {
-        setDefaultRememberActionPreference('exact');
-      }
-    } finally {
-      isSavingRememberActions = false;
-    }
-  }
-
-  function toggleExpandAction(id: string) {
-    expandedActionId = expandedActionId === id ? null : id;
   }
 
   function kindLabel(kind: EditableRememberAction['kind']) {
     return kind === 'singleNote' ? 'Single note' : 'Advanced';
   }
 
-  function handleVisibilityChange() {
-    if (document.visibilityState === 'visible') {
-      void loadAiSettings();
-    }
-  }
-
   onMount(() => {
-    void loadAiSettings();
+    aiRememberSettings.initialize();
   });
 </script>
 
-<svelte:document onvisibilitychange={handleVisibilityChange} />
+<svelte:document onvisibilitychange={aiRememberSettings.handleVisibilityChange} />
 
 <div class="flex flex-col gap-6">
   <nav
@@ -288,12 +60,12 @@
       <button
         type="button"
         class={`flex min-w-0 flex-1 flex-col items-stretch gap-0.5 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors sm:px-4 ${
-          aiSubTab === tab.id
+          $aiRememberSettings.aiSubTab === tab.id
             ? 'bg-foreground text-background shadow-sm'
             : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
         }`}
-        aria-current={aiSubTab === tab.id ? 'page' : undefined}
-        onclick={() => (aiSubTab = tab.id)}
+        aria-current={$aiRememberSettings.aiSubTab === tab.id ? 'page' : undefined}
+        onclick={() => aiRememberSettings.setAiSubTab(tab.id)}
       >
         <span class="flex items-center gap-2">
           <Icon class="h-4 w-4 shrink-0 opacity-90" />
@@ -304,7 +76,7 @@
     {/each}
   </nav>
 
-  {#if aiSubTab === 'connection'}
+  {#if $aiRememberSettings.aiSubTab === 'connection'}
     <div class="space-y-5">
       <p class="text-sm text-muted-foreground">
         Point the app at any OpenAI-compatible HTTP API, then pick a model. Your key stays on this device.
@@ -315,8 +87,12 @@
           <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider</span>
           <select
             class="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            disabled={isSavingAiSettings}
-            bind:value={aiProviderKindInput}
+            disabled={$aiRememberSettings.isSavingAiSettings}
+            value={$aiRememberSettings.aiProviderKindInput}
+            onchange={(event) =>
+              aiRememberSettings.setAiProviderKindInput(
+                (event.currentTarget as HTMLSelectElement).value as AiProviderKind
+              )}
           >
             <option value="openAiCompatible">OpenAI-compatible HTTP</option>
             <option value="llamaServer" disabled>llama-server (coming later)</option>
@@ -328,7 +104,7 @@
         >
           <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Key status</span>
           <p class="font-medium">
-            {aiSettings?.apiKeyConfigured ? 'API key on file' : 'No API key saved yet'}
+            {$aiRememberSettings.aiSettings?.apiKeyConfigured ? 'API key on file' : 'No API key saved yet'}
           </p>
           <p class="text-xs text-muted-foreground">
             Save a new key below to replace the stored one, or leave blank to keep the current key.
@@ -339,10 +115,12 @@
           <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Base URL</span>
           <input
             class="w-full rounded-2xl border border-border/70 bg-background/60 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-            bind:value={aiBaseUrlInput}
+            value={$aiRememberSettings.aiBaseUrlInput}
             placeholder="https://api.openai.com/v1"
-            disabled={isSavingAiSettings}
+            disabled={$aiRememberSettings.isSavingAiSettings}
             autocomplete="off"
+            oninput={(event) =>
+              aiRememberSettings.setAiBaseUrlInput((event.currentTarget as HTMLInputElement).value)}
           />
         </label>
 
@@ -352,28 +130,30 @@
             <button
               class="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent disabled:opacity-50"
               type="button"
-              disabled={isSavingAiSettings || isLoadingAiModels || aiProviderKindInput !== 'openAiCompatible'}
-              onclick={() => void loadAiModels()}
+              disabled={$aiRememberSettings.isSavingAiSettings || $aiRememberSettings.isLoadingAiModels || $aiRememberSettings.aiProviderKindInput !== 'openAiCompatible'}
+              onclick={() => void aiRememberSettings.loadAiModels()}
             >
-              {isLoadingAiModels ? 'Loading…' : 'Refresh list'}
+              {$aiRememberSettings.isLoadingAiModels ? 'Loading…' : 'Refresh list'}
             </button>
           </div>
           <select
             class="w-full rounded-2xl border border-border/70 bg-background/60 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-            bind:value={aiModelInput}
-            disabled={isSavingAiSettings || isLoadingAiModels || aiProviderKindInput !== 'openAiCompatible'}
+            value={$aiRememberSettings.aiModelInput}
+            disabled={$aiRememberSettings.isSavingAiSettings || $aiRememberSettings.isLoadingAiModels || $aiRememberSettings.aiProviderKindInput !== 'openAiCompatible'}
+            onchange={(event) =>
+              aiRememberSettings.setAiModelInput((event.currentTarget as HTMLSelectElement).value)}
           >
-            {#if aiModels.length === 0}
-              <option value="">{aiModelsError || 'Load models from /v1/models'}</option>
+            {#if $aiRememberSettings.aiModels.length === 0}
+              <option value="">{$aiRememberSettings.aiModelsError || 'Load models from /v1/models'}</option>
             {/if}
-            {#each aiModels as model}
+            {#each $aiRememberSettings.aiModels as model}
               <option value={model.id}>{model.id}</option>
             {/each}
           </select>
           <p class="text-xs text-muted-foreground">
             List comes from
             <code class="rounded bg-muted/50 px-1 py-0.5 text-[11px]">
-              {(aiBaseUrlInput || 'https://api.openai.com/v1').replace(/\/$/, '')}/models
+              {($aiRememberSettings.aiBaseUrlInput || 'https://api.openai.com/v1').replace(/\/$/, '')}/models
             </code>
           </p>
         </div>
@@ -383,10 +163,12 @@
           <input
             class="w-full rounded-2xl border border-border/70 bg-background/60 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring"
             type="password"
-            bind:value={aiApiKeyInput}
-            placeholder={aiSettings?.apiKeyConfigured ? 'Leave blank to keep saved key' : 'Paste API key'}
-            disabled={isSavingAiSettings}
+            value={$aiRememberSettings.aiApiKeyInput}
+            placeholder={$aiRememberSettings.aiSettings?.apiKeyConfigured ? 'Leave blank to keep saved key' : 'Paste API key'}
+            disabled={$aiRememberSettings.isSavingAiSettings}
             autocomplete="off"
+            oninput={(event) =>
+              aiRememberSettings.setAiApiKeyInput((event.currentTarget as HTMLInputElement).value)}
           />
         </label>
       </div>
@@ -396,14 +178,14 @@
         <button
           class="inline-flex w-full items-center justify-center rounded-full bg-foreground px-6 py-3 text-sm font-semibold text-background shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 sm:w-auto"
           type="button"
-          disabled={isSavingAiSettings}
-          onclick={() => void saveAiSettings()}
+          disabled={$aiRememberSettings.isSavingAiSettings}
+          onclick={() => void aiRememberSettings.saveAiSettings()}
         >
-          {isSavingAiSettings ? 'Saving…' : 'Save connection'}
+          {$aiRememberSettings.isSavingAiSettings ? 'Saving…' : 'Save connection'}
         </button>
       </div>
     </div>
-  {:else if aiSubTab === 'remember'}
+  {:else if $aiRememberSettings.aiSubTab === 'remember'}
     <div class="space-y-8">
       <section class="space-y-4">
         <h3 class="text-sm font-semibold">Defaults</h3>
@@ -437,6 +219,23 @@
             <p class="mt-3 text-xs text-muted-foreground">
               Hidden actions stay editable here but do not appear in the note menu.
             </p>
+            <label class="mt-4 block space-y-1.5">
+              <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Exact remember name
+              </span>
+              <input
+                class="w-full rounded-xl border border-border/60 bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                maxlength={80}
+                value={$exactRememberActionLabel}
+                placeholder={EXACT_REMEMBER_ACTION.label}
+                aria-label="Name for the exact remember action"
+                oninput={(event) =>
+                  setExactRememberActionLabel((event.currentTarget as HTMLInputElement).value)}
+              />
+              <span class="text-[11px] text-muted-foreground">
+                Shown on the remember control and menus. Clear the field to reset to “{EXACT_REMEMBER_ACTION.label}”.
+              </span>
+            </label>
           </div>
 
           <div class="rounded-2xl border border-border/70 bg-background/40 p-4">
@@ -477,32 +276,32 @@
           <div>
             <h3 class="text-sm font-semibold">Custom actions</h3>
             <p class="mt-1 max-w-xl text-xs text-muted-foreground">
-              Everything except “Remember Exact” lives here. Simple actions only change the open note; advanced actions can
-              reorganize your vault—use carefully.
+              Built-in AI transforms and your own prompts live here. Simple actions only change the open note; advanced actions
+              can reorganize your vault—use carefully.
             </p>
           </div>
           <div class="flex flex-wrap gap-2">
             <button
               class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
               type="button"
-              onclick={() => addRememberAction('singleNote')}
+              onclick={() => aiRememberSettings.addRememberAction('singleNote')}
             >
               + Simple
             </button>
             <button
               class="rounded-full border border-border bg-background px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
               type="button"
-              onclick={() => addRememberAction('advanced')}
+              onclick={() => aiRememberSettings.addRememberAction('advanced')}
             >
               + Advanced
             </button>
             <button
               class="rounded-full border border-border bg-foreground px-3 py-2 text-xs font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-40"
               type="button"
-              disabled={isSavingRememberActions || !canSaveRememberActions()}
-              onclick={() => void saveRememberActions()}
+              disabled={$aiRememberSettings.isSavingRememberActions || !$aiRememberSettings.canSaveRememberActions}
+              onclick={() => void aiRememberSettings.saveRememberActions()}
             >
-              {isSavingRememberActions ? 'Saving…' : 'Save actions'}
+              {$aiRememberSettings.isSavingRememberActions ? 'Saving…' : 'Save actions'}
             </button>
           </div>
         </div>
@@ -511,13 +310,13 @@
           Custom prompts can do unexpected things. Prefer simple actions until you are confident in your prompts.
         </div>
 
-        {#if rememberActionDrafts.length === 0}
+        {#if $aiRememberSettings.rememberActionDrafts.length === 0}
           <p class="rounded-2xl border border-dashed border-border/60 bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground">
             No custom actions yet. Add one above.
           </p>
         {:else}
           <ul class="space-y-2" role="list">
-            {#each rememberActionDrafts as action (action.id)}
+            {#each $aiRememberSettings.rememberActionDrafts as action (action.id)}
               <li class="overflow-hidden rounded-2xl border border-border/70 bg-card/50">
                 <div class="flex w-full items-center gap-2 p-3 sm:gap-3">
                   <label class="flex shrink-0 cursor-pointer items-center gap-2">
@@ -527,13 +326,17 @@
                       type="checkbox"
                       checked={action.visible}
                       onchange={(event) =>
-                        updateRememberAction(action.id, 'visible', (event.currentTarget as HTMLInputElement).checked)}
+                        aiRememberSettings.updateRememberAction(
+                          action.id,
+                          'visible',
+                          (event.currentTarget as HTMLInputElement).checked
+                        )}
                     />
                   </label>
                   <button
                     type="button"
                     class="min-w-0 flex-1 text-left"
-                    onclick={() => toggleExpandAction(action.id)}
+                    onclick={() => aiRememberSettings.toggleExpandAction(action.id)}
                   >
                     <span class="block truncate font-medium">{action.label.trim() || 'Untitled action'}</span>
                     <span class="text-xs text-muted-foreground">{kindLabel(action.kind)}</span>
@@ -546,7 +349,7 @@
                   <button
                     type="button"
                     class="shrink-0 rounded-full p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                    onclick={() => removeRememberAction(action.id)}
+                    onclick={() => aiRememberSettings.removeRememberAction(action.id)}
                     title="Remove action"
                   >
                     <Trash2 class="h-4 w-4" />
@@ -554,16 +357,16 @@
                   <button
                     type="button"
                     class="shrink-0 rounded-full p-1 text-muted-foreground hover:bg-muted"
-                    onclick={() => toggleExpandAction(action.id)}
-                    aria-expanded={expandedActionId === action.id}
+                    onclick={() => aiRememberSettings.toggleExpandAction(action.id)}
+                    aria-expanded={$aiRememberSettings.expandedActionId === action.id}
                   >
                     <ChevronDown
-                      class={`h-5 w-5 transition-transform ${expandedActionId === action.id ? 'rotate-180' : ''}`}
+                      class={`h-5 w-5 transition-transform ${$aiRememberSettings.expandedActionId === action.id ? 'rotate-180' : ''}`}
                     />
                   </button>
                 </div>
 
-                {#if expandedActionId === action.id}
+                {#if $aiRememberSettings.expandedActionId === action.id}
                   <div class="space-y-3 border-t border-border/50 bg-background/30 px-3 py-4 sm:px-4">
                     <label class="block space-y-1.5">
                       <span class="text-xs font-medium text-muted-foreground">Button label</span>
@@ -572,7 +375,11 @@
                         value={action.label}
                         placeholder="Shown on the remember menu"
                         oninput={(event) =>
-                          updateRememberAction(action.id, 'label', (event.currentTarget as HTMLInputElement).value)}
+                          aiRememberSettings.updateRememberAction(
+                            action.id,
+                            'label',
+                            (event.currentTarget as HTMLInputElement).value
+                          )}
                       />
                     </label>
 
@@ -583,7 +390,11 @@
                           class="w-full rounded-xl border border-border/60 bg-background px-3 py-2 text-sm outline-none"
                           value={action.kind}
                           onchange={(event) =>
-                            updateRememberAction(action.id, 'kind', (event.currentTarget as HTMLSelectElement).value)}
+                            aiRememberSettings.updateRememberAction(
+                              action.id,
+                              'kind',
+                              (event.currentTarget as HTMLSelectElement).value
+                            )}
                         >
                           <option value="singleNote">Single note (safer)</option>
                           <option value="advanced">Advanced (vault-wide)</option>
@@ -596,7 +407,11 @@
                           value={action.family}
                           disabled={action.kind === 'singleNote'}
                           onchange={(event) =>
-                            updateRememberAction(action.id, 'family', (event.currentTarget as HTMLSelectElement).value)}
+                            aiRememberSettings.updateRememberAction(
+                              action.id,
+                              'family',
+                              (event.currentTarget as HTMLSelectElement).value
+                            )}
                         >
                           <option value="edit">Transform note</option>
                           <option value="organize">Split or organize</option>
@@ -612,7 +427,11 @@
                         value={action.description}
                         placeholder="Optional subtitle in the menu"
                         oninput={(event) =>
-                          updateRememberAction(action.id, 'description', (event.currentTarget as HTMLInputElement).value)}
+                          aiRememberSettings.updateRememberAction(
+                            action.id,
+                            'description',
+                            (event.currentTarget as HTMLInputElement).value
+                          )}
                       />
                     </label>
 
@@ -623,7 +442,11 @@
                         placeholder="What should this action do?"
                         value={action.prompt}
                         oninput={(event) =>
-                          updateRememberAction(action.id, 'prompt', (event.currentTarget as HTMLTextAreaElement).value)}
+                          aiRememberSettings.updateRememberAction(
+                            action.id,
+                            'prompt',
+                            (event.currentTarget as HTMLTextAreaElement).value
+                          )}
                       ></textarea>
                     </label>
                   </div>
@@ -644,27 +467,27 @@
         <button
           class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
           type="button"
-          disabled={isLoadingAiDiagnostics}
-          onclick={() => void loadAiDiagnostics()}
+          disabled={$aiRememberSettings.isLoadingAiDiagnostics}
+          onclick={() => void aiRememberSettings.loadAiDiagnostics()}
         >
-          {isLoadingAiDiagnostics ? 'Loading…' : 'Refresh'}
+          {$aiRememberSettings.isLoadingAiDiagnostics ? 'Loading…' : 'Refresh'}
         </button>
         <button
           class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
           type="button"
-          disabled={isClearingAiDiagnostics}
-          onclick={() => void clearAiDiagnostics()}
+          disabled={$aiRememberSettings.isClearingAiDiagnostics}
+          onclick={() => void aiRememberSettings.clearAiDiagnostics()}
         >
-          {isClearingAiDiagnostics ? 'Clearing…' : 'Clear stats'}
+          {$aiRememberSettings.isClearingAiDiagnostics ? 'Clearing…' : 'Clear stats'}
         </button>
       </div>
 
-      {#if isLoadingAiDiagnostics && !aiDiagnostics}
+      {#if $aiRememberSettings.isLoadingAiDiagnostics && !$aiRememberSettings.aiDiagnostics}
         <p class="text-sm text-muted-foreground">Loading usage…</p>
-      {:else if aiDiagnostics}
-        {@const metrics = aiDiagnostics.metrics}
+      {:else if $aiRememberSettings.aiDiagnostics}
+        {@const metrics = $aiRememberSettings.aiDiagnostics.metrics}
         <p class="text-xs text-muted-foreground">
-          Snapshot: {formatTimestamp(aiDiagnostics.capturedAtMillis)}
+          Snapshot: {formatTimestamp($aiRememberSettings.aiDiagnostics.capturedAtMillis)}
         </p>
 
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { get, writable } from 'svelte/store';
 import type { SearchItem } from '$lib/types/semantic';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 
@@ -12,21 +13,24 @@ interface TextRange {
   end: number;
 }
 
-interface BottomBarSearchControllerDeps {
-  getSearchInput: () => HTMLInputElement | null;
-  getSearchResultsViewport: () => HTMLDivElement | null;
+export interface BottomBarState {
+  isSearchFocused: boolean;
+  isRememberMenuOpen: boolean;
+  activeIndex: number;
+  lastHandledFocusRequest: number;
+  isHoldingForget: boolean;
+  forgetHoldProgress: number;
+}
+
+interface BottomBarStateDeps {
   getSearchMode: () => 'current' | 'all';
   getSearchQuery: () => string;
   getSearchResults: () => SearchItem[];
   getRecentNotes: () => SearchItem[];
   getRecentTasks: () => RecentTaskItem[];
   getVisibleItems: () => BottomBarVisibleItem[];
-  getIsSearchFocused: () => boolean;
-  setIsSearchFocused: (value: boolean) => void;
-  getActiveIndex: () => number;
-  setActiveIndex: (value: number) => void;
-  getLastHandledFocusRequest: () => number;
-  setLastHandledFocusRequest: (value: number) => void;
+  getForgetHoldDurationMs: () => number;
+  isForgetHoldEnabled: () => boolean;
   onSearchInput: (value: string) => void;
   onSearchModeChange: (mode: 'current' | 'all') => void | Promise<void>;
   onSearchSelect: (result: SearchItem) => void;
@@ -36,6 +40,20 @@ interface BottomBarSearchControllerDeps {
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
   onSearchFocus: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;
+  onForget: () => void;
+}
+
+const FORGET_HOLD_COMPLETION_DELAY_MS = 100;
+
+function createInitialState(): BottomBarState {
+  return {
+    isSearchFocused: false,
+    isRememberMenuOpen: false,
+    activeIndex: 0,
+    lastHandledFocusRequest: 0,
+    isHoldingForget: false,
+    forgetHoldProgress: 0
+  };
 }
 
 export function deriveBottomBarVisibleItems(
@@ -81,21 +99,15 @@ export function buildHighlightedSegments(text: string, ranges: TextRange[]) {
   return segments.length > 0 ? segments : [{ text, highlighted: false }];
 }
 
-export function createBottomBarSearchController({
-  getSearchInput,
-  getSearchResultsViewport,
+export function createBottomBarState({
   getSearchMode,
   getSearchQuery,
   getSearchResults,
   getRecentNotes,
   getRecentTasks,
   getVisibleItems,
-  getIsSearchFocused,
-  setIsSearchFocused,
-  getActiveIndex,
-  setActiveIndex,
-  getLastHandledFocusRequest,
-  setLastHandledFocusRequest,
+  getForgetHoldDurationMs,
+  isForgetHoldEnabled,
   onSearchInput,
   onSearchModeChange,
   onSearchSelect,
@@ -104,10 +116,44 @@ export function createBottomBarSearchController({
   onRecentNoteShortcut,
   onRecentTaskShortcut,
   onSearchFocus,
-  onCommand
-}: BottomBarSearchControllerDeps) {
+  onCommand,
+  onForget
+}: BottomBarStateDeps) {
+  const store = writable<BottomBarState>(createInitialState());
+  const { subscribe, update } = store;
+
+  let searchInput: HTMLInputElement | null = null;
+  let searchResultsViewport: HTMLDivElement | null = null;
+  let forgetHoldStartedAt = 0;
+  let forgetHoldFrame: number | null = null;
+  let forgetHoldTimeout: ReturnType<typeof window.setTimeout> | null = null;
+
+  function patch(partial: Partial<BottomBarState>) {
+    update((state) => ({ ...state, ...partial }));
+  }
+
+  function bindSearchInput(node: HTMLInputElement | null) {
+    searchInput = node;
+  }
+
+  function bindSearchResultsViewport(node: HTMLDivElement | null) {
+    searchResultsViewport = node;
+  }
+
+  function setRememberMenuOpen(isRememberMenuOpen: boolean) {
+    patch({ isRememberMenuOpen });
+  }
+
+  function toggleRememberMenu() {
+    patch({ isRememberMenuOpen: !getState().isRememberMenuOpen });
+  }
+
+  function getState() {
+    return get(store);
+  }
+
   function resetActiveIndex() {
-    setActiveIndex(0);
+    patch({ activeIndex: 0 });
   }
 
   function handleSearchInput(event: Event) {
@@ -115,7 +161,7 @@ export function createBottomBarSearchController({
   }
 
   function handleSearchFocus() {
-    setIsSearchFocused(true);
+    patch({ isSearchFocused: true });
     onSearchFocus();
   }
 
@@ -129,33 +175,31 @@ export function createBottomBarSearchController({
       return;
     }
 
-    setIsSearchFocused(false);
+    patch({ isSearchFocused: false });
     resetActiveIndex();
   }
 
   function closeSearchPanel() {
-    setIsSearchFocused(false);
+    patch({ isSearchFocused: false });
     resetActiveIndex();
-    getSearchInput()?.blur();
+    searchInput?.blur();
   }
 
   async function handleSearchModeClick(mode: 'current' | 'all') {
-    const searchInput = getSearchInput();
     const selectionStart = searchInput?.selectionStart ?? null;
     const selectionEnd = searchInput?.selectionEnd ?? null;
     await onSearchModeChange(mode);
     await tick();
     requestAnimationFrame(() => {
-      const currentInput = getSearchInput();
-      if (!currentInput) return;
-      currentInput.focus();
+      if (!searchInput) return;
+      searchInput.focus();
       if (selectionStart === null || selectionEnd === null) return;
-      currentInput.setSelectionRange(selectionStart, selectionEnd);
+      searchInput.setSelectionRange(selectionStart, selectionEnd);
     });
   }
 
   function getSearchPlaceholder() {
-    if (!getIsSearchFocused()) return '';
+    if (!getState().isSearchFocused) return '';
     return getSearchMode() === 'current' ? 'Current Gneauxght' : 'All Gneauxghts';
   }
 
@@ -211,11 +255,10 @@ export function createBottomBarSearchController({
     }
 
     const items = getVisibleItems();
+    const state = getState();
     const isPanelVisible =
-      getIsSearchFocused() &&
-      (getSearchQuery().trim() !== '' ||
-        getRecentNotes().length > 0 ||
-        getRecentTasks().length > 0);
+      state.isSearchFocused &&
+      (getSearchQuery().trim() !== '' || getRecentNotes().length > 0 || getRecentTasks().length > 0);
 
     if (event.key === 'Escape') {
       if (getSearchQuery().trim() !== '') {
@@ -242,61 +285,167 @@ export function createBottomBarSearchController({
 
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActiveIndex((getActiveIndex() + 1) % items.length);
+      patch({ activeIndex: (state.activeIndex + 1) % items.length });
       return;
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      setActiveIndex((getActiveIndex() - 1 + items.length) % items.length);
+      patch({ activeIndex: (state.activeIndex - 1 + items.length) % items.length });
       return;
     }
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      selectItem(items[getActiveIndex()] ?? items[0]);
+      selectItem(items[state.activeIndex] ?? items[0]);
     }
   }
 
   function handleFocusRequest(focusRequest: number) {
-    if (focusRequest <= getLastHandledFocusRequest()) return;
-    setLastHandledFocusRequest(focusRequest);
-
-    const searchInput = getSearchInput();
-    if (!searchInput) return;
-
-    searchInput.focus();
-    const end = searchInput.value.length;
-    searchInput.setSelectionRange(end, end);
-    setIsSearchFocused(true);
-    onSearchFocus();
-  }
-
-  async function syncActiveItemIntoView() {
-    if (!getIsSearchFocused() || !getSearchResultsViewport()) {
+    if (focusRequest === 0 || focusRequest === getState().lastHandledFocusRequest) {
       return;
     }
 
-    await tick();
-    requestAnimationFrame(() => {
-      const activeItem = getSearchResultsViewport()?.querySelector<HTMLElement>(
-        '[data-search-result-active="true"]'
-      );
-      activeItem?.scrollIntoView({ block: 'nearest' });
+    patch({
+      isSearchFocused: true,
+      lastHandledFocusRequest: focusRequest
+    });
+
+    tick().then(() => {
+      searchInput?.focus();
+      searchInput?.select();
     });
   }
 
+  async function syncActiveItemIntoView() {
+    await tick();
+    const viewport = searchResultsViewport;
+    if (!viewport || !getState().isSearchFocused) {
+      return;
+    }
+
+    const activeItem = viewport.querySelector<HTMLElement>('[data-search-result-active="true"]');
+    activeItem?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function clearForgetHoldFrame() {
+    if (forgetHoldFrame === null) return;
+    window.cancelAnimationFrame(forgetHoldFrame);
+    forgetHoldFrame = null;
+  }
+
+  function clearForgetHoldTimeout() {
+    if (forgetHoldTimeout === null) return;
+    window.clearTimeout(forgetHoldTimeout);
+    forgetHoldTimeout = null;
+  }
+
+  function resetForgetHold() {
+    clearForgetHoldFrame();
+    clearForgetHoldTimeout();
+    forgetHoldStartedAt = 0;
+    patch({
+      isHoldingForget: false,
+      forgetHoldProgress: 0
+    });
+  }
+
+  function tickForgetHoldProgress() {
+    if (!getState().isHoldingForget || !isForgetHoldEnabled()) return;
+
+    const elapsed = performance.now() - forgetHoldStartedAt;
+    const nextProgress = Math.min(elapsed / getForgetHoldDurationMs(), 1);
+    patch({ forgetHoldProgress: nextProgress });
+
+    if (nextProgress >= 1) {
+      forgetHoldFrame = null;
+      return;
+    }
+
+    forgetHoldFrame = window.requestAnimationFrame(tickForgetHoldProgress);
+  }
+
+  function beginForgetHold() {
+    if (!isForgetHoldEnabled() || getState().isHoldingForget) return;
+
+    clearForgetHoldFrame();
+    clearForgetHoldTimeout();
+    forgetHoldStartedAt = performance.now();
+    patch({
+      isHoldingForget: true,
+      forgetHoldProgress: 0
+    });
+    tickForgetHoldProgress();
+    forgetHoldTimeout = window.setTimeout(() => {
+      clearForgetHoldFrame();
+      patch({ forgetHoldProgress: 1 });
+      forgetHoldTimeout = window.setTimeout(() => {
+        resetForgetHold();
+        onForget();
+      }, FORGET_HOLD_COMPLETION_DELAY_MS);
+    }, getForgetHoldDurationMs());
+  }
+
+  function cancelForgetHold() {
+    if (!getState().isHoldingForget) return;
+    resetForgetHold();
+  }
+
+  function handleForgetPointerDown(event: PointerEvent) {
+    if (!isForgetHoldEnabled() || event.button !== 0) return;
+    beginForgetHold();
+  }
+
+  function handleForgetKeyDown(event: KeyboardEvent) {
+    if (!isForgetHoldEnabled() || event.repeat || (event.key !== ' ' && event.key !== 'Enter')) {
+      return;
+    }
+    event.preventDefault();
+    beginForgetHold();
+  }
+
+  function handleForgetKeyUp(event: KeyboardEvent) {
+    if (!isForgetHoldEnabled() || (event.key !== ' ' && event.key !== 'Enter')) return;
+    event.preventDefault();
+    cancelForgetHold();
+  }
+
+  function handleForgetClick() {
+    if (isForgetHoldEnabled()) return;
+    onForget();
+  }
+
+  function getForgetButtonAriaLabel() {
+    return isForgetHoldEnabled() ? 'Hold to forget' : 'Forget';
+  }
+
+  function dispose() {
+    resetForgetHold();
+  }
+
   return {
+    subscribe,
+    bindSearchInput,
+    bindSearchResultsViewport,
+    setRememberMenuOpen,
+    toggleRememberMenu,
     resetActiveIndex,
     handleSearchInput,
     handleSearchFocus,
     handleSearchBlur,
-    closeSearchPanel,
     handleSearchModeClick,
     getSearchPlaceholder,
     handleSearchKeydown,
     selectItem,
     handleFocusRequest,
-    syncActiveItemIntoView
+    syncActiveItemIntoView,
+    resetForgetHold,
+    handleForgetPointerDown,
+    handleForgetKeyDown,
+    handleForgetKeyUp,
+    handleForgetClick,
+    cancelForgetHold,
+    getForgetButtonAriaLabel,
+    dispose
   };
 }

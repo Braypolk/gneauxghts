@@ -1,5 +1,6 @@
 import { goto } from '$app/navigation';
 import { invoke } from '@tauri-apps/api/core';
+import { get, writable } from 'svelte/store';
 import { storePendingTaskTarget } from '$lib/taskNavigation';
 
 export interface TaskItem {
@@ -35,81 +36,37 @@ export interface TaskGroup {
 
 export type TaskFilter = 'open' | 'completed' | 'all';
 
-const TASK_FILTER_STORAGE_KEY = 'gneauxghts.master-task-filter';
-
-interface TaskListControllerDeps {
-  getFilter: () => TaskFilter;
-  setFilter: (filter: TaskFilter) => void;
-  getShowHidden: () => boolean;
-  setShowHidden: (value: boolean) => void;
-  getTasks: () => TaskItem[];
-  setTasks: (tasks: TaskItem[]) => void;
-  getTogglingTaskKeys: () => Record<string, boolean>;
-  setTogglingTaskKeys: (value: Record<string, boolean>) => void;
-  getDeletingTaskKeys: () => Record<string, boolean>;
-  setDeletingTaskKeys: (value: Record<string, boolean>) => void;
-  setIsLoading: (value: boolean) => void;
-  setErrorMessage: (value: string) => void;
+interface TaskListState {
+  filter: TaskFilter;
+  showHidden: boolean;
+  tasks: TaskItem[];
+  togglingTaskKeys: Record<string, boolean>;
+  deletingTaskKeys: Record<string, boolean>;
+  isLoading: boolean;
+  errorMessage: string;
 }
 
-export function createTaskListController({
-  getFilter,
-  setFilter,
-  getShowHidden,
-  setShowHidden,
-  getTasks,
-  setTasks,
-  getTogglingTaskKeys,
-  setTogglingTaskKeys,
-  getDeletingTaskKeys,
-  setDeletingTaskKeys,
-  setIsLoading,
-  setErrorMessage
-}: TaskListControllerDeps) {
+const TASK_FILTER_STORAGE_KEY = 'gneauxghts.master-task-filter';
+
+function createInitialState(): TaskListState {
+  return {
+    filter: 'all',
+    showHidden: false,
+    tasks: [],
+    togglingTaskKeys: {},
+    deletingTaskKeys: {},
+    isLoading: true,
+    errorMessage: ''
+  };
+}
+
+export function createTaskListStore() {
+  const store = writable<TaskListState>(createInitialState());
+  const { subscribe, update } = store;
   let activeRequest = 0;
 
-  async function loadTasks({ background = false } = {}) {
-    const requestId = ++activeRequest;
-
-    if (!background) {
-      setIsLoading(true);
-    }
-
-    try {
-      const nextTasks = await invoke<TaskItem[]>('list_tasks', { filter: getFilter() });
-
-      if (requestId !== activeRequest) return;
-      setTasks(nextTasks);
-      setErrorMessage('');
-    } catch (error) {
-      if (requestId !== activeRequest) return;
-      console.error('Failed to load tasks:', error);
-      setErrorMessage('Unable to load the master task list.');
-    } finally {
-      if (requestId === activeRequest) {
-        setIsLoading(false);
-      }
-    }
-  }
-
-  function setActiveFilter(nextFilter: TaskFilter) {
-    if (getFilter() === nextFilter) return;
-    setFilter(nextFilter);
-    persistTaskFilter(nextFilter);
-    void loadTasks({ background: getTasks().length > 0 });
-  }
-
-  function refreshTasks() {
-    void loadTasks({ background: getTasks().length > 0 });
-  }
-
-  function toggleShowHidden() {
-    setShowHidden(!getShowHidden());
-  }
-
-  function persistTaskFilter(nextFilter: TaskFilter) {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(TASK_FILTER_STORAGE_KEY, nextFilter);
+  function patch(partial: Partial<TaskListState>) {
+    update((state) => ({ ...state, ...partial }));
   }
 
   function readStoredTaskFilter(): TaskFilter | null {
@@ -123,26 +80,74 @@ export function createTaskListController({
     return null;
   }
 
+  function persistTaskFilter(nextFilter: TaskFilter) {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(TASK_FILTER_STORAGE_KEY, nextFilter);
+  }
+
+  async function load({ background = false } = {}) {
+    const requestId = ++activeRequest;
+
+    if (!background) {
+      patch({ isLoading: true });
+    }
+
+    try {
+      const nextTasks = await invoke<TaskItem[]>('list_tasks', { filter: get(store).filter });
+
+      if (requestId !== activeRequest) return;
+      patch({
+        tasks: nextTasks,
+        errorMessage: ''
+      });
+    } catch (error) {
+      if (requestId !== activeRequest) return;
+      console.error('Failed to load tasks:', error);
+      patch({ errorMessage: 'Unable to load the master task list.' });
+    } finally {
+      if (requestId === activeRequest) {
+        patch({ isLoading: false });
+      }
+    }
+  }
+
+  function setActiveFilter(filter: TaskFilter) {
+    if (get(store).filter === filter) return;
+    patch({ filter });
+    persistTaskFilter(filter);
+    void load({ background: get(store).tasks.length > 0 });
+  }
+
+  function refresh() {
+    void load({ background: get(store).tasks.length > 0 });
+  }
+
+  function toggleShowHidden() {
+    patch({ showHidden: !get(store).showHidden });
+  }
+
   function handleWindowFocus() {
-    void loadTasks({ background: true });
+    void load({ background: true });
   }
 
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
-      void loadTasks({ background: true });
+      void load({ background: true });
     }
   }
 
   function updateTasksOptimistically(transform: (tasks: TaskItem[]) => TaskItem[]) {
-    const previousTasks = getTasks();
-    setTasks(transform(previousTasks));
+    const previousTasks = get(store).tasks;
+    patch({ tasks: transform(previousTasks) });
     return previousTasks;
   }
 
   async function toggleNoteCollapsed(group: TaskGroup) {
     const previousTasks = updateTasksOptimistically((tasks) =>
       tasks.map((candidate) =>
-        candidate.noteId === group.noteId ? { ...candidate, noteCollapsed: !group.noteCollapsed } : candidate
+        candidate.noteId === group.noteId
+          ? { ...candidate, noteCollapsed: !group.noteCollapsed }
+          : candidate
       )
     );
 
@@ -151,17 +156,21 @@ export function createTaskListController({
         noteId: group.noteId,
         collapsed: !group.noteCollapsed
       });
-      setErrorMessage('');
+      patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to update collapsed note state:', error);
-      setTasks(previousTasks);
-      setErrorMessage('Unable to save collapsed files.');
+      patch({
+        tasks: previousTasks,
+        errorMessage: 'Unable to save collapsed files.'
+      });
     }
   }
 
   async function setTaskHidden(task: TaskItem, hidden: boolean) {
     const previousTasks = updateTasksOptimistically((tasks) =>
-      tasks.map((candidate) => (candidate.taskKey === task.taskKey ? { ...candidate, hidden } : candidate))
+      tasks.map((candidate) =>
+        candidate.taskKey === task.taskKey ? { ...candidate, hidden } : candidate
+      )
     );
 
     try {
@@ -169,19 +178,24 @@ export function createTaskListController({
         taskKey: task.taskKey,
         hidden
       });
-      setErrorMessage('');
+      patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to update hidden task state:', error);
-      setTasks(previousTasks);
-      setErrorMessage('Unable to update hidden tasks.');
+      patch({
+        tasks: previousTasks,
+        errorMessage: 'Unable to update hidden tasks.'
+      });
     }
   }
 
   async function toggleTask(task: TaskItem) {
-    setTogglingTaskKeys({
-      ...getTogglingTaskKeys(),
-      [task.taskKey]: true
-    });
+    update((state) => ({
+      ...state,
+      togglingTaskKeys: {
+        ...state.togglingTaskKeys,
+        [task.taskKey]: true
+      }
+    }));
 
     try {
       await invoke('toggle_task', {
@@ -189,15 +203,20 @@ export function createTaskListController({
         lineNumber: task.lineNumber,
         taskText: task.text
       });
-      setErrorMessage('');
-      await loadTasks({ background: true });
+      patch({ errorMessage: '' });
+      await load({ background: true });
     } catch (error) {
       console.error('Failed to toggle task:', error);
-      setErrorMessage('Unable to update task completion.');
+      patch({ errorMessage: 'Unable to update task completion.' });
     } finally {
-      const nextTogglingTaskKeys = { ...getTogglingTaskKeys() };
-      delete nextTogglingTaskKeys[task.taskKey];
-      setTogglingTaskKeys(nextTogglingTaskKeys);
+      update((state) => {
+        const nextTogglingTaskKeys = { ...state.togglingTaskKeys };
+        delete nextTogglingTaskKeys[task.taskKey];
+        return {
+          ...state,
+          togglingTaskKeys: nextTogglingTaskKeys
+        };
+      });
     }
   }
 
@@ -213,11 +232,13 @@ export function createTaskListController({
         noteId: group.noteId,
         hidden
       });
-      setErrorMessage('');
+      patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to update hidden note state:', error);
-      setTasks(previousTasks);
-      setErrorMessage('Unable to update hidden files.');
+      patch({
+        tasks: previousTasks,
+        errorMessage: 'Unable to update hidden files.'
+      });
     }
   }
 
@@ -225,7 +246,7 @@ export function createTaskListController({
     const noteIds = [];
     const seen = new Set<string>();
 
-    for (const task of getTasks()) {
+    for (const task of get(store).tasks) {
       if (seen.has(task.noteId)) continue;
       seen.add(task.noteId);
       noteIds.push(task.noteId);
@@ -244,24 +265,30 @@ export function createTaskListController({
 
     [noteOrder[currentIndex], noteOrder[targetIndex]] = [noteOrder[targetIndex], noteOrder[currentIndex]];
 
-    const previousTasks = getTasks();
+    const previousTasks = get(store).tasks;
     const noteRank = new Map(noteOrder.map((noteId, index) => [noteId, index]));
-    setTasks(
-      [...getTasks()].sort((left, right) => {
+    patch({
+      tasks: [...previousTasks].sort((left, right) => {
         const leftRank = noteRank.get(left.noteId) ?? Number.MAX_SAFE_INTEGER;
         const rightRank = noteRank.get(right.noteId) ?? Number.MAX_SAFE_INTEGER;
 
-        return leftRank - rightRank || left.lineNumber - right.lineNumber || left.text.localeCompare(right.text);
+        return (
+          leftRank - rightRank ||
+          left.lineNumber - right.lineNumber ||
+          left.text.localeCompare(right.text)
+        );
       })
-    );
+    });
 
     try {
       await invoke('set_note_order', { noteIds: noteOrder });
-      setErrorMessage('');
+      patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to save note order:', error);
-      setTasks(previousTasks);
-      setErrorMessage('Unable to save note order.');
+      patch({
+        tasks: previousTasks,
+        errorMessage: 'Unable to save note order.'
+      });
     }
   }
 
@@ -278,12 +305,19 @@ export function createTaskListController({
       await goto('/');
     } catch (error) {
       console.error('Failed to open task note:', error);
-      setErrorMessage(`Unable to open ${task.noteTitle}.`);
+      patch({ errorMessage: `Unable to open ${task.noteTitle}.` });
     }
   }
 
   async function deleteTask(task: TaskItem) {
-    setDeletingTaskKeys({ ...getDeletingTaskKeys(), [task.taskKey]: true });
+    update((state) => ({
+      ...state,
+      deletingTaskKeys: {
+        ...state.deletingTaskKeys,
+        [task.taskKey]: true
+      }
+    }));
+
     try {
       await invoke('delete_task', {
         notePath: task.notePath,
@@ -291,23 +325,38 @@ export function createTaskListController({
         taskText: task.text,
         taskKey: task.taskKey
       });
-      setErrorMessage('');
-      await loadTasks({ background: true });
+      patch({ errorMessage: '' });
+      await load({ background: true });
     } catch (error) {
       console.error('Failed to delete task:', error);
-      setErrorMessage('Unable to delete task.');
+      patch({ errorMessage: 'Unable to delete task.' });
     } finally {
-      const next = { ...getDeletingTaskKeys() };
-      delete next[task.taskKey];
-      setDeletingTaskKeys(next);
+      update((state) => {
+        const nextDeletingTaskKeys = { ...state.deletingTaskKeys };
+        delete nextDeletingTaskKeys[task.taskKey];
+        return {
+          ...state,
+          deletingTaskKeys: nextDeletingTaskKeys
+        };
+      });
     }
   }
 
+  function initialize() {
+    const storedFilter = readStoredTaskFilter();
+    if (storedFilter) {
+      patch({ filter: storedFilter });
+    }
+
+    void load();
+  }
+
   return {
-    loadTasks,
-    readStoredTaskFilter,
+    subscribe,
+    initialize,
+    load,
+    refresh,
     setActiveFilter,
-    refreshTasks,
     toggleShowHidden,
     handleWindowFocus,
     handleVisibilityChange,

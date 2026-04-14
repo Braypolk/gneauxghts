@@ -7,22 +7,14 @@
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
   import SyncSettingsPanel from '$lib/features/settings/SyncSettingsPanel.svelte';
   import {
-    createForgottenNotesController,
-    formatForgottenRetention
-  } from '$lib/features/settings/forgottenNotesController';
-  import {
     averageDuration,
-    createSemanticSettingsController,
-    formatMillis,
-    formatTimestamp
-  } from '$lib/features/settings/semanticSettingsController';
-  import {
     buildConflictDiffRows,
     conflictRowClass,
-    createSyncSettingsController,
+    formatMillis,
+    formatForgottenRetention,
+    formatTimestamp,
     formatSyncTimestamp
-  } from '$lib/features/settings/syncSettingsController';
-  import { runAutoSyncNow, scheduleAutoSync, cancelScheduledAutoSync } from '$lib/sync/autoSync';
+  } from '$lib/features/settings/formatters';
   import {
     forgetButtonDurationOptions,
     forgetButtonDurationPreference,
@@ -37,20 +29,7 @@
     themePreference,
     type ThemePreference
   } from '$lib/theme';
-  import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
-  import type {
-    SyncConflict,
-    SyncConflictDetail,
-    SyncStatus,
-    VaultInfo
-  } from '$lib/types/sync';
-  import type {
-    RequestMagicLinkResponse
-  } from '$lib/types/sync';
-  import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
-
-  type SettingsTab = 'general' | 'forgotten';
-  type GeneralSection = 'appearance' | 'forgetting' | 'ai' | 'vault' | 'sync' | 'search';
+  import { createSettingsStore, type GeneralSection, type SettingsTab } from '$lib/features/settings/store';
 
   const generalSectionsNav: {
     id: GeneralSection;
@@ -75,167 +54,27 @@
     dark: Moon
   };
 
-  let semanticStatus = $state<SemanticStatus | null>(null);
-  let semanticSettings = $state<SemanticSettings | null>(null);
-  let semanticDebug = $state<SemanticDebugSnapshot | null>(null);
-  let vaultInfo = $state<VaultInfo | null>(null);
-  let syncStatus = $state<SyncStatus | null>(null);
-  let syncConflicts = $state<SyncConflict[]>([]);
-  let activeConflictNoteId = $state<string | null>(null);
-  let activeConflictDetail = $state<SyncConflictDetail | null>(null);
-  let vaultPathInput = $state('');
-  let syncBaseUrlInput = $state('');
-  let syncEmailInput = $state('');
-  let magicLinkTokenInput = $state('');
-  let lastMagicLinkResponse = $state<RequestMagicLinkResponse | null>(null);
-  let isSavingVault = $state(false);
-  let isRequestingMagicLink = $state(false);
-  let isCompletingSyncSignIn = $state(false);
-  let isSyncingNow = $state(false);
-  let isTogglingSyncPause = $state(false);
-  let isSigningOutSync = $state(false);
-  let isLoadingConflictDetail = $state(false);
-  let dismissingConflictNoteIds = $state<string[]>([]);
-  let resolvingConflictNoteIds = $state<string[]>([]);
-  let syncUiError = $state<string | null>(null);
-  let syncUiMessage = $state<string | null>(null);
-  let activeTab = $state<SettingsTab>('general');
-  let activeGeneralSection = $state<GeneralSection>('appearance');
+  const settings = createSettingsStore();
   const activeSectionMeta = $derived(
-    generalSectionsNav.find((s) => s.id === activeGeneralSection) ?? generalSectionsNav[0]
+    generalSectionsNav.find((s) => s.id === $settings.activeGeneralSection) ?? generalSectionsNav[0]
   );
-  let forgottenNotes = $state<ForgottenNoteSummary[]>([]);
-  let selectedForgottenPaths = $state<string[]>([]);
-  let isLoadingForgottenNotes = $state(false);
-  let isUpdatingForgottenNotes = $state(false);
-  let isSaving = $state(false);
-  let isRunningAction = $state(false);
-  let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
-  let vaultNoteChangeUnlisten: UnlistenFn | null = null;
   let allForgottenSelected = $derived(
-    forgottenNotes.length > 0 &&
-      forgottenNotes.every((note) => selectedForgottenPaths.includes(note.forgottenPath))
+    $settings.forgottenNotes.length > 0 &&
+      $settings.forgottenNotes.every((note) =>
+        $settings.selectedForgottenPaths.includes(note.forgottenPath)
+      )
   );
-  const forgottenNotesController = createForgottenNotesController({
-    getSelectedForgottenPaths: () => selectedForgottenPaths,
-    setSelectedForgottenPaths: (value) => (selectedForgottenPaths = value),
-    getForgottenNotes: () => forgottenNotes,
-    setForgottenNotes: (value) => (forgottenNotes = value),
-    setIsLoadingForgottenNotes: (value) => (isLoadingForgottenNotes = value),
-    setIsUpdatingForgottenNotes: (value) => (isUpdatingForgottenNotes = value)
-  });
-
-  const {
-    loadForgottenNotes,
-    runForgottenAction,
-    toggleForgottenSelection,
-    toggleAllForgottenSelections
-  } = forgottenNotesController;
-
-  const semanticController = createSemanticSettingsController({
-    getSemanticStatus: () => semanticStatus,
-    setSemanticStatus: (value) => (semanticStatus = value),
-    getSemanticSettings: () => semanticSettings,
-    setSemanticSettings: (value) => (semanticSettings = value),
-    setSemanticDebug: (value) => (semanticDebug = value),
-    setVaultInfo: (value) => (vaultInfo = value),
-    setSyncStatus: (value) => (syncStatus = value),
-    setSyncConflicts: (value) => (syncConflicts = value),
-    getVaultPathInput: () => vaultPathInput,
-    setVaultPathInput: (value) => (vaultPathInput = value),
-    getSyncBaseUrlInput: () => syncBaseUrlInput,
-    setSyncBaseUrlInput: (value) => (syncBaseUrlInput = value),
-    getSyncEmailInput: () => syncEmailInput,
-    setSyncEmailInput: (value) => (syncEmailInput = value),
-    getIsSaving: () => isSaving,
-    setIsSaving: (value) => (isSaving = value),
-    getIsRunningAction: () => isRunningAction,
-    setIsRunningAction: (value) => (isRunningAction = value)
-  });
-
-  const {
-    stopSemanticPolling,
-    syncSemanticPolling,
-    loadSemanticStatus,
-    loadSemanticState,
-    updateSetting,
-    runAction,
-    clearDebugMetrics
-  } = semanticController;
-
-  const syncController = createSyncSettingsController({
-    getVaultPathInput: () => vaultPathInput,
-    setVaultInfo: (value) => (vaultInfo = value),
-    setSyncStatus: (value) => (syncStatus = value),
-    getSyncStatus: () => syncStatus,
-    getSyncBaseUrlInput: () => syncBaseUrlInput,
-    getSyncEmailInput: () => syncEmailInput,
-    getMagicLinkTokenInput: () => magicLinkTokenInput,
-    setMagicLinkTokenInput: (value) => (magicLinkTokenInput = value),
-    setLastMagicLinkResponse: (value) => (lastMagicLinkResponse = value),
-    setSyncConflicts: (value) => (syncConflicts = value),
-    getActiveConflictNoteId: () => activeConflictNoteId,
-    setActiveConflictNoteId: (value) => (activeConflictNoteId = value),
-    getActiveConflictDetail: () => activeConflictDetail,
-    setActiveConflictDetail: (value) => (activeConflictDetail = value),
-    getDismissingConflictNoteIds: () => dismissingConflictNoteIds,
-    setDismissingConflictNoteIds: (value) => (dismissingConflictNoteIds = value),
-    getResolvingConflictNoteIds: () => resolvingConflictNoteIds,
-    setResolvingConflictNoteIds: (value) => (resolvingConflictNoteIds = value),
-    setSyncUiError: (value) => (syncUiError = value),
-    setSyncUiMessage: (value) => (syncUiMessage = value),
-    setIsSavingVault: (value) => (isSavingVault = value),
-    setIsRequestingMagicLink: (value) => (isRequestingMagicLink = value),
-    setIsCompletingSyncSignIn: (value) => (isCompletingSyncSignIn = value),
-    setIsSyncingNow: (value) => (isSyncingNow = value),
-    setIsTogglingSyncPause: (value) => (isTogglingSyncPause = value),
-    setIsSigningOutSync: (value) => (isSigningOutSync = value),
-    setIsLoadingConflictDetail: (value) => (isLoadingConflictDetail = value),
-    loadSemanticState,
-    loadForgottenNotes
-  });
-
-  const {
-    saveVaultDirectory,
-    requestMagicLink,
-    completeSyncSignIn,
-    runSyncNow,
-    signOutSync,
-    dismissSyncConflict,
-    toggleSyncConflictDetail,
-    resolveSyncConflict,
-    toggleSyncPaused
-  } = syncController;
 
   function handleVisibilityChange() {
-    if (document.visibilityState === 'visible') {
-      void loadSemanticStatus();
-      void runAutoSyncNow('settings-visible').then(() => loadSemanticState());
-      syncSemanticPolling();
-      return;
-    }
-
-    stopSemanticPolling();
+    void settings.handleVisibilityChange();
   }
 
   onMount(() => {
-    void loadSemanticState();
-    void loadForgottenNotes();
-    void listen('vault-note-changed', () => {
-      scheduleAutoSync('settings-vault-note-change', 1200);
-      void loadForgottenNotes();
-      void loadSemanticState();
-    }).then((unlisten) => {
-      vaultNoteChangeUnlisten = unlisten;
-    });
-    scheduleAutoSync('settings-mounted', 900);
+    void settings.initialize();
   });
 
   onDestroy(() => {
-    stopSemanticPolling();
-    cancelScheduledAutoSync();
-    vaultNoteChangeUnlisten?.();
-    vaultNoteChangeUnlisten = null;
+    settings.dispose();
   });
 </script>
 
@@ -252,25 +91,25 @@
         <div class="inline-flex items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
           <button
             class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'general'
+              $settings.activeTab === 'general'
                 ? 'bg-foreground text-background shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
             type="button"
-            onclick={() => (activeTab = 'general')}
+            onclick={() => settings.setActiveTab('general')}
           >
             General
           </button>
           <button
             class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === 'forgotten'
+              $settings.activeTab === 'forgotten'
                 ? 'bg-foreground text-background shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
             type="button"
             onclick={() => {
-              activeTab = 'forgotten';
-              void loadForgottenNotes();
+              settings.setActiveTab('forgotten');
+              void settings.loadForgottenNotes();
             }}
           >
             Forgotten Notes
@@ -278,7 +117,7 @@
         </div>
       </div>
 
-      {#if activeTab === 'general'}
+      {#if $settings.activeTab === 'general'}
       <div class="border-t border-border/70">
         <div
           class="flex flex-col lg:grid lg:grid-cols-[minmax(10.5rem,13.5rem)_minmax(0,1fr)] lg:items-start lg:divide-x lg:divide-border/70"
@@ -291,17 +130,17 @@
               <button
                 type="button"
                 class={`shrink-0 rounded-xl border px-3 py-2 text-left transition-colors lg:w-full lg:px-3.5 lg:py-2.5 ${
-                  activeGeneralSection === item.id
+                  $settings.activeGeneralSection === item.id
                     ? 'border-border bg-foreground text-background shadow-sm'
                     : 'border-transparent bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
                 }`}
-                aria-current={activeGeneralSection === item.id ? 'page' : undefined}
-                onclick={() => (activeGeneralSection = item.id)}
+                aria-current={$settings.activeGeneralSection === item.id ? 'page' : undefined}
+                onclick={() => settings.setActiveGeneralSection(item.id)}
               >
                 <span class="block text-sm font-medium">{item.label}</span>
                 <span
                   class={`mt-0.5 hidden text-xs leading-snug sm:block lg:mt-1 ${
-                    activeGeneralSection === item.id ? 'text-background/75' : ''
+                    $settings.activeGeneralSection === item.id ? 'text-background/75' : ''
                   }`}
                 >
                   {item.description}
@@ -316,7 +155,7 @@
               <p class="mt-1 text-sm text-muted-foreground">{activeSectionMeta.description}</p>
             </header>
 
-            {#if activeGeneralSection === 'appearance'}
+            {#if $settings.activeGeneralSection === 'appearance'}
               <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
                 <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -354,7 +193,7 @@
                   </fieldset>
                 </div>
               </div>
-            {:else if activeGeneralSection === 'forgetting'}
+            {:else if $settings.activeGeneralSection === 'forgetting'}
               <div class="space-y-5">
                 <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
                   <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -440,8 +279,8 @@
                     type="button"
                     class="font-medium text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
                     onclick={() => {
-                      activeTab = 'forgotten';
-                      void loadForgottenNotes();
+                      settings.setActiveTab('forgotten');
+                      void settings.loadForgottenNotes();
                     }}
                   >
                     Forgotten Notes
@@ -449,15 +288,15 @@
                   tab.
                 </p>
               </div>
-            {:else if activeGeneralSection === 'ai'}
+            {:else if $settings.activeGeneralSection === 'ai'}
               <AiRememberSettingsPanel />
-            {:else if activeGeneralSection === 'vault'}
+            {:else if $settings.activeGeneralSection === 'vault'}
               <div class="flex flex-col gap-4">
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-sm font-medium">Vault Directory</p>
               <p class="mt-0.5 text-xs text-muted-foreground">
-                {#if vaultInfo?.canConfigurePath ?? true}
+                {#if $settings.vaultInfo?.canConfigurePath ?? true}
                   Desktop vaults can live in any normal folder. Changing the directory updates future note IO and takes full effect after restarting the app.
                 {:else}
                   iPhone builds currently keep notes inside the app sandbox. Custom vault locations are disabled for now.
@@ -471,9 +310,11 @@
               <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Path</span>
               <input
                 class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-                bind:value={vaultPathInput}
-                placeholder={vaultInfo?.defaultPath ?? 'Vault path'}
-                disabled={!(vaultInfo?.canConfigurePath ?? true)}
+                value={$settings.vaultPathInput}
+                oninput={(event) =>
+                  settings.setVaultPathInput((event.currentTarget as HTMLInputElement).value)}
+                placeholder={$settings.vaultInfo?.defaultPath ?? 'Vault path'}
+                disabled={!($settings.vaultInfo?.canConfigurePath ?? true)}
               />
             </label>
 
@@ -481,10 +322,10 @@
               <button
                 class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
                 type="button"
-                disabled={isSavingVault || !(vaultInfo?.canConfigurePath ?? true)}
+                disabled={$settings.isSavingVault || !($settings.vaultInfo?.canConfigurePath ?? true)}
                 onclick={() => {
-                  vaultPathInput = vaultInfo?.defaultPath ?? '';
-                  void saveVaultDirectory();
+                  settings.setVaultPathInput($settings.vaultInfo?.defaultPath ?? '');
+                  void settings.saveVaultDirectory();
                 }}
               >
                 Use default
@@ -492,86 +333,89 @@
               <button
                 class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
                 type="button"
-                disabled={isSavingVault || !(vaultInfo?.canConfigurePath ?? true)}
-                onclick={() => void saveVaultDirectory()}
+                disabled={$settings.isSavingVault || !($settings.vaultInfo?.canConfigurePath ?? true)}
+                onclick={() => void settings.saveVaultDirectory()}
               >
-                {isSavingVault ? 'Saving…' : 'Save vault'}
+                {$settings.isSavingVault ? 'Saving…' : 'Save vault'}
               </button>
             </div>
           </div>
 
-          {#if vaultInfo?.pathConfigurationNote}
+          {#if $settings.vaultInfo?.pathConfigurationNote}
             <div class="rounded-3xl border border-sky-300/60 bg-sky-50 px-5 py-4 text-sm text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
-              {vaultInfo.pathConfigurationNote}
+              {$settings.vaultInfo.pathConfigurationNote}
             </div>
           {/if}
 
-          {#if vaultInfo}
+          {#if $settings.vaultInfo}
             <div class="grid gap-4 md:grid-cols-3">
               <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
                 <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Current vault</p>
-                <p class="mt-2 text-sm font-medium break-all">{vaultInfo.currentPath}</p>
+                <p class="mt-2 text-sm font-medium break-all">{$settings.vaultInfo.currentPath}</p>
               </div>
               <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
                 <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Forgotten notes</p>
-                <p class="mt-2 text-sm font-medium break-all">{vaultInfo.forgottenPath}</p>
+                <p class="mt-2 text-sm font-medium break-all">{$settings.vaultInfo.forgottenPath}</p>
               </div>
               <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
                 <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Vault stats</p>
-                <p class="mt-2 text-sm font-medium">{vaultInfo.noteCount} notes</p>
+                <p class="mt-2 text-sm font-medium">{$settings.vaultInfo.noteCount} notes</p>
                 <p class="mt-1 text-xs text-muted-foreground">
-                  {vaultInfo.isDefault ? 'Using default path' : 'Custom path'} · {vaultInfo.requiresRestart ? 'restart required after changes' : 'live'}
+                  {$settings.vaultInfo.isDefault ? 'Using default path' : 'Custom path'} · {$settings.vaultInfo.requiresRestart ? 'restart required after changes' : 'live'}
                 </p>
               </div>
             </div>
           {/if}
         </div>
-            {:else if activeGeneralSection === 'sync'}
+            {:else if $settings.activeGeneralSection === 'sync'}
       <SyncSettingsPanel
         embedded
-        {syncStatus}
-        {syncConflicts}
-        bind:syncBaseUrlInput
-        bind:syncEmailInput
-        bind:magicLinkTokenInput
-        {lastMagicLinkResponse}
-        {activeConflictNoteId}
-        {activeConflictDetail}
-        {isRequestingMagicLink}
-        {isCompletingSyncSignIn}
-        {isSyncingNow}
-        {isTogglingSyncPause}
-        {isSigningOutSync}
-        {isLoadingConflictDetail}
-        {dismissingConflictNoteIds}
-        {resolvingConflictNoteIds}
-        {syncUiError}
-        {syncUiMessage}
-        {requestMagicLink}
-        {completeSyncSignIn}
-        {runSyncNow}
-        {signOutSync}
-        {dismissSyncConflict}
-        {toggleSyncConflictDetail}
-        {resolveSyncConflict}
-        {toggleSyncPaused}
+        syncStatus={$settings.syncStatus}
+        syncConflicts={$settings.syncConflicts}
+        syncBaseUrlInput={$settings.syncBaseUrlInput}
+        syncEmailInput={$settings.syncEmailInput}
+        magicLinkTokenInput={$settings.magicLinkTokenInput}
+        lastMagicLinkResponse={$settings.lastMagicLinkResponse}
+        activeConflictNoteId={$settings.activeConflictNoteId}
+        activeConflictDetail={$settings.activeConflictDetail}
+        isRequestingMagicLink={$settings.isRequestingMagicLink}
+        isCompletingSyncSignIn={$settings.isCompletingSyncSignIn}
+        isSyncingNow={$settings.isSyncingNow}
+        isTogglingSyncPause={$settings.isTogglingSyncPause}
+        isSigningOutSync={$settings.isSigningOutSync}
+        isLoadingConflictDetail={$settings.isLoadingConflictDetail}
+        dismissingConflictNoteIds={$settings.dismissingConflictNoteIds}
+        resolvingConflictNoteIds={$settings.resolvingConflictNoteIds}
+        syncUiError={$settings.syncUiError}
+        syncUiMessage={$settings.syncUiMessage}
+        setSyncBaseUrlInput={settings.setSyncBaseUrlInput}
+        setSyncEmailInput={settings.setSyncEmailInput}
+        setMagicLinkTokenInput={settings.setMagicLinkTokenInput}
+        requestMagicLink={settings.requestMagicLink}
+        completeSyncSignIn={settings.completeSyncSignIn}
+        runSyncNow={settings.runSyncNow}
+        signOutSync={settings.signOutSync}
+        dismissSyncConflict={settings.dismissSyncConflict}
+        toggleSyncConflictDetail={settings.toggleSyncConflictDetail}
+        resolveSyncConflict={settings.resolveSyncConflict}
+        toggleSyncPaused={settings.toggleSyncPaused}
         {formatSyncTimestamp}
         {buildConflictDiffRows}
         {conflictRowClass}
       />
 
-            {:else if activeGeneralSection === 'search'}
+            {:else if $settings.activeGeneralSection === 'search'}
       <SemanticSettingsPanel
         embedded
-        {semanticSettings}
-        {semanticStatus}
-        {semanticDebug}
-        {isSaving}
-        {isRunningAction}
-        {loadSemanticState}
-        {updateSetting}
-        {runAction}
-        {clearDebugMetrics}
+        semanticSettings={$settings.semanticSettings}
+        semanticStatus={$settings.semanticStatus}
+        semanticDebug={$settings.semanticDebug}
+        isSaving={$settings.isSaving}
+        isRunningAction={$settings.isRunningAction}
+        loadSemanticState={settings.loadSemanticState}
+        updateSetting={settings.updateSetting}
+        runAction={settings.runAction}
+        clearDebugMetrics={settings.clearDebugMetrics}
         {formatTimestamp}
         {formatMillis}
         {averageDuration}
@@ -582,15 +426,15 @@
       </div>
       {:else}
         <ForgottenNotesPanel
-          {forgottenNotes}
+          forgottenNotes={$settings.forgottenNotes}
           {allForgottenSelected}
-          {selectedForgottenPaths}
-          {isLoadingForgottenNotes}
-          {isUpdatingForgottenNotes}
-          {loadForgottenNotes}
-          {runForgottenAction}
-          {toggleForgottenSelection}
-          {toggleAllForgottenSelections}
+          selectedForgottenPaths={$settings.selectedForgottenPaths}
+          isLoadingForgottenNotes={$settings.isLoadingForgottenNotes}
+          isUpdatingForgottenNotes={$settings.isUpdatingForgottenNotes}
+          loadForgottenNotes={settings.loadForgottenNotes}
+          runForgottenAction={settings.runForgottenAction}
+          toggleForgottenSelection={settings.toggleForgottenSelection}
+          toggleAllForgottenSelections={settings.toggleAllForgottenSelections}
           {formatTimestamp}
           {formatForgottenRetention}
         />

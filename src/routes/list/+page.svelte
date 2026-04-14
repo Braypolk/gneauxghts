@@ -16,11 +16,11 @@
     Trash2
   } from 'lucide-svelte';
   import {
-    createTaskListController,
+    createTaskListStore,
     type TaskFilter,
     type TaskGroup,
     type TaskItem
-  } from '$lib/features/tasks/taskListController';
+  } from '$lib/features/tasks/taskListStore';
 
   const filterOptions = [
     { id: 'all', label: 'All tasks' },
@@ -28,19 +28,13 @@
     { id: 'completed', label: 'Completed' }
   ] as const satisfies ReadonlyArray<{ id: TaskFilter; label: string }>;
 
-  let filter = $state<TaskFilter>('all');
-  let showHidden = $state(false);
-  let tasks = $state<TaskItem[]>([]);
-  let togglingTaskKeys = $state<Record<string, boolean>>({});
-  let deletingTaskKeys = $state<Record<string, boolean>>({});
-  let isLoading = $state(true);
-  let errorMessage = $state('');
+  const taskList = createTaskListStore();
 
   const groupedTasks = $derived.by(() => {
     const groups = new Map<string, TaskGroup>();
 
-    for (const task of tasks) {
-      if (!showHidden && task.noteHidden) {
+    for (const task of $taskList.tasks) {
+      if (!$taskList.showHidden && task.noteHidden) {
         continue;
       }
 
@@ -53,7 +47,7 @@
         } else {
           existingGroup.visibleCount += 1;
         }
-        if (showHidden || !task.hidden) {
+        if ($taskList.showHidden || !task.hidden) {
           existingGroup.displayTasks.push(task);
           existingGroup.displayCount += 1;
         }
@@ -67,10 +61,10 @@
         fileName: task.fileName,
         noteHidden: task.noteHidden,
         noteCollapsed: task.noteCollapsed,
-        displayTasks: showHidden || !task.hidden ? [task] : [],
+        displayTasks: $taskList.showHidden || !task.hidden ? [task] : [],
         hiddenCount: task.hidden ? 1 : 0,
         visibleCount: task.hidden ? 0 : 1,
-        displayCount: showHidden || !task.hidden ? 1 : 0
+        displayCount: $taskList.showHidden || !task.hidden ? 1 : 0
       });
     }
 
@@ -81,62 +75,26 @@
     const count = groupedTasks.reduce((sum, group) => sum + group.displayCount, 0);
     const noun = count === 1 ? 'task' : 'tasks';
 
-    if (filter === 'open') return `${count} open ${noun}`;
-    if (filter === 'completed') return `${count} completed ${noun}`;
+    if ($taskList.filter === 'open') return `${count} open ${noun}`;
+    if ($taskList.filter === 'completed') return `${count} completed ${noun}`;
     return `${count} total ${noun}`;
   });
-
-  const taskListController = createTaskListController({
-    getFilter: () => filter,
-    setFilter: (value) => (filter = value),
-    getShowHidden: () => showHidden,
-    setShowHidden: (value) => (showHidden = value),
-    getTasks: () => tasks,
-    setTasks: (value) => (tasks = value),
-    getTogglingTaskKeys: () => togglingTaskKeys,
-    setTogglingTaskKeys: (value) => (togglingTaskKeys = value),
-    getDeletingTaskKeys: () => deletingTaskKeys,
-    setDeletingTaskKeys: (value) => (deletingTaskKeys = value),
-    setIsLoading: (value) => (isLoading = value),
-    setErrorMessage: (value) => (errorMessage = value)
-  });
-  const {
-    loadTasks,
-    readStoredTaskFilter,
-    setActiveFilter,
-    refreshTasks,
-    toggleShowHidden,
-    handleWindowFocus,
-    handleVisibilityChange,
-    toggleNoteCollapsed,
-    setTaskHidden,
-    toggleTask,
-    setNoteHidden,
-    moveNote,
-    openTask,
-    deleteTask
-  } = taskListController;
 
   function taskIndentStyle(depth: number) {
     return `margin-left: ${Math.min(depth, 6) * 1.1}rem;`;
   }
 
   onMount(() => {
-    const storedFilter = readStoredTaskFilter();
-    if (storedFilter) {
-      filter = storedFilter;
-    }
-
-    void loadTasks();
+    taskList.initialize();
   });
 
   afterNavigate(() => {
-    void loadTasks({ background: tasks.length > 0 });
+    void taskList.load({ background: $taskList.tasks.length > 0 });
   });
 </script>
 
-<svelte:window onfocus={handleWindowFocus} />
-<svelte:document onvisibilitychange={handleVisibilityChange} />
+<svelte:window onfocus={taskList.handleWindowFocus} />
+<svelte:document onvisibilitychange={taskList.handleVisibilityChange} />
 
 <div class="h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
   <main class="flex-1 min-h-0 overflow-hidden py-0 sm:py-4">
@@ -153,9 +111,9 @@
                 <button
                   type="button"
                   class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                    filter === option.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    $taskList.filter === option.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                   }`}
-                  onclick={() => setActiveFilter(option.id)}
+                  onclick={() => taskList.setActiveFilter(option.id)}
                 >
                   {option.label}
                 </button>
@@ -165,13 +123,13 @@
             <button
               type="button"
               class={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
-                showHidden
+                $taskList.showHidden
                   ? 'border-border bg-card text-foreground'
                   : 'border-transparent bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
               }`}
-              onclick={toggleShowHidden}
+              onclick={taskList.toggleShowHidden}
             >
-              {#if showHidden}
+              {#if $taskList.showHidden}
                 <Eye class="h-4 w-4" />
                 Hide hidden
               {:else}
@@ -183,7 +141,7 @@
             <button
               type="button"
               class="inline-flex items-center gap-2 rounded-full bg-muted px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-              onclick={refreshTasks}
+              onclick={taskList.refresh}
             >
               <RefreshCw class="h-4 w-4" />
               Refresh
@@ -193,13 +151,13 @@
       </div>
 
       <div class="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-6">
-        {#if isLoading}
+        {#if $taskList.isLoading}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-sm font-medium text-muted-foreground">
             Building the task list
           </div>
-        {:else if errorMessage}
+        {:else if $taskList.errorMessage}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-destructive/25 bg-destructive/10 px-6 text-sm font-medium text-destructive">
-            {errorMessage}
+            {$taskList.errorMessage}
           </div>
         {:else if groupedTasks.length === 0}
           <div class="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-center">
@@ -221,7 +179,7 @@
                   <button
                     type="button"
                     class="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-foreground"
-                    onclick={() => void toggleNoteCollapsed(group)}
+                    onclick={() => void taskList.toggleNoteCollapsed(group)}
                   >
                     <span class="shrink-0 text-muted-foreground">
                       {#if group.noteCollapsed}
@@ -258,7 +216,7 @@
                       <button
                         type="button"
                         class="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-35"
-                        onclick={() => void moveNote(group, 'up')}
+                        onclick={() => void taskList.moveNote(group, 'up')}
                         disabled={index === 0}
                         aria-label={`Move ${group.noteTitle} up`}
                       >
@@ -268,7 +226,7 @@
                       <button
                         type="button"
                         class="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-35"
-                        onclick={() => void moveNote(group, 'down')}
+                        onclick={() => void taskList.moveNote(group, 'down')}
                         disabled={index === groupedTasks.length - 1}
                         aria-label={`Move ${group.noteTitle} down`}
                       >
@@ -278,7 +236,7 @@
                       <button
                         type="button"
                         class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                        onclick={() => void setNoteHidden(group, !group.noteHidden)}
+                        onclick={() => void taskList.setNoteHidden(group, !group.noteHidden)}
                       >
                         {#if group.noteHidden}
                           <Eye class="h-3.5 w-3.5" />
@@ -311,8 +269,8 @@
                           <button
                             type="button"
                             class="shrink-0 text-muted-foreground transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-45"
-                            onclick={() => void toggleTask(task)}
-                            disabled={!!togglingTaskKeys[task.taskKey]}
+                            onclick={() => void taskList.toggleTask(task)}
+                            disabled={!!$taskList.togglingTaskKeys[task.taskKey]}
                             aria-label={task.completed ? `Mark ${task.text} incomplete` : `Mark ${task.text} complete`}
                           >
                             {#if task.completed}
@@ -342,7 +300,7 @@
                             <button
                               type="button"
                               class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                              onclick={() => openTask(task)}
+                              onclick={() => taskList.openTask(task)}
                             >
                               <ExternalLink class="h-3.5 w-3.5" />
                               Open
@@ -351,7 +309,7 @@
                             <button
                               type="button"
                               class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                              onclick={() => void setTaskHidden(task, !task.hidden)}
+                              onclick={() => void taskList.setTaskHidden(task, !task.hidden)}
                             >
                               {#if task.hidden}
                                 <Eye class="h-3.5 w-3.5" />
@@ -365,8 +323,8 @@
                             <button
                               type="button"
                               class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-wait disabled:opacity-45"
-                              onclick={() => void deleteTask(task)}
-                              disabled={!!deletingTaskKeys[task.taskKey]}
+                              onclick={() => void taskList.deleteTask(task)}
+                              disabled={!!$taskList.deletingTaskKeys[task.taskKey]}
                               aria-label={`Delete task: ${task.text}`}
                             >
                               <Trash2 class="h-3.5 w-3.5" />

@@ -23,10 +23,18 @@
     buildClusterAnchors,
     buildClusterBubbles,
     clusterColor,
-    getGraphBounds,
-    nodeRadius,
-    temporalDecay
+    getGraphBounds
   } from './graphLayout';
+  import {
+    buildClusterLookups,
+    buildSimData as prepareSimData,
+    createNodeRenderInfoMap,
+    getClusterColorIndex,
+    getClusterLabel,
+    type ClusterLookups,
+    type GraphPrepConfig,
+    type NodeRenderInfo
+  } from './graphPrep';
   import type {
     GraphData,
     SimNode,
@@ -62,11 +70,6 @@
     timeFilterRange: [number, number] | null;
   }
 
-  interface NodeRenderInfo {
-    matchScore: number;
-    inRange: boolean;
-  }
-
   let { data, searchQuery, onZoomChange, timeFilterRange }: Props = $props();
 
   let containerEl: HTMLDivElement;
@@ -82,9 +85,7 @@
   let simLinks: SimLink[] = [];
   let clusterBubbles: ClusterBubble[] = [];
   let nodeRenderInfo = new Map<string, NodeRenderInfo>();
-  let clusterColorIndexById = new Map<number, number>();
-  let clusterLabelById = new Map<number, string>();
-  let clusterLabelLowerById = new Map<number, string>();
+  let clusterLookups = $state<ClusterLookups>(buildClusterLookups([]));
 
   let savePositionTimer: ReturnType<typeof setTimeout> | null = null;
   let entryDelayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -102,161 +103,31 @@
   let nodeSelection: Selection<SVGCircleElement, SimNode, SVGGElement, unknown> | null = null;
   let labelSelection: Selection<SVGTextElement, SimNode, SVGGElement, unknown> | null = null;
 
-  function hintsAreUsable(nodes: GraphData['nodes']): boolean {
-    const withHints = nodes.filter((n) => n.xHint !== null && n.yHint !== null);
-    if (withHints.length < 2) return false;
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const n of withHints) {
-      if (n.xHint! < minX) minX = n.xHint!;
-      if (n.xHint! > maxX) maxX = n.xHint!;
-      if (n.yHint! < minY) minY = n.yHint!;
-      if (n.yHint! > maxY) maxY = n.yHint!;
-    }
-    const span = Math.max(maxX - minX, maxY - minY);
-    return span > 50;
-  }
-
-  function rebuildClusterLookups() {
-    clusterColorIndexById = new Map(data.clusters.map((cluster) => [cluster.id, cluster.colorIndex]));
-    clusterLabelById = new Map(data.clusters.map((cluster) => [cluster.id, cluster.label]));
-    clusterLabelLowerById = new Map(
-      data.clusters.map((cluster) => [cluster.id, cluster.label.toLowerCase()])
-    );
-  }
-
-  function searchMatchScore(node: SimNode, normalizedQuery: string): number {
-    if (!normalizedQuery) return 1.0;
-    if (node.titleLower.includes(normalizedQuery)) return 1.0;
-    if (node.snippetLower.includes(normalizedQuery)) return STRONG_MATCH_SCORE;
-    if (clusterLabelLowerById.get(node.clusterId)?.includes(normalizedQuery)) return 0.5;
-    return 0;
-  }
-
-  function isInTimeRange(node: SimNode): boolean {
-    if (!timeFilterRange) return true;
-    return node.createdAtMillis >= timeFilterRange[0] && node.createdAtMillis <= timeFilterRange[1];
-  }
+  const graphPrepConfig: GraphPrepConfig = {
+    inferredEdgeSimilarityThreshold: INFERRED_EDGE_SIMILARITY_THRESHOLD,
+    maxInferredEdgesPerNode: MAX_INFERRED_EDGES_PER_NODE,
+    strongMatchScore: STRONG_MATCH_SCORE,
+    unknownClusterLabel: UNKNOWN_CLUSTER_LABEL,
+    entryAnimationScale: ENTRY_ANIMATION_SCALE,
+    entryAnimationJitter: ENTRY_ANIMATION_JITTER,
+    entryBurstProbability: ENTRY_BURST_PROBABILITY,
+    entrySwirlDistance: ENTRY_SWIRL_DISTANCE,
+    entrySwirlVelocity: ENTRY_SWIRL_VELOCITY
+  };
 
   function refreshNodeRenderInfo() {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-    nodeRenderInfo = new Map(
-      simNodes.map((node) => [
-        node.path,
-        {
-          matchScore: searchMatchScore(node, normalizedQuery),
-          inRange: isInTimeRange(node)
-        }
-      ])
-    );
-  }
-
-  function getClusterColorIndex(clusterId: number): number {
-    return clusterColorIndexById.get(clusterId) ?? 0;
-  }
-
-  function getClusterLabel(clusterId: number): string {
-    return clusterLabelById.get(clusterId) ?? UNKNOWN_CLUSTER_LABEL;
-  }
-
-  function buildSimData(graphData: GraphData) {
-    const nodeMap = new Map<string, SimNode>();
-    const hasHints = hintsAreUsable(graphData.nodes);
-
-    const clusterAnchors = buildClusterAnchors(graphData.clusters, graphData.nodes.length);
-    const spreadRadius = Math.max(200, Math.sqrt(graphData.nodes.length) * 50);
-
-    simNodes = graphData.nodes.map((n) => {
-      let targetX: number;
-      let targetY: number;
-
-      if (hasHints && n.xHint !== null && n.yHint !== null) {
-        targetX = n.xHint;
-        targetY = n.yHint;
-      } else {
-        const anchor = clusterAnchors.get(n.clusterId) ?? { x: 0, y: 0 };
-        const jitter = Math.max(40, spreadRadius * 0.3);
-        targetX = anchor.x + (Math.random() - 0.5) * jitter;
-        targetY = anchor.y + (Math.random() - 0.5) * jitter;
-      }
-
-      const burst = Math.random() < ENTRY_BURST_PROBABILITY;
-      const targetDistance = Math.hypot(targetX, targetY) || 1;
-      const radialX = targetX / targetDistance;
-      const radialY = targetY / targetDistance;
-      const tangentX = -radialY;
-      const tangentY = radialX;
-      const swirlOffset = burst ? (Math.random() - 0.5) * ENTRY_SWIRL_DISTANCE : 0;
-      const compressionScale = burst
-        ? ENTRY_ANIMATION_SCALE * (0.4 + Math.random() * 0.9)
-        : ENTRY_ANIMATION_SCALE * (0.8 + Math.random() * 0.3);
-      const x =
-        targetX * compressionScale
-        + tangentX * swirlOffset
-        + (Math.random() - 0.5) * ENTRY_ANIMATION_JITTER;
-      const y =
-        targetY * compressionScale
-        + tangentY * swirlOffset
-        + (Math.random() - 0.5) * ENTRY_ANIMATION_JITTER;
-      const swirlVelocity = burst ? (Math.random() - 0.5) * ENTRY_SWIRL_VELOCITY : (Math.random() - 0.5) * 0.28;
-
-      const node: SimNode = {
-        ...n,
-        x,
-        y,
-        homeX: targetX,
-        homeY: targetY,
-        vx: (targetX - x) * 0.02 + tangentX * swirlVelocity,
-        vy: (targetY - y) * 0.02 + tangentY * swirlVelocity,
-        fx: null,
-        fy: null,
-        radius: nodeRadius(n.modifiedMillis),
-        shortTitle: n.title.length > 24 ? `${n.title.slice(0, 22)}...` : n.title,
-        titleLower: n.title.toLowerCase(),
-        snippetLower: n.snippet.toLowerCase()
-      };
-      nodeMap.set(n.path, node);
-      return node;
+    nodeRenderInfo = createNodeRenderInfoMap(simNodes, {
+      searchQuery,
+      timeFilterRange,
+      clusterLookups,
+      strongMatchScore: STRONG_MATCH_SCORE
     });
+  }
 
-    const wikilinkSet = new Set<string>();
-    const links: SimLink[] = [];
-
-    for (const wl of graphData.wikilinkEdges) {
-      const s = nodeMap.get(wl.source);
-      const t = nodeMap.get(wl.target);
-      if (s && t) {
-        const key = [wl.source, wl.target].sort().join('::');
-        wikilinkSet.add(key);
-        links.push({ source: s, target: t, type: 'wikilink', score: 1.0, weight: 1.0 });
-      }
-    }
-
-    const inferredCountPerNode = new Map<string, number>();
-    const filteredInferred = graphData.inferredEdges
-      .filter((e) => e.score >= INFERRED_EDGE_SIMILARITY_THRESHOLD)
-      .sort((a, b) => b.score - a.score);
-
-    for (const edge of filteredInferred) {
-      const key = [edge.source, edge.target].sort().join('::');
-      if (wikilinkSet.has(key)) continue;
-
-      const srcCount = inferredCountPerNode.get(edge.source) ?? 0;
-      const tgtCount = inferredCountPerNode.get(edge.target) ?? 0;
-      if (srcCount >= MAX_INFERRED_EDGES_PER_NODE && tgtCount >= MAX_INFERRED_EDGES_PER_NODE) {
-        continue;
-      }
-
-      const s = nodeMap.get(edge.source);
-      const t = nodeMap.get(edge.target);
-      if (s && t) {
-        const weight = temporalDecay(s.createdAtMillis, t.createdAtMillis, edge.score);
-        links.push({ source: s, target: t, type: 'inferred', score: edge.score, weight });
-        inferredCountPerNode.set(edge.source, srcCount + 1);
-        inferredCountPerNode.set(edge.target, tgtCount + 1);
-      }
-    }
-
-    simLinks = links;
+  function rebuildSimData(graphData: GraphData) {
+    const prepared = prepareSimData(graphData, graphPrepConfig);
+    simNodes = prepared.simNodes;
+    simLinks = prepared.simLinks;
     refreshNodeRenderInfo();
   }
 
@@ -553,7 +424,7 @@
       .attr('y1', (d: SimLink) => d.source.y)
       .attr('x2', (d: SimLink) => d.target.x)
       .attr('y2', (d: SimLink) => d.target.y)
-      .attr('stroke', (d: SimLink) => clusterColor(getClusterColorIndex(d.source.clusterId)))
+      .attr('stroke', (d: SimLink) => clusterColor(getClusterColorIndex(d.source.clusterId, clusterLookups)))
       .attr('stroke-opacity', wikilinkOpacity)
       .attr('stroke-width', 1.15)
       .attr('stroke-dasharray', 'none');
@@ -574,7 +445,7 @@
         if (info.matchScore >= STRONG_MATCH_SCORE) return base * 1.2;
         return base;
       })
-      .attr('fill', (d: SimNode) => clusterColor(getClusterColorIndex(d.clusterId)))
+      .attr('fill', (d: SimNode) => clusterColor(getClusterColorIndex(d.clusterId, clusterLookups)))
       .attr('fill-opacity', (d: SimNode) => {
         const info = nodeRenderInfo.get(d.path);
         if (!info) return nodeOpacity;
@@ -703,8 +574,8 @@
     lastGraphData = data;
     hasFittedOnce = false;
     hasUserInteracted = false;
-    rebuildClusterLookups();
-    buildSimData(data);
+    clusterLookups = buildClusterLookups(data.clusters);
+    rebuildSimData(data);
     clusterBubbles = buildClusterBubbles(simNodes, data.clusters);
     syncClusterScene();
     syncEdgeScene();
@@ -819,9 +690,9 @@
       {/if}
       <div
         class="mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-        style="background: {clusterColor(getClusterColorIndex(tooltipNode.clusterId))}20; color: {clusterColor(getClusterColorIndex(tooltipNode.clusterId))}"
+        style="background: {clusterColor(getClusterColorIndex(tooltipNode.clusterId, clusterLookups))}20; color: {clusterColor(getClusterColorIndex(tooltipNode.clusterId, clusterLookups))}"
       >
-        {getClusterLabel(tooltipNode.clusterId)}
+        {getClusterLabel(tooltipNode.clusterId, clusterLookups, UNKNOWN_CLUSTER_LABEL)}
       </div>
     </div>
   {/if}

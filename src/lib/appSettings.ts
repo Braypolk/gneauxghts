@@ -17,6 +17,8 @@ const DEFAULT_REMEMBER_ACTION_STORAGE_KEY = 'gneauxghts.default-remember-action'
 const CLEAN_UP_APPLY_POLICY_STORAGE_KEY = 'gneauxghts.cleanup-apply-policy';
 const REMEMBER_ACTIONS_STORAGE_KEY = 'gneauxghts.remember-actions';
 const LEGACY_CUSTOM_REMEMBER_ACTIONS_STORAGE_KEY = 'gneauxghts.custom-remember-actions';
+const EXACT_REMEMBER_LABEL_STORAGE_KEY = 'gneauxghts.exact-remember-label';
+const MAX_REMEMBER_ACTION_LABEL_CHARS = 80;
 
 const FORGET_BUTTON_DURATION_MS: Record<ForgetButtonDurationPreference, number> = {
   none: 0,
@@ -84,12 +86,20 @@ export const forgottenNoteRetentionPreference = writable<ForgottenNoteRetentionP
 
 export const rememberActions = writable<EditableRememberAction[]>(readStoredRememberActions());
 
-export const rememberActionOptions = derived(rememberActions, ($rememberActions) => [
-  EXACT_REMEMBER_ACTION,
-  ...$rememberActions
-    .filter((action) => action.visible)
-    .map(editableRememberActionToOption)
-]);
+export const exactRememberActionLabel = writable<string>(readStoredExactRememberActionLabel());
+
+export const rememberActionOptions = derived(
+  [rememberActions, exactRememberActionLabel],
+  ([$rememberActions, $exactRememberActionLabel]) => [
+    {
+      ...EXACT_REMEMBER_ACTION,
+      label: $exactRememberActionLabel
+    },
+    ...$rememberActions
+      .filter((action) => action.visible)
+      .map(editableRememberActionToOption)
+  ]
+);
 
 export const cleanUpApplyPolicyOptions = [
   {
@@ -153,6 +163,18 @@ export function setRememberActions(nextActions: EditableRememberAction[]): void 
   persistRememberActions(nextActions);
 }
 
+export function setExactRememberActionLabel(nextLabel: string): void {
+  const trimmed = nextLabel.trim();
+  if (trimmed === '') {
+    exactRememberActionLabel.set(EXACT_REMEMBER_ACTION.label);
+    persistExactRememberActionLabel(null);
+    return;
+  }
+  const effective = clampRememberActionLabel(trimmed);
+  exactRememberActionLabel.set(effective);
+  persistExactRememberActionLabel(effective);
+}
+
 function readStoredForgetButtonDurationPreference(): ForgetButtonDurationPreference {
   if (!isBrowser()) {
     return 'medium';
@@ -195,6 +217,24 @@ function readStoredDefaultRememberActionPreference(): RememberActionPreference {
   }
 
   return 'exact';
+}
+
+function readStoredExactRememberActionLabel(): string {
+  if (!isBrowser()) {
+    return EXACT_REMEMBER_ACTION.label;
+  }
+
+  const raw = window.localStorage.getItem(EXACT_REMEMBER_LABEL_STORAGE_KEY);
+  if (raw === null) {
+    return EXACT_REMEMBER_ACTION.label;
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed === '') {
+    return EXACT_REMEMBER_ACTION.label;
+  }
+
+  return clampRememberActionLabel(trimmed);
 }
 
 function readStoredRememberActions(): EditableRememberAction[] {
@@ -313,6 +353,26 @@ function persistRememberActions(actions: EditableRememberAction[]): void {
   }
 
   window.localStorage.setItem(REMEMBER_ACTIONS_STORAGE_KEY, JSON.stringify(actions));
+}
+
+function persistExactRememberActionLabel(label: string | null): void {
+  if (!isBrowser()) {
+    return;
+  }
+
+  if (label === null) {
+    window.localStorage.removeItem(EXACT_REMEMBER_LABEL_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(EXACT_REMEMBER_LABEL_STORAGE_KEY, label);
+}
+
+function clampRememberActionLabel(label: string): string {
+  if (label.length <= MAX_REMEMBER_ACTION_LABEL_CHARS) {
+    return label;
+  }
+  return label.slice(0, MAX_REMEMBER_ACTION_LABEL_CHARS);
 }
 
 function persistCleanUpApplyPolicyPreference(preference: CleanUpApplyPolicyPreference): void {

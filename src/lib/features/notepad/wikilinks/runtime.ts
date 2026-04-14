@@ -15,7 +15,7 @@ import {
 import { insertWikilinkSuggestion, type EditorController } from '$lib/features/notepad/editor/editor';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 
-interface WikilinkControllerDeps {
+interface WikilinkRuntimeDeps {
   getState: () => WikilinkAutocompleteState;
   setState: (value: WikilinkAutocompleteState) => void;
   getCurrentNoteId: () => string | null;
@@ -33,7 +33,7 @@ interface WikilinkControllerDeps {
   saveCursorPositionForNote: () => void;
 }
 
-export function createWikilinkController({
+export function createWikilinkRuntime({
   getState,
   setState,
   getCurrentNoteId,
@@ -45,7 +45,7 @@ export function createWikilinkController({
   openNotePath,
   getNavigationContext,
   saveCursorPositionForNote
-}: WikilinkControllerDeps) {
+}: WikilinkRuntimeDeps) {
   function closeWikilinkAutocomplete() {
     setState(dismissWikilinkAutocomplete(getState()));
   }
@@ -85,13 +85,7 @@ export function createWikilinkController({
   }
 
   function selectWikilinkSuggestion(suggestionValue: string) {
-    if (
-      !insertWikilinkSuggestion(
-        getEditorController(),
-        getState().activeWikilink,
-        suggestionValue
-      )
-    ) {
+    if (!insertWikilinkSuggestion(getEditorController(), getState().activeWikilink, suggestionValue)) {
       return;
     }
 

@@ -1,3 +1,4 @@
+import { get, writable } from 'svelte/store';
 import type { RelatedNoteItem, RelatedNotesResponse } from '$lib/types/semantic';
 import { getRelatedNotes } from '$lib/features/notepad/search/search';
 import {
@@ -10,60 +11,75 @@ import {
   type RelatedScope
 } from '$lib/features/notepad/related/layout';
 
-interface RelatedControllerDeps {
+export interface RelatedNotesState {
+  items: RelatedNoteItem[];
+  status: RelatedNotesResponse['status'];
+  reason: string | null;
+  scope: RelatedScope;
+  panelPlacement: 'side' | 'bottom';
+  isLoading: boolean;
+  selectedText: string | null;
+  isPanelCollapsed: boolean;
+  reservedWidth: number;
+}
+
+interface RelatedStoreDeps {
   getCurrentTitle: () => string;
   getCurrentMarkdown: () => string;
   getCurrentPath: () => string | null;
-  getScope: () => RelatedScope;
-  setScope: (scope: RelatedScope) => void;
-  getSelectedText: () => string | null;
-  setSelectedText: (value: string | null) => void;
-  isPanelCollapsed: () => boolean;
-  setPanelCollapsed: (value: boolean) => void;
-  setPanelLayout: (placement: 'side' | 'bottom', reservedWidth: number) => void;
-  setItems: (items: RelatedNoteItem[]) => void;
-  setStatus: (status: RelatedNotesResponse['status']) => void;
-  setReason: (reason: string | null) => void;
-  setIsLoading: (value: boolean) => void;
 }
 
-export function createRelatedController({
+function createInitialState(): RelatedNotesState {
+  return {
+    items: [],
+    status: 'insufficientContent',
+    reason: EMPTY_RELATED_REASON,
+    scope: 'note',
+    panelPlacement: 'side',
+    isLoading: false,
+    selectedText: null,
+    isPanelCollapsed: true,
+    reservedWidth: 0
+  };
+}
+
+export function createRelatedNotesStore({
   getCurrentTitle,
   getCurrentMarkdown,
-  getCurrentPath,
-  getScope,
-  setScope,
-  getSelectedText,
-  setSelectedText,
-  isPanelCollapsed,
-  setPanelCollapsed,
-  setPanelLayout,
-  setItems,
-  setStatus,
-  setReason,
-  setIsLoading
-}: RelatedControllerDeps) {
+  getCurrentPath
+}: RelatedStoreDeps) {
+  const store = writable<RelatedNotesState>(createInitialState());
+  const { subscribe, update } = store;
   let relatedTimer: ReturnType<typeof window.setTimeout> | null = null;
   let activeRelatedRequest = 0;
   let lastRelatedRequestKey = '';
+
+  function patch(partial: Partial<RelatedNotesState>) {
+    update((state) => ({ ...state, ...partial }));
+  }
 
   function updateDrawerLayout(shellEl: HTMLDivElement | null) {
     if (!shellEl || typeof window === 'undefined') {
       return;
     }
 
-    const layout = computeRelatedDrawerLayout(shellEl, isPanelCollapsed());
-    setPanelLayout(layout.placement, layout.reservedWidth);
+    const layout = computeRelatedDrawerLayout(shellEl, get(store).isPanelCollapsed);
+    patch({
+      panelPlacement: layout.placement,
+      reservedWidth: layout.reservedWidth
+    });
   }
 
   function resetRelatedResults(
     status: RelatedNotesResponse['status'] = 'insufficientContent',
     reason: string | null = EMPTY_RELATED_REASON
   ) {
-    setItems([]);
-    setStatus(status);
-    setReason(reason);
-    setIsLoading(false);
+    patch({
+      items: [],
+      status,
+      reason,
+      isLoading: false
+    });
     lastRelatedRequestKey = '';
   }
 
@@ -74,34 +90,34 @@ export function createRelatedController({
     }
 
     activeRelatedRequest += 1;
-    setIsLoading(false);
+    patch({ isLoading: false });
   }
 
   function getActiveRelatedSelectionText() {
-    return getScope() === 'selection' ? getSelectedText() : null;
+    const state = get(store);
+    return state.scope === 'selection' ? state.selectedText : null;
   }
 
   function updateSelectedRelatedText(editorRoot: HTMLDivElement | null) {
     const nextSelection = getEditorSelectionText(editorRoot);
-    if (nextSelection === getSelectedText()) {
+    const previousSelection = get(store).selectedText;
+    if (nextSelection === previousSelection) {
       return;
     }
 
-    const hadSelection = !!getSelectedText();
-    setSelectedText(nextSelection);
-
-    if (nextSelection && !hadSelection) {
-      setScope('selection');
-    } else if (!nextSelection) {
-      setScope('note');
-    }
-
+    const hadSelection = !!previousSelection;
+    patch({
+      selectedText: nextSelection,
+      scope: nextSelection && !hadSelection ? 'selection' : !nextSelection ? 'note' : get(store).scope
+    });
     scheduleRelated({ immediate: true });
   }
 
   function clearSelectedRelatedText() {
-    setSelectedText(null);
-    setScope('note');
+    patch({
+      selectedText: null,
+      scope: 'note'
+    });
   }
 
   function scheduleRelated({ immediate = false }: { immediate?: boolean } = {}) {
@@ -110,8 +126,9 @@ export function createRelatedController({
       relatedTimer = null;
     }
 
-    if (isPanelCollapsed()) {
-      setIsLoading(false);
+    const state = get(store);
+    if (state.isPanelCollapsed) {
+      patch({ isLoading: false });
       return;
     }
 
@@ -119,17 +136,12 @@ export function createRelatedController({
     const activeSelection = getActiveRelatedSelectionText();
     const normalizedContent = normalizeRelatedText(activeSelection ?? markdown);
 
-    if (normalizedContent === '' || (getScope() === 'selection' && !activeSelection)) {
+    if (normalizedContent === '' || (state.scope === 'selection' && !activeSelection)) {
       resetRelatedResults();
       return;
     }
 
-    const delay = getRelatedAssessmentDelay(
-      normalizedContent.length,
-      immediate,
-      !!activeSelection
-    );
-
+    const delay = getRelatedAssessmentDelay(normalizedContent.length, immediate, !!activeSelection);
     relatedTimer = window.setTimeout(() => {
       relatedTimer = null;
       void runRelatedNotes();
@@ -137,8 +149,9 @@ export function createRelatedController({
   }
 
   async function runRelatedNotes() {
-    if (isPanelCollapsed()) {
-      setIsLoading(false);
+    const state = get(store);
+    if (state.isPanelCollapsed) {
+      patch({ isLoading: false });
       return;
     }
 
@@ -146,7 +159,7 @@ export function createRelatedController({
     const selectedText = getActiveRelatedSelectionText();
     const requestKey = buildRelatedRequestKey(
       getCurrentPath(),
-      getScope(),
+      state.scope,
       getCurrentTitle(),
       markdown,
       selectedText
@@ -157,7 +170,7 @@ export function createRelatedController({
     }
 
     const requestId = ++activeRelatedRequest;
-    setIsLoading(true);
+    patch({ isLoading: true });
 
     try {
       const response = await getRelatedNotes(
@@ -174,9 +187,11 @@ export function createRelatedController({
         return;
       }
 
-      setItems(response.items);
-      setStatus(response.status);
-      setReason(response.reason);
+      patch({
+        items: response.items,
+        status: response.status,
+        reason: response.reason
+      });
       lastRelatedRequestKey = requestKey;
     } catch (error) {
       if (requestId !== activeRelatedRequest) {
@@ -184,30 +199,33 @@ export function createRelatedController({
       }
 
       console.error('Failed to load related notes:', error);
-      setItems([]);
-      setStatus('unavailable');
-      setReason('Related notes are unavailable right now.');
+      patch({
+        items: [],
+        status: 'unavailable',
+        reason: 'Related notes are unavailable right now.'
+      });
       lastRelatedRequestKey = '';
     } finally {
       if (requestId === activeRelatedRequest) {
-        setIsLoading(false);
+        patch({ isLoading: false });
       }
     }
   }
 
   function handleRelatedScopeChange(scope: RelatedScope) {
-    if (scope === 'selection' && !getSelectedText()) {
+    if (scope === 'selection' && !get(store).selectedText) {
       return;
     }
 
-    setScope(scope);
+    patch({ scope });
     scheduleRelated({ immediate: true });
   }
 
   function toggleRelatedPanel(shellEl: HTMLDivElement | null) {
-    setPanelCollapsed(!isPanelCollapsed());
+    patch({ isPanelCollapsed: !get(store).isPanelCollapsed });
     updateDrawerLayout(shellEl);
-    if (isPanelCollapsed()) {
+
+    if (get(store).isPanelCollapsed) {
       cancelRelatedAssessment();
       return;
     }
@@ -220,6 +238,7 @@ export function createRelatedController({
   }
 
   return {
+    subscribe,
     updateDrawerLayout,
     resetRelatedResults,
     cancelRelatedAssessment,

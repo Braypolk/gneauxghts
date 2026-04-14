@@ -1,3 +1,4 @@
+import { get, writable } from 'svelte/store';
 import type { SearchItem } from '$lib/types/semantic';
 import {
   getIndexedRecentItem,
@@ -5,52 +6,64 @@ import {
   openRecentNoteItem as openRecentNoteListItem,
   runRecentSelection
 } from '$lib/features/notepad/search/recent';
-import { listRecentNotes, listRecentTasks, searchNotes, type SearchMode } from '$lib/features/notepad/search/search';
+import {
+  listRecentNotes,
+  listRecentTasks,
+  searchNotes,
+  type SearchMode
+} from '$lib/features/notepad/search/search';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 
-interface SearchControllerDeps {
+export interface NotepadSearchState {
+  searchMode: SearchMode;
+  searchQuery: string;
+  searchResults: SearchItem[];
+  recentNotes: SearchItem[];
+  recentTasks: RecentTaskItem[];
+  isSearching: boolean;
+  focusRequest: number;
+}
+
+interface SearchStoreDeps {
   getCurrentTitle: () => string;
   getCurrentMarkdown: () => string;
   getCurrentPath: () => string | null;
-  getSearchMode: () => SearchMode;
-  setSearchMode: (mode: SearchMode) => void;
-  getSearchQuery: () => string;
-  setSearchQuery: (query: string) => void;
-  setSearchResults: (results: SearchItem[]) => void;
-  getRecentNotes: () => SearchItem[];
-  setRecentNotes: (notes: SearchItem[]) => void;
-  getRecentTasks: () => RecentTaskItem[];
-  setRecentTasks: (tasks: RecentTaskItem[]) => void;
-  setIsSearching: (value: boolean) => void;
-  bumpSearchFocusRequest: () => void;
   openSearchResult: (result: SearchItem) => Promise<void>;
   openRecentTask: (task: RecentTaskItem) => Promise<void>;
   openNote: (noteId: string | null, notePath: string | null) => Promise<void>;
 }
 
-export function createSearchController({
+function createInitialState(): NotepadSearchState {
+  return {
+    searchMode: 'all',
+    searchQuery: '',
+    searchResults: [],
+    recentNotes: [],
+    recentTasks: [],
+    isSearching: false,
+    focusRequest: 0
+  };
+}
+
+export function createNotepadSearchStore({
   getCurrentTitle,
   getCurrentMarkdown,
   getCurrentPath,
-  getSearchMode,
-  setSearchMode,
-  getSearchQuery,
-  setSearchQuery,
-  setSearchResults,
-  getRecentNotes,
-  setRecentNotes,
-  getRecentTasks,
-  setRecentTasks,
-  setIsSearching,
-  bumpSearchFocusRequest,
   openSearchResult,
   openRecentTask,
   openNote
-}: SearchControllerDeps) {
+}: SearchStoreDeps) {
+  const store = writable<NotepadSearchState>(createInitialState());
+  const { subscribe, update } = store;
+
   let searchTimer: ReturnType<typeof window.setTimeout> | null = null;
   let activeSearchRequest = 0;
   let activeRecentNotesRequest = 0;
   let activeRecentTasksRequest = 0;
+
+  function patch(partial: Partial<NotepadSearchState>) {
+    update((state) => ({ ...state, ...partial }));
+  }
 
   function clearPendingSearchTimer() {
     if (!searchTimer) {
@@ -62,9 +75,11 @@ export function createSearchController({
   }
 
   function clearSearch() {
-    setSearchQuery('');
-    setSearchResults([]);
-    setIsSearching(false);
+    patch({
+      searchQuery: '',
+      searchResults: [],
+      isSearching: false
+    });
     activeSearchRequest += 1;
     clearPendingSearchTimer();
   }
@@ -72,16 +87,19 @@ export function createSearchController({
   async function runSearch(query: string) {
     const trimmedQuery = query.trim();
     if (trimmedQuery === '') {
-      setSearchResults([]);
-      setIsSearching(false);
+      patch({
+        searchResults: [],
+        isSearching: false
+      });
       return;
     }
 
     const requestId = ++activeSearchRequest;
-    setIsSearching(true);
+    patch({ isSearching: true });
 
     try {
-      const results = await searchNotes(trimmedQuery, getSearchMode(), {
+      const state = get(store);
+      const results = await searchNotes(trimmedQuery, state.searchMode, {
         currentPath: getCurrentPath(),
         currentTitle: getCurrentTitle(),
         currentMarkdown: getCurrentMarkdown()
@@ -91,17 +109,17 @@ export function createSearchController({
         return;
       }
 
-      setSearchResults(results);
+      patch({ searchResults: results });
     } catch (error) {
       if (requestId !== activeSearchRequest) {
         return;
       }
 
       console.error('Failed to search notes:', error);
-      setSearchResults([]);
+      patch({ searchResults: [] });
     } finally {
       if (requestId === activeSearchRequest) {
-        setIsSearching(false);
+        patch({ isSearching: false });
       }
     }
   }
@@ -109,15 +127,17 @@ export function createSearchController({
   function scheduleSearch() {
     clearPendingSearchTimer();
 
-    if (getSearchQuery().trim() === '') {
-      setSearchResults([]);
-      setIsSearching(false);
+    if (get(store).searchQuery.trim() === '') {
+      patch({
+        searchResults: [],
+        isSearching: false
+      });
       return;
     }
 
     searchTimer = window.setTimeout(() => {
       searchTimer = null;
-      void runSearch(getSearchQuery());
+      void runSearch(get(store).searchQuery);
     }, 120);
   }
 
@@ -131,9 +151,11 @@ export function createSearchController({
           currentTitle: getCurrentTitle(),
           currentMarkdown: getCurrentMarkdown()
         }),
-      setRecentNotes,
+      (notes) => {
+        patch({ recentNotes: notes });
+      },
       () => {
-        setRecentNotes([]);
+        patch({ recentNotes: [] });
       },
       'Failed to load recent notes:'
     );
@@ -151,9 +173,11 @@ export function createSearchController({
           currentTitle: getCurrentTitle(),
           currentMarkdown: getCurrentMarkdown()
         }),
-      setRecentNotes,
+      (notes) => {
+        patch({ recentNotes: notes });
+      },
       () => {
-        setRecentNotes([]);
+        patch({ recentNotes: [] });
       },
       'Failed to load recent notes:'
     );
@@ -167,9 +191,11 @@ export function createSearchController({
     const result = await loadLatestCollection(
       () => requestId === activeRecentTasksRequest,
       () => listRecentTasks(),
-      setRecentTasks,
+      (tasks) => {
+        patch({ recentTasks: tasks });
+      },
       () => {
-        setRecentTasks([]);
+        patch({ recentTasks: [] });
       },
       'Failed to load recent tasks:'
     );
@@ -182,9 +208,11 @@ export function createSearchController({
     const result = await loadLatestCollection(
       () => requestId === activeRecentTasksRequest,
       () => listRecentTasks(),
-      setRecentTasks,
+      (tasks) => {
+        patch({ recentTasks: tasks });
+      },
       () => {
-        setRecentTasks([]);
+        patch({ recentTasks: [] });
       },
       'Failed to load recent tasks:'
     );
@@ -193,29 +221,13 @@ export function createSearchController({
     return result.items;
   }
 
-  async function openRecentNoteByIndex(
-    index: number,
-    { forceReload = false }: { forceReload?: boolean } = {}
-  ) {
-    const note = await getIndexedRecentItem(
-      index,
-      getRecentNotes(),
-      forceReload,
-      refreshRecentNotesNow
-    );
+  async function openRecentNoteByIndex(index: number, { forceReload = false }: { forceReload?: boolean } = {}) {
+    const note = await getIndexedRecentItem(index, get(store).recentNotes, forceReload, refreshRecentNotesNow);
     await runRecentSelection(note, openRecentNoteItem, 'Failed to open recent note:');
   }
 
-  async function openRecentTaskByIndex(
-    index: number,
-    { forceReload = false }: { forceReload?: boolean } = {}
-  ) {
-    const task = await getIndexedRecentItem(
-      index,
-      getRecentTasks(),
-      forceReload,
-      refreshRecentTasksNow
-    );
+  async function openRecentTaskByIndex(index: number, { forceReload = false }: { forceReload?: boolean } = {}) {
+    const task = await getIndexedRecentItem(index, get(store).recentTasks, forceReload, refreshRecentTasksNow);
     await runRecentSelection(task, openRecentTask, 'Failed to open recent task:');
   }
 
@@ -228,12 +240,15 @@ export function createSearchController({
   }
 
   function handleSearchInput(value: string) {
-    setSearchQuery(value);
+    patch({ searchQuery: value });
+
     if (value.trim() === '') {
       activeSearchRequest += 1;
       clearPendingSearchTimer();
-      setSearchResults([]);
-      setIsSearching(false);
+      patch({
+        searchResults: [],
+        isSearching: false
+      });
       return;
     }
 
@@ -241,10 +256,10 @@ export function createSearchController({
   }
 
   async function handleSearchModeChange(mode: SearchMode) {
-    setSearchMode(mode);
+    patch({ searchMode: mode });
     clearPendingSearchTimer();
-    if (getSearchQuery().trim() !== '') {
-      await runSearch(getSearchQuery());
+    if (get(store).searchQuery.trim() !== '') {
+      await runSearch(get(store).searchQuery);
     }
   }
 
@@ -254,12 +269,14 @@ export function createSearchController({
   }
 
   function requestSearchFocus(mode: SearchMode) {
-    setSearchMode(mode);
-    if (getSearchQuery().trim() !== '') {
-      void runSearch(getSearchQuery());
-    }
+    patch({
+      searchMode: mode,
+      focusRequest: get(store).focusRequest + 1
+    });
 
-    bumpSearchFocusRequest();
+    if (get(store).searchQuery.trim() !== '') {
+      void runSearch(get(store).searchQuery);
+    }
   }
 
   function dispose() {
@@ -270,6 +287,7 @@ export function createSearchController({
   }
 
   return {
+    subscribe,
     clearSearch,
     runSearch,
     scheduleSearch,

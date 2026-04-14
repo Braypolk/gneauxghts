@@ -808,9 +808,15 @@ fn dispatch_remember_action(
 fn resolve_action_input(action: RememberActionInput) -> Result<ResolvedRememberAction, String> {
     if action.built_in {
         let mode = str_to_remember_mode(action.id.as_str())?;
+        let trimmed_frontend_label = action.label.trim();
+        let action_label = if trimmed_frontend_label.is_empty() {
+            mode.label().to_string()
+        } else {
+            trimmed_frontend_label.to_string()
+        };
         return Ok(ResolvedRememberAction {
             action_id: remember_mode_to_str(&mode).to_string(),
-            action_label: mode.label().to_string(),
+            action_label,
             action_prompt: None,
             mode,
         });
@@ -2494,11 +2500,7 @@ fn fallback_title_for_path(path: &str) -> String {
 }
 
 fn job_title(job: &StoredAiJob) -> String {
-    if job.kind.is_exact() {
-        format!("Remember exact: {}", job.source.title)
-    } else {
-        format!("{}: {}", job.action_label, job.source.title)
-    }
+    format!("{}: {}", job.action_label, job.source.title)
 }
 
 fn default_summary_for_job(job: &StoredAiJob, fallback: &str) -> String {

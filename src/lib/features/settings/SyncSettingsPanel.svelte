@@ -5,21 +5,15 @@
     SyncConflictDetail,
     SyncStatus
   } from '$lib/types/sync';
-
-  type ConflictDiffRow = {
-    lineNumber: number;
-    localLine: string;
-    remoteLine: string;
-    kind: 'same' | 'changed' | 'local-only' | 'remote-only';
-  };
+  import type { ConflictDiffRow } from '$lib/features/settings/formatters';
 
   let {
     embedded = false,
     syncStatus,
     syncConflicts,
-    syncBaseUrlInput = $bindable(''),
-    syncEmailInput = $bindable(''),
-    magicLinkTokenInput = $bindable(''),
+    syncBaseUrlInput,
+    syncEmailInput,
+    magicLinkTokenInput,
     lastMagicLinkResponse,
     activeConflictNoteId,
     activeConflictDetail,
@@ -33,6 +27,9 @@
     resolvingConflictNoteIds,
     syncUiError,
     syncUiMessage,
+    setSyncBaseUrlInput,
+    setSyncEmailInput,
+    setMagicLinkTokenInput,
     requestMagicLink,
     completeSyncSignIn,
     runSyncNow,
@@ -64,6 +61,9 @@
     resolvingConflictNoteIds: string[];
     syncUiError: string | null;
     syncUiMessage: string | null;
+    setSyncBaseUrlInput: (value: string) => void;
+    setSyncEmailInput: (value: string) => void;
+    setMagicLinkTokenInput: (value: string) => void;
     requestMagicLink: () => Promise<void>;
     completeSyncSignIn: () => Promise<void>;
     runSyncNow: () => Promise<void>;
@@ -94,7 +94,8 @@
         <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Server URL</span>
         <input
           class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-          bind:value={syncBaseUrlInput}
+          value={syncBaseUrlInput}
+          oninput={(event) => setSyncBaseUrlInput((event.currentTarget as HTMLInputElement).value)}
           placeholder="http://localhost:8787"
         />
       </label>
@@ -103,7 +104,8 @@
         <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Email</span>
         <input
           class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-          bind:value={syncEmailInput}
+          value={syncEmailInput}
+          oninput={(event) => setSyncEmailInput((event.currentTarget as HTMLInputElement).value)}
           placeholder="you@example.com"
         />
       </label>
@@ -114,7 +116,9 @@
         <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Magic Link Token</span>
         <input
           class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-          bind:value={magicLinkTokenInput}
+          value={magicLinkTokenInput}
+          oninput={(event) =>
+            setMagicLinkTokenInput((event.currentTarget as HTMLInputElement).value)}
           placeholder="Paste the token from the magic link flow"
         />
       </label>
