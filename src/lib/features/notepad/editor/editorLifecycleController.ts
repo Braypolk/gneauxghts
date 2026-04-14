@@ -20,13 +20,13 @@ import {
   unbindSlashMenuView
 } from '$lib/features/notepad/editor/slashMenuBridge';
 import { waitForEditorPaint } from '$lib/features/notepad/navigation/navigation';
-import type { DocumentSession } from '$lib/features/notepad/session/documentSession';
+import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 
 interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
   restoreCursor?: boolean;
   cursorPosition?: CursorPosition | null | undefined;
-  expectedDocument?: DocumentSession | null;
+  expectedDocument?: NoteDraftState | null;
 }
 
 interface EditorLifecycleControllerDeps {
@@ -36,18 +36,18 @@ interface EditorLifecycleControllerDeps {
   getShellElement: () => HTMLDivElement | null;
   getEditorShell: () => HTMLDivElement | null;
   getEditorRoot: () => HTMLDivElement | null;
-  getDocumentSession: () => DocumentSession;
-  getSharedEditorState: (document: DocumentSession) => EditorState | null;
-  setSharedEditorState: (document: DocumentSession, editorState: EditorState | null) => void;
+  getDocumentSession: () => NoteDraftState;
+  getSharedEditorState: (document: NoteDraftState) => EditorState | null;
+  setSharedEditorState: (document: NoteDraftState, editorState: EditorState | null) => void;
   setIsEditorReady: (value: boolean) => void;
   setIsApplyingExternalContent: (value: boolean) => void;
   handleEditorMarkdownChange: (
     paneId: string,
-    document: DocumentSession,
+    document: NoteDraftState,
     nextMarkdown: string,
     editorState: EditorState | null
   ) => void;
-  getSharedEditorResources: (document: DocumentSession) => SharedEditorResources;
+  getSharedEditorResources: (document: NoteDraftState) => SharedEditorResources;
   getViewCallbacks: () => EditorViewCallbacks;
   closeTransientUi: () => void;
 }
@@ -103,7 +103,7 @@ export function createEditorLifecycleController({
   }
 
   function saveCursorPositionForDocument(
-    document: DocumentSession = getDocumentSession(),
+    document: NoteDraftState = getDocumentSession(),
     position: CursorPosition | null = readCursorPosition(getController())
   ) {
     if (!document.currentNotePath || !position) {
@@ -114,22 +114,22 @@ export function createEditorLifecycleController({
   }
 
   function saveSharedEditorStateForDocument(
-    document: DocumentSession = getDocumentSession(),
+    document: NoteDraftState = getDocumentSession(),
     editorState: EditorState | null = readEditorState(getController())
   ) {
     setSharedEditorState(document, editorState);
   }
 
-  function getSharedEditorStateForDocument(document: DocumentSession) {
+  function getSharedEditorStateForDocument(document: NoteDraftState) {
     return getSharedEditorState(document);
   }
 
-  function discardSharedEditorStateForDocument(document: DocumentSession) {
+  function discardSharedEditorStateForDocument(document: NoteDraftState) {
     setSharedEditorState(document, null);
   }
 
   function restoreCursorPositionForDocument(
-    document: DocumentSession = getDocumentSession(),
+    document: NoteDraftState = getDocumentSession(),
     position: CursorPosition | null = loadCursorPosition(document.currentNotePath, getPaneId())
   ) {
     if (!document.currentNotePath || !position) {
@@ -163,7 +163,6 @@ export function createEditorLifecycleController({
       return;
     }
 
-    document.bodyMarkdown = nextMarkdown;
     await createEditor(nextMarkdown);
 
     if (restoreCursor) {
@@ -188,7 +187,6 @@ export function createEditorLifecycleController({
 
   async function replaceEditorContentInPlace(nextMarkdown: string) {
     const controller = getController();
-    const document = getDocumentSession();
     const cursorPosition = readCursorPosition(controller);
     const scrollTop = getEditorShell()?.scrollTop ?? 0;
 
@@ -204,8 +202,7 @@ export function createEditorLifecycleController({
         return;
       }
 
-      document.bodyMarkdown = nextMarkdown;
-      saveSharedEditorStateForDocument(document);
+      saveSharedEditorStateForDocument();
       closeTransientUi();
       restoreCursorPosition(controller, cursorPosition);
       await tick();
@@ -221,7 +218,7 @@ export function createEditorLifecycleController({
 
   async function replaceEditorContentInPlaceForDocument(
     nextMarkdown: string,
-    document: DocumentSession
+    document: NoteDraftState
   ) {
     if (getDocumentSession() !== document) {
       return;
@@ -251,7 +248,6 @@ export function createEditorLifecycleController({
         return;
       }
 
-      document.bodyMarkdown = nextMarkdown;
       saveSharedEditorStateForDocument(document);
       closeTransientUi();
       restoreCursorPosition(controller, cursorPosition);
@@ -261,7 +257,7 @@ export function createEditorLifecycleController({
     }
   }
 
-  async function restoreSharedEditorStateForDocument(document: DocumentSession) {
+  async function restoreSharedEditorStateForDocument(document: NoteDraftState) {
     if (getDocumentSession() !== document) {
       return false;
     }
@@ -287,7 +283,7 @@ export function createEditorLifecycleController({
     return getDocumentSession() === document;
   }
 
-  function applySharedEditorStateForDocument(document: DocumentSession) {
+  function applySharedEditorStateForDocument(document: NoteDraftState) {
     if (getDocumentSession() !== document) {
       return false;
     }

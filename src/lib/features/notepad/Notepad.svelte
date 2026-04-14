@@ -40,22 +40,23 @@
   } from '$lib/features/notepad/navigation/openFlow';
   import { type SearchMode } from '$lib/features/notepad/search/search';
   import {
+    createEmptySessionSnapshot,
+    createForgottenNote,
+    forgetNoteSession,
+    hasContent,
+    loadCurrentVaultInfo,
+    loadSavedNoteSession,
+    openNoteSession,
+    readNoteSession,
+    rememberWithAction,
+    resolveAssetRootPath,
+    restoreForgottenNotes,
+    saveNoteSession,
+    shouldSkipAutosave,
     storePastedImageAsset,
     type ForgottenNote,
-    type SaveMode,
     type SessionSnapshot
   } from '$lib/features/notepad/session/session';
-  import {
-    activateDocumentSession as activateSharedDocumentSession,
-    createDocumentSessionStore,
-    discardDocumentSession as discardSharedDocumentSession,
-    getActivePaneSession,
-    resetActiveDocumentSession as resetSharedActiveDocumentSession,
-    syncActiveDocumentSession as syncSharedActiveDocumentSession,
-    syncDocumentSession as syncSharedDocumentSession,
-    type DocumentSession,
-    DEFAULT_DOCUMENT_PANE_ID
-  } from '$lib/features/notepad/session/documentSession';
   import {
     createWikilinkAutocompleteState,
     type WikilinkAutocompleteState
@@ -80,7 +81,6 @@
   } from '$lib/features/notepad/related/layout';
   import { createSearchController } from '$lib/features/notepad/search/controller';
   import { createRelatedController } from '$lib/features/notepad/related/controller';
-  import { createSessionController } from '$lib/features/notepad/session/controller';
   import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
   import { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
   import {
@@ -96,6 +96,26 @@
     toggleProposalHunk,
     toggleProposalTitle
   } from '$lib/features/proposals/session';
+  import {
+    adoptSnapshotForPane,
+    applySnapshotToNote,
+    createFreshDraftNote,
+    createNotepadState,
+    getActiveNote,
+    getPaneNote,
+    getPaneState,
+    listReferencedNoteKeys,
+    noteKeyFromPath,
+    rekeyNote,
+    removeNoteIfUnreferenced,
+    replaceReferencedNoteWithFreshDraft,
+    setActivePane as setStoreActivePane,
+    setNoteStatus,
+    setPaneKind as setStoredPaneKind,
+    setPaneNoteKey as setStoredPaneNoteKey,
+    type NoteDraftState,
+    type NoteKey
+  } from '$lib/features/notepad/state/noteStore';
   import { cancelScheduledAutoSync, runAutoSyncNow, scheduleAutoSync } from '$lib/sync/autoSync';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
 
@@ -103,7 +123,6 @@
   type PaneKind = 'editor' | 'chat';
 
   interface PaneUiState {
-    kind: PaneKind;
     isEditorReady: boolean;
     isApplyingExternalContent: boolean;
     wikilinkAutocomplete: WikilinkAutocompleteState;
@@ -116,7 +135,7 @@
     deleted: boolean;
   }
 
-  const PRIMARY_PANE_ID = DEFAULT_DOCUMENT_PANE_ID;
+  const PRIMARY_PANE_ID = 'notepad-primary';
   const SECONDARY_PANE_ID = 'notepad-secondary';
   const proseMirrorInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
 
@@ -139,7 +158,6 @@
   let activePaneId = $state<PaneId>(PRIMARY_PANE_ID);
   let paneStates = $state<Record<PaneId, PaneUiState>>({
     [PRIMARY_PANE_ID]: {
-      kind: 'editor',
       isEditorReady: false,
       isApplyingExternalContent: false,
       wikilinkAutocomplete: createWikilinkAutocompleteState(),
@@ -147,7 +165,6 @@
       slashMenu: { open: false }
     },
     [SECONDARY_PANE_ID]: {
-      kind: 'editor',
       isEditorReady: false,
       isApplyingExternalContent: false,
       wikilinkAutocomplete: createWikilinkAutocompleteState(),
@@ -156,15 +173,26 @@
     }
   });
 
-  const documentSessionStore = createDocumentSessionStore();
-  let documentSession = $state<DocumentSession>(documentSessionStore.activePane.document);
-  let documentSessionRevision = $state(0);
-  const sharedEditorResourcesByDocument = new WeakMap<DocumentSession, ReturnType<typeof createSharedEditorResources>>();
+  let notepadState = $state(
+    createNotepadState(PRIMARY_PANE_ID, [PRIMARY_PANE_ID, SECONDARY_PANE_ID] as const)
+  );
+  let documentSession = $derived.by(() => getActiveNote(notepadState));
+  const sharedEditorResourcesByNoteKey = new Map<
+    NoteKey,
+    ReturnType<typeof createSharedEditorResources>
+  >();
+  const sharedEditorStateByNoteKey = new Map<NoteKey, EditorState | null>();
+  const sharedEditorStateGenerationByNoteKey = new Map<NoteKey, number>();
+  const noteSaveTimers = new Map<NoteKey, ReturnType<typeof window.setTimeout>>();
+  const noteSaveQueues = new Map<NoteKey, Promise<void>>();
   const cursorSaveTimers = new Map<PaneId, ReturnType<typeof window.setTimeout>>();
-  const documentSyncFrameIds = new Map<DocumentSession, number>();
+  const documentSyncFrameIds = new Map<NoteKey, number>();
+  const openNoteRequestGenerationByPane = new Map<PaneId, number>([
+    [PRIMARY_PANE_ID, 0],
+    [SECONDARY_PANE_ID, 0]
+  ]);
 
-  let canUnforget = $state(false);
-  let forgottenNote: ForgottenNote | null = null;
+  let canUnforget = $derived(notepadState.recentlyForgotten !== null);
   let searchMode = $state<SearchMode>('all');
   let searchQuery = $state('');
   let searchResults = $state<SearchItem[]>([]);
@@ -172,7 +200,6 @@
   let recentTasks = $state<RecentTaskItem[]>([]);
   let isSearching = $state(false);
   let searchFocusRequest = $state(0);
-  let isRefreshingFromDisk = false;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
   let assetRootPath = $state<string | null>(null);
   let relatedItems = $state<RelatedNoteItem[]>([]);
@@ -185,12 +212,10 @@
   let isRelatedPanelCollapsed = $state(true);
   let relatedDrawerReservedWidth = $state(0);
   let semanticStatus = $state<SemanticStatus | null>(null);
-  let proposalPreviewPath = $state<string | null>(null);
-  let isSyncingProposalPreview = false;
   let proposalErrorMessage = $state('');
 
   function getPaneKind(paneId: PaneId) {
-    return paneStates[paneId].kind;
+    return getPaneState(notepadState, paneId).kind;
   }
 
   function getPaneController(paneId: PaneId) {
@@ -289,112 +314,77 @@
     return documentSession;
   }
 
-  function setCurrentDocument(document: DocumentSession) {
-    documentSession = document;
-  }
-
-  function invalidateDocumentSessions() {
-    documentSessionRevision += 1;
-  }
-
-  function ensurePaneSession(
-    paneId: PaneId,
-    document: DocumentSession = getDocumentSession()
-  ) {
-    let paneSession = documentSessionStore.panesById.get(paneId);
-    if (!paneSession) {
-      paneSession = { paneId, document };
-      documentSessionStore.panesById.set(paneId, paneSession);
-    }
-
-    return paneSession;
+  function getNoteByKey(noteKey: NoteKey) {
+    return notepadState.notesByKey[noteKey] ?? null;
   }
 
   function getPaneDocumentSession(paneId: PaneId) {
-    documentSessionRevision;
-    return ensurePaneSession(paneId).document;
+    return getPaneNote(notepadState, paneId);
   }
 
-  function setPaneDocumentSession(paneId: PaneId, document: DocumentSession) {
-    const paneSession = ensurePaneSession(paneId, document);
-    paneSession.document = document;
-    if (documentSessionStore.activePaneId === paneId) {
-      documentSessionStore.activePane = paneSession;
-      setCurrentDocument(document);
+  function setPaneDocumentSession(paneId: PaneId, document: NoteDraftState) {
+    setStoredPaneNoteKey(notepadState, paneId, document.key);
+    if (activePaneId === paneId) {
+      setStoreActivePane(notepadState, paneId);
     }
-    invalidateDocumentSessions();
-    return paneSession;
-  }
-
-  function activatePaneSession(paneId: PaneId) {
-    const paneSession = ensurePaneSession(paneId);
-    documentSessionStore.activePaneId = paneId;
-    documentSessionStore.activePane = paneSession;
-    activePaneId = paneId;
-    setCurrentDocument(paneSession.document);
-    return paneSession;
-  }
-
-  function getPaneIdsForDocument(document: DocumentSession) {
-    return getVisiblePaneIds().filter(
-      (paneId) => getPaneKind(paneId) === 'editor' && getPaneDocumentSession(paneId) === document
-    );
-  }
-
-  function activateDocumentSession(snapshot: SessionSnapshot) {
-    activateSharedDocumentSession(documentSessionStore, snapshot);
-    setCurrentDocument(getActivePaneSession(documentSessionStore).document);
-    invalidateDocumentSessions();
-    return documentSession;
-  }
-
-  function syncActiveDocumentSession(snapshot: SessionSnapshot) {
-    syncSharedActiveDocumentSession(documentSessionStore, snapshot);
-    setCurrentDocument(getActivePaneSession(documentSessionStore).document);
-    invalidateDocumentSessions();
-    return documentSession;
-  }
-
-  function syncDocumentSession(
-    document: DocumentSession,
-    snapshot: SessionSnapshot,
-    options?: { preserveDraft?: boolean }
-  ) {
-    syncSharedDocumentSession(documentSessionStore, document, snapshot, options);
-    setCurrentDocument(getActivePaneSession(documentSessionStore).document);
-    invalidateDocumentSessions();
     return document;
   }
 
-  function resetActiveDocumentSession() {
-    resetSharedActiveDocumentSession(documentSessionStore);
-    setCurrentDocument(getActivePaneSession(documentSessionStore).document);
-    invalidateDocumentSessions();
-    return documentSession;
+  function activatePaneSession(paneId: PaneId) {
+    activePaneId = paneId;
+    setStoreActivePane(notepadState, paneId);
+    return getPaneState(notepadState, paneId);
   }
 
-  function discardDocumentSession(noteId: string | null, notePath: string | null) {
-    discardSharedDocumentSession(documentSessionStore, noteId, notePath);
-    invalidateDocumentSessions();
+  function getPaneIdsForDocument(document: NoteDraftState) {
+    return getVisiblePaneIds().filter(
+      (paneId) => getPaneKind(paneId) === 'editor' && getPaneDocumentSession(paneId).key === document.key
+    );
+  }
+
+  function setRecentlyForgotten(value: ForgottenNote | null) {
+    notepadState.recentlyForgotten = value;
   }
 
   function getCurrentMarkdown() {
     return documentSession.bodyMarkdown;
   }
 
-  function getSharedEditorStateForDocument(document: DocumentSession) {
-    return document.sharedEditorState;
+  function getSharedEditorStateGeneration(document: NoteDraftState) {
+    return sharedEditorStateGenerationByNoteKey.get(document.key) ?? 0;
+  }
+
+  function setSharedEditorStateGeneration(document: NoteDraftState, generation: number) {
+    if (generation === 0) {
+      sharedEditorStateGenerationByNoteKey.delete(document.key);
+      return;
+    }
+    sharedEditorStateGenerationByNoteKey.set(document.key, generation);
+  }
+
+  function bumpSharedEditorStateGeneration(document: NoteDraftState) {
+    const nextGeneration = getSharedEditorStateGeneration(document) + 1;
+    sharedEditorStateGenerationByNoteKey.set(document.key, nextGeneration);
+    return nextGeneration;
+  }
+
+  function getSharedEditorStateForDocument(document: NoteDraftState) {
+    return sharedEditorStateByNoteKey.get(document.key) ?? null;
   }
 
   function setSharedEditorStateForDocument(
-    document: DocumentSession,
+    document: NoteDraftState,
     editorState: EditorState | null
   ) {
-    document.sharedEditorState = editorState;
+    if (editorState) {
+      sharedEditorStateByNoteKey.set(document.key, editorState);
+      return;
+    }
+    sharedEditorStateByNoteKey.delete(document.key);
   }
 
-  function getSharedEditorResources(document: DocumentSession) {
-    let resources = sharedEditorResourcesByDocument.get(document);
+  function getSharedEditorResources(document: NoteDraftState) {
+    let resources = sharedEditorResourcesByNoteKey.get(document.key);
     if (resources) {
       return resources;
     }
@@ -406,8 +396,70 @@
       },
       onStorePastedImage: storePastedImageAsset
     });
-    sharedEditorResourcesByDocument.set(document, resources);
+    sharedEditorResourcesByNoteKey.set(document.key, resources);
     return resources;
+  }
+
+  function transferNoteRuntime(oldKey: NoteKey, nextKey: NoteKey) {
+    if (oldKey === nextKey) {
+      return;
+    }
+
+    const sharedEditorState = sharedEditorStateByNoteKey.get(oldKey);
+    if (sharedEditorState && !sharedEditorStateByNoteKey.has(nextKey)) {
+      sharedEditorStateByNoteKey.set(nextKey, sharedEditorState);
+    }
+
+    const generation = sharedEditorStateGenerationByNoteKey.get(oldKey);
+    if (generation !== undefined && !sharedEditorStateGenerationByNoteKey.has(nextKey)) {
+      sharedEditorStateGenerationByNoteKey.set(nextKey, generation);
+    }
+
+    const resources = sharedEditorResourcesByNoteKey.get(oldKey);
+    if (resources && !sharedEditorResourcesByNoteKey.has(nextKey)) {
+      sharedEditorResourcesByNoteKey.set(nextKey, resources);
+    }
+
+    const pendingTimer = noteSaveTimers.get(oldKey);
+    if (pendingTimer && !noteSaveTimers.has(nextKey)) {
+      noteSaveTimers.set(nextKey, pendingTimer);
+    }
+
+    const pendingQueue = noteSaveQueues.get(oldKey);
+    if (pendingQueue && !noteSaveQueues.has(nextKey)) {
+      noteSaveQueues.set(nextKey, pendingQueue);
+    }
+
+    const frameId = documentSyncFrameIds.get(oldKey);
+    if (frameId !== undefined && !documentSyncFrameIds.has(nextKey)) {
+      documentSyncFrameIds.set(nextKey, frameId);
+    }
+
+    sharedEditorStateByNoteKey.delete(oldKey);
+    sharedEditorStateGenerationByNoteKey.delete(oldKey);
+    sharedEditorResourcesByNoteKey.delete(oldKey);
+    noteSaveTimers.delete(oldKey);
+    noteSaveQueues.delete(oldKey);
+    documentSyncFrameIds.delete(oldKey);
+  }
+
+  function cleanupNoteRuntime(noteKey: NoteKey) {
+    const pendingTimer = noteSaveTimers.get(noteKey);
+    if (pendingTimer) {
+      window.clearTimeout(pendingTimer);
+      noteSaveTimers.delete(noteKey);
+    }
+
+    const frameId = documentSyncFrameIds.get(noteKey);
+    if (frameId !== undefined) {
+      window.cancelAnimationFrame(frameId);
+      documentSyncFrameIds.delete(noteKey);
+    }
+
+    sharedEditorStateByNoteKey.delete(noteKey);
+    sharedEditorStateGenerationByNoteKey.delete(noteKey);
+    sharedEditorResourcesByNoteKey.delete(noteKey);
+    noteSaveQueues.delete(noteKey);
   }
 
   function flushPaneCursorSave(paneId: PaneId) {
@@ -446,16 +498,16 @@
 
   function markPaneDocumentGeneration(
     paneId: PaneId,
-    document: DocumentSession = getPaneDocumentSession(paneId)
+    document: NoteDraftState = getPaneDocumentSession(paneId)
   ) {
-    paneStates[paneId].editorGeneration = document.sharedEditorStateGeneration;
+    paneStates[paneId].editorGeneration = getSharedEditorStateGeneration(document);
   }
 
-  function flushDocumentEditorSync(document: DocumentSession) {
-    const frameId = documentSyncFrameIds.get(document);
+  function flushDocumentEditorSync(document: NoteDraftState) {
+    const frameId = documentSyncFrameIds.get(document.key);
     if (frameId !== undefined) {
       window.cancelAnimationFrame(frameId);
-      documentSyncFrameIds.delete(document);
+      documentSyncFrameIds.delete(document.key);
     }
 
     const sharedEditorState = getSharedEditorStateForDocument(document);
@@ -464,7 +516,7 @@
     }
 
     for (const paneId of getPaneIdsForDocument(document)) {
-      if (paneStates[paneId].editorGeneration >= document.sharedEditorStateGeneration) {
+      if (paneStates[paneId].editorGeneration >= getSharedEditorStateGeneration(document)) {
         continue;
       }
 
@@ -480,32 +532,33 @@
     }
   }
 
-  function scheduleDocumentEditorSync(document: DocumentSession) {
-    if (documentSyncFrameIds.has(document)) {
+  function scheduleDocumentEditorSync(document: NoteDraftState) {
+    if (documentSyncFrameIds.has(document.key)) {
       return;
     }
 
     const frameId = window.requestAnimationFrame(() => {
-      documentSyncFrameIds.delete(document);
+      documentSyncFrameIds.delete(document.key);
       flushDocumentEditorSync(document);
     });
-    documentSyncFrameIds.set(document, frameId);
+    documentSyncFrameIds.set(document.key, frameId);
   }
 
   function flushAllPendingDocumentSyncs() {
-    const documents = new Set<DocumentSession>([
+    const noteKeys = new Set<NoteKey>([
       ...documentSyncFrameIds.keys(),
-      documentSessionStore.activePane.document,
-      ...documentSessionStore.documentsByKey.values(),
-      ...[...documentSessionStore.panesById.values()].map((paneSession) => paneSession.document)
+      ...listReferencedNoteKeys(notepadState)
     ]);
 
-    for (const document of documents) {
-      flushDocumentEditorSync(document);
+    for (const noteKey of noteKeys) {
+      const document = getNoteByKey(noteKey);
+      if (document) {
+        flushDocumentEditorSync(document);
+      }
     }
   }
 
-  function saveCursorPositionForDocument(document: DocumentSession = getDocumentSession()) {
+  function saveCursorPositionForDocument(document: NoteDraftState = getDocumentSession()) {
     for (const paneId of getPaneIdsForDocument(document)) {
       const pendingTimer = cursorSaveTimers.get(paneId);
       if (pendingTimer) {
@@ -517,7 +570,7 @@
   }
 
   function saveSharedEditorStateForDocument(
-    document: DocumentSession = getDocumentSession(),
+    document: NoteDraftState = getDocumentSession(),
     editorState: EditorState | null = null,
     preferredPaneId: PaneId = getNavigationPaneId()
   ) {
@@ -525,15 +578,15 @@
     const paneId =
       (paneIds.includes(preferredPaneId) ? preferredPaneId : paneIds[0]) ?? null;
     if (!paneId) {
-      if (!document.sharedEditorState && editorState) {
+      if (!getSharedEditorStateForDocument(document) && editorState) {
         setSharedEditorStateForDocument(document, editorState);
       }
       return;
     }
 
     if (
-      document.sharedEditorState &&
-      paneStates[paneId].editorGeneration < document.sharedEditorStateGeneration
+      getSharedEditorStateForDocument(document) &&
+      paneStates[paneId].editorGeneration < getSharedEditorStateGeneration(document)
     ) {
       return;
     }
@@ -544,9 +597,9 @@
     );
   }
 
-  function discardSharedEditorStateForDocument(document: DocumentSession) {
+  function discardSharedEditorStateForDocument(document: NoteDraftState) {
     setSharedEditorStateForDocument(document, null);
-    document.sharedEditorStateGeneration = 0;
+    setSharedEditorStateGeneration(document, 0);
   }
 
   async function replaceEditorContent(
@@ -571,7 +624,7 @@
 
   async function replaceEditorContentInPlaceForDocument(
     nextMarkdown: string,
-    document: DocumentSession
+    document: NoteDraftState
   ) {
     for (const paneId of getPaneIdsForDocument(document)) {
       await paneControllers[paneId].editorLifecycleController.replaceEditorContentInPlaceForDocument(
@@ -581,7 +634,7 @@
     }
   }
 
-  async function restoreSharedEditorStateForDocument(document: DocumentSession) {
+  async function restoreSharedEditorStateForDocument(document: NoteDraftState) {
     if (!getSharedEditorStateForDocument(document)) {
       return false;
     }
@@ -612,18 +665,21 @@
 
   function handleEditorMarkdownChange(
     paneId: string,
-    document: DocumentSession,
+    document: NoteDraftState,
     nextMarkdown: string,
     editorState: EditorState | null
   ) {
     const resolvedPaneId = paneId as PaneId;
     if (editorState) {
       setSharedEditorStateForDocument(document, editorState);
-      document.sharedEditorStateGeneration += 1;
+      bumpSharedEditorStateGeneration(document);
       markPaneDocumentGeneration(resolvedPaneId, document);
     }
 
-    document.bodyMarkdown = nextMarkdown;
+    if (document.bodyMarkdown !== nextMarkdown) {
+      document.bodyMarkdown = nextMarkdown;
+      document.operationRevision += 1;
+    }
     if (
       getPaneIdsForDocument(document).some((paneId) => paneStates[paneId].isApplyingExternalContent) ||
       isDocumentUnderProposal(document)
@@ -632,14 +688,14 @@
     }
 
     if (nextMarkdown.trim() !== '') {
-      canUnforget = false;
+      setRecentlyForgotten(null);
     }
 
     if (getPaneIdsForDocument(document).length > 1) {
       scheduleDocumentEditorSync(document);
     }
 
-    scheduleAutosave();
+    scheduleAutosave(document);
     scheduleSearch();
     scheduleRelated();
   }
@@ -651,11 +707,15 @@
       return;
     }
 
-    paneDocument.title = (event.currentTarget as HTMLInputElement).value;
-    if (paneDocument.title.trim() !== '' || paneDocument.bodyMarkdown.trim() !== '') {
-      canUnforget = false;
+    const nextTitle = (event.currentTarget as HTMLInputElement).value;
+    if (paneDocument.title !== nextTitle) {
+      paneDocument.title = nextTitle;
+      paneDocument.operationRevision += 1;
     }
-    scheduleAutosave();
+    if (paneDocument.title.trim() !== '' || paneDocument.bodyMarkdown.trim() !== '') {
+      setRecentlyForgotten(null);
+    }
+    scheduleAutosave(paneDocument);
     scheduleSearch();
     scheduleRelated();
   }
@@ -837,7 +897,16 @@
     if (documentSession.currentNotePath === payload.notePath) {
       await refreshCurrentNoteIfChanged();
     } else if (payload.deleted) {
-      discardDocumentSession(null, payload.notePath);
+      const noteKey = noteKeyFromPath(payload.notePath);
+      if (noteKey) {
+        const note = getNoteByKey(noteKey);
+        if (note) {
+          if (getPaneIdsForDocument(note).length > 0) {
+            const freshDraft = replaceReferencedNoteWithFreshDraft(notepadState, note.key);
+            await replaceNoteAcrossPanes(note, freshDraft);
+          }
+        }
+      }
     }
     refreshDerivedViews();
     scheduleAutoSync('vault-note-change', 1200);
@@ -1032,86 +1101,314 @@
     };
   }
 
-  const sessionController = createSessionController({
-    getDocumentSession,
-    activateDocumentSession,
-    syncActiveDocumentSession,
-    syncDocumentSession,
-    resetActiveDocumentSession,
-    discardDocumentSession,
-    isEditorReady: () =>
-      getPaneIdsForDocument(getDocumentSession()).some((paneId) => paneStates[paneId].isEditorReady),
-    getIsRefreshingFromDisk: () => isRefreshingFromDisk,
-    setIsRefreshingFromDisk: (value) => {
-      isRefreshingFromDisk = value;
-    },
-    getForgottenNote: () => forgottenNote,
-    setForgottenNote: (value) => {
-      forgottenNote = value;
-    },
-    setCanUnforget: (value) => {
-      canUnforget = value;
-    },
-    getForgottenRetentionDays: () => $forgottenNoteRetentionPreference,
-    saveCursorPositionForDocument,
-    saveSharedEditorStateForDocument,
-    discardSharedEditorStateForDocument,
-    replaceEditorContent,
-    replaceEditorContentInPlace,
-    replaceEditorContentInPlaceForDocument,
-    restoreSharedEditorStateForDocument,
-    clearSelectedRelatedText,
-    clearSearch,
-    scheduleSearch,
-    scheduleRelated,
-    loadRecentNotes,
-    scheduleAutoSync,
-    closeWikilinkAutocomplete,
-    setAssetRootPath: (value) => {
-      assetRootPath = value;
+  function hasCleanBuffer(note: NoteDraftState = getDocumentSession()) {
+    return shouldSkipAutosave(
+      note.title,
+      note.bodyMarkdown,
+      note.currentNoteId,
+      note.currentNotePath,
+      note
+    );
+  }
+
+  function invalidatePendingSaveResults(note: NoteDraftState = getDocumentSession()) {
+    note.operationRevision += 1;
+  }
+
+  function getNoteSaveQueue(noteKey: NoteKey) {
+    return noteSaveQueues.get(noteKey) ?? Promise.resolve();
+  }
+
+  function queueNoteOperation(note: NoteDraftState, operation: () => Promise<void>) {
+    const queue = getNoteSaveQueue(note.key)
+      .then(operation)
+      .catch((error) => {
+        console.error('Notepad note operation failed:', error);
+        setNoteStatus(note, 'error');
+      });
+    noteSaveQueues.set(note.key, queue);
+    return queue;
+  }
+
+  function rekeyNoteWithRuntime(note: NoteDraftState, snapshot: SessionSnapshot) {
+    const nextKey = noteKeyFromPath(snapshot.currentNotePath);
+    if (!nextKey || nextKey === note.key) {
+      return note;
     }
-  });
 
-  function scheduleAutosave() {
-    sessionController.scheduleAutosave();
+    const previousKey = note.key;
+    const nextNote = rekeyNote(notepadState, previousKey, nextKey) ?? note;
+    transferNoteRuntime(previousKey, nextKey);
+    if (!getNoteByKey(previousKey)) {
+      cleanupNoteRuntime(previousKey);
+    }
+    return nextNote;
   }
 
-  function cancelPendingAutosave() {
-    sessionController.cancelPendingAutosave();
+  async function persistNote(note: NoteDraftState) {
+    const operationRevision = note.operationRevision;
+    const title = note.title;
+    const markdown = note.bodyMarkdown;
+    const currentNoteId = note.currentNoteId;
+    const currentNotePath = note.currentNotePath;
+
+    if (shouldSkipAutosave(title, markdown, currentNoteId, currentNotePath, note)) {
+      return;
+    }
+
+    setNoteStatus(note, 'saving');
+    const savedSession = await saveNoteSession(title, markdown, currentNotePath);
+    if (note.operationRevision !== operationRevision) {
+      return;
+    }
+
+    const preserveDraft =
+      note.title !== title ||
+      note.bodyMarkdown !== markdown ||
+      note.currentNoteId !== currentNoteId ||
+      note.currentNotePath !== currentNotePath;
+
+    const savedNote = rekeyNoteWithRuntime(note, savedSession);
+    applySnapshotToNote(savedNote, savedSession, { preserveDraft });
+    setNoteStatus(savedNote, 'idle');
+    scheduleAutoSync('note-saved', 600);
   }
 
-  async function enqueueSave(mode: SaveMode) {
-    return sessionController.enqueueSave(mode);
+  function scheduleAutosave(note: NoteDraftState = getDocumentSession()) {
+    cancelPendingAutosave(note);
+    noteSaveTimers.set(
+      note.key,
+      window.setTimeout(() => {
+        noteSaveTimers.delete(note.key);
+        void enqueueSave(note);
+      }, 1000)
+    );
   }
 
-  function flushPendingAutosave() {
-    sessionController.flushPendingAutosave();
+  function cancelPendingAutosave(note: NoteDraftState = getDocumentSession()) {
+    const pendingTimer = noteSaveTimers.get(note.key);
+    if (!pendingTimer) {
+      return;
+    }
+
+    window.clearTimeout(pendingTimer);
+    noteSaveTimers.delete(note.key);
   }
 
-  async function clearNotepad(options: { canRestore?: boolean } = {}) {
-    flushAllPendingDocumentSyncs();
-    flushAllPendingCursorSaves();
-    await sessionController.clearNotepad(options);
+  async function enqueueSave(note: NoteDraftState = getDocumentSession()) {
+    return queueNoteOperation(note, () => persistNote(note));
   }
 
-  async function unforgetNotepad() {
-    flushAllPendingDocumentSyncs();
-    flushAllPendingCursorSaves();
-    await sessionController.unforgetNotepad();
+  function flushPendingAutosave(note: NoteDraftState = getDocumentSession()) {
+    const pendingTimer = noteSaveTimers.get(note.key);
+    if (!pendingTimer) {
+      return;
+    }
+
+    window.clearTimeout(pendingTimer);
+    noteSaveTimers.delete(note.key);
+    void enqueueSave(note);
+  }
+
+  async function replaceNoteAcrossPanes(
+    previousNote: NoteDraftState,
+    nextNote: NoteDraftState,
+    { restoreCursor = false }: { restoreCursor?: boolean } = {}
+  ) {
+    for (const paneId of getVisiblePaneIds()) {
+      if (getPaneKind(paneId) !== 'editor') {
+        continue;
+      }
+
+      if (getPaneDocumentSession(paneId).key !== nextNote.key) {
+        continue;
+      }
+
+      if (!getPaneController(paneId)) {
+        markPaneDocumentGeneration(paneId, nextNote);
+        continue;
+      }
+
+      await paneControllers[paneId].editorLifecycleController.replaceEditorContent(
+        nextNote.bodyMarkdown,
+        {
+          restoreCursor
+        }
+      );
+      markPaneDocumentGeneration(paneId, nextNote);
+    }
+
+    if (!getNoteByKey(previousNote.key)) {
+      cleanupNoteRuntime(previousNote.key);
+    }
   }
 
   async function loadSavedNote() {
-    await sessionController.loadSavedNote();
+    try {
+      const snapshot = await loadSavedNoteSession();
+      adoptSnapshotForPane(notepadState, PRIMARY_PANE_ID, snapshot);
+      setStoreActivePane(notepadState, PRIMARY_PANE_ID);
+    } catch (error) {
+      console.error('Failed to load saved note:', error);
+      applySnapshotToNote(getPaneDocumentSession(PRIMARY_PANE_ID), createEmptySessionSnapshot());
+    }
   }
 
   async function loadAssetRoot() {
-    await sessionController.loadAssetRoot();
+    try {
+      const vaultInfo = await loadCurrentVaultInfo();
+      assetRootPath = resolveAssetRootPath(vaultInfo.currentPath);
+    } catch (error) {
+      console.error('Failed to load vault info for image assets:', error);
+      assetRootPath = null;
+    }
   }
 
   async function refreshCurrentNoteIfChanged() {
-    flushAllPendingDocumentSyncs();
-    flushAllPendingCursorSaves();
-    await sessionController.refreshCurrentNoteIfChanged();
+    const note = getDocumentSession();
+    const currentPath = note.currentNotePath;
+    if (
+      !currentPath ||
+      !getPaneIdsForDocument(note).some((paneId) => paneStates[paneId].isEditorReady) ||
+      notepadState.isRefreshingFromDisk ||
+      !hasCleanBuffer(note)
+    ) {
+      return;
+    }
+
+    notepadState.isRefreshingFromDisk = true;
+    try {
+      const session = await readNoteSession(note.currentNoteId, currentPath);
+      if (getDocumentSession().key !== note.key || !hasCleanBuffer(note)) {
+        return;
+      }
+
+      if (
+        session.lastSavedTitle === note.lastSavedTitle &&
+        session.lastSavedMarkdown === note.lastSavedMarkdown &&
+        session.lastSavedNoteId === note.lastSavedNoteId &&
+        session.lastSavedPath === note.lastSavedPath
+      ) {
+        return;
+      }
+
+      applySnapshotToNote(note, session);
+      setRecentlyForgotten(null);
+      await replaceEditorContentInPlace(session.bodyMarkdown);
+      clearSelectedRelatedText();
+      scheduleSearch();
+      scheduleRelated({ immediate: true });
+    } catch (error) {
+      console.error('Failed to refresh note from disk:', error);
+    } finally {
+      notepadState.isRefreshingFromDisk = false;
+    }
+  }
+
+  async function clearNotepad(options: { canRestore?: boolean } = {}) {
+    const canRestore = options.canRestore ?? true;
+    const note = getDocumentSession();
+    const notePathToClear = note.currentNotePath;
+
+    if (notePathToClear) {
+      saveCursorPositionForDocument(note);
+      saveSharedEditorStateForDocument(note);
+      cancelPendingAutosave(note);
+      await enqueueSave(note);
+    }
+
+    const draft = {
+      title: note.title,
+      bodyMarkdown: note.bodyMarkdown,
+      currentNoteId: note.currentNoteId,
+      currentNotePath: note.currentNotePath
+    };
+    const hasDraftContent = hasContent(draft);
+    let forgottenPath: string | null = null;
+
+    if (notePathToClear) {
+      try {
+        setNoteStatus(note, 'forgetting');
+        const forgottenNoteSummary = await forgetNoteSession(
+          notePathToClear,
+          $forgottenNoteRetentionPreference
+        );
+        forgottenPath = forgottenNoteSummary?.forgottenPath ?? null;
+      } catch (error) {
+        console.error('Failed to forget note:', error);
+        setNoteStatus(note, 'error');
+        return;
+      }
+    }
+
+    invalidatePendingSaveResults(note);
+    cancelPendingAutosave(note);
+    discardSharedEditorStateForDocument(note);
+    const freshDraft = replaceReferencedNoteWithFreshDraft(notepadState, note.key);
+    cleanupNoteRuntime(note.key);
+    setRecentlyForgotten(
+      canRestore && hasDraftContent ? createForgottenNote(draft, forgottenPath) : null
+    );
+    await replaceNoteAcrossPanes(note, freshDraft);
+    clearSelectedRelatedText();
+    scheduleSearch();
+    scheduleRelated({ immediate: true });
+    void loadRecentNotes();
+    if (notePathToClear) {
+      scheduleAutoSync('note-forgotten', 400);
+    }
+  }
+
+  async function unforgetNotepad() {
+    const forgottenNote = notepadState.recentlyForgotten;
+    if (!forgottenNote) {
+      return;
+    }
+
+    if (forgottenNote.forgottenPath) {
+      try {
+        const restoredNotes = await restoreForgottenNotes([forgottenNote.forgottenPath]);
+        const restoredPath = restoredNotes[0]?.restoredPath;
+        if (!restoredPath) {
+          return;
+        }
+
+        const previousNote = getDocumentSession();
+        const restoredNote = adoptSnapshotForPane(
+          notepadState,
+          activePaneId,
+          await openNoteSession(null, restoredPath)
+        );
+        setRecentlyForgotten(null);
+        await replaceNoteAcrossPanes(previousNote, restoredNote, { restoreCursor: true });
+        clearSelectedRelatedText();
+        scheduleSearch();
+        scheduleRelated({ immediate: true });
+        void loadRecentNotes();
+        scheduleAutoSync('forgotten-restored', 400);
+        return;
+      } catch (error) {
+        console.error('Failed to restore forgotten note:', error);
+        return;
+      }
+    }
+
+    const note = getDocumentSession();
+    applySnapshotToNote(note, {
+      ...forgottenNote,
+      lastSavedTitle: '',
+      lastSavedMarkdown: '',
+      lastSavedNoteId: null,
+      lastSavedPath: null
+    });
+    setRecentlyForgotten(null);
+    await replaceEditorContent(note.bodyMarkdown);
+    scheduleAutosave(note);
+    clearSelectedRelatedText();
+    scheduleSearch();
+    scheduleRelated({ immediate: true });
+    void loadRecentNotes();
+    scheduleAutoSync('forgotten-restored-draft', 400);
   }
 
   function resolveRememberAction(actionId: string): RememberActionOption {
@@ -1129,10 +1426,38 @@
       rememberActionRequiresIntegrateSupport(action) && !canIntegrate()
         ? resolveRememberAction('exact')
         : action;
-    await sessionController.rememberCurrentNote(
+    const note = getDocumentSession();
+    saveCursorPositionForDocument(note);
+    saveSharedEditorStateForDocument(note);
+    cancelPendingAutosave(note);
+    await getNoteSaveQueue(note.key);
+    const operationRevision = note.operationRevision;
+    setNoteStatus(note, 'remembering');
+
+    await rememberWithAction(
       resolvedAction,
-      $cleanUpApplyPolicyPreference
+      $cleanUpApplyPolicyPreference,
+      note.title,
+      note.bodyMarkdown,
+      note.currentNotePath
     );
+
+    if (note.operationRevision !== operationRevision) {
+      return;
+    }
+
+    scheduleAutoSync('note-remembered', 400);
+    setRecentlyForgotten(null);
+    invalidatePendingSaveResults(note);
+    cancelPendingAutosave(note);
+    discardSharedEditorStateForDocument(note);
+    const freshDraft = replaceReferencedNoteWithFreshDraft(notepadState, note.key);
+    await replaceNoteAcrossPanes(note, freshDraft);
+    clearSearch();
+    clearSelectedRelatedText();
+    scheduleSearch();
+    scheduleRelated({ immediate: true });
+    void loadRecentNotes();
   }
 
   async function openNotePath(
@@ -1143,24 +1468,54 @@
     flushAllPendingCursorSaves();
     const paneId = activePaneId;
     const previousDocument = getPaneDocumentSession(paneId);
-    await sessionController.openNotePath(options.noteId ?? null, notePath, {
-      currentNoteAlreadySaved: options.currentNoteAlreadySaved ?? hasCurrentProposalReview
-    });
+    if (!options.noteId && !notePath) {
+      return;
+    }
 
-    const nextDocument = getPaneDocumentSession(paneId);
+    saveCursorPositionForDocument(previousDocument);
+    saveSharedEditorStateForDocument(previousDocument);
     if (
-      paneStates[paneId].kind === 'editor' &&
-      previousDocument !== nextDocument &&
+      !(
+        options.currentNoteAlreadySaved ?? hasCurrentProposalReview
+      ) &&
+      (previousDocument.currentNoteId !== (options.noteId ?? null) ||
+        previousDocument.currentNotePath !== notePath)
+    ) {
+      cancelPendingAutosave(previousDocument);
+      void enqueueSave(previousDocument);
+    }
+
+    const requestGeneration = (openNoteRequestGenerationByPane.get(paneId) ?? 0) + 1;
+    openNoteRequestGenerationByPane.set(paneId, requestGeneration);
+    setNoteStatus(previousDocument, 'opening');
+
+    const session = await openNoteSession(options.noteId ?? null, notePath);
+    if ((openNoteRequestGenerationByPane.get(paneId) ?? 0) !== requestGeneration) {
+      return;
+    }
+
+    const nextDocument = adoptSnapshotForPane(notepadState, paneId, session);
+    setRecentlyForgotten(null);
+    closeWikilinkAutocomplete(paneId);
+    clearSelectedRelatedText();
+
+    if (
+      paneStates[paneId].isEditorReady &&
+      getPaneKind(paneId) === 'editor' &&
       getPaneController(paneId)
     ) {
-      await paneControllers[paneId].editorLifecycleController.replaceEditorContent(
-        nextDocument.bodyMarkdown,
-        {
-          restoreCursor: true
-        }
-      );
-      markPaneDocumentGeneration(paneId, nextDocument);
+      if (!(await restoreSharedEditorStateForDocument(nextDocument))) {
+        await replaceNoteAcrossPanes(previousDocument, nextDocument, { restoreCursor: true });
+      } else {
+        markPaneDocumentGeneration(paneId, nextDocument);
+      }
     }
+
+    setNoteStatus(nextDocument, 'idle');
+    if (!getNoteByKey(previousDocument.key)) {
+      cleanupNoteRuntime(previousDocument.key);
+    }
+    scheduleRelated({ immediate: true });
   }
 
   let currentProposalChanges = $derived.by(() =>
@@ -1190,58 +1545,29 @@
   let hasCurrentProposalReview = $derived(currentProposalChanges.length > 0);
   let isCurrentNoteUnderProposal = $derived(hasCurrentProposalReview);
 
-  function getProposalChangesForDocument(document: DocumentSession) {
+  function getProposalChangesForDocument(document: NoteDraftState) {
     return getProposalChangesForPath($activeProposalSession, document.currentNotePath);
   }
 
-  function isDocumentUnderProposal(document: DocumentSession) {
+  function isDocumentUnderProposal(document: NoteDraftState) {
     return getProposalChangesForDocument(document).length > 0;
   }
 
-  async function syncProposalPreviewToEditor() {
-    if (isSyncingProposalPreview) {
-      return;
+  function getPaneDisplayTitle(paneId: PaneId) {
+    const paneDocument = getPaneDocumentSession(paneId);
+    const proposalChanges = getProposalChangesForDocument(paneDocument);
+    const proposalUpdate = proposalChanges.find(
+      (reviewChange): reviewChange is ReviewUpdateChange => reviewChange.kind === 'updateNote'
+    );
+
+    if (!proposalUpdate) {
+      return paneDocument.title;
     }
 
-    const notePath = documentSession.currentNotePath;
-    if (!notePath) {
-      proposalPreviewPath = null;
-      return;
-    }
-
-    isSyncingProposalPreview = true;
-    try {
-      if (!hasCurrentProposalReview) {
-        if (proposalPreviewPath === notePath) {
-          documentSession.title = documentSession.lastSavedTitle;
-        }
-        proposalPreviewPath = null;
-        return;
-      }
-
-      if (!currentProposalPreview) {
-        documentSession.title = documentSession.lastSavedTitle;
-        proposalPreviewPath = notePath;
-        return;
-      }
-
-      documentSession.title = currentProposalPreview.title;
-      proposalPreviewPath = notePath;
-    } catch (error) {
-      console.error('Failed to sync proposal preview into editor:', error);
-      proposalErrorMessage = 'Unable to preview the proposed changes in the editor.';
-    } finally {
-      isSyncingProposalPreview = false;
-    }
+    return proposalUpdate.titleSelected
+      ? proposalUpdate.proposedTitle
+      : proposalUpdate.currentTitle;
   }
-
-  $effect(() => {
-    documentSession.currentNotePath;
-    documentSession.lastSavedTitle;
-    hasCurrentProposalReview;
-    currentProposalPreview?.title;
-    void syncProposalPreviewToEditor();
-  });
 
   function handleActiveWikilinkChange(paneId: PaneId, nextActiveWikilink: ActiveWikilink | null) {
     paneControllers[paneId].wikilinkController.handleActiveWikilinkChange(nextActiveWikilink);
@@ -1308,7 +1634,7 @@
 
       if (!shouldMount && controller) {
         paneControllers[paneId].editorLifecycleController.saveCursorPositionForDocument(paneDocument);
-        if (paneStates[paneId].editorGeneration >= paneDocument.sharedEditorStateGeneration) {
+        if (paneStates[paneId].editorGeneration >= getSharedEditorStateGeneration(paneDocument)) {
           saveSharedEditorStateForDocument(paneDocument, readEditorState(controller), paneId);
         }
         await paneControllers[paneId].editorLifecycleController.destroyEditor();
@@ -1339,7 +1665,7 @@
       sourcePaneId === PRIMARY_PANE_ID ? SECONDARY_PANE_ID : PRIMARY_PANE_ID;
     const sharedDocument = getPaneDocumentSession(sourcePaneId);
 
-    paneStates[targetPaneId].kind = 'editor';
+    setStoredPaneKind(notepadState, targetPaneId, 'editor');
     setPaneDocumentSession(targetPaneId, sharedDocument);
     paneOrder = [PRIMARY_PANE_ID, SECONDARY_PANE_ID];
     activatePaneSession(targetPaneId);
@@ -1353,7 +1679,6 @@
       return;
     }
 
-    const document = getPaneDocumentSession(paneId);
     paneOrder = paneOrder.filter((candidate) => candidate !== paneId);
     if (getPaneController(paneId)) {
       await ensurePaneEditors();
@@ -1407,12 +1732,12 @@
   }
 
   async function setPaneKind(paneId: PaneId, kind: PaneKind) {
-    if (kind === paneStates[paneId].kind) {
+    if (kind === getPaneKind(paneId)) {
       return;
     }
 
     const document = getPaneDocumentSession(paneId);
-    paneStates[paneId].kind = kind;
+    setStoredPaneKind(notepadState, paneId, kind);
     activatePaneSession(paneId);
     await tick();
     await ensurePaneEditors();
@@ -1456,12 +1781,8 @@
       flushAllPendingDocumentSyncs();
       flushAllPendingCursorSaves();
       cancelPendingAutosave();
-      await enqueueSave('autosave');
-      const pendingDocuments = new Set<DocumentSession>([
-        documentSessionStore.activePane.document,
-        ...documentSessionStore.documentsByKey.values()
-      ]);
-      await Promise.all([...pendingDocuments].map((document) => document.saveQueue));
+      await enqueueSave();
+      await Promise.all([...noteSaveQueues.values()]);
     });
     const shellResizeObserver =
       typeof ResizeObserver === 'undefined'
@@ -1518,7 +1839,6 @@
       flushPendingAutosave();
       paneControllers[PRIMARY_PANE_ID].editorLifecycleController.dispose();
       paneControllers[SECONDARY_PANE_ID].editorLifecycleController.dispose();
-      sessionController.dispose();
       cancelScheduledAutoSync();
       searchController.dispose();
       relatedController.dispose();
@@ -1526,6 +1846,9 @@
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
       shellResizeObserver?.disconnect();
+      for (const noteKey of [...noteSaveTimers.keys()]) {
+        cleanupNoteRuntime(noteKey);
+      }
       void paneControllers[PRIMARY_PANE_ID].editorLifecycleController.destroyEditor();
       void paneControllers[SECONDARY_PANE_ID].editorLifecycleController.destroyEditor();
     };
@@ -1622,8 +1945,8 @@
                           ? 'cursor-default text-muted-foreground'
                           : ''
                       }`}
-                      placeholder={getPaneTitlePlaceholder(paneStates[PRIMARY_PANE_ID].kind)}
-                      value={getPaneDocumentSession(PRIMARY_PANE_ID).title}
+                      placeholder={getPaneTitlePlaceholder(getPaneKind(PRIMARY_PANE_ID))}
+                      value={getPaneDisplayTitle(PRIMARY_PANE_ID)}
                       readonly={isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID))}
                       oninput={(event) => handleTitleInput(PRIMARY_PANE_ID, event)}
                       onblur={handleTitleBlur}
@@ -1643,7 +1966,7 @@
               </div>
             </div>
 
-            {#if paneStates[PRIMARY_PANE_ID].kind === 'editor'}
+            {#if getPaneKind(PRIMARY_PANE_ID) === 'editor'}
               <div class="flex-1 min-h-0">
                 <div
                   bind:this={primaryEditorShell}
@@ -1720,8 +2043,8 @@
                           ? 'cursor-default text-muted-foreground'
                           : ''
                       }`}
-                      placeholder={getPaneTitlePlaceholder(paneStates[SECONDARY_PANE_ID].kind)}
-                      value={getPaneDocumentSession(SECONDARY_PANE_ID).title}
+                      placeholder={getPaneTitlePlaceholder(getPaneKind(SECONDARY_PANE_ID))}
+                      value={getPaneDisplayTitle(SECONDARY_PANE_ID)}
                       readonly={isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID))}
                       oninput={(event) => handleTitleInput(SECONDARY_PANE_ID, event)}
                       onblur={handleTitleBlur}
@@ -1741,7 +2064,7 @@
               </div>
             </div>
 
-            {#if paneStates[SECONDARY_PANE_ID].kind === 'editor'}
+            {#if getPaneKind(SECONDARY_PANE_ID) === 'editor'}
               <div class="flex-1 min-h-0">
                 <div
                   bind:this={secondaryEditorShell}
