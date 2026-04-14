@@ -9,6 +9,7 @@
     forgottenNoteRetentionPreference,
     rememberActionOptions
   } from '$lib/appSettings';
+  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
   import {
     EXACT_REMEMBER_ACTION,
     rememberActionRequiresIntegrateSupport,
@@ -852,15 +853,7 @@
       return;
     }
 
-    const lowerKey = event.key.toLowerCase();
-
-    if (
-      event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey &&
-      event.code === 'Slash'
-    ) {
+    if (keyboardShortcutMatchesEvent(event, 'splitWorkspace')) {
       if (event.repeat || paneOrder.length > 1) {
         return;
       }
@@ -872,13 +865,7 @@
       return;
     }
 
-    if (
-      event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey &&
-      lowerKey === 'w'
-    ) {
+    if (keyboardShortcutMatchesEvent(event, 'closePane')) {
       if (event.repeat || paneOrder.length < 2) {
         return;
       }
@@ -890,13 +877,7 @@
       return;
     }
 
-    if (
-      event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey &&
-      lowerKey === 's'
-    ) {
+    if (keyboardShortcutMatchesEvent(event, 'rememberCurrentNote')) {
       if (event.repeat) {
         return;
       }
@@ -906,7 +887,7 @@
       return;
     }
 
-    if (event.ctrlKey && !event.metaKey && !event.altKey && lowerKey === 'tab') {
+    if (keyboardShortcutMatchesEvent(event, 'switchPane')) {
       if (event.repeat || paneOrder.length < 2) {
         return;
       }
@@ -916,34 +897,28 @@
       return;
     }
 
-    if (
-      event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey &&
-      lowerKey === 'r'
-    ) {
+    if (keyboardShortcutMatchesEvent(event, 'toggleRelatedPanel')) {
       event.preventDefault();
       toggleRelatedPanel();
       return;
     }
 
-    if (
-      event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey &&
-      lowerKey === 'l'
-    ) {
+    if (keyboardShortcutMatchesEvent(event, 'reloadCurrentNote')) {
       event.preventDefault();
       void openRecentNoteByIndex(0, { forceReload: true });
       return;
     }
 
-    if (!event.metaKey || lowerKey !== 'f') return;
+    if (keyboardShortcutMatchesEvent(event, 'searchAll')) {
+      event.preventDefault();
+      requestSearchFocus('all');
+      return;
+    }
 
-    event.preventDefault();
-    requestSearchFocus(event.shiftKey ? 'all' : 'current');
+    if (keyboardShortcutMatchesEvent(event, 'searchCurrent')) {
+      event.preventDefault();
+      requestSearchFocus('current');
+    }
   }
 
   function handleWindowFocus() {

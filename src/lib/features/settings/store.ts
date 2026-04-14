@@ -17,7 +17,7 @@ import type {
 } from '$lib/types/semantic';
 
 type SettingsTab = 'general' | 'forgotten';
-type GeneralSection = 'appearance' | 'forgetting' | 'ai' | 'vault' | 'sync' | 'search';
+type GeneralSection = 'appearance' | 'shortcuts' | 'forgetting' | 'ai' | 'vault' | 'sync' | 'search';
 type ForgottenAction = 'restore_forgotten_notes' | 'delete_forgotten_notes';
 type SemanticAction =
   | 'rebuild_semantic_index'

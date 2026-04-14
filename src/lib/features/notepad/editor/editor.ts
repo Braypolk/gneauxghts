@@ -50,6 +50,7 @@ import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 import { createImagePastePlugin } from '$lib/features/notepad/images/imagePaste';
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
 import { createWikilinksPlugin, type ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
+import { keyboardShortcutMatchesEvent, usesNativeCutShortcut } from '$lib/keyboardShortcuts';
 
 interface CreateEditorOptions {
   editorRoot: HTMLDivElement;
@@ -114,6 +115,21 @@ interface CurrentSearchHighlightTextSegment {
 
 interface CurrentSearchHighlightUpdate {
   query: string;
+}
+
+interface SelectedBlockContext {
+  node: ProseMirrorNode;
+  pos: number;
+  depth: number;
+  index: number;
+  parent: ProseMirrorNode;
+  parentStart: number;
+  listContainer:
+    | {
+        node: ProseMirrorNode;
+        pos: number;
+      }
+    | null;
 }
 
 const CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY =
@@ -304,6 +320,37 @@ function createTaskListInteractionPlugin(onTaskListToggle: () => void) {
     key: new PluginKey('NOTEPAD_TASK_LIST_INTERACTIONS'),
     props: {
       handleDOMEvents: {
+        cut(view, event) {
+          if (
+            !(event instanceof ClipboardEvent) ||
+            !event.clipboardData ||
+            !usesNativeCutShortcut('editorCutLine')
+          ) {
+            return false;
+          }
+
+          if (!view.state.selection.empty) {
+            return false;
+          }
+
+          const block = getSelectedBlockContext(view.state);
+          if (!block) {
+            return false;
+          }
+
+          const clipboardMarkdown = serializeMarkdown(createClipboardDocumentForBlock(view.state, block));
+          event.preventDefault();
+          event.clipboardData.setData('text/plain', clipboardMarkdown);
+
+          const transaction = createDeleteBlockTransaction(view.state, block);
+          if (!transaction) {
+            return true;
+          }
+
+          view.dispatch(transaction);
+          view.focus();
+          return true;
+        },
         mousedown(view, event) {
           if (!(event instanceof MouseEvent) || event.button !== 0) {
             return false;
@@ -359,6 +406,38 @@ function createTaskListInteractionPlugin(onTaskListToggle: () => void) {
       }
     }
   });
+}
+
+async function writeTextToClipboard(text: string) {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to legacy copy path.
+    }
+  }
+
+  if (typeof document === 'undefined') {
+    return false;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
 }
 
 function getSelectionScrollTarget(view: EditorView) {
@@ -418,6 +497,227 @@ function createHorizontalRuleInputRule() {
   });
 }
 
+function getSelectedBlockContext(state: EditorState): SelectedBlockContext | null {
+  const { $from } = state.selection;
+  const listItem = findAncestorNode($from, (node) => node.type.name === 'list_item');
+  const block =
+    listItem ??
+    findAncestorNode($from, (node) =>
+      ['paragraph', 'heading', 'code_block', 'horizontal_rule'].includes(node.type.name)
+    );
+
+  if (!block || block.depth === 0) {
+    return null;
+  }
+
+  const parentDepth = block.depth - 1;
+  const parent = $from.node(parentDepth);
+  const parentStart = parentDepth > 0 ? $from.start(parentDepth) : 0;
+  const index = $from.index(parentDepth);
+  const listContainer =
+    block.node.type.name === 'list_item'
+      ? findAncestorNode(
+          $from,
+          (node) => node.type.name === 'bullet_list' || node.type.name === 'ordered_list'
+        )
+      : null;
+
+  return {
+    node: block.node,
+    pos: block.pos,
+    depth: block.depth,
+    index,
+    parent,
+    parentStart,
+    listContainer: listContainer
+      ? {
+          node: listContainer.node,
+          pos: listContainer.pos
+        }
+      : null
+  };
+}
+
+function getChildPosition(parent: ProseMirrorNode, parentStart: number, index: number) {
+  let pos = parentStart;
+  for (let childIndex = 0; childIndex < index; childIndex += 1) {
+    pos += parent.child(childIndex)?.nodeSize ?? 0;
+  }
+  return pos;
+}
+
+function createClipboardDocumentForBlock(state: EditorState, block: SelectedBlockContext) {
+  if (block.node.type.name === 'list_item') {
+    const listNode =
+      block.listContainer?.node.type.name === 'ordered_list'
+        ? state.schema.nodes.ordered_list.create(block.listContainer.node.attrs, [block.node])
+        : state.schema.nodes.bullet_list.create(block.listContainer?.node.attrs ?? null, [block.node]);
+    return state.schema.nodes.doc.create(null, [listNode]);
+  }
+
+  return state.schema.nodes.doc.create(null, [block.node]);
+}
+
+function createDeleteBlockTransaction(state: EditorState, block: SelectedBlockContext) {
+  const sourceNode = state.doc.nodeAt(block.pos);
+  if (!sourceNode) {
+    return null;
+  }
+
+  const { from: deleteFrom, to: deleteTo } = expandDeleteRangeForListItem(
+    state.doc,
+    block.pos,
+    sourceNode
+  );
+
+  let transaction = state.tr.delete(deleteFrom, deleteTo);
+  if (transaction.doc.childCount === 0) {
+    transaction = transaction
+      .insert(0, state.schema.nodes.paragraph.create())
+      .setSelection(TextSelection.create(transaction.doc, 1));
+    return transaction.scrollIntoView();
+  }
+
+  const selectionPos = Math.max(1, Math.min(deleteFrom, transaction.doc.nodeSize - 2));
+  transaction = transaction.setSelection(Selection.near(transaction.doc.resolve(selectionPos)));
+  return transaction.scrollIntoView();
+}
+
+function insertParagraphBelow(state: EditorState, dispatch?: (transaction: Transaction) => void) {
+  const block = getSelectedBlockContext(state);
+  if (!block) {
+    return false;
+  }
+
+  const insertPos = block.pos + block.node.nodeSize;
+  const nodeToInsert =
+    block.node.type.name === 'list_item'
+      ? state.schema.nodes.list_item.create(
+          {
+            checked: block.node.attrs.checked != null ? false : null
+          },
+          [state.schema.nodes.paragraph.create()]
+        )
+      : state.schema.nodes.paragraph.create();
+
+  if (dispatch) {
+    let transaction = state.tr.insert(insertPos, nodeToInsert);
+    const selectionPos = Math.max(1, Math.min(insertPos + 1, transaction.doc.nodeSize - 2));
+    transaction = transaction
+      .setSelection(TextSelection.near(transaction.doc.resolve(selectionPos)))
+      .scrollIntoView();
+    dispatch(transaction);
+  }
+
+  return true;
+}
+
+function moveSelectedBlock(
+  state: EditorState,
+  direction: 'up' | 'down',
+  dispatch?: (transaction: Transaction) => void
+) {
+  const block = getSelectedBlockContext(state);
+  if (!block) {
+    return false;
+  }
+
+  const targetIndex = direction === 'up' ? block.index - 1 : block.index + 1;
+  if (targetIndex < 0 || targetIndex >= block.parent.childCount) {
+    return false;
+  }
+
+  const sourcePos = getChildPosition(block.parent, block.parentStart, block.index);
+  const targetPos = getChildPosition(block.parent, block.parentStart, targetIndex);
+  const sourceNode = block.parent.child(block.index);
+  const targetNode = block.parent.child(targetIndex);
+  const initialInsertPos =
+    direction === 'up' ? targetPos : targetPos + targetNode.nodeSize;
+
+  if (dispatch) {
+    let transaction = state.tr.delete(sourcePos, sourcePos + sourceNode.nodeSize);
+    const mappedInsertPos = transaction.mapping.map(initialInsertPos, direction === 'up' ? -1 : 1);
+    transaction = transaction
+      .insert(mappedInsertPos, sourceNode)
+      .setSelection(
+        Selection.near(
+          transaction.doc.resolve(Math.max(1, Math.min(mappedInsertPos + 1, transaction.doc.nodeSize - 2)))
+        )
+      )
+      .scrollIntoView();
+    dispatch(transaction);
+  }
+
+  return true;
+}
+
+function copySelectedBlockToClipboardAndDelete(view: EditorView) {
+  if (view.state.selection.empty === false) {
+    return false;
+  }
+
+  const block = getSelectedBlockContext(view.state);
+  if (!block) {
+    return false;
+  }
+
+  const clipboardMarkdown = serializeMarkdown(createClipboardDocumentForBlock(view.state, block));
+  void writeTextToClipboard(clipboardMarkdown).then((didCopy) => {
+    if (!didCopy) {
+      return;
+    }
+
+    const transaction = createDeleteBlockTransaction(view.state, block);
+    if (!transaction) {
+      return;
+    }
+
+    view.dispatch(transaction);
+    view.focus();
+  });
+  return true;
+}
+
+function createEditorShortcutPlugin(listItemType: typeof notepadSchema.nodes.list_item) {
+  return new Plugin({
+    key: new PluginKey('NOTEPAD_EDITOR_SHORTCUTS'),
+    props: {
+      handleKeyDown(view, event) {
+        const shortcutHandlers = [
+          ['editorUndo', () => undo(view.state, view.dispatch)],
+          ['editorRedo', () => redo(view.state, view.dispatch)],
+          ['editorRedoAlternate', () => redo(view.state, view.dispatch)],
+          ['editorInsertBelow', () => insertParagraphBelow(view.state, view.dispatch)],
+          ['editorMoveLineUp', () => moveSelectedBlock(view.state, 'up', view.dispatch)],
+          ['editorMoveLineDown', () => moveSelectedBlock(view.state, 'down', view.dispatch)],
+          [
+            'editorCutLine',
+            () => (usesNativeCutShortcut('editorCutLine') ? false : copySelectedBlockToClipboardAndDelete(view))
+          ],
+          ['editorHardBreak', () => insertHardBreak(view.state, view.dispatch)],
+          ['editorIndentList', () => sinkListItem(listItemType)(view.state, view.dispatch)],
+          ['editorOutdentList', () => liftListItem(listItemType)(view.state, view.dispatch)]
+        ] as const;
+
+        for (const [shortcutId, handler] of shortcutHandlers) {
+          if (!keyboardShortcutMatchesEvent(event, shortcutId)) {
+            continue;
+          }
+
+          if (!handler()) {
+            return false;
+          }
+
+          event.preventDefault();
+          return true;
+        }
+
+        return false;
+      }
+    }
+  });
+}
+
 function insertHardBreak(state: EditorState, dispatch?: (transaction: Transaction) => void) {
   if (state.selection.$from.parent.type.spec.code) {
     return newlineInCode(state, dispatch);
@@ -473,26 +773,28 @@ export function createSharedEditorResources({
   let currentSearchHighlightQuery = '';
 
   const listItemType = notepadSchema.nodes.list_item;
+  const filteredBaseKeymap = { ...baseKeymap };
+  delete filteredBaseKeymap['Mod-z'];
+  delete filteredBaseKeymap['Mod-y'];
+  delete filteredBaseKeymap['Shift-Mod-z'];
+  delete filteredBaseKeymap['Tab'];
+  delete filteredBaseKeymap['Shift-Tab'];
+  delete filteredBaseKeymap['Shift-Enter'];
   const slashMenu = createSlashMenuPlugin();
   const plugins = [
     createMarkdownInputRules(),
+    createEditorShortcutPlugin(listItemType),
     keymap({
-      'Mod-z': undo,
-      'Mod-y': redo,
-      'Shift-Mod-z': redo,
       Backspace: undoInputRule,
-      'Shift-Enter': insertHardBreak,
       Enter: chainCommands(
         splitListItemKeepMarks(listItemType),
         newlineInCode,
         createParagraphNear,
         liftEmptyBlock,
         splitBlockKeepMarks
-      ),
-      Tab: sinkListItem(listItemType),
-      'Shift-Tab': liftListItem(listItemType)
+      )
     }),
-    keymap(baseKeymap),
+    keymap(filteredBaseKeymap),
     history(),
     dropCursor({
       class: 'crepe-drop-cursor',

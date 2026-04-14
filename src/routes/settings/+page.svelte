@@ -4,6 +4,7 @@
   import { onDestroy, onMount } from 'svelte';
   import AiRememberSettingsPanel from '$lib/features/settings/AiRememberSettingsPanel.svelte';
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
+  import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
   import SyncSettingsPanel from '$lib/features/settings/SyncSettingsPanel.svelte';
   import {
@@ -37,6 +38,7 @@
     description: string;
   }[] = [
     { id: 'appearance', label: 'Appearance', description: 'Theme and display' },
+    { id: 'shortcuts', label: 'Shortcuts', description: 'Customize keyboard shortcuts' },
     {
       id: 'forgetting',
       label: 'Forgetting',
@@ -193,6 +195,8 @@
                   </fieldset>
                 </div>
               </div>
+            {:else if $settings.activeGeneralSection === 'shortcuts'}
+              <KeyboardShortcutsPanel />
             {:else if $settings.activeGeneralSection === 'forgetting'}
               <div class="space-y-5">
                 <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">

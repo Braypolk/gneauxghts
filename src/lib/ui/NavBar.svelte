@@ -7,6 +7,7 @@
   import MailboxFull from './icons/MailboxFull.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
+  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
   import { createNavStatusStore } from '$lib/ui/navStatusStore';
 
   const navLinks = [
@@ -74,29 +75,28 @@
   }
 
   function handleGlobalShortcut(event: KeyboardEvent) {
-    if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
-      return;
-    }
-
-    if (event.code === 'Comma') {
+    if (keyboardShortcutMatchesEvent(event, 'navSettings')) {
       event.preventDefault();
       void navigateToHref(settingsHref);
       return;
     }
 
-    const shortcutMatch = event.code.match(/^Digit(\d)$/);
-    if (!shortcutMatch) {
+    const shortcutEntries = [
+      ['navNote', navLinks[0]],
+      ['navInbox', navLinks[1]],
+      ['navMap', navLinks[2]],
+      ['navList', navLinks[3]]
+    ] as const;
+
+    for (const [shortcutId, targetLink] of shortcutEntries) {
+      if (!targetLink || !keyboardShortcutMatchesEvent(event, shortcutId)) {
+        continue;
+      }
+
+      event.preventDefault();
+      void navigateToHref(targetLink.href);
       return;
     }
-
-    const shortcutIndex = Number(shortcutMatch[1]) - 1;
-    const targetLink = navLinks[shortcutIndex];
-    if (!targetLink) {
-      return;
-    }
-
-    event.preventDefault();
-    void navigateToHref(targetLink.href);
   }
 
   onMount(() => {

@@ -977,7 +977,6 @@ pub(crate) struct StoredNoteWithMeta {
     pub(crate) path: String,
     pub(crate) title: String,
     pub(crate) created_at: String,
-    pub(crate) updated_at: String,
     pub(crate) modified_millis: u64,
 }
 
@@ -985,7 +984,7 @@ pub(crate) fn load_all_notes_with_meta(
     connection: &Connection,
 ) -> Result<Vec<StoredNoteWithMeta>, String> {
     let mut statement = connection
-        .prepare("SELECT path, title, created_at, updated_at, modified_millis FROM notes")
+        .prepare("SELECT path, title, created_at, modified_millis FROM notes")
         .map_err(|err| err.to_string())?;
     let mut rows = statement.query([]).map_err(|err| err.to_string())?;
     let mut notes = Vec::new();
@@ -995,8 +994,7 @@ pub(crate) fn load_all_notes_with_meta(
             path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
             title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
             created_at: row.get::<_, String>(2).map_err(|err| err.to_string())?,
-            updated_at: row.get::<_, String>(3).map_err(|err| err.to_string())?,
-            modified_millis: row.get::<_, u64>(4).map_err(|err| err.to_string())?,
+            modified_millis: row.get::<_, u64>(3).map_err(|err| err.to_string())?,
         });
     }
 

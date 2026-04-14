@@ -1,5 +1,6 @@
 import { tick } from 'svelte';
 import { get, writable } from 'svelte/store';
+import { keyboardShortcutMatchesEvent, type KeyboardShortcutId } from '$lib/keyboardShortcuts';
 import type { SearchItem } from '$lib/types/semantic';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 
@@ -211,13 +212,39 @@ export function createBottomBarState({
     return getSearchMode() === 'current' ? 'Current Gneauxght' : 'All Gneauxghts';
   }
 
-  function getDigitShortcutIndex(event: KeyboardEvent) {
-    const shortcutMatch = event.code.match(/^Digit(\d)$/);
-    if (!shortcutMatch) {
-      return null;
+  function handleRecentItemShortcut(event: KeyboardEvent) {
+    for (let shortcutIndex = 0; shortcutIndex < 9; shortcutIndex += 1) {
+      const slot = shortcutIndex + 1;
+      const taskShortcutId = `recentTask${slot}` as KeyboardShortcutId;
+      if (keyboardShortcutMatchesEvent(event, taskShortcutId)) {
+        event.preventDefault();
+
+        const task = getRecentTasks()[shortcutIndex];
+        if (task) {
+          selectItem({ kind: 'task', item: task });
+          return true;
+        }
+
+        void onRecentTaskShortcut(shortcutIndex);
+        return true;
+      }
+
+      const noteShortcutId = `recentNote${slot}` as KeyboardShortcutId;
+      if (keyboardShortcutMatchesEvent(event, noteShortcutId)) {
+        event.preventDefault();
+
+        const note = getRecentNotes()[shortcutIndex];
+        if (note) {
+          selectItem({ kind: 'note', item: note });
+          return true;
+        }
+
+        void onRecentNoteShortcut(shortcutIndex);
+        return true;
+      }
     }
 
-    return Number(shortcutMatch[1]) - 1;
+    return false;
   }
 
   function selectItem(item: BottomBarVisibleItem) {
@@ -237,28 +264,7 @@ export function createBottomBarState({
   }
 
   function handleSearchKeydown(event: KeyboardEvent) {
-    const shortcutIndex = getDigitShortcutIndex(event);
-    if (event.ctrlKey && !event.metaKey && !event.altKey && shortcutIndex !== null) {
-      event.preventDefault();
-
-      if (event.shiftKey) {
-        const task = getRecentTasks()[shortcutIndex];
-        if (task) {
-          selectItem({ kind: 'task', item: task });
-          return;
-        }
-
-        void onRecentTaskShortcut(shortcutIndex);
-        return;
-      }
-
-      const note = getRecentNotes()[shortcutIndex];
-      if (note) {
-        selectItem({ kind: 'note', item: note });
-        return;
-      }
-
-      void onRecentNoteShortcut(shortcutIndex);
+    if (handleRecentItemShortcut(event)) {
       return;
     }
 

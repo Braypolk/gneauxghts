@@ -3,7 +3,9 @@
   let { class: className = '' }: { class?: string } = $props();
 </script>
 
-<Feather class="writing-pen {className}" />
+<span class="writing-pen">
+  <Feather class="writing-pen-icon {className}" />
+</span>
 
 <style>
   @keyframes writing {
@@ -16,7 +18,11 @@
     100% { transform: translate(0, 0) rotate(0deg); }
   }
 
-  :global(.writing-pen) {
+  .writing-pen {
+    display: inline-flex;
+  }
+
+  .writing-pen :global(.writing-pen-icon) {
     /* Runs for 1.5s per cycle, 2 times total = 3 seconds of animation */
     animation: writing 1.5s ease-in-out 2 forwards;
     transform-origin: 5px 19px; /* roughly the tip of the feather */
