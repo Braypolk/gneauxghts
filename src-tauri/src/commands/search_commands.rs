@@ -103,6 +103,7 @@ pub(crate) fn search_notes(
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let mut candidates = collect_lexical_candidates(
         &state,
+        &query,
         &notes_dir,
         mode,
         current_path.as_deref(),
@@ -159,6 +160,7 @@ pub(crate) async fn search_notes_hybrid(
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let lexical_candidates = collect_lexical_candidates(
         &state,
+        &query,
         &notes_dir,
         mode.clone(),
         current_path.as_deref(),
@@ -264,6 +266,7 @@ pub(crate) async fn get_related_notes(
 
 fn collect_lexical_candidates(
     state: &State<'_, AppState>,
+    query: &str,
     notes_dir: &Path,
     mode: SearchMode,
     current_path: Option<&Path>,
@@ -273,11 +276,14 @@ fn collect_lexical_candidates(
     query_terms: &[&str],
 ) -> Result<Vec<ScoredSearchResult>, String> {
     let current_override = build_current_override(current_path, current_title, current_markdown);
-    let mut index = state
+    let mut notes_index = state
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
+    notes_index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
+    let lexical_entries = notes_index.entries.clone();
+    drop(notes_index);
+    state.lexical.sync_with_notes_index(&lexical_entries)?;
 
     let mut candidates = Vec::new();
     match mode {
@@ -301,18 +307,11 @@ fn collect_lexical_candidates(
                 ));
             }
 
-            for (path, note) in &index.entries {
-                if current_path == Some(path.as_path()) {
-                    continue;
-                }
-
-                candidates.extend(search_note(
-                    Some(path.as_path()),
-                    note,
-                    normalized_query,
-                    query_terms,
-                ));
-            }
+            candidates.extend(
+                state
+                    .lexical
+                    .search(query, normalized_query, query_terms, MAX_SEARCH_RESULTS, current_path)?,
+            );
         }
     }
 

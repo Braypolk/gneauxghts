@@ -131,7 +131,7 @@ fn score_search_candidate(
         return None;
     }
 
-    let search_match = find_best_match(candidate.paragraph, normalized_query, query_terms)?;
+    let search_match = find_best_match(candidate.paragraph.text.as_str(), normalized_query, query_terms)?;
     let mut score = 0;
 
     if paragraph_phrase_match {
@@ -156,12 +156,8 @@ fn score_search_candidate(
         score += 90usize.saturating_sub(paragraph_index * 8);
     }
 
-    let (excerpt, highlight_ranges) = build_excerpt_and_highlights(
-        &candidate.paragraph.text,
-        &candidate.paragraph.text_lower,
-        search_match.match_offset,
-        query_terms,
-    );
+    let (excerpt, highlight_ranges, _) =
+        build_search_preview(&candidate.paragraph.text, normalized_query, query_terms)?;
 
     Some(ScoredSearchResult {
         score,
@@ -185,11 +181,12 @@ fn score_search_candidate(
 }
 
 fn find_best_match(
-    paragraph: &IndexedParagraph,
+    text: &str,
     normalized_query: &str,
     query_terms: &[&str],
 ) -> Option<SearchMatch> {
-    if let Some(match_offset) = paragraph.text_lower.find(normalized_query) {
+    let text_lower = text.to_lowercase();
+    if let Some(match_offset) = text_lower.find(normalized_query) {
         return Some(SearchMatch {
             match_text: normalized_query.to_string(),
             match_offset,
@@ -199,16 +196,25 @@ fn find_best_match(
     query_terms
         .iter()
         .filter_map(|term| {
-            paragraph
-                .text_lower
-                .find(term)
-                .map(|match_offset| (*term, match_offset))
+            text_lower.find(term).map(|match_offset| (*term, match_offset))
         })
         .min_by_key(|(_, match_offset)| *match_offset)
         .map(|(term, match_offset)| SearchMatch {
             match_text: term.to_string(),
             match_offset,
         })
+}
+
+pub(crate) fn build_search_preview(
+    text: &str,
+    normalized_query: &str,
+    query_terms: &[&str],
+) -> Option<(String, Vec<TextRange>, String)> {
+    let text_lower = text.to_lowercase();
+    let search_match = find_best_match(text, normalized_query, query_terms)?;
+    let (excerpt, highlight_ranges) =
+        build_excerpt_and_highlights(text, &text_lower, search_match.match_offset, query_terms);
+    Some((excerpt, highlight_ranges, search_match.match_text))
 }
 
 fn build_excerpt_and_highlights(

@@ -84,15 +84,9 @@ pub(super) fn resolve_sync_conflict_keep_local(
     let persisted_markdown = fs::read_to_string(&saved_path).map_err(|err| err.to_string())?;
     let timestamp_millis = current_time_millis()?;
     let note = build_indexed_note(&saved_path, &persisted_markdown, timestamp_millis);
-    {
-        let mut index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.upsert_note(saved_path.clone(), note);
-        if previous_canonical_path != saved_path {
-            index.remove_note(&previous_canonical_path);
-        }
+    state.upsert_note_indexes(saved_path.clone(), note)?;
+    if previous_canonical_path != saved_path {
+        state.remove_note_indexes(&previous_canonical_path)?;
     }
     if previous_canonical_path != saved_path && previous_canonical_path.exists() {
         state.semantic.queue_delete_note(&previous_canonical_path)?;
@@ -253,13 +247,7 @@ fn cleanup_resolved_sync_conflict(
         fs::remove_file(&conflict_path).map_err(|err| err.to_string())?;
     }
 
-    {
-        let mut index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.remove_note(&conflict_path);
-    }
+    state.remove_note_indexes(&conflict_path)?;
     state.semantic.queue_delete_note(&conflict_path)?;
 
     if !preserve_original_note {

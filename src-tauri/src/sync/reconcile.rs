@@ -557,20 +557,10 @@ fn apply_remote_head(
     let timestamp_millis = current_time_millis()?;
     if remote_head.trashed_at.is_some() {
         state.semantic.queue_delete_note(&target_path)?;
-        let mut index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.remove_note(&target_path);
+        state.remove_note_indexes(&target_path)?;
     } else {
         let note = build_indexed_note(&target_path, &remote_head.markdown, timestamp_millis);
-        {
-            let mut index = state
-                .notes_index
-                .lock()
-                .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.upsert_note(target_path.clone(), note);
-        }
+        state.upsert_note_indexes(target_path.clone(), note)?;
         state.semantic.queue_note_update(
             &target_path,
             remote_head.markdown.clone(),

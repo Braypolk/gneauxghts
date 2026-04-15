@@ -533,21 +533,11 @@ fn upsert_notes_index_entry(
     path: PathBuf,
     note: IndexedNote,
 ) -> Result<(), String> {
-    let mut index = state
-        .notes_index
-        .lock()
-        .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.upsert_note(path, note);
-    Ok(())
+    state.upsert_note_indexes(path, note)
 }
 
 fn remove_notes_index_entry(state: &State<'_, AppState>, path: &Path) -> Result<(), String> {
-    let mut index = state
-        .notes_index
-        .lock()
-        .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.remove_note(path);
-    Ok(())
+    state.remove_note_indexes(path)
 }
 
 fn read_indexed_note_from_path(path: &Path) -> Result<Option<IndexedNote>, String> {

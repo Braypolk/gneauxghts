@@ -78,21 +78,11 @@ fn handle_watched_path_change(
 
         if deleted {
             state.semantic.queue_delete_note(path)?;
-            let mut index = state
-                .notes_index
-                .lock()
-                .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.remove_note(path);
+            state.remove_note_indexes(path)?;
         } else {
             let timestamp_millis = current_time_millis()?;
             let note = build_indexed_note(path, &markdown, timestamp_millis);
-            {
-                let mut index = state
-                    .notes_index
-                    .lock()
-                    .map_err(|_| "Search index lock poisoned".to_string())?;
-                index.upsert_note(path.to_path_buf(), note);
-            }
+            state.upsert_note_indexes(path.to_path_buf(), note)?;
             state
                 .semantic
                 .queue_note_update(path, markdown, timestamp_millis)?;
@@ -115,11 +105,7 @@ fn handle_watched_path_change(
                 .map_err(|err| err.to_string())?;
         }
         state.semantic.queue_delete_note(path)?;
-        let mut index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.remove_note(path);
+        state.remove_note_indexes(path)?;
         app_handle
             .emit(
                 VAULT_NOTE_CHANGED_EVENT,

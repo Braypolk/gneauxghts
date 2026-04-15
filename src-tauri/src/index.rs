@@ -1,4 +1,5 @@
 use crate::{
+    lexical::LexicalIndex,
     note,
     path_utils::collect_markdown_files_recursively,
     semantic::SemanticState,
@@ -15,15 +16,41 @@ use std::{
 
 pub(crate) struct AppState {
     pub(crate) notes_index: Mutex<NotesIndex>,
+    pub(crate) lexical: Arc<LexicalIndex>,
     pub(crate) semantic: Arc<SemanticState>,
 }
 
 impl AppState {
-    pub(crate) fn new(semantic: SemanticState) -> Self {
-        Self {
+    pub(crate) fn new(semantic: SemanticState) -> Result<Self, String> {
+        Ok(Self {
             notes_index: Mutex::new(NotesIndex::default()),
+            lexical: Arc::new(LexicalIndex::new()?),
             semantic: Arc::new(semantic),
-        }
+        })
+    }
+
+    pub(crate) fn upsert_note_indexes(
+        &self,
+        path: PathBuf,
+        note: IndexedNote,
+    ) -> Result<(), String> {
+        self.lexical.upsert_note(&path, &note)?;
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        index.upsert_note(path, note);
+        Ok(())
+    }
+
+    pub(crate) fn remove_note_indexes(&self, path: &Path) -> Result<(), String> {
+        self.lexical.remove_note(path)?;
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        index.remove_note(path);
+        Ok(())
     }
 }
 
@@ -130,6 +157,12 @@ impl NotesIndex {
         self.entries
             .iter()
             .find(|(_, note)| note.note_id == note_id)
+    }
+}
+
+impl IndexedNote {
+    pub(crate) fn signature(&self) -> &FileSignature {
+        &self.signature
     }
 }
 

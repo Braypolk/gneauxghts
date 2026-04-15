@@ -1,6 +1,7 @@
 mod ai;
 mod commands;
 mod index;
+mod lexical;
 mod note;
 mod path_utils;
 mod search;
@@ -37,7 +38,7 @@ pub fn run() {
                 let bundled_runtime_path = bundled_llama_server_path(app.handle());
                 SemanticState::new_with_runtime(app_data_dir, notes_dir, bundled_runtime_path)?
             };
-            app.manage(AppState::new(semantic));
+            app.manage(AppState::new(semantic)?);
             app.manage(ai::AiState::new(app.handle().clone())?);
             app.manage(sync::start_vault_watcher(app.handle().clone())?);
             Ok(())
