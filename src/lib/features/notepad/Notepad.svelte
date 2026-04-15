@@ -2237,7 +2237,7 @@
                 />
               </div>
             {:else if getPaneKind(PRIMARY_PANE_ID) === 'editor'}
-              <div class="flex-1 min-h-0">
+              <div class="h-full flex-1 min-h-0">
                 <div
                   bind:this={primaryEditorShell}
                   class="notepad-editor-shell relative h-full"
@@ -2251,7 +2251,7 @@
                     </div>
                   {/if}
 
-                  <div bind:this={primaryEditorRoot} class={`min-h-full ${isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID)) ? 'hidden' : ''}`}></div>
+                  <div bind:this={primaryEditorRoot} class={`h-full min-h-full ${isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID)) ? 'hidden' : ''}`}></div>
                   {#if isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID))}
                     <section class="mx-auto min-h-full w-full max-w-3xl px-4 pt-28 pb-16 sm:px-8">
                       {#if proposalErrorMessage}
@@ -2349,7 +2349,7 @@
                 />
               </div>
             {:else if getPaneKind(SECONDARY_PANE_ID) === 'editor'}
-              <div class="flex-1 min-h-0">
+              <div class="h-full flex-1 min-h-0">
                 <div
                   bind:this={secondaryEditorShell}
                   class="notepad-editor-shell relative h-full"
@@ -2363,7 +2363,7 @@
                     </div>
                   {/if}
 
-                  <div bind:this={secondaryEditorRoot} class={`min-h-full ${isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID)) ? 'hidden' : ''}`}></div>
+                  <div bind:this={secondaryEditorRoot} class={`h-full min-h-full ${isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID)) ? 'hidden' : ''}`}></div>
                   {#if isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID))}
                     <section class="mx-auto min-h-full w-full max-w-3xl px-4 pt-28 pb-16 sm:px-8">
                       <ProposalReviewList
@@ -2397,7 +2397,7 @@
       {/if}
     </div>
 
-    <div class="absolute bottom-0 left-0 right-0 z-30">
+    <div class="notepad-bottom-bar absolute left-0 right-0 z-30">
       <BottomBar
         {canUnforget}
         searchMode={$searchState.searchMode}
@@ -2551,10 +2551,10 @@
     --editor-right-padding: 1rem;
     --editor-readable-width: 100%;
     --editor-top-padding: 4.6rem;
-    --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px));
+    --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
     --related-drawer-gap: 1rem;
     --related-drawer-peek-width: 2.75rem;
-    --related-bottom-offset: calc(6.1rem + env(safe-area-inset-bottom, 0px));
+    --related-bottom-offset: calc(6.1rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
     overflow: visible;
   }
 
@@ -2580,6 +2580,13 @@
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .notepad-bottom-bar {
+    bottom: var(--keyboard-inset-height, 0px);
+    transition: bottom 180ms ease;
   }
 
   .notepad-editor-shell.notepad-editor-shell--slash-open {
@@ -2668,6 +2675,7 @@
   }
 
   .notepad-editor-shell :global(.gn-editor-root) {
+    height: 100%;
     min-height: 100%;
     width: 100%;
     max-width: 100%;

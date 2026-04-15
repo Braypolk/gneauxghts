@@ -314,7 +314,9 @@
           bind:this={searchInput}
           type="text"
           autocomplete="off"
-          class="search-bar-input w-full py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground sm:py-2"
+          inputmode="search"
+          enterkeyhint="search"
+          class="search-bar-input w-full py-1.5 text-base text-foreground outline-none placeholder:text-muted-foreground min-[700px]:text-sm sm:py-2"
           placeholder={bottomBarState.getSearchPlaceholder()}
           value={searchQuery}
           oninput={bottomBarState.handleSearchInput}

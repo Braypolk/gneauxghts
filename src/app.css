@@ -84,6 +84,8 @@
   --shadow-2xl: 0px 1px 2px 0px hsl(0 0% 0% / 0.45);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
+  --app-shell-height: 100lvh;
+  --keyboard-inset-height: 0px;
 }
 
 .dark {
@@ -146,10 +148,25 @@ body {
   overflow: hidden;
 }
 
+html {
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  background: var(--background);
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+.app-shell {
+  height: var(--app-shell-height, 100lvh);
+  min-height: var(--app-shell-height, 100lvh);
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 @keyframes forget-hold-pulse {
