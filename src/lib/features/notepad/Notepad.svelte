@@ -21,11 +21,11 @@
     SearchItem,
     SemanticStatus
   } from '$lib/types/semantic';
-  import type { EditorState } from 'prosemirror-state';
-  import type { EditorView } from 'prosemirror-view';
-  import type { EditorController } from '$lib/features/notepad/editor/editor';
+  import type { EditorView } from '@codemirror/view';
   import {
     createSharedEditorResources,
+    type EditorController,
+    type EditorSnapshot,
     readEditorState,
     setEditorCurrentSearchHighlightQuery
   } from '$lib/features/notepad/editor/editor';
@@ -184,7 +184,7 @@
     NoteKey,
     ReturnType<typeof createSharedEditorResources>
   >();
-  const sharedEditorStateByNoteKey = new Map<NoteKey, EditorState | null>();
+  const sharedEditorStateByNoteKey = new Map<NoteKey, EditorSnapshot | null>();
   const sharedEditorStateGenerationByNoteKey = new Map<NoteKey, number>();
   const noteSaveTimers = new Map<NoteKey, ReturnType<typeof window.setTimeout>>();
   const noteSaveQueues = new Map<NoteKey, Promise<void>>();
@@ -453,7 +453,7 @@
 
   function setSharedEditorStateForDocument(
     document: NoteDraftState,
-    editorState: EditorState | null
+    editorState: EditorSnapshot | null
   ) {
     if (editorState) {
       sharedEditorStateByNoteKey.set(document.key, editorState);
@@ -537,6 +537,8 @@
 
     sharedEditorStateByNoteKey.delete(noteKey);
     sharedEditorStateGenerationByNoteKey.delete(noteKey);
+    const resources = sharedEditorResourcesByNoteKey.get(noteKey);
+    resources?.destroy();
     sharedEditorResourcesByNoteKey.delete(noteKey);
     noteSaveQueues.delete(noteKey);
   }
@@ -587,6 +589,11 @@
     if (frameId !== undefined) {
       window.cancelAnimationFrame(frameId);
       documentSyncFrameIds.delete(document.key);
+    }
+
+    const runtime = sharedEditorResourcesByNoteKey.get(document.key)?.runtime;
+    if ((runtime?.paneControllers.size ?? 0) > 0) {
+      return;
     }
 
     const sharedEditorState = getSharedEditorStateForDocument(document);
@@ -650,7 +657,7 @@
 
   function saveSharedEditorStateForDocument(
     document: NoteDraftState = getDocumentSession(),
-    editorState: EditorState | null = null,
+    editorState: EditorSnapshot | null = null,
     preferredPaneId: PaneId = getNavigationPaneId()
   ) {
     const paneIds = getPaneIdsForDocument(document);
@@ -746,7 +753,7 @@
     paneId: string,
     document: NoteDraftState,
     nextMarkdown: string,
-    editorState: EditorState | null
+    editorState: EditorSnapshot | null
   ) {
     const resolvedPaneId = paneId as PaneId;
     if (editorState) {
@@ -768,10 +775,6 @@
 
     if (nextMarkdown.trim() !== '') {
       setRecentlyForgotten(null);
-    }
-
-    if (getPaneIdsForDocument(document).length > 1) {
-      scheduleDocumentEditorSync(document);
     }
 
     scheduleAutosave(document);
@@ -2548,6 +2551,7 @@
 <style>
   .notepad-shell {
     --editor-left-padding: 1rem;
+    --editor-handle-lane-width: 2.75rem;
     --editor-right-padding: 1rem;
     --editor-readable-width: 100%;
     --editor-top-padding: 4.6rem;
@@ -2561,6 +2565,7 @@
   @media (min-width: 640px) {
     .notepad-shell {
       --editor-left-padding: 2rem;
+      --editor-handle-lane-width: 3rem;
       --editor-right-padding: 1.4rem;
       --editor-readable-width: 40rem;
       --editor-top-padding: 5.3rem;
@@ -2571,6 +2576,7 @@
   @media (min-width: 1280px) {
     .notepad-shell {
       --editor-left-padding: 2.8rem;
+      --editor-handle-lane-width: 3.1rem;
       --editor-right-padding: 1.8rem;
       --editor-readable-width: 42rem;
     }
@@ -2675,6 +2681,7 @@
   }
 
   .notepad-editor-shell :global(.gn-editor-root) {
+    position: relative;
     height: 100%;
     min-height: 100%;
     width: 100%;
@@ -2686,153 +2693,131 @@
     display: none;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror) {
-    box-sizing: border-box;
-    min-height: 100%;
-    max-width: 100%;
-    width: min(100%, calc(var(--editor-readable-width) + var(--editor-left-padding) + var(--editor-right-padding)));
-    margin-inline: auto;
-    padding-top: var(--editor-top-padding);
-    padding-left: var(--editor-left-padding);
-    padding-right: var(--editor-right-padding);
-    padding-bottom: var(--editor-bottom-padding);
-    overflow-anchor: auto;
-    position: relative;
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly) {
     color: var(--foreground);
-    line-height: 1.75;
-    outline: none;
-    white-space: pre-wrap;
-    word-break: break-word;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror > *) {
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-content) {
     max-width: 100%;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror p),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ol),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror blockquote),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror pre),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror table) {
-    margin: 0.65rem 0;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h1),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h2),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h3),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h4),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h5),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h6) {
-    margin: 1.15rem 0 0.45rem;
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h1) {
+    margin: 0;
+    padding-top: 1.15rem;
+    padding-bottom: 0.45rem;
+    font-size: 2rem;
     font-weight: 700;
-    line-height: 1.25;
+    line-height: 1.2;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h1) { font-size: 2rem; }
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h2) { font-size: 1.6rem; }
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h3) { font-size: 1.32rem; }
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h4),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h5),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror h6) { font-size: 1.08rem; }
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h2) {
+    margin: 0;
+    padding-top: 1.05rem;
+    padding-bottom: 0.4rem;
+    font-size: 1.6rem;
+    font-weight: 700;
+    line-height: 1.24;
+  }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror blockquote) {
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h3),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h4),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h5),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h6) {
+    margin: 0;
+    padding-top: 0.9rem;
+    padding-bottom: 0.35rem;
+    font-weight: 700;
+    line-height: 1.28;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h3) {
+    font-size: 1.32rem;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h4),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h5),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h6) {
+    font-size: 1.08rem;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-quote-line) {
+    margin: 0;
+    padding-top: 0.65rem;
+    padding-bottom: 0.65rem;
     padding-left: 1rem;
     border-left: 3px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
     color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror pre) {
-    overflow-x: auto;
-    padding: 0.95rem 1rem;
-    border-radius: 1rem;
-    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-    background: color-mix(in oklab, var(--muted) 76%, var(--background));
-    font-family: var(--font-mono);
-    font-size: 0.92rem;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror code) {
-    font-family: var(--font-mono);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror p code),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li code),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror blockquote code) {
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-inline) {
     padding: 0.12rem 0.35rem;
     border-radius: 0.4rem;
     background: color-mix(in oklab, var(--muted) 80%, var(--background));
     color: var(--destructive);
+    font-family: var(--font-mono);
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul),
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ol) {
-    padding-left: 1.4rem;
-    list-style-position: outside;
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-block),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-container) {
+    margin: 0.65rem 0;
+    border-radius: 1rem;
+    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+    background: color-mix(in oklab, var(--muted) 76%, var(--background));
+    overflow: hidden;
   }
 
-  /* Tailwind preflight sets list-style: none on ul/ol — restore markers in the editor */
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul:not([data-task-list='true'])) {
-    list-style-type: disc;
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-header) {
+    border-bottom: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
+    background: color-mix(in oklab, var(--muted) 64%, var(--background));
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ol) {
-    list-style-type: decimal;
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-line),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-block-line) {
+    font-family: var(--font-mono);
+    font-size: 0.92rem;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror ul[data-task-list='true']) {
-    padding-left: 0;
-    list-style: none;
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-line) {
+    margin: 0;
+    padding-top: 0.12rem;
+    padding-bottom: 0.12rem;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li[data-checked]) {
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol) {
+    display: block !important;
+    align-items: initial !important;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-indent) {
+    display: none !important;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul .cm-draftly-list-mark-ul),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol .cm-draftly-list-mark-ol) {
+    display: inline-block;
+    width: 1rem;
+    vertical-align: top;
     position: relative;
-    padding-left: 2.08rem;
-    list-style: none;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li[data-checked]::before) {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0.28rem;
-    width: 1.28rem;
-    height: 1.28rem;
-    border-radius: 0.24rem;
-    border: 1px solid var(--gn-task-checkbox-border);
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-content) {
+    display: inline;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-checkbox) {
+    border-color: var(--gn-task-checkbox-border);
     background: var(--gn-task-checkbox-bg);
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li[data-checked='true']::before) {
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-checkbox.checked) {
     border-color: var(--gn-task-checkbox-checked-border);
     background: var(--gn-task-checkbox-checked-bg);
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror li[data-checked='true']::after) {
-    content: '';
-    position: absolute;
-    left: 0.35rem;
-    top: 0.69rem;
-    width: 0.6rem;
-    height: 0.34rem;
-    border-left: 2px solid var(--gn-task-checkbox-check);
-    border-bottom: 2px solid var(--gn-task-checkbox-check);
-    transform: rotate(-45deg);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .crepe-placeholder::before) {
-    content: attr(data-placeholder);
-    position: absolute;
-    color: color-mix(in oklab, var(--muted-foreground) 82%, transparent);
-    pointer-events: none;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror *::selection) {
-    background: var(--gn-editor-selection-background);
-    color: var(--gn-editor-selection-color);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-current-search-highlight) {
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-current-search-highlight) {
     border-radius: 0.28rem;
     background: color-mix(in oklab, var(--accent) 76%, var(--foreground) 24%);
     box-shadow:
@@ -2840,7 +2825,7 @@
       0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent);
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-wikilink) {
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-wikilink) {
     border-radius: 0.35rem;
     background: color-mix(in oklab, var(--accent) 54%, transparent);
     color: color-mix(in oklab, var(--foreground) 88%, var(--accent-foreground) 12%);
@@ -2850,7 +2835,7 @@
     text-underline-offset: 0.14em;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .ProseMirror .gn-image-upload-placeholder) {
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-image-upload-placeholder) {
     display: inline-flex;
     align-items: center;
     padding: 0.45rem 0.7rem;
@@ -2859,6 +2844,33 @@
     background: color-mix(in oklab, var(--card) 92%, var(--background));
     color: color-mix(in oklab, var(--foreground) 72%, transparent);
     font-size: 0.92rem;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-image-embed) {
+    display: inline-flex;
+    position: relative;
+    margin: 0.5rem 0;
+    border-radius: 1rem;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--muted) 74%, var(--background));
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-image-embed img) {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-image-embed-resize-handle) {
+    position: absolute;
+    right: 0.35rem;
+    bottom: 0.35rem;
+    width: 0.95rem;
+    height: 0.95rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--foreground) 72%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--background) 84%, transparent);
+    cursor: nwse-resize;
   }
 
   .notepad-editor-shell :global(.gn-editor-root .notepad-block-drop-indicator) {

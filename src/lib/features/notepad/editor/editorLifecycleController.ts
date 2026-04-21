@@ -1,4 +1,3 @@
-import type { EditorState } from 'prosemirror-state';
 import { tick } from 'svelte';
 import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
 import { loadCursorPosition, saveCursorPosition } from '$lib/features/notepad/editor/cursorState';
@@ -12,6 +11,7 @@ import {
   replaceEditorDocument,
   restoreCursorPosition,
   type EditorController,
+  type EditorSnapshot,
   type EditorViewCallbacks,
   type SharedEditorResources
 } from '$lib/features/notepad/editor/editor';
@@ -37,15 +37,15 @@ interface EditorLifecycleControllerDeps {
   getEditorShell: () => HTMLDivElement | null;
   getEditorRoot: () => HTMLDivElement | null;
   getDocumentSession: () => NoteDraftState;
-  getSharedEditorState: (document: NoteDraftState) => EditorState | null;
-  setSharedEditorState: (document: NoteDraftState, editorState: EditorState | null) => void;
+  getSharedEditorState: (document: NoteDraftState) => EditorSnapshot | null;
+  setSharedEditorState: (document: NoteDraftState, editorState: EditorSnapshot | null) => void;
   setIsEditorReady: (value: boolean) => void;
   setIsApplyingExternalContent: (value: boolean) => void;
   handleEditorMarkdownChange: (
     paneId: string,
     document: NoteDraftState,
     nextMarkdown: string,
-    editorState: EditorState | null
+    editorState: EditorSnapshot | null
   ) => void;
   getSharedEditorResources: (document: NoteDraftState) => SharedEditorResources;
   getViewCallbacks: () => EditorViewCallbacks;
@@ -115,7 +115,7 @@ export function createEditorLifecycleController({
 
   function saveSharedEditorStateForDocument(
     document: NoteDraftState = getDocumentSession(),
-    editorState: EditorState | null = readEditorState(getController())
+    editorState: EditorSnapshot | null = readEditorState(getController())
   ) {
     setSharedEditorState(document, editorState);
   }
@@ -264,7 +264,7 @@ export function createEditorLifecycleController({
 
     const sharedEditorState = getSharedEditorStateForDocument(document);
     if (
-      !replaceEditorDocument(getController(), sharedEditorState?.doc ?? null, {
+      !replaceEditorDocument(getController(), sharedEditorState?.markdown ?? null, {
         anchor: loadCursorPosition(document.currentNotePath, getPaneId())?.anchor ?? null,
         head: loadCursorPosition(document.currentNotePath, getPaneId())?.head ?? null,
         focus: false,
@@ -300,7 +300,7 @@ export function createEditorLifecycleController({
     setIsApplyingExternalContent(true);
     try {
       if (
-        !replaceEditorDocument(controller, sharedEditorState.doc, {
+        !replaceEditorDocument(controller, sharedEditorState.markdown, {
           anchor: cursorPosition?.anchor ?? null,
           head: cursorPosition?.head ?? null,
           focus: false,

@@ -69,7 +69,7 @@
   class="notepad-block-handle"
   data-show="false"
   data-dragging="false"
-  style="position: fixed"
+  style="position: absolute"
 >
   <button
     type="button"
@@ -93,11 +93,12 @@
 
 <style>
   .notepad-block-handle {
-    position: fixed;
-    z-index: 8;
+    position: absolute;
+    z-index: 80;
     display: flex;
     align-items: center;
     gap: 0.3rem;
+    pointer-events: auto;
     color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
   }
 

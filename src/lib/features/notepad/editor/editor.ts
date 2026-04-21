@@ -1,63 +1,40 @@
-import {
-  baseKeymap,
-  chainCommands,
-  createParagraphNear,
-  liftEmptyBlock,
-  newlineInCode,
-  splitBlockKeepMarks
-} from 'prosemirror-commands';
-import { dropCursor } from 'prosemirror-dropcursor';
-import { gapCursor } from 'prosemirror-gapcursor';
-import { history, redo, undo } from 'prosemirror-history';
-import {
-  InputRule,
-  inputRules,
-  textblockTypeInputRule,
-  undoInputRule,
-  wrappingInputRule
-} from 'prosemirror-inputrules';
-import { keymap } from 'prosemirror-keymap';
-import type { Node as ProseMirrorNode } from 'prosemirror-model';
-import {
-  EditorState,
-  Plugin,
-  PluginKey,
-  Selection,
-  TextSelection
-} from 'prosemirror-state';
-import type { Transaction } from 'prosemirror-state';
-import { liftListItem, sinkListItem, splitListItemKeepMarks } from 'prosemirror-schema-list';
-import { tableEditing } from 'prosemirror-tables';
-import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
+import { isolateHistory, redo, undo } from '@codemirror/commands';
+import { Annotation, EditorState, type Extension, StateEffect, StateField, Transaction } from '@codemirror/state';
+import { Decoration, EditorView, ViewPlugin, WidgetType, keymap } from '@codemirror/view';
+import { draftly } from 'draftly/src/editor/draftly';
 import { tick } from 'svelte';
-import { createTaskListTransaction } from '$lib/features/notepad/editor/blockTypes';
-import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
-import { resolveBlockContext, selectionTouchesBlock } from '$lib/features/notepad/editor/blockTypeMenu';
-import { getEditorProseSurface } from '$lib/features/notepad/editor/editorDom';
-import { setSlashMenuFloatingReference } from '$lib/features/notepad/editor/slashMenu';
 import {
-  findAncestorNode,
-  isDocEmpty,
-  isInCodeContext,
-  isInList
-} from '$lib/features/notepad/editor/editorSelection';
-import { parseMarkdown, serializeMarkdown } from '$lib/features/notepad/editor/markdown';
-import { notepadSchema } from '$lib/features/notepad/editor/schema';
+  applyBlockTypeSelection,
+  deleteCurrentBlock,
+  describeBlockAt,
+  getClipboardMarkdownForCurrentBlock,
+  insertParagraphBelow,
+  listBlocks,
+  moveBlockTo,
+  moveCurrentBlock,
+  type BlockDescriptor
+} from '$lib/features/notepad/editor/blockTypes';
+import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
+import { notepadDraftlyPlugins } from '$lib/features/notepad/editor/draftlyPlugins';
+import { getEditorProseSurface } from '$lib/features/notepad/editor/editorDom';
+import {
+  createSlashMenuPlugin,
+  setSlashMenuFloatingReference,
+  type SlashMenuAPI
+} from '$lib/features/notepad/editor/slashMenu';
 import { mountBlockHandle } from '$lib/features/notepad/editor/blockHandleMount';
-import { createSlashMenuPlugin, type SlashMenuAPI } from '$lib/features/notepad/editor/slashMenu';
-import { createImageEmbedsPlugin } from '$lib/features/notepad/images/imageEmbeds';
+import { createImageEmbedsExtension } from '$lib/features/notepad/images/imageEmbeds';
 import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
-import { createImagePastePlugin } from '$lib/features/notepad/images/imagePaste';
+import { createImagePasteExtension } from '$lib/features/notepad/images/imagePaste';
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
-import { createWikilinksPlugin, type ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
+import { createWikilinksExtension, type ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 import { keyboardShortcutMatchesEvent, usesNativeCutShortcut } from '$lib/keyboardShortcuts';
 
 interface CreateEditorOptions {
   editorRoot: HTMLDivElement;
   initialValue: string;
   onMarkdownChange: (markdown: string) => void;
-  initialState?: EditorState | null;
-  onDispatchTransaction?: (controller: EditorController, transaction: Transaction) => void;
+  initialState?: EditorSnapshot | null;
   sharedResources?: SharedEditorResources | null;
   viewCallbacks?: EditorViewCallbacks;
 }
@@ -78,10 +55,22 @@ interface ReplaceEditorDocumentOptions {
   scrollSelectionIntoView?: boolean;
 }
 
+export interface EditorSelection {
+  anchor: number;
+  head: number;
+}
+
+export interface EditorSnapshot {
+  markdown: string;
+  selection: EditorSelection;
+  revision: number;
+}
+
 export interface EditorController {
   view: EditorView;
-  plugins: Plugin[];
   sharedResources: SharedEditorResources | null;
+  paneKey: symbol;
+  onMarkdownChange: (markdown: string) => void;
 }
 
 export interface EditorViewCallbacks {
@@ -90,10 +79,13 @@ export interface EditorViewCallbacks {
 }
 
 export interface SharedEditorResources {
-  plugins: Plugin[];
+  imagesConfig: ImagesConfig;
   registerViewCallbacks: (view: EditorView, callbacks: EditorViewCallbacks) => void;
   unregisterViewCallbacks: (view: EditorView) => void;
   setCurrentSearchHighlightQuery: (query: string | null) => void;
+  resolveViewCallbacks?: (view: EditorView) => EditorViewCallbacks | null;
+  runtime: FileEditorRuntime;
+  destroy: () => void;
 }
 
 interface CreateSharedEditorResourcesOptions {
@@ -102,38 +94,1057 @@ interface CreateSharedEditorResourcesOptions {
   onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
 }
 
-interface CurrentSearchHighlightPluginState {
-  query: string;
-  decorations: DecorationSet;
+interface RuntimeReplaceOptions {
+  flushHistory?: boolean;
+  selectionByPaneKey?: Map<symbol, EditorSelection>;
+  preferredPaneKey?: symbol | null;
 }
 
-interface CurrentSearchHighlightTextSegment {
-  from: number;
-  startOffset: number;
-  endOffset: number;
-}
-
-interface CurrentSearchHighlightUpdate {
-  query: string;
-}
-
-interface SelectedBlockContext {
-  node: ProseMirrorNode;
-  pos: number;
-  depth: number;
-  index: number;
-  parent: ProseMirrorNode;
-  parentStart: number;
-  listContainer:
-    | {
-        node: ProseMirrorNode;
-        pos: number;
+const syncAnnotation = Annotation.define<boolean>();
+const setSearchQueryEffect = StateEffect.define<string>();
+const searchQueryField = StateField.define<string>({
+  create() {
+    return '';
+  },
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setSearchQueryEffect)) {
+        return effect.value;
       }
-    | null;
+    }
+    return value;
+  }
+});
+
+function clampPos(doc: EditorState['doc'], pos: number | null | undefined) {
+  return Math.max(0, Math.min(pos ?? 0, doc.length));
 }
 
-const CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY =
-  new PluginKey<CurrentSearchHighlightPluginState>('NOTEPAD_CURRENT_SEARCH_HIGHLIGHT');
+function normalizeSearchQuery(query: string | null | undefined) {
+  return query?.trim().toLowerCase() ?? '';
+}
+
+function buildSearchHighlightDecorations(state: EditorState, query: string) {
+  if (query === '') {
+    return Decoration.none;
+  }
+
+  const decorations = [];
+  const text = state.doc.toString().toLowerCase();
+  let searchFrom = 0;
+
+  while (searchFrom < text.length) {
+    const matchStart = text.indexOf(query, searchFrom);
+    if (matchStart === -1) {
+      break;
+    }
+
+    decorations.push(
+      Decoration.mark({ class: 'gn-current-search-highlight' }).range(
+        matchStart,
+        matchStart + query.length
+      )
+    );
+    searchFrom = matchStart + query.length;
+  }
+
+  return Decoration.set(decorations, true);
+}
+
+function createSearchHighlightExtension() {
+  return ViewPlugin.fromClass(
+    class {
+      decorations;
+
+      constructor(readonly view: EditorView) {
+        this.decorations = buildSearchHighlightDecorations(
+          view.state,
+          view.state.field(searchQueryField)
+        );
+      }
+
+      update(update: import('@codemirror/view').ViewUpdate) {
+        if (update.docChanged || update.selectionSet || update.startState.field(searchQueryField) !== update.state.field(searchQueryField)) {
+          this.decorations = buildSearchHighlightDecorations(
+            update.state,
+            update.state.field(searchQueryField)
+          );
+        }
+      }
+    },
+    {
+      decorations: (value) => value.decorations
+    }
+  );
+}
+
+function readSelection(view: EditorView): EditorSelection {
+  const selection = view.state.selection.main;
+  return {
+    anchor: selection.anchor,
+    head: selection.head
+  };
+}
+
+function createRootState(markdown: string) {
+  return EditorState.create({
+    doc: markdown,
+    extensions: [
+      draftly({
+        baseStyles: false,
+        defaultKeybindings: false,
+        history: true,
+        lineWrapping: true,
+        plugins: notepadDraftlyPlugins
+      })
+    ]
+  });
+}
+
+function createPaneState(
+  markdown: string,
+  extensions: readonly Extension[],
+  initialSelection: EditorSelection | null = null
+) {
+  return EditorState.create({
+    doc: markdown,
+    selection: initialSelection
+      ? {
+          anchor: Math.max(0, initialSelection.anchor),
+          head: Math.max(0, initialSelection.head)
+        }
+      : undefined,
+    extensions
+  });
+}
+
+const unavailableImagesConfig: ImagesConfig = {
+  assetRootPath: null,
+  storePastedImage: async () => {
+    throw new Error('Image pasting unavailable for this editor instance.');
+  }
+};
+
+class FileEditorRuntime {
+  readonly rootView: EditorView;
+  readonly paneControllers = new Map<symbol, EditorController>();
+  revision = 0;
+
+  constructor(initialMarkdown = '') {
+    this.rootView = new EditorView({
+      state: createRootState(initialMarkdown),
+      dispatchTransactions: (transactions, view) => {
+        this.applyRootTransactions(view, transactions, null);
+      }
+    });
+  }
+
+  get markdown() {
+    return this.rootView.state.doc.toString();
+  }
+
+  attachController(controller: EditorController) {
+    this.paneControllers.set(controller.paneKey, controller);
+  }
+
+  detachController(controller: EditorController) {
+    this.paneControllers.delete(controller.paneKey);
+  }
+
+  destroy() {
+    this.rootView.destroy();
+    this.paneControllers.clear();
+  }
+
+  ensureMarkdown(markdown: string) {
+    if (this.paneControllers.size > 0 || this.markdown === markdown) {
+      return;
+    }
+    this.replaceMarkdown(markdown, { flushHistory: true });
+  }
+
+  dispatchFromPane(controller: EditorController, transactions: readonly Transaction[]) {
+    controller.view.update(transactions);
+
+    const docChangedTransactions = transactions.filter(
+      (transaction) => transaction.docChanged && !transaction.annotation(syncAnnotation)
+    );
+    if (docChangedTransactions.length === 0) {
+      return;
+    }
+
+    for (const transaction of docChangedTransactions) {
+      const spec = {
+        changes: transaction.changes,
+        annotations: collectHistoryAnnotations(transaction)
+      };
+      this.rootView.update([this.rootView.state.update(spec)]);
+    }
+
+    this.revision += 1;
+    this.broadcastTransactions(docChangedTransactions, controller.paneKey);
+    this.notifyMarkdownChange(controller.paneKey);
+  }
+
+  applyRootTransactions(
+    view: EditorView,
+    transactions: readonly Transaction[],
+    preferredPaneKey: symbol | null
+  ) {
+    view.update(transactions);
+    const docChangedTransactions = transactions.filter((transaction) => transaction.docChanged);
+    if (docChangedTransactions.length === 0) {
+      return;
+    }
+
+    this.revision += 1;
+    this.broadcastTransactions(docChangedTransactions, null);
+    this.notifyMarkdownChange(preferredPaneKey);
+  }
+
+  replaceMarkdown(markdown: string, options: RuntimeReplaceOptions = {}) {
+    if (!options.flushHistory && this.markdown === markdown) {
+      return false;
+    }
+
+    const selectionByPaneKey = options.selectionByPaneKey ?? new Map<symbol, EditorSelection>();
+    if (options.flushHistory) {
+      this.rootView.setState(createRootState(markdown));
+    } else {
+      this.rootView.update([
+        this.rootView.state.update({
+          changes: { from: 0, to: this.rootView.state.doc.length, insert: markdown },
+          annotations: [Transaction.addToHistory.of(false), isolateHistory.of('full')]
+        })
+      ]);
+    }
+
+    for (const [paneKey, controller] of this.paneControllers) {
+      const selection = selectionByPaneKey.get(paneKey) ?? readSelection(controller.view);
+      controller.view.dispatch(
+        controller.view.state.update({
+          changes: { from: 0, to: controller.view.state.doc.length, insert: markdown },
+          selection,
+          annotations: [syncAnnotation.of(true), Transaction.addToHistory.of(false), isolateHistory.of('full')]
+        })
+      );
+    }
+
+    this.revision += 1;
+    this.notifyMarkdownChange(options.preferredPaneKey ?? null);
+    return true;
+  }
+
+  applyExternalSnapshot(snapshot: EditorSnapshot, controller: EditorController | null, flushHistory = false) {
+    const selectionByPaneKey = new Map<symbol, EditorSelection>();
+    for (const [paneKey, paneController] of this.paneControllers) {
+      if (controller && paneKey === controller.paneKey) {
+        selectionByPaneKey.set(paneKey, snapshot.selection);
+      } else {
+        selectionByPaneKey.set(paneKey, readSelection(paneController.view));
+      }
+    }
+
+    return this.replaceMarkdown(snapshot.markdown, {
+      flushHistory,
+      selectionByPaneKey,
+      preferredPaneKey: controller?.paneKey ?? null
+    });
+  }
+
+  undo(preferredPaneKey: symbol | null) {
+    return undo({
+      state: this.rootView.state,
+      dispatch: (transaction) => this.applyRootTransactions(this.rootView, [transaction], preferredPaneKey)
+    });
+  }
+
+  redo(preferredPaneKey: symbol | null) {
+    return redo({
+      state: this.rootView.state,
+      dispatch: (transaction) => this.applyRootTransactions(this.rootView, [transaction], preferredPaneKey)
+    });
+  }
+
+  snapshotFor(controller: EditorController): EditorSnapshot {
+    return {
+      markdown: this.markdown,
+      selection: readSelection(controller.view),
+      revision: this.revision
+    };
+  }
+
+  private broadcastTransactions(transactions: readonly Transaction[], sourcePaneKey: symbol | null) {
+    for (const [paneKey, controller] of this.paneControllers) {
+      if (sourcePaneKey && paneKey === sourcePaneKey) {
+        continue;
+      }
+
+      const updates = transactions.map((transaction) =>
+        controller.view.state.update({
+          changes: transaction.changes,
+          annotations: [syncAnnotation.of(true), Transaction.addToHistory.of(false)]
+        })
+      );
+      controller.view.update(updates);
+    }
+  }
+
+  private notifyMarkdownChange(preferredPaneKey: symbol | null) {
+    const preferredController = preferredPaneKey ? this.paneControllers.get(preferredPaneKey) : null;
+    const controller = preferredController ?? this.paneControllers.values().next().value ?? null;
+    controller?.onMarkdownChange(this.markdown);
+  }
+}
+
+function collectHistoryAnnotations(transaction: Transaction) {
+  const annotations = [];
+  const userEvent = transaction.annotation(Transaction.userEvent);
+  if (userEvent) {
+    annotations.push(Transaction.userEvent.of(userEvent));
+  }
+  const historyBoundary = transaction.annotation(isolateHistory);
+  if (historyBoundary) {
+    annotations.push(isolateHistory.of(historyBoundary));
+  }
+  return annotations;
+}
+
+function createLayoutTheme() {
+  return EditorView.theme({
+    '&.cm-editor.cm-draftly': {
+      height: '100%',
+      minHeight: '100%',
+      border: 'none',
+      outline: 'none',
+      background: 'transparent'
+    },
+    '&.cm-editor.cm-draftly.cm-focused': {
+      outline: 'none'
+    },
+    '&.cm-editor.cm-draftly .cm-cursor, &.cm-editor.cm-draftly .cm-dropCursor': {
+      borderLeftColor: 'var(--foreground) !important'
+    },
+    '&.cm-editor.cm-draftly .cm-scroller': {
+      fontFamily: 'inherit',
+      lineHeight: '1.75'
+    },
+    '&.cm-editor.cm-draftly .cm-content': {
+      boxSizing: 'border-box',
+      minHeight: '100%',
+      maxWidth: '100%',
+      width: 'min(100%, calc(var(--editor-readable-width) + var(--editor-left-padding) + var(--editor-handle-lane-width) + var(--editor-right-padding)))',
+      margin: '0 auto',
+      paddingTop: 'var(--editor-top-padding)',
+      paddingLeft: 'calc(var(--editor-left-padding) + var(--editor-handle-lane-width))',
+      paddingRight: 'var(--editor-right-padding)',
+      paddingBottom: 'var(--editor-bottom-padding)',
+      color: 'var(--foreground)',
+      caretColor: 'var(--foreground)',
+      overflowAnchor: 'auto',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word'
+    },
+    '&.cm-editor.cm-draftly .cm-selectionBackground': {
+      backgroundColor: 'var(--gn-editor-selection-background) !important'
+    },
+    '&.cm-editor.cm-draftly .cm-line': {
+      paddingInline: 0
+    }
+  });
+}
+
+function createEditorShortcuts(controller: () => EditorController | null) {
+  return EditorView.domEventHandlers({
+    keydown: (event, view) => {
+      const current = controller();
+      const runtime = current?.sharedResources?.runtime ?? null;
+
+      if (keyboardShortcutMatchesEvent(event, 'editorUndo')) {
+        event.preventDefault();
+        return runtime ? runtime.undo(current?.paneKey ?? null) : undo(view);
+      }
+
+      if (
+        keyboardShortcutMatchesEvent(event, 'editorRedo') ||
+        keyboardShortcutMatchesEvent(event, 'editorRedoAlternate')
+      ) {
+        event.preventDefault();
+        return runtime ? runtime.redo(current?.paneKey ?? null) : redo(view);
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorInsertBelow')) {
+        event.preventDefault();
+        return insertParagraphBelow(view);
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorMoveLineUp')) {
+        event.preventDefault();
+        return moveCurrentBlock(view, -1);
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorMoveLineDown')) {
+        event.preventDefault();
+        return moveCurrentBlock(view, 1);
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorCutLine')) {
+        if (usesNativeCutShortcut('editorCutLine') || !view.state.selection.main.empty) {
+          return false;
+        }
+
+        const markdown = getClipboardMarkdownForCurrentBlock(view);
+        if (!markdown) {
+          return false;
+        }
+
+        event.preventDefault();
+        void navigator.clipboard
+          .writeText(markdown)
+          .then(() => {
+            deleteCurrentBlock(view);
+          })
+          .catch((error) => {
+            console.error('Failed to copy block markdown to clipboard:', error);
+          });
+        return true;
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorHardBreak')) {
+        event.preventDefault();
+        const selection = view.state.selection.main;
+        view.dispatch(
+          view.state.update({
+            changes: { from: selection.from, to: selection.to, insert: '\n' },
+            selection: { anchor: selection.from + 1 }
+          })
+        );
+        return true;
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorIndentList')) {
+        event.preventDefault();
+        return adjustListIndent(view, 2);
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorOutdentList')) {
+        event.preventDefault();
+        return adjustListIndent(view, -2);
+      }
+
+      return false;
+    }
+  });
+}
+
+function adjustListIndent(view: EditorView, amount: number) {
+  const selection = view.state.selection.main;
+  const startLine = view.state.doc.lineAt(selection.from).number;
+  const endLine = view.state.doc.lineAt(selection.to).number;
+  const changes = [];
+
+  for (let lineNo = startLine; lineNo <= endLine; lineNo += 1) {
+    const line = view.state.doc.line(lineNo);
+    if (!/^(\s*)(?:[-+*]|\d+\.)\s+/.test(line.text)) {
+      continue;
+    }
+
+    if (amount > 0) {
+      changes.push({ from: line.from, to: line.from, insert: ' '.repeat(amount) });
+    } else {
+      const removable = Math.min(Math.abs(amount), line.text.match(/^\s*/)?.[0]?.length ?? 0);
+      if (removable > 0) {
+        changes.push({ from: line.from, to: line.from + removable, insert: '' });
+      }
+    }
+  }
+
+  if (changes.length === 0) {
+    return false;
+  }
+
+  view.dispatch(view.state.update({ changes }));
+  return true;
+}
+
+function createWikilinkExtensions(sharedResources: SharedEditorResources | null) {
+  return createWikilinksExtension({
+    resolveCallbacks: (view) => sharedResources?.resolveViewCallbacks?.(view) ?? null
+  });
+}
+
+interface VisualLineAnchor {
+  block: BlockDescriptor;
+  from: number;
+  to: number;
+  lineNumber: number;
+  docTop: number;
+  docBottom: number;
+  centerDocY: number;
+  isBlank: boolean;
+}
+
+interface HandleLaneMetrics {
+  rootTop: number;
+  left: number;
+  textLeft: number;
+  paddingLeft: number;
+  surfaceWidth: number;
+  handleHeight: number;
+}
+
+interface DropSlot {
+  target: BlockDescriptor;
+  before: boolean;
+  indicatorDocY: number;
+}
+
+function createBlockHandleExtension(
+  editorRoot: HTMLDivElement,
+  showSlashMenu: (view: EditorView, pos: number) => void
+) {
+  return ViewPlugin.fromClass(
+    class {
+      readonly #view: EditorView;
+      readonly #editorRoot: HTMLDivElement;
+      readonly #scrollRoot: HTMLElement | null;
+      readonly #dropIndicator: HTMLDivElement;
+      readonly #unmountBlockHandle: () => void;
+      #destroyed = false;
+      #measureQueued = false;
+      #hoveringHandle = false;
+      #content: HTMLDivElement | null = null;
+      #addButton: HTMLButtonElement | null = null;
+      #dragButton: HTMLButtonElement | null = null;
+      #currentBlock: BlockDescriptor | null = null;
+      #pendingAnchor: VisualLineAnchor | null = null;
+      #laneMetrics: HandleLaneMetrics | null = null;
+      #laneDirty = true;
+      #dropSlots: DropSlot[] | null = null;
+      #dropSlotsDirty = true;
+      #pointerX = 0;
+      #pointerY = 0;
+      #drag:
+        | {
+            pointerId: number;
+            startX: number;
+            startY: number;
+            source: BlockDescriptor;
+            before: boolean;
+            target: BlockDescriptor | null;
+            dragging: boolean;
+            indicatorDocY: number | null;
+          }
+        | null = null;
+
+      constructor(view: EditorView) {
+        this.#view = view;
+        this.#editorRoot = editorRoot;
+        this.#scrollRoot = this.#editorRoot.closest<HTMLElement>('.notepad-editor-shell');
+        this.#dropIndicator = document.createElement('div');
+        this.#dropIndicator.className = 'notepad-block-drop-indicator';
+        this.#dropIndicator.dataset.show = 'false';
+        this.#dropIndicator.style.position = 'fixed';
+        this.#editorRoot.appendChild(this.#dropIndicator);
+
+        this.#unmountBlockHandle = mountBlockHandle(this.#editorRoot, (refs) => {
+          this.#content = refs.content;
+          this.#addButton = refs.addButton;
+          this.#dragButton = refs.dragButton;
+          refs.addButton.style.display = 'none';
+
+          refs.content.addEventListener('pointerenter', this.handleHandlePointerEnter);
+          refs.content.addEventListener('pointerleave', this.handleHandlePointerLeave);
+          refs.addButton.addEventListener('click', this.handleAddClick);
+          refs.dragButton.addEventListener('pointerdown', this.handleDragPointerDown);
+        });
+
+        this.#editorRoot.addEventListener('mousemove', this.handleMouseMove, true);
+        this.#editorRoot.addEventListener('mouseleave', this.handleMouseLeave, true);
+        this.#scrollRoot?.addEventListener('scroll', this.handleScroll, true);
+      }
+
+      update(update: import('@codemirror/view').ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
+          this.#laneDirty = true;
+          this.#dropSlotsDirty = true;
+        }
+        if (update.docChanged || update.selectionSet || update.viewportChanged) {
+          this.scheduleCurrentBlockSync();
+        }
+      }
+
+      destroy() {
+        this.#destroyed = true;
+        this.#editorRoot.removeEventListener('mousemove', this.handleMouseMove, true);
+        this.#editorRoot.removeEventListener('mouseleave', this.handleMouseLeave, true);
+        this.#scrollRoot?.removeEventListener('scroll', this.handleScroll, true);
+        window.removeEventListener('pointermove', this.handleWindowPointerMove, true);
+        window.removeEventListener('pointerup', this.handleWindowPointerUp, true);
+        window.removeEventListener('pointercancel', this.handleWindowPointerUp, true);
+        this.#dropIndicator.remove();
+        this.#content?.removeEventListener('pointerenter', this.handleHandlePointerEnter);
+        this.#content?.removeEventListener('pointerleave', this.handleHandlePointerLeave);
+        this.#unmountBlockHandle();
+      }
+
+      private handleMouseMove = (event: MouseEvent) => {
+        this.#pointerX = event.clientX;
+        this.#pointerY = event.clientY;
+        if (this.#drag?.dragging) {
+          return;
+        }
+
+        const anchor = this.resolveAnchorAtClientY(event.clientY);
+        if (!anchor) {
+          this.hideHandle();
+          return;
+        }
+
+        if (
+          this.#currentBlock &&
+          this.#currentBlock.from === anchor.block.from &&
+          this.#currentBlock.to === anchor.block.to &&
+          this.#content?.dataset.show === 'true' &&
+          !this.#laneDirty
+        ) {
+          return;
+        }
+
+        this.#pendingAnchor = anchor;
+        this.scheduleCurrentBlockSync();
+      };
+
+      private handleMouseLeave = (event: MouseEvent) => {
+        if (!this.#drag?.dragging) {
+          const relatedTarget = event.relatedTarget;
+          if (relatedTarget instanceof Node && this.#content?.contains(relatedTarget)) {
+            return;
+          }
+          if (this.#hoveringHandle) {
+            return;
+          }
+          this.hideHandle();
+        }
+      };
+
+      private handleHandlePointerEnter = () => {
+        this.#hoveringHandle = true;
+      };
+
+      private handleHandlePointerLeave = (event: PointerEvent) => {
+        this.#hoveringHandle = false;
+        if (this.#drag?.dragging) {
+          return;
+        }
+
+        const relatedTarget = event.relatedTarget;
+        if (relatedTarget instanceof Node && this.#editorRoot.contains(relatedTarget)) {
+          return;
+        }
+
+        this.hideHandle();
+      };
+
+      private handleScroll = () => {
+        this.#laneDirty = true;
+        if (this.#currentBlock) {
+          this.syncCurrentBlock();
+        }
+        if (this.#drag?.dragging) {
+          this.renderDropIndicator();
+        }
+      };
+
+      private handleAddClick = () => {
+        if (!this.#currentBlock) {
+          return;
+        }
+        insertParagraphBelow(this.#view, this.#currentBlock);
+      };
+
+      private handleDragPointerDown = (event: PointerEvent) => {
+        if (!this.#currentBlock || !this.#dragButton) {
+          return;
+        }
+
+        event.preventDefault();
+        this.#drag = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          source: this.#currentBlock,
+          before: true,
+          target: null,
+          dragging: false,
+          indicatorDocY: null
+        };
+        this.#dropSlotsDirty = true;
+        window.addEventListener('pointermove', this.handleWindowPointerMove, true);
+        window.addEventListener('pointerup', this.handleWindowPointerUp, true);
+        window.addEventListener('pointercancel', this.handleWindowPointerUp, true);
+      };
+
+      private handleWindowPointerMove = (event: PointerEvent) => {
+        const drag = this.#drag;
+        if (!drag || event.pointerId !== drag.pointerId) {
+          return;
+        }
+
+        const movedEnough =
+          Math.abs(event.clientX - drag.startX) > 5 || Math.abs(event.clientY - drag.startY) > 5;
+        if (!drag.dragging && !movedEnough) {
+          return;
+        }
+
+        drag.dragging = true;
+        this.#content?.setAttribute('data-dragging', 'true');
+        const slot = this.resolveDropSlot(event.clientY);
+        if (!slot) {
+          this.hideDropIndicator();
+          return;
+        }
+
+        drag.target = slot.target;
+        drag.before = slot.before;
+        drag.indicatorDocY = slot.indicatorDocY;
+        this.renderDropIndicator();
+      };
+
+      private handleWindowPointerUp = (event: PointerEvent) => {
+        const drag = this.#drag;
+        if (!drag || event.pointerId !== drag.pointerId) {
+          return;
+        }
+
+        window.removeEventListener('pointermove', this.handleWindowPointerMove, true);
+        window.removeEventListener('pointerup', this.handleWindowPointerUp, true);
+        window.removeEventListener('pointercancel', this.handleWindowPointerUp, true);
+
+        this.#content?.setAttribute('data-dragging', 'false');
+        this.hideDropIndicator();
+
+        if (!drag.dragging) {
+          this.focusBlock(drag.source);
+          if (this.#dragButton) {
+            setSlashMenuFloatingReference(this.#view, this.#dragButton);
+          }
+          showSlashMenu(this.#view, drag.source.from);
+          this.#drag = null;
+          return;
+        }
+
+        if (
+          drag.target &&
+          (drag.target.from !== drag.source.from || drag.target.to !== drag.source.to)
+        ) {
+          moveBlockTo(this.#view, drag.source, drag.target, drag.before);
+        }
+
+        this.#drag = null;
+      };
+
+      private focusBlock(block: BlockDescriptor) {
+        this.#view.dispatch(
+          this.#view.state.update({
+            selection: { anchor: block.from, head: block.from },
+            scrollIntoView: true,
+            annotations: [isolateHistory.of('full')]
+          })
+        );
+        this.#view.focus();
+      }
+
+      private scheduleCurrentBlockSync() {
+        if (this.#measureQueued || this.#destroyed) {
+          return;
+        }
+
+        this.#measureQueued = true;
+        this.#view.requestMeasure({
+          read: () => {
+            const anchor =
+              this.#pendingAnchor ??
+              (this.#currentBlock ? this.resolveAnchorAtClientY(this.#pointerY) : null);
+            if (!anchor) {
+              return null;
+            }
+
+            const placement = this.measureHandlePlacement(anchor, this.readHandleLaneMetrics());
+            if (!placement) {
+              return null;
+            }
+
+            return { anchor, ...placement };
+          },
+          write: (measurement) => {
+            this.#measureQueued = false;
+            if (this.#destroyed || !measurement) {
+              return;
+            }
+
+            this.#pendingAnchor = null;
+            this.#currentBlock = measurement.anchor.block;
+            this.renderMeasuredHandle(
+              measurement.left,
+              measurement.top,
+              measurement.anchor.block.from
+            );
+          }
+        });
+      }
+
+      private syncCurrentBlock() {
+        if (!this.#currentBlock) {
+          return;
+        }
+        const anchor = this.resolveAnchorAtClientY(this.#pointerY);
+        if (!anchor) {
+          return;
+        }
+
+        this.#pendingAnchor = anchor;
+        this.scheduleCurrentBlockSync();
+      }
+
+      private renderMeasuredHandle(left: number, top: number, blockPos: number) {
+        if (!this.#content) {
+          return;
+        }
+        this.#content.dataset.show = 'true';
+        this.#content.dataset.blockPos = String(blockPos);
+        this.#content.style.left = `${left}px`;
+        this.#content.style.top = `${top}px`;
+      }
+
+      private renderHandle(anchor: VisualLineAnchor) {
+        this.#pendingAnchor = anchor;
+        this.scheduleCurrentBlockSync();
+      }
+
+      private measureHandlePlacement(anchor: VisualLineAnchor, lane: HandleLaneMetrics | null) {
+        if (!lane) {
+          return null;
+        }
+
+        return {
+          left: Math.round(lane.left),
+          top: Math.round(this.#view.documentTop + anchor.centerDocY - lane.rootTop - lane.handleHeight / 2)
+        };
+      }
+
+      private hideHandle() {
+        if (!this.#content) {
+          return;
+        }
+        this.#currentBlock = null;
+        this.#content.dataset.show = 'false';
+      }
+
+      private renderDropIndicator() {
+        const drag = this.#drag;
+        if (!drag?.target || drag.indicatorDocY == null) {
+          this.hideDropIndicator();
+          return;
+        }
+
+        const lane = this.#laneDirty ? this.readHandleLaneMetrics() : this.#laneMetrics;
+        if (!lane) {
+          this.hideDropIndicator();
+          return;
+        }
+        this.#dropIndicator.dataset.show = 'true';
+        this.#dropIndicator.style.left = `${Math.round(lane.textLeft + 4)}px`;
+        this.#dropIndicator.style.top = `${Math.round(this.#view.documentTop + drag.indicatorDocY - 1)}px`;
+        this.#dropIndicator.style.width = `${Math.max(120, Math.round(lane.surfaceWidth - lane.paddingLeft - 8))}px`;
+      }
+
+      private resolveDropSlot(pointerY: number) {
+        const slots = this.getDropSlots();
+        if (slots.length === 0) {
+          return null;
+        }
+        const pointerDocY = pointerY - this.#view.documentTop;
+        return slots.reduce((best, slot) =>
+          Math.abs(slot.indicatorDocY - pointerDocY) < Math.abs(best.indicatorDocY - pointerDocY)
+            ? slot
+            : best
+        );
+      }
+
+      private resolveAnchorAtClientY(clientY: number) {
+        const pointerDocY = clientY - this.#view.documentTop;
+        const lineBlock = this.#view.lineBlockAtHeight(pointerDocY);
+        if (pointerDocY < lineBlock.top || pointerDocY > lineBlock.top + lineBlock.height) {
+          return null;
+        }
+
+        const block = describeBlockAt(this.#view.state, lineBlock.from);
+        return block ? this.resolveAnchorForBlock(block) : null;
+      }
+
+      private resolveAnchorForBlock(block: BlockDescriptor) {
+        const lineBlock = this.#view.lineBlockAt(block.from);
+        if (!lineBlock) {
+          return null;
+        }
+
+        return {
+          block,
+          from: block.from,
+          to: block.to,
+          lineNumber: block.startLine,
+          docTop: lineBlock.top,
+          docBottom: lineBlock.top + lineBlock.height,
+          centerDocY: lineBlock.top + lineBlock.height / 2,
+          isBlank: this.#view.state.doc.line(block.startLine).text.trim() === ''
+        };
+      }
+
+      private readHandleLaneMetrics() {
+        if (!this.#content) {
+          return null;
+        }
+
+        if (this.#laneMetrics && !this.#laneDirty) {
+          return this.#laneMetrics;
+        }
+
+        const surface = getEditorProseSurface(this.#view);
+        const surfaceRect = surface.getBoundingClientRect();
+        const rootRect = this.#editorRoot.getBoundingClientRect();
+        const styles = getComputedStyle(surface);
+        const paddingLeft = Number.parseFloat(styles.paddingLeft || '0') || 0;
+        const nextMetrics = {
+          rootTop: rootRect.top,
+          left: surfaceRect.left - rootRect.left + 8,
+          textLeft: surfaceRect.left + paddingLeft,
+          paddingLeft,
+          surfaceWidth: surfaceRect.width,
+          handleHeight: Math.max(30, this.#content.getBoundingClientRect().height)
+        } satisfies HandleLaneMetrics;
+        this.#laneMetrics = nextMetrics;
+        this.#laneDirty = false;
+        return nextMetrics;
+      }
+
+      private getDropSlots() {
+        if (this.#dropSlots && !this.#dropSlotsDirty) {
+          return this.#dropSlots;
+        }
+
+        const blocks = listBlocks(this.#view.state);
+        if (blocks.length === 0) {
+          this.#dropSlots = [];
+          this.#dropSlotsDirty = false;
+          return this.#dropSlots;
+        }
+
+        const anchors = blocks
+          .map((block) => this.resolveAnchorForBlock(block))
+          .filter((entry): entry is VisualLineAnchor => entry !== null);
+
+        if (anchors.length === 0) {
+          this.#dropSlots = [];
+          this.#dropSlotsDirty = false;
+          return this.#dropSlots;
+        }
+
+        const slots: DropSlot[] = [
+          {
+            target: anchors[0].block,
+            before: true,
+            indicatorDocY: anchors[0].docTop
+          }
+        ];
+
+        for (let index = 1; index < anchors.length; index += 1) {
+          const previous = anchors[index - 1];
+          const current = anchors[index];
+          slots.push({
+            target: current.block,
+            before: true,
+            indicatorDocY: (previous.docBottom + current.docTop) / 2
+          });
+        }
+
+        const last = anchors[anchors.length - 1];
+        slots.push({
+          target: last.block,
+          before: false,
+          indicatorDocY: last.docBottom
+        });
+
+        this.#dropSlots = slots;
+        this.#dropSlotsDirty = false;
+        return slots;
+      }
+
+      private hideDropIndicator() {
+        this.#dropIndicator.dataset.show = 'false';
+      }
+    }
+  );
+}
+
+function createPaneExtensions(
+  controller: () => EditorController | null,
+  editorRoot: HTMLDivElement,
+  sharedResources: SharedEditorResources | null,
+  slashMenuApi: ReturnType<typeof createSlashMenuPlugin>
+) {
+  const imagesConfig = sharedResources?.imagesConfig ?? unavailableImagesConfig;
+  return [
+    searchQueryField,
+    createLayoutTheme(),
+    createSearchHighlightExtension(),
+    ...createWikilinkExtensions(sharedResources),
+    createImageEmbedsExtension(imagesConfig),
+    ...createImagePasteExtension(imagesConfig),
+    ...slashMenuApi.extension,
+    createBlockHandleExtension(editorRoot, slashMenuApi.show),
+    createEditorShortcuts(controller),
+    EditorView.domEventHandlers({
+      focus: (_event, view) => {
+        slashMenuApi.register(view);
+        return false;
+      }
+    }),
+    keymap.of([])
+  ];
+}
+
+export function createSharedEditorResources({
+  assetRootPath,
+  onTaskListToggle: _onTaskListToggle,
+  onStorePastedImage
+}: CreateSharedEditorResourcesOptions): SharedEditorResources {
+  const viewCallbacks = new WeakMap<EditorView, EditorViewCallbacks>();
+  const runtime = new FileEditorRuntime('');
+
+  const sharedResources: SharedEditorResources & {
+    resolveViewCallbacks: (view: EditorView) => EditorViewCallbacks | null;
+  } = {
+    imagesConfig: {
+      assetRootPath,
+      storePastedImage: onStorePastedImage
+    },
+    registerViewCallbacks: (view, callbacks) => {
+      viewCallbacks.set(view, callbacks);
+    },
+    unregisterViewCallbacks: (view) => {
+      viewCallbacks.delete(view);
+    },
+    resolveViewCallbacks: (view) => viewCallbacks.get(view) ?? null,
+    setCurrentSearchHighlightQuery: (_query) => {},
+    runtime,
+    destroy: () => {
+      runtime.destroy();
+    }
+  };
+
+  return sharedResources;
+}
 
 export function setEditorCurrentSearchHighlightQuery(
   controller: EditorController | null,
@@ -143,1476 +1154,22 @@ export function setEditorCurrentSearchHighlightQuery(
     return false;
   }
 
-  const nextQuery = normalizeCurrentSearchHighlightQuery(query);
-  const currentState = CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY.getState(controller.view.state);
-  if (currentState?.query === nextQuery) {
+  const nextQuery = normalizeSearchQuery(query);
+  if (controller.view.state.field(searchQueryField) === nextQuery) {
     return false;
   }
 
   controller.view.dispatch(
-    controller.view.state.tr
-      .setMeta(CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY, { query: nextQuery })
-      .setMeta('addToHistory', false)
-  );
-  return true;
-}
-
-interface PlaceholderConfig {
-  text: string;
-  mode: 'doc' | 'block';
-}
-
-function createPlaceholderDecoration(
-  state: EditorState,
-  placeholderText: string
-): Decoration | null {
-  const { selection } = state;
-  if (!selection.empty) return null;
-
-  const $pos = selection.$anchor;
-  const node = $pos.parent;
-  if (node.content.size > 0) return null;
-
-  const inTable = findAncestorNode($pos, (candidate) => candidate.type.name === 'table');
-  if (inTable) return null;
-
-  const before = $pos.before();
-  return Decoration.node(before, before + node.nodeSize, {
-    class: 'crepe-placeholder',
-    'data-placeholder': placeholderText
-  });
-}
-
-function createPlaceholderPlugin(config: PlaceholderConfig) {
-  return new Plugin({
-    key: new PluginKey('NOTEPAD_PLACEHOLDER'),
-    props: {
-      decorations: (state) => {
-        if (config.mode === 'doc' && !isDocEmpty(state.doc)) {
-          return null;
-        }
-
-        if (isInCodeContext(state.selection) || isInList(state.selection)) {
-          return null;
-        }
-
-        const decoration = createPlaceholderDecoration(state, config.text);
-        if (!decoration) {
-          return null;
-        }
-
-        return DecorationSet.create(state.doc, [decoration]);
-      }
-    }
-  });
-}
-
-function normalizeCurrentSearchHighlightQuery(query: string | null | undefined) {
-  return query?.trim().toLowerCase() ?? '';
-}
-
-function buildCurrentSearchHighlightDecorations(doc: ProseMirrorNode, query: string) {
-  if (query === '') {
-    return DecorationSet.empty;
-  }
-
-  const decorations: Decoration[] = [];
-
-  doc.descendants((node, pos) => {
-    if (!node.isTextblock) {
-      return;
-    }
-
-    let blockText = '';
-    const textSegments: CurrentSearchHighlightTextSegment[] = [];
-
-    node.descendants((child, childPos) => {
-      if (!child.isText || !child.text) {
-        return;
-      }
-
-      const from = pos + 1 + childPos;
-      const startOffset = blockText.length;
-      blockText += child.text;
-      textSegments.push({
-        from,
-        startOffset,
-        endOffset: blockText.length
-      });
-    });
-
-    if (blockText === '') {
-      return;
-    }
-
-    const lowerBlockText = blockText.toLowerCase();
-    let searchFrom = 0;
-
-    while (searchFrom < lowerBlockText.length) {
-      const matchStart = lowerBlockText.indexOf(query, searchFrom);
-      if (matchStart === -1) {
-        break;
-      }
-
-      const matchEnd = matchStart + query.length;
-      for (const segment of textSegments) {
-        const overlapStart = Math.max(matchStart, segment.startOffset);
-        const overlapEnd = Math.min(matchEnd, segment.endOffset);
-        if (overlapStart >= overlapEnd) {
-          continue;
-        }
-
-        decorations.push(
-          Decoration.inline(
-            segment.from + (overlapStart - segment.startOffset),
-            segment.from + (overlapEnd - segment.startOffset),
-            { class: 'gn-current-search-highlight' }
-          )
-        );
-      }
-
-      searchFrom = matchStart + query.length;
-    }
-  });
-
-  return decorations.length > 0 ? DecorationSet.create(doc, decorations) : DecorationSet.empty;
-}
-
-function createCurrentSearchHighlightPlugin(getInitialQuery: () => string) {
-  return new Plugin<CurrentSearchHighlightPluginState>({
-    key: CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY,
-    state: {
-      init(_, state) {
-        const query = getInitialQuery();
-        return {
-          query,
-          decorations: buildCurrentSearchHighlightDecorations(state.doc, query)
-        };
-      },
-      apply(transaction, pluginState, _oldState, newState) {
-        const meta = transaction.getMeta(
-          CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY
-        ) as CurrentSearchHighlightUpdate | undefined;
-        const query = meta?.query ?? pluginState.query;
-
-        if (!transaction.docChanged && meta === undefined) {
-          return pluginState;
-        }
-
-        return {
-          query,
-          decorations: buildCurrentSearchHighlightDecorations(newState.doc, query)
-        };
-      }
-    },
-    props: {
-      decorations(state) {
-        return (
-          CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY.getState(state)?.decorations ?? DecorationSet.empty
-        );
-      }
-    }
-  });
-}
-
-function createTaskListInteractionPlugin(onTaskListToggle: () => void) {
-  return new Plugin({
-    key: new PluginKey('NOTEPAD_TASK_LIST_INTERACTIONS'),
-    props: {
-      handleDOMEvents: {
-        cut(view, event) {
-          if (
-            !(event instanceof ClipboardEvent) ||
-            !event.clipboardData ||
-            !usesNativeCutShortcut('editorCutLine')
-          ) {
-            return false;
-          }
-
-          if (!view.state.selection.empty) {
-            return false;
-          }
-
-          const block = getSelectedBlockContext(view.state);
-          if (!block) {
-            return false;
-          }
-
-          const clipboardMarkdown = serializeMarkdown(createClipboardDocumentForBlock(view.state, block));
-          event.preventDefault();
-          event.clipboardData.setData('text/plain', clipboardMarkdown);
-
-          const transaction = createDeleteBlockTransaction(view.state, block);
-          if (!transaction) {
-            return true;
-          }
-
-          view.dispatch(transaction);
-          view.focus();
-          return true;
-        },
-        mousedown(view, event) {
-          if (!(event instanceof MouseEvent) || event.button !== 0) {
-            return false;
-          }
-
-          const target = event.target;
-          const listItem =
-            target instanceof Element
-              ? target.closest<HTMLElement>('li[data-checked]')
-              : null;
-          if (!listItem) {
-            return false;
-          }
-
-          const rect = listItem.getBoundingClientRect();
-          const withinCheckboxBounds =
-            event.clientX >= rect.left - 4 &&
-            event.clientX <= rect.left + 24 &&
-            event.clientY >= rect.top &&
-            event.clientY <= rect.top + 28;
-
-          if (!withinCheckboxBounds) {
-            return false;
-          }
-
-          try {
-            const pos = view.posAtDOM(listItem, 0);
-            const $pos = view.state.doc.resolve(pos);
-            const listItemParent = findAncestorNode($pos, (node) => node.type.name === 'list_item');
-            if (!listItemParent) {
-              return false;
-            }
-            const listItemPos = listItemParent.pos;
-
-            const currentChecked = listItemParent.node.attrs.checked;
-            if (currentChecked == null) {
-              return false;
-            }
-
-            event.preventDefault();
-            const transaction = view.state.tr.setNodeMarkup(listItemPos, undefined, {
-              ...listItemParent.node.attrs,
-              checked: !currentChecked
-            });
-            view.dispatch(transaction);
-            view.focus();
-            onTaskListToggle();
-            return true;
-          } catch {
-            return false;
-          }
-        }
-      }
-    }
-  });
-}
-
-async function writeTextToClipboard(text: string) {
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Fall through to legacy copy path.
-    }
-  }
-
-  if (typeof document === 'undefined') {
-    return false;
-  }
-
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  textarea.style.pointerEvents = 'none';
-  document.body.appendChild(textarea);
-  textarea.select();
-
-  try {
-    return document.execCommand('copy');
-  } catch {
-    return false;
-  } finally {
-    textarea.remove();
-  }
-}
-
-function getSelectionScrollTarget(view: EditorView) {
-  const { node } = view.domAtPos(view.state.selection.head);
-  if (node instanceof HTMLElement) {
-    return node;
-  }
-
-  return node.parentElement ?? view.dom;
-}
-
-function scrollSelectionIntoView(view: EditorView) {
-  const target = getSelectionScrollTarget(view);
-  target.scrollIntoView({ block: 'center', inline: 'nearest' });
-}
-
-function createEditorDocument(markdown: string) {
-  const normalized = markdown.trim() === '' ? '\n' : markdown;
-  const doc = parseMarkdown(normalized);
-  if (doc.childCount > 0) {
-    return doc;
-  }
-
-  return notepadSchema.node('doc', null, [notepadSchema.node('paragraph')]);
-}
-
-function createTaskListInputRule() {
-  return new InputRule(/^([-+*])\s\[( |x|X)\]\s$/, (state, match) =>
-    createTaskListTransaction(state, {
-      checked: match[2].toLowerCase() === 'x'
+    controller.view.state.update({
+      effects: setSearchQueryEffect.of(nextQuery)
     })
   );
-}
-
-function createHorizontalRuleInputRule() {
-  return new InputRule(/^(?:---|\*\*\*|___)\s$/, (state) => {
-    const { selection, schema } = state;
-    if (!(selection instanceof TextSelection) || !selection.empty) {
-      return null;
-    }
-
-    const { $from } = selection;
-    const parent = $from.parent;
-    if (parent.type.name !== 'paragraph') {
-      return null;
-    }
-
-    const blockPos = $from.before();
-    const transaction = state.tr.replaceWith(
-      blockPos,
-      blockPos + parent.nodeSize,
-      schema.nodes.horizontal_rule.create()
-    );
-    const insertPos = Math.max(1, Math.min(blockPos + 1, transaction.doc.nodeSize - 2));
-    transaction.setSelection(TextSelection.near(transaction.doc.resolve(insertPos)));
-    return transaction;
-  });
-}
-
-function getSelectedBlockContext(state: EditorState): SelectedBlockContext | null {
-  const { $from } = state.selection;
-  const listItem = findAncestorNode($from, (node) => node.type.name === 'list_item');
-  const block =
-    listItem ??
-    findAncestorNode($from, (node) =>
-      ['paragraph', 'heading', 'code_block', 'horizontal_rule'].includes(node.type.name)
-    );
-
-  if (!block || block.depth === 0) {
-    return null;
-  }
-
-  const parentDepth = block.depth - 1;
-  const parent = $from.node(parentDepth);
-  const parentStart = parentDepth > 0 ? $from.start(parentDepth) : 0;
-  const index = $from.index(parentDepth);
-  const listContainer =
-    block.node.type.name === 'list_item'
-      ? findAncestorNode(
-          $from,
-          (node) => node.type.name === 'bullet_list' || node.type.name === 'ordered_list'
-        )
-      : null;
-
-  return {
-    node: block.node,
-    pos: block.pos,
-    depth: block.depth,
-    index,
-    parent,
-    parentStart,
-    listContainer: listContainer
-      ? {
-          node: listContainer.node,
-          pos: listContainer.pos
-        }
-      : null
-  };
-}
-
-function getChildPosition(parent: ProseMirrorNode, parentStart: number, index: number) {
-  let pos = parentStart;
-  for (let childIndex = 0; childIndex < index; childIndex += 1) {
-    pos += parent.child(childIndex)?.nodeSize ?? 0;
-  }
-  return pos;
-}
-
-function createClipboardDocumentForBlock(state: EditorState, block: SelectedBlockContext) {
-  if (block.node.type.name === 'list_item') {
-    const listNode =
-      block.listContainer?.node.type.name === 'ordered_list'
-        ? state.schema.nodes.ordered_list.create(block.listContainer.node.attrs, [block.node])
-        : state.schema.nodes.bullet_list.create(block.listContainer?.node.attrs ?? null, [block.node]);
-    return state.schema.nodes.doc.create(null, [listNode]);
-  }
-
-  return state.schema.nodes.doc.create(null, [block.node]);
-}
-
-function createDeleteBlockTransaction(state: EditorState, block: SelectedBlockContext) {
-  const sourceNode = state.doc.nodeAt(block.pos);
-  if (!sourceNode) {
-    return null;
-  }
-
-  const { from: deleteFrom, to: deleteTo } = expandDeleteRangeForListItem(
-    state.doc,
-    block.pos,
-    sourceNode
-  );
-
-  let transaction = state.tr.delete(deleteFrom, deleteTo);
-  if (transaction.doc.childCount === 0) {
-    transaction = transaction
-      .insert(0, state.schema.nodes.paragraph.create())
-      .setSelection(TextSelection.create(transaction.doc, 1));
-    return transaction.scrollIntoView();
-  }
-
-  const selectionPos = Math.max(1, Math.min(deleteFrom, transaction.doc.nodeSize - 2));
-  transaction = transaction.setSelection(Selection.near(transaction.doc.resolve(selectionPos)));
-  return transaction.scrollIntoView();
-}
-
-function insertParagraphBelow(state: EditorState, dispatch?: (transaction: Transaction) => void) {
-  const block = getSelectedBlockContext(state);
-  if (!block) {
-    return false;
-  }
-
-  const insertPos = block.pos + block.node.nodeSize;
-  const nodeToInsert =
-    block.node.type.name === 'list_item'
-      ? state.schema.nodes.list_item.create(
-          {
-            checked: block.node.attrs.checked != null ? false : null
-          },
-          [state.schema.nodes.paragraph.create()]
-        )
-      : state.schema.nodes.paragraph.create();
-
-  if (dispatch) {
-    let transaction = state.tr.insert(insertPos, nodeToInsert);
-    const selectionPos = Math.max(1, Math.min(insertPos + 1, transaction.doc.nodeSize - 2));
-    transaction = transaction
-      .setSelection(TextSelection.near(transaction.doc.resolve(selectionPos)))
-      .scrollIntoView();
-    dispatch(transaction);
-  }
-
   return true;
 }
-
-function moveSelectedBlock(
-  state: EditorState,
-  direction: 'up' | 'down',
-  dispatch?: (transaction: Transaction) => void
-) {
-  const block = getSelectedBlockContext(state);
-  if (!block) {
-    return false;
-  }
-
-  const targetIndex = direction === 'up' ? block.index - 1 : block.index + 1;
-  if (targetIndex < 0 || targetIndex >= block.parent.childCount) {
-    return false;
-  }
-
-  const sourcePos = getChildPosition(block.parent, block.parentStart, block.index);
-  const targetPos = getChildPosition(block.parent, block.parentStart, targetIndex);
-  const sourceNode = block.parent.child(block.index);
-  const targetNode = block.parent.child(targetIndex);
-  const initialInsertPos =
-    direction === 'up' ? targetPos : targetPos + targetNode.nodeSize;
-
-  if (dispatch) {
-    let transaction = state.tr.delete(sourcePos, sourcePos + sourceNode.nodeSize);
-    const mappedInsertPos = transaction.mapping.map(initialInsertPos, direction === 'up' ? -1 : 1);
-    transaction = transaction
-      .insert(mappedInsertPos, sourceNode)
-      .setSelection(
-        Selection.near(
-          transaction.doc.resolve(Math.max(1, Math.min(mappedInsertPos + 1, transaction.doc.nodeSize - 2)))
-        )
-      )
-      .scrollIntoView();
-    dispatch(transaction);
-  }
-
-  return true;
-}
-
-function copySelectedBlockToClipboardAndDelete(view: EditorView) {
-  if (view.state.selection.empty === false) {
-    return false;
-  }
-
-  const block = getSelectedBlockContext(view.state);
-  if (!block) {
-    return false;
-  }
-
-  const clipboardMarkdown = serializeMarkdown(createClipboardDocumentForBlock(view.state, block));
-  void writeTextToClipboard(clipboardMarkdown).then((didCopy) => {
-    if (!didCopy) {
-      return;
-    }
-
-    const transaction = createDeleteBlockTransaction(view.state, block);
-    if (!transaction) {
-      return;
-    }
-
-    view.dispatch(transaction);
-    view.focus();
-  });
-  return true;
-}
-
-function createEditorShortcutPlugin(listItemType: typeof notepadSchema.nodes.list_item) {
-  return new Plugin({
-    key: new PluginKey('NOTEPAD_EDITOR_SHORTCUTS'),
-    props: {
-      handleKeyDown(view, event) {
-        const shortcutHandlers = [
-          ['editorUndo', () => undo(view.state, view.dispatch)],
-          ['editorRedo', () => redo(view.state, view.dispatch)],
-          ['editorRedoAlternate', () => redo(view.state, view.dispatch)],
-          ['editorInsertBelow', () => insertParagraphBelow(view.state, view.dispatch)],
-          ['editorMoveLineUp', () => moveSelectedBlock(view.state, 'up', view.dispatch)],
-          ['editorMoveLineDown', () => moveSelectedBlock(view.state, 'down', view.dispatch)],
-          [
-            'editorCutLine',
-            () => (usesNativeCutShortcut('editorCutLine') ? false : copySelectedBlockToClipboardAndDelete(view))
-          ],
-          ['editorHardBreak', () => insertHardBreak(view.state, view.dispatch)],
-          ['editorIndentList', () => sinkListItem(listItemType)(view.state, view.dispatch)],
-          ['editorOutdentList', () => liftListItem(listItemType)(view.state, view.dispatch)]
-        ] as const;
-
-        for (const [shortcutId, handler] of shortcutHandlers) {
-          if (!keyboardShortcutMatchesEvent(event, shortcutId)) {
-            continue;
-          }
-
-          if (!handler()) {
-            return false;
-          }
-
-          event.preventDefault();
-          return true;
-        }
-
-        return false;
-      }
-    }
-  });
-}
-
-function insertHardBreak(state: EditorState, dispatch?: (transaction: Transaction) => void) {
-  if (state.selection.$from.parent.type.spec.code) {
-    return newlineInCode(state, dispatch);
-  }
-
-  const hardBreak = state.schema.nodes.hard_break;
-  if (!hardBreak) {
-    return false;
-  }
-
-  if (dispatch) {
-    dispatch(state.tr.replaceSelectionWith(hardBreak.create(), true).scrollIntoView());
-  }
-
-  return true;
-}
-
-function createMarkdownInputRules() {
-  return inputRules({
-    rules: [
-      textblockTypeInputRule(/^(#{1,6})\s$/, notepadSchema.nodes.heading, (match) => ({
-        level: match[1].length
-      })),
-      textblockTypeInputRule(/^```(?:\s+([A-Za-z0-9_-]+))?\s$/, notepadSchema.nodes.code_block, (match) => ({
-        params: match[1] ?? ''
-      })),
-      wrappingInputRule(/^\s*>\s$/, notepadSchema.nodes.blockquote),
-      wrappingInputRule(/^\s*([-+*])\s$/, notepadSchema.nodes.bullet_list, (match) => ({
-        bullet: match[1],
-        tight: false
-      })),
-      wrappingInputRule(/^(\d+)\.\s$/, notepadSchema.nodes.ordered_list, (match) => ({
-        order: Number(match[1]) || 1,
-        tight: false
-      })),
-      createTaskListInputRule(),
-      createHorizontalRuleInputRule()
-    ]
-  });
-}
-
-export function createSharedEditorResources({
-  assetRootPath,
-  onTaskListToggle,
-  onStorePastedImage
-}: CreateSharedEditorResourcesOptions): SharedEditorResources {
-  const viewCallbacks = new WeakMap<EditorView, EditorViewCallbacks>();
-  const registeredViews = new Set<EditorView>();
-  const imagesConfig: ImagesConfig = {
-    assetRootPath,
-    storePastedImage: onStorePastedImage
-  };
-  let currentSearchHighlightQuery = '';
-
-  const listItemType = notepadSchema.nodes.list_item;
-  const filteredBaseKeymap = { ...baseKeymap };
-  delete filteredBaseKeymap['Mod-z'];
-  delete filteredBaseKeymap['Mod-y'];
-  delete filteredBaseKeymap['Shift-Mod-z'];
-  delete filteredBaseKeymap['Tab'];
-  delete filteredBaseKeymap['Shift-Tab'];
-  delete filteredBaseKeymap['Shift-Enter'];
-  const slashMenu = createSlashMenuPlugin();
-  const plugins = [
-    createMarkdownInputRules(),
-    createEditorShortcutPlugin(listItemType),
-    keymap({
-      Backspace: undoInputRule,
-      Enter: chainCommands(
-        splitListItemKeepMarks(listItemType),
-        newlineInCode,
-        createParagraphNear,
-        liftEmptyBlock,
-        splitBlockKeepMarks
-      )
-    }),
-    keymap(filteredBaseKeymap),
-    history(),
-    dropCursor({
-      class: 'crepe-drop-cursor',
-      width: 4,
-      color: false
-    }),
-    gapCursor(),
-    tableEditing(),
-    createPlaceholderPlugin({
-      text: 'Start writing',
-      mode: 'doc'
-    }),
-    createCurrentSearchHighlightPlugin(() => currentSearchHighlightQuery),
-    createTaskListInteractionPlugin(onTaskListToggle),
-    createWikilinksPlugin({
-      resolveCallbacks: (view) => viewCallbacks.get(view)
-    }),
-    createImageEmbedsPlugin(imagesConfig),
-    createImagePastePlugin(imagesConfig),
-    slashMenu.plugin,
-    createBlockHandlePlugin((view, pos) => {
-      slashMenu.show(view, pos);
-    })
-  ];
-
-  return {
-    plugins,
-    registerViewCallbacks(view, callbacks) {
-      registeredViews.add(view);
-      viewCallbacks.set(view, callbacks);
-    },
-    unregisterViewCallbacks(view) {
-      registeredViews.delete(view);
-      viewCallbacks.delete(view);
-      slashMenu.hide(view);
-    },
-    setCurrentSearchHighlightQuery(query) {
-      const nextQuery = normalizeCurrentSearchHighlightQuery(query);
-      if (currentSearchHighlightQuery === nextQuery) {
-        return;
-      }
-
-      currentSearchHighlightQuery = nextQuery;
-      for (const view of registeredViews) {
-        view.dispatch(
-          view.state.tr
-            .setMeta(CURRENT_SEARCH_HIGHLIGHT_PLUGIN_KEY, { query: nextQuery })
-            .setMeta('addToHistory', false)
-        );
-      }
-    }
-  };
-}
-
-function createEditorState(markdown: string, plugins: Plugin[]) {
-  return EditorState.create({
-    schema: notepadSchema,
-    doc: createEditorDocument(markdown),
-    plugins
-  });
-}
-
-interface ActiveBlockHandle {
-  node: ProseMirrorNode;
-  pos: number;
-  element: HTMLElement;
-}
-
-interface BlockDropTarget {
-  element: HTMLElement;
-  placement: 'before' | 'after';
-  targetPos: number;
-  targetNode: ProseMirrorNode;
-}
-
-const BLOCK_HANDLE_SELECTOR = 'li, p, h1, h2, h3, h4, h5, h6, pre, hr';
-const BLOCK_HANDLE_ANCHOR_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, pre, hr';
-
-/** Horizontal zone for which row a block handle refers to (full editor column + left gutter). */
-const BLOCK_ROW_PICK_GUTTER_LEFT = 96;
-const BLOCK_ROW_VERTICAL_SLOP = 8;
-
-function sortBlockElementsBySpecificity(elements: HTMLElement[]) {
-  return [...elements].sort((left, right) => {
-    if (left === right) return 0;
-    if (left.contains(right)) return 1;
-    if (right.contains(left)) return -1;
-
-    const leftRect = left.getBoundingClientRect();
-    const rightRect = right.getBoundingClientRect();
-    const leftArea = leftRect.width * leftRect.height;
-    const rightArea = rightRect.width * rightRect.height;
-
-    return rightRect.left - leftRect.left || leftArea - rightArea || leftRect.top - rightRect.top;
-  });
-}
-
-function resolveBlockRootElement(editorRoot: HTMLDivElement, element: Element | null) {
-  if (!(element instanceof Element)) {
-    return null;
-  }
-
-  const listItem = element.closest<HTMLElement>('li');
-  if (listItem && editorRoot.contains(listItem)) {
-    return listItem;
-  }
-
-  const block = element.closest<HTMLElement>(BLOCK_HANDLE_ANCHOR_SELECTOR);
-  if (block && editorRoot.contains(block)) {
-    return block;
-  }
-
-  return null;
-}
-
-/**
- * DOM used to vertically align the handle with the visible "line" for that block.
- * For `list_item`, `<li>` includes nested lists — use the first text block child for
- * vertical metrics; horizontal placement uses the `<li>` so the handle lines up with the
- * block edge (marker/checkbox + text), not only the inner paragraph.
- */
-function getBlockHandleLineElement(blockElement: HTMLElement): HTMLElement {
-  if (blockElement.matches('li')) {
-    for (const child of Array.from(blockElement.children)) {
-      if (child instanceof HTMLElement && child.matches(BLOCK_HANDLE_ANCHOR_SELECTOR)) {
-        return child;
-      }
-    }
-  }
-
-  return blockElement;
-}
-
-/**
- * `ul`/`ol` use horizontal padding for markers; `li` starts inside that padding, so `li.left`
- * matches inner text (same mis-alignment as using `<p>`). Task lists zero out list padding and
- * pad `li` instead, so `li.left` already matches the block edge. Use the list element’s left
- * for bullet/ordered lists so the handle lines up with paragraphs and with task rows.
- */
-function getListItemBlockHandleAnchorLeft(li: HTMLElement): number {
-  const list = li.closest('ul, ol');
-  if (list instanceof HTMLElement) {
-    return list.getBoundingClientRect().left;
-  }
-  return li.getBoundingClientRect().left;
-}
-
-function resolveBlockContextFromElement(view: EditorView, element: HTMLElement) {
-  const pos = view.posAtDOM(element, 0);
-  const maxResolvedPos = Math.max(1, view.state.doc.nodeSize - 2);
-  const $pos = view.state.doc.resolve(Math.max(1, Math.min(pos, maxResolvedPos)));
-
-  if (element.matches('li')) {
-    const listItem = findAncestorNode($pos, (node) => node.type.name === 'list_item');
-    if (listItem) {
-      return {
-        node: listItem.node,
-        pos: listItem.pos
-      };
-    }
-  }
-
-  const block = findAncestorNode($pos, (node) =>
-    ['paragraph', 'heading', 'code_block', 'horizontal_rule', 'list_item'].includes(
-      node.type.name
-    )
-  );
-
-  if (!block) {
-    return null;
-  }
-
-  return {
-    node: block.node,
-    pos: block.pos
-  };
-}
-
-/** Parent `bullet_list` / `ordered_list` for a `list_item` that starts at `listItemStartPos`, if any. */
-function getListContainerKind(
-  doc: EditorState['doc'],
-  listItemStartPos: number
-): 'bullet_list' | 'ordered_list' | null {
-  const node = doc.nodeAt(listItemStartPos);
-  if (!node || node.type.name !== 'list_item') {
-    return null;
-  }
-  const $p = doc.resolve(listItemStartPos + 1);
-  for (let depth = $p.depth; depth >= 1; depth -= 1) {
-    const name = $p.node(depth).type.name;
-    if (name === 'bullet_list') {
-      return 'bullet_list';
-    }
-    if (name === 'ordered_list') {
-      return 'ordered_list';
-    }
-  }
-  return null;
-}
-
-/**
- * Deleting the last `list_item` in a list would leave `list_item+` invalid; delete the whole list node.
- */
-function expandDeleteRangeForListItem(
-  doc: EditorState['doc'],
-  sourcePos: number,
-  sourceNode: ProseMirrorNode
-): { from: number; to: number } {
-  let from = sourcePos;
-  let to = sourcePos + sourceNode.nodeSize;
-  if (sourceNode.type.name !== 'list_item') {
-    return { from, to };
-  }
-
-  const $p = doc.resolve(sourcePos + 1);
-  const listItemBlock = findAncestorNode($p, (node) => node.type.name === 'list_item');
-  if (!listItemBlock || listItemBlock.pos !== sourcePos) {
-    return { from, to };
-  }
-
-  const listDepth = listItemBlock.depth - 1;
-  if (listDepth < 1) {
-    return { from, to };
-  }
-
-  const listNode = $p.node(listDepth);
-  if (
-    (listNode.type.name !== 'bullet_list' && listNode.type.name !== 'ordered_list') ||
-    listNode.childCount !== 1
-  ) {
-    return { from, to };
-  }
-
-  return {
-    from: $p.before(listDepth),
-    to: $p.after(listDepth)
-  };
-}
-
-function nodeToInsertAtBlockGap(
-  schema: EditorState['schema'],
-  sourceNode: ProseMirrorNode,
-  listContainerKind: 'bullet_list' | 'ordered_list' | null,
-  parent: ProseMirrorNode,
-  insertIndex: number
-): ProseMirrorNode | null {
-  if (parent.canReplaceWith(insertIndex, insertIndex, sourceNode.type)) {
-    return sourceNode;
-  }
-
-  if (sourceNode.type.name !== 'list_item') {
-    return null;
-  }
-
-  const tryKinds: Array<'bullet_list' | 'ordered_list'> = listContainerKind
-    ? [listContainerKind, listContainerKind === 'bullet_list' ? 'ordered_list' : 'bullet_list']
-    : ['bullet_list', 'ordered_list'];
-
-  for (const kind of tryKinds) {
-    const wrapper =
-      kind === 'ordered_list' ? schema.nodes.ordered_list : schema.nodes.bullet_list;
-    const wrapped = wrapper.create(null, [sourceNode]);
-    if (parent.canReplaceWith(insertIndex, insertIndex, wrapped.type)) {
-      return wrapped;
-    }
-  }
-
-  return null;
-}
-
-function createBlockHandlePlugin(showSlashMenu: (view: EditorView, pos: number) => void) {
-  const key = new PluginKey('NOTEPAD_BLOCK_HANDLE');
-
-  class BlockHandleView {
-    readonly #view: EditorView;
-    readonly #editorRoot: HTMLDivElement;
-    #content!: HTMLElement;
-    #addButton!: HTMLElement;
-    #dragButton!: HTMLElement;
-    readonly #dropIndicator: HTMLElement;
-    readonly #unmountBlockHandle: () => void;
-    #activeBlock: ActiveBlockHandle | null = null;
-    #scrollRoot: HTMLElement | null;
-    #hideTimer: number | null = null;
-    #dragState:
-      | {
-          pointerId: number;
-          originX: number;
-          originY: number;
-          sourcePos: number;
-          source: ActiveBlockHandle;
-          started: boolean;
-          dropTarget: BlockDropTarget | null;
-          sourceButton: HTMLElement;
-        }
-      | null = null;
-
-    constructor(view: EditorView) {
-      this.#view = view;
-      const editorRoot = view.dom.parentElement;
-      if (!(editorRoot instanceof HTMLDivElement)) {
-        throw new Error('Editor root container is missing.');
-      }
-      this.#editorRoot = editorRoot;
-      this.#scrollRoot = this.#editorRoot.closest<HTMLElement>('.notepad-editor-shell');
-      this.#unmountBlockHandle = mountBlockHandle(this.#editorRoot, (refs) => {
-        this.#content = refs.content;
-        this.#addButton = refs.addButton;
-        this.#dragButton = refs.dragButton;
-      });
-      this.#dropIndicator = document.createElement('div');
-      this.#dropIndicator.className = 'notepad-block-drop-indicator';
-      this.#dropIndicator.dataset.show = 'false';
-      this.#editorRoot.appendChild(this.#dropIndicator);
-
-      this.#editorRoot.addEventListener('mousemove', this.handleEditorMouseMove, true);
-      this.#editorRoot.addEventListener('mouseleave', this.handleEditorMouseLeave, true);
-      this.#content.addEventListener('mouseenter', this.handleHandleMouseEnter);
-      this.#content.addEventListener('mouseleave', this.handleHandleMouseLeave);
-      this.#addButton.addEventListener('pointerdown', this.handleAddPointerDown);
-      this.#addButton.addEventListener('pointerup', this.handleAddPointerUp);
-      this.#dragButton.addEventListener('pointerdown', this.handleDragPointerDown);
-      window.addEventListener('pointermove', this.handlePointerMove, true);
-      window.addEventListener('pointerup', this.handlePointerUp, true);
-      window.addEventListener('pointercancel', this.handlePointerCancel, true);
-      this.#scrollRoot?.addEventListener('scroll', this.handleScroll, true);
-    }
-
-    update() {
-      if (this.#dragState?.started) {
-        this.repositionDropIndicator();
-        return;
-      }
-
-      if (this.#activeBlock?.element.isConnected) {
-        this.positionHandle(this.#activeBlock.element);
-      } else {
-        this.hide();
-      }
-    }
-
-    destroy() {
-      this.clearHideTimer();
-      this.#editorRoot.removeEventListener('mousemove', this.handleEditorMouseMove, true);
-      this.#editorRoot.removeEventListener('mouseleave', this.handleEditorMouseLeave, true);
-      this.#content.removeEventListener('mouseenter', this.handleHandleMouseEnter);
-      this.#content.removeEventListener('mouseleave', this.handleHandleMouseLeave);
-      this.#addButton.removeEventListener('pointerdown', this.handleAddPointerDown);
-      this.#addButton.removeEventListener('pointerup', this.handleAddPointerUp);
-      this.#dragButton.removeEventListener('pointerdown', this.handleDragPointerDown);
-      window.removeEventListener('pointermove', this.handlePointerMove, true);
-      window.removeEventListener('pointerup', this.handlePointerUp, true);
-      window.removeEventListener('pointercancel', this.handlePointerCancel, true);
-      this.#scrollRoot?.removeEventListener('scroll', this.handleScroll, true);
-      document.body.classList.remove('notepad-block-dragging');
-      this.#unmountBlockHandle();
-      this.#dropIndicator.remove();
-    }
-
-    private clearHideTimer() {
-      if (this.#hideTimer !== null) {
-        window.clearTimeout(this.#hideTimer);
-        this.#hideTimer = null;
-      }
-    }
-
-    private scheduleHide() {
-      if (this.#dragState?.started) {
-        return;
-      }
-
-      this.clearHideTimer();
-      this.#hideTimer = window.setTimeout(() => {
-        this.hide();
-      }, 110);
-    }
-
-    private handleEditorMouseMove = (event: MouseEvent) => {
-      if (this.#dragState?.started) {
-        return;
-      }
-
-      if (event.target instanceof Node && this.#content.contains(event.target)) {
-        this.clearHideTimer();
-        return;
-      }
-
-      const element = this.resolveBlockElement(event.clientX, event.clientY);
-      if (!element) {
-        this.scheduleHide();
-        return;
-      }
-
-      this.clearHideTimer();
-      this.activateBlock(element);
-    };
-
-    private handleEditorMouseLeave = () => {
-      this.scheduleHide();
-    };
-
-    private handleHandleMouseEnter = () => {
-      this.clearHideTimer();
-    };
-
-    private handleHandleMouseLeave = () => {
-      this.scheduleHide();
-    };
-
-    private handleAddPointerDown = (event: PointerEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.clearHideTimer();
-      this.#addButton.classList.add('active');
-    };
-
-    private handleAddPointerUp = (event: PointerEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.#addButton.classList.remove('active');
-
-      if (!this.#activeBlock) {
-        return;
-      }
-
-      if (!this.#view.hasFocus()) {
-        this.#view.focus();
-      }
-
-      const pos = this.#activeBlock.pos + this.#activeBlock.node.nodeSize;
-      let transaction = this.#view.state.tr.insert(
-        pos,
-        this.#view.state.schema.nodes.paragraph.create()
-      );
-      transaction = transaction.setSelection(TextSelection.near(transaction.doc.resolve(pos)));
-      this.#view.dispatch(transaction.scrollIntoView());
-
-      this.hide();
-      setSlashMenuFloatingReference(this.#view, null);
-      showSlashMenu(this.#view, transaction.selection.from);
-    };
-
-    private handleDragPointerDown = (event: PointerEvent) => {
-      if (!this.#activeBlock) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      this.clearHideTimer();
-      this.#dragButton.classList.add('active');
-      try {
-        this.#dragButton.setPointerCapture(event.pointerId);
-      } catch {
-        // Ignore capture failures and fall back to window-level listeners.
-      }
-      this.#dragState = {
-        pointerId: event.pointerId,
-        originX: event.clientX,
-        originY: event.clientY,
-        sourcePos: this.#activeBlock.pos,
-        source: this.#activeBlock,
-        started: false,
-        dropTarget: null,
-        sourceButton: this.#dragButton
-      };
-    };
-
-    private handlePointerMove = (event: PointerEvent) => {
-      if (!this.#dragState || event.pointerId !== this.#dragState.pointerId) {
-        return;
-      }
-
-      const delta = Math.hypot(
-        event.clientX - this.#dragState.originX,
-        event.clientY - this.#dragState.originY
-      );
-      if (!this.#dragState.started && delta > 6) {
-        this.#dragState.started = true;
-        this.#content.dataset.dragging = 'true';
-        document.body.classList.add('notepad-block-dragging');
-      }
-
-      if (this.#dragState.started) {
-        event.preventDefault();
-        this.#dragState.dropTarget = this.resolveDropTarget(event.clientX, event.clientY);
-        this.repositionDropIndicator();
-      }
-    };
-
-    private handleScroll = () => {
-      if (this.#dragState?.started) {
-        this.repositionDropIndicator();
-        return;
-      }
-
-      if (this.#activeBlock?.element.isConnected) {
-        this.positionHandle(this.#activeBlock.element);
-      }
-    };
-
-    #openSlashMenuFromDragHandleTap(dragState: { sourcePos: number; sourceButton: HTMLElement }) {
-      const ctx = resolveBlockContext(this.#view, this.#editorRoot, dragState.sourceButton);
-      if (!ctx) {
-        return;
-      }
-
-      const state = this.#view.state;
-      if (!selectionTouchesBlock(state.doc, state.selection, dragState.sourcePos)) {
-        const tr = state.tr.setSelection(TextSelection.create(state.doc, ctx.targetPos));
-        this.#view.dispatch(tr.scrollIntoView());
-      }
-
-      if (!this.#view.hasFocus()) {
-        this.#view.focus();
-      }
-
-      setSlashMenuFloatingReference(this.#view, this.#content);
-      showSlashMenu(this.#view, ctx.targetPos);
-    }
-
-    private handlePointerUp = (event: PointerEvent) => {
-      if (!this.#dragState || event.pointerId !== this.#dragState.pointerId) {
-        return;
-      }
-
-      const dragState = this.#dragState;
-      this.#dragState = null;
-      this.finishDragInteraction(dragState.pointerId, dragState.sourceButton);
-
-      if (!dragState.started) {
-        this.#openSlashMenuFromDragHandleTap(dragState);
-        return;
-      }
-
-      if (!dragState.dropTarget) {
-        return;
-      }
-
-      event.preventDefault();
-      this.commitBlockMove(dragState.sourcePos, dragState.dropTarget);
-      this.hide();
-    };
-
-    private handlePointerCancel = (event: PointerEvent) => {
-      if (!this.#dragState || event.pointerId !== this.#dragState.pointerId) {
-        return;
-      }
-
-      const dragState = this.#dragState;
-      this.#dragState = null;
-      this.finishDragInteraction(event.pointerId, dragState.sourceButton);
-    };
-
-    private activateBlock(element: HTMLElement) {
-      try {
-        const context = resolveBlockContextFromElement(this.#view, element);
-        if (!context) {
-          this.hide();
-          return;
-        }
-
-        this.#activeBlock = {
-          node: context.node,
-          pos: context.pos,
-          element
-        };
-        this.#content.dataset.blockPos = String(context.pos);
-        this.positionHandle(element);
-      } catch {
-        this.hide();
-      }
-    }
-
-    private resolveBlockElement(clientX: number, clientY: number) {
-      const prose = getEditorProseSurface(this.#view);
-      const proseRect = prose.getBoundingClientRect();
-      const inRowPickZone =
-        clientX >= proseRect.left - BLOCK_ROW_PICK_GUTTER_LEFT &&
-        clientX <= proseRect.right + 4;
-
-      const handleRect = this.#content.getBoundingClientRect();
-      if (
-        this.#activeBlock?.element.isConnected &&
-        clientX >= handleRect.left - 16 &&
-        clientX <= handleRect.right + 16 &&
-        clientY >= handleRect.top - 14 &&
-        clientY <= handleRect.bottom + 14
-      ) {
-        return this.#activeBlock.element;
-      }
-
-      if (!inRowPickZone) {
-        return null;
-      }
-
-      const elements = document
-        .elementsFromPoint(clientX, clientY)
-        .filter((candidate): candidate is HTMLElement => candidate instanceof HTMLElement)
-        .filter((candidate) => this.#editorRoot.contains(candidate) && !this.#content.contains(candidate));
-
-      const matchedBlocks = new Set<HTMLElement>();
-      for (const candidate of elements) {
-        const block = resolveBlockRootElement(this.#editorRoot, candidate);
-        if (block) {
-          matchedBlocks.add(block);
-        }
-      }
-
-      const sortedMatches = sortBlockElementsBySpecificity([...matchedBlocks]);
-      if (sortedMatches.length > 0) {
-        const picked = sortedMatches[0];
-        if (picked) {
-          const bounds = picked.getBoundingClientRect();
-          if (
-            clientY >= bounds.top - BLOCK_ROW_VERTICAL_SLOP &&
-            clientY <= bounds.bottom + BLOCK_ROW_VERTICAL_SLOP
-          ) {
-            return picked;
-          }
-        }
-      }
-
-      const candidates = sortBlockElementsBySpecificity(
-        Array.from(prose.querySelectorAll<HTMLElement>(BLOCK_HANDLE_SELECTOR))
-          .map((candidate) => resolveBlockRootElement(this.#editorRoot, candidate))
-          .filter((candidate): candidate is HTMLElement => candidate !== null)
-      );
-
-      let best: HTMLElement | null = null;
-      let bestScore = Infinity;
-      for (const candidate of candidates) {
-        const rect = candidate.getBoundingClientRect();
-        if (
-          clientY < rect.top - BLOCK_ROW_VERTICAL_SLOP ||
-          clientY > rect.bottom + BLOCK_ROW_VERTICAL_SLOP
-        ) {
-          continue;
-        }
-        const midY = (rect.top + rect.bottom) / 2;
-        const score = Math.abs(clientY - midY);
-        if (score < bestScore) {
-          bestScore = score;
-          best = candidate;
-        }
-      }
-
-      return best;
-    }
-
-    private resolveDropTarget(clientX: number, clientY: number): BlockDropTarget | null {
-      const source = this.#dragState?.source;
-      if (!source) {
-        return null;
-      }
-
-      // Prefer the pointer column so narrow blocks (e.g. list items) stay targetable; offset helps when the drag handle overlaps the gutter.
-      const probeXs = [clientX, clientX + 20, clientX + 40, clientX + 64, clientX + 96];
-
-      for (const probeX of probeXs) {
-        const element = this.resolveBlockElement(probeX, clientY);
-        if (!element) {
-          continue;
-        }
-
-        try {
-          const context = resolveBlockContextFromElement(this.#view, element);
-          if (!context || context.pos === source.pos) {
-            continue;
-          }
-
-          const rect = element.getBoundingClientRect();
-          const placement = clientY < rect.top + rect.height / 2 ? 'before' : 'after';
-          return {
-            element,
-            placement,
-            targetPos: context.pos,
-            targetNode: context.node
-          };
-        } catch {
-          continue;
-        }
-      }
-
-      return null;
-    }
-
-    private repositionDropIndicator() {
-      const dropTarget = this.#dragState?.dropTarget;
-      if (!dropTarget) {
-        this.hideDropIndicator();
-        return;
-      }
-
-      const prose = getEditorProseSurface(this.#view);
-      const proseRect = prose.getBoundingClientRect();
-      const rect = dropTarget.element.getBoundingClientRect();
-      const top =
-        dropTarget.placement === 'before' ? rect.top - 2 : rect.bottom - 2;
-
-      this.#dropIndicator.style.left = `${Math.round(proseRect.left)}px`;
-      this.#dropIndicator.style.top = `${Math.round(top)}px`;
-      this.#dropIndicator.style.width = `${Math.round(proseRect.width)}px`;
-      this.#dropIndicator.dataset.show = 'true';
-    }
-
-    private hideDropIndicator() {
-      this.#dropIndicator.dataset.show = 'false';
-    }
-
-    private finishDragInteraction(pointerId: number, sourceButton: HTMLElement) {
-      sourceButton.classList.remove('active');
-      this.#content.dataset.dragging = 'false';
-      document.body.classList.remove('notepad-block-dragging');
-      this.hideDropIndicator();
-      try {
-        if (sourceButton.hasPointerCapture(pointerId)) {
-          sourceButton.releasePointerCapture(pointerId);
-        }
-      } catch {
-        // Ignore release failures during teardown or synthetic pointer transitions.
-      }
-    }
-
-    private commitBlockMove(sourcePos: number, dropTarget: BlockDropTarget) {
-      const state = this.#view.state;
-      const sourceNode = state.doc.nodeAt(sourcePos);
-      if (!sourceNode) {
-        return;
-      }
-
-      const listKind = getListContainerKind(state.doc, sourcePos);
-      const { from: deleteFrom, to: deleteTo } = expandDeleteRangeForListItem(
-        state.doc,
-        sourcePos,
-        sourceNode
-      );
-
-      const initialInsertPos =
-        dropTarget.placement === 'before'
-          ? dropTarget.targetPos
-          : dropTarget.targetPos + dropTarget.targetNode.nodeSize;
-
-      if (
-        initialInsertPos === deleteFrom ||
-        initialInsertPos === deleteTo ||
-        (initialInsertPos >= deleteFrom && initialInsertPos <= deleteTo)
-      ) {
-        return;
-      }
-
-      const transaction = state.tr.delete(deleteFrom, deleteTo);
-      const mappedInsertPos = transaction.mapping.map(
-        initialInsertPos,
-        dropTarget.placement === 'before' ? -1 : 1
-      );
-      const clampedInsertPos = Math.max(0, Math.min(mappedInsertPos, transaction.doc.content.size));
-      const resolvedInsert = transaction.doc.resolve(clampedInsertPos);
-      const insertIndex = resolvedInsert.index();
-      const toInsert = nodeToInsertAtBlockGap(
-        state.schema,
-        sourceNode,
-        listKind,
-        resolvedInsert.parent,
-        insertIndex
-      );
-      if (!toInsert) {
-        return;
-      }
-
-      transaction.insert(clampedInsertPos, toInsert);
-      const selectionPos = Math.max(
-        1,
-        Math.min(clampedInsertPos + 1, transaction.doc.nodeSize - 2)
-      );
-      transaction.setSelection(Selection.near(transaction.doc.resolve(selectionPos)));
-      this.#view.dispatch(transaction.scrollIntoView());
-      this.#view.focus();
-    }
-
-    private positionHandle(blockElement: HTMLElement) {
-      this.#content.dataset.show = 'true';
-      const lineEl = getBlockHandleLineElement(blockElement);
-      const lineRect = lineEl.getBoundingClientRect();
-      const handleRect = this.#content.getBoundingClientRect();
-      const handleWidth = handleRect.width || 72;
-      const handleHeight = handleRect.height || 32;
-      const gap = 6;
-      const anchorLeft = blockElement.matches('li')
-        ? getListItemBlockHandleAnchorLeft(blockElement)
-        : lineRect.left;
-      const left = Math.round(anchorLeft - handleWidth - gap);
-      const top = Math.round(lineRect.top + lineRect.height / 2 - handleHeight / 2);
-      this.#content.style.left = `${left}px`;
-      this.#content.style.top = `${top}px`;
-    }
-
-    private hide() {
-      this.clearHideTimer();
-      this.#activeBlock = null;
-      this.#content.dataset.show = 'false';
-      this.#content.dataset.dragging = 'false';
-      delete this.#content.dataset.blockPos;
-    }
-  }
-
-  return new Plugin({
-    key,
-    view: (view) => new BlockHandleView(view)
-  });
-}
-
-// ── Editor lifecycle ─────────────────────────────────────────────────
 
 export async function prepareEditor(editorRoot: HTMLDivElement | null) {
   if (!editorRoot) return false;
   await tick();
-  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   return !!editorRoot;
 }
 
@@ -1621,64 +1178,71 @@ export async function createEditor({
   initialValue,
   onMarkdownChange,
   initialState = null,
-  onDispatchTransaction,
   sharedResources = null,
   viewCallbacks
 }: CreateEditorOptions) {
   editorRoot.classList.add('gn-editor-root');
 
-  const resources =
-    sharedResources ??
-    createSharedEditorResources({
-      assetRootPath: null,
-      onTaskListToggle: () => {},
-      onStorePastedImage: async () => {
-        throw new Error('Image pasting is unavailable for this editor instance.');
-      }
-    });
-  const plugins = resources.plugins;
-  const state = initialState ?? createEditorState(initialValue, plugins);
-  let controller: EditorController;
+  const runtime = sharedResources?.runtime ?? new FileEditorRuntime(initialState?.markdown ?? initialValue);
+  runtime.ensureMarkdown(initialState?.markdown ?? initialValue);
 
-  const view = new EditorView(editorRoot, {
-    state,
-    attributes: {
-      spellcheck: 'true',
-      autocorrect: 'on',
-      autocapitalize: 'sentences'
-    },
-    dispatchTransaction(transaction) {
-      if (onDispatchTransaction) {
-        onDispatchTransaction(controller, transaction);
+  const paneKey = Symbol('editor-pane');
+  const slashMenuApi = createSlashMenuPlugin();
+  let controller: EditorController | null = null;
+  const extensions = [
+    ...draftly({
+      baseStyles: true,
+      defaultKeybindings: false,
+      history: false,
+      lineWrapping: true,
+      plugins: notepadDraftlyPlugins,
+      extensions: createPaneExtensions(() => controller, editorRoot, sharedResources, slashMenuApi)
+    })
+  ];
+
+  const view = new EditorView({
+    state: createPaneState(
+      initialState?.markdown ?? runtime.markdown,
+      extensions,
+      initialState?.selection ?? null
+    ),
+    parent: editorRoot,
+    dispatchTransactions: (transactions, viewInstance) => {
+      const currentController = controller;
+      if (!currentController) {
+        viewInstance.update(transactions);
         return;
       }
-
-      const nextState = view.state.apply(transaction);
-      view.updateState(nextState);
-      if (transaction.docChanged) {
-        onMarkdownChange(serializeMarkdown(nextState.doc));
-      }
+      runtime.dispatchFromPane(currentController, transactions);
     }
-  });
-
-  resources.registerViewCallbacks(view, {
-    onOpenLink: viewCallbacks?.onOpenLink ?? (() => {}),
-    onActiveWikilinkChange: viewCallbacks?.onActiveWikilinkChange ?? (() => {})
   });
 
   controller = {
     view,
-    plugins,
-    sharedResources: resources
+    sharedResources,
+    paneKey,
+    onMarkdownChange
   };
+
+  sharedResources?.registerViewCallbacks(view, viewCallbacks ?? defaultViewCallbacks);
+  runtime.attachController(controller);
+  slashMenuApi.register(view);
 
   return controller;
 }
 
+const defaultViewCallbacks: EditorViewCallbacks = {
+  onOpenLink: () => {},
+  onActiveWikilinkChange: () => {}
+};
+
 export async function destroyEditor(controller: EditorController | null) {
-  if (!controller) return null;
+  if (!controller) {
+    return null;
+  }
 
   controller.sharedResources?.unregisterViewCallbacks(controller.view);
+  controller.sharedResources?.runtime.detachController(controller);
   controller.view.destroy();
   return null;
 }
@@ -1692,101 +1256,124 @@ export function replaceEditorContent(
     return false;
   }
 
-  const nextState = createEditorState(markdown, controller.plugins);
-  controller.view.updateState(
-    flushHistory ? EditorState.create({ schema: notepadSchema, doc: nextState.doc, plugins: controller.plugins }) : nextState
+  const runtime = controller.sharedResources?.runtime;
+  if (runtime) {
+    const snapshot: EditorSnapshot = {
+      markdown,
+      selection: readSelection(controller.view),
+      revision: runtime.revision + 1
+    };
+    return runtime.applyExternalSnapshot(snapshot, controller, flushHistory);
+  }
+
+  controller.view.dispatch(
+    controller.view.state.update({
+      changes: { from: 0, to: controller.view.state.doc.length, insert: markdown },
+      selection: readSelection(controller.view),
+      annotations: [Transaction.addToHistory.of(false), isolateHistory.of('full')]
+    })
   );
+  controller.onMarkdownChange(markdown);
   return true;
 }
 
-export function readEditorState(controller: EditorController | null): EditorState | null {
-  return controller?.view.state ?? null;
+export function readEditorState(controller: EditorController | null): EditorSnapshot | null {
+  if (!controller) {
+    return null;
+  }
+
+  const runtime = controller.sharedResources?.runtime;
+  if (runtime) {
+    return runtime.snapshotFor(controller);
+  }
+
+  return {
+    markdown: controller.view.state.doc.toString(),
+    selection: readSelection(controller.view),
+    revision: 0
+  };
 }
 
 export function replaceEditorState(
   controller: EditorController | null,
-  state: EditorState | null,
-  {
-    focus = true,
-    scrollSelectionIntoView: shouldScrollSelectionIntoView = true
-  }: ReplaceEditorStateOptions = {}
+  state: EditorSnapshot | null,
+  { focus = false, scrollSelectionIntoView = false }: ReplaceEditorStateOptions = {}
 ) {
   if (!controller || !state) {
     return false;
   }
 
-  controller.view.updateState(state);
+  const didReplace = controller.sharedResources?.runtime.applyExternalSnapshot(state, controller, false) ?? false;
+  if (!didReplace) {
+    controller.view.dispatch(
+      controller.view.state.update({
+        selection: state.selection,
+        scrollIntoView: scrollSelectionIntoView
+      })
+    );
+  }
+
   if (focus) {
     controller.view.focus();
   }
-  if (shouldScrollSelectionIntoView) {
-    window.requestAnimationFrame(() => {
-      scrollSelectionIntoView(controller.view);
-    });
-  }
-
   return true;
 }
 
 export function replaceEditorDocument(
   controller: EditorController | null,
-  doc: ProseMirrorNode | null,
+  markdown: string | null,
   {
     anchor = null,
     head = null,
     focus = false,
-    scrollSelectionIntoView: shouldScrollSelectionIntoView = false
+    scrollSelectionIntoView = false
   }: ReplaceEditorDocumentOptions = {}
 ) {
-  if (!controller || !doc) {
+  if (!controller || markdown == null) {
     return false;
   }
 
-  const view = controller.view;
-  if (view.state.doc.eq(doc)) {
-    return true;
+  const nextDocLength = markdown.length;
+  const selection = {
+    anchor: Math.max(0, Math.min(anchor ?? controller.view.state.selection.main.anchor, nextDocLength)),
+    head: Math.max(0, Math.min(head ?? controller.view.state.selection.main.head, nextDocLength))
+  };
+
+  const snapshot: EditorSnapshot = {
+    markdown,
+    selection,
+    revision: (controller.sharedResources?.runtime.revision ?? 0) + 1
+  };
+
+  const didReplace = controller.sharedResources?.runtime.applyExternalSnapshot(snapshot, controller, false) ?? false;
+  if (!didReplace) {
+    controller.view.dispatch(
+      controller.view.state.update({
+        changes: { from: 0, to: controller.view.state.doc.length, insert: markdown },
+        selection,
+        scrollIntoView: scrollSelectionIntoView
+      })
+    );
+  } else if (scrollSelectionIntoView) {
+    controller.view.dispatch(
+      controller.view.state.update({
+        selection,
+        scrollIntoView: true
+      })
+    );
   }
-
-  let transaction = view.state.tr
-    .replaceWith(0, view.state.doc.content.size, doc.content)
-    .setMeta('addToHistory', false);
-
-  const maxPos = Math.max(1, transaction.doc.nodeSize - 2);
-  const nextAnchor = Math.max(1, Math.min(anchor ?? view.state.selection.anchor, maxPos));
-  const nextHead = Math.max(1, Math.min(head ?? view.state.selection.head, maxPos));
-
-  transaction = transaction.setSelection(
-    TextSelection.between(
-      transaction.doc.resolve(nextAnchor),
-      transaction.doc.resolve(nextHead)
-    )
-  );
-
-  view.updateState(view.state.apply(transaction));
 
   if (focus) {
-    view.focus();
+    controller.view.focus();
   }
-  if (shouldScrollSelectionIntoView) {
-    window.requestAnimationFrame(() => {
-      scrollSelectionIntoView(view);
-    });
-  }
-
   return true;
 }
 
-export function readCursorPosition(
-  controller: EditorController | null
-): CursorPosition | null {
+export function readCursorPosition(controller: EditorController | null): CursorPosition | null {
   if (!controller) {
     return null;
   }
-
-  return {
-    anchor: controller.view.state.selection.anchor,
-    head: controller.view.state.selection.head
-  };
+  return readSelection(controller.view);
 }
 
 export function restoreCursorPosition(
@@ -1797,19 +1384,15 @@ export function restoreCursorPosition(
     return false;
   }
 
-  const view = controller.view;
-  const maxPos = Math.max(1, view.state.doc.nodeSize - 2);
-  const anchor = Math.max(1, Math.min(position.anchor, maxPos));
-  const head = Math.max(1, Math.min(position.head, maxPos));
-  const transaction = view.state.tr
-    .setSelection(TextSelection.create(view.state.doc, anchor, head))
-    .scrollIntoView();
-
-  view.dispatch(transaction);
-  view.focus();
-  window.requestAnimationFrame(() => {
-    scrollSelectionIntoView(view);
-  });
+  const anchor = clampPos(controller.view.state.doc, position.anchor);
+  const head = clampPos(controller.view.state.doc, position.head);
+  controller.view.dispatch(
+    controller.view.state.update({
+      selection: { anchor, head },
+      scrollIntoView: true,
+      annotations: [Transaction.addToHistory.of(false)]
+    })
+  );
   return true;
 }
 
@@ -1822,14 +1405,18 @@ export function insertWikilinkSuggestion(
     return false;
   }
 
-  const transaction = controller.view.state.tr.insertText(
-    suggestionValue,
-    activeWikilink.targetFrom,
-    activeWikilink.targetTo
+  controller.view.dispatch(
+    controller.view.state.update({
+      changes: {
+        from: activeWikilink.targetFrom,
+        to: activeWikilink.targetTo,
+        insert: suggestionValue
+      },
+      selection: {
+        anchor: activeWikilink.targetFrom + suggestionValue.length
+      }
+    })
   );
-  const cursorPosition = activeWikilink.targetFrom + suggestionValue.length;
-  transaction.setSelection(TextSelection.create(transaction.doc, cursorPosition));
-  controller.view.dispatch(transaction);
   controller.view.focus();
   return true;
 }

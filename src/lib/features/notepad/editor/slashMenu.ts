@@ -1,15 +1,13 @@
-import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
-import type { EditorView } from 'prosemirror-view';
+import { Transaction } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
 import {
   applyBlockTypeSelection,
-  createTaskListTransaction,
   slashMenuGroups,
   slashMenuOptionIds,
   type EditorMenuOption
 } from '$lib/features/notepad/editor/blockTypes';
 import { emitSlashMenuUpdate } from '$lib/features/notepad/editor/slashMenuBridge';
 
-/** When set, Floating UI anchors the slash menu to this element (e.g. block handle) instead of the caret. */
 const slashMenuFloatingReferenceByView = new WeakMap<EditorView, HTMLElement>();
 
 export function setSlashMenuFloatingReference(view: EditorView, element: HTMLElement | null): void {
@@ -21,14 +19,14 @@ export function setSlashMenuFloatingReference(view: EditorView, element: HTMLEle
 }
 
 export function getSlashMenuFloatingReference(view: EditorView): HTMLElement | null {
-  const el = slashMenuFloatingReferenceByView.get(view);
-  if (!el?.isConnected) {
-    if (el) {
+  const element = slashMenuFloatingReferenceByView.get(view);
+  if (!element?.isConnected) {
+    if (element) {
       slashMenuFloatingReferenceByView.delete(view);
     }
     return null;
   }
-  return el;
+  return element;
 }
 
 export interface SlashMenuItemWithIndex extends EditorMenuOption {
@@ -51,7 +49,6 @@ export type SlashMenuSnapshot =
   | { open: false }
   | {
       open: true;
-      /** Document position used with `view.coordsAtPos` for Floating UI reference. */
       anchorPos: number;
       groups: SlashMenuGroupWithItems[];
       hoverIndex: number;
@@ -73,7 +70,6 @@ export function getSlashMenuState(filter = ''): SlashMenuModel {
         if (normalizedFilter === '') {
           return true;
         }
-
         return item.label.toLowerCase().includes(normalizedFilter);
       })
       .map((item) => ({
@@ -99,37 +95,42 @@ export function getSlashMenuState(filter = ''): SlashMenuModel {
   };
 }
 
-/** True when this block is a typed-slash line (`/…`), not a programmatic open from the handle / + button. */
-function isSlashTriggerLine(view: EditorView): boolean {
-  const { selection } = view.state;
-  if (!(selection instanceof TextSelection)) {
-    return false;
+function getSelectionLine(view: EditorView) {
+  const selection = view.state.selection.main;
+  if (!selection.empty) {
+    return null;
   }
-  const { $from } = selection;
-  const parent = $from.parent;
-  if (!parent.isTextblock) {
-    return false;
-  }
-  const text = parent.textBetween(0, parent.content.size, '\n', '\0');
-  return text.startsWith('/');
+  return view.state.doc.lineAt(selection.head);
 }
 
-/** Removes `/…` on the current line before applying the chosen block type (typed-slash flow only). */
+function isSelectionAtEndOfLine(view: EditorView) {
+  const line = getSelectionLine(view);
+  if (!line) {
+    return false;
+  }
+  return view.state.selection.main.head === line.to;
+}
+
+function isSlashTriggerLine(view: EditorView): boolean {
+  const line = getSelectionLine(view);
+  if (!line) {
+    return false;
+  }
+  return line.text.startsWith('/');
+}
+
 function deleteSlashTriggerText(view: EditorView): void {
-  const selection = view.state.selection;
-  if (!(selection instanceof TextSelection)) {
+  const line = getSelectionLine(view);
+  if (!line || !isSelectionAtEndOfLine(view)) {
     return;
   }
-  const { $from } = selection;
-  const parent = $from.parent;
-  if (!isSelectionAtEndOfNode(view) || !parent.isTextblock) {
-    return;
-  }
-  const from = $from.start();
-  const to = $from.end();
-  const transaction = view.state.tr.deleteRange(from, to);
-  transaction.setSelection(TextSelection.create(transaction.doc, from));
-  view.dispatch(transaction);
+
+  view.dispatch(
+    view.state.update({
+      changes: { from: line.from, to: line.to, insert: '' },
+      selection: { anchor: line.from }
+    })
+  );
 }
 
 function runSlashMenuSelection(view: EditorView, optionId: string) {
@@ -137,24 +138,7 @@ function runSlashMenuSelection(view: EditorView, optionId: string) {
     return;
   }
 
-  const slashLine = isSlashTriggerLine(view);
-
-  if (optionId === 'taskList') {
-    if (slashLine) {
-      const transaction = createTaskListTransaction(view.state, {
-        requireSelectionAtEnd: true,
-        scrollIntoView: true
-      });
-      if (transaction) {
-        view.dispatch(transaction);
-        return;
-      }
-    }
-    applyBlockTypeSelection(view, optionId);
-    return;
-  }
-
-  if (slashLine) {
+  if (isSlashTriggerLine(view)) {
     deleteSlashTriggerText(view);
   }
 
@@ -168,32 +152,12 @@ function consumeKeyEvent(event: KeyboardEvent) {
 }
 
 function getCurrentText(view: EditorView) {
-  const { selection } = view.state;
-  if (!(selection instanceof TextSelection)) {
-    return null;
-  }
-
-  const parent = selection.$from.parent;
-  if (!parent.isTextblock) {
-    return null;
-  }
-
-  return parent.textBetween(0, parent.content.size, '\n', '\0');
+  return getSelectionLine(view)?.text ?? null;
 }
 
-function isSelectionAtEndOfNode(view: EditorView) {
-  const { selection } = view.state;
-  if (!(selection instanceof TextSelection)) {
-    return false;
-  }
+const slashControllers = new WeakMap<EditorView, SlashMenuController>();
 
-  const { $head } = selection;
-  return $head.parentOffset === $head.parent.content.size;
-}
-
-const slashControllers = new WeakMap<EditorView, SlashMenuPluginController>();
-
-class SlashMenuPluginController {
+class SlashMenuController {
   readonly #view: EditorView;
   #filter = '';
   #hoverIndex = 0;
@@ -209,12 +173,7 @@ class SlashMenuPluginController {
 
   sync(view: EditorView) {
     const shouldShow = this.#shouldShow(view);
-    if (!shouldShow) {
-      this.hide();
-      return;
-    }
-
-    if (this.#menuState.size === 0) {
+    if (!shouldShow || this.#menuState.size === 0) {
       this.hide();
       return;
     }
@@ -239,9 +198,7 @@ class SlashMenuPluginController {
 
   destroy() {
     window.removeEventListener('resize', this.handleWindowResize, true);
-    this.#visible = false;
-    slashMenuFloatingReferenceByView.delete(this.#view);
-    emitSlashMenuUpdate(this.#view, { open: false });
+    this.hide();
   }
 
   setHoverIndex(index: number) {
@@ -349,7 +306,7 @@ class SlashMenuPluginController {
   }
 
   #buildOpenSnapshot(view: EditorView): SlashMenuSnapshot {
-    const anchorPos = this.#programmaticPos ?? view.state.selection.from;
+    const anchorPos = this.#programmaticPos ?? view.state.selection.main.head;
     return {
       open: true,
       anchorPos,
@@ -365,11 +322,11 @@ class SlashMenuPluginController {
 
   #shouldShow(view: EditorView) {
     if (typeof this.#programmaticPos === 'number') {
-      const maxSize = view.state.doc.nodeSize - 2;
-      const validPos = Math.min(this.#programmaticPos, maxSize);
-      const targetParent = view.state.doc.resolve(validPos).parent;
-      const activeParent = view.state.selection.$from.parent;
-      if (targetParent !== activeParent) {
+      const maxPos = view.state.doc.length;
+      const validPos = Math.max(0, Math.min(this.#programmaticPos, maxPos));
+      const selectionLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+      const targetLine = view.state.doc.lineAt(validPos).number;
+      if (selectionLine !== targetLine) {
         this.#programmaticPos = null;
         return false;
       }
@@ -380,16 +337,12 @@ class SlashMenuPluginController {
       return true;
     }
 
-    if (!isSelectionAtEndOfNode(view)) {
+    if (!isSelectionAtEndOfLine(view)) {
       return false;
     }
 
     const currentText = getCurrentText(view);
-    if (currentText == null) {
-      return false;
-    }
-
-    if (!currentText.startsWith('/')) {
+    if (currentText == null || !currentText.startsWith('/')) {
       return false;
     }
 
@@ -406,13 +359,8 @@ class SlashMenuPluginController {
   };
 }
 
-/** Recompute anchor position after layout/viewport changes (handled by plugin resize; optional for Svelte). */
 export function refreshSlashMenuLayout(view: EditorView) {
-  const ctrl = slashControllers.get(view);
-  if (!ctrl) {
-    return;
-  }
-  ctrl.sync(view);
+  slashControllers.get(view)?.sync(view);
 }
 
 export function slashMenuHandleKeydownFromUi(view: EditorView, event: KeyboardEvent) {
@@ -437,39 +385,55 @@ export function slashMenuHideFromUi(view: EditorView) {
 
 export function createSlashMenuPlugin() {
   const apiByView = new WeakMap<EditorView, SlashMenuAPI>();
-
-  const plugin = new Plugin({
-    key: new PluginKey('NOTEPAD_SLASH_MENU'),
-    view: (view) => {
-      const api: SlashMenuAPI = {
-        show: () => {},
-        hide: () => {}
-      };
-      const controller = new SlashMenuPluginController(view);
-      slashControllers.set(view, controller);
-      api.show = (pos) => controller.show(pos);
-      api.hide = () => controller.hide();
-      apiByView.set(view, api);
-      return {
-        update(updatedView) {
-          controller.sync(updatedView);
-        },
-        destroy() {
-          apiByView.delete(view);
-          slashControllers.delete(view);
-          controller.destroy();
-        }
-      };
-    }
+  const extension = EditorView.updateListener.of((update) => {
+    slashControllers.get(update.view)?.sync(update.view);
   });
 
   return {
-    plugin,
+    extension: [
+      extension,
+      EditorView.domEventHandlers({
+        blur: (_event, view) => {
+          const controller = slashControllers.get(view);
+          if (!controller) {
+            return false;
+          }
+          queueMicrotask(() => {
+            if (!view.hasFocus) {
+              controller.hide();
+            }
+          });
+          return false;
+        }
+      })
+    ],
     show(view: EditorView, pos: number) {
-      apiByView.get(view)?.show(pos);
+      let controller = slashControllers.get(view);
+      if (!controller) {
+        controller = new SlashMenuController(view);
+        slashControllers.set(view, controller);
+      }
+      if (!apiByView.has(view)) {
+        apiByView.set(view, {
+          show: (nextPos) => controller?.show(nextPos),
+          hide: () => controller?.hide()
+        });
+      }
+      controller.show(pos);
     },
     hide(view: EditorView) {
-      apiByView.get(view)?.hide();
+      slashControllers.get(view)?.hide();
+    },
+    register(view: EditorView) {
+      if (!slashControllers.has(view)) {
+        slashControllers.set(view, new SlashMenuController(view));
+      }
+    },
+    unregister(view: EditorView) {
+      const controller = slashControllers.get(view);
+      controller?.destroy();
+      slashControllers.delete(view);
+      apiByView.delete(view);
     }
   };
 }

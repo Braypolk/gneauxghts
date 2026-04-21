@@ -1,10 +1,7 @@
-import type { Node as ProseMirrorNode } from 'prosemirror-model';
-import type { Selection, Transaction } from 'prosemirror-state';
-
 const IMAGE_EMBED_PATTERN = /!\[\[([^\[\]\n]+?)\]\]/g;
-const COMPLETE_IMAGE_EMBED_PATTERN = /!\[\[[^\[\]\n]+?\]\]/;
 const IMAGE_FILE_PATTERN = /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i;
 const IMAGE_SIZE_PATTERN = /^(?:(\d+)x(\d+)|(\d+)x|x(\d+)|(\d+))$/;
+const FENCE_PATTERN = /^\s*(```+|~~~+)/;
 
 export interface ParsedImageEmbedTarget {
   fileName: string;
@@ -17,65 +14,6 @@ export interface ImageEmbedMatch {
   to: number;
   target: ParsedImageEmbedTarget;
   widgetKey: string;
-}
-
-export function isInCodeContext(selection: Selection) {
-  const { $from } = selection;
-  if ($from.parent.type.name === 'code_block') {
-    return true;
-  }
-
-  return $from.marks().some((mark) => mark.type.name === 'code');
-}
-
-export function selectionTouchesEmbed(selection: Selection, from: number, to: number) {
-  if (selection.empty) {
-    return selection.from > from && selection.from < to;
-  }
-
-  return selection.from < to && selection.to > from;
-}
-
-function clampTextWindow(doc: ProseMirrorNode, start: number, end: number, padding = 48) {
-  const maxPos = Math.max(0, doc.content.size);
-  return {
-    from: Math.max(0, start - padding),
-    to: Math.min(maxPos, end + padding)
-  };
-}
-
-function textWindowContainsImageEmbed(doc: ProseMirrorNode, start: number, end: number) {
-  const { from, to } = clampTextWindow(doc, start, end);
-  return COMPLETE_IMAGE_EMBED_PATTERN.test(doc.textBetween(from, to, '\n', '\n'));
-}
-
-export function transactionMayAffectImageEmbeds(
-  transaction: Transaction,
-  oldDoc: ProseMirrorNode,
-  newDoc: ProseMirrorNode
-) {
-  let affectsEmbeds = false;
-
-  for (const map of transaction.mapping.maps) {
-    map.forEach((oldStart, oldEnd, newStart, newEnd) => {
-      if (affectsEmbeds) {
-        return;
-      }
-
-      if (
-        textWindowContainsImageEmbed(oldDoc, oldStart, oldEnd) ||
-        textWindowContainsImageEmbed(newDoc, newStart, newEnd)
-      ) {
-        affectsEmbeds = true;
-      }
-    });
-
-    if (affectsEmbeds) {
-      break;
-    }
-  }
-
-  return affectsEmbeds;
 }
 
 export function formatImageEmbedTarget(target: ParsedImageEmbedTarget) {
@@ -127,58 +65,59 @@ function parseImageEmbedTarget(rawTarget: string): ParsedImageEmbedTarget | null
   };
 }
 
-export function forEachImageEmbed(doc: ProseMirrorNode, callback: (embed: ImageEmbedMatch) => void) {
-  const occurrencesByRawTarget = new Map<string, number>();
-
-  doc.descendants((node, position, parent) => {
-    if (!node.isText || !node.text) {
-      return;
+function lineStarts(text: string) {
+  const starts = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === '\n' && index + 1 <= text.length) {
+      starts.push(index + 1);
     }
-
-    if (
-      parent?.type.name === 'code_block' ||
-      node.marks.some((mark) => mark.type.name === 'code')
-    ) {
-      return;
-    }
-
-    for (const match of node.text.matchAll(IMAGE_EMBED_PATTERN)) {
-      const index = match.index ?? -1;
-      const rawTarget = match[1]?.trim();
-      const target = rawTarget ? parseImageEmbedTarget(rawTarget) : null;
-
-      if (index < 0 || !rawTarget || !target) {
-        continue;
-      }
-
-      const occurrence = (occurrencesByRawTarget.get(rawTarget) ?? 0) + 1;
-      occurrencesByRawTarget.set(rawTarget, occurrence);
-
-      const from = position + index;
-      const to = from + match[0].length;
-      callback({
-        from,
-        to,
-        target,
-        widgetKey: `image-embed:${rawTarget}:${occurrence}`
-      });
-    }
-  });
+  }
+  return starts;
 }
 
-export function findTouchedImageEmbedKey(doc: ProseMirrorNode, selection: Selection) {
-  if (isInCodeContext(selection)) {
-    return null;
-  }
+function isOffsetInsideCodeFence(text: string, offset: number, starts = lineStarts(text)) {
+  let insideFence = false;
 
-  let activeWidgetKey: string | null = null;
-  forEachImageEmbed(doc, (embed) => {
-    if (activeWidgetKey || !selectionTouchesEmbed(selection, embed.from, embed.to)) {
-      return;
+  for (const start of starts) {
+    if (start > offset) {
+      break;
     }
 
-    activeWidgetKey = embed.widgetKey;
-  });
+    const end = text.indexOf('\n', start);
+    const line = text.slice(start, end === -1 ? text.length : end);
+    if (FENCE_PATTERN.test(line)) {
+      insideFence = !insideFence;
+    }
+  }
 
-  return activeWidgetKey;
+  return insideFence;
+}
+
+export function isPositionInsideCodeFence(text: string, offset: number) {
+  return isOffsetInsideCodeFence(text, offset);
+}
+
+export function forEachImageEmbed(text: string, callback: (embed: ImageEmbedMatch) => void) {
+  const occurrencesByRawTarget = new Map<string, number>();
+  const starts = lineStarts(text);
+
+  for (const match of text.matchAll(IMAGE_EMBED_PATTERN)) {
+    const index = match.index ?? -1;
+    const rawTarget = match[1]?.trim();
+    const target = rawTarget ? parseImageEmbedTarget(rawTarget) : null;
+
+    if (index < 0 || !rawTarget || !target || isOffsetInsideCodeFence(text, index, starts)) {
+      continue;
+    }
+
+    const occurrence = (occurrencesByRawTarget.get(rawTarget) ?? 0) + 1;
+    occurrencesByRawTarget.set(rawTarget, occurrence);
+
+    callback({
+      from: index,
+      to: index + match[0].length,
+      target,
+      widgetKey: `image-embed:${rawTarget}:${occurrence}`
+    });
+  }
 }

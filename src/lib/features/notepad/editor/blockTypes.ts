@@ -1,13 +1,5 @@
-import { setBlockType, wrapIn } from 'prosemirror-commands';
-import {
-  Fragment,
-  type Node as ProseMirrorNode,
-  type NodeType
-} from 'prosemirror-model';
-import { EditorState, TextSelection, type Selection, type Transaction } from 'prosemirror-state';
-import type { EditorView } from 'prosemirror-view';
-import { wrapInList } from 'prosemirror-schema-list';
-import { liftTarget } from 'prosemirror-transform';
+import type { EditorState, TransactionSpec } from '@codemirror/state';
+import type { EditorView } from '@codemirror/view';
 
 export interface EditorMenuOption {
   id: string;
@@ -20,13 +12,39 @@ export interface EditorMenuGroup {
   items: readonly EditorMenuOption[];
 }
 
-interface ListSelectionRangeInfo {
-  listPos: number;
-  listDepth: number;
-  listNode: ProseMirrorNode;
-  startIndex: number;
-  endIndex: number;
+export type BlockTypeId =
+  | 'paragraph'
+  | 'heading1'
+  | 'heading2'
+  | 'heading3'
+  | 'heading4'
+  | 'heading5'
+  | 'heading6'
+  | 'quote'
+  | 'bulletList'
+  | 'orderedList'
+  | 'taskList'
+  | 'code'
+  | 'divider'
+  | 'wikilink';
+
+export interface BlockDescriptor {
+  from: number;
+  to: number;
+  moveTo: number;
+  startLine: number;
+  endLine: number;
+  typeId: BlockTypeId;
+  indent: number;
 }
+
+const headingPattern = /^(#{1,6})\s+/;
+const quotePattern = /^\s*>\s?/;
+const unorderedListPattern = /^(\s*)([-+*])\s+(\[[ xX]\]\s+)?/;
+const orderedListPattern = /^(\s*)(\d+\.)\s+(\[[ xX]\]\s+)?/;
+const taskOnlyPattern = /^(\s*)([-+*])\s+\[[ xX]\]\s+/;
+const hrPattern = /^\s*(?:---|\*\*\*|___)\s*$/;
+const fencePattern = /^\s*(```+|~~~+)/;
 
 const wikilinkSlashIcon = `
   <svg
@@ -126,403 +144,368 @@ export const blockTypeIcons: Record<string, string> = {
   wikilink: wikilinkSlashIcon
 };
 
-function readBooleanAttr(value: unknown, fallback: boolean) {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') return value === 'true';
-  return fallback;
+interface LineInfo {
+  number: number;
+  from: number;
+  to: number;
+  text: string;
 }
 
-function readNullableBooleanAttr(value: unknown) {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') return value === 'true';
-  return null;
-}
-
-function readNumberAttr(value: unknown, fallback: number) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return fallback;
-}
-
-export function createTaskListTransaction(
-  state: EditorState,
-  {
-    checked = false,
-    requireSelectionAtEnd = false,
-    scrollIntoView = false
-  }: {
-    checked?: boolean;
-    requireSelectionAtEnd?: boolean;
-    scrollIntoView?: boolean;
-  } = {}
-): Transaction | null {
-  const { selection, schema } = state;
-  if (!(selection instanceof TextSelection) || !selection.empty) {
-    return null;
-  }
-
-  const { $from } = selection;
-  if (requireSelectionAtEnd && $from.parentOffset !== $from.parent.content.size) {
-    return null;
-  }
-
-  const parent = $from.parent;
-  if (parent.type.name !== 'paragraph' && parent.type.name !== 'heading') {
-    return null;
-  }
-
-  const blockPos = $from.before();
-  const paragraph = schema.nodes.paragraph.create();
-  const listItem = schema.nodes.list_item.create({ checked }, paragraph);
-  const taskList = schema.nodes.bullet_list.create({ bullet: '-', tight: false }, listItem);
-  const transaction = state.tr.replaceWith(blockPos, blockPos + parent.nodeSize, taskList);
-  transaction.setSelection(TextSelection.create(transaction.doc, blockPos + 3));
-
-  return scrollIntoView ? transaction.scrollIntoView() : transaction;
-}
-
-function getNearestListAncestor($pos: Selection['$from']) {
-  for (let depth = $pos.depth; depth >= 1; depth -= 1) {
-    const node = $pos.node(depth);
-    if (node.type.name === 'bullet_list' || node.type.name === 'ordered_list') {
-      return {
-        listDepth: depth,
-        listNode: node,
-        listPos: $pos.before(depth)
-      };
-    }
-  }
-
-  return null;
-}
-
-function resolveListSelectionRange(view: EditorView): ListSelectionRangeInfo | null {
-  const { doc, selection } = view.state;
-  const rangeStart = selection.from;
-  const rangeEnd = selection.empty ? selection.to : Math.max(selection.from, selection.to - 1);
-  const startResolved = doc.resolve(rangeStart);
-  const endResolved = doc.resolve(rangeEnd);
-  const startInfo = getNearestListAncestor(startResolved);
-  const endInfo = getNearestListAncestor(endResolved);
-
-  if (!startInfo || !endInfo) {
-    return null;
-  }
-
-  if (startInfo.listPos !== endInfo.listPos || startInfo.listDepth !== endInfo.listDepth) {
-    return null;
-  }
-
-  const startIndex = startResolved.index(startInfo.listDepth);
-  const endIndex = endResolved.index(endInfo.listDepth);
-
-  if (
-    startIndex < 0 ||
-    endIndex < 0 ||
-    startIndex >= startInfo.listNode.childCount ||
-    endIndex >= startInfo.listNode.childCount
-  ) {
-    return null;
-  }
-
+function getLineInfo(state: EditorState, number: number): LineInfo {
+  const line = state.doc.line(number);
   return {
-    ...startInfo,
-    startIndex: Math.min(startIndex, endIndex),
-    endIndex: Math.max(startIndex, endIndex)
+    number,
+    from: line.from,
+    to: line.to,
+    text: line.text
   };
 }
 
-function liftSelectionOutOfBlockquote(view: EditorView) {
-  const { $from, $to } = view.state.selection;
-  const range = $from.blockRange($to, (node) => node.type.name === 'blockquote');
-  if (!range) return false;
-
-  const target = liftTarget(range);
-  if (target == null) return false;
-
-  view.dispatch(view.state.tr.lift(range, target).scrollIntoView());
-  return true;
+function countIndent(text: string) {
+  const match = text.match(/^\s*/);
+  return match?.[0]?.length ?? 0;
 }
 
-function ensureParagraphSelection(
-  view: EditorView,
-  paragraphType: NodeType
-) {
-  if (view.state.selection.$from.parent.type.name === 'paragraph') {
-    return true;
-  }
-
-  return setBlockType(paragraphType)(view.state, view.dispatch);
+function isBlank(text: string) {
+  return text.trim() === '';
 }
 
-function normalizeSelectionForList(
-  view: EditorView,
-  paragraphType: NodeType
-) {
-  let lifted = false;
-  while (liftSelectionOutOfBlockquote(view)) {
-    lifted = true;
-  }
-
-  const parentTypeName = view.state.selection.$from.parent.type.name;
-  if (parentTypeName !== 'paragraph') {
-    return ensureParagraphSelection(view, paragraphType) || lifted;
-  }
-
-  return lifted;
+function matchesList(text: string) {
+  return unorderedListPattern.test(text) || orderedListPattern.test(text);
 }
 
-function buildListAttrsForTarget(
-  listNode: ProseMirrorNode,
-  targetId: 'bulletList' | 'orderedList' | 'taskList',
-  orderedStart = readNumberAttr(listNode.attrs.order, 1)
-) {
-  const spread = readBooleanAttr(listNode.attrs.spread, false);
-
-  if (targetId === 'orderedList') {
-    return {
-      order: orderedStart,
-      spread
-    };
-  }
-
-  return { spread };
+function matchesTask(text: string) {
+  return taskOnlyPattern.test(text);
 }
 
-function buildListAttrsForExistingType(listNode: ProseMirrorNode, orderedStart: number) {
-  const spread = readBooleanAttr(listNode.attrs.spread, false);
-
-  if (listNode.type.name === 'ordered_list') {
-    return {
-      order: orderedStart,
-      spread
-    };
-  }
-
-  return { spread };
+function listKind(text: string): BlockTypeId {
+  if (matchesTask(text)) return 'taskList';
+  if (orderedListPattern.test(text)) return 'orderedList';
+  return 'bulletList';
 }
 
-function buildListItemAttrsForTarget(
-  itemNode: ProseMirrorNode,
-  targetId: 'bulletList' | 'orderedList' | 'taskList',
-  itemIndex: number,
-  orderedStart: number
-) {
-  const spread = readBooleanAttr(itemNode.attrs.spread, true);
-  const checked = readNullableBooleanAttr(itemNode.attrs.checked);
+function isTableLine(text: string) {
+  const trimmed = text.trim();
+  return trimmed.includes('|') && trimmed !== '|';
+}
 
-  if (targetId === 'orderedList') {
-    return {
-      ...itemNode.attrs,
-      label: `${orderedStart + itemIndex}.`,
-      listType: 'ordered',
-      spread,
-      checked: null
-    };
-  }
+function isTableDelimiterLine(text: string) {
+  return /^\s*\|?(?:\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(text);
+}
 
+function stripListMarker(text: string) {
+  return text.replace(/^(\s*)(?:[-+*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, '$1');
+}
+
+function stripQuote(text: string) {
+  return text.replace(/^\s*>\s?/, '');
+}
+
+function lineContentRange(state: EditorState, lineNumber: number) {
+  const line = state.doc.line(lineNumber);
   return {
-    ...itemNode.attrs,
-    label: '•',
-    listType: 'bullet',
-    spread,
-    checked: targetId === 'taskList' ? checked ?? false : null
+    from: line.from,
+    to: line.to,
+    moveTo: lineNumber < state.doc.lines ? state.doc.line(lineNumber + 1).from : line.to
   };
 }
 
-function isListSelectionAlreadyTargeted(
-  listNode: ProseMirrorNode,
-  selectedItems: readonly ProseMirrorNode[],
-  targetId: 'bulletList' | 'orderedList' | 'taskList'
-) {
-  if (targetId === 'orderedList') {
-    return listNode.type.name === 'ordered_list';
+function detectLineBlockType(text: string): BlockTypeId {
+  if (isBlank(text)) return 'paragraph';
+
+  const headingMatch = text.match(headingPattern);
+  if (headingMatch) {
+    return `heading${headingMatch[1].length}` as BlockTypeId;
   }
 
-  if (listNode.type.name !== 'bullet_list') {
-    return false;
-  }
-
-  if (targetId === 'bulletList') {
-    return selectedItems.every((item) => readNullableBooleanAttr(item.attrs.checked) == null);
-  }
-
-  return selectedItems.every((item) => readNullableBooleanAttr(item.attrs.checked) != null);
+  if (fencePattern.test(text)) return 'code';
+  if (quotePattern.test(text)) return 'quote';
+  if (matchesList(text)) return listKind(text);
+  if (hrPattern.test(text.trim())) return 'divider';
+  return 'paragraph';
 }
 
-function convertCurrentList(
-  view: EditorView,
-  bulletListType: NodeType,
-  orderedListType: NodeType,
-  targetId: 'bulletList' | 'orderedList' | 'taskList'
-) {
-  const selectionRange = resolveListSelectionRange(view);
-  if (!selectionRange) {
-    return false;
+function describeBlankLineBlock(state: EditorState, lineNumber: number): BlockDescriptor {
+  const { from, to, moveTo } = lineContentRange(state, lineNumber);
+
+  return {
+    from,
+    to,
+    moveTo,
+    startLine: lineNumber,
+    endLine: lineNumber,
+    typeId: 'paragraph',
+    indent: 0
+  };
+}
+
+function findFenceEnd(state: EditorState, startLine: number, fenceText: string) {
+  for (let lineNo = startLine + 1; lineNo <= state.doc.lines; lineNo += 1) {
+    const line = state.doc.line(lineNo).text;
+    if (line.trim().startsWith(fenceText)) {
+      return lineNo;
+    }
   }
+  return startLine;
+}
 
-  const { listNode, listPos, startIndex, endIndex } = selectionRange;
-  const targetListType = targetId === 'orderedList' ? orderedListType : bulletListType;
-  const originalOrderedStart = readNumberAttr(listNode.attrs.order, 1);
-  const targetOrderedStart =
-    listNode.type.name === 'ordered_list' ? originalOrderedStart + startIndex : 1;
-  const transaction = view.state.tr;
+function findListItemEnd(state: EditorState, startLine: number) {
+  const startText = state.doc.line(startLine).text;
+  const baseIndent = countIndent(startText);
+  let endLine = startLine;
 
-  const beforeItems: ProseMirrorNode[] = [];
-  const selectedItems: ProseMirrorNode[] = [];
-  const afterItems: ProseMirrorNode[] = [];
-
-  for (let index = 0; index < listNode.childCount; index += 1) {
-    const child = listNode.child(index);
-    if (index < startIndex) {
-      beforeItems.push(child);
+  for (let lineNo = startLine + 1; lineNo <= state.doc.lines; lineNo += 1) {
+    const text = state.doc.line(lineNo).text;
+    if (isBlank(text)) {
+      endLine = lineNo;
       continue;
     }
 
-    if (index > endIndex) {
-      afterItems.push(child);
-      continue;
+    const indent = countIndent(text);
+    const listHere = matchesList(text);
+    if (indent < baseIndent) {
+      break;
     }
-
-    selectedItems.push(child);
+    if (indent === baseIndent && listHere) {
+      break;
+    }
+    if (indent === 0 && !listHere && baseIndent === 0) {
+      break;
+    }
+    endLine = lineNo;
   }
 
-  if (
-    selectedItems.length === 0 ||
-    isListSelectionAlreadyTargeted(listNode, selectedItems, targetId)
-  ) {
-    return true;
+  while (endLine > startLine && isBlank(state.doc.line(endLine).text)) {
+    endLine -= 1;
   }
 
-  const replacementNodes: ProseMirrorNode[] = [];
-
-  if (beforeItems.length > 0) {
-    replacementNodes.push(
-      listNode.type.create(buildListAttrsForExistingType(listNode, originalOrderedStart), beforeItems)
-    );
-  }
-
-  replacementNodes.push(
-    targetListType.create(
-      buildListAttrsForTarget(listNode, targetId, targetOrderedStart),
-      selectedItems.map((item, itemIndex) =>
-        item.type.create(
-          buildListItemAttrsForTarget(item, targetId, itemIndex, targetOrderedStart),
-          item.content,
-          item.marks
-        )
-      )
-    )
-  );
-
-  if (afterItems.length > 0) {
-    const afterOrderedStart =
-      listNode.type.name === 'ordered_list' ? originalOrderedStart + endIndex + 1 : 1;
-    replacementNodes.push(
-      listNode.type.create(buildListAttrsForExistingType(listNode, afterOrderedStart), afterItems)
-    );
-  }
-
-  transaction.replaceWith(
-    listPos,
-    listPos + listNode.nodeSize,
-    Fragment.fromArray(replacementNodes)
-  );
-
-  const mappedAnchor = transaction.mapping.map(view.state.selection.anchor);
-  const mappedHead = transaction.mapping.map(view.state.selection.head);
-  transaction.setSelection(TextSelection.create(transaction.doc, mappedAnchor, mappedHead));
-
-  if (transaction.docChanged) {
-    view.dispatch(transaction.scrollIntoView());
-  }
-
-  return true;
+  return endLine;
 }
 
-function wrapSelectionInList(
-  view: EditorView,
-  bulletListType: NodeType,
-  orderedListType: NodeType,
-  targetId: 'bulletList' | 'orderedList' | 'taskList'
-) {
-  const listType = targetId === 'orderedList' ? orderedListType : bulletListType;
-  const wrapped = wrapInList(listType)(view.state, view.dispatch);
+function describeBlockStartingAt(state: EditorState, startLine: number): BlockDescriptor {
+  const start = getLineInfo(state, startLine);
+  const text = start.text;
+  const { from, to, moveTo } = lineContentRange(state, startLine);
 
-  if (!wrapped) {
-    return false;
-  }
-
-  if (targetId === 'taskList') {
-    return convertCurrentList(view, bulletListType, orderedListType, 'taskList');
-  }
-
-  return true;
+  return {
+    from,
+    to,
+    moveTo,
+    startLine,
+    endLine: startLine,
+    typeId: detectLineBlockType(text),
+    indent: countIndent(text)
+  };
 }
 
-function insertWikilinkAtSelection(view: EditorView) {
-  const { $from } = view.state.selection;
-  const from = $from.start();
-  const to = $from.end();
-  const transaction = view.state.tr.insertText('[[]]', from, to);
-  transaction.setSelection(TextSelection.create(transaction.doc, from + 2));
-  view.dispatch(transaction);
+export function listBlocks(state: EditorState) {
+  const blocks: BlockDescriptor[] = [];
+  let lineNo = 1;
+
+  while (lineNo <= state.doc.lines) {
+    const block = describeBlockStartingAt(state, lineNo);
+    blocks.push(block);
+    lineNo += 1;
+  }
+
+  return blocks;
+}
+
+export function describeBlockAt(state: EditorState, pos: number) {
+  const line = state.doc.lineAt(Math.max(0, Math.min(pos, state.doc.length)));
+  return describeBlockStartingAt(state, line.number);
+}
+
+function applySpec(view: EditorView, spec: TransactionSpec) {
+  view.dispatch(spec);
   view.focus();
+  return true;
+}
+
+function replaceBlock(view: EditorView, block: BlockDescriptor, insert: string, anchor?: number) {
+  return applySpec(view, {
+    changes: { from: block.from, to: block.to, insert },
+    selection: { anchor: anchor ?? block.from + insert.length, head: anchor ?? block.from + insert.length },
+    scrollIntoView: true
+  });
+}
+
+function normalizeToParagraphLines(text: string) {
+  const lines = text.split('\n');
+
+  if (lines.length >= 2 && fencePattern.test(lines[0] ?? '') && fencePattern.test(lines.at(-1) ?? '')) {
+    return lines.slice(1, -1);
+  }
+
+  return lines.map((line) => stripListMarker(stripQuote(line)).replace(headingPattern, ''));
+}
+
+function toHeading(text: string, level: number) {
+  const lines = normalizeToParagraphLines(text);
+  const [first = '', ...rest] = lines;
+  return [`${'#'.repeat(level)} ${first.trim()}`, ...rest].join('\n');
+}
+
+function toParagraph(text: string) {
+  return normalizeToParagraphLines(text).join('\n');
+}
+
+function toQuote(text: string) {
+  return normalizeToParagraphLines(text)
+    .map((line) => (line.trim() === '' ? '>' : `> ${line}`))
+    .join('\n');
+}
+
+function toCode(text: string) {
+  const lines = normalizeToParagraphLines(text);
+  return ['```', ...lines, '```'].join('\n');
+}
+
+function toList(text: string, kind: 'bulletList' | 'orderedList' | 'taskList') {
+  const lines = normalizeToParagraphLines(text);
+  if (lines.length === 0) {
+    return kind === 'orderedList' ? '1. ' : kind === 'taskList' ? '- [ ] ' : '- ';
+  }
+
+  const first = lines[0] ?? '';
+  const prefix =
+    kind === 'orderedList' ? '1. ' : kind === 'taskList' ? '- [ ] ' : '- ';
+  const rest = lines.slice(1);
+  return [prefix + first.trim(), ...rest].join('\n');
 }
 
 export function applyBlockTypeSelection(
   view: EditorView,
-  id: string
+  id: string,
+  blockOverride: BlockDescriptor | null = null
 ) {
-  const { schema } = view.state;
-
-  if (id === 'paragraph') {
-    setBlockType(schema.nodes.paragraph)(view.state, view.dispatch);
-    return;
+  const block = blockOverride ?? describeBlockAt(view.state, view.state.selection.main.head);
+  if (!block) {
+    return false;
   }
 
-  if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
-    const bulletListType = schema.nodes.bullet_list;
-    const orderedListType = schema.nodes.ordered_list;
-    const paragraphType = schema.nodes.paragraph;
+  const text = view.state.sliceDoc(block.from, block.to);
 
-    if (convertCurrentList(view, bulletListType, orderedListType, id)) {
-      return;
-    }
-
-    normalizeSelectionForList(view, paragraphType);
-    wrapSelectionInList(view, bulletListType, orderedListType, id);
-    return;
+  if (id === 'paragraph') {
+    return replaceBlock(view, block, toParagraph(text), block.from);
   }
 
   if (id.startsWith('heading')) {
-    const level = parseInt(id.replace('heading', ''), 10);
-    setBlockType(schema.nodes.heading, { level })(view.state, view.dispatch);
-    return;
+    const level = Number.parseInt(id.replace('heading', ''), 10);
+    if (!Number.isFinite(level) || level < 1 || level > 6) {
+      return false;
+    }
+    return replaceBlock(view, block, toHeading(text, level), block.from + level + 1);
   }
 
   if (id === 'quote') {
-    wrapIn(schema.nodes.blockquote)(view.state, view.dispatch);
-    return;
+    return replaceBlock(view, block, toQuote(text), block.from + 2);
+  }
+
+  if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
+    return replaceBlock(view, block, toList(text, id), block.from + (id === 'orderedList' ? 3 : id === 'taskList' ? 6 : 2));
   }
 
   if (id === 'code') {
-    setBlockType(schema.nodes.code_block)(view.state, view.dispatch);
-    return;
+    return replaceBlock(view, block, toCode(text), block.from + 4);
   }
 
   if (id === 'divider') {
-    const transaction = view.state.tr.replaceSelectionWith(
-      schema.nodes.horizontal_rule.create()
-    );
-    view.dispatch(transaction.scrollIntoView());
-    return;
+    return replaceBlock(view, block, '---', block.from + 3);
   }
 
   if (id === 'wikilink') {
-    insertWikilinkAtSelection(view);
+    const { from, to } = view.state.selection.main;
+    return applySpec(view, {
+      changes: { from, to, insert: '[[]]' },
+      selection: { anchor: from + 2 },
+      scrollIntoView: true
+    });
   }
+
+  return false;
+}
+
+export function insertParagraphBelow(
+  view: EditorView,
+  blockOverride: BlockDescriptor | null = null
+) {
+  const block = blockOverride ?? describeBlockAt(view.state, view.state.selection.main.head);
+  if (!block) {
+    return false;
+  }
+
+  const insertPos = block.moveTo;
+  const prefix = insertPos > 0 && view.state.sliceDoc(insertPos - 1, insertPos) !== '\n' ? '\n' : '';
+  const suffix = insertPos < view.state.doc.length ? '\n\n' : '\n';
+  const insert = `${prefix}${suffix}`;
+  const anchor = insertPos + prefix.length + 1;
+  return applySpec(view, {
+    changes: { from: insertPos, to: insertPos, insert },
+    selection: { anchor },
+    scrollIntoView: true
+  });
+}
+
+function reorderText(text: string, source: BlockDescriptor, target: BlockDescriptor, before: boolean) {
+  const sourceSlice = text.slice(source.from, source.moveTo);
+  const withoutSource = text.slice(0, source.from) + text.slice(source.moveTo);
+  let targetPos = before ? target.from : target.moveTo;
+  if (targetPos > source.from) {
+    targetPos -= source.moveTo - source.from;
+  }
+  return {
+    text: withoutSource.slice(0, targetPos) + sourceSlice + withoutSource.slice(targetPos),
+    anchor: targetPos
+  };
+}
+
+function replaceWholeDoc(view: EditorView, text: string, anchor: number) {
+  return applySpec(view, {
+    changes: { from: 0, to: view.state.doc.length, insert: text },
+    selection: { anchor: Math.max(0, Math.min(anchor, text.length)) },
+    scrollIntoView: true
+  });
+}
+
+export function moveCurrentBlock(view: EditorView, direction: -1 | 1) {
+  const blocks = listBlocks(view.state);
+  const current = describeBlockAt(view.state, view.state.selection.main.head);
+  if (!current) {
+    return false;
+  }
+
+  const index = blocks.findIndex((candidate) => candidate.from === current.from && candidate.to === current.to);
+  const target = blocks[index + direction];
+  if (!target) {
+    return false;
+  }
+
+  const reordered = reorderText(view.state.doc.toString(), current, target, direction < 0);
+  return replaceWholeDoc(view, reordered.text, reordered.anchor);
+}
+
+export function moveBlockTo(view: EditorView, source: BlockDescriptor, target: BlockDescriptor, before: boolean) {
+  const reordered = reorderText(view.state.doc.toString(), source, target, before);
+  return replaceWholeDoc(view, reordered.text, reordered.anchor);
+}
+
+export function getClipboardMarkdownForCurrentBlock(view: EditorView) {
+  const block = describeBlockAt(view.state, view.state.selection.main.head);
+  if (!block) {
+    return null;
+  }
+  return view.state.sliceDoc(block.from, block.to);
+}
+
+export function deleteCurrentBlock(view: EditorView) {
+  const block = describeBlockAt(view.state, view.state.selection.main.head);
+  if (!block) {
+    return false;
+  }
+
+  const nextText = view.state.doc.toString().slice(0, block.from) + view.state.doc.toString().slice(block.moveTo);
+  const normalized = nextText.trim() === '' ? '\n' : nextText.replace(/^\n+/, '');
+  const anchor = Math.max(0, Math.min(block.from, normalized.length));
+  return replaceWholeDoc(view, normalized, anchor);
 }

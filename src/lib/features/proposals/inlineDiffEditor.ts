@@ -1,12 +1,7 @@
-import { ChangeSet, simplifyChanges } from 'prosemirror-changeset';
-import { DOMSerializer, type Node as ProseMirrorNode, type Slice as ProseMirrorSlice } from 'prosemirror-model';
-import { EditorState, Plugin, PluginKey } from 'prosemirror-state';
-import { StepMap } from 'prosemirror-transform';
-import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
-import { parseMarkdown } from '$lib/features/notepad/editor/markdown';
-import { notepadSchema } from '$lib/features/notepad/editor/schema';
-
-const inlineDiffPluginKey = new PluginKey('proposal-inline-diff');
+import { EditorState, RangeSetBuilder } from '@codemirror/state';
+import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view';
+import { draftly } from 'draftly/src/editor/draftly';
+import { notepadDraftlyPlugins } from '$lib/features/notepad/editor/draftlyPlugins';
 
 export interface InlineDiffEditorController {
   view: EditorView;
@@ -19,14 +14,164 @@ interface CreateInlineDiffEditorOptions {
   showRemovedContent?: boolean;
 }
 
-function createEditorDocument(markdown: string) {
-  const normalized = markdown.trim() === '' ? '\n' : markdown;
-  const doc = parseMarkdown(normalized);
-  if (doc.childCount > 0) {
-    return doc;
+type DiffOp =
+  | { kind: 'equal'; lines: string[] }
+  | { kind: 'add'; lines: string[] }
+  | { kind: 'remove'; lines: string[] };
+
+class RemovedContentWidget extends WidgetType {
+  constructor(private readonly text: string) {
+    super();
   }
 
-  return notepadSchema.node('doc', null, [notepadSchema.node('paragraph')]);
+  override eq(other: RemovedContentWidget) {
+    return this.text === other.text;
+  }
+
+  override toDOM() {
+    const wrapper = document.createElement(this.text.includes('\n') ? 'div' : 'span');
+    wrapper.className = this.text.includes('\n')
+      ? 'proposal-inline-diff__removed proposal-inline-diff__removed-block'
+      : 'proposal-inline-diff__removed';
+    wrapper.textContent = this.text || '[deleted content]';
+    return wrapper;
+  }
+}
+
+function splitLines(text: string) {
+  return text === '' ? [''] : text.split('\n');
+}
+
+function buildLineDiff(currentMarkdown: string, proposedMarkdown: string) {
+  const currentLines = splitLines(currentMarkdown);
+  const proposedLines = splitLines(proposedMarkdown);
+  const rows = currentLines.length;
+  const cols = proposedLines.length;
+  const lcs = Array.from({ length: rows + 1 }, () => Array<number>(cols + 1).fill(0));
+
+  for (let row = rows - 1; row >= 0; row -= 1) {
+    for (let col = cols - 1; col >= 0; col -= 1) {
+      lcs[row][col] =
+        currentLines[row] === proposedLines[col]
+          ? lcs[row + 1][col + 1] + 1
+          : Math.max(lcs[row + 1][col], lcs[row][col + 1]);
+    }
+  }
+
+  const operations: DiffOp[] = [];
+  let row = 0;
+  let col = 0;
+  const push = (kind: DiffOp['kind'], line: string) => {
+    const previous = operations.at(-1);
+    if (previous?.kind === kind) {
+      previous.lines.push(line);
+    } else {
+      operations.push({ kind, lines: [line] } as DiffOp);
+    }
+  };
+
+  while (row < rows && col < cols) {
+    if (currentLines[row] === proposedLines[col]) {
+      push('equal', currentLines[row]);
+      row += 1;
+      col += 1;
+      continue;
+    }
+
+    if (lcs[row + 1][col] >= lcs[row][col + 1]) {
+      push('remove', currentLines[row]);
+      row += 1;
+    } else {
+      push('add', proposedLines[col]);
+      col += 1;
+    }
+  }
+
+  while (row < rows) {
+    push('remove', currentLines[row]);
+    row += 1;
+  }
+  while (col < cols) {
+    push('add', proposedLines[col]);
+    col += 1;
+  }
+
+  return operations;
+}
+
+function lineOffsets(text: string) {
+  const lines = splitLines(text);
+  const offsets = [];
+  let offset = 0;
+
+  for (const line of lines) {
+    offsets.push({ from: offset, to: offset + line.length });
+    offset += line.length + 1;
+  }
+
+  return offsets;
+}
+
+function createInlineDiffExtension(currentMarkdown: string, proposedMarkdown: string, showRemovedContent: boolean) {
+  const operations = buildLineDiff(currentMarkdown, proposedMarkdown);
+
+  return ViewPlugin.fromClass(
+    class {
+      decorations;
+
+      constructor(readonly view: EditorView) {
+        this.decorations = this.buildDecorations();
+      }
+
+      buildDecorations() {
+        const builder = new RangeSetBuilder<Decoration>();
+        const offsets = lineOffsets(this.view.state.doc.toString());
+        let proposedLineIndex = 0;
+
+        for (const operation of operations) {
+          if (operation.kind === 'equal') {
+            proposedLineIndex += operation.lines.length;
+            continue;
+          }
+
+          if (operation.kind === 'add') {
+            for (let index = 0; index < operation.lines.length; index += 1) {
+              const lineOffset = offsets[proposedLineIndex + index];
+              if (!lineOffset) {
+                continue;
+              }
+
+              builder.add(
+                lineOffset.from,
+                lineOffset.to,
+                Decoration.mark({ class: 'proposal-inline-diff__added' })
+              );
+            }
+            proposedLineIndex += operation.lines.length;
+            continue;
+          }
+
+          if (showRemovedContent) {
+            const insertionLine = offsets[proposedLineIndex];
+            const insertPos = insertionLine?.from ?? this.view.state.doc.length;
+            builder.add(
+              insertPos,
+              insertPos,
+              Decoration.widget({
+                widget: new RemovedContentWidget(operation.lines.join('\n')),
+                side: -1
+              })
+            );
+          }
+        }
+
+        return builder.finish();
+      }
+    },
+    {
+      decorations: (value) => value.decorations
+    }
+  );
 }
 
 export async function createInlineDiffEditor({
@@ -36,143 +181,45 @@ export async function createInlineDiffEditor({
   showRemovedContent = true
 }: CreateInlineDiffEditorOptions) {
   const state = EditorState.create({
-    schema: notepadSchema,
-    doc: createEditorDocument(proposedMarkdown),
-    plugins: [createInlineDiffPlugin(currentMarkdown, showRemovedContent)]
+    doc: proposedMarkdown,
+    extensions: [
+      ...draftly({
+        baseStyles: true,
+        defaultKeybindings: false,
+        history: false,
+        lineWrapping: true,
+        plugins: notepadDraftlyPlugins,
+        extensions: [
+          createInlineDiffExtension(currentMarkdown, proposedMarkdown, showRemovedContent),
+          EditorView.theme({
+            '&.cm-editor.cm-draftly': {
+              background: 'transparent',
+              border: 'none',
+              height: 'auto'
+            },
+            '&.cm-editor.cm-draftly .cm-content': {
+              padding: '1rem 0'
+            }
+          })
+        ]
+      }),
+      EditorView.editable.of(false)
+    ]
   });
 
-  const view = new EditorView(editorRoot, {
+  const view = new EditorView({
     state,
-    editable: () => false
+    parent: editorRoot
   });
 
-  return {
-    view
-  } satisfies InlineDiffEditorController;
+  return { view } satisfies InlineDiffEditorController;
 }
 
-export async function destroyInlineDiffEditor(
-  controller: InlineDiffEditorController | null
-) {
+export async function destroyInlineDiffEditor(controller: InlineDiffEditorController | null) {
   if (!controller) {
     return null;
   }
 
   controller.view.destroy();
   return null;
-}
-
-function createInlineDiffPlugin(currentMarkdown: string, showRemovedContent: boolean) {
-  const currentDoc = createEditorDocument(currentMarkdown);
-
-  return new Plugin({
-    key: inlineDiffPluginKey,
-    props: {
-      decorations: (state) => {
-        const decorations = buildInlineDiffDecorations(
-          currentDoc,
-          state.doc,
-          showRemovedContent
-        );
-
-        return decorations.length === 0
-          ? DecorationSet.empty
-          : DecorationSet.create(state.doc, decorations);
-      }
-    }
-  });
-}
-
-function buildInlineDiffDecorations(
-  currentDoc: ProseMirrorNode,
-  proposedDoc: ProseMirrorNode,
-  showRemovedContent: boolean
-) {
-  const changes = simplifyChanges(
-    ChangeSet.create(currentDoc)
-      .addSteps(
-        proposedDoc,
-        [new StepMap([0, currentDoc.content.size, proposedDoc.content.size])],
-        null
-      )
-      .changes,
-    proposedDoc
-  );
-
-  const decorations: Decoration[] = [];
-
-  for (const change of changes) {
-    if (change.fromB < change.toB) {
-      decorations.push(
-        Decoration.inline(change.fromB, change.toB, {
-          class: 'proposal-inline-diff__added'
-        })
-      );
-    }
-
-    if (showRemovedContent && change.fromA < change.toA) {
-      const deletedSlice = currentDoc.slice(change.fromA, change.toA);
-
-      decorations.push(
-        Decoration.widget(
-          change.fromB,
-          () => createDeletedWidget(currentDoc, deletedSlice),
-          {
-            side: -1,
-            ignoreSelection: true
-          }
-        )
-      );
-    }
-  }
-
-  return decorations;
-}
-
-function inferDeletedLabel(deletedSlice: ProseMirrorSlice) {
-  if (deletedSlice.content.size === 0) {
-    return '[deleted content]';
-  }
-
-  const firstNode = deletedSlice.content.firstChild;
-  if (!firstNode) {
-    return '[deleted content]';
-  }
-
-  return `[deleted ${firstNode.type.name}]`;
-}
-
-function createDeletedWidget(doc: ProseMirrorNode, deletedSlice: ProseMirrorSlice) {
-  const hasBlockContent = sliceHasBlockContent(deletedSlice);
-  const wrapper = document.createElement(hasBlockContent ? 'div' : 'span');
-  wrapper.className = hasBlockContent
-    ? 'proposal-inline-diff__removed proposal-inline-diff__removed-block'
-    : 'proposal-inline-diff__removed';
-
-  if (deletedSlice.content.size === 0) {
-    wrapper.textContent = '[deleted content]';
-    return wrapper;
-  }
-
-  const fragment = DOMSerializer.fromSchema(doc.type.schema).serializeFragment(
-    deletedSlice.content
-  );
-
-  if (fragment.childNodes.length === 0) {
-    wrapper.textContent = inferDeletedLabel(deletedSlice);
-    return wrapper;
-  }
-
-  wrapper.appendChild(fragment);
-  return wrapper;
-}
-
-function sliceHasBlockContent(deletedSlice: ProseMirrorSlice) {
-  for (let index = 0; index < deletedSlice.content.childCount; index += 1) {
-    if (deletedSlice.content.child(index)?.isBlock) {
-      return true;
-    }
-  }
-
-  return false;
 }

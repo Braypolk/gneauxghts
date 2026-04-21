@@ -1,8 +1,8 @@
-import type { Node as ProseMirrorNode } from 'prosemirror-model';
-import { Plugin, PluginKey, TextSelection } from 'prosemirror-state';
-import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
+import { RangeSetBuilder } from '@codemirror/state';
+import { Decoration, EditorView, ViewPlugin } from '@codemirror/view';
 
 const WIKILINK_PATTERN = /\[\[([^\[\]\n]+?)\]\]/g;
+const FENCE_PATTERN = /^\s*(```+|~~~+)/;
 
 interface WikilinkConfig {
   resolveCallbacks: (view: EditorView) => Partial<WikilinkCallbacks> | null | undefined;
@@ -27,48 +27,59 @@ const defaultWikilinkCallbacks: WikilinkCallbacks = {
   onActiveWikilinkChange: () => {}
 };
 
-function isInCodeContext(view: EditorView) {
-  const { $from } = view.state.selection;
-  if ($from.parent.type.name === 'code_block') {
-    return true;
+function lineStarts(text: string) {
+  const starts = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === '\n' && index + 1 <= text.length) {
+      starts.push(index + 1);
+    }
   }
-
-  return $from.marks().some((mark) => mark.type.name === 'code');
+  return starts;
 }
 
-function buildWikilinkDecorations(doc: ProseMirrorNode) {
-  const decorations: Decoration[] = [];
+function isOffsetInsideCodeFence(text: string, offset: number, starts = lineStarts(text)) {
+  let insideFence = false;
 
-  doc.descendants((node, position, parent) => {
-    if (!node.isText || !node.text) {
-      return;
+  for (const start of starts) {
+    if (start > offset) {
+      break;
     }
 
-    if (parent?.type.name === 'code_block' || node.marks.some((mark) => mark.type.name === 'code')) {
-      return;
+    const end = text.indexOf('\n', start);
+    const line = text.slice(start, end === -1 ? text.length : end);
+    if (FENCE_PATTERN.test(line)) {
+      insideFence = !insideFence;
+    }
+  }
+
+  return insideFence;
+}
+
+function buildWikilinkDecorations(view: EditorView) {
+  const builder = new RangeSetBuilder<Decoration>();
+  const text = view.state.doc.toString();
+  const starts = lineStarts(text);
+
+  for (const match of text.matchAll(WIKILINK_PATTERN)) {
+    const index = match.index ?? -1;
+    const rawTarget = match[1]?.trim();
+    if (index < 0 || !rawTarget || isOffsetInsideCodeFence(text, index, starts)) {
+      continue;
     }
 
-    for (const match of node.text.matchAll(WIKILINK_PATTERN)) {
-      const index = match.index ?? -1;
-      const rawTarget = match[1]?.trim();
-
-      if (index < 0 || !rawTarget) {
-        continue;
-      }
-
-      const from = position + index;
-      const to = from + match[0].length;
-
-      decorations.push(
-        Decoration.inline(from, to, {
-          class: 'gn-wikilink',
+    builder.add(
+      index,
+      index + match[0].length,
+      Decoration.mark({
+        class: 'gn-wikilink',
+        attributes: {
           'data-wikilink-target': rawTarget
-        })
-      );
-    }
-  });
+        }
+      })
+    );
+  }
 
-  return DecorationSet.create(doc, decorations);
+  return builder.finish();
 }
 
 function findWikilinkElement(target: EventTarget | null) {
@@ -84,36 +95,38 @@ function findWikilinkElement(target: EventTarget | null) {
 }
 
 function getActiveWikilink(view: EditorView): ActiveWikilink | null {
-  const { selection } = view.state;
-  if (!selection.empty || isInCodeContext(view)) {
+  const selection = view.state.selection.main;
+  if (!selection.empty) {
     return null;
   }
 
-  const { $from } = selection;
-  const parent = $from.parent;
-  if (!parent.isTextblock) {
+  const text = view.state.doc.toString();
+  if (isOffsetInsideCodeFence(text, selection.head)) {
     return null;
   }
 
-  const parentText = parent.textBetween(0, parent.content.size, '\n', '\0');
-  const cursorOffset = $from.parentOffset;
-  const start = parentText.lastIndexOf('[[', cursorOffset);
-
+  const line = view.state.doc.lineAt(selection.head);
+  const lineText = line.text;
+  const cursorOffset = selection.head - line.from;
+  const start = lineText.lastIndexOf('[[', cursorOffset);
   if (start < 0 || cursorOffset < start + 2) {
     return null;
   }
 
-  const end = parentText.indexOf(']]', start + 2);
+  const end = lineText.indexOf(']]', start + 2);
   if (end < 0 || cursorOffset > end) {
     return null;
   }
 
-  const targetFrom = $from.start() + start + 2;
-  const targetTo = $from.start() + end;
-  const cursorCoords = view.coordsAtPos(selection.from);
+  const targetFrom = line.from + start + 2;
+  const targetTo = line.from + end;
+  const cursorCoords = view.coordsAtPos(selection.head);
+  if (!cursorCoords) {
+    return null;
+  }
 
   return {
-    rawTarget: parentText.slice(start + 2, end),
+    rawTarget: lineText.slice(start + 2, end),
     targetFrom,
     targetTo,
     left: cursorCoords.left,
@@ -122,63 +135,88 @@ function getActiveWikilink(view: EditorView): ActiveWikilink | null {
   };
 }
 
-function resolveCallbacks(
-  view: EditorView,
-  config: WikilinkConfig
-): WikilinkCallbacks {
+function resolveCallbacks(view: EditorView, config: WikilinkConfig): WikilinkCallbacks {
   return {
     ...defaultWikilinkCallbacks,
     ...config.resolveCallbacks(view)
   };
 }
 
-export function createWikilinksPlugin(
-  config: WikilinkConfig
-) {
-  return new Plugin({
-    key: new PluginKey('NOTEPAD_WIKILINKS'),
-    view: (view) => {
-      const report = () => {
-        resolveCallbacks(view, config).onActiveWikilinkChange(getActiveWikilink(view));
-      };
+export function createWikilinksExtension(config: WikilinkConfig) {
+  return [
+    ViewPlugin.fromClass(
+      class {
+        decorations;
+        #destroyed = false;
 
-      report();
-
-      return {
-        update: () => {
-          report();
-        },
-        destroy: () => {
-          resolveCallbacks(view, config).onActiveWikilinkChange(null);
-        }
-      };
-    },
-    props: {
-      decorations: (state) => buildWikilinkDecorations(state.doc),
-      handleTextInput: (view, from, to, text) => {
-        if (text !== '[' || from !== to || isInCodeContext(view)) {
-          return false;
+        constructor(readonly view: EditorView) {
+          this.decorations = buildWikilinkDecorations(view);
+          this.scheduleActiveWikilinkUpdate(view);
         }
 
-        const previousCharacter = view.state.doc.textBetween(Math.max(0, from - 1), from, '\n', '\0');
-        if (previousCharacter !== '[') {
-          return false;
+        update(update: import('@codemirror/view').ViewUpdate) {
+          if (update.docChanged || update.selectionSet || update.viewportChanged) {
+            this.decorations = buildWikilinkDecorations(update.view);
+          }
+
+          if (update.docChanged || update.selectionSet) {
+            this.scheduleActiveWikilinkUpdate(update.view);
+          }
         }
 
-        const nextCharacters = view.state.doc.textBetween(to, Math.min(view.state.doc.content.size, to + 2), '\n', '\0');
-        if (nextCharacters === ']]') {
-          return false;
+        destroy() {
+          this.#destroyed = true;
+          resolveCallbacks(this.view, config).onActiveWikilinkChange(null);
         }
 
-        const transaction = view.state.tr.insertText('[]]', from, to);
-        transaction.setSelection(TextSelection.create(transaction.doc, from + 1));
-        view.dispatch(transaction);
-        return true;
+        private scheduleActiveWikilinkUpdate(view: EditorView) {
+          view.requestMeasure({
+            read: () => getActiveWikilink(view),
+            write: (activeWikilink) => {
+              if (this.#destroyed) {
+                return;
+              }
+              resolveCallbacks(view, config).onActiveWikilinkChange(activeWikilink);
+            }
+          });
+        }
       },
-      handleClick: (view, _position, event) => {
+      {
+        decorations: (value) => value.decorations
+      }
+    ),
+    EditorView.inputHandler.of((view, from, to, text, insert) => {
+      if (text !== '[' || from !== to) {
+        return false;
+      }
+
+      const docText = view.state.doc.toString();
+      if (isOffsetInsideCodeFence(docText, from)) {
+        return false;
+      }
+
+      const previousCharacter = view.state.sliceDoc(Math.max(0, from - 1), from);
+      if (previousCharacter !== '[') {
+        return false;
+      }
+
+      const nextCharacters = view.state.sliceDoc(to, Math.min(view.state.doc.length, to + 2));
+      if (nextCharacters === ']]') {
+        return false;
+      }
+
+      view.dispatch(
+        view.state.update({
+          changes: { from, to, insert: '[]]' },
+          selection: { anchor: from + 1 }
+        })
+      );
+      return true;
+    }),
+    EditorView.domEventHandlers({
+      click: (event, view) => {
         const wikilinkElement = findWikilinkElement(event.target);
         const rawTarget = wikilinkElement?.dataset.wikilinkTarget?.trim();
-
         if (!rawTarget) {
           return false;
         }
@@ -187,6 +225,6 @@ export function createWikilinksPlugin(
         resolveCallbacks(view, config).onOpenLink(rawTarget);
         return true;
       }
-    }
-  });
+    })
+  ];
 }

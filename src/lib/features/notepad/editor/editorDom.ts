@@ -1,16 +1,16 @@
-import type { EditorView } from 'prosemirror-view';
+import { EditorView } from '@codemirror/view';
 
 type QueryRoot = Element | Document | DocumentFragment | null;
 
 export function findProseMirrorElement(root: QueryRoot) {
-  if (root instanceof HTMLElement && root.classList.contains('ProseMirror')) {
+  if (root instanceof HTMLElement && root.classList.contains('cm-content')) {
     return root;
   }
 
-  const proseMirror = root?.querySelector('.ProseMirror');
-  return proseMirror instanceof HTMLElement ? proseMirror : null;
+  const content = root?.querySelector('.cm-content');
+  return content instanceof HTMLElement ? content : null;
 }
 
 export function getEditorProseSurface(view: EditorView) {
-  return findProseMirrorElement(view.dom) ?? (view.dom as HTMLElement);
+  return findProseMirrorElement(view.dom) ?? view.contentDOM;
 }

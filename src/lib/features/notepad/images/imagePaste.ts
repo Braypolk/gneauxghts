@@ -1,73 +1,73 @@
-import { EditorState, Plugin, PluginKey, type Transaction } from 'prosemirror-state';
-import { Decoration, DecorationSet } from 'prosemirror-view';
+import { RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
+import { Decoration, EditorView, WidgetType } from '@codemirror/view';
 import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 
-interface ImageUploadAction {
-  add?: { id: symbol; pos: number };
-  remove?: { id: symbol };
+interface PlaceholderEntry {
+  id: symbol;
+  from: number;
+  to: number;
 }
 
-function findUploadPlaceholder(
-  key: PluginKey<DecorationSet>,
-  state: EditorState,
-  id: symbol
-) {
-  const decorations = key.getState(state);
-  if (!decorations) {
-    return -1;
+const addPlaceholderEffect = StateEffect.define<{ id: symbol; pos: number }>();
+const removePlaceholderEffect = StateEffect.define<{ id: symbol }>();
+
+class UploadPlaceholderWidget extends WidgetType {
+  override toDOM() {
+    const placeholder = document.createElement('span');
+    placeholder.className = 'gn-image-upload-placeholder';
+    placeholder.textContent = 'Saving image...';
+    return placeholder;
   }
-
-  const matches = decorations.find(undefined, undefined, (spec) => spec.id === id);
-  return matches[0]?.from ?? -1;
 }
 
-function createUploadPlaceholder() {
-  const placeholder = document.createElement('span');
-  placeholder.className = 'gn-image-upload-placeholder';
-  placeholder.textContent = 'Saving image...';
-  return placeholder;
-}
+const placeholderField = StateField.define<readonly PlaceholderEntry[]>({
+  create() {
+    return [];
+  },
+  update(value, transaction) {
+    let next = value.map((entry) => ({
+      ...entry,
+      from: transaction.changes.mapPos(entry.from, -1),
+      to: transaction.changes.mapPos(entry.to, 1)
+    }));
 
-export function createImagePastePlugin(config: ImagesConfig) {
-  const key = new PluginKey<DecorationSet>('NOTEPAD_PASTED_IMAGES');
-
-  return new Plugin({
-    key,
-    state: {
-      init() {
-        return DecorationSet.empty;
-      },
-      apply(transaction: Transaction, decorationSet: DecorationSet) {
-        const nextDecorationSet = decorationSet.map(transaction.mapping, transaction.doc);
-        const action = transaction.getMeta(key) as ImageUploadAction | undefined;
-
-        if (!action) {
-          return nextDecorationSet;
-        }
-
-        if (action.add) {
-          return nextDecorationSet.add(transaction.doc, [
-            Decoration.widget(action.add.pos, createUploadPlaceholder, {
-              id: action.add.id,
-              side: -1
-            })
-          ]);
-        }
-
-        if (action.remove) {
-          return nextDecorationSet.remove(
-            nextDecorationSet.find(undefined, undefined, (spec) => spec.id === action.remove?.id)
-          );
-        }
-
-        return nextDecorationSet;
+    for (const effect of transaction.effects) {
+      if (effect.is(addPlaceholderEffect)) {
+        next = [...next, { id: effect.value.id, from: effect.value.pos, to: effect.value.pos }];
+      } else if (effect.is(removePlaceholderEffect)) {
+        next = next.filter((entry) => entry.id !== effect.value.id);
       }
-    },
-    props: {
-      decorations(state) {
-        return key.getState(state) ?? DecorationSet.empty;
-      },
-      handlePaste: (view, event) => {
+    }
+
+    return next;
+  },
+  provide(field) {
+    return EditorView.decorations.from(field, (entries) => {
+      const builder = new RangeSetBuilder<Decoration>();
+      for (const entry of entries) {
+        builder.add(
+          entry.from,
+          entry.from,
+          Decoration.widget({
+            widget: new UploadPlaceholderWidget(),
+            side: -1
+          })
+        );
+      }
+      return builder.finish();
+    });
+  }
+});
+
+function findUploadPlaceholder(view: EditorView, id: symbol) {
+  return view.state.field(placeholderField).find((entry) => entry.id === id)?.from ?? -1;
+}
+
+export function createImagePasteExtension(config: ImagesConfig) {
+  return [
+    placeholderField,
+    EditorView.domEventHandlers({
+      paste: (event, view) => {
         if (!(event instanceof ClipboardEvent)) {
           return false;
         }
@@ -81,41 +81,52 @@ export function createImagePastePlugin(config: ImagesConfig) {
 
         event.preventDefault();
         const placeholderId = Symbol('notepad image upload');
-        let transaction = view.state.tr;
-        if (!transaction.selection.empty) {
-          transaction = transaction.deleteSelection();
-        }
-        const insertPos = transaction.selection.from;
-        view.dispatch(transaction.setMeta(key, { add: { id: placeholderId, pos: insertPos } }));
+        const selection = view.state.selection.main;
+        let changes = null as { from: number; to: number; insert: string } | null;
+        let insertPos = selection.from;
 
-        const { storePastedImage } = config;
-        void Promise.all(imageFiles.map((file) => storePastedImage(file)))
+        if (!selection.empty) {
+          changes = { from: selection.from, to: selection.to, insert: '' };
+          insertPos = selection.from;
+        }
+
+        view.dispatch(
+          view.state.update({
+            ...(changes ? { changes } : {}),
+            effects: addPlaceholderEffect.of({ id: placeholderId, pos: insertPos })
+          })
+        );
+
+        void Promise.all(imageFiles.map((file) => config.storePastedImage(file)))
           .then((assets) => {
-            const placeholderPos = findUploadPlaceholder(key, view.state, placeholderId);
+            const placeholderPos = findUploadPlaceholder(view, placeholderId);
             if (placeholderPos < 0) {
               return;
             }
 
-            const embedMarkdown = assets
-              .map((asset) => `![[${asset.fileName}]]`)
-              .join('\n\n');
-            const nextTransaction = view.state.tr
-              .insertText(embedMarkdown, placeholderPos, placeholderPos)
-              .setMeta(key, { remove: { id: placeholderId } });
-            view.dispatch(nextTransaction);
+            const embedMarkdown = assets.map((asset) => `![[${asset.fileName}]]`).join('\n\n');
+            view.dispatch(
+              view.state.update({
+                changes: { from: placeholderPos, to: placeholderPos, insert: embedMarkdown },
+                effects: removePlaceholderEffect.of({ id: placeholderId })
+              })
+            );
           })
           .catch((error) => {
             console.error('Failed to store pasted image:', error);
-            const placeholderPos = findUploadPlaceholder(key, view.state, placeholderId);
-            if (placeholderPos < 0) {
+            if (findUploadPlaceholder(view, placeholderId) < 0) {
               return;
             }
 
-            view.dispatch(view.state.tr.setMeta(key, { remove: { id: placeholderId } }));
+            view.dispatch(
+              view.state.update({
+                effects: removePlaceholderEffect.of({ id: placeholderId })
+              })
+            );
           });
 
         return true;
       }
-    }
-  });
+    })
+  ];
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import * as floatingUi from '@floating-ui/dom';
   import type { VirtualElement } from '@floating-ui/dom';
-  import type { EditorView } from 'prosemirror-view';
+  import type { EditorView } from '@codemirror/view';
   import { blockTypeIcons } from '$lib/features/notepad/editor/blockTypes';
   import type { SlashMenuGroupWithItems } from '$lib/features/notepad/editor/slashMenu';
   import {
@@ -37,7 +37,12 @@
   function buildCoordsSlashMenuReference(view: EditorView, anchorPos: number): VirtualElement {
     return {
       getBoundingClientRect() {
-        const coords = view.coordsAtPos(anchorPos);
+        const coords =
+          view.coordsAtPos(anchorPos) ??
+          view.coordsAtPos(Math.max(0, Math.min(anchorPos, view.state.doc.length)));
+        if (!coords) {
+          return new DOMRect(0, 0, 1, 1);
+        }
         const width = Math.max(1, coords.right - coords.left);
         const height = Math.max(1, coords.bottom - coords.top);
         return {

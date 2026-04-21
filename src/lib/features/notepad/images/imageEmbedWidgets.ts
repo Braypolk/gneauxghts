@@ -1,12 +1,9 @@
-import type { Node as ProseMirrorNode } from 'prosemirror-model';
-import { TextSelection, type Selection } from 'prosemirror-state';
-import { Decoration, DecorationSet, type EditorView } from 'prosemirror-view';
 import { invoke } from '@tauri-apps/api/core';
+import { RangeSetBuilder } from '@codemirror/state';
+import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
 import {
   forEachImageEmbed,
   formatImageEmbedTarget,
-  isInCodeContext,
-  selectionTouchesEmbed,
   type ParsedImageEmbedTarget
 } from '$lib/features/notepad/images/imageEmbedParser';
 
@@ -172,6 +169,15 @@ function updateImageEmbedElement(
     });
 }
 
+function dispatchSelection(view: EditorView, anchor: number) {
+  view.dispatch(
+    view.state.update({
+      selection: { anchor },
+      scrollIntoView: true
+    })
+  );
+}
+
 function createImageEmbedElement(
   widgetKey: string,
   view: EditorView,
@@ -260,12 +266,11 @@ function createImageEmbedElement(
       };
       const nextMarkdown = formatImageEmbedTarget(nextTarget);
       preserveEditorScrollPosition(activeState.view, () => {
-        const transaction = activeState.view.state.tr.insertText(
-          nextMarkdown,
-          activeState.from,
-          activeState.to
+        activeState.view.dispatch(
+          activeState.view.state.update({
+            changes: { from: activeState.from, to: activeState.to, insert: nextMarkdown }
+          })
         );
-        activeState.view.dispatch(transaction);
       });
     };
 
@@ -298,12 +303,8 @@ function createImageEmbedElement(
 
     event.preventDefault();
     const currentState = nextCachedElement.state;
-    const maxPos = Math.max(1, currentState.view.state.doc.nodeSize - 2);
-    const selectionPos = Math.max(1, Math.min(currentState.from + 2, maxPos));
-    const transaction = currentState.view.state.tr.setSelection(
-      TextSelection.create(currentState.view.state.doc, selectionPos)
-    );
-    currentState.view.dispatch(transaction);
+    const selectionPos = Math.max(0, Math.min(currentState.from + 2, currentState.view.state.doc.length));
+    dispatchSelection(currentState.view, selectionPos);
     currentState.view.focus();
   });
 
@@ -317,38 +318,63 @@ function createImageEmbedElement(
   return container;
 }
 
-export function buildImageEmbedDecorations(
-  doc: ProseMirrorNode,
-  selection: Selection,
-  assetRootPath: string | null
-) {
-  if (!assetRootPath || isInCodeContext(selection)) {
-    return DecorationSet.empty;
+class ImageEmbedWidget extends WidgetType {
+  constructor(
+    private readonly widgetKey: string,
+    private readonly view: EditorView,
+    private readonly from: number,
+    private readonly to: number,
+    private readonly target: ParsedImageEmbedTarget
+  ) {
+    super();
   }
 
-  const decorations: Decoration[] = [];
-  forEachImageEmbed(doc, ({ from, to, target, widgetKey }) => {
-    if (selectionTouchesEmbed(selection, from, to)) {
+  override eq(other: ImageEmbedWidget) {
+    return (
+      this.widgetKey === other.widgetKey &&
+      this.from === other.from &&
+      this.to === other.to &&
+      this.target.fileName === other.target.fileName &&
+      this.target.width === other.target.width &&
+      this.target.height === other.target.height
+    );
+  }
+
+  override toDOM() {
+    return createImageEmbedElement(this.widgetKey, this.view, this.from, this.to, this.target);
+  }
+
+  override ignoreEvent() {
+    return false;
+  }
+}
+
+export function buildImageEmbedDecorations(
+  view: EditorView,
+  assetRootPath: string | null
+): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  if (!assetRootPath) {
+    return builder.finish();
+  }
+
+  const selection = view.state.selection.main;
+  const text = view.state.doc.toString();
+  forEachImageEmbed(text, ({ from, to, target, widgetKey }) => {
+    if (selection.from < to && selection.to > from) {
       return;
     }
 
-    decorations.push(
-      Decoration.inline(from, to, {
-        class: 'gn-image-embed-source'
+    builder.add(from, to, Decoration.mark({ class: 'gn-image-embed-source' }));
+    builder.add(
+      from,
+      from,
+      Decoration.widget({
+        widget: new ImageEmbedWidget(widgetKey, view, from, to, target),
+        side: -1
       })
-    );
-    decorations.push(
-      Decoration.widget(
-        from,
-        (view) => createImageEmbedElement(widgetKey, view, from, to, target),
-        {
-          side: -1,
-          key: widgetKey,
-          ignoreSelection: true
-        }
-      )
     );
   });
 
-  return DecorationSet.create(doc, decorations);
+  return builder.finish();
 }

@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { EditorView } from '@codemirror/view';
 import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
 
 function findLastSelectionPoint(node: Node): { node: Node; offset: number } | null {
@@ -27,25 +28,20 @@ export function focusInputAtEnd(input: HTMLInputElement | null) {
 }
 
 export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLElement) {
-  const proseMirror = findProseMirrorElement(editorRoot);
-  if (!(proseMirror instanceof HTMLElement)) return;
+  const surface = findProseMirrorElement(editorRoot);
+  if (!(surface instanceof HTMLElement)) return;
+  const view = EditorView.findFromDOM(surface) ?? EditorView.findFromDOM(target);
+  if (!view) return;
 
   const point = findLastSelectionPoint(target);
-  proseMirror.focus({ preventScroll: true });
+  view.focus();
 
   if (!point) {
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
   }
-
-  const selection = window.getSelection();
-  if (!selection) return;
-
-  const range = document.createRange();
-  range.setStart(point.node, point.offset);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
+  const anchor = Math.max(0, Math.min(view.state.doc.length, view.posAtDOM(point.node, point.offset)));
+  view.dispatch(view.state.update({ selection: { anchor }, scrollIntoView: true }));
 
   target.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -53,23 +49,19 @@ export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLEl
 export async function focusEditorAtEnd(editorRoot: HTMLElement | null) {
   await tick();
 
-  const proseMirror = findProseMirrorElement(editorRoot);
-  if (!(proseMirror instanceof HTMLElement)) return;
+  const surface = findProseMirrorElement(editorRoot);
+  if (!(surface instanceof HTMLElement)) return;
 
-  proseMirror.focus();
+  const view = EditorView.findFromDOM(surface);
+  if (!view) return;
 
-  const point = findLastSelectionPoint(proseMirror);
-  const selection = window.getSelection();
-  if (!point || !selection) return;
+  const anchor = view.state.doc.length;
+  view.dispatch(view.state.update({ selection: { anchor }, scrollIntoView: true }));
+  view.focus();
 
-  const range = document.createRange();
-  range.setStart(point.node, point.offset);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
-
+  const point = findLastSelectionPoint(surface);
   const selectionTarget =
-    point.node instanceof HTMLElement ? point.node : point.node.parentElement ?? proseMirror;
+    point?.node instanceof HTMLElement ? point.node : point?.node.parentElement ?? surface;
   selectionTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -102,21 +94,23 @@ function normalizeTargets(nodes: readonly HTMLElement[]): NormalizedEditorTarget
 }
 
 function getEditorBlocks(editorRoot: HTMLElement | null) {
-  const proseMirror = findProseMirrorElement(editorRoot);
-  if (!proseMirror) return [];
+  const surface = findProseMirrorElement(editorRoot);
+  if (!surface) return [];
 
-  return Array.from(proseMirror.children).filter(
+  return Array.from(surface.querySelectorAll('.cm-line')).filter(
     (child): child is HTMLElement => child instanceof HTMLElement
   );
 }
 
 function getEditorTargets(editorRoot: HTMLElement | null) {
-  const proseMirror = findProseMirrorElement(editorRoot);
-  if (!proseMirror) return [];
+  const surface = findProseMirrorElement(editorRoot);
+  if (!surface) return [];
 
   const matches = normalizeTargets(
     Array.from(
-      proseMirror.querySelectorAll('li, p, h1, h2, h3, h4, h5, h6, blockquote, pre')
+      surface.querySelectorAll(
+        '.cm-line.cm-draftly-line-h1, .cm-line.cm-draftly-line-h2, .cm-line.cm-draftly-line-h3, .cm-line.cm-draftly-line-h4, .cm-line.cm-draftly-line-h5, .cm-line.cm-draftly-line-h6, .cm-line.cm-draftly-quote-line, .cm-line.cm-draftly-code-block-line, .cm-line.cm-draftly-list-line-ul, .cm-line.cm-draftly-list-line-ol, .cm-line.cm-draftly-task-line, .cm-line'
+      )
     ).filter((node): node is HTMLElement => node instanceof HTMLElement)
   );
 

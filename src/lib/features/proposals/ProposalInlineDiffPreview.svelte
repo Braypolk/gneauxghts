@@ -104,63 +104,16 @@
     min-height: 0;
   }
 
-  .proposal-inline-diff :global(.ProseMirror) {
+  .proposal-inline-diff :global(.cm-editor.cm-draftly) {
     min-height: 0;
-    padding: 1rem 0;
     background: transparent;
     color: var(--foreground);
     line-height: 1.75;
     cursor: default;
   }
 
-  .proposal-inline-diff :global(.ProseMirror:focus) {
+  .proposal-inline-diff :global(.cm-editor.cm-draftly:focus) {
     outline: none;
-  }
-
-  .proposal-inline-diff :global(.ProseMirror p),
-  .proposal-inline-diff :global(.ProseMirror ul),
-  .proposal-inline-diff :global(.ProseMirror ol),
-  .proposal-inline-diff :global(.ProseMirror blockquote),
-  .proposal-inline-diff :global(.ProseMirror pre),
-  .proposal-inline-diff :global(.ProseMirror table) {
-    margin: 0.65rem 0;
-  }
-
-  .proposal-inline-diff :global(.ProseMirror h1),
-  .proposal-inline-diff :global(.ProseMirror h2),
-  .proposal-inline-diff :global(.ProseMirror h3),
-  .proposal-inline-diff :global(.ProseMirror h4),
-  .proposal-inline-diff :global(.ProseMirror h5),
-  .proposal-inline-diff :global(.ProseMirror h6) {
-    margin: 1rem 0 0.35rem;
-    font-weight: 700;
-    line-height: 1.25;
-  }
-
-  .proposal-inline-diff :global(.ProseMirror blockquote) {
-    padding-left: 0.9rem;
-    border-left: 3px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
-  }
-
-  .proposal-inline-diff :global(.ProseMirror pre) {
-    overflow-x: auto;
-    padding: 0.9rem 1rem;
-    border-radius: 0.95rem;
-    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-    background: color-mix(in oklab, var(--muted) 76%, var(--background));
-  }
-
-  .proposal-inline-diff :global(.ProseMirror table) {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-  }
-
-  .proposal-inline-diff :global(.ProseMirror th),
-  .proposal-inline-diff :global(.ProseMirror td) {
-    padding: 0.5rem 0.65rem;
-    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-    vertical-align: top;
   }
 
   .proposal-inline-diff :global(.proposal-inline-diff__added) {

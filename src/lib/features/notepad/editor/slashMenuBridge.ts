@@ -1,4 +1,4 @@
-import type { EditorView } from 'prosemirror-view';
+import type { EditorView } from '@codemirror/view';
 import type { SlashMenuSnapshot } from '$lib/features/notepad/editor/slashMenu';
 
 const viewToPaneId = new WeakMap<EditorView, string>();

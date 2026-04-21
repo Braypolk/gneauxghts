@@ -8,6 +8,55 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [sveltekit(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@codemirror/language-data": new URL("./src/lib/vendor/codemirrorLanguageData.ts", import.meta.url).pathname,
+    },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        /** @param {string} id */
+        manualChunks(id) {
+          if (!id.includes("node_modules")) {
+            return;
+          }
+
+          if (id.includes("node_modules/mermaid")) {
+            return "mermaid-vendor";
+          }
+
+          if (id.includes("node_modules/draftly/")) {
+            return "draftly-vendor";
+          }
+
+          if (id.includes("node_modules/@codemirror/view")) {
+            return "codemirror-vendor";
+          }
+
+          if (
+            id.includes("node_modules/@codemirror/commands") ||
+            id.includes("node_modules/@codemirror/state")
+          ) {
+            return "codemirror-vendor";
+          }
+
+          if (
+            id.includes("node_modules/@codemirror/language") ||
+            id.includes("node_modules/@codemirror/lang-") ||
+            id.includes("node_modules/@codemirror/legacy-modes") ||
+            id.includes("node_modules/@lezer/")
+          ) {
+            return "codemirror-vendor";
+          }
+
+          if (id.includes("node_modules/d3")) {
+            return "graph-vendor";
+          }
+        },
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
