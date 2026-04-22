@@ -15,6 +15,7 @@ import type {
   SemanticSettings,
   SemanticStatus
 } from '$lib/types/semantic';
+import { refreshSettingsAfterVaultChange, refreshSettingsForVisibility } from './refreshPolicy';
 
 type SettingsTab = 'general' | 'forgotten';
 type GeneralSection = 'appearance' | 'shortcuts' | 'forgetting' | 'ai' | 'vault' | 'sync' | 'search';
@@ -642,12 +643,12 @@ export function createSettingsStore() {
   async function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
       await runAutoSyncNow('settings-visible');
-      const shouldRefreshSemanticPanel = get(store).activeGeneralSection === 'search';
-      if (shouldRefreshSemanticPanel) {
-        await Promise.all([loadSemanticState(), loadForgottenNotes()]);
-      } else {
-        await Promise.all([loadSemanticStatus(), loadSyncState(true), loadForgottenNotes()]);
-      }
+      await refreshSettingsForVisibility(get(store).activeGeneralSection, {
+        loadSemanticState,
+        loadSemanticStatus,
+        loadSyncState,
+        loadForgottenNotes
+      });
       syncSemanticPolling();
       return;
     }
@@ -662,7 +663,11 @@ export function createSettingsStore() {
 
     vaultChangeRefreshTimer = window.setTimeout(() => {
       vaultChangeRefreshTimer = null;
-      void Promise.all([loadForgottenNotes(), loadSemanticStatus(), loadSyncState(false)]);
+      void refreshSettingsAfterVaultChange({
+        loadSemanticStatus,
+        loadSyncState,
+        loadForgottenNotes
+      });
     }, delayMs);
   }
 

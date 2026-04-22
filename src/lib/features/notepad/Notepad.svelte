@@ -88,6 +88,10 @@
     getCardStyle,
     getRelatedDrawerStyle
   } from '$lib/features/notepad/related/layout';
+  import {
+    createNotepadRefreshController,
+    type VaultNoteChangeEvent
+  } from '$lib/features/notepad/orchestration/notepadRefreshController';
   import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
   import { createNotepadSearchStore } from '$lib/features/notepad/search/store';
   import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
@@ -149,11 +153,6 @@
     wikilinkAutocomplete: WikilinkAutocompleteState;
     editorGeneration: number;
     slashMenu: PaneSlashMenuModel;
-  }
-
-  interface VaultNoteChangeEvent {
-    notePath: string;
-    deleted: boolean;
   }
 
   const proseMirrorInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
@@ -933,20 +932,6 @@
     }
   }
 
-  function handleWindowFocus() {
-    void syncAndRefresh('window-focus');
-  }
-
-  function handleWindowResize() {
-    updateRelatedDrawerLayout();
-  }
-
-  function handleVisibilityChange() {
-    if (document.visibilityState === 'visible') {
-      void syncAndRefresh('window-visible');
-    }
-  }
-
   function refreshDerivedViews() {
     void loadRecentNotes();
     void loadRecentTasks();
@@ -956,30 +941,27 @@
     scheduleRelated({ immediate: true });
   }
 
-  async function syncAndRefresh(reason: string) {
-    await runAutoSyncNow(reason);
-    await refreshCurrentNoteIfChanged();
-    refreshDerivedViews();
-  }
+  const refreshController = createNotepadRefreshController({
+    getDocumentSession: () => documentSession,
+    refreshDerivedViews,
+    updateRelatedDrawerLayout,
+    runAutoSyncNow,
+    scheduleAutoSync,
+    refreshCurrentNoteIfChanged,
+    getNoteByKey,
+    getPaneIdsForDocument,
+    replaceNoteAcrossPanes,
+    replaceReferencedNoteWithFreshDraft: (noteKey) =>
+      replaceReferencedNoteWithFreshDraft(notepadState, noteKey),
+    noteKeyFromPath
+  });
 
-  async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
-    if (documentSession.currentNotePath === payload.notePath) {
-      await refreshCurrentNoteIfChanged();
-    } else if (payload.deleted) {
-      const noteKey = noteKeyFromPath(payload.notePath);
-      if (noteKey) {
-        const note = getNoteByKey(noteKey);
-        if (note) {
-          if (getPaneIdsForDocument(note).length > 0) {
-            const freshDraft = replaceReferencedNoteWithFreshDraft(notepadState, note.key);
-            await replaceNoteAcrossPanes(note, freshDraft);
-          }
-        }
-      }
-    }
-    refreshDerivedViews();
-    scheduleAutoSync('vault-note-change', 1200);
-  }
+  const {
+    handleWindowFocus,
+    handleWindowResize,
+    handleVisibilityChange,
+    handleVaultNoteChanged
+  } = refreshController;
 
   async function loadRememberCapabilities() {
     try {
