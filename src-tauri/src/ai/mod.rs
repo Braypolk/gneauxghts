@@ -2144,6 +2144,23 @@ fn build_change_previews(changes: &[AiChange]) -> Result<Vec<AiChangePreview>, S
     Ok(previews)
 }
 
+fn build_ai_http_client(
+    connect_timeout_secs: u64,
+    request_timeout_secs: u64,
+) -> Result<Client, String> {
+    Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(connect_timeout_secs))
+        .timeout(std::time::Duration::from_secs(request_timeout_secs))
+        .build()
+        .map_err(|err| err.to_string())
+}
+
+fn openai_compatible_endpoint(base_url: &str, path: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    let trimmed_path = path.trim_start_matches('/');
+    format!("{trimmed}/{trimmed_path}")
+}
+
 fn build_provider(
     settings: &StoredAiSettings,
 ) -> Result<Box<dyn GenerationProvider + Send + Sync>, String> {
@@ -2160,11 +2177,7 @@ fn build_provider(
                 return Err("Set a model in Settings before using AI remember modes.".to_string());
             }
             Ok(Box::new(OpenAiCompatibleProvider {
-                client: Client::builder()
-                    .connect_timeout(std::time::Duration::from_secs(AI_CONNECT_TIMEOUT_SECS))
-                    .timeout(std::time::Duration::from_secs(AI_COMPLETION_TIMEOUT_SECS))
-                    .build()
-                    .map_err(|err| err.to_string())?,
+                client: build_ai_http_client(AI_CONNECT_TIMEOUT_SECS, AI_COMPLETION_TIMEOUT_SECS)?,
                 base_url: normalize_base_url(&settings.base_url),
                 model: settings.model.clone(),
                 api_key,
@@ -2185,9 +2198,9 @@ impl GenerationProvider for OpenAiCompatibleProvider {
     ) -> Result<ModelCompletion, String> {
         let response = self
             .client
-            .post(format!(
-                "{}/chat/completions",
-                self.base_url.trim_end_matches('/')
+            .post(openai_compatible_endpoint(
+                self.base_url.as_str(),
+                "chat/completions",
             ))
             .bearer_auth(&self.api_key)
             .json(&json!({
@@ -2243,13 +2256,9 @@ fn fetch_openai_compatible_models(
     base_url: &str,
     api_key: &str,
 ) -> Result<Vec<AiModelOption>, String> {
-    let client = Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(AI_CONNECT_TIMEOUT_SECS))
-        .timeout(std::time::Duration::from_secs(AI_MODEL_LIST_TIMEOUT_SECS))
-        .build()
-        .map_err(|err| err.to_string())?;
+    let client = build_ai_http_client(AI_CONNECT_TIMEOUT_SECS, AI_MODEL_LIST_TIMEOUT_SECS)?;
     let response = client
-        .get(format!("{}/models", base_url.trim_end_matches('/')))
+        .get(openai_compatible_endpoint(base_url, "models"))
         .bearer_auth(api_key)
         .send()
         .map_err(|err| err.to_string())?;
@@ -2838,7 +2847,7 @@ fn list_jobs_with_filter(
         ))
         .map_err(|err| err.to_string())?;
     let rows = statement
-        .query_map([], |row| row_to_job(row))
+        .query_map([], row_to_job)
         .map_err(|err| err.to_string())?;
     let mut jobs = Vec::new();
     for row in rows {
@@ -2874,7 +2883,7 @@ fn load_job(connection: &Connection, id: i64) -> Result<Option<StoredAiJob>, Str
              FROM ai_jobs
              WHERE id = ?1",
             params![id],
-            |row| row_to_job(row),
+            row_to_job,
         )
         .optional()
         .map_err(|err| err.to_string())
@@ -2911,7 +2920,7 @@ fn claim_next_queued_job(db_path: &Path) -> Result<Option<StoredAiJob>, String> 
              ORDER BY created_at_millis ASC, id ASC
              LIMIT 1",
             [],
-            |row| row_to_job(row),
+            row_to_job,
         )
         .optional()
         .map_err(|err| err.to_string())?
