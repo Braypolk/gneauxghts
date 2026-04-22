@@ -10,7 +10,7 @@ pub(super) fn build_client() -> Result<Client, String> {
 }
 
 pub(super) fn authorized_client(
-    sync_base_url: &str,
+    _sync_base_url: &str,
     session_token: &str,
 ) -> Result<Client, String> {
     Client::builder()
@@ -27,10 +27,6 @@ pub(super) fn authorized_client(
         )
         .build()
         .map_err(|err| err.to_string())
-        .map(|client| {
-            let _ = sync_base_url;
-            client
-        })
 }
 
 pub(super) fn sync_url(sync_base_url: &str, path: &str) -> Result<String, String> {

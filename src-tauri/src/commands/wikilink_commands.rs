@@ -244,13 +244,11 @@ fn display_text_for_section(text: &str) -> String {
                 trimmed
             };
 
+            let trimmed = trimmed.replace("[[", "").replace("]]", "");
             trimmed
-                .replace("[[", "")
-                .replace("]]", "")
-                .replace('`', "")
-                .replace('*', "")
-                .replace('_', "")
-                .replace('~', "")
+                .chars()
+                .filter(|ch| !matches!(ch, '`' | '*' | '_' | '~'))
+                .collect::<String>()
         })
         .collect::<Vec<_>>();
 

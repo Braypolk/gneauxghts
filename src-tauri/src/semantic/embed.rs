@@ -631,7 +631,7 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             "ready".to_string()
         } else if !runtime_status.is_empty() {
             runtime_status
-        } else if !runtime_binary_path.is_some() {
+        } else if runtime_binary_path.is_none() {
             "llama-server runtime not installed".to_string()
         } else if cached_model_path.is_none() {
             if settings.local_only_mode {
@@ -797,7 +797,7 @@ fn find_model_file(directory: &Path, file_names: &[&str], depth: usize) -> Optio
                 .file_name()
                 .and_then(|name| name.to_str())
                 .map(|name| {
-                    file_names.iter().any(|candidate| name == *candidate)
+                    file_names.contains(&name)
                         || (name.contains("jina-embeddings-v5-text-nano-retrieval")
                             && name.ends_with("Q6_K.gguf"))
                 })

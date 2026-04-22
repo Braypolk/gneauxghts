@@ -57,6 +57,7 @@ pub(crate) enum WorkerSignal {
     SetPaused { paused: bool },
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_indexing_worker(
     db_path: PathBuf,
     notes_dir: PathBuf,
@@ -90,6 +91,7 @@ pub(crate) fn spawn_indexing_worker(
         .map_err(|err| err.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_worker(
     db_path: PathBuf,
     notes_dir: PathBuf,
@@ -149,6 +151,7 @@ fn run_worker(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_pending_jobs(
     db_path: &Path,
     notes_dir: &Path,

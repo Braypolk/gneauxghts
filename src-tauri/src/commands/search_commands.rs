@@ -130,6 +130,7 @@ pub(crate) fn search_notes(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_notes_hybrid(
     state: State<'_, AppState>,
     query: String,
@@ -264,6 +265,7 @@ pub(crate) async fn get_related_notes(
     .map_err(|err| err.to_string())?
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_lexical_candidates(
     state: &State<'_, AppState>,
     query: &str,

@@ -253,6 +253,7 @@ pub(crate) fn load_existing_chunk_embeddings(
     Ok(chunks)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn upsert_note_chunks(
     connection: &mut Connection,
     note_path: &str,

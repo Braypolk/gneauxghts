@@ -377,6 +377,7 @@ fn upsert_tracked_note(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn upsert_tracked_note_record(
     connection: &Connection,
     note_id: &str,
