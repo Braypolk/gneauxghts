@@ -7,6 +7,9 @@ Scope:
 - Excluded: sync server and other server-side sync implementation details
 - Reference-only: generated Apple/Tauri artifacts and vendored code
 
+Follow-up:
+- [Main App QA Remediation Playbook](/Users/bray.polkinghorne/Documents/code/personal/Gneauxghts/docs/main-app-qa-remediation-playbook-2026-04-22.md)
+
 ## Summary
 
 This repo already has a solid local-first architecture and a meaningful Rust unit-test base, but the main app is now concentrated around a handful of oversized orchestration modules that make correctness, performance, and future refactors harder than they should be.
