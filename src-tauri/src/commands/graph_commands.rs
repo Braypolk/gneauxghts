@@ -4,16 +4,15 @@ use crate::{
     semantic::{
         cluster::cluster_notes,
         db::{
-            ensure_schema, load_all_edges, load_all_notes_with_meta,
-            load_first_chunk_text_per_note, load_graph_positions, load_note_embeddings,
-            open_database, save_graph_positions,
+            ensure_schema, load_all_edges_for_notes, load_all_notes_with_meta_for_paths,
+            load_first_chunk_text_per_note_for_paths, load_graph_positions_for_notes,
+            load_note_embeddings, open_database, save_graph_positions, StoredNoteWithMeta,
         },
     },
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    fs,
     path::Path,
     sync::{LazyLock, Mutex},
 };
@@ -102,8 +101,8 @@ pub(crate) fn get_graph_data(
     let connection = open_database(&db_path)?;
     ensure_schema(&connection)?;
 
-    let stored_notes = load_all_notes_with_meta(&connection)?;
-    if stored_notes.is_empty() {
+    let embeddings_raw = load_note_embeddings(&connection)?;
+    if embeddings_raw.is_empty() {
         return Ok(GraphData {
             nodes: Vec::new(),
             clusters: Vec::new(),
@@ -113,28 +112,35 @@ pub(crate) fn get_graph_data(
         });
     }
 
-    let embeddings_raw = load_note_embeddings(&connection)?;
-    let snippets = load_first_chunk_text_per_note(&connection)?;
-    let positions = load_graph_positions(&connection)?;
-    let stored_edges = load_all_edges(&connection)?;
+    let note_paths: Vec<String> = embeddings_raw
+        .iter()
+        .map(|embedding| embedding.note_path.clone())
+        .collect();
+
+    let stored_note_map = load_all_notes_with_meta_for_paths(&connection, &note_paths)?;
+    if stored_note_map.is_empty() {
+        return Ok(GraphData {
+            nodes: Vec::new(),
+            clusters: Vec::new(),
+            wikilink_edges: Vec::new(),
+            inferred_edges: Vec::new(),
+            time_range: (0, 0),
+        });
+    }
+
+    let snippets = load_first_chunk_text_per_note_for_paths(&connection, &note_paths)?;
+    let positions = load_graph_positions_for_notes(&connection, &note_paths)?;
+    let stored_edges = load_all_edges_for_notes(&connection, &note_paths)?;
 
     let position_map: HashMap<String, (f64, f64)> = positions
         .into_iter()
         .map(|p| (p.note_path, (p.x, p.y)))
         .collect();
 
-    let indexed_paths: HashSet<String> =
-        embeddings_raw.iter().map(|e| e.note_path.clone()).collect();
-    let stored_note_map: HashMap<String, _> = stored_notes
-        .iter()
-        .filter(|n| indexed_paths.contains(&n.path))
-        .map(|n| (n.path.clone(), n))
-        .collect();
-
     let embeddings_for_cluster: Vec<(String, Vec<f32>)> = embeddings_raw
-        .iter()
-        .filter(|e| stored_note_map.contains_key(&e.note_path))
-        .map(|e| (e.note_path.clone(), e.embedding.clone()))
+        .into_iter()
+        .filter(|embedding| stored_note_map.contains_key(&embedding.note_path))
+        .map(|embedding| (embedding.note_path, embedding.embedding))
         .collect();
 
     let note_titles: HashMap<String, String> = embeddings_for_cluster
@@ -319,7 +325,7 @@ pub(crate) fn save_graph_node_positions(
 fn extract_wikilinks(
     state: &State<'_, AppState>,
     notes_dir: &Path,
-    valid_notes: &HashMap<String, &crate::semantic::db::StoredNoteWithMeta>,
+    valid_notes: &HashMap<String, StoredNoteWithMeta>,
 ) -> Result<Vec<WikilinkEdge>, String> {
     let mut index = state
         .notes_index
@@ -350,17 +356,13 @@ fn extract_wikilinks(
     let mut edges = Vec::new();
     let mut seen = HashSet::new();
 
-    for (path, _note) in index.entries.iter() {
+    for (path, note) in index.entries.iter() {
         let path_str = path.to_string_lossy().into_owned();
         if !valid_notes.contains_key(&path_str) {
             continue;
         }
 
-        let Ok(markdown) = fs::read_to_string(path) else {
-            continue;
-        };
-
-        for raw_target in extract_wikilink_targets(&markdown) {
+        for raw_target in extract_note_wikilink_targets(note) {
             if raw_target.is_empty() {
                 continue;
             }
@@ -385,6 +387,14 @@ fn extract_wikilinks(
     }
 
     Ok(edges)
+}
+
+fn extract_note_wikilink_targets(note: &crate::index::IndexedNote) -> Vec<String> {
+    let mut targets = extract_wikilink_targets(&note.title);
+    for paragraph in &note.paragraphs {
+        targets.extend(extract_wikilink_targets(&paragraph.text));
+    }
+    targets
 }
 
 fn lookup_graph_cluster_cache(

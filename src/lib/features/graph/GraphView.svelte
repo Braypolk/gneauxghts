@@ -62,6 +62,7 @@
   const INITIAL_SIMULATION_ALPHA = 0.72;
   const DRAG_REHEAT_ALPHA = 0.16;
   const SETTLE_STOP_ALPHA = 0.045;
+  const POSITION_SAVE_EPSILON = 0.75;
 
   interface Props {
     data: GraphData;
@@ -86,6 +87,7 @@
   let clusterBubbles: ClusterBubble[] = [];
   let nodeRenderInfo = new Map<string, NodeRenderInfo>();
   let clusterLookups = $state<ClusterLookups>(buildClusterLookups([]));
+  let persistedPositions = new Map<string, { x: number; y: number }>();
 
   let savePositionTimer: ReturnType<typeof setTimeout> | null = null;
   let entryDelayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -560,11 +562,31 @@
     }
     queuedBubbleRefresh = false;
     isDraggingNode = false;
+    persistedPositions.clear();
     clusterSelection = null;
     edgeSelection = null;
     nodeSelection = null;
     labelSelection = null;
     graphContainerSelection?.selectAll('*').remove();
+  }
+
+  function resetPersistedPositions(graphData: GraphData) {
+    persistedPositions = new Map(
+      graphData.nodes
+        .filter((node) => node.xHint !== null && node.yHint !== null)
+        .map((node) => [node.path, { x: node.xHint as number, y: node.yHint as number }])
+    );
+  }
+
+  function positionNeedsSave(node: SimNode) {
+    const persisted = persistedPositions.get(node.path);
+    if (!persisted) {
+      return true;
+    }
+    return (
+      Math.abs(persisted.x - node.x) > POSITION_SAVE_EPSILON ||
+      Math.abs(persisted.y - node.y) > POSITION_SAVE_EPSILON
+    );
   }
 
   function rebuildGraphView() {
@@ -575,6 +597,7 @@
     hasFittedOnce = false;
     hasUserInteracted = false;
     clusterLookups = buildClusterLookups(data.clusters);
+    resetPersistedPositions(data);
     rebuildSimData(data);
     clusterBubbles = buildClusterBubbles(simNodes, data.clusters);
     syncClusterScene();
@@ -587,12 +610,23 @@
   function scheduleSavePositions() {
     if (savePositionTimer) clearTimeout(savePositionTimer);
     savePositionTimer = setTimeout(() => {
-      const positions: GraphPositionEntry[] = simNodes.map((n) => ({
-        path: n.path,
-        x: n.x,
-        y: n.y
-      }));
-      void invoke('save_graph_node_positions', { positions });
+      const positions: GraphPositionEntry[] = simNodes
+        .filter(positionNeedsSave)
+        .map((node) => ({
+          path: node.path,
+          x: node.x,
+          y: node.y
+        }));
+
+      if (positions.length === 0) {
+        return;
+      }
+
+      void invoke('save_graph_node_positions', { positions }).then(() => {
+        for (const position of positions) {
+          persistedPositions.set(position.path, { x: position.x, y: position.y });
+        }
+      });
     }, 1000);
   }
 

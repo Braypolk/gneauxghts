@@ -62,6 +62,7 @@ export function createMapStore() {
   const { subscribe, update } = store;
   let activeLoadRequest = 0;
   let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
+  let semanticPollInFlight = false;
 
   function patch(partial: Partial<MapState>) {
     update((state) => ({ ...state, ...partial }));
@@ -72,6 +73,7 @@ export function createMapStore() {
       window.clearInterval(semanticPollTimer);
       semanticPollTimer = null;
     }
+    semanticPollInFlight = false;
   }
 
   async function refreshSemanticGate(requestId: number) {
@@ -115,12 +117,17 @@ export function createMapStore() {
     }
 
     semanticPollTimer = window.setInterval(() => {
+      if (semanticPollInFlight) {
+        return;
+      }
+      semanticPollInFlight = true;
       const requestId = activeLoadRequest;
       void (async () => {
         try {
           const isReady = await refreshSemanticGate(requestId);
           if (isReady && requestId === activeLoadRequest) {
-            await loadGraphData();
+            stopSemanticPolling();
+            await loadGraphData({ skipGateCheck: true });
           }
         } catch (error) {
           if (requestId !== activeLoadRequest) {
@@ -132,12 +139,14 @@ export function createMapStore() {
             isLoading: false
           });
           stopSemanticPolling();
+        } finally {
+          semanticPollInFlight = false;
         }
       })();
     }, SEMANTIC_POLL_INTERVAL_MS);
   }
 
-  async function loadGraphData() {
+  async function loadGraphData(options?: { skipGateCheck?: boolean }) {
     const requestId = ++activeLoadRequest;
     patch({
       isLoading: true,
@@ -146,9 +155,11 @@ export function createMapStore() {
     });
 
     try {
-      const isReady = await refreshSemanticGate(requestId);
-      if (requestId !== activeLoadRequest || !isReady) {
-        return;
+      if (!options?.skipGateCheck) {
+        const isReady = await refreshSemanticGate(requestId);
+        if (requestId !== activeLoadRequest || !isReady) {
+          return;
+        }
       }
 
       const { colorGroupCount } = get(store);

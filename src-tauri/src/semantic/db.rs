@@ -9,6 +9,8 @@ use std::{
 };
 
 const SETTINGS_KEY: &str = "semantic_settings";
+const SQLITE_SAFE_VARIABLE_LIMIT: usize = 900;
+const SQLITE_SAFE_DOUBLE_IN_LIMIT: usize = SQLITE_SAFE_VARIABLE_LIMIT / 2;
 
 #[derive(Clone)]
 pub(crate) struct StoredChunkEmbedding {
@@ -903,21 +905,34 @@ pub(crate) struct StoredGraphPosition {
     pub(crate) y: f64,
 }
 
-pub(crate) fn load_graph_positions(
+pub(crate) fn load_graph_positions_for_notes(
     connection: &Connection,
+    note_paths: &[String],
 ) -> Result<Vec<StoredGraphPosition>, String> {
-    let mut statement = connection
-        .prepare("SELECT note_path, x, y FROM graph_positions")
-        .map_err(|err| err.to_string())?;
-    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+    if note_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut positions = Vec::new();
 
-    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
-        positions.push(StoredGraphPosition {
-            note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
-            x: row.get::<_, f64>(1).map_err(|err| err.to_string())?,
-            y: row.get::<_, f64>(2).map_err(|err| err.to_string())?,
-        });
+    for paths_chunk in note_paths.chunks(SQLITE_SAFE_VARIABLE_LIMIT) {
+        let placeholders = std::iter::repeat_n("?", paths_chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT note_path, x, y FROM graph_positions WHERE note_path IN ({placeholders})"
+        );
+        let mut statement = connection.prepare(&sql).map_err(|err| err.to_string())?;
+        let params = rusqlite::params_from_iter(paths_chunk.iter());
+        let mut rows = statement.query(params).map_err(|err| err.to_string())?;
+
+        while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+            positions.push(StoredGraphPosition {
+                note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+                x: row.get::<_, f64>(1).map_err(|err| err.to_string())?,
+                y: row.get::<_, f64>(2).map_err(|err| err.to_string())?,
+            });
+        }
     }
 
     Ok(positions)
@@ -955,57 +970,126 @@ pub(crate) struct StoredEdge {
     pub(crate) score: f32,
 }
 
-pub(crate) fn load_all_edges(connection: &Connection) -> Result<Vec<StoredEdge>, String> {
-    let mut statement = connection
-        .prepare("SELECT source_note_path, target_note_path, score FROM edges")
-        .map_err(|err| err.to_string())?;
-    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+pub(crate) fn load_all_edges_for_notes(
+    connection: &Connection,
+    note_paths: &[String],
+) -> Result<Vec<StoredEdge>, String> {
+    if note_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut edges = Vec::new();
 
-    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
-        edges.push(StoredEdge {
-            source_note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
-            target_note_path: row.get::<_, String>(1).map_err(|err| err.to_string())?,
-            score: row.get::<_, f32>(2).map_err(|err| err.to_string())?,
-        });
+    if note_paths.len() <= SQLITE_SAFE_DOUBLE_IN_LIMIT {
+        let placeholders = std::iter::repeat_n("?", note_paths.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "
+            SELECT source_note_path, target_note_path, score
+            FROM edges
+            WHERE source_note_path IN ({placeholders})
+              AND target_note_path IN ({placeholders})
+            "
+        );
+        let mut statement = connection.prepare(&sql).map_err(|err| err.to_string())?;
+        let params = rusqlite::params_from_iter(note_paths.iter().chain(note_paths.iter()));
+        let mut rows = statement.query(params).map_err(|err| err.to_string())?;
+
+        while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+            edges.push(StoredEdge {
+                source_note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+                target_note_path: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+                score: row.get::<_, f32>(2).map_err(|err| err.to_string())?,
+            });
+        }
+    } else {
+        let valid_paths: HashSet<&str> = note_paths.iter().map(String::as_str).collect();
+        let mut statement = connection
+            .prepare("SELECT source_note_path, target_note_path, score FROM edges")
+            .map_err(|err| err.to_string())?;
+        let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+
+        while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+            let source_note_path = row.get::<_, String>(0).map_err(|err| err.to_string())?;
+            let target_note_path = row.get::<_, String>(1).map_err(|err| err.to_string())?;
+            if valid_paths.contains(source_note_path.as_str())
+                && valid_paths.contains(target_note_path.as_str())
+            {
+                edges.push(StoredEdge {
+                    source_note_path,
+                    target_note_path,
+                    score: row.get::<_, f32>(2).map_err(|err| err.to_string())?,
+                });
+            }
+        }
     }
 
     Ok(edges)
 }
 
 pub(crate) struct StoredNoteWithMeta {
-    pub(crate) path: String,
     pub(crate) title: String,
     pub(crate) created_at: String,
     pub(crate) modified_millis: u64,
 }
 
-pub(crate) fn load_all_notes_with_meta(
+pub(crate) fn load_all_notes_with_meta_for_paths(
     connection: &Connection,
-) -> Result<Vec<StoredNoteWithMeta>, String> {
-    let mut statement = connection
-        .prepare("SELECT path, title, created_at, modified_millis FROM notes")
-        .map_err(|err| err.to_string())?;
-    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
-    let mut notes = Vec::new();
+    note_paths: &[String],
+) -> Result<HashMap<String, StoredNoteWithMeta>, String> {
+    if note_paths.is_empty() {
+        return Ok(HashMap::new());
+    }
 
-    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
-        notes.push(StoredNoteWithMeta {
-            path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
-            title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
-            created_at: row.get::<_, String>(2).map_err(|err| err.to_string())?,
-            modified_millis: row.get::<_, u64>(3).map_err(|err| err.to_string())?,
-        });
+    let mut notes = HashMap::new();
+
+    for paths_chunk in note_paths.chunks(SQLITE_SAFE_VARIABLE_LIMIT) {
+        let placeholders = std::iter::repeat_n("?", paths_chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "
+            SELECT path, title, created_at, modified_millis
+            FROM notes
+            WHERE path IN ({placeholders})
+            "
+        );
+        let mut statement = connection.prepare(&sql).map_err(|err| err.to_string())?;
+        let params = rusqlite::params_from_iter(paths_chunk.iter());
+        let mut rows = statement.query(params).map_err(|err| err.to_string())?;
+
+        while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+            let path = row.get::<_, String>(0).map_err(|err| err.to_string())?;
+            notes.insert(
+                path.clone(),
+                StoredNoteWithMeta {
+                    title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+                    created_at: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+                    modified_millis: row.get::<_, u64>(3).map_err(|err| err.to_string())?,
+                },
+            );
+        }
     }
 
     Ok(notes)
 }
 
-pub(crate) fn load_first_chunk_text_per_note(
+pub(crate) fn load_first_chunk_text_per_note_for_paths(
     connection: &Connection,
+    note_paths: &[String],
 ) -> Result<HashMap<String, String>, String> {
-    let mut statement = connection
-        .prepare(
+    if note_paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let mut snippets = HashMap::new();
+
+    for paths_chunk in note_paths.chunks(SQLITE_SAFE_VARIABLE_LIMIT) {
+        let placeholders = std::iter::repeat_n("?", paths_chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
             "
             SELECT c.note_path, c.text
             FROM chunks c
@@ -1014,17 +1098,19 @@ pub(crate) fn load_first_chunk_text_per_note(
                 FROM chunks
                 GROUP BY note_path
             ) m ON c.note_path = m.note_path AND c.ordinal = m.min_ordinal
-            ",
-        )
-        .map_err(|err| err.to_string())?;
-    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
-    let mut snippets = HashMap::new();
-
-    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
-        snippets.insert(
-            row.get::<_, String>(0).map_err(|err| err.to_string())?,
-            row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            WHERE c.note_path IN ({placeholders})
+            "
         );
+        let mut statement = connection.prepare(&sql).map_err(|err| err.to_string())?;
+        let params = rusqlite::params_from_iter(paths_chunk.iter());
+        let mut rows = statement.query(params).map_err(|err| err.to_string())?;
+
+        while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+            snippets.insert(
+                row.get::<_, String>(0).map_err(|err| err.to_string())?,
+                row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            );
+        }
     }
 
     Ok(snippets)
