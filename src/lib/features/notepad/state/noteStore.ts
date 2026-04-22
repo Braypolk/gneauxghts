@@ -239,6 +239,18 @@ export function removeNoteIfUnreferenced<TPaneId extends string>(
   delete state.notesByKey[noteKey];
 }
 
+function removeTransientNoteIfUnreferenced<TPaneId extends string>(
+  state: NotepadState<TPaneId>,
+  noteKey: NoteKey
+) {
+  const note = state.notesByKey[noteKey];
+  if (!note || note.currentNotePath) {
+    return;
+  }
+
+  removeNoteIfUnreferenced(state, noteKey);
+}
+
 export function listReferencedNoteKeys<TPaneId extends string>(state: NotepadState<TPaneId>) {
   return [
     ...new Set((Object.values(state.panesById) as PaneState<TPaneId>[]).map((pane) => pane.noteKey))
@@ -261,7 +273,7 @@ export function adoptSnapshotForPane<TPaneId extends string>(
     applySnapshotToNote(note, snapshot);
     state.notesByKey[note.key] = note;
     state.panesById[paneId].noteKey = note.key;
-    removeNoteIfUnreferenced(state, currentNote.key);
+    removeTransientNoteIfUnreferenced(state, currentNote.key);
     return note;
   }
 
@@ -273,6 +285,6 @@ export function adoptSnapshotForPane<TPaneId extends string>(
   const freshDraft = createNoteDraftState(snapshot);
   state.notesByKey[freshDraft.key] = freshDraft;
   state.panesById[paneId].noteKey = freshDraft.key;
-  removeNoteIfUnreferenced(state, currentNote.key);
+  removeTransientNoteIfUnreferenced(state, currentNote.key);
   return freshDraft;
 }

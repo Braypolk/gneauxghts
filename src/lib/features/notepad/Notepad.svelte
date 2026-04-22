@@ -103,7 +103,6 @@
     adoptSnapshotForPane,
     applySnapshotToNote,
     createFreshDraftNote,
-    createNotepadState,
     getActiveNote,
     getPaneNote,
     getPaneState,
@@ -119,10 +118,23 @@
     type NoteDraftState,
     type NoteKey
   } from '$lib/features/notepad/state/noteStore';
+  import {
+    documentSyncFrameIds,
+    noteSaveQueues,
+    noteSaveTimers,
+    notepadRuntimeState,
+    PRIMARY_PANE_ID,
+    SECONDARY_PANE_ID,
+    sharedEditorResourcesByNoteKey,
+    sharedEditorStateByNoteKey,
+    sharedEditorStateGenerationByNoteKey,
+    updateSharedEditorResourceConfig,
+    type NotepadPaneId
+  } from '$lib/features/notepad/session/runtimeStore.svelte';
   import { cancelScheduledAutoSync, runAutoSyncNow, scheduleAutoSync } from '$lib/sync/autoSync';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
 
-  type PaneId = typeof PRIMARY_PANE_ID | typeof SECONDARY_PANE_ID;
+  type PaneId = NotepadPaneId;
   type PaneKind = 'editor' | 'chat';
 
   interface PaneUiState {
@@ -138,8 +150,6 @@
     deleted: boolean;
   }
 
-  const PRIMARY_PANE_ID = 'notepad-primary';
-  const SECONDARY_PANE_ID = 'notepad-secondary';
   const proseMirrorInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
 
   let workspaceShell = $state<HTMLDivElement | null>(null);
@@ -157,8 +167,8 @@
   let secondaryTitleShell = $state<HTMLDivElement | null>(null);
   let secondaryController: EditorController | null = null;
 
-  let paneOrder = $state<PaneId[]>([PRIMARY_PANE_ID]);
-  let activePaneId = $state<PaneId>(PRIMARY_PANE_ID);
+  let paneOrder = $state<PaneId[]>([...notepadRuntimeState.paneOrder]);
+  let activePaneId = $state<PaneId>(notepadRuntimeState.activePaneId);
   let paneStates = $state<Record<PaneId, PaneUiState>>({
     [PRIMARY_PANE_ID]: {
       isEditorReady: false,
@@ -176,20 +186,9 @@
     }
   });
 
-  let notepadState = $state(
-    createNotepadState(PRIMARY_PANE_ID, [PRIMARY_PANE_ID, SECONDARY_PANE_ID] as const)
-  );
+  const notepadState = notepadRuntimeState.notepadState;
   let documentSession = $derived.by(() => getActiveNote(notepadState));
-  const sharedEditorResourcesByNoteKey = new Map<
-    NoteKey,
-    ReturnType<typeof createSharedEditorResources>
-  >();
-  const sharedEditorStateByNoteKey = new Map<NoteKey, EditorSnapshot | null>();
-  const sharedEditorStateGenerationByNoteKey = new Map<NoteKey, number>();
-  const noteSaveTimers = new Map<NoteKey, ReturnType<typeof window.setTimeout>>();
-  const noteSaveQueues = new Map<NoteKey, Promise<void>>();
   const cursorSaveTimers = new Map<PaneId, ReturnType<typeof window.setTimeout>>();
-  const documentSyncFrameIds = new Map<NoteKey, number>();
   const openNoteRequestGenerationByPane = new Map<PaneId, number>([
     [PRIMARY_PANE_ID, 0],
     [SECONDARY_PANE_ID, 0]
@@ -197,11 +196,15 @@
 
   let canUnforget = $derived(notepadState.recentlyForgotten !== null);
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
-  let assetRootPath = $state<string | null>(null);
   let semanticStatus = $state<SemanticStatus | null>(null);
   let proposalErrorMessage = $state('');
   let currentSearchHighlightMode: SearchMode = 'all';
   let currentSearchHighlightQuery = '';
+
+  $effect(() => {
+    notepadRuntimeState.paneOrder = paneOrder;
+    notepadRuntimeState.activePaneId = activePaneId;
+  });
 
   const searchState = createNotepadSearchStore({
     getCurrentTitle: () => documentSession.title,
@@ -469,7 +472,7 @@
     }
 
     resources = createSharedEditorResources({
-      assetRootPath,
+      assetRootPath: notepadRuntimeState.assetRootPath,
       onTaskListToggle: () => {
         flushPendingAutosave();
       },
@@ -1290,10 +1293,13 @@
   async function loadAssetRoot() {
     try {
       const vaultInfo = await loadCurrentVaultInfo();
-      assetRootPath = resolveAssetRootPath(vaultInfo.currentPath);
+      updateSharedEditorResourceConfig(
+        resolveAssetRootPath(vaultInfo.currentPath),
+        storePastedImageAsset
+      );
     } catch (error) {
       console.error('Failed to load vault info for image assets:', error);
-      assetRootPath = null;
+      updateSharedEditorResourceConfig(null, storePastedImageAsset);
     }
   }
 
@@ -2061,7 +2067,12 @@
     (async () => {
       await tick();
       if (!mounted || !primaryEditorRoot) return;
-      await Promise.all([loadSavedNote(), loadAssetRoot(), loadRememberCapabilities()]);
+      if (notepadRuntimeState.hasLoadedInitialSession) {
+        await Promise.all([loadAssetRoot(), loadRememberCapabilities()]);
+      } else {
+        await Promise.all([loadSavedNote(), loadAssetRoot(), loadRememberCapabilities()]);
+        notepadRuntimeState.hasLoadedInitialSession = true;
+      }
       if (!mounted || !primaryEditorRoot) return;
       try {
         await ensurePaneEditors();
@@ -2105,9 +2116,6 @@
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
       shellResizeObserver?.disconnect();
-      for (const noteKey of [...noteSaveTimers.keys()]) {
-        cleanupNoteRuntime(noteKey);
-      }
       void paneControllers[PRIMARY_PANE_ID].editorLifecycleController.destroyEditor();
       void paneControllers[SECONDARY_PANE_ID].editorLifecycleController.destroyEditor();
     };
@@ -2550,7 +2558,7 @@
 
 <style>
   .notepad-shell {
-    --editor-left-padding: 1rem;
+    --editor-left-padding: 0rem;
     --editor-handle-lane-width: 2.75rem;
     --editor-right-padding: 1rem;
     --editor-readable-width: 100%;
@@ -2564,7 +2572,7 @@
 
   @media (min-width: 640px) {
     .notepad-shell {
-      --editor-left-padding: 2rem;
+      /* --editor-left-padding: 0rem; */
       --editor-handle-lane-width: 3rem;
       --editor-right-padding: 1.4rem;
       --editor-readable-width: 40rem;
@@ -2575,7 +2583,7 @@
 
   @media (min-width: 1280px) {
     .notepad-shell {
-      --editor-left-padding: 2.8rem;
+      /* --editor-left-padding: 1.25rem; */
       --editor-handle-lane-width: 3.1rem;
       --editor-right-padding: 1.8rem;
       --editor-readable-width: 42rem;

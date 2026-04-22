@@ -1,5 +1,5 @@
 <script lang="ts">
-  type SplitChoice = 'current' | 'previous' | 'chat';
+  type SplitChoice = 'current' | 'previous' | 'new' | 'chat';
 
   interface Props {
     highlightedIndex: number;
@@ -20,6 +20,21 @@
   }: Props = $props();
 
   const hasPrevious = $derived(previousNoteLabel !== null);
+  const activeDescendantId = $derived.by(() => {
+    if (highlightedIndex === 0) {
+      return 'split-choice-current';
+    }
+
+    if (highlightedIndex === 1) {
+      return 'split-choice-previous';
+    }
+
+    if (highlightedIndex === 2) {
+      return 'split-choice-new';
+    }
+
+    return 'split-choice-chat';
+  });
 
   function optionClass(index: number, enabled: boolean) {
     const active = highlightedIndex === index;
@@ -38,11 +53,7 @@
   bind:this={focusRoot}
   role="listbox"
   aria-label="Choose content for this pane"
-  aria-activedescendant={highlightedIndex === 0
-    ? 'split-choice-current'
-    : highlightedIndex === 1
-      ? 'split-choice-previous'
-      : 'split-choice-chat'}
+  aria-activedescendant={activeDescendantId}
   tabindex="0"
   class="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-28 pb-16 outline-none"
 >
@@ -90,15 +101,32 @@
 
     <button
       type="button"
-      id="split-choice-chat"
+      id="split-choice-new"
       role="option"
       aria-selected={highlightedIndex === 2}
       class={optionClass(2, true)}
-      onclick={() => onChoose('chat')}
+      onclick={() => onChoose('new')}
       onmouseenter={() => onHighlightChange(2)}
       onfocus={() => onHighlightChange(2)}
     >
       <span class="mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">3</span>
+      <span>
+        <span class="font-medium">New note</span>
+        <span class="mt-0.5 block text-xs text-muted-foreground">Start a fresh note in this pane</span>
+      </span>
+    </button>
+
+    <button
+      type="button"
+      id="split-choice-chat"
+      role="option"
+      aria-selected={highlightedIndex === 3}
+      class={optionClass(3, true)}
+      onclick={() => onChoose('chat')}
+      onmouseenter={() => onHighlightChange(3)}
+      onfocus={() => onHighlightChange(3)}
+    >
+      <span class="mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">4</span>
       <span>
         <span class="font-medium">Chat</span>
         <span class="mt-0.5 block text-xs text-muted-foreground">LLM chat placeholder for this pane</span>
