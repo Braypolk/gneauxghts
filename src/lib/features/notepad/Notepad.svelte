@@ -63,6 +63,12 @@
     createWikilinkAutocompleteState,
     type WikilinkAutocompleteState
   } from '$lib/features/notepad/wikilinks/state';
+  import {
+    getNextSplitChoiceIndex,
+    getSplitChoiceByIndex,
+    getSplitChoiceForShortcut,
+    type SplitChoice
+  } from '$lib/features/notepad/splitPanePicker';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
   import BottomBar from '$lib/features/notepad/ui/BottomBar.svelte';
   import SplitPaneContentPicker from '$lib/features/notepad/SplitPaneContentPicker.svelte';
@@ -1752,10 +1758,7 @@
     paneOrder = paneOrder.filter((candidate) => candidate !== paneId);
 
     if (wasSplitPicker) {
-      splitPickerPaneId = null;
-      splitPickerSourceNoteKey = null;
-      splitPickerHighlightedIndex = 0;
-      splitPickerFocusEl = null;
+      resetSplitPickerState();
       const anchorPane = (paneOrder[0] ?? PRIMARY_PANE_ID) as PaneId;
       setPaneDocumentSession(paneId, getPaneDocumentSession(anchorPane));
       setStoredPaneKind(notepadState, paneId, 'editor');
@@ -1809,11 +1812,11 @@
   }
 
   function moveSplitPickerHighlight(direction: 1 | -1) {
-    const hasPrev = splitPickerPreviousItem !== null;
-    const slots = hasPrev ? [0, 1, 2] : [0, 2];
-    const position = Math.max(0, slots.indexOf(splitPickerHighlightedIndex));
-    splitPickerHighlightedIndex =
-      slots[(position + direction + slots.length) % slots.length] ?? 0;
+    splitPickerHighlightedIndex = getNextSplitChoiceIndex(
+      splitPickerHighlightedIndex,
+      direction,
+      splitPickerPreviousItem !== null
+    );
   }
 
   async function confirmSplitPickerChoiceByHighlight() {
@@ -1822,13 +1825,9 @@
       return;
     }
 
-    const hasPrev = splitPickerPreviousItem !== null;
-    if (splitPickerHighlightedIndex === 0) {
-      await resolveSplitPickerChoice(paneId, 'current');
-    } else if (splitPickerHighlightedIndex === 1 && hasPrev) {
-      await resolveSplitPickerChoice(paneId, 'previous');
-    } else if (splitPickerHighlightedIndex === 2) {
-      await resolveSplitPickerChoice(paneId, 'chat');
+    const choice = getSplitChoiceByIndex(splitPickerHighlightedIndex, splitPickerPreviousItem !== null);
+    if (choice) {
+      await resolveSplitPickerChoice(paneId, choice);
     }
   }
 
@@ -1854,8 +1853,6 @@
       return false;
     }
 
-    const hasPrev = splitPickerPreviousItem !== null;
-
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       moveSplitPickerHighlight(1);
@@ -1874,35 +1871,35 @@
       return true;
     }
 
-    if (event.key === '1') {
-      event.preventDefault();
-      void resolveSplitPickerChoice(splitPickerPaneId, 'current');
-      return true;
+    const shortcutChoice = getSplitChoiceForShortcut(event.key, splitPickerPreviousItem !== null);
+    if (shortcutChoice === null) {
+      return false;
     }
 
-    if (event.key === '2') {
-      if (!hasPrev) {
-        return false;
-      }
-
-      event.preventDefault();
-      void resolveSplitPickerChoice(splitPickerPaneId, 'previous');
-      return true;
-    }
-
-    if (event.key === '3') {
-      event.preventDefault();
-      void resolveSplitPickerChoice(splitPickerPaneId, 'chat');
-      return true;
-    }
-
-    return false;
+    event.preventDefault();
+    void resolveSplitPickerChoice(splitPickerPaneId, shortcutChoice);
+    return true;
   }
 
-  async function resolveSplitPickerChoice(
-    paneId: PaneId,
-    choice: 'current' | 'previous' | 'chat'
-  ) {
+  function resetSplitPickerState() {
+    splitPickerPaneId = null;
+    splitPickerSourceNoteKey = null;
+    splitPickerHighlightedIndex = 0;
+    splitPickerFocusEl = null;
+  }
+
+  async function finalizeSplitPickerSelection(paneId: PaneId) {
+    await tick();
+    await ensurePaneEditors();
+    updateSelectedRelatedText(paneId);
+    if ($searchState.searchQuery.trim() !== '') {
+      scheduleSearch();
+    }
+
+    scheduleRelated({ immediate: true });
+  }
+
+  async function resolveSplitPickerChoice(paneId: PaneId, choice: SplitChoice) {
     if (splitPickerPaneId !== paneId) {
       return;
     }
@@ -1911,11 +1908,7 @@
     const previousItem = splitPickerPreviousItem;
     const placeholderKey = getPaneDocumentSession(paneId).key;
 
-    splitPickerPaneId = null;
-    splitPickerSourceNoteKey = null;
-    splitPickerHighlightedIndex = 0;
-    splitPickerFocusEl = null;
-
+    resetSplitPickerState();
     activatePaneSession(paneId);
 
     if (choice === 'current') {
@@ -1932,15 +1925,8 @@
       setPaneDocumentSession(paneId, shared);
       removeNoteIfUnreferenced(notepadState, placeholderKey);
       cleanupNoteRuntime(placeholderKey);
-      await tick();
-      await ensurePaneEditors();
+      await finalizeSplitPickerSelection(paneId);
       flushDocumentEditorSync(shared);
-      updateSelectedRelatedText(paneId);
-      if ($searchState.searchQuery.trim() !== '') {
-        scheduleSearch();
-      }
-
-      scheduleRelated({ immediate: true });
       return;
     }
 
@@ -1956,14 +1942,18 @@
         await openSearchResult(getOpenContext(), getNavigationContext(paneId), previousItem);
       }
 
-      await tick();
-      await ensurePaneEditors();
-      updateSelectedRelatedText(paneId);
-      if ($searchState.searchQuery.trim() !== '') {
-        scheduleSearch();
-      }
+      await finalizeSplitPickerSelection(paneId);
+      return;
+    }
 
-      scheduleRelated({ immediate: true });
+    if (choice === 'new') {
+      setStoredPaneKind(notepadState, paneId, 'editor');
+      const newDraft = createFreshDraftNote(notepadState);
+      setPaneDocumentSession(paneId, newDraft);
+      removeNoteIfUnreferenced(notepadState, placeholderKey);
+      cleanupNoteRuntime(placeholderKey);
+      await finalizeSplitPickerSelection(paneId);
+      flushDocumentEditorSync(newDraft);
       return;
     }
 
@@ -1972,14 +1962,7 @@
     setPaneDocumentSession(paneId, chatDraft);
     removeNoteIfUnreferenced(notepadState, placeholderKey);
     cleanupNoteRuntime(placeholderKey);
-    await tick();
-    await ensurePaneEditors();
-    updateSelectedRelatedText(paneId);
-    if ($searchState.searchQuery.trim() !== '') {
-      scheduleSearch();
-    }
-
-    scheduleRelated({ immediate: true });
+    await finalizeSplitPickerSelection(paneId);
   }
 
   async function switchActivePane(direction: 1 | -1 = 1) {

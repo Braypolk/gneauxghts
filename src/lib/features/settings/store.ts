@@ -102,6 +102,10 @@ export function createSettingsStore() {
   const { subscribe, update } = store;
 
   let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
+  let vaultChangeRefreshTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let semanticStatusRequest: Promise<void> | null = null;
+  let semanticStateRequest: Promise<void> | null = null;
+  let forgottenNotesRequest: Promise<void> | null = null;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
 
   function patch(partial: Partial<SettingsState>) {
@@ -178,37 +182,18 @@ export function createSettingsStore() {
     }, 5000);
   }
 
-  async function loadSemanticStatus() {
+  async function loadSyncState(includeConflicts = true) {
     try {
-      patch({ semanticStatus: await invoke<SemanticStatus>('get_semantic_status') });
-      syncSemanticPolling();
-    } catch (error) {
-      console.error('Failed to load semantic status:', error);
-    }
-  }
-
-  async function loadSemanticState() {
-    try {
-      const [status, settings, debug, nextVaultInfo, nextSyncStatus, nextSyncConflicts] =
-        await Promise.all([
-          invoke<SemanticStatus>('get_semantic_status'),
-          invoke<SemanticSettings>('get_semantic_settings'),
-          invoke<SemanticDebugSnapshot>('get_semantic_debug_metrics'),
-          invoke<VaultInfo>('get_vault_info'),
-          invoke<SyncStatus>('get_sync_status'),
-          invoke<SyncConflict[]>('list_sync_conflicts')
-        ]);
-
+      const [nextSyncStatus, nextSyncConflicts] = includeConflicts
+        ? await Promise.all([
+            invoke<SyncStatus>('get_sync_status'),
+            invoke<SyncConflict[]>('list_sync_conflicts')
+          ])
+        : [await invoke<SyncStatus>('get_sync_status'), null];
       update((state) => ({
         ...state,
-        semanticStatus: status,
-        semanticSettings: settings,
-        semanticDebug: debug,
-        vaultInfo: nextVaultInfo,
         syncStatus: nextSyncStatus,
-        syncConflicts: nextSyncConflicts,
-        vaultPathInput:
-          state.vaultPathInput.trim() === '' ? nextVaultInfo.currentPath : state.vaultPathInput,
+        syncConflicts: nextSyncConflicts ?? state.syncConflicts,
         syncBaseUrlInput:
           state.syncBaseUrlInput.trim() === '' && nextSyncStatus.syncBaseUrl
             ? nextSyncStatus.syncBaseUrl
@@ -218,28 +203,103 @@ export function createSettingsStore() {
             ? nextSyncStatus.authEmail
             : state.syncEmailInput
       }));
-      syncSemanticPolling();
     } catch (error) {
-      console.error('Failed to load semantic settings:', error);
+      console.error('Failed to load sync state:', error);
     }
   }
 
-  async function loadForgottenNotes() {
-    patch({ isLoadingForgottenNotes: true });
-    try {
-      const forgottenNotes = await invoke<ForgottenNoteSummary[]>('list_forgotten_notes');
-      update((state) => ({
-        ...state,
-        forgottenNotes,
-        selectedForgottenPaths: state.selectedForgottenPaths.filter((path) =>
-          forgottenNotes.some((note) => note.forgottenPath === path)
-        )
-      }));
-    } catch (error) {
-      console.error('Failed to load forgotten notes:', error);
-    } finally {
-      patch({ isLoadingForgottenNotes: false });
+  async function loadSemanticStatus() {
+    if (semanticStatusRequest) {
+      return semanticStatusRequest;
     }
+
+    semanticStatusRequest = (async () => {
+      try {
+        patch({ semanticStatus: await invoke<SemanticStatus>('get_semantic_status') });
+        syncSemanticPolling();
+      } catch (error) {
+        console.error('Failed to load semantic status:', error);
+      } finally {
+        semanticStatusRequest = null;
+      }
+    })();
+
+    return semanticStatusRequest;
+  }
+
+  async function loadSemanticState() {
+    if (semanticStateRequest) {
+      return semanticStateRequest;
+    }
+
+    semanticStateRequest = (async () => {
+      try {
+        const [status, settings, debug, nextVaultInfo, nextSyncStatus, nextSyncConflicts] =
+          await Promise.all([
+            invoke<SemanticStatus>('get_semantic_status'),
+            invoke<SemanticSettings>('get_semantic_settings'),
+            invoke<SemanticDebugSnapshot>('get_semantic_debug_metrics'),
+            invoke<VaultInfo>('get_vault_info'),
+            invoke<SyncStatus>('get_sync_status'),
+            invoke<SyncConflict[]>('list_sync_conflicts')
+          ]);
+
+        update((state) => ({
+          ...state,
+          semanticStatus: status,
+          semanticSettings: settings,
+          semanticDebug: debug,
+          vaultInfo: nextVaultInfo,
+          syncStatus: nextSyncStatus,
+          syncConflicts: nextSyncConflicts,
+          vaultPathInput:
+            state.vaultPathInput.trim() === '' ? nextVaultInfo.currentPath : state.vaultPathInput,
+          syncBaseUrlInput:
+            state.syncBaseUrlInput.trim() === '' && nextSyncStatus.syncBaseUrl
+              ? nextSyncStatus.syncBaseUrl
+              : state.syncBaseUrlInput,
+          syncEmailInput:
+            state.syncEmailInput.trim() === '' && nextSyncStatus.authEmail
+              ? nextSyncStatus.authEmail
+              : state.syncEmailInput
+        }));
+        syncSemanticPolling();
+      } catch (error) {
+        console.error('Failed to load semantic settings:', error);
+      } finally {
+        semanticStateRequest = null;
+      }
+    })();
+
+    return semanticStateRequest;
+  }
+
+  async function loadForgottenNotes() {
+    if (forgottenNotesRequest) {
+      return forgottenNotesRequest;
+    }
+
+    patch({ isLoadingForgottenNotes: true });
+
+    forgottenNotesRequest = (async () => {
+      try {
+        const forgottenNotes = await invoke<ForgottenNoteSummary[]>('list_forgotten_notes');
+        update((state) => ({
+          ...state,
+          forgottenNotes,
+          selectedForgottenPaths: state.selectedForgottenPaths.filter((path) =>
+            forgottenNotes.some((note) => note.forgottenPath === path)
+          )
+        }));
+      } catch (error) {
+        console.error('Failed to load forgotten notes:', error);
+      } finally {
+        forgottenNotesRequest = null;
+        patch({ isLoadingForgottenNotes: false });
+      }
+    })();
+
+    return forgottenNotesRequest;
   }
 
   async function runForgottenAction(command: ForgottenAction, forgottenPaths: string[]) {
@@ -398,7 +458,7 @@ export function createSettingsStore() {
           deviceName: navigator.platform || null
         })
       });
-      await loadSemanticState();
+      await Promise.all([loadSemanticStatus(), loadSyncState(true), loadForgottenNotes()]);
       patch({ syncUiMessage: 'This device is linked and ready to sync.' });
     } catch (error) {
       console.error('Failed to complete sync sign-in:', error);
@@ -416,13 +476,12 @@ export function createSettingsStore() {
     });
     try {
       patch({ syncStatus: await invoke<SyncStatus>('sync_now') });
-      await loadForgottenNotes();
-      await loadSemanticState();
+      await Promise.all([loadForgottenNotes(), loadSemanticStatus(), loadSyncState(true)]);
       patch({ syncUiMessage: 'Sync completed.' });
     } catch (error) {
       console.error('Failed to sync:', error);
       patch({ syncUiError: String(error) });
-      await loadSemanticState();
+      await Promise.all([loadSemanticStatus(), loadSyncState(true)]);
     } finally {
       patch({ isSyncingNow: false });
     }
@@ -538,7 +597,7 @@ export function createSettingsStore() {
             ? 'Conflict resolved by restoring the local version to the canonical note.'
             : 'Conflict resolved by keeping the remote canonical version.'
       }));
-      await loadSemanticState();
+      await loadSemanticStatus();
     } catch (error) {
       console.error('Failed to resolve sync conflict:', error);
       patch({ syncUiError: String(error) });
@@ -570,7 +629,7 @@ export function createSettingsStore() {
           : 'Syncing resumed on this device.'
       });
       if (!nextStatus.paused) {
-        await loadSemanticState();
+        await Promise.all([loadSemanticStatus(), loadSyncState(true)]);
       }
     } catch (error) {
       console.error('Failed to toggle sync pause:', error);
@@ -582,9 +641,13 @@ export function createSettingsStore() {
 
   async function handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
-      await loadSemanticStatus();
       await runAutoSyncNow('settings-visible');
-      await loadSemanticState();
+      const shouldRefreshSemanticPanel = get(store).activeGeneralSection === 'search';
+      if (shouldRefreshSemanticPanel) {
+        await Promise.all([loadSemanticState(), loadForgottenNotes()]);
+      } else {
+        await Promise.all([loadSemanticStatus(), loadSyncState(true), loadForgottenNotes()]);
+      }
       syncSemanticPolling();
       return;
     }
@@ -592,18 +655,32 @@ export function createSettingsStore() {
     stopSemanticPolling();
   }
 
+  function scheduleVaultChangeRefresh(delayMs = 350) {
+    if (vaultChangeRefreshTimer) {
+      window.clearTimeout(vaultChangeRefreshTimer);
+    }
+
+    vaultChangeRefreshTimer = window.setTimeout(() => {
+      vaultChangeRefreshTimer = null;
+      void Promise.all([loadForgottenNotes(), loadSemanticStatus(), loadSyncState(false)]);
+    }, delayMs);
+  }
+
   async function initialize() {
     await Promise.all([loadSemanticState(), loadForgottenNotes()]);
     vaultNoteChangeUnlisten = await listen('vault-note-changed', () => {
       scheduleAutoSync('settings-vault-note-change', 1200);
-      void loadForgottenNotes();
-      void loadSemanticState();
+      scheduleVaultChangeRefresh();
     });
     scheduleAutoSync('settings-mounted', 900);
   }
 
   function dispose() {
     stopSemanticPolling();
+    if (vaultChangeRefreshTimer) {
+      window.clearTimeout(vaultChangeRefreshTimer);
+      vaultChangeRefreshTimer = null;
+    }
     cancelScheduledAutoSync();
     vaultNoteChangeUnlisten?.();
     vaultNoteChangeUnlisten = null;

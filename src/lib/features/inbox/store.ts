@@ -1,7 +1,6 @@
 import { resolve } from '$app/paths';
 import { goto } from '$app/navigation';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { get, writable } from 'svelte/store';
 import {
   activeProposalSession,
@@ -11,6 +10,12 @@ import {
   syncProposalSessionFromInboxItem
 } from '$lib/features/proposals/session';
 import type { ClearInboxResult, InboxItemDetail, InboxListItem } from '$lib/types/ai';
+import {
+  initializeInboxListResource,
+  refreshInboxList,
+  subscribeInboxListResource,
+  type InboxListResourceState
+} from '$lib/features/inbox/listResource';
 
 export type InboxGroupKey =
   | 'pendingApproval'
@@ -41,14 +46,20 @@ export interface InboxState {
 }
 
 function createGroupedItems(items: InboxListItem[]): Record<InboxGroupKey, InboxListItem[]> {
-  return {
-    pendingApproval: items.filter((item) => groupForStatus(item.status) === 'pendingApproval'),
-    running: items.filter((item) => groupForStatus(item.status) === 'running'),
-    applied: items.filter((item) => groupForStatus(item.status) === 'applied'),
-    failed: items.filter((item) => groupForStatus(item.status) === 'failed'),
-    stale: items.filter((item) => groupForStatus(item.status) === 'stale'),
-    rejected: items.filter((item) => groupForStatus(item.status) === 'rejected')
+  const grouped: Record<InboxGroupKey, InboxListItem[]> = {
+    pendingApproval: [],
+    running: [],
+    applied: [],
+    failed: [],
+    stale: [],
+    rejected: []
   };
+
+  for (const item of items) {
+    grouped[groupForStatus(item.status)].push(item);
+  }
+
+  return grouped;
 }
 
 function createInitialState(): InboxState {
@@ -107,15 +118,7 @@ function syncDerivedState(
   return {
     ...nextState,
     groupedItems: createGroupedItems(nextState.items),
-    hasClearableItems: nextState.items.some(
-      (item) =>
-        item.status === 'queued' ||
-        item.status === 'running' ||
-        item.status === 'applied' ||
-        item.status === 'failed' ||
-        item.status === 'stale' ||
-        item.status === 'rejected'
-    )
+    hasClearableItems: nextState.items.some((item) => item.status !== 'pendingApproval')
   };
 }
 
@@ -123,18 +126,35 @@ export function createInboxStore() {
   const store = writable<InboxState>(createInitialState());
   const { subscribe, update } = store;
 
-  let inboxUnlisten: UnlistenFn | null = null;
-  let activeListRequest = 0;
   let activeDetailRequest = 0;
+  let inboxListResourceUnsubscribe: (() => void) | null = null;
+  let inboxListResourceDispose: (() => void) | null = null;
+  let selectedListItemVersion: string | null = null;
+  let latestListFingerprint = '';
 
   function patch(partial: Partial<Omit<InboxState, 'groupedItems' | 'hasClearableItems'>>) {
     update((state) => syncDerivedState(state, partial));
+  }
+
+  function listItemVersion(item: InboxListItem) {
+    return `${item.id}:${item.status}:${item.updatedAtMillis}`;
+  }
+
+  function listFingerprint(items: InboxListItem[]) {
+    return items.map((item) => listItemVersion(item)).join('|');
   }
 
   function setSelectedItem(
     item: InboxItemDetail | null,
     { preserveSelections = true }: { preserveSelections?: boolean } = {}
   ) {
+    if (item === null) {
+      selectedListItemVersion = null;
+    } else {
+      const selectedListItem = get(store).items.find((entry) => entry.id === item.id);
+      selectedListItemVersion = selectedListItem ? listItemVersion(selectedListItem) : null;
+    }
+
     update((state) =>
       syncDerivedState(state, {
         selectedId: item?.id ?? null,
@@ -163,50 +183,51 @@ export function createInboxStore() {
     }
   }
 
+  async function syncSelectedInboxItem(nextItems: InboxListItem[]) {
+    const currentSelectedId = get(store).selectedId;
+    if (currentSelectedId !== null) {
+      const selectedListItem = nextItems.find((item) => item.id === currentSelectedId);
+      if (selectedListItem) {
+        const nextVersion = listItemVersion(selectedListItem);
+        if (nextVersion !== selectedListItemVersion) {
+          await selectInboxItem(currentSelectedId);
+        }
+        return;
+      }
+    }
+
+    const nextSelectedId = nextItems[0]?.id ?? null;
+    if (nextSelectedId === null) {
+      activeDetailRequest += 1;
+      selectedListItemVersion = null;
+      patch({ selectedId: null, selectedItem: null });
+      clearProposalSession();
+      return;
+    }
+
+    await selectInboxItem(nextSelectedId, { preserveSelections: false });
+  }
+
+  function handleInboxListResourceUpdate(resourceState: InboxListResourceState) {
+    const nextFingerprint = listFingerprint(resourceState.items);
+    const listChanged = nextFingerprint !== latestListFingerprint;
+    latestListFingerprint = nextFingerprint;
+
+    patch({
+      items: resourceState.items,
+      isLoading: resourceState.isLoading,
+      errorMessage: resourceState.errorMessage
+    });
+
+    if (resourceState.errorMessage || !listChanged) {
+      return;
+    }
+
+    void syncSelectedInboxItem(resourceState.items);
+  }
+
   async function loadInbox({ background = false } = {}) {
-    const requestId = ++activeListRequest;
-
-    if (!background) {
-      patch({ isLoading: true });
-    }
-
-    try {
-      const nextItems = await invoke<InboxListItem[]>('list_inbox_items');
-      if (requestId !== activeListRequest) {
-        return;
-      }
-
-      patch({
-        items: nextItems,
-        errorMessage: ''
-      });
-
-      const currentSelectedId = get(store).selectedId;
-      if (currentSelectedId !== null && nextItems.some((item) => item.id === currentSelectedId)) {
-        await selectInboxItem(currentSelectedId);
-        return;
-      }
-
-      const nextSelectedId = nextItems[0]?.id ?? null;
-      if (nextSelectedId === null) {
-        activeDetailRequest += 1;
-        patch({ selectedId: null, selectedItem: null });
-        clearProposalSession();
-        return;
-      }
-
-      await selectInboxItem(nextSelectedId, { preserveSelections: false });
-    } catch (error) {
-      if (requestId !== activeListRequest) {
-        return;
-      }
-      console.error('Failed to load inbox:', error);
-      patch({ errorMessage: 'Unable to load Inbox items.' });
-    } finally {
-      if (requestId === activeListRequest) {
-        patch({ isLoading: false });
-      }
-    }
+    await refreshInboxList({ background });
   }
 
   async function runInboxAction(
@@ -290,19 +311,22 @@ export function createInboxStore() {
   }
 
   function initialize() {
-    void loadInbox();
-    void listen('inbox-changed', () => {
-      void loadInbox({ background: get(store).items.length > 0 });
-    }).then((unlisten) => {
-      inboxUnlisten = unlisten;
-    });
+    if (inboxListResourceDispose || inboxListResourceUnsubscribe) {
+      return;
+    }
+
+    inboxListResourceDispose = initializeInboxListResource();
+    inboxListResourceUnsubscribe = subscribeInboxListResource(handleInboxListResourceUpdate);
   }
 
   function dispose() {
-    activeListRequest += 1;
     activeDetailRequest += 1;
-    inboxUnlisten?.();
-    inboxUnlisten = null;
+    selectedListItemVersion = null;
+    latestListFingerprint = '';
+    inboxListResourceUnsubscribe?.();
+    inboxListResourceUnsubscribe = null;
+    inboxListResourceDispose?.();
+    inboxListResourceDispose = null;
   }
 
   return {

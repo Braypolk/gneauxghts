@@ -1,5 +1,9 @@
 <script lang="ts">
-  type SplitChoice = 'current' | 'previous' | 'new' | 'chat';
+  import {
+    getSplitChoiceByIndex,
+    getSplitOptionId,
+    type SplitChoice
+  } from '$lib/features/notepad/splitPanePicker';
 
   interface Props {
     highlightedIndex: number;
@@ -21,19 +25,8 @@
 
   const hasPrevious = $derived(previousNoteLabel !== null);
   const activeDescendantId = $derived.by(() => {
-    if (highlightedIndex === 0) {
-      return 'split-choice-current';
-    }
-
-    if (highlightedIndex === 1) {
-      return 'split-choice-previous';
-    }
-
-    if (highlightedIndex === 2) {
-      return 'split-choice-new';
-    }
-
-    return 'split-choice-chat';
+    const activeChoice = getSplitChoiceByIndex(highlightedIndex, hasPrevious) ?? 'current';
+    return getSplitOptionId(activeChoice);
   });
 
   function optionClass(index: number, enabled: boolean) {
