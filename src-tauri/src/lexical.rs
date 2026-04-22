@@ -78,8 +78,20 @@ impl LexicalIndex {
             .inner
             .lock()
             .map_err(|_| "Lexical index lock poisoned".to_string())?;
+        if inner.signatures.len() == entries.len()
+            && entries.iter().all(|(path, note)| {
+                let note_path = path.to_string_lossy();
+                inner
+                    .signatures
+                    .get(note_path.as_ref())
+                    .is_some_and(|signature| signature == note.signature())
+            })
+        {
+            return Ok(());
+        }
+
         let mut changed = false;
-        let mut seen_paths = HashSet::new();
+        let mut seen_paths = HashSet::with_capacity(entries.len());
 
         for (path, note) in entries {
             let note_path = path.to_string_lossy().into_owned();
@@ -93,9 +105,7 @@ impl LexicalIndex {
             }
 
             replace_note_locked(&mut inner, self.fields, &note_path, note)?;
-            inner
-                .signatures
-                .insert(note_path, note.signature().clone());
+            inner.signatures.insert(note_path, note.signature().clone());
             changed = true;
         }
 
@@ -133,9 +143,7 @@ impl LexicalIndex {
         }
 
         replace_note_locked(&mut inner, self.fields, &note_path, note)?;
-        inner
-            .signatures
-            .insert(note_path, note.signature().clone());
+        inner.signatures.insert(note_path, note.signature().clone());
         commit_locked(&mut inner)
     }
 
@@ -246,7 +254,7 @@ fn replace_note_locked(
         inner
             .writer
             .add_document(doc!(
-                fields.note_path => note_path.to_string(),
+                fields.note_path => note_path,
                 fields.note_id => note.note_id.clone(),
                 fields.file_name => note.file_name.clone(),
                 fields.title => note.title.clone(),
@@ -277,7 +285,12 @@ fn lexical_preview(
 ) -> (String, Vec<TextRange>, String) {
     build_search_preview(body, normalized_query, query_terms).unwrap_or_else(|| {
         let body_chars = body.chars().collect::<Vec<_>>();
-        let mut excerpt = body_chars.iter().take(180).collect::<String>().trim().to_string();
+        let mut excerpt = body_chars
+            .iter()
+            .take(180)
+            .collect::<String>()
+            .trim()
+            .to_string();
         if body_chars.len() > 180 {
             excerpt.push('…');
         }
@@ -322,7 +335,13 @@ mod tests {
             .expect("sync lexical index");
 
         let results = index
-            .search("wording changes", "wording changes", &["wording", "changes"], 10, None)
+            .search(
+                "wording changes",
+                "wording changes",
+                &["wording", "changes"],
+                10,
+                None,
+            )
             .expect("search lexical index");
 
         assert!(!results.is_empty());

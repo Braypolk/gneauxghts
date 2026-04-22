@@ -14,7 +14,6 @@ use crate::{
     sync,
 };
 use std::{
-    cmp::Reverse,
     collections::{HashMap, HashSet},
     fs,
     path::Path,
@@ -71,29 +70,28 @@ pub(super) fn list_recent_tasks(
     let notes_dir = prepare_notes_dir(false)?;
 
     let mut persisted_state = read_state(&notes_dir)?;
-    let hidden_task_keys = persisted_state
-        .hidden_task_keys
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    let hidden_note_ids = persisted_state
-        .hidden_note_ids
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-
     let mut index = state
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
     index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
     let did_sync_task_timestamps = sync_task_timestamps_from_index(&mut persisted_state, &index);
+    let hidden_task_keys = persisted_state
+        .hidden_task_keys
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let hidden_note_ids = persisted_state
+        .hidden_note_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
 
     let mut tasks = Vec::new();
 
     for (path, note) in &index.entries {
         let raw_path = path.to_string_lossy().into_owned();
-        if hidden_note_ids.contains(&note.note_id) {
+        if hidden_note_ids.contains(note.note_id.as_str()) {
             continue;
         }
 
@@ -103,7 +101,7 @@ pub(super) fn list_recent_tasks(
             }
 
             let task_key = task_key(&note.note_id, task);
-            if hidden_task_keys.contains(&task_key) {
+            if hidden_task_keys.contains(task_key.as_str()) {
                 continue;
             }
 
@@ -130,13 +128,14 @@ pub(super) fn list_recent_tasks(
         write_state(&notes_dir, &persisted_state)?;
     }
 
-    tasks.sort_by_cached_key(|task| {
-        (
-            Reverse(task.item.updated_at_millis),
-            task.note_title_lower.clone(),
-            task.item.line_number,
-            task.text_lower.clone(),
-        )
+    tasks.sort_by(|left, right| {
+        right
+            .item
+            .updated_at_millis
+            .cmp(&left.item.updated_at_millis)
+            .then_with(|| left.note_title_lower.cmp(&right.note_title_lower))
+            .then_with(|| left.item.line_number.cmp(&right.item.line_number))
+            .then_with(|| left.text_lower.cmp(&right.text_lower))
     });
     tasks.truncate(limit);
 
@@ -149,22 +148,6 @@ pub(super) fn list_tasks(
 ) -> Result<Vec<TaskListItem>, String> {
     let notes_dir = prepare_notes_dir(false)?;
     let mut persisted_state = read_state(&notes_dir)?;
-    let hidden_task_keys = persisted_state
-        .hidden_task_keys
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    let hidden_note_ids = persisted_state
-        .hidden_note_ids
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    let collapsed_note_ids = persisted_state
-        .collapsed_note_ids
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
-    let note_order = persisted_state.note_order_note_ids.clone();
 
     let mut index = state
         .notes_index
@@ -172,13 +155,28 @@ pub(super) fn list_tasks(
         .map_err(|_| "Search index lock poisoned".to_string())?;
     index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
     let did_sync_task_timestamps = sync_task_timestamps_from_index(&mut persisted_state, &index);
+    let hidden_task_keys = persisted_state
+        .hidden_task_keys
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let hidden_note_ids = persisted_state
+        .hidden_note_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let collapsed_note_ids = persisted_state
+        .collapsed_note_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
 
     let mut tasks = Vec::new();
 
     for (path, note) in &index.entries {
         let raw_path = path.to_string_lossy().into_owned();
-        let note_hidden = hidden_note_ids.contains(&note.note_id);
-        let note_collapsed = collapsed_note_ids.contains(&note.note_id);
+        let note_hidden = hidden_note_ids.contains(note.note_id.as_str());
+        let note_collapsed = collapsed_note_ids.contains(note.note_id.as_str());
         for task in &note.tasks {
             let matches_filter = match filter {
                 TaskFilter::Open => !task.completed,
@@ -209,7 +207,7 @@ pub(super) fn list_tasks(
                 section_label: task.section_label.clone(),
                 text: task.text.clone(),
                 completed: task.completed,
-                hidden: hidden_task_keys.contains(&task_key),
+                hidden: hidden_task_keys.contains(task_key.as_str()),
                 note_hidden,
                 note_collapsed,
                 depth: task.depth,
@@ -225,22 +223,27 @@ pub(super) fn list_tasks(
         write_state(&notes_dir, &persisted_state)?;
     }
 
-    let note_order_index = note_order
+    let note_order_index = persisted_state
+        .note_order_note_ids
         .iter()
         .enumerate()
         .map(|(index, note_id)| (note_id.as_str(), index))
         .collect::<HashMap<_, _>>();
 
-    tasks.sort_by_cached_key(|task| {
-        (
-            note_order_index
-                .get(task.item.note_id.as_str())
-                .copied()
-                .map_or((1usize, usize::MAX), |rank| (0usize, rank)),
-            task.note_title_lower.clone(),
-            task.item.line_number,
-            task.text_lower.clone(),
-        )
+    tasks.sort_by(|left, right| {
+        let left_rank = note_order_index
+            .get(left.item.note_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX);
+        let right_rank = note_order_index
+            .get(right.item.note_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX);
+        left_rank
+            .cmp(&right_rank)
+            .then_with(|| left.note_title_lower.cmp(&right.note_title_lower))
+            .then_with(|| left.item.line_number.cmp(&right.item.line_number))
+            .then_with(|| left.text_lower.cmp(&right.text_lower))
     });
 
     Ok(tasks.into_iter().map(|task| task.item).collect())

@@ -133,14 +133,24 @@ impl NotesIndex {
         notes_dir: &Path,
         max_age: Duration,
     ) -> Result<(), String> {
+        self.refresh_if_stale_with_flag(notes_dir, max_age)
+            .map(|_| ())
+    }
+
+    pub(crate) fn refresh_if_stale_with_flag(
+        &mut self,
+        notes_dir: &Path,
+        max_age: Duration,
+    ) -> Result<bool, String> {
         if self
             .last_refresh_at
             .is_some_and(|last_refresh_at| last_refresh_at.elapsed() < max_age)
         {
-            return Ok(());
+            return Ok(false);
         }
 
-        self.refresh(notes_dir)
+        self.refresh(notes_dir)?;
+        Ok(true)
     }
 
     pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) {
@@ -300,7 +310,14 @@ pub(crate) fn normalize_search_text(value: &str) -> String {
 }
 
 pub(crate) fn collapse_whitespace(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
+    let mut collapsed = String::with_capacity(value.len());
+    for segment in value.split_whitespace() {
+        if !collapsed.is_empty() {
+            collapsed.push(' ');
+        }
+        collapsed.push_str(segment);
+    }
+    collapsed
 }
 
 fn read_file_signature(path: &Path) -> Result<FileSignature, String> {

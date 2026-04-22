@@ -13,7 +13,7 @@ use crate::{
     state::{
         current_vault_info, is_valid_note_path, notes_root, read_state, resolve_note_id_from_path,
         resolve_note_path_by_id, set_notes_root, touch_recent_note_id, validate_current_path,
-        write_state, VaultInfo,
+        write_state, PersistedState, VaultInfo,
     },
     sync::{self, SyncConflict, SyncConflictDetail, SyncStatus},
     time::current_time_millis,
@@ -40,7 +40,7 @@ const INTERACTIVE_INDEX_REFRESH_MAX_AGE: Duration = Duration::from_millis(750);
 const ASSETS_DIRECTORY_NAME: &str = "assets";
 const DEFAULT_PASTED_IMAGE_NAME: &str = "Pasted image";
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteSession {
     note_id: Option<String>,
@@ -148,6 +148,18 @@ fn prepare_notes_dir(cleanup_forgotten_notes: bool) -> Result<PathBuf, String> {
         forgotten_note_commands::cleanup_expired_forgotten_notes(&notes_dir)?;
     }
     Ok(notes_dir)
+}
+
+fn clear_stale_last_opened_note(state: &mut PersistedState, note_id: &str) {
+    state.last_opened_note_id = None;
+    state
+        .recent_note_ids
+        .retain(|recent_note_id| recent_note_id != note_id);
+}
+
+fn mark_note_opened(state: &mut PersistedState, note_id: String) {
+    state.last_opened_note_id = Some(note_id.clone());
+    touch_recent_note_id(state, note_id);
 }
 
 #[tauri::command]
@@ -426,39 +438,18 @@ pub(crate) fn clear_semantic_debug_metrics(state: State<'_, AppState>) -> Result
 fn load_note_session_from_notes_dir(notes_dir: &Path) -> Result<NoteSession, String> {
     let mut state = read_state(notes_dir)?;
     let Some(last_opened_note_id) = state.last_opened_note_id.clone() else {
-        return Ok(NoteSession {
-            note_id: None,
-            title: String::new(),
-            markdown: String::new(),
-            path: None,
-        });
+        return Ok(NoteSession::default());
     };
 
     let Some(note_path) = resolve_note_path_by_id(notes_dir, &last_opened_note_id)? else {
-        state.last_opened_note_id = None;
-        state
-            .recent_note_ids
-            .retain(|note_id| note_id != &last_opened_note_id);
+        clear_stale_last_opened_note(&mut state, &last_opened_note_id);
         write_state(notes_dir, &state)?;
-        return Ok(NoteSession {
-            note_id: None,
-            title: String::new(),
-            markdown: String::new(),
-            path: None,
-        });
+        return Ok(NoteSession::default());
     };
     if !is_valid_note_path(&note_path, notes_dir) {
-        state.last_opened_note_id = None;
-        state
-            .recent_note_ids
-            .retain(|note_id| note_id != &last_opened_note_id);
+        clear_stale_last_opened_note(&mut state, &last_opened_note_id);
         write_state(notes_dir, &state)?;
-        return Ok(NoteSession {
-            note_id: None,
-            title: String::new(),
-            markdown: String::new(),
-            path: None,
-        });
+        return Ok(NoteSession::default());
     }
 
     touch_recent_note_id(&mut state, last_opened_note_id);
@@ -475,8 +466,7 @@ fn open_note_from_notes_dir(
     let resolved_note_id = resolve_note_id_from_path(&note_path)?;
 
     let mut state = read_state(notes_dir)?;
-    state.last_opened_note_id = Some(resolved_note_id.clone());
-    touch_recent_note_id(&mut state, resolved_note_id);
+    mark_note_opened(&mut state, resolved_note_id);
     write_state(notes_dir, &state)?;
 
     read_note_session_from_path(&note_path)

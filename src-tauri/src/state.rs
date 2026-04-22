@@ -60,7 +60,7 @@ pub(crate) struct PersistedForgottenNote {
     pub(crate) purge_at_millis: u64,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedState {
     pub(crate) last_opened_note_id: Option<String>,
@@ -261,36 +261,26 @@ pub(crate) fn forgotten_notes_root(notes_dir: &Path) -> PathBuf {
 
 pub(crate) fn read_state(notes_dir: &Path) -> Result<PersistedState, String> {
     let mut state = read_unpruned_state(notes_dir)?;
-    prune_recent_note_ids(&mut state, notes_dir);
-    dedupe_hidden_task_keys(&mut state);
-    prune_hidden_note_ids(&mut state, notes_dir);
-    prune_note_order_note_ids(&mut state, notes_dir);
-    prune_collapsed_note_ids(&mut state, notes_dir);
-    prune_forgotten_notes(&mut state, notes_dir);
+    prune_state_in_place(&mut state, notes_dir);
     Ok(state)
 }
 
 pub(crate) fn write_state(notes_dir: &Path, state: &PersistedState) -> Result<(), String> {
-    let mut state = PersistedState {
-        last_opened_note_id: state.last_opened_note_id.clone(),
-        recent_note_ids: state.recent_note_ids.clone(),
-        hidden_task_keys: state.hidden_task_keys.clone(),
-        hidden_note_ids: state.hidden_note_ids.clone(),
-        note_order_note_ids: state.note_order_note_ids.clone(),
-        collapsed_note_ids: state.collapsed_note_ids.clone(),
-        task_timestamps: state.task_timestamps.clone(),
-        forgotten_notes: state.forgotten_notes.clone(),
-    };
-    prune_recent_note_ids(&mut state, notes_dir);
-    dedupe_hidden_task_keys(&mut state);
-    prune_hidden_note_ids(&mut state, notes_dir);
-    prune_note_order_note_ids(&mut state, notes_dir);
-    prune_collapsed_note_ids(&mut state, notes_dir);
-    prune_forgotten_notes(&mut state, notes_dir);
+    let mut state = state.clone();
+    prune_state_in_place(&mut state, notes_dir);
     let mut connection = open_state_database()?;
     write_state_to_database(&mut connection, &state)?;
     cleanup_legacy_state_files(notes_dir)?;
     Ok(())
+}
+
+fn prune_state_in_place(state: &mut PersistedState, notes_dir: &Path) {
+    prune_recent_note_ids(state, notes_dir);
+    dedupe_hidden_task_keys(state);
+    prune_hidden_note_ids(state, notes_dir);
+    prune_note_order_note_ids(state, notes_dir);
+    prune_collapsed_note_ids(state, notes_dir);
+    prune_forgotten_notes(state, notes_dir);
 }
 
 pub(crate) fn prune_recent_note_ids(state: &mut PersistedState, notes_dir: &Path) {
@@ -653,58 +643,34 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
             .transpose()?;
     }
 
-    let recent_note_ids = read_ordered_string_column(
+    let recent_note_ids = read_note_ids_with_legacy_path_fallback(
         connection,
         "SELECT note_id FROM app_state_recent_note_ids ORDER BY position",
+        "SELECT note_path FROM app_state_recent_paths ORDER BY position",
+        read_ordered_string_column,
     )?;
-    let recent_note_ids = if recent_note_ids.is_empty() {
-        resolve_note_ids_from_paths(&read_ordered_string_column(
-            connection,
-            "SELECT note_path FROM app_state_recent_paths ORDER BY position",
-        )?)
-    } else {
-        recent_note_ids
-    };
     let hidden_task_keys = read_string_column(
         connection,
         "SELECT task_key FROM app_state_hidden_task_keys ORDER BY task_key",
     )?;
-    let hidden_note_ids = read_string_column(
+    let hidden_note_ids = read_note_ids_with_legacy_path_fallback(
         connection,
         "SELECT note_id FROM app_state_hidden_note_ids ORDER BY note_id",
+        "SELECT note_path FROM app_state_hidden_note_paths ORDER BY note_path",
+        read_string_column,
     )?;
-    let hidden_note_ids = if hidden_note_ids.is_empty() {
-        resolve_note_ids_from_paths(&read_string_column(
-            connection,
-            "SELECT note_path FROM app_state_hidden_note_paths ORDER BY note_path",
-        )?)
-    } else {
-        hidden_note_ids
-    };
-    let note_order_note_ids = read_ordered_string_column(
+    let note_order_note_ids = read_note_ids_with_legacy_path_fallback(
         connection,
         "SELECT note_id FROM app_state_note_order_note_ids ORDER BY position",
+        "SELECT note_path FROM app_state_note_order ORDER BY position",
+        read_ordered_string_column,
     )?;
-    let note_order_note_ids = if note_order_note_ids.is_empty() {
-        resolve_note_ids_from_paths(&read_ordered_string_column(
-            connection,
-            "SELECT note_path FROM app_state_note_order ORDER BY position",
-        )?)
-    } else {
-        note_order_note_ids
-    };
-    let collapsed_note_ids = read_string_column(
+    let collapsed_note_ids = read_note_ids_with_legacy_path_fallback(
         connection,
         "SELECT note_id FROM app_state_collapsed_note_ids ORDER BY note_id",
+        "SELECT note_path FROM app_state_collapsed_note_paths ORDER BY note_path",
+        read_string_column,
     )?;
-    let collapsed_note_ids = if collapsed_note_ids.is_empty() {
-        resolve_note_ids_from_paths(&read_string_column(
-            connection,
-            "SELECT note_path FROM app_state_collapsed_note_paths ORDER BY note_path",
-        )?)
-    } else {
-        collapsed_note_ids
-    };
 
     let mut task_timestamps = HashMap::new();
     let mut statement = connection
@@ -775,6 +741,23 @@ fn read_string_column(connection: &Connection, query: &str) -> Result<Vec<String
 
 fn read_ordered_string_column(connection: &Connection, query: &str) -> Result<Vec<String>, String> {
     read_string_column(connection, query)
+}
+
+fn read_note_ids_with_legacy_path_fallback(
+    connection: &Connection,
+    note_id_query: &str,
+    legacy_path_query: &str,
+    reader: fn(&Connection, &str) -> Result<Vec<String>, String>,
+) -> Result<Vec<String>, String> {
+    let note_ids = reader(connection, note_id_query)?;
+    if note_ids.is_empty() {
+        return Ok(resolve_note_ids_from_paths(&reader(
+            connection,
+            legacy_path_query,
+        )?));
+    }
+
+    Ok(note_ids)
 }
 
 fn resolve_note_ids_from_paths(paths: &[String]) -> Vec<String> {
@@ -1045,26 +1028,20 @@ fn dedupe_hidden_task_keys(state: &mut PersistedState) {
 }
 
 fn prune_hidden_note_ids(state: &mut PersistedState, notes_dir: &Path) {
-    let mut seen = HashSet::new();
-    state.hidden_note_ids.retain(|note_id| {
-        resolve_note_path_by_id(notes_dir, note_id)
-            .map(|path| path.is_some() && seen.insert(note_id.clone()))
-            .unwrap_or(false)
-    });
+    prune_note_id_list(&mut state.hidden_note_ids, notes_dir);
 }
 
 fn prune_note_order_note_ids(state: &mut PersistedState, notes_dir: &Path) {
-    let mut seen = HashSet::new();
-    state.note_order_note_ids.retain(|note_id| {
-        resolve_note_path_by_id(notes_dir, note_id)
-            .map(|path| path.is_some() && seen.insert(note_id.clone()))
-            .unwrap_or(false)
-    });
+    prune_note_id_list(&mut state.note_order_note_ids, notes_dir);
 }
 
 fn prune_collapsed_note_ids(state: &mut PersistedState, notes_dir: &Path) {
+    prune_note_id_list(&mut state.collapsed_note_ids, notes_dir);
+}
+
+fn prune_note_id_list(note_ids: &mut Vec<String>, notes_dir: &Path) {
     let mut seen = HashSet::new();
-    state.collapsed_note_ids.retain(|note_id| {
+    note_ids.retain(|note_id| {
         resolve_note_path_by_id(notes_dir, note_id)
             .map(|path| path.is_some() && seen.insert(note_id.clone()))
             .unwrap_or(false)

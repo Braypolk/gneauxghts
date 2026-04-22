@@ -276,15 +276,6 @@ fn collect_lexical_candidates(
     query_terms: &[&str],
 ) -> Result<Vec<ScoredSearchResult>, String> {
     let current_override = build_current_override(current_path, current_title, current_markdown);
-    let mut notes_index = state
-        .notes_index
-        .lock()
-        .map_err(|_| "Search index lock poisoned".to_string())?;
-    notes_index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
-    let lexical_entries = notes_index.entries.clone();
-    drop(notes_index);
-    state.lexical.sync_with_notes_index(&lexical_entries)?;
-
     let mut candidates = Vec::new();
     match mode {
         SearchMode::Current => {
@@ -307,11 +298,30 @@ fn collect_lexical_candidates(
                 ));
             }
 
-            candidates.extend(
-                state
-                    .lexical
-                    .search(query, normalized_query, query_terms, MAX_SEARCH_RESULTS, current_path)?,
-            );
+            let lexical_entries = {
+                let mut notes_index = state
+                    .notes_index
+                    .lock()
+                    .map_err(|_| "Search index lock poisoned".to_string())?;
+                if notes_index
+                    .refresh_if_stale_with_flag(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?
+                {
+                    Some(notes_index.entries.clone())
+                } else {
+                    None
+                }
+            };
+            if let Some(lexical_entries) = lexical_entries {
+                state.lexical.sync_with_notes_index(&lexical_entries)?;
+            }
+
+            candidates.extend(state.lexical.search(
+                query,
+                normalized_query,
+                query_terms,
+                MAX_SEARCH_RESULTS,
+                current_path,
+            )?);
         }
     }
 

@@ -24,6 +24,73 @@ pub(crate) enum NotePersistenceMode {
     Remember,
 }
 
+fn read_saved_markdown(persisted_path: Option<&str>) -> Result<Option<String>, String> {
+    persisted_path
+        .map(|path| std::fs::read_to_string(path).map_err(|err| err.to_string()))
+        .transpose()
+}
+
+fn build_next_note(
+    mode: NotePersistenceMode,
+    persisted_path: Option<&str>,
+    persisted_markdown: Option<&str>,
+    original_markdown: &str,
+    timestamp_millis: u64,
+) -> Option<crate::index::IndexedNote> {
+    match mode {
+        NotePersistenceMode::Save => {
+            persisted_path
+                .zip(persisted_markdown)
+                .map(|(path, markdown)| {
+                    build_indexed_note(Path::new(path), markdown, timestamp_millis)
+                })
+        }
+        NotePersistenceMode::Remember => persisted_path
+            .map(|path| build_indexed_note(Path::new(path), original_markdown, timestamp_millis)),
+    }
+}
+
+fn compute_sync_markdown(
+    mode: NotePersistenceMode,
+    persisted_markdown: Option<&str>,
+    persisted_path: Option<&str>,
+) -> Result<Option<String>, String> {
+    match (mode, persisted_markdown, persisted_path) {
+        (NotePersistenceMode::Save, markdown, _) => Ok(markdown.map(ToOwned::to_owned)),
+        (NotePersistenceMode::Remember, _, Some(path)) => Ok(Some(
+            std::fs::read_to_string(path).map_err(|err| err.to_string())?,
+        )),
+        (NotePersistenceMode::Remember, _, None) => Ok(None),
+    }
+}
+
+fn file_stem_title(path: Option<&str>) -> Option<String> {
+    path.and_then(|raw_path| Path::new(raw_path).file_stem())
+        .map(|stem| stem.to_string_lossy().into_owned())
+}
+
+fn build_saved_note_session(
+    note_id: Option<String>,
+    title: &str,
+    markdown: &str,
+    persisted_path: Option<String>,
+    persisted_markdown: Option<&str>,
+) -> NoteSession {
+    let fallback_title = file_stem_title(persisted_path.as_deref()).unwrap_or_default();
+    NoteSession {
+        note_id,
+        title: if fallback_title.is_empty() {
+            title.trim().to_string()
+        } else {
+            fallback_title.clone()
+        },
+        markdown: persisted_markdown
+            .map(|saved| note::extract_file_name_title_and_body(saved, &fallback_title).1)
+            .unwrap_or_else(|| note::normalize_wikilink_markdown(markdown)),
+        path: persisted_path,
+    }
+}
+
 pub(crate) fn persist_note_session(
     state: &State<'_, AppState>,
     title: String,
@@ -62,23 +129,16 @@ pub(crate) fn persist_note_session_with_outcome(
     };
     let timestamp_millis = current_time_millis()?;
     let persisted_markdown = match mode {
-        NotePersistenceMode::Save => persisted_path
-            .as_deref()
-            .map(|path| std::fs::read_to_string(path).map_err(|err| err.to_string()))
-            .transpose()?,
+        NotePersistenceMode::Save => read_saved_markdown(persisted_path.as_deref())?,
         NotePersistenceMode::Remember => None,
     };
-    let next_note = match mode {
-        NotePersistenceMode::Save => persisted_path
-            .as_deref()
-            .zip(persisted_markdown.as_deref())
-            .map(|(path, markdown)| {
-                build_indexed_note(Path::new(path), markdown, timestamp_millis)
-            }),
-        NotePersistenceMode::Remember => persisted_path
-            .as_deref()
-            .map(|path| build_indexed_note(Path::new(path), &markdown, timestamp_millis)),
-    };
+    let next_note = build_next_note(
+        mode,
+        persisted_path.as_deref(),
+        persisted_markdown.as_deref(),
+        &markdown,
+        timestamp_millis,
+    );
 
     let mut persisted_state = read_state(&notes_dir)?;
     persisted_state.last_opened_note_id = match mode {
@@ -98,26 +158,22 @@ pub(crate) fn persist_note_session_with_outcome(
     );
     write_state(&notes_dir, &persisted_state)?;
 
+    let removed_previous_path = current_path
+        .as_deref()
+        .filter(|previous_path| note_path_changed(previous_path, persisted_path.as_deref()));
+
     if let (Some(path), Some(next_note)) = (persisted_path.as_deref(), next_note.as_ref()) {
         upsert_notes_index_entry(state, PathBuf::from(path), next_note.clone())?;
     }
-    if let Some(previous_path) = current_path.as_deref() {
-        if note_path_changed(previous_path, persisted_path.as_deref()) {
-            remove_notes_index_entry(state, previous_path)?;
-        }
+    if let Some(previous_path) = removed_previous_path {
+        remove_notes_index_entry(state, previous_path)?;
     }
 
-    let sync_markdown = match (
+    let sync_markdown = compute_sync_markdown(
         mode,
         persisted_markdown.as_deref(),
         persisted_path.as_deref(),
-    ) {
-        (NotePersistenceMode::Save, markdown, _) => markdown.map(ToOwned::to_owned),
-        (NotePersistenceMode::Remember, _, Some(path)) => {
-            Some(std::fs::read_to_string(path).map_err(|err| err.to_string())?)
-        }
-        (NotePersistenceMode::Remember, _, None) => None,
-    };
+    )?;
 
     if let (Some(path), Some(sync_markdown)) = (persisted_path.as_deref(), sync_markdown.as_deref())
     {
@@ -128,33 +184,18 @@ pub(crate) fn persist_note_session_with_outcome(
             timestamp_millis,
         )?;
     }
-    if let Some(previous_path) = current_path.as_deref() {
-        if note_path_changed(previous_path, persisted_path.as_deref()) {
-            state.semantic.queue_delete_note(previous_path)?;
-        }
+    if let Some(previous_path) = removed_previous_path {
+        state.semantic.queue_delete_note(previous_path)?;
     }
 
     let session = match mode {
-        NotePersistenceMode::Save => Some(NoteSession {
-            note_id: next_note.as_ref().map(|note| note.note_id.clone()),
-            title: persisted_path
-                .as_deref()
-                .and_then(|path| Path::new(path).file_stem())
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .unwrap_or_else(|| title.trim().to_string()),
-            markdown: persisted_markdown
-                .as_deref()
-                .map(|saved| {
-                    let fallback_title = persisted_path
-                        .as_deref()
-                        .and_then(|path| Path::new(path).file_stem())
-                        .map(|stem| stem.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    note::extract_file_name_title_and_body(saved, &fallback_title).1
-                })
-                .unwrap_or_else(|| note::normalize_wikilink_markdown(&markdown)),
-            path: persisted_path.clone(),
-        }),
+        NotePersistenceMode::Save => Some(build_saved_note_session(
+            next_note.as_ref().map(|note| note.note_id.clone()),
+            &title,
+            &markdown,
+            persisted_path.clone(),
+            persisted_markdown.as_deref(),
+        )),
         NotePersistenceMode::Remember => None,
     };
 

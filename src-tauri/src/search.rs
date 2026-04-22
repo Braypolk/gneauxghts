@@ -111,12 +111,11 @@ fn score_search_candidate(
     normalized_query: &str,
     query_terms: &[&str],
 ) -> Option<ScoredSearchResult> {
-    let haystack = format!(
-        "{}\n{}\n{}",
-        candidate.note.file_name_lower, candidate.note.title_lower, candidate.paragraph.text_lower
-    );
-
-    if query_terms.iter().any(|term| !haystack.contains(term)) {
+    if query_terms.iter().any(|term| {
+        !candidate.note.file_name_lower.contains(term)
+            && !candidate.note.title_lower.contains(term)
+            && !candidate.paragraph.text_lower.contains(term)
+    }) {
         return None;
     }
 
@@ -131,7 +130,11 @@ fn score_search_candidate(
         return None;
     }
 
-    let search_match = find_best_match(candidate.paragraph.text.as_str(), normalized_query, query_terms)?;
+    let search_match = find_best_match_in_lower(
+        &candidate.paragraph.text_lower,
+        normalized_query,
+        query_terms,
+    )?;
     let mut score = 0;
 
     if paragraph_phrase_match {
@@ -156,8 +159,12 @@ fn score_search_candidate(
         score += 90usize.saturating_sub(paragraph_index * 8);
     }
 
-    let (excerpt, highlight_ranges, _) =
-        build_search_preview(&candidate.paragraph.text, normalized_query, query_terms)?;
+    let (excerpt, highlight_ranges) = build_excerpt_and_highlights(
+        &candidate.paragraph.text,
+        &candidate.paragraph.text_lower,
+        search_match.match_offset,
+        query_terms,
+    );
 
     Some(ScoredSearchResult {
         score,
@@ -180,12 +187,11 @@ fn score_search_candidate(
     })
 }
 
-fn find_best_match(
-    text: &str,
+fn find_best_match_in_lower(
+    text_lower: &str,
     normalized_query: &str,
     query_terms: &[&str],
 ) -> Option<SearchMatch> {
-    let text_lower = text.to_lowercase();
     if let Some(match_offset) = text_lower.find(normalized_query) {
         return Some(SearchMatch {
             match_text: normalized_query.to_string(),
@@ -196,7 +202,9 @@ fn find_best_match(
     query_terms
         .iter()
         .filter_map(|term| {
-            text_lower.find(term).map(|match_offset| (*term, match_offset))
+            text_lower
+                .find(term)
+                .map(|match_offset| (*term, match_offset))
         })
         .min_by_key(|(_, match_offset)| *match_offset)
         .map(|(term, match_offset)| SearchMatch {
@@ -211,7 +219,7 @@ pub(crate) fn build_search_preview(
     query_terms: &[&str],
 ) -> Option<(String, Vec<TextRange>, String)> {
     let text_lower = text.to_lowercase();
-    let search_match = find_best_match(text, normalized_query, query_terms)?;
+    let search_match = find_best_match_in_lower(&text_lower, normalized_query, query_terms)?;
     let (excerpt, highlight_ranges) =
         build_excerpt_and_highlights(text, &text_lower, search_match.match_offset, query_terms);
     Some((excerpt, highlight_ranges, search_match.match_text))

@@ -1,4 +1,7 @@
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=GNEAUXGHTS_LLAMA_SERVER_BIN");
@@ -62,7 +65,7 @@ fn cleanup_staged_runtime_artifacts() {
     }
 }
 
-fn copy_runtime_libraries(resources_lib_dir: &PathBuf) -> Result<(), String> {
+fn copy_runtime_libraries(resources_lib_dir: &Path) -> Result<(), String> {
     for library_path in runtime_library_paths()? {
         let file_name = library_path
             .file_name()
