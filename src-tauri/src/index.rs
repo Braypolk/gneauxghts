@@ -54,18 +54,11 @@ impl AppState {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
     last_refresh_at: Option<Instant>,
-}
-
-impl Default for NotesIndex {
-    fn default() -> Self {
-        Self {
-            entries: HashMap::new(),
-            last_refresh_at: None,
-        }
-    }
+    revision: u64,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -105,8 +98,9 @@ pub(crate) struct IndexedNote {
 }
 
 impl NotesIndex {
-    pub(crate) fn refresh(&mut self, notes_dir: &Path) -> Result<(), String> {
+    pub(crate) fn refresh(&mut self, notes_dir: &Path) -> Result<bool, String> {
         let mut seen_paths = HashSet::new();
+        let mut changed = false;
 
         for path in collect_markdown_files_recursively(notes_dir)? {
             seen_paths.insert(path.clone());
@@ -120,12 +114,26 @@ impl NotesIndex {
             if should_reload {
                 self.entries
                     .insert(path.clone(), load_indexed_note(&path, signature)?);
+                changed = true;
             }
         }
 
-        self.entries.retain(|path, _| seen_paths.contains(path));
+        let stale_paths = self
+            .entries
+            .keys()
+            .filter(|path| !seen_paths.contains(*path))
+            .cloned()
+            .collect::<Vec<_>>();
+        for stale_path in stale_paths {
+            if self.entries.remove(&stale_path).is_some() {
+                changed = true;
+            }
+        }
         self.last_refresh_at = Some(Instant::now());
-        Ok(())
+        if changed {
+            self.revision = self.revision.wrapping_add(1);
+        }
+        Ok(changed)
     }
 
     pub(crate) fn refresh_if_stale(
@@ -149,18 +157,35 @@ impl NotesIndex {
             return Ok(false);
         }
 
-        self.refresh(notes_dir)?;
-        Ok(true)
+        self.refresh(notes_dir)
     }
 
-    pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) {
+    pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) -> bool {
+        if self
+            .entries
+            .get(&path)
+            .is_some_and(|existing_note| existing_note.signature() == note.signature())
+        {
+            return false;
+        }
+
         self.entries.insert(path, note);
         self.last_refresh_at = Some(Instant::now());
+        self.revision = self.revision.wrapping_add(1);
+        true
     }
 
-    pub(crate) fn remove_note(&mut self, path: &Path) {
-        self.entries.remove(path);
+    pub(crate) fn remove_note(&mut self, path: &Path) -> bool {
+        if self.entries.remove(path).is_none() {
+            return false;
+        }
         self.last_refresh_at = Some(Instant::now());
+        self.revision = self.revision.wrapping_add(1);
+        true
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub(crate) fn get_note_by_note_id(&self, note_id: &str) -> Option<(&PathBuf, &IndexedNote)> {

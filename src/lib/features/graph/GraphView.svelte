@@ -133,6 +133,78 @@
     refreshNodeRenderInfo();
   }
 
+  function graphDataEquals(left: GraphData | null, right: GraphData | null) {
+    if (left === right) {
+      return true;
+    }
+    if (!left || !right) {
+      return false;
+    }
+
+    if (
+      left.timeRange[0] !== right.timeRange[0] ||
+      left.timeRange[1] !== right.timeRange[1] ||
+      left.nodes.length !== right.nodes.length ||
+      left.clusters.length !== right.clusters.length ||
+      left.wikilinkEdges.length !== right.wikilinkEdges.length ||
+      left.inferredEdges.length !== right.inferredEdges.length
+    ) {
+      return false;
+    }
+
+    for (let index = 0; index < left.clusters.length; index += 1) {
+      const leftCluster = left.clusters[index];
+      const rightCluster = right.clusters[index];
+      if (
+        leftCluster.id !== rightCluster.id ||
+        leftCluster.label !== rightCluster.label ||
+        leftCluster.noteCount !== rightCluster.noteCount ||
+        leftCluster.colorIndex !== rightCluster.colorIndex
+      ) {
+        return false;
+      }
+    }
+
+    for (let index = 0; index < left.nodes.length; index += 1) {
+      const leftNode = left.nodes[index];
+      const rightNode = right.nodes[index];
+      if (
+        leftNode.path !== rightNode.path ||
+        leftNode.title !== rightNode.title ||
+        leftNode.snippet !== rightNode.snippet ||
+        leftNode.clusterId !== rightNode.clusterId ||
+        leftNode.createdAtMillis !== rightNode.createdAtMillis ||
+        leftNode.modifiedMillis !== rightNode.modifiedMillis ||
+        leftNode.xHint !== rightNode.xHint ||
+        leftNode.yHint !== rightNode.yHint
+      ) {
+        return false;
+      }
+    }
+
+    for (let index = 0; index < left.wikilinkEdges.length; index += 1) {
+      const leftEdge = left.wikilinkEdges[index];
+      const rightEdge = right.wikilinkEdges[index];
+      if (leftEdge.source !== rightEdge.source || leftEdge.target !== rightEdge.target) {
+        return false;
+      }
+    }
+
+    for (let index = 0; index < left.inferredEdges.length; index += 1) {
+      const leftEdge = left.inferredEdges[index];
+      const rightEdge = right.inferredEdges[index];
+      if (
+        leftEdge.source !== rightEdge.source ||
+        leftEdge.target !== rightEdge.target ||
+        leftEdge.score !== rightEdge.score
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   function edgeKey(link: SimLink) {
     return `${link.source.path}::${link.target.path}::${link.type}`;
   }
@@ -672,7 +744,7 @@
 
   $effect(() => {
     data;
-    if (!isMounted || data === lastGraphData) {
+    if (!isMounted || graphDataEquals(data, lastGraphData)) {
       return;
     }
     rebuildGraphView();

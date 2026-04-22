@@ -17,8 +17,11 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::Path,
+    sync::{LazyLock, Mutex},
 };
 use tauri::State;
+
+static TASK_TIMESTAMP_SYNC_REVISION: LazyLock<Mutex<u64>> = LazyLock::new(|| Mutex::new(u64::MAX));
 
 #[derive(Clone)]
 struct TaskTimestampCandidate {
@@ -75,7 +78,8 @@ pub(super) fn list_recent_tasks(
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
     index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
-    let did_sync_task_timestamps = sync_task_timestamps_from_index(&mut persisted_state, &index);
+    let did_sync_task_timestamps = should_sync_task_timestamps(&index)?
+        && sync_task_timestamps_from_index(&mut persisted_state, &index);
     let hidden_task_keys = persisted_state
         .hidden_task_keys
         .iter()
@@ -154,7 +158,8 @@ pub(super) fn list_tasks(
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
     index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
-    let did_sync_task_timestamps = sync_task_timestamps_from_index(&mut persisted_state, &index);
+    let did_sync_task_timestamps = should_sync_task_timestamps(&index)?
+        && sync_task_timestamps_from_index(&mut persisted_state, &index);
     let hidden_task_keys = persisted_state
         .hidden_task_keys
         .iter()
@@ -465,6 +470,19 @@ pub(super) fn sync_task_timestamps_from_index(
         .task_timestamps
         .retain(|task_key, _| active_task_keys.contains(task_key));
     changed || existing_count != state.task_timestamps.len()
+}
+
+fn should_sync_task_timestamps(index: &NotesIndex) -> Result<bool, String> {
+    let revision = index.revision();
+    let mut last_synced_revision = TASK_TIMESTAMP_SYNC_REVISION
+        .lock()
+        .map_err(|_| "Task timestamp revision lock poisoned".to_string())?;
+    if *last_synced_revision == revision {
+        return Ok(false);
+    }
+
+    *last_synced_revision = revision;
+    Ok(true)
 }
 
 pub(super) fn find_task_key_for_line(

@@ -19,8 +19,11 @@ use std::{
 use tauri::State;
 
 const GRAPH_CLUSTER_CACHE_LIMIT: usize = 6;
+const GRAPH_DATA_CACHE_LIMIT: usize = 6;
 
 static GRAPH_CLUSTER_CACHE: LazyLock<Mutex<Vec<GraphClusterCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+static GRAPH_DATA_CACHE: LazyLock<Mutex<Vec<GraphDataCacheEntry>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
 #[derive(Clone, Debug, Serialize)]
@@ -86,6 +89,14 @@ struct GraphClusterCacheEntry {
     clusters: Vec<GraphCluster>,
 }
 
+#[derive(Clone)]
+struct GraphDataCacheEntry {
+    semantic_revision: u64,
+    notes_revision: u64,
+    color_group_count: usize,
+    data: GraphData,
+}
+
 #[tauri::command]
 pub(crate) fn get_graph_data(
     state: State<'_, AppState>,
@@ -97,6 +108,23 @@ pub(crate) fn get_graph_data(
         .semantic
         .db_path()
         .ok_or_else(|| "Semantic search is not available".to_string())?;
+
+    let notes_revision = {
+        let mut index = state
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
+        index.revision()
+    };
+    let semantic_revision = state.semantic.current_index_revision();
+    if let Some(cached) = lookup_graph_data_cache(
+        semantic_revision,
+        notes_revision,
+        requested_color_group_count,
+    )? {
+        return Ok(cached.data);
+    }
 
     let connection = open_database(&db_path)?;
     ensure_schema(&connection)?;
@@ -161,32 +189,32 @@ pub(crate) fn get_graph_data(
 
     let provider = state.semantic.embedding_provider();
     let model = provider.as_ref().map(|provider| provider.model_info());
-    if !embeddings_for_cluster.is_empty() && model.as_ref().is_some_and(|model| !model.ready) {
-        let is_loading = model.as_ref().is_some_and(|model| model.loading);
-        let reason = model
-            .as_ref()
-            .and_then(|model| model.error.clone())
-            .unwrap_or_else(|| {
-                model
-                    .as_ref()
-                    .map(|model| model.status.clone())
-                    .unwrap_or_else(|| "Embedding model is not ready".to_string())
-            });
-        let message = if is_loading {
-            format!(
-                "Map calculations are waiting for the embedding model to finish loading. {reason}"
-            )
-        } else {
-            format!("Map calculations are unavailable because the embedding model is not ready. {reason}")
-        };
-        return Err(message);
-    }
-    let semantic_revision = state.semantic.current_index_revision();
     let cached_clusters =
         lookup_graph_cluster_cache(semantic_revision, requested_color_group_count)?;
     let (path_to_cluster, mut clusters) = if let Some(cached) = cached_clusters {
         (cached.assignments, cached.clusters)
     } else {
+        if !embeddings_for_cluster.is_empty() && model.as_ref().is_some_and(|model| !model.ready) {
+            let is_loading = model.as_ref().is_some_and(|model| model.loading);
+            let reason = model
+                .as_ref()
+                .and_then(|model| model.error.clone())
+                .unwrap_or_else(|| {
+                    model
+                        .as_ref()
+                        .map(|model| model.status.clone())
+                        .unwrap_or_else(|| "Embedding model is not ready".to_string())
+                });
+            let message = if is_loading {
+                format!(
+                    "Map calculations are waiting for the embedding model to finish loading. {reason}"
+                )
+            } else {
+                format!("Map calculations are unavailable because the embedding model is not ready. {reason}")
+            };
+            return Err(message);
+        }
+
         let embed_fn = provider.as_ref().map(|p| {
             let p = p.clone();
             move |texts: &[String]| -> Result<Vec<Vec<f32>>, String> {
@@ -295,13 +323,22 @@ pub(crate) fn get_graph_data(
 
     let wikilink_edges = extract_wikilinks(&state, &notes_dir, &stored_note_map)?;
 
-    Ok(GraphData {
+    let graph_data = GraphData {
         nodes,
         clusters,
         wikilink_edges,
         inferred_edges,
         time_range: (time_min, time_max),
-    })
+    };
+
+    let _ = store_graph_data_cache(GraphDataCacheEntry {
+        semantic_revision,
+        notes_revision,
+        color_group_count: requested_color_group_count,
+        data: graph_data.clone(),
+    });
+
+    Ok(graph_data)
 }
 
 #[tauri::command]
@@ -410,6 +447,24 @@ fn lookup_graph_cluster_cache(
         .cloned())
 }
 
+fn lookup_graph_data_cache(
+    semantic_revision: u64,
+    notes_revision: u64,
+    color_group_count: usize,
+) -> Result<Option<GraphDataCacheEntry>, String> {
+    let cache = GRAPH_DATA_CACHE
+        .lock()
+        .map_err(|_| "Graph cache lock poisoned".to_string())?;
+    Ok(cache
+        .iter()
+        .find(|entry| {
+            entry.semantic_revision == semantic_revision
+                && entry.notes_revision == notes_revision
+                && entry.color_group_count == color_group_count
+        })
+        .cloned())
+}
+
 fn store_graph_cluster_cache(entry: GraphClusterCacheEntry) -> Result<(), String> {
     let mut cache = GRAPH_CLUSTER_CACHE
         .lock()
@@ -421,6 +476,22 @@ fn store_graph_cluster_cache(entry: GraphClusterCacheEntry) -> Result<(), String
     cache.insert(0, entry);
     if cache.len() > GRAPH_CLUSTER_CACHE_LIMIT {
         cache.truncate(GRAPH_CLUSTER_CACHE_LIMIT);
+    }
+    Ok(())
+}
+
+fn store_graph_data_cache(entry: GraphDataCacheEntry) -> Result<(), String> {
+    let mut cache = GRAPH_DATA_CACHE
+        .lock()
+        .map_err(|_| "Graph cache lock poisoned".to_string())?;
+    cache.retain(|existing| {
+        !(existing.semantic_revision == entry.semantic_revision
+            && existing.notes_revision == entry.notes_revision
+            && existing.color_group_count == entry.color_group_count)
+    });
+    cache.insert(0, entry);
+    if cache.len() > GRAPH_DATA_CACHE_LIMIT {
+        cache.truncate(GRAPH_DATA_CACHE_LIMIT);
     }
     Ok(())
 }
