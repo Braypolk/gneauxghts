@@ -2,8 +2,6 @@
   import { afterNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
   import {
-    ArrowDown,
-    ArrowUp,
     CheckCircle2,
     ChevronDown,
     ChevronRight,
@@ -12,6 +10,7 @@
     Eye,
     EyeOff,
     ExternalLink,
+    GripVertical,
     RefreshCw,
     Trash2
   } from 'lucide-svelte';
@@ -82,6 +81,36 @@
 
   function taskIndentStyle(depth: number) {
     return `margin-left: ${Math.min(depth, 6) * 1.1}rem;`;
+  }
+
+  let dragSrcIndex = $state<number | null>(null);
+  let dragOverIndex = $state<number | null>(null);
+
+  function handleDragStart(index: number) {
+    dragSrcIndex = index;
+  }
+
+  function handleDragOver(event: DragEvent, index: number) {
+    event.preventDefault();
+    if (dragSrcIndex === null || dragSrcIndex === index) {
+      dragOverIndex = null;
+      return;
+    }
+    dragOverIndex = index;
+  }
+
+  function handleDrop(event: DragEvent, index: number) {
+    event.preventDefault();
+    if (dragSrcIndex !== null && dragSrcIndex !== index) {
+      void taskList.reorderNote(dragSrcIndex, index);
+    }
+    dragSrcIndex = null;
+    dragOverIndex = null;
+  }
+
+  function handleDragEnd() {
+    dragSrcIndex = null;
+    dragOverIndex = null;
   }
 
   onMount(() => {
@@ -173,9 +202,34 @@
               <section
                 class={`overflow-hidden rounded-[1.35rem] border ${
                   group.noteHidden ? 'border-border bg-muted' : 'border-border bg-card'
-                }`}
+                } ${dragSrcIndex === index ? 'opacity-50' : ''} ${dragOverIndex === index && dragSrcIndex !== index ? 'ring-2 ring-primary/50' : ''}`}
+                role="group"
+                draggable="true"
+                ondragstart={(e) => {
+                  const under = document.elementFromPoint(e.clientX, e.clientY);
+                  if (!under?.closest('[data-drag-handle]')) {
+                    e.preventDefault();
+                    return;
+                  }
+                  e.dataTransfer?.setData('text/plain', group.noteId);
+                  e.dataTransfer!.effectAllowed = 'move';
+                  handleDragStart(index);
+                }}
+                ondragover={(e) => handleDragOver(e, index)}
+                ondrop={(e) => handleDrop(e, index)}
+                ondragend={handleDragEnd}
               >
                 <div class={`flex items-center gap-3 px-4 py-3 ${group.noteHidden ? 'bg-muted' : 'bg-card'}`}>
+                  <span
+                    data-drag-handle
+                    class="shrink-0 cursor-grab text-muted-foreground/60 hover:text-muted-foreground active:cursor-grabbing"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Drag to reorder"
+                  >
+                    <GripVertical class="h-4 w-4" />
+                  </span>
+
                   <button
                     type="button"
                     class="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-foreground"
@@ -213,26 +267,6 @@
 
                   <span class="shrink-0">
                     <div class="flex items-center gap-1">
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-35"
-                        onclick={() => void taskList.moveNote(group, 'up')}
-                        disabled={index === 0}
-                        aria-label={`Move ${group.noteTitle} up`}
-                      >
-                        <ArrowUp class="h-3.5 w-3.5" />
-                      </button>
-
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-35"
-                        onclick={() => void taskList.moveNote(group, 'down')}
-                        disabled={index === groupedTasks.length - 1}
-                        aria-label={`Move ${group.noteTitle} down`}
-                      >
-                        <ArrowDown class="h-3.5 w-3.5" />
-                      </button>
-
                       <button
                         type="button"
                         class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"

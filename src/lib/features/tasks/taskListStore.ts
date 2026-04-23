@@ -292,6 +292,42 @@ export function createTaskListStore() {
     }
   }
 
+  async function reorderNote(fromIndex: number, toIndex: number) {
+    const noteOrder = buildNoteOrder();
+    if (fromIndex < 0 || fromIndex >= noteOrder.length) return;
+    if (toIndex < 0 || toIndex >= noteOrder.length) return;
+    if (fromIndex === toIndex) return;
+
+    const [movedNoteId] = noteOrder.splice(fromIndex, 1);
+    noteOrder.splice(toIndex, 0, movedNoteId);
+
+    const previousTasks = get(store).tasks;
+    const noteRank = new Map(noteOrder.map((noteId, index) => [noteId, index]));
+    patch({
+      tasks: [...previousTasks].sort((left, right) => {
+        const leftRank = noteRank.get(left.noteId) ?? Number.MAX_SAFE_INTEGER;
+        const rightRank = noteRank.get(right.noteId) ?? Number.MAX_SAFE_INTEGER;
+
+        return (
+          leftRank - rightRank ||
+          left.lineNumber - right.lineNumber ||
+          left.text.localeCompare(right.text)
+        );
+      })
+    });
+
+    try {
+      await invoke('set_note_order', { noteIds: noteOrder });
+      patch({ errorMessage: '' });
+    } catch (error) {
+      console.error('Failed to save note order:', error);
+      patch({
+        tasks: previousTasks,
+        errorMessage: 'Unable to save note order.'
+      });
+    }
+  }
+
   async function openTask(task: TaskItem) {
     try {
       await invoke('open_note', { noteId: task.noteId, path: task.notePath });
@@ -365,6 +401,7 @@ export function createTaskListStore() {
     toggleTask,
     setNoteHidden,
     moveNote,
+    reorderNote,
     openTask,
     deleteTask
   };
