@@ -1,6 +1,7 @@
+use super::index_bridge::upsert_notes_index_entry;
 use super::{
-    current_time_millis, prepare_notes_dir, upsert_notes_index_entry, RecentTaskItem, TaskFilter,
-    TaskListItem, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+    current_time_millis, prepare_notes_dir, RecentTaskItem, TaskFilter, TaskListItem,
+    INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
 use crate::{
     index::{
@@ -73,11 +74,15 @@ pub(super) fn list_recent_tasks(
     let notes_dir = prepare_notes_dir(false)?;
 
     let mut persisted_state = read_state(&notes_dir)?;
-    let mut index = state
+    state.ensure_interactive_index(
+        &notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "list_recent_tasks",
+    )?;
+    let index = state
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
     let did_sync_task_timestamps = should_sync_task_timestamps(&index)?
         && sync_task_timestamps_from_index(&mut persisted_state, &index);
     let hidden_task_keys = persisted_state
@@ -153,11 +158,11 @@ pub(super) fn list_tasks(
     let notes_dir = prepare_notes_dir(false)?;
     let mut persisted_state = read_state(&notes_dir)?;
 
-    let mut index = state
+    state.ensure_interactive_index(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE, "list_tasks")?;
+    let index = state
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
     let did_sync_task_timestamps = should_sync_task_timestamps(&index)?
         && sync_task_timestamps_from_index(&mut persisted_state, &index);
     let hidden_task_keys = persisted_state

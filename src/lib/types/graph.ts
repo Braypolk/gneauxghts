@@ -35,6 +35,14 @@ export interface GraphData {
   timeRange: [number, number];
 }
 
+export interface GraphDataMetadata {
+  semanticRevision: number;
+  notesRevision: number;
+  colorGroupCount: number;
+  invalidationEpoch: number;
+  refreshed: boolean;
+}
+
 export interface GraphPositionEntry {
   path: string;
   x: number;

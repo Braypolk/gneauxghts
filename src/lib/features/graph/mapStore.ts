@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { get, writable } from 'svelte/store';
-import type { GraphData } from '$lib/types/graph';
+import type { GraphData, GraphDataMetadata } from '$lib/types/graph';
 import type { SemanticStatus } from '$lib/types/semantic';
 
 const SEMANTIC_POLL_INTERVAL_MS = 1500;
@@ -63,6 +63,7 @@ export function createMapStore() {
   let activeLoadRequest = 0;
   let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
   let semanticPollInFlight = false;
+  let lastGraphMetadataKey: string | null = null;
 
   function patch(partial: Partial<MapState>) {
     update((state) => ({ ...state, ...partial }));
@@ -163,12 +164,21 @@ export function createMapStore() {
       }
 
       const { colorGroupCount } = get(store);
+      const metadata = await invoke<GraphDataMetadata>('get_graph_data_metadata', { colorGroupCount });
+      if (requestId !== activeLoadRequest) {
+        return;
+      }
+      const metadataKey = `${metadata.semanticRevision}:${metadata.notesRevision}:${metadata.colorGroupCount}:${metadata.invalidationEpoch}`;
+      if (lastGraphMetadataKey === metadataKey && get(store).graphData) {
+        return;
+      }
 
       const nextGraphData = await invoke<GraphData>('get_graph_data', { colorGroupCount });
       if (requestId !== activeLoadRequest) {
         return;
       }
 
+      lastGraphMetadataKey = metadataKey;
       patch({ graphData: nextGraphData });
     } catch (error) {
       if (requestId !== activeLoadRequest) {
@@ -248,6 +258,7 @@ export function createMapStore() {
 
   function dispose() {
     activeLoadRequest += 1;
+    lastGraphMetadataKey = null;
     stopSemanticPolling();
   }
 

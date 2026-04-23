@@ -18,6 +18,24 @@ pub(crate) struct AppState {
     pub(crate) notes_index: Mutex<NotesIndex>,
     pub(crate) lexical: Arc<LexicalIndex>,
     pub(crate) semantic: Arc<SemanticState>,
+    interactive_invalidation: Mutex<InteractiveInvalidationState>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct InteractiveRefreshOutcome {
+    pub(crate) revision: u64,
+    pub(crate) changed: bool,
+    pub(crate) used_full_refresh: bool,
+    pub(crate) epoch: u64,
+}
+
+#[derive(Default)]
+struct InteractiveInvalidationState {
+    epoch: u64,
+    dirty_paths: HashSet<PathBuf>,
+    full_refresh_count: u64,
+    incremental_update_count: u64,
+    refresh_source_counts: HashMap<String, u64>,
 }
 
 impl AppState {
@@ -26,6 +44,7 @@ impl AppState {
             notes_index: Mutex::new(NotesIndex::default()),
             lexical: Arc::new(LexicalIndex::new()?),
             semantic: Arc::new(semantic),
+            interactive_invalidation: Mutex::new(InteractiveInvalidationState::default()),
         })
     }
 
@@ -39,7 +58,9 @@ impl AppState {
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.upsert_note(path, note);
+        index.upsert_note(path.clone(), note);
+        drop(index);
+        self.clear_dirty_path(&path)?;
         Ok(())
     }
 
@@ -50,6 +71,82 @@ impl AppState {
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
         index.remove_note(path);
+        drop(index);
+        self.clear_dirty_path(path)?;
+        Ok(())
+    }
+
+    pub(crate) fn mark_notes_index_dirty(&self, path: &Path, source: &str) -> Result<(), String> {
+        let mut invalidation = self
+            .interactive_invalidation
+            .lock()
+            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+        invalidation.epoch = invalidation.epoch.wrapping_add(1);
+        invalidation.dirty_paths.insert(path.to_path_buf());
+        *invalidation
+            .refresh_source_counts
+            .entry(format!("dirty:{source}"))
+            .or_insert(0) += 1;
+        Ok(())
+    }
+
+    pub(crate) fn ensure_interactive_index(
+        &self,
+        notes_dir: &Path,
+        max_age: Duration,
+        source: &str,
+    ) -> Result<InteractiveRefreshOutcome, String> {
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        let mut invalidation = self
+            .interactive_invalidation
+            .lock()
+            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+        *invalidation
+            .refresh_source_counts
+            .entry(source.to_string())
+            .or_insert(0) += 1;
+
+        let mut changed = false;
+        let had_dirty_paths = !invalidation.dirty_paths.is_empty();
+        if had_dirty_paths {
+            let dirty_paths = invalidation.dirty_paths.drain().collect::<Vec<_>>();
+            for path in dirty_paths {
+                if index.apply_dirty_path(&path)? {
+                    changed = true;
+                }
+            }
+            index.mark_refreshed(changed);
+            invalidation.incremental_update_count =
+                invalidation.incremental_update_count.wrapping_add(1);
+        }
+
+        let mut used_full_refresh = false;
+        let stale = index
+            .last_refresh_at
+            .is_none_or(|last_refresh_at| last_refresh_at.elapsed() >= max_age);
+        if stale && !had_dirty_paths {
+            changed = index.refresh(notes_dir)? || changed;
+            used_full_refresh = true;
+            invalidation.full_refresh_count = invalidation.full_refresh_count.wrapping_add(1);
+        }
+
+        Ok(InteractiveRefreshOutcome {
+            revision: index.revision(),
+            changed,
+            used_full_refresh,
+            epoch: invalidation.epoch,
+        })
+    }
+
+    fn clear_dirty_path(&self, path: &Path) -> Result<(), String> {
+        let mut invalidation = self
+            .interactive_invalidation
+            .lock()
+            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+        invalidation.dirty_paths.remove(path);
         Ok(())
     }
 }
@@ -136,30 +233,6 @@ impl NotesIndex {
         Ok(changed)
     }
 
-    pub(crate) fn refresh_if_stale(
-        &mut self,
-        notes_dir: &Path,
-        max_age: Duration,
-    ) -> Result<(), String> {
-        self.refresh_if_stale_with_flag(notes_dir, max_age)
-            .map(|_| ())
-    }
-
-    pub(crate) fn refresh_if_stale_with_flag(
-        &mut self,
-        notes_dir: &Path,
-        max_age: Duration,
-    ) -> Result<bool, String> {
-        if self
-            .last_refresh_at
-            .is_some_and(|last_refresh_at| last_refresh_at.elapsed() < max_age)
-        {
-            return Ok(false);
-        }
-
-        self.refresh(notes_dir)
-    }
-
     pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) -> bool {
         if self
             .entries
@@ -192,6 +265,32 @@ impl NotesIndex {
         self.entries
             .iter()
             .find(|(_, note)| note.note_id == note_id)
+    }
+
+    fn apply_dirty_path(&mut self, path: &Path) -> Result<bool, String> {
+        if is_note_file(path) {
+            let signature = read_file_signature(path)?;
+            let should_reload = self
+                .entries
+                .get(path)
+                .map(|indexed_note| indexed_note.signature != signature)
+                .unwrap_or(true);
+            if should_reload {
+                self.entries
+                    .insert(path.to_path_buf(), load_indexed_note(path, signature)?);
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+
+        Ok(self.entries.remove(path).is_some())
+    }
+
+    fn mark_refreshed(&mut self, changed: bool) {
+        self.last_refresh_at = Some(Instant::now());
+        if changed {
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 }
 

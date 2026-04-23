@@ -1376,9 +1376,14 @@ export function readCursorPosition(controller: EditorController | null): CursorP
   return readSelection(controller.view);
 }
 
+export interface RestoreCursorPositionOptions {
+  scrollIntoView?: boolean;
+}
+
 export function restoreCursorPosition(
   controller: EditorController | null,
-  position: CursorPosition | null
+  position: CursorPosition | null,
+  { scrollIntoView = true }: RestoreCursorPositionOptions = {}
 ) {
   if (!controller || !position) {
     return false;
@@ -1389,10 +1394,55 @@ export function restoreCursorPosition(
   controller.view.dispatch(
     controller.view.state.update({
       selection: { anchor, head },
-      scrollIntoView: true,
+      ...(scrollIntoView ? { scrollIntoView: true } : {}),
       annotations: [Transaction.addToHistory.of(false)]
     })
   );
+  return true;
+}
+
+function pickVerticalScrollTarget(view: EditorView, outerShell: HTMLElement | null): HTMLElement {
+  const inner = view.scrollDOM;
+  if (inner.scrollHeight > inner.clientHeight + 1) {
+    return inner;
+  }
+  if (outerShell && outerShell.scrollHeight > outerShell.clientHeight + 1) {
+    return outerShell;
+  }
+  return inner;
+}
+
+/**
+ * Scroll the editor's vertical scroll container (usually CodeMirror's `scrollDOM`)
+ * so the caret sits near `fractionFromTop` of the visible viewport (0 = top).
+ * `outerShell` is optional; when the inner scroller does not overflow, the shell
+ * is used if it scrolls (some layouts scroll the pane wrapper instead).
+ */
+export function alignEditorScrollToSelection(
+  controller: EditorController | null,
+  outerShell: HTMLElement | null,
+  fractionFromTop = 0.25
+): boolean {
+  if (!controller) {
+    return false;
+  }
+
+  const view = controller.view;
+  const scrollEl = pickVerticalScrollTarget(view, outerShell);
+  const head = view.state.selection.main.head;
+  const coords = view.coordsAtPos(head);
+  if (!coords) {
+    view.requestMeasure();
+    return false;
+  }
+
+  const portRect = scrollEl.getBoundingClientRect();
+  const cursorMidY = (coords.top + coords.bottom) / 2;
+  const offsetInViewport = cursorMidY - portRect.top;
+  const contentY = scrollEl.scrollTop + offsetInViewport;
+  const targetScroll = contentY - fractionFromTop * scrollEl.clientHeight;
+  const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+  scrollEl.scrollTop = Math.max(0, Math.min(targetScroll, maxScroll));
   return true;
 }
 

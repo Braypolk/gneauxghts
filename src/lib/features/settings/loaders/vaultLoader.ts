@@ -1,0 +1,6 @@
+import { invoke } from '@tauri-apps/api/core';
+import type { VaultInfo } from '$lib/types/sync';
+
+export function loadVaultInfoSlice() {
+  return invoke<VaultInfo>('get_vault_info');
+}

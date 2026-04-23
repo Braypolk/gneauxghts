@@ -10,9 +10,14 @@ interface StoredCursorEntry extends CursorPosition {
 const STORAGE_KEY = 'gneauxghts:notepad-cursors:v1';
 const MAX_STORED_CURSORS = 200;
 const DEFAULT_PANE_CURSOR_SCOPE = 'default';
+const NOTE_ID_PREFIX = 'note-id:';
 
 function getCursorStorageKey(notePath: string, paneId: string | null = null) {
   return `${paneId ?? DEFAULT_PANE_CURSOR_SCOPE}::${notePath}`;
+}
+
+function getCursorStorageKeyForNoteId(noteId: string, paneId: string | null = null) {
+  return `${paneId ?? DEFAULT_PANE_CURSOR_SCOPE}::${NOTE_ID_PREFIX}${noteId}`;
 }
 
 function canUseStorage() {
@@ -77,15 +82,81 @@ function writeStoredCursorMap(cursorMap: Map<string, StoredCursorEntry>) {
   }
 }
 
-export function loadCursorPosition(notePath: string | null, paneId: string | null = null) {
+function findBestCursorEntry(
+  cursorMap: Map<string, StoredCursorEntry>,
+  notePath: string,
+  paneId: string | null,
+  noteId: string | null
+) {
+  const exactEntry = cursorMap.get(getCursorStorageKey(notePath, paneId));
+  if (exactEntry) {
+    return exactEntry;
+  }
+
+  if (noteId) {
+    const noteIdScopedEntry = cursorMap.get(getCursorStorageKeyForNoteId(noteId, paneId));
+    if (noteIdScopedEntry) {
+      return noteIdScopedEntry;
+    }
+  }
+
+  const defaultScopeEntry = cursorMap.get(getCursorStorageKey(notePath));
+  if (defaultScopeEntry) {
+    return defaultScopeEntry;
+  }
+
+  if (noteId) {
+    const noteIdDefaultScopeEntry = cursorMap.get(getCursorStorageKeyForNoteId(noteId));
+    if (noteIdDefaultScopeEntry) {
+      return noteIdDefaultScopeEntry;
+    }
+  }
+
+  const legacyEntry = cursorMap.get(notePath);
+  if (legacyEntry) {
+    return legacyEntry;
+  }
+
+  const scopedSuffix = `::${notePath}`;
+  let latestScopedEntry: StoredCursorEntry | null = null;
+
+  for (const [storedKey, entry] of cursorMap.entries()) {
+    if (!storedKey.endsWith(scopedSuffix)) {
+      continue;
+    }
+
+    if (!latestScopedEntry || entry.updatedAtMillis > latestScopedEntry.updatedAtMillis) {
+      latestScopedEntry = entry;
+    }
+  }
+
+  if (noteId) {
+    const noteIdScopedSuffix = `::${NOTE_ID_PREFIX}${noteId}`;
+    for (const [storedKey, entry] of cursorMap.entries()) {
+      if (!storedKey.endsWith(noteIdScopedSuffix)) {
+        continue;
+      }
+
+      if (!latestScopedEntry || entry.updatedAtMillis > latestScopedEntry.updatedAtMillis) {
+        latestScopedEntry = entry;
+      }
+    }
+  }
+
+  return latestScopedEntry;
+}
+
+export function loadCursorPosition(
+  notePath: string | null,
+  paneId: string | null = null,
+  noteId: string | null = null
+) {
   if (!notePath) {
     return null;
   }
 
   const cursorMap = readStoredCursorMap();
-  const entry =
-    cursorMap.get(getCursorStorageKey(notePath, paneId)) ??
-    cursorMap.get(notePath);
+  const entry = findBestCursorEntry(cursorMap, notePath, paneId, noteId);
   if (!entry) {
     return null;
   }
@@ -99,17 +170,22 @@ export function loadCursorPosition(notePath: string | null, paneId: string | nul
 export function saveCursorPosition(
   notePath: string | null,
   position: CursorPosition | null,
-  paneId: string | null = null
+  paneId: string | null = null,
+  noteId: string | null = null
 ) {
   if (!notePath || !position) {
     return;
   }
 
   const cursorMap = readStoredCursorMap();
-  cursorMap.set(getCursorStorageKey(notePath, paneId), {
+  const entry: StoredCursorEntry = {
     anchor: position.anchor,
     head: position.head,
     updatedAtMillis: Date.now()
-  });
+  };
+  cursorMap.set(getCursorStorageKey(notePath, paneId), entry);
+  if (noteId) {
+    cursorMap.set(getCursorStorageKeyForNoteId(noteId, paneId), entry);
+  }
   writeStoredCursorMap(cursorMap);
 }

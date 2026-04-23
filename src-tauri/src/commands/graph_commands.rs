@@ -73,6 +73,16 @@ pub(crate) struct GraphData {
     time_range: (u64, u64),
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GraphDataMetadata {
+    semantic_revision: u64,
+    notes_revision: u64,
+    color_group_count: usize,
+    invalidation_epoch: u64,
+    refreshed: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GraphPositionEntry {
@@ -98,6 +108,27 @@ struct GraphDataCacheEntry {
 }
 
 #[tauri::command]
+pub(crate) fn get_graph_data_metadata(
+    state: State<'_, AppState>,
+    color_group_count: Option<usize>,
+) -> Result<GraphDataMetadata, String> {
+    let requested_color_group_count = color_group_count.unwrap_or(3);
+    let notes_dir = prepare_notes_dir(false)?;
+    let refresh_outcome = state.ensure_interactive_index(
+        &notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "graph_metadata",
+    )?;
+    Ok(GraphDataMetadata {
+        semantic_revision: state.semantic.current_index_revision(),
+        notes_revision: refresh_outcome.revision,
+        color_group_count: requested_color_group_count,
+        invalidation_epoch: refresh_outcome.epoch,
+        refreshed: refresh_outcome.used_full_refresh || refresh_outcome.changed,
+    })
+}
+
+#[tauri::command]
 pub(crate) fn get_graph_data(
     state: State<'_, AppState>,
     color_group_count: Option<usize>,
@@ -109,14 +140,13 @@ pub(crate) fn get_graph_data(
         .db_path()
         .ok_or_else(|| "Semantic search is not available".to_string())?;
 
-    let notes_revision = {
-        let mut index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
-        index.revision()
-    };
+    let notes_revision = state
+        .ensure_interactive_index(
+            &notes_dir,
+            INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+            "graph_payload",
+        )?
+        .revision;
     let semantic_revision = state.semantic.current_index_revision();
     if let Some(cached) = lookup_graph_data_cache(
         semantic_revision,
@@ -361,14 +391,13 @@ pub(crate) fn save_graph_node_positions(
 
 fn extract_wikilinks(
     state: &State<'_, AppState>,
-    notes_dir: &Path,
+    _notes_dir: &Path,
     valid_notes: &HashMap<String, StoredNoteWithMeta>,
 ) -> Result<Vec<WikilinkEdge>, String> {
-    let mut index = state
+    let index = state
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
 
     let title_to_path: HashMap<String, String> = index
         .entries

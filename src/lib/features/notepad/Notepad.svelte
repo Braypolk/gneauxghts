@@ -1256,7 +1256,8 @@
       await paneControllers[paneId].editorLifecycleController.replaceEditorContent(
         nextNote.bodyMarkdown,
         {
-          restoreCursor
+          restoreCursor,
+          suppressReadyReset: true
         }
       );
       markPaneDocumentGeneration(paneId, nextNote);
@@ -1493,7 +1494,11 @@
 
   async function openNotePath(
     notePath: string | null,
-    options: { noteId?: string | null; currentNoteAlreadySaved?: boolean } = {}
+    options: {
+      noteId?: string | null;
+      currentNoteAlreadySaved?: boolean;
+      focusEditorAfterOpen?: boolean;
+    } = {}
   ) {
     flushAllPendingDocumentSyncs();
     flushAllPendingCursorSaves();
@@ -1535,11 +1540,12 @@
       getPaneKind(paneId) === 'editor' &&
       getPaneController(paneId)
     ) {
-      if (!(await restoreSharedEditorStateForDocument(nextDocument))) {
-        await replaceNoteAcrossPanes(previousDocument, nextDocument, { restoreCursor: true });
-      } else {
-        markPaneDocumentGeneration(paneId, nextDocument);
-      }
+      await replaceNoteAcrossPanes(previousDocument, nextDocument, { restoreCursor: true });
+    }
+
+    if ((options.focusEditorAfterOpen ?? true) && getPaneKind(paneId) === 'editor') {
+      await tick();
+      focusPaneAfterShortcut(paneId, { preferTitle: false });
     }
 
     setNoteStatus(nextDocument, 'idle');

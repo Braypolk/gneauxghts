@@ -85,6 +85,7 @@ pub fn run() {
             commands::search_commands::search_notes,
             commands::search_commands::search_notes_hybrid,
             commands::search_commands::get_related_notes,
+            commands::graph_commands::get_graph_data_metadata,
             commands::graph_commands::get_graph_data,
             commands::graph_commands::save_graph_node_positions,
             commands::get_semantic_settings,

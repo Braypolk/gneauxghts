@@ -1,6 +1,6 @@
+use super::index_bridge::read_indexed_note_from_path;
 use super::{
-    prepare_notes_dir, read_indexed_note_from_path, NoteLinkSuggestion, ResolvedNoteLink,
-    INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+    prepare_notes_dir, NoteLinkSuggestion, ResolvedNoteLink, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
 use crate::{
     index::{
@@ -171,11 +171,15 @@ fn resolve_wikilink_note_path(
         }
     }
 
-    let mut index = state
+    state.ensure_interactive_index(
+        notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "resolve_wikilink_note_path",
+    )?;
+    let index = state
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
 
     Ok(index
         .entries
@@ -298,11 +302,15 @@ fn build_note_suggestions(
         }
     }
 
-    let mut index = state
+    state.ensure_interactive_index(
+        notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "build_note_suggestions",
+    )?;
+    let index = state
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh_if_stale(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
 
     for (path, note) in &index.entries {
         if current_path.is_some_and(|current_path| current_path == path.as_path()) {

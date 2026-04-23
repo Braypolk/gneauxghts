@@ -9,6 +9,7 @@ import {
   readEditorState,
   replaceEditorContent as replaceEditorBuffer,
   replaceEditorDocument,
+  alignEditorScrollToSelection,
   restoreCursorPosition,
   type EditorController,
   type EditorSnapshot,
@@ -27,6 +28,8 @@ interface ReplaceEditorContentOptions {
   restoreCursor?: boolean;
   cursorPosition?: CursorPosition | null | undefined;
   expectedDocument?: NoteDraftState | null;
+  /** When true, do not flip the pane to a loading state while the editor is torn down and recreated. */
+  suppressReadyReset?: boolean;
 }
 
 interface EditorLifecycleControllerDeps {
@@ -110,7 +113,7 @@ export function createEditorLifecycleController({
       return;
     }
 
-    saveCursorPosition(document.currentNotePath, position, getPaneId());
+    saveCursorPosition(document.currentNotePath, position, getPaneId(), document.currentNoteId);
   }
 
   function saveSharedEditorStateForDocument(
@@ -130,13 +133,17 @@ export function createEditorLifecycleController({
 
   function restoreCursorPositionForDocument(
     document: NoteDraftState = getDocumentSession(),
-    position: CursorPosition | null = loadCursorPosition(document.currentNotePath, getPaneId())
+    position: CursorPosition | null = loadCursorPosition(
+      document.currentNotePath,
+      getPaneId(),
+      document.currentNoteId
+    )
   ) {
     if (!document.currentNotePath || !position) {
       return false;
     }
 
-    return restoreCursorPosition(getController(), position);
+    return restoreCursorPosition(getController(), position, { scrollIntoView: true });
   }
 
   async function replaceEditorContent(
@@ -145,7 +152,8 @@ export function createEditorLifecycleController({
       preserveScroll = false,
       restoreCursor = false,
       cursorPosition = undefined,
-      expectedDocument = null
+      expectedDocument = null,
+      suppressReadyReset = false
     }: ReplaceEditorContentOptions = {}
   ) {
     if (expectedDocument && getDocumentSession() !== expectedDocument) {
@@ -155,8 +163,11 @@ export function createEditorLifecycleController({
     const editorShell = getEditorShell();
     const scrollTop = preserveScroll ? (editorShell?.scrollTop ?? 0) : 0;
     const document = getDocumentSession();
+    const shouldRestoreFocus = restoreCursor && (getController()?.view.hasFocus ?? false);
 
-    setIsEditorReady(false);
+    if (!suppressReadyReset) {
+      setIsEditorReady(false);
+    }
     await destroyEditor();
 
     if (expectedDocument && getDocumentSession() !== expectedDocument) {
@@ -170,12 +181,64 @@ export function createEditorLifecycleController({
         return;
       }
 
-      await waitForEditorPaint();
-      if (cursorPosition === undefined) {
-        restoreCursorPositionForDocument(document);
-      } else {
-        restoreCursorPositionForDocument(document, cursorPosition);
+      const positionToRestore =
+        cursorPosition !== undefined
+          ? cursorPosition
+          : (loadCursorPosition(
+              document.currentNotePath,
+              getPaneId(),
+              document.currentNoteId
+            ) ?? getSharedEditorStateForDocument(document)?.selection ?? null);
+
+      const shell = getEditorShell();
+      const hideForCursorScroll = Boolean(
+        suppressReadyReset && shell && positionToRestore && !preserveScroll
+      );
+
+      if (hideForCursorScroll && shell) {
+        shell.style.visibility = 'hidden';
+        shell.style.pointerEvents = 'none';
       }
+
+      try {
+        await waitForEditorPaint();
+
+        if (expectedDocument && getDocumentSession() !== expectedDocument) {
+          return;
+        }
+
+        if (positionToRestore) {
+          restoreCursorPosition(getController(), positionToRestore, { scrollIntoView: false });
+          if (!preserveScroll) {
+            let aligned = alignEditorScrollToSelection(getController(), shell, 0.25);
+            for (let attempt = 0; !aligned && attempt < 8; attempt++) {
+              await new Promise<void>((resolve) => {
+                requestAnimationFrame(() => resolve());
+              });
+              getController()?.view.requestMeasure();
+              aligned = alignEditorScrollToSelection(getController(), shell, 0.25);
+            }
+          }
+        }
+
+        if (hideForCursorScroll && shell) {
+          await tick();
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => resolve());
+            });
+          });
+        }
+      } finally {
+        if (hideForCursorScroll && shell) {
+          shell.style.visibility = '';
+          shell.style.pointerEvents = '';
+        }
+      }
+    }
+
+    if (shouldRestoreFocus) {
+      getController()?.view.focus();
     }
 
     const nextEditorShell = getEditorShell();
@@ -204,7 +267,7 @@ export function createEditorLifecycleController({
 
       saveSharedEditorStateForDocument();
       closeTransientUi();
-      restoreCursorPosition(controller, cursorPosition);
+      restoreCursorPosition(controller, cursorPosition, { scrollIntoView: false });
       await tick();
 
       const editorShell = getEditorShell();
@@ -226,7 +289,8 @@ export function createEditorLifecycleController({
 
     const controller = getController();
     const cursorPosition =
-      loadCursorPosition(document.currentNotePath, getPaneId()) ?? { anchor: 1, head: 1 };
+      loadCursorPosition(document.currentNotePath, getPaneId(), document.currentNoteId) ??
+      getSharedEditorStateForDocument(document)?.selection ?? { anchor: 0, head: 0 };
 
     setIsApplyingExternalContent(true);
     try {
@@ -263,10 +327,16 @@ export function createEditorLifecycleController({
     }
 
     const sharedEditorState = getSharedEditorStateForDocument(document);
+    const persistedCursor = loadCursorPosition(
+      document.currentNotePath,
+      getPaneId(),
+      document.currentNoteId
+    );
+    const selectionToRestore = persistedCursor ?? sharedEditorState?.selection ?? null;
     if (
       !replaceEditorDocument(getController(), sharedEditorState?.markdown ?? null, {
-        anchor: loadCursorPosition(document.currentNotePath, getPaneId())?.anchor ?? null,
-        head: loadCursorPosition(document.currentNotePath, getPaneId())?.head ?? null,
+        anchor: selectionToRestore?.anchor ?? null,
+        head: selectionToRestore?.head ?? null,
         focus: false,
         scrollSelectionIntoView: false
       })
@@ -278,7 +348,7 @@ export function createEditorLifecycleController({
       return false;
     }
 
-    restoreCursorPositionForDocument(document);
+    restoreCursorPosition(getController(), selectionToRestore);
     await tick();
     return getDocumentSession() === document;
   }

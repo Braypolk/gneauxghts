@@ -1,7 +1,7 @@
-use super::{
-    current_time_millis, prepare_notes_dir, read_indexed_note_from_path, remove_notes_index_entry,
-    upsert_notes_index_entry, NoteSession,
+use super::index_bridge::{
+    read_indexed_note_from_path, remove_notes_index_entry, upsert_notes_index_entry,
 };
+use super::{current_time_millis, prepare_notes_dir, NoteSession};
 use crate::{
     index::{build_indexed_note, AppState},
     note,

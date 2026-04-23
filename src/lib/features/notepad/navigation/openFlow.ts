@@ -20,14 +20,15 @@ export interface OpenContext {
   openNotePath: (
     noteId: string | null,
     notePath: string | null,
-    options?: { currentNoteAlreadySaved?: boolean }
+    options?: { currentNoteAlreadySaved?: boolean; focusEditorAfterOpen?: boolean }
   ) => Promise<void>;
 }
 
 async function ensureNoteContext(
   { currentNoteId, currentNotePath, stopPendingAutosave, openNotePath }: OpenContext,
   nextNoteId: string | null,
-  nextNotePath: string | null
+  nextNotePath: string | null,
+  options: { focusEditorAfterOpen?: boolean } = {}
 ) {
   const shouldOpenDifferentNote =
     (!!nextNoteId && nextNoteId !== currentNoteId) ||
@@ -38,7 +39,7 @@ async function ensureNoteContext(
   }
 
   stopPendingAutosave();
-  await openNotePath(nextNoteId, nextNotePath);
+  await openNotePath(nextNoteId, nextNotePath, options);
   return true;
 }
 
@@ -98,14 +99,17 @@ export async function openSearchResult(
   navigationContext: NavigationContext,
   result: SearchItem
 ) {
-  await ensureNoteContext(openContext, result.noteId ?? null, result.notePath ?? null);
+  const shouldFocus = !isSemanticOnlyResult(result);
+  await ensureNoteContext(openContext, result.noteId ?? null, result.notePath ?? null, {
+    focusEditorAfterOpen: shouldFocus
+  });
   openContext.clearSearch();
 
   await navigateToSectionTarget(
     navigationContext,
     result.sectionLabel,
     result.matchText,
-    !isSemanticOnlyResult(result)
+    shouldFocus
   );
 }
 
@@ -114,7 +118,9 @@ export async function openRecentTask(
   navigationContext: NavigationContext,
   task: RecentTaskItem
 ) {
-  await ensureNoteContext(openContext, task.noteId, task.notePath);
+  await ensureNoteContext(openContext, task.noteId, task.notePath, {
+    focusEditorAfterOpen: true
+  });
   openContext.clearSearch();
 
   await navigateToPendingTaskTarget(navigationContext, {
@@ -137,7 +143,8 @@ export async function openResolvedNoteLink(
       clearSearch: () => {}
     },
     target.noteId,
-    target.notePath
+    target.notePath,
+    { focusEditorAfterOpen: true }
   );
 
   await navigateToSectionTarget(

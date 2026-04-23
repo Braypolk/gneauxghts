@@ -38,11 +38,15 @@ pub(crate) fn list_recent_notes(
     prune_recent_note_ids(&mut persisted_state, &notes_dir);
     write_state(&notes_dir, &persisted_state)?;
 
-    let mut index = state
+    state.ensure_interactive_index(
+        &notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "list_recent_notes",
+    )?;
+    let index = state
         .notes_index
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
-    index.refresh_if_stale(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?;
 
     Ok(collect_recent_note_results(
         &persisted_state.recent_note_ids,
@@ -300,18 +304,19 @@ fn collect_lexical_candidates(
                 ));
             }
 
-            let lexical_entries = {
-                let mut notes_index = state
+            let refresh_outcome = state.ensure_interactive_index(
+                notes_dir,
+                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+                "search_notes_all",
+            )?;
+            let lexical_entries = if refresh_outcome.changed {
+                let notes_index = state
                     .notes_index
                     .lock()
                     .map_err(|_| "Search index lock poisoned".to_string())?;
-                if notes_index
-                    .refresh_if_stale_with_flag(notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE)?
-                {
-                    Some(notes_index.entries.clone())
-                } else {
-                    None
-                }
+                Some(notes_index.entries.clone())
+            } else {
+                None
             };
             if let Some(lexical_entries) = lexical_entries {
                 state.lexical.sync_with_notes_index(&lexical_entries)?;

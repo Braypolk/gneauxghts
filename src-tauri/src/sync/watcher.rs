@@ -3,7 +3,7 @@ use super::{
     VAULT_NOTE_CHANGED_EVENT,
 };
 use crate::{
-    index::{build_indexed_note, AppState},
+    index::AppState,
     state::{is_forgotten_note_path, notes_root},
 };
 use notify::{event::ModifyKind, Event, EventKind};
@@ -78,15 +78,13 @@ fn handle_watched_path_change(
 
         if deleted {
             state.semantic.queue_delete_note(path)?;
-            state.remove_note_indexes(path)?;
         } else {
             let timestamp_millis = current_time_millis()?;
-            let note = build_indexed_note(path, &markdown, timestamp_millis);
-            state.upsert_note_indexes(path.to_path_buf(), note)?;
             state
                 .semantic
                 .queue_note_update(path, markdown, timestamp_millis)?;
         }
+        state.mark_notes_index_dirty(path, "watcher")?;
 
         app_handle
             .emit(VAULT_NOTE_CHANGED_EVENT, payload)
@@ -105,7 +103,7 @@ fn handle_watched_path_change(
                 .map_err(|err| err.to_string())?;
         }
         state.semantic.queue_delete_note(path)?;
-        state.remove_note_indexes(path)?;
+        state.mark_notes_index_dirty(path, "watcher")?;
         app_handle
             .emit(
                 VAULT_NOTE_CHANGED_EVENT,

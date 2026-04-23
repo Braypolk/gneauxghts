@@ -27,7 +27,7 @@ interface WikilinkRuntimeDeps {
   openNotePath: (
     noteId: string | null,
     notePath: string | null,
-    options?: { currentNoteAlreadySaved?: boolean }
+    options?: { currentNoteAlreadySaved?: boolean; focusEditorAfterOpen?: boolean }
   ) => Promise<void>;
   getNavigationContext: () => NavigationContext;
   saveCursorPositionForNote: () => void;

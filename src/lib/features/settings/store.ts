@@ -15,7 +15,14 @@ import type {
   SemanticSettings,
   SemanticStatus
 } from '$lib/types/semantic';
-import { refreshSettingsAfterVaultChange, refreshSettingsForVisibility } from './refreshPolicy';
+import {
+  refreshSettingsAfterVaultChange,
+  refreshSettingsForVisibility
+} from './refreshCoordinator';
+import { loadForgottenNotesSlice } from './loaders/forgottenLoader';
+import { loadSemanticSlice, loadSemanticStatusSlice } from './loaders/semanticLoader';
+import { loadSyncSlice } from './loaders/syncLoader';
+import { loadVaultInfoSlice } from './loaders/vaultLoader';
 
 type SettingsTab = 'general' | 'forgotten';
 type GeneralSection = 'appearance' | 'shortcuts' | 'forgetting' | 'ai' | 'vault' | 'sync' | 'search';
@@ -185,12 +192,7 @@ export function createSettingsStore() {
 
   async function loadSyncState(includeConflicts = true) {
     try {
-      const [nextSyncStatus, nextSyncConflicts] = includeConflicts
-        ? await Promise.all([
-            invoke<SyncStatus>('get_sync_status'),
-            invoke<SyncConflict[]>('list_sync_conflicts')
-          ])
-        : [await invoke<SyncStatus>('get_sync_status'), null];
+      const { status: nextSyncStatus, conflicts: nextSyncConflicts } = await loadSyncSlice(includeConflicts);
       update((state) => ({
         ...state,
         syncStatus: nextSyncStatus,
@@ -209,6 +211,20 @@ export function createSettingsStore() {
     }
   }
 
+  async function loadVaultInfo() {
+    try {
+      const nextVaultInfo = await loadVaultInfoSlice();
+      update((state) => ({
+        ...state,
+        vaultInfo: nextVaultInfo,
+        vaultPathInput:
+          state.vaultPathInput.trim() === '' ? nextVaultInfo.currentPath : state.vaultPathInput
+      }));
+    } catch (error) {
+      console.error('Failed to load vault info:', error);
+    }
+  }
+
   async function loadSemanticStatus() {
     if (semanticStatusRequest) {
       return semanticStatusRequest;
@@ -216,7 +232,7 @@ export function createSettingsStore() {
 
     semanticStatusRequest = (async () => {
       try {
-        patch({ semanticStatus: await invoke<SemanticStatus>('get_semantic_status') });
+        patch({ semanticStatus: await loadSemanticStatusSlice() });
         syncSemanticPolling();
       } catch (error) {
         console.error('Failed to load semantic status:', error);
@@ -235,33 +251,29 @@ export function createSettingsStore() {
 
     semanticStateRequest = (async () => {
       try {
-        const [status, settings, debug, nextVaultInfo, nextSyncStatus, nextSyncConflicts] =
-          await Promise.all([
-            invoke<SemanticStatus>('get_semantic_status'),
-            invoke<SemanticSettings>('get_semantic_settings'),
-            invoke<SemanticDebugSnapshot>('get_semantic_debug_metrics'),
-            invoke<VaultInfo>('get_vault_info'),
-            invoke<SyncStatus>('get_sync_status'),
-            invoke<SyncConflict[]>('list_sync_conflicts')
-          ]);
+        const [semantic, nextVaultInfo, sync] = await Promise.all([
+          loadSemanticSlice(),
+          loadVaultInfoSlice(),
+          loadSyncSlice(true)
+        ]);
 
         update((state) => ({
           ...state,
-          semanticStatus: status,
-          semanticSettings: settings,
-          semanticDebug: debug,
+          semanticStatus: semantic.status,
+          semanticSettings: semantic.settings,
+          semanticDebug: semantic.debug,
           vaultInfo: nextVaultInfo,
-          syncStatus: nextSyncStatus,
-          syncConflicts: nextSyncConflicts,
+          syncStatus: sync.status,
+          syncConflicts: sync.conflicts ?? state.syncConflicts,
           vaultPathInput:
             state.vaultPathInput.trim() === '' ? nextVaultInfo.currentPath : state.vaultPathInput,
           syncBaseUrlInput:
-            state.syncBaseUrlInput.trim() === '' && nextSyncStatus.syncBaseUrl
-              ? nextSyncStatus.syncBaseUrl
+            state.syncBaseUrlInput.trim() === '' && sync.status.syncBaseUrl
+              ? sync.status.syncBaseUrl
               : state.syncBaseUrlInput,
           syncEmailInput:
-            state.syncEmailInput.trim() === '' && nextSyncStatus.authEmail
-              ? nextSyncStatus.authEmail
+            state.syncEmailInput.trim() === '' && sync.status.authEmail
+              ? sync.status.authEmail
               : state.syncEmailInput
         }));
         syncSemanticPolling();
@@ -284,7 +296,7 @@ export function createSettingsStore() {
 
     forgottenNotesRequest = (async () => {
       try {
-        const forgottenNotes = await invoke<ForgottenNoteSummary[]>('list_forgotten_notes');
+        const forgottenNotes = await loadForgottenNotesSlice();
         update((state) => ({
           ...state,
           forgottenNotes,
@@ -395,9 +407,10 @@ export function createSettingsStore() {
       const nextVaultInfo = await invoke<VaultInfo>('set_vault_directory', {
         path: state.vaultPathInput.trim() === '' ? null : state.vaultPathInput.trim()
       });
+      const { status: nextSyncStatus } = await loadSyncSlice(false);
       patch({
         vaultInfo: nextVaultInfo,
-        syncStatus: await invoke<SyncStatus>('get_sync_status')
+        syncStatus: nextSyncStatus
       });
     } catch (error) {
       console.error('Failed to save vault directory:', error);
@@ -647,6 +660,7 @@ export function createSettingsStore() {
         loadSemanticState,
         loadSemanticStatus,
         loadSyncState,
+        loadVaultInfo,
         loadForgottenNotes
       });
       syncSemanticPolling();
@@ -666,6 +680,7 @@ export function createSettingsStore() {
       void refreshSettingsAfterVaultChange({
         loadSemanticStatus,
         loadSyncState,
+        loadVaultInfo,
         loadForgottenNotes
       });
     }, delayMs);

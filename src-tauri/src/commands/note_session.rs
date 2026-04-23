@@ -3,7 +3,7 @@ use crate::{
     note,
     state::{
         is_valid_note_path, read_state, resolve_note_path_by_id, touch_recent_note_id,
-        validate_current_path, write_state,
+        validate_current_path, write_state, PersistedState,
     },
 };
 use std::{fs, path::Path, path::PathBuf};
@@ -18,6 +18,19 @@ fn clear_stale_last_opened_note(state: &mut crate::state::PersistedState, note_i
 fn mark_note_opened(state: &mut crate::state::PersistedState, note_id: String) {
     state.last_opened_note_id = Some(note_id.clone());
     touch_recent_note_id(state, note_id);
+}
+
+fn open_ui_state_already_primary(state: &PersistedState, note_id: &str) -> bool {
+    let normalized = note_id.trim();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    state.last_opened_note_id.as_deref() == Some(normalized)
+        && state
+            .recent_note_ids
+            .first()
+            .is_some_and(|recent_id| recent_id == normalized)
 }
 
 pub(crate) fn load_note_session_from_notes_dir(notes_dir: &Path) -> Result<NoteSession, String> {
@@ -48,13 +61,23 @@ pub(crate) fn open_note_from_notes_dir(
     path: Option<String>,
 ) -> Result<NoteSession, String> {
     let note_path = resolve_note_path_input(notes_dir, note_id, path)?;
-    let resolved_note_id = crate::state::resolve_note_id_from_path(&note_path)?;
+    let session = read_note_session_from_path(&note_path)?;
+    let resolved_note_id = session
+        .note_id
+        .clone()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| "Unable to determine note id".to_string())?;
 
-    let mut state = read_state(notes_dir)?;
+    let state = read_state(notes_dir)?;
+    if open_ui_state_already_primary(&state, &resolved_note_id) {
+        return Ok(session);
+    }
+
+    let mut state = state;
     mark_note_opened(&mut state, resolved_note_id);
     write_state(notes_dir, &state)?;
 
-    read_note_session_from_path(&note_path)
+    Ok(session)
 }
 
 pub(crate) fn read_note_session_from_path(note_path: &Path) -> Result<NoteSession, String> {
