@@ -414,11 +414,14 @@
         semanticSettings={$settings.semanticSettings}
         semanticStatus={$settings.semanticStatus}
         semanticDebug={$settings.semanticDebug}
+        semanticLayerError={$settings.semanticLayerError}
+        semanticLayerMessage={$settings.semanticLayerMessage}
         isSaving={$settings.isSaving}
         isRunningAction={$settings.isRunningAction}
         loadSemanticState={settings.loadSemanticState}
         updateSetting={settings.updateSetting}
         runAction={settings.runAction}
+        downloadEmbeddingModel={settings.downloadEmbeddingModel}
         clearDebugMetrics={settings.clearDebugMetrics}
         {formatTimestamp}
         {formatMillis}

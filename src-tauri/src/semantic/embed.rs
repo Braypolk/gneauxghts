@@ -3,21 +3,25 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
-    io::Read,
+    io::{self, Read, Seek, SeekFrom, Write},
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 
 const MODEL_REPO_ID: &str = "jinaai/jina-embeddings-v5-text-nano-retrieval";
-const MODEL_ID: &str = "jinaai/jina-embeddings-v5-text-nano-retrieval";
-const MODEL_QUANT: &str = "Q6_K";
 const MODEL_FILENAME: &str = "jina-embeddings-v5-text-nano-retrieval-Q6_K.gguf";
+/// File name on the Hugging Face repo `main` branch (llama.cpp `-hf` used a different naming scheme).
+const HF_REPO_GGUF_FILE: &str = "v5-nano-retrieval-Q6_K.gguf";
 const QUERY_PREFIX: &str = "Query: ";
 const DOCUMENT_PREFIX: &str = "Document: ";
+
+/// First load of a large GGUF on slower disks/CPUs can exceed tens of seconds.
+const LLAMA_SERVER_READY_TIMEOUT: Duration = Duration::from_secs(240);
+const LLAMA_SERVER_READY_POLL: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,7 +30,6 @@ pub(crate) struct ModelInfo {
     pub(crate) label: String,
     pub(crate) dimensions: usize,
     pub(crate) local_only: bool,
-    pub(crate) auto_download_supported: bool,
     pub(crate) runtime_binary_path: Option<String>,
     pub(crate) model_path: Option<String>,
     pub(crate) model_repo_id: String,
@@ -43,6 +46,13 @@ pub(crate) enum EmbeddingInputKind {
     Query,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SemanticModelDownloadResult {
+    pub(crate) already_present: bool,
+    pub(crate) path: String,
+}
+
 pub(crate) trait EmbeddingProvider {
     fn embed_texts(
         &self,
@@ -52,6 +62,9 @@ pub(crate) trait EmbeddingProvider {
     fn prepare(&self) -> Result<(), String>;
     fn model_info(&self) -> ModelInfo;
     fn shutdown(&self);
+    fn download_model_if_needed(&self) -> Result<SemanticModelDownloadResult, String> {
+        Err("Embedding model download is not supported.".to_string())
+    }
 }
 
 pub(crate) struct JinaLlamaEmbeddingProvider {
@@ -95,7 +108,6 @@ struct MultiEmbeddingResponse {
 
 enum ModelSource {
     LocalFile(PathBuf),
-    HuggingFaceReference(String),
 }
 
 impl JinaLlamaEmbeddingProvider {
@@ -204,17 +216,14 @@ impl JinaLlamaEmbeddingProvider {
 
         let mut command = Command::new(&runtime_binary);
         command.env("LLAMA_CACHE", &self.model_dir);
+        if let Some(backend_path) = bundled_backend_plugin_path(&runtime_binary) {
+            command.env("GGML_BACKEND_PATH", backend_path);
+        }
         if settings.local_only_mode {
             command.env("LLAMA_OFFLINE", "1");
         }
-        match model_source {
-            ModelSource::LocalFile(model_path) => {
-                command.arg("-m").arg(model_path);
-            }
-            ModelSource::HuggingFaceReference(reference) => {
-                command.arg("-hf").arg(reference);
-            }
-        }
+        let ModelSource::LocalFile(model_path) = model_source;
+        command.arg("-m").arg(model_path);
         let child = command
             .arg("--embeddings")
             .arg("--pooling")
@@ -249,7 +258,8 @@ impl JinaLlamaEmbeddingProvider {
             |metrics| metrics.runtime_spawn_count += 1,
         );
 
-        for _ in 0..60 {
+        let ready_deadline = Instant::now() + LLAMA_SERVER_READY_TIMEOUT;
+        loop {
             if self.server_ready(port) {
                 let mut runtime = self
                     .runtime
@@ -266,13 +276,55 @@ impl JinaLlamaEmbeddingProvider {
                 );
                 return Ok(port);
             }
-            thread::sleep(Duration::from_millis(500));
+
+            if Instant::now() >= ready_deadline {
+                break;
+            }
+
+            let exited_early = {
+                let mut runtime = self
+                    .runtime
+                    .lock()
+                    .map_err(|_| "Embedding runtime lock poisoned".to_string())?;
+                match runtime.server.as_mut() {
+                    Some(child) => match child.try_wait() {
+                        Ok(Some(status)) => Some(status),
+                        Ok(None) | Err(_) => None,
+                    },
+                    None => None,
+                }
+            };
+            if let Some(status) = exited_early {
+                let detail = format_llama_server_exit(&stderr_path, status);
+                self.update_runtime_error(detail.clone());
+                self.debug.record_with_metrics(
+                    "runtime",
+                    "runtime_child_exited_early",
+                    Some(detail.clone()),
+                    None,
+                    |_| {},
+                );
+                self.shutdown_server();
+                return Err(detail);
+            }
+
+            thread::sleep(LLAMA_SERVER_READY_POLL);
         }
 
-        self.update_runtime_error(format!(
-            "Timed out waiting for llama-server. Check {}",
-            stderr_path.display()
-        ));
+        let stderr_tail = read_tail_utf8_lossy(&stderr_path, 6000);
+        let timeout_msg = if stderr_tail.trim().is_empty() {
+            format!(
+                "Timed out after {}s waiting for llama-server on port {port} (model load can be slow on older hardware). Full log: {}. If this repeats, confirm `llama-server` matches your machine (Apple Silicon vs Intel) and that the GGUF is not on a very slow or remote disk.",
+                LLAMA_SERVER_READY_TIMEOUT.as_secs(),
+                stderr_path.display()
+            )
+        } else {
+            format!(
+                "Timed out after {}s waiting for llama-server on port {port}. Last stderr output:\n{stderr_tail}",
+                LLAMA_SERVER_READY_TIMEOUT.as_secs()
+            )
+        };
+        self.update_runtime_error(timeout_msg.clone());
         self.debug.record_with_metrics(
             "runtime",
             "runtime_timeout",
@@ -281,7 +333,7 @@ impl JinaLlamaEmbeddingProvider {
             |metrics| metrics.runtime_timeout_count += 1,
         );
         self.shutdown_server();
-        Err("Timed out waiting for local Jina embedding runtime".to_string())
+        Err(timeout_msg)
     }
 
     fn shutdown_server(&self) {
@@ -311,38 +363,85 @@ impl JinaLlamaEmbeddingProvider {
             return Ok(ModelSource::LocalFile(model_path));
         }
 
-        if settings.local_only_mode {
-            let error = format!(
-                "Model file missing from {} and local-only mode is enabled. Place {} in the llama.cpp cache or disable local-only mode.",
+        let error = if settings.local_only_mode {
+            format!(
+                "Model file missing from {}. Local-only mode blocks network download. Turn off local-only mode and use Download embedding model in Settings, or place {} in this folder.",
                 self.model_dir.display(),
                 MODEL_FILENAME
-            );
-            self.update_runtime_error(error.clone());
-            return Err(error);
-        }
-
-        if !settings.auto_download_model {
-            let error = format!(
-                "Model file missing from {}. Enable auto-download or place {} in the llama.cpp cache manually.",
+            )
+        } else {
+            format!(
+                "Model file missing from {}. Use Download embedding model in Settings (Search), or place {} in this folder.",
                 self.model_dir.display(),
                 MODEL_FILENAME
-            );
-            self.update_runtime_error(error.clone());
-            return Err(error);
-        }
+            )
+        };
+        self.update_runtime_error(error.clone());
+        Err(error)
+    }
 
+    fn download_gguf_from_huggingface(&self) -> Result<(), String> {
         fs::create_dir_all(&self.model_dir).map_err(|err| err.to_string())?;
-        {
-            let mut runtime = self
-                .runtime
-                .lock()
-                .map_err(|_| "Embedding runtime lock poisoned".to_string())?;
-            runtime.status = format!("will download {MODEL_ID}:{MODEL_QUANT} into llama.cpp cache");
-            runtime.last_error = None;
+        let dest = self.model_path();
+        let partial = self.model_dir.join(format!("{MODEL_FILENAME}.partial"));
+        if partial.exists() {
+            let _ = fs::remove_file(&partial);
         }
-        Ok(ModelSource::HuggingFaceReference(format!(
-            "{MODEL_ID}:{MODEL_QUANT}"
-        )))
+
+        let url =
+            format!("https://huggingface.co/{MODEL_REPO_ID}/resolve/main/{HF_REPO_GGUF_FILE}");
+        self.debug.record_with_metrics(
+            "runtime",
+            "model_download_started",
+            Some(url.clone()),
+            None,
+            |_| {},
+        );
+
+        let download_client = Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(7200))
+            .user_agent(concat!("Gneauxghts/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|err| err.to_string())?;
+
+        let mut response = download_client
+            .get(&url)
+            .send()
+            .map_err(|err| format!("Failed to reach Hugging Face: {err}"))?
+            .error_for_status()
+            .map_err(|err| format!("Model download request failed: {err}"))?;
+
+        let mut partial_file = fs::File::create(&partial)
+            .map_err(|err| format!("Could not write download file: {err}"))?;
+        io::copy(&mut response, &mut partial_file)
+            .map_err(|err| format!("Failed while saving the model file: {err}"))?;
+        partial_file
+            .flush()
+            .map_err(|err| format!("Could not finish writing the model file: {err}"))?;
+        drop(partial_file);
+
+        if !is_valid_gguf_file(&partial) {
+            let _ = fs::remove_file(&partial);
+            return Err(
+                "Downloaded data is not a valid GGUF model (file too small or corrupt)."
+                    .to_string(),
+            );
+        }
+
+        fs::rename(&partial, &dest).map_err(|err| {
+            let _ = fs::remove_file(&partial);
+            format!("Could not install the model file: {err}")
+        })?;
+
+        self.debug.record_with_metrics(
+            "runtime",
+            "model_download_completed",
+            Some(dest.display().to_string()),
+            None,
+            |_| {},
+        );
+        Ok(())
     }
 
     fn server_ready(&self, port: u16) -> bool {
@@ -635,22 +734,20 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             "llama-server runtime not installed".to_string()
         } else if cached_model_path.is_none() {
             if settings.local_only_mode {
-                "model missing from llama.cpp cache and local-only mode blocks download".to_string()
-            } else if settings.auto_download_model {
-                "model will download into llama.cpp cache on first semantic use".to_string()
+                "model missing; turn off local-only mode to download, or add the GGUF file manually"
+                    .to_string()
             } else {
-                "model missing from llama.cpp cache".to_string()
+                "model missing; use Download embedding model in Settings".to_string()
             }
         } else {
             "waiting for local runtime".to_string()
         };
 
         ModelInfo {
-            id: MODEL_ID.to_string(),
+            id: MODEL_REPO_ID.to_string(),
             label: "Jina Embeddings v5 Text Nano Retrieval".to_string(),
             dimensions: self.dimensions,
             local_only: settings.local_only_mode,
-            auto_download_supported: true,
             runtime_binary_path: runtime_binary_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
@@ -711,6 +808,50 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
         }
     }
 
+    fn download_model_if_needed(&self) -> Result<SemanticModelDownloadResult, String> {
+        self.shutdown_server();
+        if let Some(path) = self.cached_model_path() {
+            return Ok(SemanticModelDownloadResult {
+                already_present: true,
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+
+        let settings = self
+            .settings
+            .lock()
+            .map_err(|_| "Semantic settings lock poisoned".to_string())?
+            .clone();
+        if settings.local_only_mode {
+            return Err(
+                "Local-only mode is on. Turn it off in Semantic Layer settings to download from Hugging Face, or add the GGUF file manually."
+                    .to_string(),
+            );
+        }
+
+        match self.download_gguf_from_huggingface() {
+            Ok(()) => {
+                let path = self.cached_model_path().ok_or_else(|| {
+                    "Download reported success but the model file is still missing.".to_string()
+                })?;
+                Ok(SemanticModelDownloadResult {
+                    already_present: false,
+                    path: path.to_string_lossy().into_owned(),
+                })
+            }
+            Err(err) => {
+                self.debug.record_with_metrics(
+                    "runtime",
+                    "model_download_failed",
+                    Some(err.clone()),
+                    None,
+                    |_| {},
+                );
+                Err(err)
+            }
+        }
+    }
+
     fn shutdown(&self) {
         self.shutdown_server();
     }
@@ -763,6 +904,52 @@ fn with_prefix(text: &str, prefix: &str) -> String {
     }
 
     format!("{prefix}{text}")
+}
+
+fn read_tail_utf8_lossy(path: &Path, max_bytes: usize) -> String {
+    let Ok(mut file) = fs::File::open(path) else {
+        return String::new();
+    };
+    let Ok(meta) = file.metadata() else {
+        return String::new();
+    };
+    let len = meta.len();
+    let start = len.saturating_sub(max_bytes as u64);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).is_err() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+fn format_llama_server_exit(stderr_path: &Path, status: ExitStatus) -> String {
+    let tail = read_tail_utf8_lossy(stderr_path, 6000);
+    let code = status
+        .code()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "(terminated by signal)".to_string());
+    let mut message = if tail.trim().is_empty() {
+        format!(
+            "llama-server exited with status {code} before the HTTP API was ready. See {}",
+            stderr_path.display()
+        )
+    } else {
+        format!(
+            "llama-server exited with status {code} before the HTTP API was ready. Stderr tail:\n{tail}"
+        )
+    };
+
+    #[cfg(target_os = "macos")]
+    if status.code().is_none() && tail.trim().is_empty() {
+        message.push_str(
+            "\n\nOn macOS, release builds use the bundled llama-server under Resources/bin. Empty logs usually mean the process was killed before it ran (unsigned nested binary after install_name_tool). Rebuild so build.rs can ad-hoc codesign the staged binaries, or set GNEAUXGHTS_LLAMA_SERVER_BIN to a working llama-server (e.g. from Homebrew). Check Console.app for AMFI or kernel messages.",
+        );
+    }
+
+    message
 }
 
 fn find_open_port() -> Result<u16, String> {
@@ -829,6 +1016,22 @@ fn terminate_child(child: &mut Option<Child>) {
             let _ = child.wait();
         }
     }
+}
+
+fn bundled_backend_plugin_path(runtime_binary: &Path) -> Option<PathBuf> {
+    let bin_dir = runtime_binary.parent()?;
+    if bin_dir.file_name().and_then(|name| name.to_str()) != Some("bin") {
+        return None;
+    }
+    let backend_dir = bin_dir.parent()?.join("lib");
+    [
+        "libggml-cpu-apple_m1.so",
+        "libggml-metal.so",
+        "libggml-blas.so",
+    ]
+    .into_iter()
+    .map(|file_name| backend_dir.join(file_name))
+    .find(|path| path.is_file())
 }
 
 fn is_valid_gguf_file(path: &Path) -> bool {

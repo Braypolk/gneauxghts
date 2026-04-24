@@ -13,11 +13,14 @@
     semanticSettings,
     semanticStatus,
     semanticDebug,
+    semanticLayerError,
+    semanticLayerMessage,
     isSaving,
     isRunningAction,
     loadSemanticState,
     updateSetting,
     runAction,
+    downloadEmbeddingModel,
     clearDebugMetrics,
     formatTimestamp,
     formatMillis,
@@ -27,6 +30,8 @@
     semanticSettings: SemanticSettings | null;
     semanticStatus: SemanticStatus | null;
     semanticDebug: SemanticDebugSnapshot | null;
+    semanticLayerError: string | null;
+    semanticLayerMessage: string | null;
     isSaving: boolean;
     isRunningAction: boolean;
     loadSemanticState: () => Promise<void>;
@@ -35,6 +40,7 @@
       value: SemanticSettings[Key]
     ) => void;
     runAction: (command: SemanticAction) => Promise<void>;
+    downloadEmbeddingModel: () => Promise<void>;
     clearDebugMetrics: () => Promise<void>;
     formatTimestamp: (value: number | null) => string;
     formatMillis: (value: number | null) => string;
@@ -92,7 +98,9 @@
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-sm font-medium">Local-only Mode</p>
-              <p class="mt-1 text-xs text-muted-foreground">Refuse any model download flow and stay offline.</p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Stay offline for the semantic runtime. Turn off temporarily to download the embedding model from Hugging Face.
+              </p>
             </div>
             <input
               type="checkbox"
@@ -103,23 +111,17 @@
           </div>
         </label>
 
-        <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <p class="text-sm font-medium">Auto-download Models</p>
-              <p class="mt-1 text-xs text-muted-foreground">Reserved for future runtime providers that need local model files.</p>
-            </div>
-            <input
-              type="checkbox"
-              checked={semanticSettings.autoDownloadModel}
-              onchange={(event) =>
-                updateSetting(
-                  'autoDownloadModel',
-                  (event.currentTarget as HTMLInputElement).checked
-                )}
-            />
-          </div>
-        </label>
+      </div>
+    {/if}
+
+    {#if semanticLayerError}
+      <div class="mt-6 rounded-3xl border border-rose-300/60 bg-rose-50 px-5 py-4 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
+        {semanticLayerError}
+      </div>
+    {/if}
+    {#if semanticLayerMessage}
+      <div class="mt-6 rounded-3xl border border-emerald-300/60 bg-emerald-50 px-5 py-4 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+        {semanticLayerMessage}
       </div>
     {/if}
 
@@ -176,6 +178,15 @@
 
     {#if semanticStatus.platformSupported}
       <div class="mt-6 flex flex-wrap items-center gap-3">
+        <button
+          class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+          type="button"
+          disabled={isRunningAction}
+          onclick={() => void downloadEmbeddingModel()}
+        >
+          Download embedding model
+        </button>
+
         <button
           class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
           type="button"

@@ -1,7 +1,6 @@
 export interface SemanticSettings {
   semanticSearchEnabled: boolean;
   localOnlyMode: boolean;
-  autoDownloadModel: boolean;
   lexicalWeight: number;
   semanticWeight: number;
   graphMinScore: number;
@@ -13,7 +12,6 @@ export interface SemanticModelInfo {
   label: string;
   dimensions: number;
   localOnly: boolean;
-  autoDownloadSupported: boolean;
   runtimeBinaryPath: string | null;
   modelPath: string | null;
   modelRepoId: string;
@@ -22,6 +20,11 @@ export interface SemanticModelInfo {
   ready: boolean;
   status: string;
   error: string | null;
+}
+
+export interface SemanticModelDownloadResult {
+  alreadyPresent: boolean;
+  path: string;
 }
 
 export interface SemanticIndexJob {

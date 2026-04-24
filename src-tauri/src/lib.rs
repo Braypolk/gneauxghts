@@ -97,6 +97,7 @@ pub fn run() {
             commands::pause_semantic_indexing,
             commands::resume_semantic_indexing,
             commands::prepare_semantic_model,
+            commands::download_semantic_embedding_model,
             ai::get_ai_settings,
             ai::set_ai_settings,
             ai::get_ai_diagnostics,

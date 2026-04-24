@@ -15,7 +15,10 @@ pub(crate) use note_session::{
 
 use crate::{
     index::AppState,
-    semantic::{debug::SemanticDebugSnapshot, SemanticSettings, SemanticStatus},
+    semantic::{
+        debug::SemanticDebugSnapshot, embed::SemanticModelDownloadResult, SemanticSettings,
+        SemanticStatus,
+    },
     state::{current_vault_info, notes_root, set_notes_root, VaultInfo},
     sync::{self, SyncConflict, SyncConflictDetail, SyncStatus},
     time::current_time_millis,
@@ -411,6 +414,16 @@ pub(crate) fn resume_semantic_indexing(state: State<'_, AppState>) -> Result<(),
 pub(crate) async fn prepare_semantic_model(state: State<'_, AppState>) -> Result<(), String> {
     let semantic = state.semantic.clone();
     tauri::async_runtime::spawn_blocking(move || semantic.prepare_model())
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn download_semantic_embedding_model(
+    state: State<'_, AppState>,
+) -> Result<SemanticModelDownloadResult, String> {
+    let semantic = state.semantic.clone();
+    tauri::async_runtime::spawn_blocking(move || semantic.download_embedding_model())
         .await
         .map_err(|err| err.to_string())?
 }

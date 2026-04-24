@@ -12,6 +12,7 @@ import type {
 } from '$lib/types/sync';
 import type {
   SemanticDebugSnapshot,
+  SemanticModelDownloadResult,
   SemanticSettings,
   SemanticStatus
 } from '$lib/types/semantic';
@@ -66,6 +67,8 @@ interface SettingsState {
   isUpdatingForgottenNotes: boolean;
   isSaving: boolean;
   isRunningAction: boolean;
+  semanticLayerError: string | null;
+  semanticLayerMessage: string | null;
 }
 
 function createInitialState(): SettingsState {
@@ -101,7 +104,9 @@ function createInitialState(): SettingsState {
     isLoadingForgottenNotes: false,
     isUpdatingForgottenNotes: false,
     isSaving: false,
-    isRunningAction: false
+    isRunningAction: false,
+    semanticLayerError: null,
+    semanticLayerMessage: null
   };
 }
 
@@ -380,12 +385,36 @@ export function createSettingsStore() {
   }
 
   async function runAction(command: SemanticAction) {
-    patch({ isRunningAction: true });
+    patch({ isRunningAction: true, semanticLayerError: null, semanticLayerMessage: null });
     try {
       await invoke(command);
       await loadSemanticState();
     } catch (error) {
       console.error(`Failed to run ${command}:`, error);
+      patch({ semanticLayerError: String(error), semanticLayerMessage: null });
+    } finally {
+      patch({ isRunningAction: false });
+    }
+  }
+
+  async function downloadEmbeddingModel() {
+    patch({
+      isRunningAction: true,
+      semanticLayerError: null,
+      semanticLayerMessage: null
+    });
+    try {
+      const result = await invoke<SemanticModelDownloadResult>('download_semantic_embedding_model');
+      patch({
+        semanticLayerMessage: result.alreadyPresent
+          ? 'Embedding model is already installed.'
+          : 'Embedding model downloaded successfully.',
+        semanticLayerError: null
+      });
+      await loadSemanticState();
+    } catch (error) {
+      console.error('Failed to download embedding model:', error);
+      patch({ semanticLayerError: String(error), semanticLayerMessage: null });
     } finally {
       patch({ isRunningAction: false });
     }
@@ -725,6 +754,7 @@ export function createSettingsStore() {
     loadSemanticState,
     updateSetting,
     runAction,
+    downloadEmbeddingModel,
     clearDebugMetrics,
     saveVaultDirectory,
     requestMagicLink,

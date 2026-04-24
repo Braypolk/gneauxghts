@@ -40,7 +40,6 @@ use std::{
 pub(crate) struct SemanticSettings {
     pub(crate) semantic_search_enabled: bool,
     pub(crate) local_only_mode: bool,
-    pub(crate) auto_download_model: bool,
     pub(crate) lexical_weight: f32,
     pub(crate) semantic_weight: f32,
     pub(crate) graph_min_score: f32,
@@ -52,7 +51,6 @@ impl Default for SemanticSettings {
         Self {
             semantic_search_enabled: true,
             local_only_mode: true,
-            auto_download_model: false,
             lexical_weight: 0.5,
             semantic_weight: 0.4,
             graph_min_score: 0.46,
@@ -356,6 +354,17 @@ impl SemanticState {
         match &self.inner {
             SemanticStateInner::Active(state) => state.provider.prepare(),
             SemanticStateInner::Disabled(_) => Ok(()),
+        }
+    }
+
+    pub(crate) fn download_embedding_model(
+        &self,
+    ) -> Result<embed::SemanticModelDownloadResult, String> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => state.provider.download_model_if_needed(),
+            SemanticStateInner::Disabled(_) => {
+                Err("Semantic search is disabled on this platform.".to_string())
+            }
         }
     }
 
@@ -738,7 +747,6 @@ impl DisabledSemanticState {
                 label: "Semantic Search Disabled".to_string(),
                 dimensions: 0,
                 local_only: true,
-                auto_download_supported: false,
                 runtime_binary_path: None,
                 model_path: None,
                 model_repo_id: String::new(),
