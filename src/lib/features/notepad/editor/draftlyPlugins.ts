@@ -11,7 +11,6 @@ import { LinkPlugin } from 'draftly/src/plugins/link-plugin';
 import { ListPlugin } from 'draftly/src/plugins/list-plugin';
 import { ParagraphPlugin } from 'draftly/src/plugins/paragraph-plugin';
 import { QuotePlugin } from 'draftly/src/plugins/quote-plugin';
-import { TablePlugin } from 'draftly/src/plugins/table-plugin';
 
 // Keep the editor on the smaller plugin surface the app actively uses.
 // Draftly's bundled `allPlugins` also pulls in Mermaid and Math support,
@@ -22,7 +21,6 @@ export const notepadDraftlyPlugins = [
   new InlinePlugin(),
   new LinkPlugin(),
   new ListPlugin(),
-  new TablePlugin(),
   new HTMLPlugin(),
   new ImagePlugin(),
   new CodePlugin(),

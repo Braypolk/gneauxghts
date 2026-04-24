@@ -63,6 +63,7 @@
   const DRAG_REHEAT_ALPHA = 0.16;
   const SETTLE_STOP_ALPHA = 0.045;
   const POSITION_SAVE_EPSILON = 0.75;
+  const PENDING_MAP_NOTE_PATH_KEY = 'gneauxghts:pending-map-note-path';
 
   interface Props {
     data: GraphData;
@@ -281,7 +282,8 @@
         tooltipNode = null;
       })
       .on('click', (_event: MouseEvent, d: SimNode) => {
-        void invoke('open_note', { path: d.path }).then(() => goto('/'));
+        window.sessionStorage.setItem(PENDING_MAP_NOTE_PATH_KEY, d.path);
+        void goto('/');
       });
 
     const dragBehavior = d3Drag<SVGCircleElement, SimNode>()

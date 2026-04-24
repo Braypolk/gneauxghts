@@ -330,6 +330,82 @@ function replaceBlock(view: EditorView, block: BlockDescriptor, insert: string, 
   });
 }
 
+function getSelectedLineRange(state: EditorState) {
+  const selection = state.selection.main;
+  if (selection.empty) {
+    return null;
+  }
+
+  const startLine = state.doc.lineAt(selection.from);
+  let endLine = state.doc.lineAt(selection.to);
+  if (selection.to > selection.from && selection.to === endLine.from && endLine.number > startLine.number) {
+    endLine = state.doc.line(endLine.number - 1);
+  }
+
+  return {
+    from: startLine.from,
+    to: endLine.to,
+    startLine: startLine.number,
+    endLine: endLine.number
+  };
+}
+
+function transformLine(text: string, id: string, index: number) {
+  if (id === 'paragraph') {
+    return toParagraph(text);
+  }
+
+  if (id.startsWith('heading')) {
+    const level = Number.parseInt(id.replace('heading', ''), 10);
+    if (!Number.isFinite(level) || level < 1 || level > 6) {
+      return null;
+    }
+    return toHeading(text, level);
+  }
+
+  if (id === 'quote') {
+    return toQuote(text);
+  }
+
+  if (id === 'bulletList' || id === 'orderedList' || id === 'taskList') {
+    const line = toList(text, id);
+    return id === 'orderedList' ? line.replace(/^1\./, `${index + 1}.`) : line;
+  }
+
+  if (id === 'divider') {
+    return '---';
+  }
+
+  return null;
+}
+
+function applyBlockTypeToSelectedLines(view: EditorView, id: string) {
+  const range = getSelectedLineRange(view.state);
+  if (!range || id === 'wikilink') {
+    return false;
+  }
+
+  const text = view.state.sliceDoc(range.from, range.to);
+  const insert =
+    id === 'code'
+      ? toCode(text)
+      : text
+          .split('\n')
+          .map((line, index) => transformLine(line, id, index))
+          .filter((line): line is string => line !== null)
+          .join('\n');
+
+  if (!insert) {
+    return false;
+  }
+
+  return applySpec(view, {
+    changes: { from: range.from, to: range.to, insert },
+    selection: { anchor: range.from, head: range.from + insert.length },
+    scrollIntoView: true
+  });
+}
+
 function normalizeToParagraphLines(text: string) {
   const lines = text.split('\n');
 
@@ -379,6 +455,10 @@ export function applyBlockTypeSelection(
   id: string,
   blockOverride: BlockDescriptor | null = null
 ) {
+  if (!blockOverride && applyBlockTypeToSelectedLines(view, id)) {
+    return true;
+  }
+
   const block = blockOverride ?? describeBlockAt(view.state, view.state.selection.main.head);
   if (!block) {
     return false;

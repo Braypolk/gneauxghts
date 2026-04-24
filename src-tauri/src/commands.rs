@@ -107,6 +107,8 @@ pub(crate) struct TaskListItem {
     note_collapsed: bool,
     depth: usize,
     line_number: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    editor_line_number: Option<usize>,
     created_at_millis: u64,
     updated_at_millis: u64,
 }
@@ -884,6 +886,7 @@ mod tests {
             note_collapsed: true,
             depth: 2,
             line_number: 14,
+            editor_line_number: Some(9),
             created_at_millis: 111,
             updated_at_millis: 222,
         };
@@ -922,6 +925,7 @@ mod tests {
                 "noteCollapsed": true,
                 "depth": 2,
                 "lineNumber": 14,
+                "editorLineNumber": 9,
                 "createdAtMillis": 111,
                 "updatedAtMillis": 222,
             })

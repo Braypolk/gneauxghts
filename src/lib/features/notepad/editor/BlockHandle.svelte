@@ -117,16 +117,25 @@
     margin: 0;
     padding: 0;
     border-radius: 999px;
-    border: 1px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
+    border: 1px solid transparent;
     background: color-mix(in oklab, var(--card) 94%, var(--background));
     color: inherit;
     cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease;
   }
 
   .notepad-block-handle__action :global(svg) {
     display: block;
     width: 1.15rem;
     height: 1.15rem;
+  }
+
+  .notepad-block-handle__action:hover,
+  .notepad-block-handle__action:focus-visible,
+  .notepad-block-handle__action:global(.active) {
+    border-color: color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
   }
 
   .notepad-block-handle__action:global(.active) {

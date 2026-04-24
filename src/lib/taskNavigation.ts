@@ -6,6 +6,8 @@ export interface PendingTaskTarget {
   text: string;
   lineNumber: number;
   sectionLabel: string | null;
+  /** 1-based line in the editor document (body), when provided by the task index. */
+  editorLineNumber?: number;
 }
 
 export function storePendingTaskTarget(target: PendingTaskTarget) {

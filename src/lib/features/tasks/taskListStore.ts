@@ -17,6 +17,7 @@ export interface TaskItem {
   noteCollapsed: boolean;
   depth: number;
   lineNumber: number;
+  editorLineNumber?: number;
   createdAtMillis: number;
   updatedAtMillis: number;
 }
@@ -330,17 +331,17 @@ export function createTaskListStore() {
 
   async function openTask(task: TaskItem) {
     try {
-      await invoke('open_note', { noteId: task.noteId, path: task.notePath });
       storePendingTaskTarget({
         noteId: task.noteId,
         notePath: task.notePath,
         text: task.text,
         lineNumber: task.lineNumber,
-        sectionLabel: task.sectionLabel
+        sectionLabel: task.sectionLabel,
+        ...(task.editorLineNumber != null ? { editorLineNumber: task.editorLineNumber } : {})
       });
       await goto('/');
     } catch (error) {
-      console.error('Failed to open task note:', error);
+      console.error('Failed to navigate to note for task:', error);
       patch({ errorMessage: `Unable to open ${task.noteTitle}.` });
     }
   }

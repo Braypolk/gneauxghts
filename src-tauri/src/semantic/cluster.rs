@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::similarity::cosine_similarity;
 
-const MAX_CLUSTER_NOTES: usize = 18;
+const MAX_CLUSTER_NOTES: usize = 7;
 const MIN_COLOR_GROUPS: usize = 2;
 const MAX_COLOR_GROUPS: usize = 5;
 
@@ -839,6 +839,18 @@ mod tests {
         assert!(clusters
             .iter()
             .all(|cluster| cluster.len() <= MAX_CLUSTER_NOTES));
+    }
+
+    #[test]
+    fn split_oversized_clusters_limits_blobs_to_seven_notes() {
+        let embeddings = (0..8)
+            .map(|index| (format!("{index}.md"), vec![1.0, 0.0, 0.0]))
+            .collect::<Vec<_>>();
+        let assignments = split_oversized_clusters(&embeddings, vec![0; embeddings.len()]);
+        let clusters = build_cluster_members(&assignments);
+
+        assert!(clusters.len() > 1);
+        assert!(clusters.iter().all(|cluster| cluster.len() <= 7));
     }
 
     #[test]

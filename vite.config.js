@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { sveltekit } from "@sveltejs/kit/vite";
@@ -56,6 +57,11 @@ export default defineConfig(async () => ({
         },
       },
     },
+  },
+  test: {
+    environment: "node",
+    globals: true,
+    include: ["src/**/*.test.ts"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

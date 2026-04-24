@@ -222,6 +222,7 @@ pub(super) fn list_tasks(
                 note_collapsed,
                 depth: task.depth,
                 line_number: task.line_number,
+                editor_line_number: task.editor_line_number,
                 created_at_millis: timestamps.created_at_millis,
                 updated_at_millis: timestamps.updated_at_millis,
             }));

@@ -179,6 +179,8 @@ pub(crate) struct IndexedTask {
     pub(crate) completed: bool,
     pub(crate) depth: usize,
     pub(crate) line_number: usize,
+    /// 1-based line number in the editor body (`strip_leading_title_heading(strip_frontmatter(file))`).
+    pub(crate) editor_line_number: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -590,6 +592,33 @@ fn finalize_paragraph(lines: &[String], paragraph_index: usize) -> Option<Indexe
     })
 }
 
+fn file_line_to_editor_line_1based(full_markdown: &str, file_line_1based: usize) -> Option<usize> {
+    let normalized = full_markdown.replace("\r\n", "\n");
+    let full_lines: Vec<&str> = normalized.lines().collect();
+    let target_idx = file_line_1based.checked_sub(1)?;
+    if target_idx >= full_lines.len() {
+        return None;
+    }
+
+    let needle = full_lines[target_idx];
+    let occurrence = (0..=target_idx)
+        .filter(|&idx| full_lines[idx] == needle)
+        .count();
+
+    let body = note::extract_file_name_title_and_body(&normalized, "").1;
+    let mut seen = 0usize;
+    for (idx, line) in body.lines().enumerate() {
+        if line == needle {
+            seen += 1;
+            if seen == occurrence {
+                return Some(idx + 1);
+            }
+        }
+    }
+
+    None
+}
+
 fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
     let normalized = markdown.replace("\r\n", "\n");
     let lines = normalized.lines().collect::<Vec<_>>();
@@ -615,12 +644,14 @@ fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
         }
 
         if let Some((completed, text, indentation_width)) = parse_task_line(line) {
+            let file_line = line_index + 1;
             tasks.push(IndexedTask {
                 section_label: section_label.clone(),
                 text,
                 completed,
                 depth: task_depth(indentation_width, &mut indent_levels),
-                line_number: line_index + 1,
+                line_number: file_line,
+                editor_line_number: file_line_to_editor_line_1based(&normalized, file_line),
             });
         }
     }
@@ -764,6 +795,7 @@ mod tests {
                 "completed": task.completed,
                 "depth": task.depth,
                 "lineNumber": task.line_number,
+                "editorLineNumber": task.editor_line_number,
             })).collect::<Vec<_>>(),
         });
 

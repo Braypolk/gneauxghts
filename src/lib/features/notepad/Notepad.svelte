@@ -54,7 +54,6 @@
     resolveAssetRootPath,
     restoreForgottenNotes,
     saveNoteSession,
-    shouldSkipAutosave,
     storePastedImageAsset,
     type ForgottenNote,
     type SessionSnapshot
@@ -77,10 +76,6 @@
   } from '$lib/features/notepad/editor/SlashMenu.svelte';
   import WikilinkAutocomplete from '$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte';
   import RelatedPanel from '$lib/features/notepad/related/RelatedPanel.svelte';
-  import {
-    applySelectedHunks,
-    type ReviewUpdateChange
-  } from '$lib/features/inbox/reviewDiff';
   import ProposalReviewList from '$lib/features/proposals/ProposalReviewList.svelte';
   import {
     EMPTY_RELATED_REASON,
@@ -92,6 +87,21 @@
     createNotepadRefreshController,
     type VaultNoteChangeEvent
   } from '$lib/features/notepad/orchestration/notepadRefreshController';
+  import {
+    createPaneSessionController,
+    findSplitPickerPreviousItem,
+    getSplitSourceNote,
+    splitPickerNoteLabel,
+    splitPickerPreviousNoteLabel as buildSplitPickerPreviousNoteLabel
+  } from '$lib/features/notepad/orchestration/paneSessionController';
+  import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
+  import {
+    buildProposalPreview,
+    getCurrentProposalUpdate,
+    getProposalChangesForDocument as getDocumentProposalChanges,
+    getProposalDisplayTitle,
+    isDocumentUnderProposal as isProposalDocument
+  } from '$lib/features/notepad/orchestration/proposalController';
   import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
   import { createNotepadSearchStore } from '$lib/features/notepad/search/store';
   import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
@@ -146,6 +156,7 @@
 
   type PaneId = NotepadPaneId;
   type PaneKind = 'editor' | 'chat';
+  const PENDING_MAP_NOTE_PATH_KEY = 'gneauxghts:pending-map-note-path';
 
   interface PaneUiState {
     isEditorReady: boolean;
@@ -236,69 +247,23 @@
   let splitPickerHighlightedIndex = $state(0);
   let splitPickerFocusEl = $state<HTMLElement | null>(null);
 
-  let splitPickerCurrentNoteLabel = $derived.by(() => {
-    if (!splitPickerSourceNoteKey) {
-      return 'Untitled note';
-    }
-
-    const note = notepadState.notesByKey[splitPickerSourceNoteKey];
-    if (!note) {
-      return 'Untitled note';
-    }
-
-    const trimmed = note.title.trim();
-    if (trimmed) {
-      return trimmed;
-    }
-
-    const path = note.currentNotePath;
-    if (path) {
-      return path.split('/').pop()?.replace(/\.md$/i, '') ?? 'Untitled note';
-    }
-
-    return 'Untitled note';
-  });
-
-  function searchItemMatchesSplitSource(item: SearchItem, path: string | null, id: string | null) {
-    const itemPath = item.notePath ?? null;
-    const itemId = item.noteId ?? null;
-    if (path && itemPath) {
-      return path === itemPath;
-    }
-
-    if (!path && !itemPath) {
-      return (id ?? null) === (itemId ?? null);
-    }
-
-    return false;
-  }
+  let splitPickerCurrentNoteLabel = $derived.by(() =>
+    splitPickerNoteLabel(getSplitSourceNote(notepadState, splitPickerSourceNoteKey))
+  );
 
   let splitPickerPreviousItem = $derived.by((): SearchItem | null => {
     if (splitPickerPaneId === null || !splitPickerSourceNoteKey) {
       return null;
     }
 
-    const source = notepadState.notesByKey[splitPickerSourceNoteKey];
-    const path = source?.currentNotePath ?? null;
-    const id = source?.currentNoteId ?? null;
-
-    for (const item of $searchState.recentNotes) {
-      if (searchItemMatchesSplitSource(item, path, id)) {
-        continue;
-      }
-
-      return item;
-    }
-
-    return null;
+    return findSplitPickerPreviousItem(
+      $searchState.recentNotes,
+      getSplitSourceNote(notepadState, splitPickerSourceNoteKey)
+    );
   });
 
   let splitPickerPreviousNoteLabel = $derived(
-    splitPickerPreviousItem
-      ? splitPickerPreviousItem.fileName?.trim() ||
-          splitPickerPreviousItem.notePath ||
-          'Recent note'
-      : null
+    buildSplitPickerPreviousNoteLabel(splitPickerPreviousItem)
   );
 
   function getPaneKind(paneId: PaneId) {
@@ -356,21 +321,22 @@
     };
   }
 
-  function getVisiblePaneIds() {
-    return paneOrder;
-  }
+  const paneSessionController = createPaneSessionController<PaneId>({
+    getPaneOrder: () => paneOrder,
+    getActivePaneId: () => activePaneId,
+    getPaneKind,
+    getPaneDocumentSession,
+    activatePaneSession,
+    setPaneDocumentSession
+  });
 
-  function getEditorPaneIds() {
-    return getVisiblePaneIds().filter((paneId) => getPaneKind(paneId) === 'editor');
-  }
-
-  function getNavigationPaneId() {
-    if (getPaneKind(activePaneId) === 'editor') {
-      return activePaneId;
-    }
-
-    return getEditorPaneIds()[0] ?? activePaneId;
-  }
+  const {
+    getEditorPaneIds,
+    getNavigationPaneId,
+    getNextPaneId,
+    getPaneIdsForDocument,
+    getVisiblePaneIds
+  } = paneSessionController;
 
   function focusTitleAtEnd(paneId: PaneId = getNavigationPaneId()) {
     focusInputAtEnd(getPaneTitleInput(paneId));
@@ -421,12 +387,6 @@
     activePaneId = paneId;
     setStoreActivePane(notepadState, paneId);
     return getPaneState(notepadState, paneId);
-  }
-
-  function getPaneIdsForDocument(document: NoteDraftState) {
-    return getVisiblePaneIds().filter(
-      (paneId) => getPaneKind(paneId) === 'editor' && getPaneDocumentSession(paneId).key === document.key
-    );
   }
 
   function setRecentlyForgotten(value: ForgottenNote | null) {
@@ -1060,11 +1020,6 @@
     paneStates[paneId].wikilinkAutocomplete = nextState;
   }
 
-  const paneControllers = {
-    [PRIMARY_PANE_ID]: createPaneRuntime(PRIMARY_PANE_ID),
-    [SECONDARY_PANE_ID]: createPaneRuntime(SECONDARY_PANE_ID)
-  } as const;
-
   function createPaneRuntime(paneId: PaneId) {
     const editorLifecycleController = createEditorLifecycleController({
       getController: () => getPaneController(paneId),
@@ -1125,35 +1080,6 @@
     };
   }
 
-  function hasCleanBuffer(note: NoteDraftState = getDocumentSession()) {
-    return shouldSkipAutosave(
-      note.title,
-      note.bodyMarkdown,
-      note.currentNoteId,
-      note.currentNotePath,
-      note
-    );
-  }
-
-  function invalidatePendingSaveResults(note: NoteDraftState = getDocumentSession()) {
-    note.operationRevision += 1;
-  }
-
-  function getNoteSaveQueue(noteKey: NoteKey) {
-    return noteSaveQueues.get(noteKey) ?? Promise.resolve();
-  }
-
-  function queueNoteOperation(note: NoteDraftState, operation: () => Promise<void>) {
-    const queue = getNoteSaveQueue(note.key)
-      .then(operation)
-      .catch((error) => {
-        console.error('Notepad note operation failed:', error);
-        setNoteStatus(note, 'error');
-      });
-    noteSaveQueues.set(note.key, queue);
-    return queue;
-  }
-
   function rekeyNoteWithRuntime(note: NoteDraftState, snapshot: SessionSnapshot) {
     const nextKey = noteKeyFromPath(snapshot.currentNotePath);
     if (!nextKey || nextKey === note.key) {
@@ -1169,70 +1095,27 @@
     return nextNote;
   }
 
-  async function persistNote(note: NoteDraftState) {
-    const operationRevision = note.operationRevision;
-    const title = note.title;
-    const markdown = note.bodyMarkdown;
-    const currentNoteId = note.currentNoteId;
-    const currentNotePath = note.currentNotePath;
+  const {
+    cancelPendingAutosave,
+    enqueueSave,
+    flushPendingAutosave,
+    getNoteSaveQueue,
+    hasCleanBuffer,
+    invalidatePendingSaveResults,
+    scheduleAutosave
+  } = createNotepadPersistenceController({
+    getDocumentSession,
+    timers: noteSaveTimers,
+    queues: noteSaveQueues,
+    saveNoteSession,
+    rekeyNoteWithRuntime,
+    scheduleAutoSync
+  });
 
-    if (shouldSkipAutosave(title, markdown, currentNoteId, currentNotePath, note)) {
-      return;
-    }
-
-    setNoteStatus(note, 'saving');
-    const savedSession = await saveNoteSession(title, markdown, currentNotePath);
-    if (note.operationRevision !== operationRevision) {
-      return;
-    }
-
-    const preserveDraft =
-      note.title !== title ||
-      note.bodyMarkdown !== markdown ||
-      note.currentNoteId !== currentNoteId ||
-      note.currentNotePath !== currentNotePath;
-
-    const savedNote = rekeyNoteWithRuntime(note, savedSession);
-    applySnapshotToNote(savedNote, savedSession, { preserveDraft });
-    setNoteStatus(savedNote, 'idle');
-    scheduleAutoSync('note-saved', 600);
-  }
-
-  function scheduleAutosave(note: NoteDraftState = getDocumentSession()) {
-    cancelPendingAutosave(note);
-    noteSaveTimers.set(
-      note.key,
-      window.setTimeout(() => {
-        noteSaveTimers.delete(note.key);
-        void enqueueSave(note);
-      }, 1000)
-    );
-  }
-
-  function cancelPendingAutosave(note: NoteDraftState = getDocumentSession()) {
-    const pendingTimer = noteSaveTimers.get(note.key);
-    if (!pendingTimer) {
-      return;
-    }
-
-    window.clearTimeout(pendingTimer);
-    noteSaveTimers.delete(note.key);
-  }
-
-  async function enqueueSave(note: NoteDraftState = getDocumentSession()) {
-    return queueNoteOperation(note, () => persistNote(note));
-  }
-
-  function flushPendingAutosave(note: NoteDraftState = getDocumentSession()) {
-    const pendingTimer = noteSaveTimers.get(note.key);
-    if (!pendingTimer) {
-      return;
-    }
-
-    window.clearTimeout(pendingTimer);
-    noteSaveTimers.delete(note.key);
-    void enqueueSave(note);
-  }
+  const paneControllers = {
+    [PRIMARY_PANE_ID]: createPaneRuntime(PRIMARY_PANE_ID),
+    [SECONDARY_PANE_ID]: createPaneRuntime(SECONDARY_PANE_ID)
+  } as const;
 
   async function replaceNoteAcrossPanes(
     previousNote: NoteDraftState,
@@ -1290,6 +1173,16 @@
       console.error('Failed to load vault info for image assets:', error);
       updateSharedEditorResourceConfig(null, storePastedImageAsset);
     }
+  }
+
+  function consumePendingMapNotePath() {
+    const notePath = window.sessionStorage.getItem(PENDING_MAP_NOTE_PATH_KEY);
+    if (!notePath) {
+      return null;
+    }
+
+    window.sessionStorage.removeItem(PENDING_MAP_NOTE_PATH_KEY);
+    return notePath;
   }
 
   async function refreshCurrentNoteIfChanged() {
@@ -1558,52 +1451,21 @@
   let currentProposalChanges = $derived.by(() =>
     getProposalChangesForPath($activeProposalSession, documentSession.currentNotePath)
   );
-  let currentProposalUpdate = $derived.by<ReviewUpdateChange | null>(() => {
-    const update = currentProposalChanges.find(
-      (reviewChange): reviewChange is ReviewUpdateChange => reviewChange.kind === 'updateNote'
-    );
-    return update ?? null;
-  });
-  let currentProposalPreview = $derived.by(() => {
-    if (!currentProposalUpdate) {
-      return null;
-    }
-
-    return {
-      title: currentProposalUpdate.titleSelected
-        ? currentProposalUpdate.proposedTitle
-        : currentProposalUpdate.currentTitle,
-      markdown: applySelectedHunks(
-        currentProposalUpdate.currentMarkdown,
-        currentProposalUpdate.hunks.filter((hunk) => hunk.selected)
-      )
-    };
-  });
+  let currentProposalUpdate = $derived.by(() => getCurrentProposalUpdate(currentProposalChanges));
+  let currentProposalPreview = $derived.by(() => buildProposalPreview(currentProposalUpdate));
   let hasCurrentProposalReview = $derived(currentProposalChanges.length > 0);
   let isCurrentNoteUnderProposal = $derived(hasCurrentProposalReview);
 
   function getProposalChangesForDocument(document: NoteDraftState) {
-    return getProposalChangesForPath($activeProposalSession, document.currentNotePath);
+    return getDocumentProposalChanges($activeProposalSession, document);
   }
 
   function isDocumentUnderProposal(document: NoteDraftState) {
-    return getProposalChangesForDocument(document).length > 0;
+    return isProposalDocument($activeProposalSession, document);
   }
 
   function getPaneDisplayTitle(paneId: PaneId) {
-    const paneDocument = getPaneDocumentSession(paneId);
-    const proposalChanges = getProposalChangesForDocument(paneDocument);
-    const proposalUpdate = proposalChanges.find(
-      (reviewChange): reviewChange is ReviewUpdateChange => reviewChange.kind === 'updateNote'
-    );
-
-    if (!proposalUpdate) {
-      return paneDocument.title;
-    }
-
-    return proposalUpdate.titleSelected
-      ? proposalUpdate.proposedTitle
-      : proposalUpdate.currentTitle;
+    return getProposalDisplayTitle($activeProposalSession, getPaneDocumentSession(paneId));
   }
 
   function handleActiveWikilinkChange(paneId: PaneId, nextActiveWikilink: ActiveWikilink | null) {
@@ -1762,20 +1624,6 @@
 
     activatePaneSession((paneOrder[0] ?? PRIMARY_PANE_ID) as PaneId);
     updateSelectedRelatedText();
-  }
-
-  function getNextPaneId(paneId: PaneId = activePaneId, direction: 1 | -1 = 1) {
-    if (paneOrder.length < 2) {
-      return null;
-    }
-
-    const currentIndex = paneOrder.indexOf(paneId);
-    if (currentIndex === -1) {
-      return paneOrder[0] ?? null;
-    }
-
-    const nextIndex = (currentIndex + direction + paneOrder.length) % paneOrder.length;
-    return paneOrder[nextIndex] ?? null;
   }
 
   function focusPaneAfterShortcut(paneId: PaneId, options: { preferTitle?: boolean } = {}) {
@@ -2049,8 +1897,16 @@
         await ensurePaneEditors();
         updateRelatedDrawerLayout();
         scheduleRelated({ immediate: true });
+        const pendingMapNotePath = consumePendingMapNotePath();
+        if (pendingMapNotePath) {
+          await openNotePath(pendingMapNotePath, { focusEditorAfterOpen: false });
+        }
         const pendingTaskTarget = consumePendingTaskTarget();
         if (pendingTaskTarget) {
+          await openNotePath(pendingTaskTarget.notePath, {
+            noteId: pendingTaskTarget.noteId,
+            focusEditorAfterOpen: false
+          });
           await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
         }
         vaultNoteChangeUnlisten = await listen<VaultNoteChangeEvent>(
@@ -2143,7 +1999,7 @@
 
 <div bind:this={workspaceShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
   <div
-    class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm sm:rounded-[2rem] sm:border"
+    class="notepad-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm sm:rounded-[2rem] sm:border"
     style={getCardStyle($relatedState.panelPlacement, $relatedState.reservedWidth)}
   >
     <div class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"></div>
@@ -2569,6 +2425,11 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  .notepad-card {
+    transition: width 300ms ease-out;
+    will-change: width;
+  }
+
   .notepad-bottom-bar {
     bottom: var(--keyboard-inset-height, 0px);
     transition: bottom 180ms ease;
@@ -2684,18 +2545,18 @@
     margin: 0;
     padding-top: 1.15rem;
     padding-bottom: 0.45rem;
-    font-size: 2rem;
+    font-size: 1.75rem;
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1.3;
   }
 
   .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h2) {
     margin: 0;
     padding-top: 1.05rem;
     padding-bottom: 0.4rem;
-    font-size: 1.6rem;
+    font-size: 1.375rem;
     font-weight: 700;
-    line-height: 1.24;
+    line-height: 1.35;
   }
 
   .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h3),
@@ -2710,13 +2571,23 @@
   }
 
   .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h3) {
-    font-size: 1.32rem;
+    font-size: 1.125rem;
+    line-height: 1.45;
   }
 
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h4),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h5),
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h4) {
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
+  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h5) {
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
+
   .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h6) {
-    font-size: 1.08rem;
+    font-size: 0.8125rem;
+    line-height: 1.55;
   }
 
   .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-quote-line) {

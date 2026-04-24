@@ -3,6 +3,7 @@ import type { RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 
 export type SearchMode = 'current' | 'all';
+const RECENT_ITEMS_LIMIT = 20;
 
 export interface SearchContext {
   currentPath: string | null;
@@ -35,7 +36,7 @@ export async function searchNotes(
 
 export async function listRecentNotes(context: SearchContext) {
   return invoke<SearchItem[]>('list_recent_notes', {
-    limit: 12,
+    limit: RECENT_ITEMS_LIMIT,
     currentPath: context.currentPath,
     currentTitle: context.currentTitle,
     currentMarkdown: context.currentMarkdown
@@ -44,7 +45,7 @@ export async function listRecentNotes(context: SearchContext) {
 
 export async function listRecentTasks() {
   return invoke<RecentTaskItem[]>('list_recent_tasks', {
-    limit: 12
+    limit: RECENT_ITEMS_LIMIT
   });
 }
 

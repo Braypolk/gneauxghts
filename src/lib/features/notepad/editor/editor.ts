@@ -1,8 +1,24 @@
 import { isolateHistory, redo, undo } from '@codemirror/commands';
-import { Annotation, EditorState, type Extension, StateEffect, StateField, Transaction } from '@codemirror/state';
-import { Decoration, EditorView, ViewPlugin, WidgetType, keymap } from '@codemirror/view';
+import {
+  Annotation,
+  EditorState,
+  RangeSetBuilder,
+  type Extension,
+  StateEffect,
+  StateField,
+  Transaction
+} from '@codemirror/state';
+import {
+  Decoration,
+  EditorView,
+  ViewPlugin,
+  WidgetType,
+  keymap,
+  type DecorationSet
+} from '@codemirror/view';
 import { draftly } from 'draftly/src/editor/draftly';
 import { tick } from 'svelte';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   applyBlockTypeSelection,
   deleteCurrentBlock,
@@ -450,8 +466,106 @@ function createLayoutTheme() {
     },
     '&.cm-editor.cm-draftly .cm-line': {
       paddingInline: 0
+    },
+    '&.cm-editor.cm-draftly .gn-markdown-table-line': {
+      fontFamily: 'var(--font-jetbrains-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
+      fontSize: '0.92em',
+      lineHeight: '1.7',
+      color: 'var(--foreground)',
+      backgroundColor: 'color-mix(in oklab, var(--card) 76%, var(--background))',
+      boxShadow: 'inset 0 -1px 0 color-mix(in oklab, var(--border) 72%, transparent)',
+      overflowX: 'auto',
+      whiteSpace: 'pre'
+    },
+    '&.cm-editor.cm-draftly .gn-markdown-table-header': {
+      fontWeight: '650',
+      color: 'var(--foreground)',
+      backgroundColor: 'color-mix(in oklab, var(--card) 88%, var(--foreground) 4%)',
+      boxShadow:
+        'inset 0 1px 0 color-mix(in oklab, var(--border) 76%, transparent), inset 0 -1px 0 color-mix(in oklab, var(--border) 82%, transparent)'
+    },
+    '&.cm-editor.cm-draftly .gn-markdown-table-delimiter': {
+      color: 'var(--muted-foreground)',
+      backgroundColor: 'color-mix(in oklab, var(--muted) 28%, var(--background))'
     }
   });
+}
+
+function isMarkdownTableLine(text: string) {
+  const trimmed = text.trim();
+  return trimmed.includes('|') && trimmed !== '|';
+}
+
+function isMarkdownTableDelimiterLine(text: string) {
+  return /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/.test(text);
+}
+
+function buildPassiveTableDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const doc = view.state.doc;
+
+  for (let lineNumber = 2; lineNumber <= doc.lines; lineNumber += 1) {
+    const delimiterLine = doc.line(lineNumber);
+    if (!isMarkdownTableDelimiterLine(delimiterLine.text)) {
+      continue;
+    }
+
+    const headerLine = doc.line(lineNumber - 1);
+    if (!isMarkdownTableLine(headerLine.text)) {
+      continue;
+    }
+
+    builder.add(
+      headerLine.from,
+      headerLine.from,
+      Decoration.line({ class: 'gn-markdown-table-line gn-markdown-table-header' })
+    );
+    builder.add(
+      delimiterLine.from,
+      delimiterLine.from,
+      Decoration.line({ class: 'gn-markdown-table-line gn-markdown-table-delimiter' })
+    );
+
+    let bodyLineNumber = lineNumber + 1;
+    while (bodyLineNumber <= doc.lines) {
+      const bodyLine = doc.line(bodyLineNumber);
+      if (!isMarkdownTableLine(bodyLine.text)) {
+        break;
+      }
+
+      builder.add(
+        bodyLine.from,
+        bodyLine.from,
+        Decoration.line({ class: 'gn-markdown-table-line' })
+      );
+      bodyLineNumber += 1;
+    }
+
+    lineNumber = bodyLineNumber - 1;
+  }
+
+  return builder.finish();
+}
+
+function createPassiveTableExtension() {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+
+      constructor(view: EditorView) {
+        this.decorations = buildPassiveTableDecorations(view);
+      }
+
+      update(update: import('@codemirror/view').ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = buildPassiveTableDecorations(update.view);
+        }
+      }
+    },
+    {
+      decorations: (value) => value.decorations
+    }
+  );
 }
 
 function createEditorShortcuts(controller: () => EditorController | null) {
@@ -571,6 +685,78 @@ function createWikilinkExtensions(sharedResources: SharedEditorResources | null)
   return createWikilinksExtension({
     resolveCallbacks: (view) => sharedResources?.resolveViewCallbacks?.(view) ?? null
   });
+}
+
+function findRenderedMarkdownLinkUrl(target: EventTarget | null): string | null {
+  if (!(target instanceof HTMLElement || target instanceof Text)) {
+    return null;
+  }
+
+  const element = target instanceof Text ? target.parentElement : target;
+  const linkElement =
+    element?.closest<HTMLElement>('.cm-draftly-link-styled, .cm-draftly-link-wrapper') ?? null;
+  const rawUrl = linkElement?.querySelector<HTMLElement>('.cm-draftly-link-tooltip')?.textContent;
+  const url = rawUrl?.trim();
+
+  return url || null;
+}
+
+function normalizeExternalLinkUrl(rawUrl: string): string | null {
+  if (/^https?:\/\//i.test(rawUrl) || /^mailto:/i.test(rawUrl)) {
+    return rawUrl;
+  }
+
+  if (/^www\./i.test(rawUrl)) {
+    return `https://${rawUrl}`;
+  }
+
+  return null;
+}
+
+async function openExternalLink(rawUrl: string) {
+  const url = normalizeExternalLinkUrl(rawUrl);
+  if (!url) {
+    return;
+  }
+
+  try {
+    await openUrl(url);
+  } catch (error) {
+    console.error('Failed to open external link:', error);
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
+
+function createExternalLinkClickExtension() {
+  return ViewPlugin.fromClass(
+    class {
+      readonly #view: EditorView;
+
+      constructor(view: EditorView) {
+        this.#view = view;
+        this.#view.dom.addEventListener('click', this.#handleClick, { capture: true });
+      }
+
+      destroy() {
+        this.#view.dom.removeEventListener('click', this.#handleClick, { capture: true });
+      }
+
+      #handleClick = (event: MouseEvent) => {
+        if (event.button !== 0 || (!event.metaKey && !event.ctrlKey)) {
+          return;
+        }
+
+        const rawUrl = findRenderedMarkdownLinkUrl(event.target);
+        if (!rawUrl || !normalizeExternalLinkUrl(rawUrl)) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void openExternalLink(rawUrl);
+      };
+    }
+  );
 }
 
 interface VisualLineAnchor {
@@ -825,7 +1011,9 @@ function createBlockHandleExtension(
         this.hideDropIndicator();
 
         if (!drag.dragging) {
-          this.focusBlock(drag.source);
+          if (!this.selectionIncludesBlock(drag.source)) {
+            this.focusBlock(drag.source);
+          }
           if (this.#dragButton) {
             setSlashMenuFloatingReference(this.#view, this.#dragButton);
           }
@@ -853,6 +1041,11 @@ function createBlockHandleExtension(
           })
         );
         this.#view.focus();
+      }
+
+      private selectionIncludesBlock(block: BlockDescriptor) {
+        const selection = this.#view.state.selection.main;
+        return !selection.empty && selection.from <= block.to && selection.to >= block.from;
       }
 
       private scheduleCurrentBlockSync() {
@@ -1098,7 +1291,9 @@ function createPaneExtensions(
     searchQueryField,
     createLayoutTheme(),
     createSearchHighlightExtension(),
+    createPassiveTableExtension(),
     ...createWikilinkExtensions(sharedResources),
+    createExternalLinkClickExtension(),
     createImageEmbedsExtension(imagesConfig),
     ...createImagePasteExtension(imagesConfig),
     ...slashMenuApi.extension,

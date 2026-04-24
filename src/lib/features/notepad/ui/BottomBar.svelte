@@ -188,11 +188,11 @@
 
 
   function getRecentNotesViewportClass() {
-    return 'h-[8.25rem] overflow-y-auto lg:h-[9rem]';
+    return 'h-[13.75rem] overflow-y-auto';
   }
 
   function getRecentTasksViewportClass() {
-    return 'h-[9rem] overflow-y-auto';
+    return 'h-[15rem] overflow-y-auto';
   }
 
   function getRecentNoteItemClass() {

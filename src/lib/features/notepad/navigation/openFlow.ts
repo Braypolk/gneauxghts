@@ -1,6 +1,11 @@
 import type { PendingTaskTarget } from '$lib/taskNavigation';
 import type { SearchItem } from '$lib/types/semantic';
-import { findBestEditorTarget, focusEditorTarget, waitForEditorPaint } from '$lib/features/notepad/navigation/navigation';
+import {
+  findBestEditorTarget,
+  focusEditorAtDocumentLine,
+  focusEditorTarget,
+  waitForEditorPaint
+} from '$lib/features/notepad/navigation/navigation';
 import { isSemanticOnlyResult } from '$lib/features/notepad/search/search';
 import type { RecentTaskItem, ResolvedNoteLink } from '$lib/features/notepad/model/types';
 
@@ -76,9 +81,10 @@ export async function navigateToSectionTarget(
 }
 
 export async function navigateToPendingTaskTarget(
-  { currentNoteId, currentNotePath, editorRoot }: NavigationContext,
+  ctx: NavigationContext,
   target: PendingTaskTarget
 ) {
+  const { currentNoteId, currentNotePath, editorRoot } = ctx;
   if (
     (currentNoteId && currentNoteId !== target.noteId) ||
     (!currentNoteId && (!currentNotePath || currentNotePath !== target.notePath))
@@ -87,6 +93,18 @@ export async function navigateToPendingTaskTarget(
   }
 
   await waitForEditorPaint();
+
+  if (target.editorLineNumber != null) {
+    if (focusEditorAtDocumentLine(editorRoot, target.editorLineNumber)) {
+      return;
+    }
+  }
+
+  const sectionLabel = target.sectionLabel?.trim() ?? '';
+  if (sectionLabel) {
+    await navigateToSectionTarget(ctx, sectionLabel, target.text, true);
+    return;
+  }
 
   const targetBlock = findBestEditorTarget(editorRoot, target.text);
   if (targetBlock) {

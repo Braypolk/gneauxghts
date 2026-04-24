@@ -323,14 +323,7 @@ class SlashMenuController {
   #shouldShow(view: EditorView) {
     if (typeof this.#programmaticPos === 'number') {
       const maxPos = view.state.doc.length;
-      const validPos = Math.max(0, Math.min(this.#programmaticPos, maxPos));
-      const selectionLine = view.state.doc.lineAt(view.state.selection.main.head).number;
-      const targetLine = view.state.doc.lineAt(validPos).number;
-      if (selectionLine !== targetLine) {
-        this.#programmaticPos = null;
-        return false;
-      }
-
+      this.#programmaticPos = Math.max(0, Math.min(this.#programmaticPos, maxPos));
       this.#filter = '';
       this.#menuState = getSlashMenuState('');
       this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));

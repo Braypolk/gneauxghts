@@ -304,23 +304,21 @@ fn collect_lexical_candidates(
                 ));
             }
 
-            let refresh_outcome = state.ensure_interactive_index(
+            state.ensure_interactive_index(
                 notes_dir,
                 INTERACTIVE_INDEX_REFRESH_MAX_AGE,
                 "search_notes_all",
             )?;
-            let lexical_entries = if refresh_outcome.changed {
+            // Reconcile lexical on every "all" search: `notes_index` may have been
+            // refreshed elsewhere without updating the Tantivy mirror.
+            let lexical_entries = {
                 let notes_index = state
                     .notes_index
                     .lock()
                     .map_err(|_| "Search index lock poisoned".to_string())?;
-                Some(notes_index.entries.clone())
-            } else {
-                None
+                notes_index.entries.clone()
             };
-            if let Some(lexical_entries) = lexical_entries {
-                state.lexical.sync_with_notes_index(&lexical_entries)?;
-            }
+            state.lexical.sync_with_notes_index(&lexical_entries)?;
 
             candidates.extend(state.lexical.search(
                 query,

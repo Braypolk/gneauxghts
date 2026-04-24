@@ -27,6 +27,34 @@ export function focusInputAtEnd(input: HTMLInputElement | null) {
   input.setSelectionRange(end, end);
 }
 
+export function focusEditorAtDocumentLine(editorRoot: HTMLElement | null, lineNumber1Based: number) {
+  const surface = findProseMirrorElement(editorRoot);
+  if (!(surface instanceof HTMLElement)) return false;
+  const view = EditorView.findFromDOM(surface);
+  if (!view) return false;
+
+  const line = Math.max(1, Math.min(lineNumber1Based, view.state.doc.lines));
+  const info = view.state.doc.line(line);
+  const anchor = Math.min(info.from, view.state.doc.length);
+
+  view.focus();
+  view.dispatch(view.state.update({ selection: { anchor }, scrollIntoView: false }));
+
+  const coords = view.coordsAtPos(anchor);
+  if (coords) {
+    const scrollElement = view.scrollDOM;
+    const scrollRect = scrollElement.getBoundingClientRect();
+    const targetTop =
+      scrollElement.scrollTop + (coords.top - scrollRect.top) - scrollRect.height * 0.25;
+    const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+    scrollElement.scrollTo({
+      top: Math.max(0, Math.min(targetTop, maxScrollTop)),
+      behavior: 'smooth'
+    });
+  }
+  return true;
+}
+
 export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLElement) {
   const surface = findProseMirrorElement(editorRoot);
   if (!(surface instanceof HTMLElement)) return;
