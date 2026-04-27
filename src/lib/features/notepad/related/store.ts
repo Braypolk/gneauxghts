@@ -98,7 +98,34 @@ export function createRelatedNotesStore({
     return state.scope === 'selection' ? state.selectedText : null;
   }
 
+  function isSelectionInsideEditorRoot(editorRoot: HTMLDivElement | null) {
+    const selection = window.getSelection();
+    if (!selection || !editorRoot) {
+      return false;
+    }
+
+    const anchorNode =
+      selection.anchorNode instanceof Element
+        ? selection.anchorNode
+        : selection.anchorNode?.parentElement ?? null;
+    const focusNode =
+      selection.focusNode instanceof Element
+        ? selection.focusNode
+        : selection.focusNode?.parentElement ?? null;
+
+    return (
+      !!anchorNode &&
+      !!focusNode &&
+      editorRoot.contains(anchorNode) &&
+      editorRoot.contains(focusNode)
+    );
+  }
+
   function updateSelectedRelatedText(editorRoot: HTMLDivElement | null) {
+    if (!isSelectionInsideEditorRoot(editorRoot)) {
+      return;
+    }
+
     const nextSelection = getEditorSelectionText(editorRoot);
     const previousSelection = get(store).selectedText;
     if (nextSelection === previousSelection) {
@@ -132,16 +159,16 @@ export function createRelatedNotesStore({
       return;
     }
 
-    const markdown = getCurrentMarkdown();
     const activeSelection = getActiveRelatedSelectionText();
-    const normalizedContent = normalizeRelatedText(activeSelection ?? markdown);
 
-    if (normalizedContent === '' || (state.scope === 'selection' && !activeSelection)) {
+    if (state.scope === 'selection' && !activeSelection) {
       resetRelatedResults();
       return;
     }
 
-    const delay = getRelatedAssessmentDelay(normalizedContent.length, immediate, !!activeSelection);
+    const delay = activeSelection
+      ? getRelatedAssessmentDelay(normalizeRelatedText(activeSelection).length, immediate, true)
+      : getRelatedAssessmentDelay(0, immediate, false);
     relatedTimer = window.setTimeout(() => {
       relatedTimer = null;
       void runRelatedNotes();
@@ -155,8 +182,19 @@ export function createRelatedNotesStore({
       return;
     }
 
-    const markdown = getCurrentMarkdown();
     const selectedText = getActiveRelatedSelectionText();
+    if (state.scope === 'selection' && !selectedText) {
+      resetRelatedResults();
+      return;
+    }
+
+    const markdown = getCurrentMarkdown();
+    const normalizedContent = normalizeRelatedText(selectedText ?? markdown);
+    if (normalizedContent === '') {
+      resetRelatedResults();
+      return;
+    }
+
     const requestKey = buildRelatedRequestKey(
       getCurrentPath(),
       state.scope,

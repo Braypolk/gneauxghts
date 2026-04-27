@@ -107,6 +107,10 @@ export function hasWikilinkAlias(activeWikilink: ActiveWikilink | null) {
   return activeWikilink?.rawTarget.includes('|') ?? false;
 }
 
+function wikilinkNeedsCurrentMarkdown(rawTarget: string) {
+  return rawTarget.includes('#');
+}
+
 export async function autocompleteNoteLinks(
   rawTarget: string,
   currentPath: string | null,
@@ -117,7 +121,7 @@ export async function autocompleteNoteLinks(
     rawTarget,
     currentPath,
     currentTitle,
-    currentMarkdown,
+    currentMarkdown: wikilinkNeedsCurrentMarkdown(rawTarget) ? currentMarkdown : null,
     limit: 8
   });
 }
@@ -132,6 +136,6 @@ export async function resolveNoteLink(
     rawTarget,
     currentPath,
     currentTitle,
-    currentMarkdown
+    currentMarkdown: wikilinkNeedsCurrentMarkdown(rawTarget) ? currentMarkdown : null
   });
 }

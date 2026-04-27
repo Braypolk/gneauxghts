@@ -21,19 +21,24 @@ struct HybridCandidate {
     result: NoteSearchResult,
 }
 
+#[derive(Hash, PartialEq, Eq)]
+struct HybridCandidateKey {
+    note_path: Option<String>,
+    section_label: String,
+    match_text: String,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+}
+
 #[tauri::command]
 pub(crate) fn list_recent_notes(
     state: State<'_, AppState>,
     limit: usize,
     current_path: Option<String>,
-    current_title: String,
-    current_markdown: String,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let notes_dir = prepare_notes_dir(true)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let _ = current_title;
-    let _ = current_markdown;
     let mut persisted_state = read_state(&notes_dir)?;
     prune_recent_note_ids(&mut persisted_state, &notes_dir);
     write_state(&notes_dir, &persisted_state)?;
@@ -373,7 +378,7 @@ pub(super) fn merge_hybrid_candidates(
         .iter()
         .map(|candidate| candidate.score)
         .fold(0.0, f32::max);
-    let mut merged = HashMap::<String, HybridCandidate>::new();
+    let mut merged = HashMap::<HybridCandidateKey, HybridCandidate>::new();
 
     for lexical_candidate in lexical_candidates {
         let mut result = lexical_candidate.result;
@@ -402,13 +407,13 @@ pub(super) fn merge_hybrid_candidates(
         } else {
             0.0
         };
-        let key = format!(
-            "{}::{}::{}::{}",
-            semantic_match.note_path,
-            semantic_match.section_label,
-            semantic_match.start_line,
-            semantic_match.end_line
-        );
+        let key = HybridCandidateKey {
+            note_path: Some(semantic_match.note_path.clone()),
+            section_label: semantic_match.section_label.clone(),
+            match_text: semantic_match.match_text.clone(),
+            start_line: Some(semantic_match.start_line),
+            end_line: Some(semantic_match.end_line),
+        };
         let file_name = Path::new(&semantic_match.note_path)
             .file_stem()
             .and_then(|stem| stem.to_str())
@@ -475,13 +480,14 @@ pub(super) fn merge_hybrid_candidates(
         .collect()
 }
 
-fn hybrid_candidate_key(result: &NoteSearchResult) -> String {
-    format!(
-        "{}::{}::{}",
-        result.note_path.as_deref().unwrap_or("draft"),
-        result.section_label,
-        result.match_text
-    )
+fn hybrid_candidate_key(result: &NoteSearchResult) -> HybridCandidateKey {
+    HybridCandidateKey {
+        note_path: result.note_path.clone(),
+        section_label: result.section_label.clone(),
+        match_text: result.match_text.clone(),
+        start_line: result.start_line,
+        end_line: result.end_line,
+    }
 }
 
 fn structural_boost(

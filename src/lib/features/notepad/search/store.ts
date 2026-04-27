@@ -158,9 +158,7 @@ export function createNotepadSearchStore({
       () => requestId === activeRecentNotesRequest,
       () =>
         listRecentNotes({
-          currentPath: getCurrentPath(),
-          currentTitle: getCurrentTitle(),
-          currentMarkdown: getCurrentMarkdown()
+          currentPath: getCurrentPath()
         }),
       (notes) => {
         patch({ recentNotes: notes });
@@ -180,9 +178,7 @@ export function createNotepadSearchStore({
       () => requestId === activeRecentNotesRequest,
       () =>
         listRecentNotes({
-          currentPath: getCurrentPath(),
-          currentTitle: getCurrentTitle(),
-          currentMarkdown: getCurrentMarkdown()
+          currentPath: getCurrentPath()
         }),
       (notes) => {
         patch({ recentNotes: notes });

@@ -12,7 +12,7 @@ export type KeyboardShortcutId =
   | 'splitWorkspace'
   | 'closePane'
   | 'switchPane'
-  | 'reloadCurrentNote'
+  | 'goToPreviousNote'
   | 'toggleRelatedPanel'
   | 'rememberCurrentNote'
   | 'searchCurrent'
@@ -167,9 +167,9 @@ const shortcutDefinitionsBase = [
     defaultBinding: 'Ctrl+Tab'
   },
   {
-    id: 'reloadCurrentNote',
-    label: 'Reload Current Note',
-    description: 'Reopen current note from disk.',
+    id: 'goToPreviousNote',
+    label: 'Go to Previous Note',
+    description: 'Open the note you had open immediately before this one.',
     group: 'workspace',
     defaultBinding: 'Meta+l'
   },

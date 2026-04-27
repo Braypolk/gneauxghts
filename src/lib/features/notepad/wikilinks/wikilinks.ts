@@ -155,7 +155,7 @@ export function createWikilinksExtension(config: WikilinkConfig) {
         }
 
         update(update: import('@codemirror/view').ViewUpdate) {
-          if (update.docChanged || update.selectionSet || update.viewportChanged) {
+          if (update.docChanged) {
             this.decorations = buildWikilinkDecorations(update.view);
           }
 

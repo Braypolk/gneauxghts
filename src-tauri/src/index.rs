@@ -38,6 +38,11 @@ struct InteractiveInvalidationState {
     refresh_source_counts: HashMap<String, u64>,
 }
 
+enum PendingIndexUpdate {
+    Upsert(PathBuf, IndexedNote),
+    Remove(PathBuf),
+}
+
 impl AppState {
     pub(crate) fn new(semantic: SemanticState) -> Result<Self, String> {
         Ok(Self {
@@ -96,48 +101,108 @@ impl AppState {
         max_age: Duration,
         source: &str,
     ) -> Result<InteractiveRefreshOutcome, String> {
-        let mut index = self
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        let mut invalidation = self
-            .interactive_invalidation
-            .lock()
-            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
-        *invalidation
-            .refresh_source_counts
-            .entry(source.to_string())
-            .or_insert(0) += 1;
+        let dirty_paths = {
+            let mut invalidation = self
+                .interactive_invalidation
+                .lock()
+                .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+            *invalidation
+                .refresh_source_counts
+                .entry(source.to_string())
+                .or_insert(0) += 1;
+            invalidation.dirty_paths.drain().collect::<Vec<_>>()
+        };
 
+        let had_dirty_paths = !dirty_paths.is_empty();
         let mut changed = false;
-        let had_dirty_paths = !invalidation.dirty_paths.is_empty();
+        let mut used_full_refresh = false;
+
         if had_dirty_paths {
-            let dirty_paths = invalidation.dirty_paths.drain().collect::<Vec<_>>();
-            for path in dirty_paths {
-                if index.apply_dirty_path(&path)? {
-                    changed = true;
-                }
+            let existing_signatures = {
+                let index = self
+                    .notes_index
+                    .lock()
+                    .map_err(|_| "Search index lock poisoned".to_string())?;
+                dirty_paths
+                    .iter()
+                    .filter_map(|path| {
+                        index
+                            .entries
+                            .get(path)
+                            .map(|note| (path.clone(), note.signature.clone()))
+                    })
+                    .collect::<HashMap<_, _>>()
+            };
+            let updates = collect_dirty_updates(dirty_paths, &existing_signatures)?;
+            {
+                let mut index = self
+                    .notes_index
+                    .lock()
+                    .map_err(|_| "Search index lock poisoned".to_string())?;
+                changed = index.apply_pending_updates(updates);
+                index.mark_refreshed(changed);
             }
-            index.mark_refreshed(changed);
+            let mut invalidation = self
+                .interactive_invalidation
+                .lock()
+                .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
             invalidation.incremental_update_count =
                 invalidation.incremental_update_count.wrapping_add(1);
+        } else {
+            let stale = {
+                let index = self
+                    .notes_index
+                    .lock()
+                    .map_err(|_| "Search index lock poisoned".to_string())?;
+                index
+                    .last_refresh_at
+                    .is_none_or(|last_refresh_at| last_refresh_at.elapsed() >= max_age)
+            };
+            if stale {
+                let existing_signatures = {
+                    let index = self
+                        .notes_index
+                        .lock()
+                        .map_err(|_| "Search index lock poisoned".to_string())?;
+                    index
+                        .entries
+                        .iter()
+                        .map(|(path, note)| (path.clone(), note.signature.clone()))
+                        .collect::<HashMap<_, _>>()
+                };
+                let (updates, seen_paths) =
+                    collect_refresh_updates(notes_dir, &existing_signatures)?;
+                {
+                    let mut index = self
+                        .notes_index
+                        .lock()
+                        .map_err(|_| "Search index lock poisoned".to_string())?;
+                    changed = index.apply_refresh_updates(updates, seen_paths);
+                }
+                let mut invalidation = self
+                    .interactive_invalidation
+                    .lock()
+                    .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+                invalidation.full_refresh_count = invalidation.full_refresh_count.wrapping_add(1);
+                used_full_refresh = true;
+            }
         }
 
-        let mut used_full_refresh = false;
-        let stale = index
-            .last_refresh_at
-            .is_none_or(|last_refresh_at| last_refresh_at.elapsed() >= max_age);
-        if stale && !had_dirty_paths {
-            changed = index.refresh(notes_dir)? || changed;
-            used_full_refresh = true;
-            invalidation.full_refresh_count = invalidation.full_refresh_count.wrapping_add(1);
-        }
-
+        let revision = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?
+            .revision();
+        let epoch = self
+            .interactive_invalidation
+            .lock()
+            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?
+            .epoch;
         Ok(InteractiveRefreshOutcome {
-            revision: index.revision(),
+            revision,
             changed,
             used_full_refresh,
-            epoch: invalidation.epoch,
+            epoch,
         })
     }
 
@@ -197,44 +262,6 @@ pub(crate) struct IndexedNote {
 }
 
 impl NotesIndex {
-    pub(crate) fn refresh(&mut self, notes_dir: &Path) -> Result<bool, String> {
-        let mut seen_paths = HashSet::new();
-        let mut changed = false;
-
-        for path in collect_markdown_files_recursively(notes_dir)? {
-            seen_paths.insert(path.clone());
-            let signature = read_file_signature(&path)?;
-            let should_reload = self
-                .entries
-                .get(&path)
-                .map(|indexed_note| indexed_note.signature != signature)
-                .unwrap_or(true);
-
-            if should_reload {
-                self.entries
-                    .insert(path.clone(), load_indexed_note(&path, signature)?);
-                changed = true;
-            }
-        }
-
-        let stale_paths = self
-            .entries
-            .keys()
-            .filter(|path| !seen_paths.contains(*path))
-            .cloned()
-            .collect::<Vec<_>>();
-        for stale_path in stale_paths {
-            if self.entries.remove(&stale_path).is_some() {
-                changed = true;
-            }
-        }
-        self.last_refresh_at = Some(Instant::now());
-        if changed {
-            self.revision = self.revision.wrapping_add(1);
-        }
-        Ok(changed)
-    }
-
     pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) -> bool {
         if self
             .entries
@@ -269,23 +296,45 @@ impl NotesIndex {
             .find(|(_, note)| note.note_id == note_id)
     }
 
-    fn apply_dirty_path(&mut self, path: &Path) -> Result<bool, String> {
-        if is_note_file(path) {
-            let signature = read_file_signature(path)?;
-            let should_reload = self
-                .entries
-                .get(path)
-                .map(|indexed_note| indexed_note.signature != signature)
-                .unwrap_or(true);
-            if should_reload {
-                self.entries
-                    .insert(path.to_path_buf(), load_indexed_note(path, signature)?);
-                return Ok(true);
+    fn apply_pending_updates(&mut self, updates: Vec<PendingIndexUpdate>) -> bool {
+        let mut changed = false;
+        for update in updates {
+            match update {
+                PendingIndexUpdate::Upsert(path, note) => {
+                    self.entries.insert(path, note);
+                    changed = true;
+                }
+                PendingIndexUpdate::Remove(path) => {
+                    changed = self.entries.remove(&path).is_some() || changed;
+                }
             }
-            return Ok(false);
+        }
+        changed
+    }
+
+    fn apply_refresh_updates(
+        &mut self,
+        updates: Vec<(PathBuf, IndexedNote)>,
+        seen_paths: HashSet<PathBuf>,
+    ) -> bool {
+        let mut changed = false;
+        for (path, note) in updates {
+            self.entries.insert(path, note);
+            changed = true;
         }
 
-        Ok(self.entries.remove(path).is_some())
+        let stale_paths = self
+            .entries
+            .keys()
+            .filter(|path| !seen_paths.contains(*path))
+            .cloned()
+            .collect::<Vec<_>>();
+        for stale_path in stale_paths {
+            changed = self.entries.remove(&stale_path).is_some() || changed;
+        }
+
+        self.mark_refreshed(changed);
+        changed
     }
 
     fn mark_refreshed(&mut self, changed: bool) {
@@ -294,6 +343,56 @@ impl NotesIndex {
             self.revision = self.revision.wrapping_add(1);
         }
     }
+}
+
+fn collect_dirty_updates(
+    dirty_paths: Vec<PathBuf>,
+    existing_signatures: &HashMap<PathBuf, FileSignature>,
+) -> Result<Vec<PendingIndexUpdate>, String> {
+    let mut updates = Vec::new();
+
+    for path in dirty_paths {
+        if is_note_file(&path) {
+            let signature = read_file_signature(&path)?;
+            if existing_signatures
+                .get(&path)
+                .is_some_and(|existing_signature| existing_signature == &signature)
+            {
+                continue;
+            }
+            updates.push(PendingIndexUpdate::Upsert(
+                path.clone(),
+                load_indexed_note(&path, signature)?,
+            ));
+        } else {
+            updates.push(PendingIndexUpdate::Remove(path));
+        }
+    }
+
+    Ok(updates)
+}
+
+fn collect_refresh_updates(
+    notes_dir: &Path,
+    existing_signatures: &HashMap<PathBuf, FileSignature>,
+) -> Result<(Vec<(PathBuf, IndexedNote)>, HashSet<PathBuf>), String> {
+    let mut seen_paths = HashSet::new();
+    let mut updates = Vec::new();
+
+    for path in collect_markdown_files_recursively(notes_dir)? {
+        seen_paths.insert(path.clone());
+        let signature = read_file_signature(&path)?;
+        let should_reload = existing_signatures
+            .get(&path)
+            .map(|existing_signature| existing_signature != &signature)
+            .unwrap_or(true);
+
+        if should_reload {
+            updates.push((path.clone(), load_indexed_note(&path, signature)?));
+        }
+    }
+
+    Ok((updates, seen_paths))
 }
 
 impl IndexedNote {
@@ -557,7 +656,15 @@ fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {
     let mut current_lines = Vec::new();
     let mut paragraph_number = 0;
 
-    for line in body.replace("\r\n", "\n").lines() {
+    let normalized_body;
+    let body = if body.contains("\r\n") {
+        normalized_body = body.replace("\r\n", "\n");
+        normalized_body.as_str()
+    } else {
+        body
+    };
+
+    for line in body.lines() {
         if line.trim().is_empty() {
             if let Some(paragraph) = finalize_paragraph(&current_lines, paragraph_number) {
                 paragraph_number += 1;
@@ -567,7 +674,7 @@ fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {
             continue;
         }
 
-        current_lines.push(line.trim().to_string());
+        current_lines.push(line.trim());
     }
 
     if let Some(paragraph) = finalize_paragraph(&current_lines, paragraph_number) {
@@ -577,7 +684,7 @@ fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {
     paragraphs
 }
 
-fn finalize_paragraph(lines: &[String], paragraph_index: usize) -> Option<IndexedParagraph> {
+fn finalize_paragraph(lines: &[&str], paragraph_index: usize) -> Option<IndexedParagraph> {
     let joined = lines.join(" ");
     let text = collapse_whitespace(&joined);
     if text.is_empty() {
@@ -592,37 +699,17 @@ fn finalize_paragraph(lines: &[String], paragraph_index: usize) -> Option<Indexe
     })
 }
 
-fn file_line_to_editor_line_1based(full_markdown: &str, file_line_1based: usize) -> Option<usize> {
-    let normalized = full_markdown.replace("\r\n", "\n");
-    let full_lines: Vec<&str> = normalized.lines().collect();
-    let target_idx = file_line_1based.checked_sub(1)?;
-    if target_idx >= full_lines.len() {
-        return None;
-    }
-
-    let needle = full_lines[target_idx];
-    let occurrence = (0..=target_idx)
-        .filter(|&idx| full_lines[idx] == needle)
-        .count();
-
-    let body = note::extract_file_name_title_and_body(&normalized, "").1;
-    let mut seen = 0usize;
-    for (idx, line) in body.lines().enumerate() {
-        if line == needle {
-            seen += 1;
-            if seen == occurrence {
-                return Some(idx + 1);
-            }
-        }
-    }
-
-    None
-}
-
 fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
-    let normalized = markdown.replace("\r\n", "\n");
+    let normalized_markdown;
+    let normalized = if markdown.contains("\r\n") {
+        normalized_markdown = markdown.replace("\r\n", "\n");
+        normalized_markdown.as_str()
+    } else {
+        markdown
+    };
     let lines = normalized.lines().collect::<Vec<_>>();
     let first_content_index = lines.iter().position(|line| !line.trim().is_empty());
+    let editor_line_numbers = build_editor_line_number_map(&lines, first_content_index);
     let mut section_label = None;
     let mut indent_levels = Vec::new();
     let mut tasks = Vec::new();
@@ -651,12 +738,66 @@ fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
                 completed,
                 depth: task_depth(indentation_width, &mut indent_levels),
                 line_number: file_line,
-                editor_line_number: file_line_to_editor_line_1based(&normalized, file_line),
+                editor_line_number: editor_line_numbers[line_index],
             });
         }
     }
 
     tasks
+}
+
+fn build_editor_line_number_map(
+    lines: &[&str],
+    first_content_index: Option<usize>,
+) -> Vec<Option<usize>> {
+    let mut editor_line_numbers = vec![None; lines.len()];
+    let mut body_start_index = 0usize;
+
+    if lines.first().is_some_and(|line| *line == "---") {
+        if let Some(closing_index) = lines
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(index, line)| (*line == "---").then_some(index))
+        {
+            body_start_index = closing_index + 1;
+            if lines
+                .get(body_start_index)
+                .is_some_and(|line| line.trim().is_empty())
+            {
+                body_start_index += 1;
+            }
+        }
+    }
+
+    let first_body_content_index = lines
+        .iter()
+        .enumerate()
+        .skip(body_start_index)
+        .find_map(|(index, line)| (!line.trim().is_empty()).then_some(index));
+    let stripped_heading_index = first_body_content_index
+        .or(first_content_index.filter(|&index| index >= body_start_index))
+        .filter(|&index| lines[index].trim().starts_with("# "));
+    let stripped_heading_blank_index = stripped_heading_index.and_then(|index| {
+        let next_index = index + 1;
+        (next_index < lines.len() && lines[next_index].trim().is_empty()).then_some(next_index)
+    });
+
+    let mut editor_line_number = 1usize;
+    for (index, editor_line) in editor_line_numbers
+        .iter_mut()
+        .enumerate()
+        .skip(body_start_index)
+    {
+        if Some(index) == stripped_heading_index || Some(index) == stripped_heading_blank_index {
+            continue;
+        }
+
+        *editor_line = Some(editor_line_number);
+        editor_line_number += 1;
+    }
+
+    editor_line_numbers
 }
 
 fn parse_heading(line: &str) -> Option<String> {
@@ -772,10 +913,13 @@ fn toggle_task_line(line: &mut String) -> Option<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_indexed_note, toggle_task_in_markdown, NotesIndex};
+    use super::{
+        build_indexed_note, build_tasks, collect_dirty_updates, collect_refresh_updates,
+        read_file_signature, toggle_task_in_markdown, NotesIndex,
+    };
     use crate::test_support::{fixture_path, load_fixture, load_json_fixture, TestDir};
     use serde_json::json;
-    use std::fs;
+    use std::{collections::HashMap, fs};
 
     #[test]
     fn build_indexed_note_matches_project_atlas_fixture() {
@@ -826,6 +970,74 @@ mod tests {
     }
 
     #[test]
+    fn build_tasks_maps_editor_lines_without_matching_duplicate_text() {
+        let markdown = "\
+---
+gneauxghts:
+  id: 01TEST
+---
+
+# Duplicate Tasks
+
+- [ ] Review search ranking
+- [ ] Another task
+- [ ] Review search ranking
+";
+
+        let tasks = build_tasks(markdown);
+
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0].line_number, 8);
+        assert_eq!(tasks[0].editor_line_number, Some(1));
+        assert_eq!(tasks[2].line_number, 10);
+        assert_eq!(tasks[2].editor_line_number, Some(3));
+    }
+
+    #[test]
+    fn build_tasks_maps_crlf_editor_lines() {
+        let markdown = "# Tasks\r\n\r\n- [ ] First\r\n- [x] Second\r\n";
+
+        let tasks = build_tasks(markdown);
+
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].line_number, 3);
+        assert_eq!(tasks[0].editor_line_number, Some(1));
+        assert_eq!(tasks[1].line_number, 4);
+        assert_eq!(tasks[1].editor_line_number, Some(2));
+    }
+
+    #[test]
+    fn dirty_update_skips_unchanged_file_signatures() {
+        let temp = TestDir::new("index-dirty-unchanged");
+        let note_path = temp.path().join("Stable.md");
+        fs::write(&note_path, "# Stable\n\n- [ ] Ship").expect("write note");
+        let signature = read_file_signature(&note_path).expect("read signature");
+        let mut existing_signatures = HashMap::new();
+        existing_signatures.insert(note_path.clone(), signature);
+
+        let updates =
+            collect_dirty_updates(vec![note_path], &existing_signatures).expect("collect updates");
+
+        assert!(updates.is_empty());
+    }
+
+    #[test]
+    fn full_refresh_collects_no_updates_for_unchanged_signatures() {
+        let temp = TestDir::new("index-refresh-unchanged");
+        let note_path = temp.path().join("Stable.md");
+        fs::write(&note_path, "# Stable\n\nBody").expect("write note");
+        let signature = read_file_signature(&note_path).expect("read signature");
+        let mut existing_signatures = HashMap::new();
+        existing_signatures.insert(note_path.clone(), signature);
+
+        let (updates, seen_paths) =
+            collect_refresh_updates(temp.path(), &existing_signatures).expect("collect refresh");
+
+        assert!(updates.is_empty());
+        assert!(seen_paths.contains(&note_path));
+    }
+
+    #[test]
     fn refresh_discovers_nested_notes_and_skips_hidden_directories() {
         let temp = TestDir::new("index-refresh-nested");
         let nested_dir = temp.path().join("Projects");
@@ -839,7 +1051,9 @@ mod tests {
         fs::write(&hidden_note, "# Hidden\n\nBody").expect("write hidden note");
 
         let mut index = NotesIndex::default();
-        index.refresh(temp.path()).expect("refresh index");
+        let (updates, seen_paths) =
+            collect_refresh_updates(temp.path(), &HashMap::new()).expect("collect refresh updates");
+        index.apply_refresh_updates(updates, seen_paths);
 
         assert_eq!(index.entries.len(), 1);
         assert!(index.entries.contains_key(&nested_note));

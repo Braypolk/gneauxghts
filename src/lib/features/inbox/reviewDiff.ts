@@ -64,6 +64,7 @@ export interface ReviewDeleteChange {
 export type ReviewChange = ReviewUpdateChange | ReviewCreateChange | ReviewDeleteChange;
 
 const DIFF_CONTEXT_LINES = 3;
+const MAX_FULL_DIFF_CELLS = 1_000_000;
 
 export function buildReviewChanges(changePreviews: AiChangePreview[]): ReviewChange[] {
   return changePreviews.map((changePreview, index) => {
@@ -249,6 +250,10 @@ function buildDiffRuns(oldLines: string[], newLines: string[]) {
 }
 
 function buildDiffEntries(oldLines: string[], newLines: string[]): DiffEntry[] {
+  if ((oldLines.length + 1) * (newLines.length + 1) > MAX_FULL_DIFF_CELLS) {
+    return buildReplaceAllDiffEntries(oldLines, newLines);
+  }
+
   const dp = Array.from({ length: oldLines.length + 1 }, () => new Uint32Array(newLines.length + 1));
   for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
     for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex -= 1) {
@@ -316,6 +321,23 @@ function buildDiffEntries(oldLines: string[], newLines: string[]): DiffEntry[] {
   }
 
   return entries;
+}
+
+function buildReplaceAllDiffEntries(oldLines: string[], newLines: string[]): DiffEntry[] {
+  return [
+    ...oldLines.map((text, oldIndex) => ({
+      kind: 'remove' as const,
+      text,
+      oldIndex,
+      newIndex: 0
+    })),
+    ...newLines.map((text, newIndex) => ({
+      kind: 'add' as const,
+      text,
+      oldIndex: oldLines.length,
+      newIndex
+    }))
+  ];
 }
 
 function buildDiffHunks(runs: DiffRun[]) {

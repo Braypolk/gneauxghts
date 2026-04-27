@@ -34,12 +34,10 @@ export async function searchNotes(
   });
 }
 
-export async function listRecentNotes(context: SearchContext) {
+export async function listRecentNotes(context: Pick<SearchContext, 'currentPath'>) {
   return invoke<SearchItem[]>('list_recent_notes', {
     limit: RECENT_ITEMS_LIMIT,
-    currentPath: context.currentPath,
-    currentTitle: context.currentTitle,
-    currentMarkdown: context.currentMarkdown
+    currentPath: context.currentPath
   });
 }
 

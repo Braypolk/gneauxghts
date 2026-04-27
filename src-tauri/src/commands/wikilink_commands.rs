@@ -26,13 +26,14 @@ pub(crate) fn resolve_note_link(
     raw_target: String,
     current_path: Option<String>,
     current_title: String,
-    current_markdown: String,
+    current_markdown: Option<String>,
 ) -> Result<Option<ResolvedNoteLink>, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_override =
-        build_current_override(current_path.as_deref(), &current_title, &current_markdown);
+    let current_override = current_markdown.as_deref().and_then(|markdown| {
+        build_current_override(current_path.as_deref(), &current_title, markdown)
+    });
     let target = parse_wikilink_target(&raw_target);
     let Some(note_path) = resolve_wikilink_note_path(
         &state,
@@ -70,14 +71,15 @@ pub(crate) fn autocomplete_note_links(
     raw_target: String,
     current_path: Option<String>,
     current_title: String,
-    current_markdown: String,
+    current_markdown: Option<String>,
     limit: usize,
 ) -> Result<Vec<NoteLinkSuggestion>, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_override =
-        build_current_override(current_path.as_deref(), &current_title, &current_markdown);
+    let current_override = current_markdown.as_deref().and_then(|markdown| {
+        build_current_override(current_path.as_deref(), &current_title, markdown)
+    });
     let target = parse_wikilink_target(&raw_target);
     let limit = limit.max(1);
 
@@ -109,6 +111,7 @@ pub(crate) fn autocomplete_note_links(
         &state,
         &notes_dir,
         current_path.as_deref(),
+        &current_title,
         current_override.as_ref(),
         target.note.as_deref().unwrap_or_default(),
         limit,
@@ -263,6 +266,7 @@ fn build_note_suggestions(
     state: &State<'_, AppState>,
     notes_dir: &Path,
     current_path: Option<&Path>,
+    current_title: &str,
     current_override: Option<&IndexedNote>,
     query: &str,
     limit: usize,
@@ -271,34 +275,43 @@ fn build_note_suggestions(
     let mut suggestions = Vec::<(u8, String, NoteLinkSuggestion)>::new();
     let mut seen_values = HashSet::<String>::new();
 
-    if let (Some(_current_path), Some(current_override)) = (current_path, current_override) {
-        let label = current_override.title.clone();
-        let value = label.clone();
-        let note_label = current_override.title_lower.clone();
-        let file_label = current_override.file_name_lower.clone();
-        let matches_query = normalized_query.is_empty()
-            || note_label.contains(&normalized_query)
-            || file_label.contains(&normalized_query);
+    if let Some(_current_path) = current_path {
+        let label = current_override.map(|note| note.title.clone()).or_else(|| {
+            let trimmed_title = current_title.trim();
+            (!trimmed_title.is_empty()).then(|| trimmed_title.to_string())
+        });
+        if let Some(label) = label {
+            let value = label.clone();
+            let note_label = current_override
+                .map(|note| note.title_lower.clone())
+                .unwrap_or_else(|| normalize_note_reference(&label));
+            let file_label = current_override
+                .map(|note| note.file_name_lower.clone())
+                .unwrap_or_default();
+            let matches_query = normalized_query.is_empty()
+                || note_label.contains(&normalized_query)
+                || file_label.contains(&normalized_query);
 
-        if matches_query && seen_values.insert(value.clone()) {
-            let rank = if note_label.starts_with(&normalized_query)
-                || file_label.starts_with(&normalized_query)
-            {
-                0
-            } else {
-                1
-            };
+            if matches_query && seen_values.insert(value.clone()) {
+                let rank = if note_label.starts_with(&normalized_query)
+                    || file_label.starts_with(&normalized_query)
+                {
+                    0
+                } else {
+                    1
+                };
 
-            suggestions.push((
-                rank,
-                label.to_lowercase(),
-                NoteLinkSuggestion {
-                    kind: "note".to_string(),
-                    value,
-                    label: label.clone(),
-                    detail: "Current note".to_string(),
-                },
-            ));
+                suggestions.push((
+                    rank,
+                    label.to_lowercase(),
+                    NoteLinkSuggestion {
+                        kind: "note".to_string(),
+                        value,
+                        label: label.clone(),
+                        detail: "Current note".to_string(),
+                    },
+                ));
+            }
         }
     }
 

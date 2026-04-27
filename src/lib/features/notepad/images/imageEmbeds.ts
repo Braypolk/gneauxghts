@@ -12,7 +12,7 @@ export function createImageEmbedsExtension(config: ImagesConfig) {
       }
 
       update(update: import('@codemirror/view').ViewUpdate) {
-        if (update.docChanged || update.selectionSet || update.viewportChanged) {
+        if (update.docChanged || update.selectionSet) {
           this.decorations = buildImageEmbedDecorations(update.view, config.assetRootPath);
         }
       }

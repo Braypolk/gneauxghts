@@ -94,10 +94,7 @@
   } from '$lib/features/notepad/orchestration/paneSessionController';
   import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
   import {
-    buildProposalPreview,
-    getCurrentProposalUpdate,
-    getProposalDisplayTitle,
-    isDocumentUnderProposal as isProposalDocument
+    getCurrentProposalUpdate
   } from '$lib/features/notepad/orchestration/proposalController';
   import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
   import { createNotepadSearchStore } from '$lib/features/notepad/search/store';
@@ -160,7 +157,15 @@
     slashMenu: PaneSlashMenuModel;
   }
 
+  interface PaneTitleChrome {
+    titleClass: string;
+    titleReadonly: boolean;
+    titleValue: string;
+  }
+
   const proseMirrorInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
+  const paneTitleInputClass =
+    'w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl';
 
   let workspaceShell = $state<HTMLDivElement | null>(null);
   let primaryPaneCard = $state<HTMLDivElement | null>(null);
@@ -727,8 +732,8 @@
     }
 
     scheduleAutosave(document);
-    scheduleSearch();
-    scheduleRelated();
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded();
   }
 
   function handleTitleInput(paneId: PaneId, event: Event) {
@@ -747,12 +752,12 @@
       setRecentlyForgotten(null);
     }
     scheduleAutosave(paneDocument);
-    scheduleSearch();
-    scheduleRelated();
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded();
   }
 
   function handleTitleBlur() {
-    if (isCurrentNoteUnderProposal) {
+    if (hasCurrentProposalReview) {
       return;
     }
 
@@ -855,7 +860,7 @@
       return;
     }
 
-    if (keyboardShortcutMatchesEvent(event, 'reloadCurrentNote')) {
+    if (keyboardShortcutMatchesEvent(event, 'goToPreviousNote')) {
       event.preventDefault();
       void openRecentNoteByIndex(0, { forceReload: true });
       return;
@@ -876,10 +881,8 @@
   function refreshDerivedViews() {
     void loadRecentNotes();
     void loadRecentTasks();
-    if ($searchState.searchQuery.trim() !== '') {
-      scheduleSearch();
-    }
-    scheduleRelated({ immediate: true });
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded({ immediate: true });
   }
 
   const refreshController = createNotepadRefreshController({
@@ -955,6 +958,26 @@
     toggleRelatedPanel: toggleRelatedPanelController,
     updateSelectedRelatedText: updateSelectedRelatedTextController
   } = relatedState;
+
+  function hasActiveSearchQuery() {
+    return $searchState.searchQuery.trim() !== '';
+  }
+
+  function isRelatedPanelExpanded() {
+    return !$relatedState.isPanelCollapsed;
+  }
+
+  function scheduleSearchIfNeeded() {
+    if (hasActiveSearchQuery()) {
+      scheduleSearch();
+    }
+  }
+
+  function scheduleRelatedIfNeeded(options: { immediate?: boolean } = {}) {
+    if (isRelatedPanelExpanded()) {
+      scheduleRelated(options);
+    }
+  }
 
   function getCurrentFileSearchHighlightQuery(
     query: string = currentSearchHighlightQuery,
@@ -1198,8 +1221,8 @@
       setRecentlyForgotten(null);
       await replaceEditorContentInPlace(session.bodyMarkdown);
       clearSelectedRelatedText();
-      scheduleSearch();
-      scheduleRelated({ immediate: true });
+      scheduleSearchIfNeeded();
+      scheduleRelatedIfNeeded({ immediate: true });
     } catch (error) {
       console.error('Failed to refresh note from disk:', error);
     } finally {
@@ -1253,8 +1276,8 @@
     );
     await replaceNoteAcrossPanes(note, freshDraft);
     clearSelectedRelatedText();
-    scheduleSearch();
-    scheduleRelated({ immediate: true });
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded({ immediate: true });
     void loadRecentNotes();
     if (notePathToClear) {
       scheduleAutoSync('note-forgotten', 400);
@@ -1284,8 +1307,8 @@
         setRecentlyForgotten(null);
         await replaceNoteAcrossPanes(previousNote, restoredNote, { restoreCursor: true });
         clearSelectedRelatedText();
-        scheduleSearch();
-        scheduleRelated({ immediate: true });
+        scheduleSearchIfNeeded();
+        scheduleRelatedIfNeeded({ immediate: true });
         void loadRecentNotes();
         scheduleAutoSync('forgotten-restored', 400);
         return;
@@ -1307,8 +1330,8 @@
     await replaceEditorContent(note.bodyMarkdown);
     scheduleAutosave(note);
     clearSelectedRelatedText();
-    scheduleSearch();
-    scheduleRelated({ immediate: true });
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded({ immediate: true });
     void loadRecentNotes();
     scheduleAutoSync('forgotten-restored-draft', 400);
   }
@@ -1361,8 +1384,8 @@
     await replaceNoteAcrossPanes(note, freshDraft);
     clearSearch();
     clearSelectedRelatedText();
-    scheduleSearch();
-    scheduleRelated({ immediate: true });
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded({ immediate: true });
     void loadRecentNotes();
   }
 
@@ -1374,14 +1397,16 @@
       focusEditorAfterOpen?: boolean;
     } = {}
   ) {
-    flushAllPendingDocumentSyncs();
-    flushAllPendingCursorSaves();
     const paneId = activePaneId;
     const previousDocument = getPaneDocumentSession(paneId);
     if (!options.noteId && !notePath) {
       return;
     }
 
+    if (documentSyncFrameIds.has(previousDocument.key)) {
+      flushDocumentEditorSync(previousDocument);
+    }
+    flushAllPendingCursorSaves();
     saveCursorPositionForDocument(previousDocument);
     saveSharedEditorStateForDocument(previousDocument);
     if (
@@ -1426,24 +1451,41 @@
     if (!getNoteByKey(previousDocument.key)) {
       cleanupNoteRuntime(previousDocument.key);
     }
-    scheduleRelated({ immediate: true });
+    scheduleRelatedIfNeeded({ immediate: true });
   }
 
-  let currentProposalChanges = $derived.by(() =>
-    getProposalChangesForPath($activeProposalSession, documentSession.currentNotePath)
+  let hasCurrentProposalReview = $derived.by(
+    () => getProposalChangesForPath($activeProposalSession, documentSession.currentNotePath).length > 0
   );
-  let currentProposalUpdate = $derived.by(() => getCurrentProposalUpdate(currentProposalChanges));
-  let currentProposalPreview = $derived.by(() => buildProposalPreview(currentProposalUpdate));
-  let hasCurrentProposalReview = $derived(currentProposalChanges.length > 0);
-  let isCurrentNoteUnderProposal = $derived(hasCurrentProposalReview);
 
   function isDocumentUnderProposal(document: NoteDraftState) {
-    return isProposalDocument($activeProposalSession, document);
+    return getProposalChangesForPath($activeProposalSession, document.currentNotePath).length > 0;
   }
 
-  function getPaneDisplayTitle(paneId: PaneId) {
-    return getProposalDisplayTitle($activeProposalSession, getPaneDocumentSession(paneId));
+  function getPaneTitleChrome(paneId: PaneId): PaneTitleChrome {
+    const paneDocument = getPaneDocumentSession(paneId);
+    const proposalChanges = getProposalChangesForPath(
+      $activeProposalSession,
+      paneDocument.currentNotePath
+    );
+    const proposalUpdate = getCurrentProposalUpdate(proposalChanges);
+    const isUnderProposal = proposalChanges.length > 0;
+
+    return {
+      titleClass: `${paneTitleInputClass}${
+        isUnderProposal ? ' cursor-default text-muted-foreground' : ''
+      }`,
+      titleReadonly: isUnderProposal || splitPickerPaneId === paneId,
+      titleValue: proposalUpdate
+        ? proposalUpdate.titleSelected
+          ? proposalUpdate.proposedTitle
+          : proposalUpdate.currentTitle
+        : paneDocument.title
+    };
   }
+
+  let primaryPaneTitleChrome = $derived.by(() => getPaneTitleChrome(PRIMARY_PANE_ID));
+  let secondaryPaneTitleChrome = $derived.by(() => getPaneTitleChrome(SECONDARY_PANE_ID));
 
   function handleActiveWikilinkChange(paneId: PaneId, nextActiveWikilink: ActiveWikilink | null) {
     paneControllers[paneId].wikilinkController.handleActiveWikilinkChange(nextActiveWikilink);
@@ -1536,10 +1578,8 @@
     flushDocumentEditorSync(getPaneDocumentSession(paneId));
     activatePaneSession(paneId);
     updateSelectedRelatedText(paneId);
-    if ($searchState.searchQuery.trim() !== '') {
-      scheduleSearch();
-    }
-    scheduleRelated({ immediate: true });
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded({ immediate: true });
   }
 
   async function splitWorkspace() {
@@ -1705,11 +1745,8 @@
     await tick();
     await ensurePaneEditors();
     updateSelectedRelatedText(paneId);
-    if ($searchState.searchQuery.trim() !== '') {
-      scheduleSearch();
-    }
-
-    scheduleRelated({ immediate: true });
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded({ immediate: true });
   }
 
   async function resolveSplitPickerChoice(paneId: PaneId, choice: SplitChoice) {
@@ -1835,14 +1872,6 @@
     return `relative flex min-h-0 flex-1 flex-col ${activePaneId === paneId ? 'z-10' : 'z-0'}`;
   }
 
-  function getPaneTitleClass(paneId: PaneId) {
-    return `w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl ${
-      isDocumentUnderProposal(getPaneDocumentSession(paneId))
-        ? 'cursor-default text-muted-foreground'
-        : ''
-    }`;
-  }
-
   onMount(() => {
     let mounted = true;
     const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(async () => {
@@ -1881,7 +1910,7 @@
       try {
         await ensurePaneEditors();
         updateRelatedDrawerLayout();
-        scheduleRelated({ immediate: true });
+        scheduleRelatedIfNeeded({ immediate: true });
         const pendingMapNotePath = consumePendingMapNotePath();
         if (pendingMapNotePath) {
           await openNotePath(pendingMapNotePath, { focusEditorAfterOpen: false });
@@ -1951,27 +1980,46 @@
       schedulePaneCursorSave(paneId);
     };
 
+    let selectionFrameId: number | null = null;
     const handleSelectionChange = () => {
-      if (activePaneId !== paneId) {
+      if (selectionFrameId !== null) {
         return;
       }
 
-      updateSelectedRelatedText(paneId);
+      selectionFrameId = window.requestAnimationFrame(() => {
+        selectionFrameId = null;
+        if (activePaneId !== paneId || getPaneKind(paneId) !== 'editor') {
+          return;
+        }
+
+        updateSelectedRelatedText(paneId);
+      });
+    };
+
+    const handleKeyboardSelectionChange = (event: KeyboardEvent) => {
+      if (!event.shiftKey && !(event.metaKey && event.key.toLowerCase() === 'a')) {
+        return;
+      }
+
+      handleSelectionChange();
     };
 
     for (const eventName of proseMirrorInteractionEvents) {
       proseMirror.addEventListener(eventName, persistCursorPosition);
       proseMirror.addEventListener(eventName, handleSelectionChange);
     }
-    document.addEventListener('selectionchange', handleSelectionChange);
+    proseMirror.addEventListener('keyup', handleKeyboardSelectionChange);
 
     return () => {
+      if (selectionFrameId !== null) {
+        window.cancelAnimationFrame(selectionFrameId);
+      }
       flushPaneCursorSave(paneId);
       for (const eventName of proseMirrorInteractionEvents) {
         proseMirror.removeEventListener(eventName, persistCursorPosition);
         proseMirror.removeEventListener(eventName, handleSelectionChange);
       }
-      document.removeEventListener('selectionchange', handleSelectionChange);
+      proseMirror.removeEventListener('keyup', handleKeyboardSelectionChange);
     };
   }
 
@@ -2011,11 +2059,10 @@
           isSlashMenuOpen={paneStates[PRIMARY_PANE_ID].slashMenu.open}
           isSplitPickerOpen={splitPickerPaneId === PRIMARY_PANE_ID}
           showCloseButton={paneOrder.length > 1}
-          titleClass={getPaneTitleClass(PRIMARY_PANE_ID)}
+          titleClass={primaryPaneTitleChrome.titleClass}
           titlePlaceholder={getPaneTitlePlaceholder(getPaneKind(PRIMARY_PANE_ID))}
-          titleValue={getPaneDisplayTitle(PRIMARY_PANE_ID)}
-          titleReadonly={isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID)) ||
-            splitPickerPaneId === PRIMARY_PANE_ID}
+          titleValue={primaryPaneTitleChrome.titleValue}
+          titleReadonly={primaryPaneTitleChrome.titleReadonly}
           chatDescription="Chat panes are scaffolded for the multipane layout. This pane already tracks focus, title chrome, and close behavior, but the actual chat experience is still a placeholder in this pass."
           splitPickerHighlightedIndex={splitPickerHighlightedIndex}
           splitPickerCurrentNoteLabel={splitPickerCurrentNoteLabel}
@@ -2050,11 +2097,10 @@
           isSlashMenuOpen={paneStates[SECONDARY_PANE_ID].slashMenu.open}
           isSplitPickerOpen={splitPickerPaneId === SECONDARY_PANE_ID}
           showCloseButton={paneOrder.length > 1}
-          titleClass={getPaneTitleClass(SECONDARY_PANE_ID)}
+          titleClass={secondaryPaneTitleChrome.titleClass}
           titlePlaceholder={getPaneTitlePlaceholder(getPaneKind(SECONDARY_PANE_ID))}
-          titleValue={getPaneDisplayTitle(SECONDARY_PANE_ID)}
-          titleReadonly={isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID)) ||
-            splitPickerPaneId === SECONDARY_PANE_ID}
+          titleValue={secondaryPaneTitleChrome.titleValue}
+          titleReadonly={secondaryPaneTitleChrome.titleReadonly}
           chatDescription="This placeholder reserves the pane contract for a future chat implementation while keeping the workspace architecture aligned around split panes and a shared note session."
           splitPickerHighlightedIndex={splitPickerHighlightedIndex}
           splitPickerCurrentNoteLabel={splitPickerCurrentNoteLabel}

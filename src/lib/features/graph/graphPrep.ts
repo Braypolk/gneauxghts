@@ -1,6 +1,8 @@
 import { buildClusterAnchors, nodeRadius, temporalDecay } from '$lib/features/graph/graphLayout';
 import type { GraphCluster, GraphData, SimLink, SimNode } from '$lib/types/graph';
 
+const MAX_INFERRED_EDGES_TO_CONSIDER = 5_000;
+
 export interface NodeRenderInfo {
   matchScore: number;
   inRange: boolean;
@@ -148,7 +150,8 @@ export function buildSimData(
   const inferredCountPerNode = new Map<string, number>();
   const filteredInferred = graphData.inferredEdges
     .filter((edge) => edge.score >= config.inferredEdgeSimilarityThreshold)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_INFERRED_EDGES_TO_CONSIDER);
 
   for (const edge of filteredInferred) {
     const key = [edge.source, edge.target].sort().join('::');

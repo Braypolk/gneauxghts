@@ -180,7 +180,7 @@ function createSearchHighlightExtension() {
       }
 
       update(update: import('@codemirror/view').ViewUpdate) {
-        if (update.docChanged || update.selectionSet || update.startState.field(searchQueryField) !== update.state.field(searchQueryField)) {
+        if (update.docChanged || update.startState.field(searchQueryField) !== update.state.field(searchQueryField)) {
           this.decorations = buildSearchHighlightDecorations(
             update.state,
             update.state.field(searchQueryField)
@@ -557,7 +557,7 @@ function createPassiveTableExtension() {
       }
 
       update(update: import('@codemirror/view').ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
+        if (update.docChanged) {
           this.decorations = buildPassiveTableDecorations(update.view);
         }
       }
