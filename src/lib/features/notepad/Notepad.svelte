@@ -1,7 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { Columns2, X } from 'lucide-svelte';
   import { onMount, tick, untrack } from 'svelte';
   import {
     cleanUpApplyPolicyPreference,
@@ -70,13 +69,12 @@
   } from '$lib/features/notepad/splitPanePicker';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
   import BottomBar from '$lib/features/notepad/ui/BottomBar.svelte';
-  import SplitPaneContentPicker from '$lib/features/notepad/SplitPaneContentPicker.svelte';
+  import NotepadPane from '$lib/features/notepad/NotepadPane.svelte';
   import SlashMenu, {
     type PaneSlashMenuModel
   } from '$lib/features/notepad/editor/SlashMenu.svelte';
   import WikilinkAutocomplete from '$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte';
   import RelatedPanel from '$lib/features/notepad/related/RelatedPanel.svelte';
-  import ProposalReviewList from '$lib/features/proposals/ProposalReviewList.svelte';
   import {
     EMPTY_RELATED_REASON,
     getBottomSheetStyle,
@@ -98,7 +96,6 @@
   import {
     buildProposalPreview,
     getCurrentProposalUpdate,
-    getProposalChangesForDocument as getDocumentProposalChanges,
     getProposalDisplayTitle,
     isDocumentUnderProposal as isProposalDocument
   } from '$lib/features/notepad/orchestration/proposalController';
@@ -114,10 +111,7 @@
   import { createWikilinkRuntime } from '$lib/features/notepad/wikilinks/runtime';
   import {
     activeProposalSession,
-    getProposalChangesForPath,
-    toggleProposalChange,
-    toggleProposalHunk,
-    toggleProposalTitle
+    getProposalChangesForPath
   } from '$lib/features/proposals/session';
   import {
     adoptSnapshotForPane,
@@ -213,7 +207,6 @@
   let canUnforget = $derived(notepadState.recentlyForgotten !== null);
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
   let semanticStatus = $state<SemanticStatus | null>(null);
-  let proposalErrorMessage = $state('');
   let currentSearchHighlightMode: SearchMode = 'all';
   let currentSearchHighlightQuery = '';
 
@@ -283,24 +276,12 @@
     secondaryController = value;
   }
 
-  function getPaneCardElement(paneId: PaneId) {
-    return paneId === PRIMARY_PANE_ID ? primaryPaneCard : secondaryPaneCard;
-  }
-
-  function getPaneEditorShell(paneId: PaneId) {
-    return paneId === PRIMARY_PANE_ID ? primaryEditorShell : secondaryEditorShell;
-  }
-
   function getPaneEditorRoot(paneId: PaneId) {
     return paneId === PRIMARY_PANE_ID ? primaryEditorRoot : secondaryEditorRoot;
   }
 
   function getPaneTitleInput(paneId: PaneId) {
     return paneId === PRIMARY_PANE_ID ? primaryTitleInput : secondaryTitleInput;
-  }
-
-  function getPaneTitleShell(paneId: PaneId) {
-    return paneId === PRIMARY_PANE_ID ? primaryTitleShell : secondaryTitleShell;
   }
 
   function applySlashMenuSnapshotForPane(
@@ -346,7 +327,7 @@
     const paneDocument = getPaneDocumentSession(paneId);
     return {
       editorRoot: getPaneEditorRoot(paneId),
-      titleShell: getPaneTitleShell(paneId),
+      titleShell: paneId === PRIMARY_PANE_ID ? primaryTitleShell : secondaryTitleShell,
       currentNoteId: paneDocument.currentNoteId,
       currentNotePath: paneDocument.currentNotePath,
       focusTitleAtEnd: () => focusTitleAtEnd(paneId)
@@ -1027,8 +1008,8 @@
       setController: (value) => {
         setPaneController(paneId, value);
       },
-      getShellElement: () => getPaneCardElement(paneId),
-      getEditorShell: () => getPaneEditorShell(paneId),
+      getShellElement: () => (paneId === PRIMARY_PANE_ID ? primaryPaneCard : secondaryPaneCard),
+      getEditorShell: () => (paneId === PRIMARY_PANE_ID ? primaryEditorShell : secondaryEditorShell),
       getEditorRoot: () => getPaneEditorRoot(paneId),
       getDocumentSession: () => getPaneDocumentSession(paneId),
       getSharedEditorState: getSharedEditorStateForDocument,
@@ -1456,10 +1437,6 @@
   let hasCurrentProposalReview = $derived(currentProposalChanges.length > 0);
   let isCurrentNoteUnderProposal = $derived(hasCurrentProposalReview);
 
-  function getProposalChangesForDocument(document: NoteDraftState) {
-    return getDocumentProposalChanges($activeProposalSession, document);
-  }
-
   function isDocumentUnderProposal(document: NoteDraftState) {
     return isProposalDocument($activeProposalSession, document);
   }
@@ -1858,6 +1835,14 @@
     return `relative flex min-h-0 flex-1 flex-col ${activePaneId === paneId ? 'z-10' : 'z-0'}`;
   }
 
+  function getPaneTitleClass(paneId: PaneId) {
+    return `w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl ${
+      isDocumentUnderProposal(getPaneDocumentSession(paneId))
+        ? 'cursor-default text-muted-foreground'
+        : ''
+    }`;
+  }
+
   onMount(() => {
     let mounted = true;
     const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(async () => {
@@ -2016,222 +2001,81 @@
 
     <div class="relative z-10 flex min-h-0 flex-1 gap-0 px-0 pt-0">
       {#if paneOrder.includes(PRIMARY_PANE_ID)}
-        <div
-          bind:this={primaryPaneCard}
-          class={getPaneBodyClass(PRIMARY_PANE_ID)}
-          role="group"
-          aria-label="Primary pane"
-          onpointerdown={() => activatePane(PRIMARY_PANE_ID)}
-          onfocusin={() => activatePane(PRIMARY_PANE_ID)}
-        >
-          <div class={getPaneFrameClass(PRIMARY_PANE_ID)}>
-            <div class="absolute inset-x-0 top-0 z-20">
-              <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
-              <div class="relative z-10 flex items-center justify-between gap-3 px-4 pt-4 pb-3">
-                <div class="h-9 w-9 shrink-0" aria-hidden="true"></div>
-                <div class="pointer-events-none absolute inset-x-16 top-4 flex justify-center">
-                  <div bind:this={primaryTitleShell} class="pointer-events-auto w-full max-w-[24rem] min-w-0">
-                    <input
-                      bind:this={primaryTitleInput}
-                      type="text"
-                      class={`w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl ${
-                        isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID))
-                          ? 'cursor-default text-muted-foreground'
-                          : ''
-                      }`}
-                      placeholder={getPaneTitlePlaceholder(getPaneKind(PRIMARY_PANE_ID))}
-                      value={getPaneDisplayTitle(PRIMARY_PANE_ID)}
-                      readonly={isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID)) ||
-                        splitPickerPaneId === PRIMARY_PANE_ID}
-                      oninput={(event) => handleTitleInput(PRIMARY_PANE_ID, event)}
-                      onblur={handleTitleBlur}
-                      onkeydown={handleTitleKeydown}
-                    />
-                  </div>
-                </div>
-                {#if paneOrder.length > 1}
-                  <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void closePane(PRIMARY_PANE_ID)} aria-label="Close pane">
-                    <X class="h-4 w-4" />
-                  </button>
-                {:else}
-                  <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void splitWorkspace()} aria-label="Add pane">
-                    <Columns2 class="h-4 w-4" />
-                  </button>
-                {/if}
-              </div>
-            </div>
-
-            {#if splitPickerPaneId === PRIMARY_PANE_ID}
-              <div class="flex min-h-0 flex-1">
-                <SplitPaneContentPicker
-                  bind:focusRoot={splitPickerFocusEl}
-                  highlightedIndex={splitPickerHighlightedIndex}
-                  currentNoteLabel={splitPickerCurrentNoteLabel}
-                  previousNoteLabel={splitPickerPreviousNoteLabel}
-                  onHighlightChange={(index) => {
-                    splitPickerHighlightedIndex = index;
-                  }}
-                  onChoose={(choice) => void resolveSplitPickerChoice(PRIMARY_PANE_ID, choice)}
-                />
-              </div>
-            {:else if getPaneKind(PRIMARY_PANE_ID) === 'editor'}
-              <div class="h-full flex-1 min-h-0">
-                <div
-                  bind:this={primaryEditorShell}
-                  class="notepad-editor-shell relative h-full"
-                  class:notepad-editor-shell--slash-open={paneStates[PRIMARY_PANE_ID].slashMenu.open}
-                >
-                  {#if !paneStates[PRIMARY_PANE_ID].isEditorReady}
-                    <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                      <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
-                        Loading editor
-                      </span>
-                    </div>
-                  {/if}
-
-                  <div bind:this={primaryEditorRoot} class={`h-full min-h-full ${isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID)) ? 'hidden' : ''}`}></div>
-                  {#if isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID))}
-                    <section class="mx-auto min-h-full w-full max-w-3xl px-4 pt-28 pb-16 sm:px-8">
-                      {#if proposalErrorMessage}
-                        <div class="mb-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                          {proposalErrorMessage}
-                        </div>
-                      {/if}
-                      <ProposalReviewList
-                        reviewChanges={getProposalChangesForDocument(getPaneDocumentSession(PRIMARY_PANE_ID))}
-                        compact={true}
-                        minimal={true}
-                        showSegmentControls={false}
-                        framelessPreview={true}
-                        showRemovedContent={false}
-                        emptyMessage="No proposed edits are attached to this note."
-                        onToggleChange={toggleProposalChange}
-                        onToggleHunk={toggleProposalHunk}
-                        onToggleTitle={toggleProposalTitle}
-                      />
-                    </section>
-                  {/if}
-                </div>
-              </div>
-            {:else}
-              <div class="flex min-h-0 flex-1 items-center justify-center px-6 pt-28 pb-16">
-                <div class="max-w-md rounded-[1.6rem] border border-border/70 bg-background/60 px-6 py-5 text-left shadow-sm">
-                  <div class="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">LLM Chat</div>
-                  <p class="mt-3 text-sm leading-7 text-muted-foreground">
-                    Chat panes are scaffolded for the multipane layout. This pane already tracks focus, title chrome, and close behavior, but the actual chat experience is still a placeholder in this pass.
-                  </p>
-                </div>
-              </div>
-            {/if}
-          </div>
-        </div>
+        <NotepadPane
+          paneId={PRIMARY_PANE_ID}
+          ariaLabel="Primary pane"
+          bodyClass={getPaneBodyClass(PRIMARY_PANE_ID)}
+          frameClass={getPaneFrameClass(PRIMARY_PANE_ID)}
+          paneKind={getPaneKind(PRIMARY_PANE_ID)}
+          isEditorReady={paneStates[PRIMARY_PANE_ID].isEditorReady}
+          isSlashMenuOpen={paneStates[PRIMARY_PANE_ID].slashMenu.open}
+          isSplitPickerOpen={splitPickerPaneId === PRIMARY_PANE_ID}
+          showCloseButton={paneOrder.length > 1}
+          titleClass={getPaneTitleClass(PRIMARY_PANE_ID)}
+          titlePlaceholder={getPaneTitlePlaceholder(getPaneKind(PRIMARY_PANE_ID))}
+          titleValue={getPaneDisplayTitle(PRIMARY_PANE_ID)}
+          titleReadonly={isDocumentUnderProposal(getPaneDocumentSession(PRIMARY_PANE_ID)) ||
+            splitPickerPaneId === PRIMARY_PANE_ID}
+          chatDescription="Chat panes are scaffolded for the multipane layout. This pane already tracks focus, title chrome, and close behavior, but the actual chat experience is still a placeholder in this pass."
+          splitPickerHighlightedIndex={splitPickerHighlightedIndex}
+          splitPickerCurrentNoteLabel={splitPickerCurrentNoteLabel}
+          splitPickerPreviousNoteLabel={splitPickerPreviousNoteLabel}
+          bind:paneCard={primaryPaneCard}
+          bind:editorShell={primaryEditorShell}
+          bind:editorRoot={primaryEditorRoot}
+          bind:titleInput={primaryTitleInput}
+          bind:titleShell={primaryTitleShell}
+          bind:splitPickerFocusRoot={splitPickerFocusEl}
+          onActivate={activatePane}
+          onClose={closePane}
+          onSplit={splitWorkspace}
+          onTitleInput={handleTitleInput}
+          onTitleBlur={handleTitleBlur}
+          onTitleKeydown={handleTitleKeydown}
+          onSplitHighlightChange={(index) => {
+            splitPickerHighlightedIndex = index;
+          }}
+          onSplitChoose={resolveSplitPickerChoice}
+        />
       {/if}
 
       {#if paneOrder.includes(SECONDARY_PANE_ID)}
-        <div
-          bind:this={secondaryPaneCard}
-          class={getPaneBodyClass(SECONDARY_PANE_ID)}
-          role="group"
-          aria-label="Secondary pane"
-          onpointerdown={() => activatePane(SECONDARY_PANE_ID)}
-          onfocusin={() => activatePane(SECONDARY_PANE_ID)}
-        >
-          <div class={getPaneFrameClass(SECONDARY_PANE_ID)}>
-            <div class="absolute inset-x-0 top-0 z-20">
-              <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
-              <div class="relative z-10 flex items-center justify-between gap-3 px-4 pt-4 pb-3">
-                <div class="h-9 w-9 shrink-0" aria-hidden="true"></div>
-                <div class="pointer-events-none absolute inset-x-16 top-4 flex justify-center">
-                  <div bind:this={secondaryTitleShell} class="pointer-events-auto w-full max-w-[24rem] min-w-0">
-                    <input
-                      bind:this={secondaryTitleInput}
-                      type="text"
-                      class={`w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl ${
-                        isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID))
-                          ? 'cursor-default text-muted-foreground'
-                          : ''
-                      }`}
-                      placeholder={getPaneTitlePlaceholder(getPaneKind(SECONDARY_PANE_ID))}
-                      value={getPaneDisplayTitle(SECONDARY_PANE_ID)}
-                      readonly={isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID)) ||
-                        splitPickerPaneId === SECONDARY_PANE_ID}
-                      oninput={(event) => handleTitleInput(SECONDARY_PANE_ID, event)}
-                      onblur={handleTitleBlur}
-                      onkeydown={handleTitleKeydown}
-                    />
-                  </div>
-                </div>
-                {#if paneOrder.length > 1}
-                  <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void closePane(SECONDARY_PANE_ID)} aria-label="Close pane">
-                    <X class="h-4 w-4" />
-                  </button>
-                {:else}
-                  <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void splitWorkspace()} aria-label="Add pane">
-                    <Columns2 class="h-4 w-4" />
-                  </button>
-                {/if}
-              </div>
-            </div>
-
-            {#if splitPickerPaneId === SECONDARY_PANE_ID}
-              <div class="flex min-h-0 flex-1">
-                <SplitPaneContentPicker
-                  bind:focusRoot={splitPickerFocusEl}
-                  highlightedIndex={splitPickerHighlightedIndex}
-                  currentNoteLabel={splitPickerCurrentNoteLabel}
-                  previousNoteLabel={splitPickerPreviousNoteLabel}
-                  onHighlightChange={(index) => {
-                    splitPickerHighlightedIndex = index;
-                  }}
-                  onChoose={(choice) => void resolveSplitPickerChoice(SECONDARY_PANE_ID, choice)}
-                />
-              </div>
-            {:else if getPaneKind(SECONDARY_PANE_ID) === 'editor'}
-              <div class="h-full flex-1 min-h-0">
-                <div
-                  bind:this={secondaryEditorShell}
-                  class="notepad-editor-shell relative h-full"
-                  class:notepad-editor-shell--slash-open={paneStates[SECONDARY_PANE_ID].slashMenu.open}
-                >
-                  {#if !paneStates[SECONDARY_PANE_ID].isEditorReady}
-                    <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                      <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
-                        Loading editor
-                      </span>
-                    </div>
-                  {/if}
-
-                  <div bind:this={secondaryEditorRoot} class={`h-full min-h-full ${isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID)) ? 'hidden' : ''}`}></div>
-                  {#if isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID))}
-                    <section class="mx-auto min-h-full w-full max-w-3xl px-4 pt-28 pb-16 sm:px-8">
-                      <ProposalReviewList
-                        reviewChanges={getProposalChangesForDocument(getPaneDocumentSession(SECONDARY_PANE_ID))}
-                        compact={true}
-                        minimal={true}
-                        showSegmentControls={false}
-                        framelessPreview={true}
-                        showRemovedContent={false}
-                        emptyMessage="No proposed edits are attached to this note."
-                        onToggleChange={toggleProposalChange}
-                        onToggleHunk={toggleProposalHunk}
-                        onToggleTitle={toggleProposalTitle}
-                      />
-                    </section>
-                  {/if}
-                </div>
-              </div>
-            {:else}
-              <div class="flex min-h-0 flex-1 items-center justify-center px-6 pt-28 pb-16">
-                <div class="max-w-md rounded-[1.6rem] border border-border/70 bg-background/60 px-6 py-5 text-left shadow-sm">
-                  <div class="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">LLM Chat</div>
-                  <p class="mt-3 text-sm leading-7 text-muted-foreground">
-                    This placeholder reserves the pane contract for a future chat implementation while keeping the workspace architecture aligned around split panes and a shared note session.
-                  </p>
-                </div>
-              </div>
-            {/if}
-          </div>
-        </div>
+        <NotepadPane
+          paneId={SECONDARY_PANE_ID}
+          ariaLabel="Secondary pane"
+          bodyClass={getPaneBodyClass(SECONDARY_PANE_ID)}
+          frameClass={getPaneFrameClass(SECONDARY_PANE_ID)}
+          paneKind={getPaneKind(SECONDARY_PANE_ID)}
+          isEditorReady={paneStates[SECONDARY_PANE_ID].isEditorReady}
+          isSlashMenuOpen={paneStates[SECONDARY_PANE_ID].slashMenu.open}
+          isSplitPickerOpen={splitPickerPaneId === SECONDARY_PANE_ID}
+          showCloseButton={paneOrder.length > 1}
+          titleClass={getPaneTitleClass(SECONDARY_PANE_ID)}
+          titlePlaceholder={getPaneTitlePlaceholder(getPaneKind(SECONDARY_PANE_ID))}
+          titleValue={getPaneDisplayTitle(SECONDARY_PANE_ID)}
+          titleReadonly={isDocumentUnderProposal(getPaneDocumentSession(SECONDARY_PANE_ID)) ||
+            splitPickerPaneId === SECONDARY_PANE_ID}
+          chatDescription="This placeholder reserves the pane contract for a future chat implementation while keeping the workspace architecture aligned around split panes and a shared note session."
+          splitPickerHighlightedIndex={splitPickerHighlightedIndex}
+          splitPickerCurrentNoteLabel={splitPickerCurrentNoteLabel}
+          splitPickerPreviousNoteLabel={splitPickerPreviousNoteLabel}
+          bind:paneCard={secondaryPaneCard}
+          bind:editorShell={secondaryEditorShell}
+          bind:editorRoot={secondaryEditorRoot}
+          bind:titleInput={secondaryTitleInput}
+          bind:titleShell={secondaryTitleShell}
+          bind:splitPickerFocusRoot={splitPickerFocusEl}
+          onActivate={activatePane}
+          onClose={closePane}
+          onSplit={splitWorkspace}
+          onTitleInput={handleTitleInput}
+          onTitleBlur={handleTitleBlur}
+          onTitleKeydown={handleTitleKeydown}
+          onSplitHighlightChange={(index) => {
+            splitPickerHighlightedIndex = index;
+          }}
+          onSplitChoose={resolveSplitPickerChoice}
+        />
       {/if}
     </div>
 

@@ -362,19 +362,21 @@ export function isKeyboardShortcutCustomized(
   return bindings[id] !== defaultKeyboardShortcutBindings[id];
 }
 
-export function formatShortcutBinding(binding: string) {
+export function getShortcutBindingParts(binding: string): string[] {
   const parsed = parseShortcutBinding(binding);
-  if (!parsed) {
-    return 'Disabled';
-  }
+  if (!parsed) return ['Disabled'];
 
-  const parts = [];
+  const parts: string[] = [];
   if (parsed.metaKey) parts.push('Cmd');
   if (parsed.ctrlKey) parts.push('Ctrl');
   if (parsed.altKey) parts.push('Option');
   if (parsed.shiftKey) parts.push('Shift');
   parts.push(formatShortcutKey(parsed.key));
-  return parts.join(' + ');
+  return parts;
+}
+
+export function formatShortcutBinding(binding: string) {
+  return getShortcutBindingParts(binding).join(' + ');
 }
 
 export function recordShortcutBindingFromEvent(event: KeyboardEvent) {
@@ -469,7 +471,7 @@ function normalizeShortcutBinding(binding: string) {
   return parts.join('+');
 }
 
-function parseShortcutBinding(binding: string): ParsedShortcutBinding | null {
+export function parseShortcutBinding(binding: string): ParsedShortcutBinding | null {
   if (binding.trim() === '') {
     return null;
   }
@@ -532,7 +534,7 @@ function getEventKeyToken(event: Pick<KeyboardEvent, 'code' | 'key'>) {
   }
 }
 
-function formatShortcutKey(key: string) {
+export function formatShortcutKey(key: string) {
   if (key.length === 1) {
     return /^[a-z]$/.test(key) ? key.toUpperCase() : key;
   }

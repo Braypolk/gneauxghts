@@ -15,6 +15,7 @@
     type KeyboardShortcutDefinition,
     type KeyboardShortcutId
   } from '$lib/keyboardShortcuts';
+  import ShortcutBinding from '$lib/ui/ShortcutBinding.svelte';
 
   const groupedDefinitions = keyboardShortcutGroups.map((group) => ({
     ...group,
@@ -197,7 +198,7 @@
                 </div>
                 <p class="mt-1 text-xs text-muted-foreground">{definition.description}</p>
                 <p class="mt-1 text-[11px] text-muted-foreground">
-                  Default: {formatShortcutBinding(getDefaultKeyboardShortcutBinding(definition.id))}
+                  Default: <ShortcutBinding binding={getDefaultKeyboardShortcutBinding(definition.id)} />
                 </p>
                 {#if conflictDescription}
                   <p class="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
@@ -222,7 +223,7 @@
                   {#if recordingShortcutId === definition.id}
                     Press shortcut…
                   {:else}
-                    {formatShortcutBinding(currentBinding)}
+                    <ShortcutBinding binding={currentBinding} />
                   {/if}
                 </button>
 

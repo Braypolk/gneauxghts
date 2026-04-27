@@ -175,7 +175,7 @@ export interface EditableRememberAction {
 
 export const EXACT_REMEMBER_ACTION: RememberActionOption = {
   id: 'exact',
-  label: 'Exact',
+  label: 'Remember',
   description: 'Save exactly as written.',
   family: 'exact',
   builtIn: true,

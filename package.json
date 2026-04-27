@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "tauri": "node scripts/tauri.mjs"
+    "tauri": "node scripts/tauri.mjs",
+    "release:mac": "GNEAUXGHTS_REQUIRE_NOTARIZATION=1 node scripts/tauri.mjs build"
   },
   "license": "MIT",
   "dependencies": {
