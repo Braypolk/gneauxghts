@@ -15,6 +15,8 @@ export const notepadRuntimeState = $state({
   assetRootPath: null as string | null
 });
 
+export const notepadState = notepadRuntimeState.notepadState;
+
 export const sharedEditorResourcesByNoteKey = new Map<NoteKey, SharedEditorResources>();
 export const sharedEditorStateByNoteKey = new Map<NoteKey, EditorSnapshot | null>();
 export const sharedEditorStateGenerationByNoteKey = new Map<NoteKey, number>();
