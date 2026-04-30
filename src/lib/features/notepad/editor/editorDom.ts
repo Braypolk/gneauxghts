@@ -2,7 +2,8 @@ import { EditorView } from '@codemirror/view';
 
 type QueryRoot = Element | Document | DocumentFragment | null;
 
-export function findProseMirrorElement(root: QueryRoot) {
+/** Resolves the CodeMirror 6 editable surface (`.cm-content`) under `root`, if present. */
+export function findCmContentElement(root: QueryRoot) {
   if (root instanceof HTMLElement && root.classList.contains('cm-content')) {
     return root;
   }
@@ -11,6 +12,7 @@ export function findProseMirrorElement(root: QueryRoot) {
   return content instanceof HTMLElement ? content : null;
 }
 
-export function getEditorProseSurface(view: EditorView) {
-  return findProseMirrorElement(view.dom) ?? view.contentDOM;
+/** Content DOM for layout/focus; prefers the `.cm-content` element inside `view.dom`. */
+export function getEditorContentSurface(view: EditorView) {
+  return findCmContentElement(view.dom) ?? view.contentDOM;
 }

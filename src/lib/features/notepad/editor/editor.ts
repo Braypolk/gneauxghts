@@ -32,7 +32,7 @@ import {
 } from '$lib/features/notepad/editor/blockTypes';
 import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
 import { notepadDraftlyPlugins } from '$lib/features/notepad/editor/draftlyPlugins';
-import { getEditorProseSurface } from '$lib/features/notepad/editor/editorDom';
+import { getEditorContentSurface } from '$lib/features/notepad/editor/editorDom';
 import {
   createSlashMenuPlugin,
   setSlashMenuFloatingReference,
@@ -1203,7 +1203,7 @@ function createBlockHandleExtension(
           return this.#laneMetrics;
         }
 
-        const surface = getEditorProseSurface(this.#view);
+        const surface = getEditorContentSurface(this.#view);
         const surfaceRect = surface.getBoundingClientRect();
         const rootRect = this.#editorRoot.getBoundingClientRect();
         const styles = getComputedStyle(surface);

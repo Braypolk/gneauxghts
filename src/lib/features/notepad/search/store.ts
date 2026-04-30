@@ -229,7 +229,13 @@ export function createNotepadSearchStore({
   }
 
   async function openRecentNoteByIndex(index: number, { forceReload = false }: { forceReload?: boolean } = {}) {
-    const note = await getIndexedRecentItem(index, get(store).recentNotes, forceReload, refreshRecentNotesNow);
+    const state = get(store);
+    const cachedItem = state.recentNotes[index];
+    // If the cached item is the current note, the recent list is stale —
+    // we need a fresh list from the backend (which excludes the current note).
+    const isStale = cachedItem && cachedItem.notePath === getCurrentPath();
+    const effectiveForceReload = forceReload || isStale;
+    const note = await getIndexedRecentItem(index, state.recentNotes, effectiveForceReload, refreshRecentNotesNow);
     await runRecentSelection(note, openRecentNoteItem, 'Failed to open recent note:');
   }
 

@@ -98,7 +98,7 @@
   } from '$lib/features/notepad/orchestration/proposalController';
   import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
   import { createNotepadSearchStore } from '$lib/features/notepad/search/store';
-  import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
+  import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
   import { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
   import {
     getPaneIdForSlashMenuView,
@@ -163,7 +163,7 @@
     titleValue: string;
   }
 
-  const proseMirrorInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
+  const cmContentInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
   const paneTitleInputClass =
     'w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl';
 
@@ -862,7 +862,7 @@
 
     if (keyboardShortcutMatchesEvent(event, 'goToPreviousNote')) {
       event.preventDefault();
-      void openRecentNoteByIndex(0, { forceReload: true });
+      void openRecentNoteByIndex(0);
       return;
     }
 
@@ -1140,13 +1140,22 @@
         continue;
       }
 
-      await paneControllers[paneId].editorLifecycleController.replaceEditorContent(
-        nextNote.bodyMarkdown,
-        {
-          restoreCursor,
-          suppressReadyReset: true
-        }
-      );
+      if (previousNote.key === nextNote.key) {
+        // Same note identity — safe in-place buffer replace (avoids full destroy + create).
+        await paneControllers[paneId].editorLifecycleController.replaceEditorContentInPlaceForDocument(
+          nextNote.bodyMarkdown,
+          nextNote
+        );
+      } else {
+        // Different note — full teardown + recreate to bind the correct FileEditorRuntime.
+        await paneControllers[paneId].editorLifecycleController.replaceEditorContent(
+          nextNote.bodyMarkdown,
+          {
+            restoreCursor,
+            suppressReadyReset: true
+          }
+        );
+      }
       markPaneDocumentGeneration(paneId, nextNote);
     }
 
@@ -1655,9 +1664,9 @@
       return;
     }
 
-    const proseMirror = findProseMirrorElement(getPaneEditorRoot(paneId));
-    if (proseMirror instanceof HTMLElement) {
-      proseMirror.focus({ preventScroll: true });
+    const cmContent = findCmContentElement(getPaneEditorRoot(paneId));
+    if (cmContent instanceof HTMLElement) {
+      cmContent.focus({ preventScroll: true });
       return;
     }
 
@@ -1971,8 +1980,8 @@
       return;
     }
 
-    const proseMirror = findProseMirrorElement(editorRoot);
-    if (!(proseMirror instanceof HTMLElement)) {
+    const cmContent = findCmContentElement(editorRoot);
+    if (!(cmContent instanceof HTMLElement)) {
       return;
     }
 
@@ -2004,22 +2013,22 @@
       handleSelectionChange();
     };
 
-    for (const eventName of proseMirrorInteractionEvents) {
-      proseMirror.addEventListener(eventName, persistCursorPosition);
-      proseMirror.addEventListener(eventName, handleSelectionChange);
+    for (const eventName of cmContentInteractionEvents) {
+      cmContent.addEventListener(eventName, persistCursorPosition);
+      cmContent.addEventListener(eventName, handleSelectionChange);
     }
-    proseMirror.addEventListener('keyup', handleKeyboardSelectionChange);
+    cmContent.addEventListener('keyup', handleKeyboardSelectionChange);
 
     return () => {
       if (selectionFrameId !== null) {
         window.cancelAnimationFrame(selectionFrameId);
       }
       flushPaneCursorSave(paneId);
-      for (const eventName of proseMirrorInteractionEvents) {
-        proseMirror.removeEventListener(eventName, persistCursorPosition);
-        proseMirror.removeEventListener(eventName, handleSelectionChange);
+      for (const eventName of cmContentInteractionEvents) {
+        cmContent.removeEventListener(eventName, persistCursorPosition);
+        cmContent.removeEventListener(eventName, handleSelectionChange);
       }
-      proseMirror.removeEventListener('keyup', handleKeyboardSelectionChange);
+      cmContent.removeEventListener('keyup', handleKeyboardSelectionChange);
     };
   }
 

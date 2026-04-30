@@ -1,6 +1,6 @@
 import { tick } from 'svelte';
 import { EditorView } from '@codemirror/view';
-import { findProseMirrorElement } from '$lib/features/notepad/editor/editorDom';
+import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
 
 function findLastSelectionPoint(node: Node): { node: Node; offset: number } | null {
   if (node.nodeType === Node.TEXT_NODE) {
@@ -28,7 +28,7 @@ export function focusInputAtEnd(input: HTMLInputElement | null) {
 }
 
 export function focusEditorAtDocumentLine(editorRoot: HTMLElement | null, lineNumber1Based: number) {
-  const surface = findProseMirrorElement(editorRoot);
+  const surface = findCmContentElement(editorRoot);
   if (!(surface instanceof HTMLElement)) return false;
   const view = EditorView.findFromDOM(surface);
   if (!view) return false;
@@ -56,7 +56,7 @@ export function focusEditorAtDocumentLine(editorRoot: HTMLElement | null, lineNu
 }
 
 export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLElement) {
-  const surface = findProseMirrorElement(editorRoot);
+  const surface = findCmContentElement(editorRoot);
   if (!(surface instanceof HTMLElement)) return;
   const view = EditorView.findFromDOM(surface) ?? EditorView.findFromDOM(target);
   if (!view) return;
@@ -77,7 +77,7 @@ export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLEl
 export async function focusEditorAtEnd(editorRoot: HTMLElement | null) {
   await tick();
 
-  const surface = findProseMirrorElement(editorRoot);
+  const surface = findCmContentElement(editorRoot);
   if (!(surface instanceof HTMLElement)) return;
 
   const view = EditorView.findFromDOM(surface);
@@ -122,7 +122,7 @@ function normalizeTargets(nodes: readonly HTMLElement[]): NormalizedEditorTarget
 }
 
 function getEditorBlocks(editorRoot: HTMLElement | null) {
-  const surface = findProseMirrorElement(editorRoot);
+  const surface = findCmContentElement(editorRoot);
   if (!surface) return [];
 
   return Array.from(surface.querySelectorAll('.cm-line')).filter(
@@ -131,7 +131,7 @@ function getEditorBlocks(editorRoot: HTMLElement | null) {
 }
 
 function getEditorTargets(editorRoot: HTMLElement | null) {
-  const surface = findProseMirrorElement(editorRoot);
+  const surface = findCmContentElement(editorRoot);
   if (!surface) return [];
 
   const matches = normalizeTargets(
