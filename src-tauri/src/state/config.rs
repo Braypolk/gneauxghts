@@ -1,4 +1,3 @@
-use super::persistence::migrate_legacy_ios_state_paths;
 use crate::path_utils::collect_markdown_files_recursively;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -89,42 +88,6 @@ pub(crate) fn default_notes_root() -> Result<PathBuf, String> {
     Ok(home.join("Documents").join(NOTES_DIRECTORY_NAME))
 }
 
-pub(crate) fn migrate_legacy_ios_notes_dir() -> Result<(), String> {
-    if !cfg!(target_os = "ios") {
-        return Ok(());
-    }
-
-    let Some(documents_dir) = configured_documents_dir()? else {
-        return Ok(());
-    };
-    let legacy_dir = documents_dir.join(NOTES_DIRECTORY_NAME);
-    if !legacy_dir.is_dir() {
-        return Ok(());
-    }
-
-    for entry in fs::read_dir(&legacy_dir).map_err(|err| err.to_string())? {
-        let entry = entry.map_err(|err| err.to_string())?;
-        let source = entry.path();
-        let target = documents_dir.join(entry.file_name());
-        if target.exists() {
-            continue;
-        }
-
-        fs::rename(&source, &target).map_err(|err| err.to_string())?;
-    }
-
-    let is_empty = fs::read_dir(&legacy_dir)
-        .map_err(|err| err.to_string())?
-        .next()
-        .is_none();
-    if is_empty {
-        fs::remove_dir(&legacy_dir).map_err(|err| err.to_string())?;
-    }
-
-    migrate_legacy_ios_state_paths(&documents_dir, &legacy_dir)?;
-
-    Ok(())
-}
 
 pub(crate) fn read_vault_config() -> Result<VaultConfig, String> {
     let path = vault_config_path()?;

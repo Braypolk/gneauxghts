@@ -149,7 +149,6 @@
     unregisterEditorPaneForNote
   } from '$lib/features/notepad/session/noteRuntime';
   import { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-  import { cancelScheduledAutoSync, runAutoSyncNow, scheduleAutoSync } from '$lib/sync/autoSync';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
 
   type PaneId = NotepadPaneId;
@@ -691,8 +690,6 @@
     getDocumentSession: () => getDocumentSession(),
     refreshDerivedViews,
     updateRelatedDrawerLayout,
-    runAutoSyncNow,
-    scheduleAutoSync,
     refreshCurrentNoteIfChanged,
     getNoteByKey,
     getPaneIdsForDocument,
@@ -890,8 +887,7 @@
     timers: noteSaveTimers,
     queues: noteSaveQueues,
     saveNoteSession,
-    rekeyNoteWithRuntime,
-    scheduleAutoSync
+    rekeyNoteWithRuntime
   });
 
   const paneControllers = {
@@ -1070,9 +1066,6 @@
     scheduleSearchIfNeeded();
     scheduleRelatedIfNeeded({ immediate: true });
     void loadRecentNotes();
-    if (notePathToClear) {
-      scheduleAutoSync('note-forgotten', 400);
-    }
   }
 
   async function unforgetNotepad() {
@@ -1101,7 +1094,6 @@
         scheduleSearchIfNeeded();
         scheduleRelatedIfNeeded({ immediate: true });
         void loadRecentNotes();
-        scheduleAutoSync('forgotten-restored', 400);
         return;
       } catch (error) {
         console.error('Failed to restore forgotten note:', error);
@@ -1124,7 +1116,6 @@
     scheduleSearchIfNeeded();
     scheduleRelatedIfNeeded({ immediate: true });
     void loadRecentNotes();
-    scheduleAutoSync('forgotten-restored-draft', 400);
   }
 
   function resolveRememberAction(actionId: string): RememberActionOption {
@@ -1166,7 +1157,6 @@
       return;
     }
 
-    scheduleAutoSync('note-remembered', 400);
     setRecentlyForgotten(null);
     invalidatePendingSaveResults(note);
     cancelPendingAutosave(note);
@@ -1720,7 +1710,6 @@
             void handleVaultNoteChanged(payload);
           }
         );
-        scheduleAutoSync('notepad-mounted', 900);
       } catch (err) {
         console.error('Notepad init failed:', err);
       }
@@ -1740,7 +1729,6 @@
       flushPendingAutosave();
       paneControllers[PRIMARY_PANE_ID].editorLifecycleController.dispose();
       paneControllers[SECONDARY_PANE_ID].editorLifecycleController.dispose();
-      cancelScheduledAutoSync();
       syncCurrentFileSearchHighlights('', 'all');
       searchState.dispose();
       relatedState.dispose();

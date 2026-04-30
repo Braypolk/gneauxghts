@@ -1,8 +1,5 @@
-use super::config::{configured_app_data_dir, forgotten_notes_root};
-use crate::{
-    index::is_note_file, note, path_utils::collect_markdown_files_recursively,
-    sync::SYNC_DB_FILE_NAME,
-};
+use super::config::forgotten_notes_root;
+use crate::{index::is_note_file, note, path_utils::collect_markdown_files_recursively};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,7 +12,8 @@ pub(super) const DEFAULT_NOTE_NAME: &str = "Untitled Note";
 pub(super) const MAX_FILE_STEM_LENGTH: usize = 80;
 pub(super) const MAX_RECENT_NOTES: usize = 20;
 pub(super) const APP_STATE_SINGLETON_ID: i64 = 1;
-pub(super) const STATE_FILE_NAME: &str = ".gneauxghts-state.json";
+const APP_STATE_DB_FILE_NAME: &str = "app-state.sqlite3";
+
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,25 +53,7 @@ pub(crate) struct PersistedState {
     pub(crate) forgotten_notes: Vec<PersistedForgottenNote>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LegacyPersistedState {
-    last_opened_path: Option<String>,
-    #[serde(default)]
-    recent_paths: Vec<String>,
-    #[serde(default)]
-    hidden_task_keys: Vec<String>,
-    #[serde(default)]
-    hidden_note_paths: Vec<String>,
-    #[serde(default)]
-    note_order: Vec<String>,
-    #[serde(default)]
-    collapsed_note_paths: Vec<String>,
-    #[serde(default)]
-    task_timestamps: HashMap<String, PersistedTaskTimestamps>,
-    #[serde(default)]
-    forgotten_notes: Vec<PersistedForgottenNote>,
-}
+
 
 pub(crate) fn read_state(notes_dir: &Path) -> Result<PersistedState, String> {
     let mut state = read_unpruned_state(notes_dir)?;
@@ -86,7 +66,6 @@ pub(crate) fn write_state(notes_dir: &Path, state: &PersistedState) -> Result<()
     prune_state_in_place(&mut state, notes_dir);
     let mut connection = open_state_database()?;
     write_state_to_database(&mut connection, &state)?;
-    cleanup_legacy_state_files(notes_dir)?;
     Ok(())
 }
 
@@ -242,42 +221,7 @@ pub(crate) fn derive_file_stem_from_title_and_markdown(title: &str, markdown: &s
     )
 }
 
-pub(crate) fn legacy_state_paths(notes_dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut paths = Vec::new();
-    if let Some(app_data_dir) = configured_app_data_dir()? {
-        paths.push(app_data_dir.join(STATE_FILE_NAME));
-    }
-    let notes_path = notes_dir.join(STATE_FILE_NAME);
-    if !paths.iter().any(|path| path == &notes_path) {
-        paths.push(notes_path);
-    }
-    Ok(paths)
-}
 
-pub(super) fn migrate_legacy_ios_state_paths(
-    notes_dir: &Path,
-    legacy_dir: &Path,
-) -> Result<(), String> {
-    let mut state =
-        match read_unpruned_state_from_database()?.or(read_legacy_state_file(notes_dir)?) {
-            Some(state) => state,
-            None => return Ok(()),
-        };
-    let mut changed = false;
-
-    for forgotten_note in &mut state.forgotten_notes {
-        changed |=
-            remap_string_path_prefix(&mut forgotten_note.forgotten_path, legacy_dir, notes_dir);
-        changed |=
-            remap_string_path_prefix(&mut forgotten_note.original_path, legacy_dir, notes_dir);
-    }
-
-    if !changed {
-        return Ok(());
-    }
-
-    write_state(notes_dir, &state)
-}
 
 fn prune_state_in_place(state: &mut PersistedState, notes_dir: &Path) {
     prune_recent_note_ids(state, notes_dir);
@@ -376,8 +320,8 @@ fn resolve_target_path(
 fn open_state_database() -> Result<Connection, String> {
     let app_data_dir = super::config::app_data_dir()?;
     fs::create_dir_all(&app_data_dir).map_err(|err| err.to_string())?;
-    let connection =
-        Connection::open(app_data_dir.join(SYNC_DB_FILE_NAME)).map_err(|err| err.to_string())?;
+    let database_path = app_data_dir.join(APP_STATE_DB_FILE_NAME);
+    let connection = Connection::open(database_path).map_err(|err| err.to_string())?;
     ensure_state_schema(&connection)?;
     Ok(connection)
 }
@@ -387,12 +331,7 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS app_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                last_opened_path TEXT,
                 last_opened_note_id TEXT
-            );
-            CREATE TABLE IF NOT EXISTS app_state_recent_paths (
-                position INTEGER PRIMARY KEY,
-                note_path TEXT NOT NULL UNIQUE
             );
             CREATE TABLE IF NOT EXISTS app_state_recent_note_ids (
                 position INTEGER PRIMARY KEY,
@@ -401,22 +340,12 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS app_state_hidden_task_keys (
                 task_key TEXT PRIMARY KEY
             );
-            CREATE TABLE IF NOT EXISTS app_state_hidden_note_paths (
-                note_path TEXT PRIMARY KEY
-            );
             CREATE TABLE IF NOT EXISTS app_state_hidden_note_ids (
                 note_id TEXT PRIMARY KEY
-            );
-            CREATE TABLE IF NOT EXISTS app_state_note_order (
-                position INTEGER PRIMARY KEY,
-                note_path TEXT NOT NULL UNIQUE
             );
             CREATE TABLE IF NOT EXISTS app_state_note_order_note_ids (
                 position INTEGER PRIMARY KEY,
                 note_id TEXT NOT NULL UNIQUE
-            );
-            CREATE TABLE IF NOT EXISTS app_state_collapsed_note_paths (
-                note_path TEXT PRIMARY KEY
             );
             CREATE TABLE IF NOT EXISTS app_state_collapsed_note_ids (
                 note_id TEXT PRIMARY KEY
@@ -439,15 +368,8 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn read_unpruned_state(notes_dir: &Path) -> Result<PersistedState, String> {
+fn read_unpruned_state(_notes_dir: &Path) -> Result<PersistedState, String> {
     if let Some(state) = read_unpruned_state_from_database()? {
-        return Ok(state);
-    }
-
-    if let Some(state) = read_legacy_state_file(notes_dir)? {
-        let mut connection = open_state_database()?;
-        write_state_to_database(&mut connection, &state)?;
-        cleanup_legacy_state_files(notes_dir)?;
         return Ok(state);
     }
 
@@ -479,14 +401,10 @@ fn database_has_persisted_state(connection: &Connection) -> Result<bool, String>
 
     for table in [
         "app_state_recent_note_ids",
-        "app_state_recent_paths",
         "app_state_hidden_task_keys",
         "app_state_hidden_note_ids",
-        "app_state_hidden_note_paths",
         "app_state_note_order_note_ids",
-        "app_state_note_order",
         "app_state_collapsed_note_ids",
-        "app_state_collapsed_note_paths",
         "app_state_task_timestamps",
         "app_state_forgotten_notes",
     ] {
@@ -505,7 +423,7 @@ fn database_has_persisted_state(connection: &Connection) -> Result<bool, String>
 }
 
 fn read_state_from_database(connection: &Connection) -> Result<PersistedState, String> {
-    let mut last_opened_note_id = connection
+    let last_opened_note_id = connection
         .query_row(
             "SELECT last_opened_note_id FROM app_state WHERE id = ?1",
             params![APP_STATE_SINGLETON_ID],
@@ -514,50 +432,26 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
         .optional()
         .map_err(|err| err.to_string())?
         .flatten();
-    if last_opened_note_id.is_none() {
-        let legacy_last_opened_path = connection
-            .query_row(
-                "SELECT last_opened_path FROM app_state WHERE id = ?1",
-                params![APP_STATE_SINGLETON_ID],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()
-            .map_err(|err| err.to_string())?
-            .flatten();
-        last_opened_note_id = legacy_last_opened_path
-            .as_deref()
-            .map(Path::new)
-            .map(resolve_note_id_from_path)
-            .transpose()?;
-    }
 
-    let recent_note_ids = read_note_ids_with_legacy_path_fallback(
+    let recent_note_ids = read_ordered_string_column(
         connection,
         "SELECT note_id FROM app_state_recent_note_ids ORDER BY position",
-        "SELECT note_path FROM app_state_recent_paths ORDER BY position",
-        read_ordered_string_column,
     )?;
     let hidden_task_keys = read_string_column(
         connection,
         "SELECT task_key FROM app_state_hidden_task_keys ORDER BY task_key",
     )?;
-    let hidden_note_ids = read_note_ids_with_legacy_path_fallback(
+    let hidden_note_ids = read_string_column(
         connection,
         "SELECT note_id FROM app_state_hidden_note_ids ORDER BY note_id",
-        "SELECT note_path FROM app_state_hidden_note_paths ORDER BY note_path",
-        read_string_column,
     )?;
-    let note_order_note_ids = read_note_ids_with_legacy_path_fallback(
+    let note_order_note_ids = read_ordered_string_column(
         connection,
         "SELECT note_id FROM app_state_note_order_note_ids ORDER BY position",
-        "SELECT note_path FROM app_state_note_order ORDER BY position",
-        read_ordered_string_column,
     )?;
-    let collapsed_note_ids = read_note_ids_with_legacy_path_fallback(
+    let collapsed_note_ids = read_string_column(
         connection,
         "SELECT note_id FROM app_state_collapsed_note_ids ORDER BY note_id",
-        "SELECT note_path FROM app_state_collapsed_note_paths ORDER BY note_path",
-        read_string_column,
     )?;
 
     let mut task_timestamps = HashMap::new();
@@ -631,41 +525,6 @@ fn read_ordered_string_column(connection: &Connection, query: &str) -> Result<Ve
     read_string_column(connection, query)
 }
 
-fn read_note_ids_with_legacy_path_fallback(
-    connection: &Connection,
-    note_id_query: &str,
-    legacy_path_query: &str,
-    reader: fn(&Connection, &str) -> Result<Vec<String>, String>,
-) -> Result<Vec<String>, String> {
-    let note_ids = reader(connection, note_id_query)?;
-    if note_ids.is_empty() {
-        return Ok(resolve_note_ids_from_paths(&reader(
-            connection,
-            legacy_path_query,
-        )?));
-    }
-
-    Ok(note_ids)
-}
-
-fn resolve_note_ids_from_paths(paths: &[String]) -> Vec<String> {
-    let mut note_ids = Vec::new();
-    let mut seen = HashSet::new();
-    for path in paths {
-        let note_id = Path::new(path)
-            .is_file()
-            .then(|| resolve_note_id_from_path(Path::new(path)))
-            .transpose()
-            .ok()
-            .flatten();
-        if let Some(note_id) = note_id {
-            if seen.insert(note_id.clone()) {
-                note_ids.push(note_id);
-            }
-        }
-    }
-    note_ids
-}
 
 fn write_state_to_database(
     connection: &mut Connection,
@@ -675,11 +534,10 @@ fn write_state_to_database(
 
     transaction
         .execute(
-            "INSERT INTO app_state (id, last_opened_path, last_opened_note_id)
-             VALUES (?1, NULL, ?2)
+            "INSERT INTO app_state (id, last_opened_note_id)
+             VALUES (?1, ?2)
              ON CONFLICT(id) DO UPDATE
-             SET last_opened_path = NULL,
-                 last_opened_note_id = excluded.last_opened_note_id",
+             SET last_opened_note_id = excluded.last_opened_note_id",
             params![APP_STATE_SINGLETON_ID, state.last_opened_note_id.as_deref()],
         )
         .map_err(|err| err.to_string())?;
@@ -695,9 +553,6 @@ fn write_state_to_database(
             )
             .map_err(|err| err.to_string())?;
     }
-    transaction
-        .execute("DELETE FROM app_state_recent_paths", [])
-        .map_err(|err| err.to_string())?;
 
     transaction
         .execute("DELETE FROM app_state_hidden_task_keys", [])
@@ -722,9 +577,6 @@ fn write_state_to_database(
             )
             .map_err(|err| err.to_string())?;
     }
-    transaction
-        .execute("DELETE FROM app_state_hidden_note_paths", [])
-        .map_err(|err| err.to_string())?;
 
     transaction
         .execute("DELETE FROM app_state_note_order_note_ids", [])
@@ -737,9 +589,6 @@ fn write_state_to_database(
             )
             .map_err(|err| err.to_string())?;
     }
-    transaction
-        .execute("DELETE FROM app_state_note_order", [])
-        .map_err(|err| err.to_string())?;
 
     transaction
         .execute("DELETE FROM app_state_collapsed_note_ids", [])
@@ -752,9 +601,6 @@ fn write_state_to_database(
             )
             .map_err(|err| err.to_string())?;
     }
-    transaction
-        .execute("DELETE FROM app_state_collapsed_note_paths", [])
-        .map_err(|err| err.to_string())?;
 
     transaction
         .execute("DELETE FROM app_state_task_timestamps", [])
@@ -805,57 +651,6 @@ fn write_state_to_database(
     transaction.commit().map_err(|err| err.to_string())
 }
 
-fn read_legacy_state_file(notes_dir: &Path) -> Result<Option<PersistedState>, String> {
-    for path in legacy_state_paths(notes_dir)? {
-        if !path.is_file() {
-            continue;
-        }
-
-        let contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
-        if let Ok(state) = serde_json::from_str::<PersistedState>(&contents) {
-            return Ok(Some(state));
-        }
-
-        let legacy_state: LegacyPersistedState =
-            serde_json::from_str(&contents).map_err(|err| err.to_string())?;
-        return Ok(Some(PersistedState {
-            last_opened_note_id: legacy_state
-                .last_opened_path
-                .as_deref()
-                .map(Path::new)
-                .map(resolve_note_id_from_path)
-                .transpose()?,
-            recent_note_ids: resolve_note_ids_from_paths(&legacy_state.recent_paths),
-            hidden_task_keys: legacy_state.hidden_task_keys,
-            hidden_note_ids: resolve_note_ids_from_paths(&legacy_state.hidden_note_paths),
-            note_order_note_ids: resolve_note_ids_from_paths(&legacy_state.note_order),
-            collapsed_note_ids: resolve_note_ids_from_paths(&legacy_state.collapsed_note_paths),
-            task_timestamps: legacy_state.task_timestamps,
-            forgotten_notes: legacy_state.forgotten_notes,
-        }));
-    }
-
-    Ok(None)
-}
-
-fn cleanup_legacy_state_files(notes_dir: &Path) -> Result<(), String> {
-    for path in legacy_state_paths(notes_dir)? {
-        if path.is_file() {
-            fs::remove_file(path).map_err(|err| err.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-fn remap_string_path_prefix(raw_path: &mut String, from: &Path, to: &Path) -> bool {
-    let candidate = Path::new(raw_path);
-    let Ok(suffix) = candidate.strip_prefix(from) else {
-        return false;
-    };
-
-    *raw_path = to.join(suffix).to_string_lossy().into_owned();
-    true
-}
 
 fn read_u64_column(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
     let value = row.get::<_, i64>(index)?;

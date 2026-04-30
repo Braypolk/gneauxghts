@@ -49,7 +49,7 @@
 		BFD8120B81E17CB9F400CC7E /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
 		CBED7BE69AE58169F320E2B5 /* lib.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = lib.rs; sourceTree = "<group>"; };
 		CDCE92922F0AE631F18827F1 /* index.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = index.rs; sourceTree = "<group>"; };
-		CF0488B71F4E96EE273ABB1B /* sync.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = sync.rs; sourceTree = "<group>"; };
+		CF0488B71F4E96EE273ABB1B /* vault_watcher.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = vault_watcher.rs; sourceTree = "<group>"; };
 		D47129918C73F57D762DD98C /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
 		D76B0DE84942C2CEBFC4955C /* similarity.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = similarity.rs; sourceTree = "<group>"; };
 		F4B8680A83F92491EDBC7600 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
@@ -86,7 +86,7 @@
 				3BCEC7DE255230F5A6903FF4 /* note.rs */,
 				B11F0939E997DB9582574C07 /* search.rs */,
 				A1A932DC1270D643637CF21F /* state.rs */,
-				CF0488B71F4E96EE273ABB1B /* sync.rs */,
+				CF0488B71F4E96EE273ABB1B /* vault_watcher.rs */,
 				A63DEB9A613CBD1852453E28 /* test_support.rs */,
 				BA732EE98EADAC6230D55F27 /* semantic */,
 			);

@@ -1543,7 +1543,6 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "blake3",
- "gneauxghts-sync-contract",
  "hnswlib-rs",
  "notify",
  "reqwest 0.12.28",
@@ -1554,13 +1553,6 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
-]
-
-[[package]]
-name = "gneauxghts-sync-contract"
-version = "0.1.0"
-dependencies = [
- "serde",
 ]
 
 [[package]]

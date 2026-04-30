@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import {
-    buildReviewChanges,
-  } from '$lib/features/inbox/reviewDiff';
+  import { buildReviewChanges } from '$lib/features/inbox/reviewChanges';
   import {
     createInboxStore,
     formatInboxStatusLabel,
@@ -15,9 +13,7 @@
   import {
     activeProposalSession,
     getSelectedApprovedChangeCount,
-    toggleProposalChange,
-    toggleProposalHunk,
-    toggleProposalTitle
+    toggleProposalChange
   } from '$lib/features/proposals/session';
   const inboxStore = createInboxStore();
 
@@ -219,19 +215,12 @@
             {/if}
 
             <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4 shadow-sm shadow-black/5">
-              <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Source snapshot</p>
-              <pre class="mt-3 max-h-[22rem] overflow-x-auto rounded-2xl border border-border/60 bg-background/80 p-4 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{$inboxStore.selectedItem.sourceMarkdown}</pre>
-            </div>
-
-            <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4 shadow-sm shadow-black/5">
               <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Proposed changes</p>
               <div class="mt-4">
                 <ProposalReviewList
                   {reviewChanges}
                   showOpenButtons={$inboxStore.selectedItem.status === 'pendingApproval'}
                   onToggleChange={toggleProposalChange}
-                  onToggleHunk={toggleProposalHunk}
-                  onToggleTitle={toggleProposalTitle}
                   onOpenPath={(path) => void inboxStore.openProposalPathInNotepad(path)}
                 />
               </div>

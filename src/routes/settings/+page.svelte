@@ -6,15 +6,11 @@
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
   import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
-  import SyncSettingsPanel from '$lib/features/settings/SyncSettingsPanel.svelte';
   import {
     averageDuration,
-    buildConflictDiffRows,
-    conflictRowClass,
     formatMillis,
     formatForgottenRetention,
-    formatTimestamp,
-    formatSyncTimestamp
+    formatTimestamp
   } from '$lib/features/settings/formatters';
   import {
     forgetButtonDurationOptions,
@@ -46,7 +42,6 @@
     },
     { id: 'ai', label: 'AI & Remember', description: 'Connection, defaults, and token usage' },
     { id: 'vault', label: 'Vault', description: 'Where your notes are stored' },
-    { id: 'sync', label: 'Sync', description: 'Account, server, and conflicts' },
     { id: 'search', label: 'Semantic search', description: 'Local index and embeddings' }
   ];
 
@@ -371,43 +366,6 @@
             </div>
           {/if}
         </div>
-            {:else if $settings.activeGeneralSection === 'sync'}
-      <SyncSettingsPanel
-        embedded
-        syncStatus={$settings.syncStatus}
-        syncConflicts={$settings.syncConflicts}
-        syncBaseUrlInput={$settings.syncBaseUrlInput}
-        syncEmailInput={$settings.syncEmailInput}
-        magicLinkTokenInput={$settings.magicLinkTokenInput}
-        lastMagicLinkResponse={$settings.lastMagicLinkResponse}
-        activeConflictNoteId={$settings.activeConflictNoteId}
-        activeConflictDetail={$settings.activeConflictDetail}
-        isRequestingMagicLink={$settings.isRequestingMagicLink}
-        isCompletingSyncSignIn={$settings.isCompletingSyncSignIn}
-        isSyncingNow={$settings.isSyncingNow}
-        isTogglingSyncPause={$settings.isTogglingSyncPause}
-        isSigningOutSync={$settings.isSigningOutSync}
-        isLoadingConflictDetail={$settings.isLoadingConflictDetail}
-        dismissingConflictNoteIds={$settings.dismissingConflictNoteIds}
-        resolvingConflictNoteIds={$settings.resolvingConflictNoteIds}
-        syncUiError={$settings.syncUiError}
-        syncUiMessage={$settings.syncUiMessage}
-        setSyncBaseUrlInput={settings.setSyncBaseUrlInput}
-        setSyncEmailInput={settings.setSyncEmailInput}
-        setMagicLinkTokenInput={settings.setMagicLinkTokenInput}
-        requestMagicLink={settings.requestMagicLink}
-        completeSyncSignIn={settings.completeSyncSignIn}
-        runSyncNow={settings.runSyncNow}
-        signOutSync={settings.signOutSync}
-        dismissSyncConflict={settings.dismissSyncConflict}
-        toggleSyncConflictDetail={settings.toggleSyncConflictDetail}
-        resolveSyncConflict={settings.resolveSyncConflict}
-        toggleSyncPaused={settings.toggleSyncPaused}
-        {formatSyncTimestamp}
-        {buildConflictDiffRows}
-        {conflictRowClass}
-      />
-
             {:else if $settings.activeGeneralSection === 'search'}
       <SemanticSettingsPanel
         embedded

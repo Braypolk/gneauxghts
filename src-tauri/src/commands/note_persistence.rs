@@ -6,7 +6,6 @@ use crate::{
     index::{build_indexed_note, AppState},
     note,
     state::{persist_note, read_state, touch_recent_note_id, validate_current_path, write_state},
-    sync,
 };
 use std::path::{Path, PathBuf};
 use tauri::State;
@@ -177,7 +176,6 @@ pub(crate) fn persist_note_session_with_outcome(
 
     if let (Some(path), Some(sync_markdown)) = (persisted_path.as_deref(), sync_markdown.as_deref())
     {
-        sync::mark_note_dirty(Path::new(path), sync_markdown)?;
         state.semantic.queue_note_update(
             Path::new(path),
             sync_markdown.to_string(),

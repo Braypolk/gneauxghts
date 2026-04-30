@@ -1,64 +1,47 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { get, writable } from 'svelte/store';
-import { cancelScheduledAutoSync, runAutoSyncNow, scheduleAutoSync } from '$lib/sync/autoSync';
-import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
-import type {
-  RequestMagicLinkResponse,
-  SyncConflict,
-  SyncConflictDetail,
-  SyncStatus,
-  VaultInfo
-} from '$lib/types/sync';
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { get, writable } from "svelte/store";
+import type { ForgottenNoteSummary } from "$lib/types/forgottenNotes";
+import type { VaultInfo } from "$lib/types/vault";
 import type {
   SemanticDebugSnapshot,
   SemanticModelDownloadResult,
   SemanticSettings,
-  SemanticStatus
-} from '$lib/types/semantic';
+  SemanticStatus,
+} from "$lib/types/semantic";
 import {
   refreshSettingsAfterVaultChange,
-  refreshSettingsForVisibility
-} from './refreshCoordinator';
-import { loadForgottenNotesSlice } from './loaders/forgottenLoader';
-import { loadSemanticSlice, loadSemanticStatusSlice } from './loaders/semanticLoader';
-import { loadSyncSlice } from './loaders/syncLoader';
-import { loadVaultInfoSlice } from './loaders/vaultLoader';
+  refreshSettingsForVisibility,
+} from "./refreshCoordinator";
+import { loadForgottenNotesSlice } from "./loaders/forgottenLoader";
+import {
+  loadSemanticSlice,
+  loadSemanticStatusSlice,
+} from "./loaders/semanticLoader";
+import { loadVaultInfoSlice } from "./loaders/vaultLoader";
 
-type SettingsTab = 'general' | 'forgotten';
-type GeneralSection = 'appearance' | 'shortcuts' | 'forgetting' | 'ai' | 'vault' | 'sync' | 'search';
-type ForgottenAction = 'restore_forgotten_notes' | 'delete_forgotten_notes';
+type SettingsTab = "general" | "forgotten";
+type GeneralSection =
+  | "appearance"
+  | "shortcuts"
+  | "forgetting"
+  | "ai"
+  | "vault"
+  | "search";
+type ForgottenAction = "restore_forgotten_notes" | "delete_forgotten_notes";
 type SemanticAction =
-  | 'rebuild_semantic_index'
-  | 'pause_semantic_indexing'
-  | 'resume_semantic_indexing'
-  | 'prepare_semantic_model';
+  | "rebuild_semantic_index"
+  | "pause_semantic_indexing"
+  | "resume_semantic_indexing"
+  | "prepare_semantic_model";
 
 interface SettingsState {
   semanticStatus: SemanticStatus | null;
   semanticSettings: SemanticSettings | null;
   semanticDebug: SemanticDebugSnapshot | null;
   vaultInfo: VaultInfo | null;
-  syncStatus: SyncStatus | null;
-  syncConflicts: SyncConflict[];
-  activeConflictNoteId: string | null;
-  activeConflictDetail: SyncConflictDetail | null;
   vaultPathInput: string;
-  syncBaseUrlInput: string;
-  syncEmailInput: string;
-  magicLinkTokenInput: string;
-  lastMagicLinkResponse: RequestMagicLinkResponse | null;
   isSavingVault: boolean;
-  isRequestingMagicLink: boolean;
-  isCompletingSyncSignIn: boolean;
-  isSyncingNow: boolean;
-  isTogglingSyncPause: boolean;
-  isSigningOutSync: boolean;
-  isLoadingConflictDetail: boolean;
-  dismissingConflictNoteIds: string[];
-  resolvingConflictNoteIds: string[];
-  syncUiError: string | null;
-  syncUiMessage: string | null;
   activeTab: SettingsTab;
   activeGeneralSection: GeneralSection;
   forgottenNotes: ForgottenNoteSummary[];
@@ -77,28 +60,10 @@ function createInitialState(): SettingsState {
     semanticSettings: null,
     semanticDebug: null,
     vaultInfo: null,
-    syncStatus: null,
-    syncConflicts: [],
-    activeConflictNoteId: null,
-    activeConflictDetail: null,
-    vaultPathInput: '',
-    syncBaseUrlInput: '',
-    syncEmailInput: '',
-    magicLinkTokenInput: '',
-    lastMagicLinkResponse: null,
+    vaultPathInput: "",
     isSavingVault: false,
-    isRequestingMagicLink: false,
-    isCompletingSyncSignIn: false,
-    isSyncingNow: false,
-    isTogglingSyncPause: false,
-    isSigningOutSync: false,
-    isLoadingConflictDetail: false,
-    dismissingConflictNoteIds: [],
-    resolvingConflictNoteIds: [],
-    syncUiError: null,
-    syncUiMessage: null,
-    activeTab: 'general',
-    activeGeneralSection: 'appearance',
+    activeTab: "general",
+    activeGeneralSection: "appearance",
     forgottenNotes: [],
     selectedForgottenPaths: [],
     isLoadingForgottenNotes: false,
@@ -106,7 +71,7 @@ function createInitialState(): SettingsState {
     isSaving: false,
     isRunningAction: false,
     semanticLayerError: null,
-    semanticLayerMessage: null
+    semanticLayerMessage: null,
   };
 }
 
@@ -115,7 +80,8 @@ export function createSettingsStore() {
   const { subscribe, update } = store;
 
   let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
-  let vaultChangeRefreshTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let vaultChangeRefreshTimer: ReturnType<typeof window.setTimeout> | null =
+    null;
   let semanticStatusRequest: Promise<void> | null = null;
   let semanticStateRequest: Promise<void> | null = null;
   let forgottenNotesRequest: Promise<void> | null = null;
@@ -137,27 +103,15 @@ export function createSettingsStore() {
     patch({ vaultPathInput });
   }
 
-  function setSyncBaseUrlInput(syncBaseUrlInput: string) {
-    patch({ syncBaseUrlInput });
-  }
-
-  function setSyncEmailInput(syncEmailInput: string) {
-    patch({ syncEmailInput });
-  }
-
-  function setMagicLinkTokenInput(magicLinkTokenInput: string) {
-    patch({ magicLinkTokenInput });
-  }
-
   function setSelectedForgottenPaths(
-    selectedForgottenPaths: string[] | ((current: string[]) => string[])
+    selectedForgottenPaths: string[] | ((current: string[]) => string[]),
   ) {
     update((state) => ({
       ...state,
       selectedForgottenPaths:
-        typeof selectedForgottenPaths === 'function'
+        typeof selectedForgottenPaths === "function"
           ? selectedForgottenPaths(state.selectedForgottenPaths)
-          : selectedForgottenPaths
+          : selectedForgottenPaths,
     }));
   }
 
@@ -171,12 +125,17 @@ export function createSettingsStore() {
   function shouldPollSemanticState() {
     const state = get(store);
     return Boolean(
-      state.semanticStatus?.indexingInProgress || state.isRunningAction || state.isSaving
+      state.semanticStatus?.indexingInProgress ||
+        state.isRunningAction ||
+        state.isSaving,
     );
   }
 
   function syncSemanticPolling() {
-    if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+    if (
+      typeof document === "undefined" ||
+      document.visibilityState !== "visible"
+    ) {
       stopSemanticPolling();
       return;
     }
@@ -195,27 +154,6 @@ export function createSettingsStore() {
     }, 5000);
   }
 
-  async function loadSyncState(includeConflicts = true) {
-    try {
-      const { status: nextSyncStatus, conflicts: nextSyncConflicts } = await loadSyncSlice(includeConflicts);
-      update((state) => ({
-        ...state,
-        syncStatus: nextSyncStatus,
-        syncConflicts: nextSyncConflicts ?? state.syncConflicts,
-        syncBaseUrlInput:
-          state.syncBaseUrlInput.trim() === '' && nextSyncStatus.syncBaseUrl
-            ? nextSyncStatus.syncBaseUrl
-            : state.syncBaseUrlInput,
-        syncEmailInput:
-          state.syncEmailInput.trim() === '' && nextSyncStatus.authEmail
-            ? nextSyncStatus.authEmail
-            : state.syncEmailInput
-      }));
-    } catch (error) {
-      console.error('Failed to load sync state:', error);
-    }
-  }
-
   async function loadVaultInfo() {
     try {
       const nextVaultInfo = await loadVaultInfoSlice();
@@ -223,10 +161,12 @@ export function createSettingsStore() {
         ...state,
         vaultInfo: nextVaultInfo,
         vaultPathInput:
-          state.vaultPathInput.trim() === '' ? nextVaultInfo.currentPath : state.vaultPathInput
+          state.vaultPathInput.trim() === ""
+            ? nextVaultInfo.currentPath
+            : state.vaultPathInput,
       }));
     } catch (error) {
-      console.error('Failed to load vault info:', error);
+      console.error("Failed to load vault info:", error);
     }
   }
 
@@ -240,7 +180,7 @@ export function createSettingsStore() {
         patch({ semanticStatus: await loadSemanticStatusSlice() });
         syncSemanticPolling();
       } catch (error) {
-        console.error('Failed to load semantic status:', error);
+        console.error("Failed to load semantic status:", error);
       } finally {
         semanticStatusRequest = null;
       }
@@ -256,10 +196,9 @@ export function createSettingsStore() {
 
     semanticStateRequest = (async () => {
       try {
-        const [semantic, nextVaultInfo, sync] = await Promise.all([
+        const [semantic, nextVaultInfo] = await Promise.all([
           loadSemanticSlice(),
           loadVaultInfoSlice(),
-          loadSyncSlice(true)
         ]);
 
         update((state) => ({
@@ -268,22 +207,14 @@ export function createSettingsStore() {
           semanticSettings: semantic.settings,
           semanticDebug: semantic.debug,
           vaultInfo: nextVaultInfo,
-          syncStatus: sync.status,
-          syncConflicts: sync.conflicts ?? state.syncConflicts,
           vaultPathInput:
-            state.vaultPathInput.trim() === '' ? nextVaultInfo.currentPath : state.vaultPathInput,
-          syncBaseUrlInput:
-            state.syncBaseUrlInput.trim() === '' && sync.status.syncBaseUrl
-              ? sync.status.syncBaseUrl
-              : state.syncBaseUrlInput,
-          syncEmailInput:
-            state.syncEmailInput.trim() === '' && sync.status.authEmail
-              ? sync.status.authEmail
-              : state.syncEmailInput
+            state.vaultPathInput.trim() === ""
+              ? nextVaultInfo.currentPath
+              : state.vaultPathInput,
         }));
         syncSemanticPolling();
       } catch (error) {
-        console.error('Failed to load semantic settings:', error);
+        console.error("Failed to load semantic settings:", error);
       } finally {
         semanticStateRequest = null;
       }
@@ -306,11 +237,11 @@ export function createSettingsStore() {
           ...state,
           forgottenNotes,
           selectedForgottenPaths: state.selectedForgottenPaths.filter((path) =>
-            forgottenNotes.some((note) => note.forgottenPath === path)
-          )
+            forgottenNotes.some((note) => note.forgottenPath === path),
+          ),
         }));
       } catch (error) {
-        console.error('Failed to load forgotten notes:', error);
+        console.error("Failed to load forgotten notes:", error);
       } finally {
         forgottenNotesRequest = null;
         patch({ isLoadingForgottenNotes: false });
@@ -320,13 +251,18 @@ export function createSettingsStore() {
     return forgottenNotesRequest;
   }
 
-  async function runForgottenAction(command: ForgottenAction, forgottenPaths: string[]) {
+  async function runForgottenAction(
+    command: ForgottenAction,
+    forgottenPaths: string[],
+  ) {
     if (forgottenPaths.length === 0) return;
 
     patch({ isUpdatingForgottenNotes: true });
     try {
       await invoke(command, { forgottenPaths });
-      setSelectedForgottenPaths((current) => current.filter((path) => !forgottenPaths.includes(path)));
+      setSelectedForgottenPaths((current) =>
+        current.filter((path) => !forgottenPaths.includes(path)),
+      );
       await loadForgottenNotes();
     } catch (error) {
       console.error(`Failed to run ${command}:`, error);
@@ -337,14 +273,16 @@ export function createSettingsStore() {
 
   function toggleForgottenSelection(forgottenPath: string, checked: boolean) {
     setSelectedForgottenPaths((current) =>
-      checked ? Array.from(new Set([...current, forgottenPath])) : current.filter((path) => path !== forgottenPath)
+      checked
+        ? Array.from(new Set([...current, forgottenPath]))
+        : current.filter((path) => path !== forgottenPath),
     );
   }
 
   function toggleAllForgottenSelections(checked: boolean) {
     const state = get(store);
     setSelectedForgottenPaths(
-      checked ? state.forgottenNotes.map((note) => note.forgottenPath) : []
+      checked ? state.forgottenNotes.map((note) => note.forgottenPath) : [],
     );
   }
 
@@ -355,19 +293,25 @@ export function createSettingsStore() {
     patch({ isSaving: true });
     try {
       patch({
-        semanticSettings: await invoke<SemanticSettings>('set_semantic_settings', {
-          settings: state.semanticSettings
-        })
+        semanticSettings: await invoke<SemanticSettings>(
+          "set_semantic_settings",
+          {
+            settings: state.semanticSettings,
+          },
+        ),
       });
       await loadSemanticState();
     } catch (error) {
-      console.error('Failed to save semantic settings:', error);
+      console.error("Failed to save semantic settings:", error);
     } finally {
       patch({ isSaving: false });
     }
   }
 
-  function updateSetting<Key extends keyof SemanticSettings>(key: Key, value: SemanticSettings[Key]) {
+  function updateSetting<Key extends keyof SemanticSettings>(
+    key: Key,
+    value: SemanticSettings[Key],
+  ) {
     update((state) => {
       if (!state.semanticSettings) {
         return state;
@@ -377,15 +321,19 @@ export function createSettingsStore() {
         ...state,
         semanticSettings: {
           ...state.semanticSettings,
-          [key]: value
-        }
+          [key]: value,
+        },
       };
     });
     void saveSettings();
   }
 
   async function runAction(command: SemanticAction) {
-    patch({ isRunningAction: true, semanticLayerError: null, semanticLayerMessage: null });
+    patch({
+      isRunningAction: true,
+      semanticLayerError: null,
+      semanticLayerMessage: null,
+    });
     try {
       await invoke(command);
       await loadSemanticState();
@@ -401,19 +349,21 @@ export function createSettingsStore() {
     patch({
       isRunningAction: true,
       semanticLayerError: null,
-      semanticLayerMessage: null
+      semanticLayerMessage: null,
     });
     try {
-      const result = await invoke<SemanticModelDownloadResult>('download_semantic_embedding_model');
+      const result = await invoke<SemanticModelDownloadResult>(
+        "download_semantic_embedding_model",
+      );
       patch({
         semanticLayerMessage: result.alreadyPresent
-          ? 'Embedding model is already installed.'
-          : 'Embedding model downloaded successfully.',
-        semanticLayerError: null
+          ? "Embedding model is already installed."
+          : "Embedding model downloaded successfully.",
+        semanticLayerError: null,
       });
       await loadSemanticState();
     } catch (error) {
-      console.error('Failed to download embedding model:', error);
+      console.error("Failed to download embedding model:", error);
       patch({ semanticLayerError: String(error), semanticLayerMessage: null });
     } finally {
       patch({ isRunningAction: false });
@@ -422,10 +372,10 @@ export function createSettingsStore() {
 
   async function clearDebugMetrics() {
     try {
-      await invoke('clear_semantic_debug_metrics');
+      await invoke("clear_semantic_debug_metrics");
       await loadSemanticState();
     } catch (error) {
-      console.error('Failed to clear semantic debug metrics:', error);
+      console.error("Failed to clear semantic debug metrics:", error);
     }
   }
 
@@ -433,264 +383,29 @@ export function createSettingsStore() {
     patch({ isSavingVault: true });
     try {
       const state = get(store);
-      const nextVaultInfo = await invoke<VaultInfo>('set_vault_directory', {
-        path: state.vaultPathInput.trim() === '' ? null : state.vaultPathInput.trim()
+      const nextVaultInfo = await invoke<VaultInfo>("set_vault_directory", {
+        path:
+          state.vaultPathInput.trim() === ""
+            ? null
+            : state.vaultPathInput.trim(),
       });
-      const { status: nextSyncStatus } = await loadSyncSlice(false);
       patch({
         vaultInfo: nextVaultInfo,
-        syncStatus: nextSyncStatus
       });
     } catch (error) {
-      console.error('Failed to save vault directory:', error);
+      console.error("Failed to save vault directory:", error);
     } finally {
       patch({ isSavingVault: false });
     }
   }
 
-  async function requestMagicLink() {
-    const state = get(store);
-    if (state.syncBaseUrlInput.trim() === '' || state.syncEmailInput.trim() === '') return;
-
-    patch({
-      isRequestingMagicLink: true,
-      syncUiError: null,
-      syncUiMessage: null
-    });
-
-    try {
-      const response = await invoke<RequestMagicLinkResponse>('request_sync_magic_link', {
-        syncBaseUrl: state.syncBaseUrlInput.trim(),
-        email: state.syncEmailInput.trim()
-      });
-      patch({
-        lastMagicLinkResponse: response,
-        magicLinkTokenInput: response.magicLinkToken ?? get(store).magicLinkTokenInput,
-        syncStatus: await invoke<SyncStatus>('get_sync_status'),
-        syncUiMessage: 'Magic link requested.'
-      });
-    } catch (error) {
-      console.error('Failed to request magic link:', error);
-      patch({ syncUiError: String(error) });
-    } finally {
-      patch({ isRequestingMagicLink: false });
-    }
-  }
-
-  async function completeSyncSignIn() {
-    const state = get(store);
-    if (
-      state.syncBaseUrlInput.trim() === '' ||
-      state.syncEmailInput.trim() === '' ||
-      state.magicLinkTokenInput.trim() === ''
-    ) {
-      return;
-    }
-
-    patch({
-      isCompletingSyncSignIn: true,
-      syncUiError: null,
-      syncUiMessage: null
-    });
-    try {
-      patch({
-        syncStatus: await invoke<SyncStatus>('complete_sync_sign_in', {
-          syncBaseUrl: state.syncBaseUrlInput.trim(),
-          email: state.syncEmailInput.trim(),
-          magicLinkToken: state.magicLinkTokenInput.trim(),
-          deviceName: navigator.platform || null
-        })
-      });
-      await Promise.all([loadSemanticStatus(), loadSyncState(true), loadForgottenNotes()]);
-      patch({ syncUiMessage: 'This device is linked and ready to sync.' });
-    } catch (error) {
-      console.error('Failed to complete sync sign-in:', error);
-      patch({ syncUiError: String(error) });
-    } finally {
-      patch({ isCompletingSyncSignIn: false });
-    }
-  }
-
-  async function runSyncNow() {
-    patch({
-      isSyncingNow: true,
-      syncUiError: null,
-      syncUiMessage: null
-    });
-    try {
-      patch({ syncStatus: await invoke<SyncStatus>('sync_now') });
-      await Promise.all([loadForgottenNotes(), loadSemanticStatus(), loadSyncState(true)]);
-      patch({ syncUiMessage: 'Sync completed.' });
-    } catch (error) {
-      console.error('Failed to sync:', error);
-      patch({ syncUiError: String(error) });
-      await Promise.all([loadSemanticStatus(), loadSyncState(true)]);
-    } finally {
-      patch({ isSyncingNow: false });
-    }
-  }
-
-  async function signOutSync(keepServerUrl = true) {
-    patch({
-      isSigningOutSync: true,
-      syncUiError: null,
-      syncUiMessage: null
-    });
-    try {
-      patch({
-        syncStatus: await invoke<SyncStatus>('sign_out_sync', { keepServerUrl }),
-        magicLinkTokenInput: '',
-        lastMagicLinkResponse: null,
-        syncConflicts: await invoke<SyncConflict[]>('list_sync_conflicts'),
-        syncUiMessage: 'Signed out on this device.'
-      });
-    } catch (error) {
-      console.error('Failed to sign out of sync:', error);
-      patch({ syncUiError: String(error) });
-    } finally {
-      patch({ isSigningOutSync: false });
-    }
-  }
-
-  async function dismissSyncConflict(noteId: string) {
-    update((state) => ({
-      ...state,
-      dismissingConflictNoteIds: Array.from(new Set([...state.dismissingConflictNoteIds, noteId])),
-      syncUiError: null
-    }));
-
-    try {
-      const nextStatus = await invoke<SyncStatus>('dismiss_sync_conflict', { noteId });
-      const nextConflicts = await invoke<SyncConflict[]>('list_sync_conflicts');
-      update((state) => ({
-        ...state,
-        syncStatus: nextStatus,
-        syncConflicts: nextConflicts,
-        activeConflictNoteId: state.activeConflictNoteId === noteId ? null : state.activeConflictNoteId,
-        activeConflictDetail: state.activeConflictNoteId === noteId ? null : state.activeConflictDetail
-      }));
-    } catch (error) {
-      console.error('Failed to dismiss sync conflict:', error);
-      patch({ syncUiError: String(error) });
-    } finally {
-      update((state) => ({
-        ...state,
-        dismissingConflictNoteIds: state.dismissingConflictNoteIds.filter((id) => id !== noteId)
-      }));
-    }
-  }
-
-  async function toggleSyncConflictDetail(noteId: string) {
-    const state = get(store);
-    if (state.activeConflictNoteId === noteId) {
-      patch({
-        activeConflictNoteId: null,
-        activeConflictDetail: null
-      });
-      return;
-    }
-
-    patch({
-      isLoadingConflictDetail: true,
-      syncUiError: null
-    });
-
-    try {
-      const detail = await invoke<SyncConflictDetail | null>('get_sync_conflict_detail', { noteId });
-      patch({
-        activeConflictDetail: detail,
-        activeConflictNoteId: detail ? noteId : null
-      });
-    } catch (error) {
-      console.error('Failed to load sync conflict detail:', error);
-      patch({
-        syncUiError: String(error),
-        activeConflictNoteId: null,
-        activeConflictDetail: null
-      });
-    } finally {
-      patch({ isLoadingConflictDetail: false });
-    }
-  }
-
-  async function resolveSyncConflict(noteId: string, strategy: 'keep-local' | 'keep-remote') {
-    update((state) => ({
-      ...state,
-      resolvingConflictNoteIds: Array.from(new Set([...state.resolvingConflictNoteIds, noteId])),
-      syncUiError: null,
-      syncUiMessage: null
-    }));
-
-    try {
-      const nextStatus = await invoke<SyncStatus>(
-        strategy === 'keep-local'
-          ? 'resolve_sync_conflict_keep_local'
-          : 'resolve_sync_conflict_keep_remote',
-        { noteId }
-      );
-      const nextConflicts = await invoke<SyncConflict[]>('list_sync_conflicts');
-      update((state) => ({
-        ...state,
-        syncStatus: nextStatus,
-        syncConflicts: nextConflicts,
-        activeConflictNoteId: state.activeConflictNoteId === noteId ? null : state.activeConflictNoteId,
-        activeConflictDetail: state.activeConflictNoteId === noteId ? null : state.activeConflictDetail,
-        syncUiMessage:
-          strategy === 'keep-local'
-            ? 'Conflict resolved by restoring the local version to the canonical note.'
-            : 'Conflict resolved by keeping the remote canonical version.'
-      }));
-      await loadSemanticStatus();
-    } catch (error) {
-      console.error('Failed to resolve sync conflict:', error);
-      patch({ syncUiError: String(error) });
-    } finally {
-      update((state) => ({
-        ...state,
-        resolvingConflictNoteIds: state.resolvingConflictNoteIds.filter((id) => id !== noteId)
-      }));
-    }
-  }
-
-  async function toggleSyncPaused() {
-    const state = get(store);
-    if (!state.syncStatus) return;
-
-    patch({
-      isTogglingSyncPause: true,
-      syncUiError: null,
-      syncUiMessage: null
-    });
-    try {
-      const nextStatus = await invoke<SyncStatus>('set_sync_paused', {
-        paused: !state.syncStatus.paused
-      });
-      patch({
-        syncStatus: nextStatus,
-        syncUiMessage: nextStatus.paused
-          ? 'Syncing is paused on this device.'
-          : 'Syncing resumed on this device.'
-      });
-      if (!nextStatus.paused) {
-        await Promise.all([loadSemanticStatus(), loadSyncState(true)]);
-      }
-    } catch (error) {
-      console.error('Failed to toggle sync pause:', error);
-      patch({ syncUiError: String(error) });
-    } finally {
-      patch({ isTogglingSyncPause: false });
-    }
-  }
-
   async function handleVisibilityChange() {
-    if (document.visibilityState === 'visible') {
-      await runAutoSyncNow('settings-visible');
+    if (document.visibilityState === "visible") {
       await refreshSettingsForVisibility(get(store).activeGeneralSection, {
         loadSemanticState,
         loadSemanticStatus,
-        loadSyncState,
         loadVaultInfo,
-        loadForgottenNotes
+        loadForgottenNotes,
       });
       syncSemanticPolling();
       return;
@@ -708,20 +423,17 @@ export function createSettingsStore() {
       vaultChangeRefreshTimer = null;
       void refreshSettingsAfterVaultChange({
         loadSemanticStatus,
-        loadSyncState,
         loadVaultInfo,
-        loadForgottenNotes
+        loadForgottenNotes,
       });
     }, delayMs);
   }
 
   async function initialize() {
     await Promise.all([loadSemanticState(), loadForgottenNotes()]);
-    vaultNoteChangeUnlisten = await listen('vault-note-changed', () => {
-      scheduleAutoSync('settings-vault-note-change', 1200);
+    vaultNoteChangeUnlisten = await listen("vault-note-changed", () => {
       scheduleVaultChangeRefresh();
     });
-    scheduleAutoSync('settings-mounted', 900);
   }
 
   function dispose() {
@@ -730,7 +442,6 @@ export function createSettingsStore() {
       window.clearTimeout(vaultChangeRefreshTimer);
       vaultChangeRefreshTimer = null;
     }
-    cancelScheduledAutoSync();
     vaultNoteChangeUnlisten?.();
     vaultNoteChangeUnlisten = null;
   }
@@ -743,9 +454,6 @@ export function createSettingsStore() {
     setActiveTab,
     setActiveGeneralSection,
     setVaultPathInput,
-    setSyncBaseUrlInput,
-    setSyncEmailInput,
-    setMagicLinkTokenInput,
     loadForgottenNotes,
     runForgottenAction,
     toggleForgottenSelection,
@@ -757,14 +465,6 @@ export function createSettingsStore() {
     downloadEmbeddingModel,
     clearDebugMetrics,
     saveVaultDirectory,
-    requestMagicLink,
-    completeSyncSignIn,
-    runSyncNow,
-    signOutSync,
-    dismissSyncConflict,
-    toggleSyncConflictDetail,
-    resolveSyncConflict,
-    toggleSyncPaused
   };
 }
 

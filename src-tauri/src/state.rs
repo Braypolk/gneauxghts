@@ -4,13 +4,13 @@ mod persistence;
 #[allow(unused_imports)]
 pub(crate) use config::{
     app_data_dir, current_vault_info, default_notes_root, forgotten_notes_root,
-    initialize_app_data_dir, initialize_documents_dir, migrate_legacy_ios_notes_dir, notes_root,
+    initialize_app_data_dir, initialize_documents_dir, notes_root,
     read_vault_config, set_notes_root, write_vault_config, VaultConfig, VaultInfo,
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{
     derive_file_stem, derive_file_stem_from_title_and_markdown, is_forgotten_note_path,
-    is_valid_note_path, legacy_state_paths, persist_note, prune_recent_note_ids, push_unique,
+    is_valid_note_path, persist_note, prune_recent_note_ids, push_unique,
     read_state, resolve_note_id_from_path, resolve_note_path_by_id, touch_recent_note_id,
     validate_current_path, write_state, PersistedForgottenNote, PersistedState,
     PersistedTaskTimestamps,
@@ -20,7 +20,7 @@ pub(crate) use persistence::{
 mod tests {
     use super::{
         derive_file_stem, derive_file_stem_from_title_and_markdown, forgotten_notes_root,
-        initialize_app_data_dir, legacy_state_paths, persist_note, read_state,
+        initialize_app_data_dir, persist_note, read_state,
         resolve_note_id_from_path, write_state, PersistedForgottenNote, PersistedState,
         PersistedTaskTimestamps,
     };
@@ -227,61 +227,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn read_state_migrates_legacy_json_into_sqlite() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
-        let app_data_dir = TestDir::new("state-app-data-migrate");
-        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
-        let temp = TestDir::new("state-migrate");
-        let notes_dir = temp.path();
-        let live_note = notes_dir.join("Live Note.md");
-        fs::write(&live_note, "# Live Note\n\nBody").expect("write live note");
-        let live_note_id = resolve_note_id_from_path(&live_note).expect("live note id");
-
-        let legacy_paths = legacy_state_paths(notes_dir).expect("legacy state paths");
-        let legacy_path = legacy_paths.first().cloned().expect("legacy state path");
-        let legacy_state = PersistedState {
-            last_opened_note_id: Some(live_note_id.clone()),
-            recent_note_ids: vec![live_note_id.clone()],
-            hidden_task_keys: vec!["task-1".to_string()],
-            hidden_note_ids: vec![live_note_id.clone()],
-            note_order_note_ids: vec![live_note_id.clone()],
-            collapsed_note_ids: vec![live_note_id.clone()],
-            task_timestamps: HashMap::from([(
-                "task-1".to_string(),
-                PersistedTaskTimestamps {
-                    created_at_millis: 10,
-                    updated_at_millis: 20,
-                },
-            )]),
-            forgotten_notes: Vec::new(),
-        };
-        let serialized =
-            serde_json::to_string_pretty(&legacy_state).expect("serialize legacy state");
-        fs::write(&legacy_path, serialized).expect("write legacy state");
-
-        let migrated = read_state(notes_dir).expect("migrate state");
-        assert_eq!(
-            migrated.last_opened_note_id,
-            legacy_state.last_opened_note_id
-        );
-        assert_eq!(migrated.recent_note_ids, legacy_state.recent_note_ids);
-        assert_eq!(migrated.hidden_task_keys, legacy_state.hidden_task_keys);
-        assert_eq!(migrated.hidden_note_ids, legacy_state.hidden_note_ids);
-        assert_eq!(
-            migrated.note_order_note_ids,
-            legacy_state.note_order_note_ids
-        );
-        assert_eq!(migrated.collapsed_note_ids, legacy_state.collapsed_note_ids);
-        assert_eq!(migrated.task_timestamps.len(), 1);
-        assert!(!legacy_path.exists());
-
-        let persisted = read_state(notes_dir).expect("read migrated state");
-        assert_eq!(
-            persisted.last_opened_note_id,
-            legacy_state.last_opened_note_id
-        );
-        assert_eq!(persisted.recent_note_ids, legacy_state.recent_note_ids);
-        assert_eq!(persisted.hidden_task_keys, legacy_state.hidden_task_keys);
-    }
 }

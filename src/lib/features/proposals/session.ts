@@ -4,7 +4,7 @@ import {
   buildReviewChanges,
   getReviewChangePath,
   type ReviewChange
-} from '$lib/features/inbox/reviewDiff';
+} from '$lib/features/inbox/reviewChanges';
 import type { InboxItemDetail } from '$lib/types/ai';
 
 export interface ProposalSession {
@@ -97,61 +97,7 @@ export function toggleProposalChange(changeId: string, selected: boolean) {
         if (reviewChange.id !== changeId) {
           return reviewChange;
         }
-
-        if (reviewChange.kind === 'createNote' || reviewChange.kind === 'deleteNote') {
-          return { ...reviewChange, selected };
-        }
-
-        return {
-          ...reviewChange,
-          titleSelected: selected && reviewChange.titleChanged,
-          hunks: reviewChange.hunks.map((hunk) => ({ ...hunk, selected }))
-        };
-      })
-    };
-  });
-}
-
-export function toggleProposalTitle(changeId: string, selected: boolean) {
-  activeProposalSession.update((session) => {
-    if (!session) {
-      return session;
-    }
-
-    return {
-      ...session,
-      reviewChanges: session.reviewChanges.map((reviewChange) => {
-        if (reviewChange.id !== changeId || reviewChange.kind !== 'updateNote') {
-          return reviewChange;
-        }
-        return {
-          ...reviewChange,
-          titleSelected: reviewChange.titleChanged ? selected : false
-        };
-      })
-    };
-  });
-}
-
-export function toggleProposalHunk(changeId: string, hunkId: string, selected: boolean) {
-  activeProposalSession.update((session) => {
-    if (!session) {
-      return session;
-    }
-
-    return {
-      ...session,
-      reviewChanges: session.reviewChanges.map((reviewChange) => {
-        if (reviewChange.id !== changeId || reviewChange.kind !== 'updateNote') {
-          return reviewChange;
-        }
-
-        return {
-          ...reviewChange,
-          hunks: reviewChange.hunks.map((hunk) =>
-            hunk.id === hunkId ? { ...hunk, selected } : hunk
-          )
-        };
+        return { ...reviewChange, selected };
       })
     };
   });

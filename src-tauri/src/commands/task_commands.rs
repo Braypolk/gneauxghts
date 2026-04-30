@@ -12,7 +12,6 @@ use crate::{
         push_unique, read_state, resolve_note_path_by_id, validate_current_path, write_state,
         PersistedState, PersistedTaskTimestamps,
     },
-    sync,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -341,7 +340,6 @@ pub(super) fn toggle_task(
     let Some(toggled_task_key) =
         find_task_key_for_line(&note_path, &updated_note, line_number, &task_text)
     else {
-        sync::mark_note_dirty(&note_path, &updated_markdown)?;
         upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
         return Ok(());
     };
@@ -357,7 +355,6 @@ pub(super) fn toggle_task(
         });
     timestamps.updated_at_millis = timestamp_millis;
     write_state(&notes_dir, &persisted_state)?;
-    sync::mark_note_dirty(&note_path, &updated_markdown)?;
     upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
     state
         .semantic
@@ -381,7 +378,6 @@ pub(super) fn delete_task(
     fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
     let timestamp_millis = current_time_millis()?;
     let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
-    sync::mark_note_dirty(&note_path, &updated_markdown)?;
     upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
 
     let mut persisted_state = read_state(&notes_dir)?;

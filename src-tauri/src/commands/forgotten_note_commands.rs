@@ -10,7 +10,6 @@ use crate::{
         forgotten_notes_root, read_state, validate_current_path, write_state,
         PersistedForgottenNote,
     },
-    sync,
 };
 use std::{
     collections::HashSet,
@@ -96,7 +95,6 @@ pub(crate) fn forget_note(
                 purge_at_millis,
             });
         state.semantic.queue_delete_note(note_path)?;
-        sync::mark_note_trashed(&forgotten_path, &forgotten_markdown)?;
         let summary = build_forgotten_note_summary(
             persisted_state
                 .forgotten_notes
@@ -170,7 +168,6 @@ pub(crate) fn restore_forgotten_notes(
 
         let note = build_indexed_note(&restored_path, &restored_markdown, timestamp_millis);
         upsert_notes_index_entry(&state, restored_path.clone(), note)?;
-        sync::mark_note_dirty(&restored_path, &restored_markdown)?;
         state
             .semantic
             .queue_note_update(&restored_path, restored_markdown, timestamp_millis)?;
@@ -207,9 +204,6 @@ pub(crate) fn delete_forgotten_notes(forgotten_paths: Vec<String>) -> Result<(),
         let forgotten_note = persisted_state.forgotten_notes.remove(index);
         let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
         if forgotten_path.exists() {
-            if let Ok(markdown) = fs::read_to_string(&forgotten_path) {
-                let _ = sync::mark_note_trashed(&forgotten_path, &markdown);
-            }
             fs::remove_file(&forgotten_path).map_err(|err| err.to_string())?;
         }
         write_state(&notes_dir, &persisted_state)?;

@@ -17,11 +17,11 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 ## How Notes Are Stored
 
 - Notes live in `~/Documents/Gneauxghts`
-- Local app metadata and sync state live in the app data SQLite database
+- Local app metadata, AI workflow state, and semantic indexes live in app data SQLite databases
 - Notes are plain `.md` files
 - File names are derived from the first Markdown heading or first non-empty line
 
-This means your notes stay easy to back up, sync, or edit outside the app.
+This means your notes stay easy to back up or edit outside the app.
 
 ## Keyboard Shortcuts
 

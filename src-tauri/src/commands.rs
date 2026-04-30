@@ -20,10 +20,8 @@ use crate::{
         SemanticStatus,
     },
     state::{current_vault_info, notes_root, set_notes_root, VaultInfo},
-    sync::{self, SyncConflict, SyncConflictDetail, SyncStatus},
     time::current_time_millis,
 };
-use gneauxghts_sync_contract::RequestMagicLinkResponse;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -196,90 +194,6 @@ pub(crate) fn set_vault_directory(path: Option<String>) -> Result<VaultInfo, Str
         Some(path) => set_notes_root(Some(Path::new(path))),
         None => set_notes_root(None),
     }
-}
-
-#[tauri::command]
-pub(crate) fn get_sync_status() -> Result<SyncStatus, String> {
-    sync::get_sync_status()
-}
-
-#[tauri::command]
-pub(crate) fn list_sync_conflicts() -> Result<Vec<SyncConflict>, String> {
-    sync::list_sync_conflicts()
-}
-
-#[tauri::command]
-pub(crate) fn get_sync_conflict_detail(
-    note_id: String,
-) -> Result<Option<SyncConflictDetail>, String> {
-    sync::get_sync_conflict_detail(&note_id)
-}
-
-#[tauri::command]
-pub(crate) async fn request_sync_magic_link(
-    sync_base_url: String,
-    email: String,
-) -> Result<RequestMagicLinkResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || sync::request_magic_link(&sync_base_url, &email))
-        .await
-        .map_err(|err| err.to_string())?
-}
-
-#[tauri::command]
-pub(crate) async fn complete_sync_sign_in(
-    sync_base_url: String,
-    email: String,
-    magic_link_token: String,
-    device_name: Option<String>,
-) -> Result<SyncStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        sync::complete_magic_link(
-            &sync_base_url,
-            &email,
-            &magic_link_token,
-            device_name.as_deref(),
-        )
-    })
-    .await
-    .map_err(|err| err.to_string())?
-}
-
-#[tauri::command]
-pub(crate) fn sync_now(state: State<'_, AppState>) -> Result<SyncStatus, String> {
-    let notes_dir = prepare_notes_dir(false)?;
-    sync::sync_now(&state, &notes_dir)
-}
-
-#[tauri::command]
-pub(crate) fn dismiss_sync_conflict(note_id: String) -> Result<SyncStatus, String> {
-    sync::dismiss_sync_conflict(&note_id)
-}
-
-#[tauri::command]
-pub(crate) fn resolve_sync_conflict_keep_local(
-    state: State<'_, AppState>,
-    note_id: String,
-) -> Result<SyncStatus, String> {
-    let notes_dir = prepare_notes_dir(false)?;
-    sync::resolve_sync_conflict_keep_local(&state, &notes_dir, &note_id)
-}
-
-#[tauri::command]
-pub(crate) fn resolve_sync_conflict_keep_remote(
-    state: State<'_, AppState>,
-    note_id: String,
-) -> Result<SyncStatus, String> {
-    sync::resolve_sync_conflict_keep_remote(&state, &note_id)
-}
-
-#[tauri::command]
-pub(crate) fn sign_out_sync(keep_server_url: Option<bool>) -> Result<SyncStatus, String> {
-    sync::sign_out(keep_server_url.unwrap_or(true))
-}
-
-#[tauri::command]
-pub(crate) fn set_sync_paused(paused: bool) -> Result<SyncStatus, String> {
-    sync::set_sync_paused(paused)
 }
 
 #[tauri::command]
