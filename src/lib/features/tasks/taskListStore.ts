@@ -6,6 +6,13 @@ import { storePendingTaskTarget } from '$lib/taskNavigation';
 export interface TaskItem {
   noteId: string;
   taskKey: string;
+  /**
+   * Stable internal task id assigned by the SQLite task projection.
+   * Optional in the wire format so existing call sites can keep using
+   * `taskKey`; new consumers may prefer this identifier when text or
+   * position changes invalidate the derived key.
+   */
+  taskId?: string;
   notePath: string;
   fileName: string;
   noteTitle: string;

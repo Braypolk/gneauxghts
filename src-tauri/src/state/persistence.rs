@@ -3,7 +3,7 @@ use crate::{index::is_note_file, note, path_utils::collect_markdown_files_recurs
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
@@ -41,13 +41,6 @@ pub(super) const MAX_RECENT_NOTES: usize = 20;
 pub(super) const APP_STATE_SINGLETON_ID: i64 = 1;
 const APP_STATE_DB_FILE_NAME: &str = "app-state.sqlite3";
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PersistedTaskTimestamps {
-    pub(crate) created_at_millis: u64,
-    pub(crate) updated_at_millis: u64,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedForgottenNote {
@@ -66,15 +59,11 @@ pub(crate) struct PersistedState {
     #[serde(default)]
     pub(crate) recent_note_ids: Vec<String>,
     #[serde(default)]
-    pub(crate) hidden_task_keys: Vec<String>,
-    #[serde(default)]
     pub(crate) hidden_note_ids: Vec<String>,
     #[serde(default)]
     pub(crate) note_order_note_ids: Vec<String>,
     #[serde(default)]
     pub(crate) collapsed_note_ids: Vec<String>,
-    #[serde(default)]
-    pub(crate) task_timestamps: HashMap<String, PersistedTaskTimestamps>,
     #[serde(default)]
     pub(crate) forgotten_notes: Vec<PersistedForgottenNote>,
 }
@@ -284,18 +273,10 @@ pub(crate) fn derive_file_stem_from_title_and_markdown(title: &str, markdown: &s
 
 fn prune_state_in_place(state: &mut PersistedState, notes_dir: &Path, lookup: &NoteIdLookup<'_>) {
     prune_recent_note_ids_with_lookup(state, notes_dir, lookup);
-    dedupe_hidden_task_keys(state);
     prune_note_id_list(&mut state.hidden_note_ids, notes_dir, lookup);
     prune_note_id_list(&mut state.note_order_note_ids, notes_dir, lookup);
     prune_note_id_list(&mut state.collapsed_note_ids, notes_dir, lookup);
     prune_forgotten_notes(state, notes_dir);
-}
-
-fn dedupe_hidden_task_keys(state: &mut PersistedState) {
-    let mut seen = HashSet::new();
-    state
-        .hidden_task_keys
-        .retain(|task_key| !task_key.is_empty() && seen.insert(task_key.clone()));
 }
 
 fn prune_note_id_list(note_ids: &mut Vec<String>, notes_dir: &Path, lookup: &NoteIdLookup<'_>) {
@@ -388,6 +369,17 @@ fn with_state_database<R, F>(action: F) -> Result<R, String>
 where
     F: FnOnce(&mut Connection) -> Result<R, String>,
 {
+    with_state_database_internal(action)
+}
+
+/// Internal access to the long-lived app-state SQLite connection. The
+/// `internal` suffix marks it as a sibling-module hook used by
+/// [`super::task_projection`] which needs to share the same connection
+/// to keep transactions / writes coherent.
+pub(super) fn with_state_database_internal<R, F>(action: F) -> Result<R, String>
+where
+    F: FnOnce(&mut Connection) -> Result<R, String>,
+{
     let database_path = state_database_path()?;
     let mut guard: MutexGuard<'_, Option<StateDatabase>> = STATE_DATABASE
         .lock()
@@ -408,6 +400,14 @@ where
     action(&mut entry.connection)
 }
 
+/// Idempotent re-entry to the schema bootstrap. Sibling modules (the
+/// task projection) call this so they can layer their own DDL on top
+/// of the bootstrapped tables without depending on this module's
+/// open-once behaviour.
+pub(super) fn ensure_state_schema_idempotent(connection: &Connection) -> Result<(), String> {
+    ensure_state_schema(connection)
+}
+
 fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
     connection
         .execute_batch(
@@ -419,9 +419,6 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
                 position INTEGER PRIMARY KEY,
                 note_id TEXT NOT NULL UNIQUE
             );
-            CREATE TABLE IF NOT EXISTS app_state_hidden_task_keys (
-                task_key TEXT PRIMARY KEY
-            );
             CREATE TABLE IF NOT EXISTS app_state_hidden_note_ids (
                 note_id TEXT PRIMARY KEY
             );
@@ -431,11 +428,6 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
             );
             CREATE TABLE IF NOT EXISTS app_state_collapsed_note_ids (
                 note_id TEXT PRIMARY KEY
-            );
-            CREATE TABLE IF NOT EXISTS app_state_task_timestamps (
-                task_key TEXT PRIMARY KEY,
-                created_at_millis INTEGER NOT NULL,
-                updated_at_millis INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS app_state_forgotten_notes (
                 forgotten_path TEXT PRIMARY KEY,
@@ -483,11 +475,9 @@ fn database_has_persisted_state(connection: &Connection) -> Result<bool, String>
 
     for table in [
         "app_state_recent_note_ids",
-        "app_state_hidden_task_keys",
         "app_state_hidden_note_ids",
         "app_state_note_order_note_ids",
         "app_state_collapsed_note_ids",
-        "app_state_task_timestamps",
         "app_state_forgotten_notes",
     ] {
         let query = format!("SELECT 1 FROM {table} LIMIT 1");
@@ -519,10 +509,6 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
         connection,
         "SELECT note_id FROM app_state_recent_note_ids ORDER BY position",
     )?;
-    let hidden_task_keys = read_string_column(
-        connection,
-        "SELECT task_key FROM app_state_hidden_task_keys ORDER BY task_key",
-    )?;
     let hidden_note_ids = read_string_column(
         connection,
         "SELECT note_id FROM app_state_hidden_note_ids ORDER BY note_id",
@@ -535,29 +521,6 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
         connection,
         "SELECT note_id FROM app_state_collapsed_note_ids ORDER BY note_id",
     )?;
-
-    let mut task_timestamps = HashMap::new();
-    let mut statement = connection
-        .prepare(
-            "SELECT task_key, created_at_millis, updated_at_millis
-             FROM app_state_task_timestamps",
-        )
-        .map_err(|err| err.to_string())?;
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                PersistedTaskTimestamps {
-                    created_at_millis: read_u64_column(row, 1)?,
-                    updated_at_millis: read_u64_column(row, 2)?,
-                },
-            ))
-        })
-        .map_err(|err| err.to_string())?;
-    for row in rows {
-        let (task_key, timestamps) = row.map_err(|err| err.to_string())?;
-        task_timestamps.insert(task_key, timestamps);
-    }
 
     let mut forgotten_notes = Vec::new();
     let mut statement = connection
@@ -585,11 +548,9 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
     Ok(PersistedState {
         last_opened_note_id,
         recent_note_ids,
-        hidden_task_keys,
         hidden_note_ids,
         note_order_note_ids,
         collapsed_note_ids,
-        task_timestamps,
         forgotten_notes,
     })
 }
@@ -640,18 +601,6 @@ fn write_state_to_connection(
     }
 
     transaction
-        .execute("DELETE FROM app_state_hidden_task_keys", [])
-        .map_err(|err| err.to_string())?;
-    for task_key in &state.hidden_task_keys {
-        transaction
-            .execute(
-                "INSERT INTO app_state_hidden_task_keys (task_key) VALUES (?1)",
-                params![task_key],
-            )
-            .map_err(|err| err.to_string())?;
-    }
-
-    transaction
         .execute("DELETE FROM app_state_hidden_note_ids", [])
         .map_err(|err| err.to_string())?;
     for note_id in &state.hidden_note_ids {
@@ -683,26 +632,6 @@ fn write_state_to_connection(
             .execute(
                 "INSERT INTO app_state_collapsed_note_ids (note_id) VALUES (?1)",
                 params![note_id],
-            )
-            .map_err(|err| err.to_string())?;
-    }
-
-    transaction
-        .execute("DELETE FROM app_state_task_timestamps", [])
-        .map_err(|err| err.to_string())?;
-    for (task_key, timestamps) in &state.task_timestamps {
-        transaction
-            .execute(
-                "INSERT INTO app_state_task_timestamps (
-                    task_key,
-                    created_at_millis,
-                    updated_at_millis
-                 ) VALUES (?1, ?2, ?3)",
-                params![
-                    task_key,
-                    to_i64(timestamps.created_at_millis)?,
-                    to_i64(timestamps.updated_at_millis)?
-                ],
             )
             .map_err(|err| err.to_string())?;
     }
@@ -778,23 +707,6 @@ pub(crate) fn db_set_recent_note_ids(recent_note_ids: &[String]) -> Result<(), S
     })
 }
 
-pub(crate) fn db_set_hidden_task_key(task_key: &str, hidden: bool) -> Result<(), String> {
-    with_state_database(|connection| {
-        let result = if hidden {
-            connection.execute(
-                "INSERT OR IGNORE INTO app_state_hidden_task_keys (task_key) VALUES (?1)",
-                params![task_key],
-            )
-        } else {
-            connection.execute(
-                "DELETE FROM app_state_hidden_task_keys WHERE task_key = ?1",
-                params![task_key],
-            )
-        };
-        result.map(|_| ()).map_err(|err| err.to_string())
-    })
-}
-
 pub(crate) fn db_set_note_hidden(note_id: &str, hidden: bool) -> Result<(), String> {
     with_state_database(|connection| {
         let result = if hidden {
@@ -844,44 +756,6 @@ pub(crate) fn db_set_note_order(note_ids: &[String]) -> Result<(), String> {
                 .map_err(|err| err.to_string())?;
         }
         transaction.commit().map_err(|err| err.to_string())
-    })
-}
-
-pub(crate) fn db_upsert_task_timestamp(
-    task_key: &str,
-    timestamps: &PersistedTaskTimestamps,
-) -> Result<(), String> {
-    with_state_database(|connection| {
-        connection
-            .execute(
-                "INSERT INTO app_state_task_timestamps (
-                    task_key,
-                    created_at_millis,
-                    updated_at_millis
-                 ) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(task_key) DO UPDATE SET
-                    created_at_millis = excluded.created_at_millis,
-                    updated_at_millis = excluded.updated_at_millis",
-                params![
-                    task_key,
-                    to_i64(timestamps.created_at_millis)?,
-                    to_i64(timestamps.updated_at_millis)?,
-                ],
-            )
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    })
-}
-
-pub(crate) fn db_remove_task_timestamp(task_key: &str) -> Result<(), String> {
-    with_state_database(|connection| {
-        connection
-            .execute(
-                "DELETE FROM app_state_task_timestamps WHERE task_key = ?1",
-                params![task_key],
-            )
-            .map(|_| ())
-            .map_err(|err| err.to_string())
     })
 }
 

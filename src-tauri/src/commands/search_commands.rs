@@ -1,6 +1,3 @@
-use super::task_commands::{
-    select_recent_tasks, should_sync_task_timestamps, sync_task_timestamps_from_index,
-};
 use super::{
     prepare_notes_dir, DraftRef, RecentTaskItem, SearchMode, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
@@ -11,11 +8,12 @@ use crate::{
     },
     semantic::{RelatedNotesResponse, SemanticChunkMatch},
     state::{
-        prune_recent_note_ids, read_state, resolve_note_id_from_path, validate_current_path,
-        write_state,
+        prune_recent_note_ids, read_state, resolve_note_id_from_path,
+        task_projection::list_recent_open_tasks, validate_current_path, write_state,
     },
 };
 use serde::Serialize;
+use std::collections::HashSet;
 use std::{
     collections::HashMap,
     path::Path,
@@ -274,9 +272,6 @@ pub(crate) fn list_recent_focus(
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
 
-    let task_sync_changed = should_sync_task_timestamps(&index)?
-        && sync_task_timestamps_from_index(&mut persisted_state, &index);
-
     let current_note_id = current_path
         .as_deref()
         .map(resolve_note_id_from_path)
@@ -287,12 +282,26 @@ pub(crate) fn list_recent_focus(
         &index,
         limit,
     );
-    let recent_tasks = select_recent_tasks(&persisted_state, &index, limit);
 
     drop(index);
-    if prune_changed || task_sync_changed {
+    if prune_changed {
         write_state(&notes_dir, &persisted_state)?;
     }
+
+    let hidden_note_ids: HashSet<String> =
+        persisted_state.hidden_note_ids.iter().cloned().collect();
+    let recent_tasks: Vec<RecentTaskItem> = list_recent_open_tasks(limit, &hidden_note_ids)?
+        .into_iter()
+        .map(|record| RecentTaskItem {
+            note_id: record.note_id,
+            task_key: record.task_key,
+            note_path: record.note_path,
+            note_title: record.note_title,
+            text: record.text,
+            line_number: record.line_number,
+            updated_at_millis: record.updated_at_millis,
+        })
+        .collect();
 
     Ok(RecentFocusBundle {
         recent_notes,

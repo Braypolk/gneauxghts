@@ -38,13 +38,20 @@ use std::{
 use task_commands::find_task_key_for_line;
 use task_commands::{
     list_recent_tasks as list_recent_tasks_impl, list_tasks as list_tasks_impl,
-    reconcile_note_task_timestamps, set_note_collapsed as set_note_collapsed_impl,
-    set_note_hidden as set_note_hidden_impl, set_note_order as set_note_order_impl,
-    set_task_hidden as set_task_hidden_impl,
+    set_note_collapsed as set_note_collapsed_impl, set_note_hidden as set_note_hidden_impl,
+    set_note_order as set_note_order_impl, set_task_hidden as set_task_hidden_impl,
 };
 use tauri::State;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Legacy "max age" parameter still passed to
+/// [`AppState::ensure_interactive_index`] for call-site compatibility.
+/// The foreground hot path no longer triggers full vault scans on
+/// staleness — that work has moved to the background reconciliation
+/// loop in `vault_watcher::spawn_background_reconcile_loop`. This
+/// constant is kept (rather than removing every call site argument) so
+/// that `ensure_interactive_index` retains a stable signature; its
+/// runtime value is intentionally ignored.
 const INTERACTIVE_INDEX_REFRESH_MAX_AGE: Duration = Duration::from_millis(750);
 const ASSETS_DIRECTORY_NAME: &str = "assets";
 const DEFAULT_PASTED_IMAGE_NAME: &str = "Pasted image";
@@ -122,6 +129,12 @@ pub(crate) enum TaskFilter {
 pub(crate) struct TaskListItem {
     note_id: String,
     task_key: String,
+    /// Stable internal task id assigned by the SQLite task projection.
+    /// Optional in the wire format so existing frontend code can ignore
+    /// it; new consumers can use it instead of the derived `task_key`
+    /// for cross-save identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_id: Option<String>,
     note_path: String,
     file_name: String,
     note_title: String,
@@ -565,19 +578,18 @@ mod tests {
     };
     use super::{
         find_task_key_for_line, load_note_session_from_notes_dir, open_note_from_notes_dir,
-        read_note_session_from_path, reconcile_note_task_timestamps, NoteSession, RecentTaskItem,
-        ResolvedNoteLink, TaskListItem,
+        read_note_session_from_path, NoteSession, RecentTaskItem, ResolvedNoteLink, TaskListItem,
     };
     use crate::{
         index::{build_indexed_note, task_key, NotesIndex},
         note,
         search::{NoteSearchResult, ScoredSearchResult},
         state::initialize_app_data_dir,
-        state::{read_state, write_state, PersistedState, PersistedTaskTimestamps},
+        state::{read_state, write_state, PersistedState},
         test_support::{TestDir, TEST_ENV_GUARD},
     };
     use serde_json::json;
-    use std::{collections::HashMap, fs, path::PathBuf};
+    use std::{fs, path::PathBuf};
 
     #[test]
     fn load_note_session_from_notes_dir_clears_stale_last_opened_path() {
@@ -706,85 +718,6 @@ mod tests {
             Some(other_path.to_string_lossy().as_ref())
         );
         assert_eq!(results[0].file_name, "other");
-    }
-
-    #[test]
-    fn reconcile_note_task_timestamps_preserves_identity_across_reordering() {
-        let note_path = PathBuf::from("/tmp/project.md");
-        let previous_markdown = "# Project\n\n- [ ] Alpha\n- [ ] Beta\n";
-        let next_markdown = "# Project\n\n- [ ] Beta\n- [ ] Alpha\n";
-        let previous_note = build_indexed_note(&note_path, previous_markdown, 10);
-        let next_note = build_indexed_note(&note_path, next_markdown, 20);
-        let previous_alpha = task_key(&previous_note.note_id, &previous_note.tasks[0]);
-        let previous_beta = task_key(&previous_note.note_id, &previous_note.tasks[1]);
-        let next_beta = task_key(&next_note.note_id, &next_note.tasks[0]);
-        let next_alpha = task_key(&next_note.note_id, &next_note.tasks[1]);
-
-        let mut state = PersistedState {
-            task_timestamps: HashMap::from([
-                (
-                    previous_alpha,
-                    PersistedTaskTimestamps {
-                        created_at_millis: 101,
-                        updated_at_millis: 111,
-                    },
-                ),
-                (
-                    previous_beta,
-                    PersistedTaskTimestamps {
-                        created_at_millis: 202,
-                        updated_at_millis: 222,
-                    },
-                ),
-            ]),
-            ..PersistedState::default()
-        };
-
-        reconcile_note_task_timestamps(
-            &mut state,
-            Some(note_path.as_path()),
-            Some(&previous_note),
-            Some(note_path.as_path()),
-            Some(&next_note),
-            999,
-        );
-
-        assert_eq!(state.task_timestamps[&next_alpha].created_at_millis, 101);
-        assert_eq!(state.task_timestamps[&next_alpha].updated_at_millis, 111);
-        assert_eq!(state.task_timestamps[&next_beta].created_at_millis, 202);
-        assert_eq!(state.task_timestamps[&next_beta].updated_at_millis, 222);
-    }
-
-    #[test]
-    fn reconcile_note_task_timestamps_updates_timestamp_when_completion_changes() {
-        let note_path = PathBuf::from("/tmp/project.md");
-        let previous_note = build_indexed_note(&note_path, "# Project\n\n- [ ] Ship beta\n", 10);
-        let next_note = build_indexed_note(&note_path, "# Project\n\n- [x] Ship beta\n", 20);
-        let previous_key = task_key(&previous_note.note_id, &previous_note.tasks[0]);
-        let next_key = task_key(&next_note.note_id, &next_note.tasks[0]);
-
-        let mut state = PersistedState {
-            task_timestamps: HashMap::from([(
-                previous_key,
-                PersistedTaskTimestamps {
-                    created_at_millis: 123,
-                    updated_at_millis: 456,
-                },
-            )]),
-            ..PersistedState::default()
-        };
-
-        reconcile_note_task_timestamps(
-            &mut state,
-            Some(note_path.as_path()),
-            Some(&previous_note),
-            Some(note_path.as_path()),
-            Some(&next_note),
-            999,
-        );
-
-        assert_eq!(state.task_timestamps[&next_key].created_at_millis, 123);
-        assert_eq!(state.task_timestamps[&next_key].updated_at_millis, 999);
     }
 
     #[test]
@@ -1000,6 +933,7 @@ mod tests {
         let task = TaskListItem {
             note_id: "note-1".to_string(),
             task_key: "task-key".to_string(),
+            task_id: Some("t_note1_abc123".to_string()),
             note_path: "/notes/title.md".to_string(),
             file_name: "title".to_string(),
             note_title: "Title".to_string(),
@@ -1039,6 +973,7 @@ mod tests {
             json!({
                 "noteId": "note-1",
                 "taskKey": "task-key",
+                "taskId": "t_note1_abc123",
                 "notePath": "/notes/title.md",
                 "fileName": "title",
                 "noteTitle": "Title",

@@ -81,6 +81,35 @@ enum PendingIndexUpdate {
     Remove(PathBuf),
 }
 
+/// Payload describing what to mirror into the SQLite task projection
+/// after a bulk index refresh has settled.
+enum ProjectionPayload {
+    Upsert { path: PathBuf, note: IndexedNote },
+    Remove { path: PathBuf },
+}
+
+fn apply_projection_payload(payload: ProjectionPayload) {
+    match payload {
+        ProjectionPayload::Upsert { path, note } => {
+            let timestamp = if note.modified_millis == 0 {
+                crate::time::current_time_millis().unwrap_or(0)
+            } else {
+                note.modified_millis
+            };
+            let _ = crate::state::task_projection::reconcile_note_tasks(
+                &path,
+                Some(&note),
+                &note.note_id,
+                timestamp,
+            );
+        }
+        ProjectionPayload::Remove { path } => {
+            let timestamp = crate::time::current_time_millis().unwrap_or(0);
+            let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
+        }
+    }
+}
+
 impl AppState {
     pub(crate) fn new(semantic: SemanticState) -> Result<Self, String> {
         Ok(Self {
@@ -141,12 +170,26 @@ impl AppState {
         note: IndexedNote,
     ) -> Result<(), String> {
         self.lexical.upsert_note(&path, &note)?;
+        let note_id = note.note_id.clone();
+        let modified_millis = note.modified_millis;
+        let note_clone_for_projection = note.clone();
         let mut index = self
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
         index.upsert_note(path.clone(), note);
         drop(index);
+        let timestamp = if modified_millis == 0 {
+            crate::time::current_time_millis().unwrap_or(modified_millis)
+        } else {
+            modified_millis
+        };
+        let _ = crate::state::task_projection::reconcile_note_tasks(
+            &path,
+            Some(&note_clone_for_projection),
+            &note_id,
+            timestamp,
+        );
         self.clear_dirty_path(&path)?;
         Ok(())
     }
@@ -159,6 +202,8 @@ impl AppState {
             .map_err(|_| "Search index lock poisoned".to_string())?;
         index.remove_note(path);
         drop(index);
+        let timestamp = crate::time::current_time_millis().unwrap_or(0);
+        let _ = crate::state::task_projection::delete_tasks_for_note_path(path, timestamp);
         self.clear_dirty_path(path)?;
         Ok(())
     }
@@ -177,10 +222,27 @@ impl AppState {
         Ok(())
     }
 
+    /// Foreground hot path used by search, recents, tasks, and wikilink
+    /// commands. Designed to never block on a full vault scan in normal
+    /// operation:
+    ///
+    /// 1. Drains any watcher-marked dirty paths and applies them
+    ///    incrementally (cheap — bounded by the user's recent file
+    ///    activity).
+    /// 2. On the very first call (the index has never been populated)
+    ///    performs a synchronous full refresh so the caller has data to
+    ///    work with.
+    /// 3. Otherwise leaves the index alone. A separate background
+    ///    reconciliation pass (see [`AppState::reconcile_full_vault_scan`])
+    ///    catches any events the watcher missed without ever blocking a
+    ///    keystroke or focus.
+    ///
+    /// The `max_age` parameter is preserved for call-site compatibility
+    /// but is no longer used to gate foreground full scans.
     pub(crate) fn ensure_interactive_index(
         &self,
         notes_dir: &Path,
-        max_age: Duration,
+        _max_age: Duration,
         source: &str,
     ) -> Result<InteractiveRefreshOutcome, String> {
         let dirty_paths = {
@@ -200,101 +262,22 @@ impl AppState {
         let mut used_full_refresh = false;
 
         if had_dirty_paths {
-            let existing_signatures = {
-                let index = self
-                    .notes_index
-                    .lock()
-                    .map_err(|_| "Search index lock poisoned".to_string())?;
-                dirty_paths
-                    .iter()
-                    .filter_map(|path| {
-                        index
-                            .entries
-                            .get(path)
-                            .map(|note| (path.clone(), note.signature.clone()))
-                    })
-                    .collect::<HashMap<_, _>>()
-            };
-            let updates = collect_dirty_updates(dirty_paths, &existing_signatures)?;
-            // Phase 5 write-through: mirror dirty updates into the lexical
-            // index before they land in `notes_index`, so search no longer
-            // needs to clone+resync the full entries map on every query.
-            for update in &updates {
-                match update {
-                    PendingIndexUpdate::Upsert(path, note) => {
-                        self.lexical.upsert_note(path, note)?;
-                    }
-                    PendingIndexUpdate::Remove(path) => {
-                        self.lexical.remove_note(path)?;
-                    }
-                }
-            }
-            {
-                let mut index = self
-                    .notes_index
-                    .lock()
-                    .map_err(|_| "Search index lock poisoned".to_string())?;
-                changed = index.apply_pending_updates(updates);
-                index.mark_refreshed(changed);
-            }
-            let mut invalidation = self
-                .interactive_invalidation
-                .lock()
-                .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
-            invalidation.incremental_update_count =
-                invalidation.incremental_update_count.wrapping_add(1);
-        } else {
-            let stale = {
-                let index = self
-                    .notes_index
-                    .lock()
-                    .map_err(|_| "Search index lock poisoned".to_string())?;
-                index
-                    .last_refresh_at
-                    .is_none_or(|last_refresh_at| last_refresh_at.elapsed() >= max_age)
-            };
-            if stale {
-                let existing_signatures = {
-                    let index = self
-                        .notes_index
-                        .lock()
-                        .map_err(|_| "Search index lock poisoned".to_string())?;
-                    index
-                        .entries
-                        .iter()
-                        .map(|(path, note)| (path.clone(), note.signature.clone()))
-                        .collect::<HashMap<_, _>>()
-                };
-                let (updates, seen_paths) =
-                    collect_refresh_updates(notes_dir, &existing_signatures)?;
-                // Phase 5 write-through: incrementally update the lexical
-                // mirror for every changed/added entry, and remove stale
-                // entries that disappeared from disk.
-                for (path, note) in &updates {
-                    self.lexical.upsert_note(path, note)?;
-                }
-                let stale_lexical_paths: Vec<PathBuf> = existing_signatures
-                    .keys()
-                    .filter(|path| !seen_paths.contains(*path))
-                    .cloned()
-                    .collect();
-                for path in stale_lexical_paths {
-                    self.lexical.remove_note(&path)?;
-                }
-                {
-                    let mut index = self
-                        .notes_index
-                        .lock()
-                        .map_err(|_| "Search index lock poisoned".to_string())?;
-                    changed = index.apply_refresh_updates(updates, seen_paths);
-                }
-                let mut invalidation = self
-                    .interactive_invalidation
-                    .lock()
-                    .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
-                invalidation.full_refresh_count = invalidation.full_refresh_count.wrapping_add(1);
-                used_full_refresh = true;
-            }
+            changed = self.apply_dirty_paths(dirty_paths)?;
+        }
+
+        let cold_start = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?
+            .last_refresh_at
+            .is_none();
+        if cold_start {
+            // Cold start: callers have no data to work with yet, so this
+            // single full scan is unavoidable. Subsequent invocations rely
+            // on watcher dirty paths plus the background reconciliation
+            // loop and never reach this branch again.
+            changed = self.run_full_refresh(notes_dir)? || changed;
+            used_full_refresh = true;
         }
 
         let revision = self
@@ -315,6 +298,137 @@ impl AppState {
         })
     }
 
+    fn apply_dirty_paths(&self, dirty_paths: Vec<PathBuf>) -> Result<bool, String> {
+        let existing_signatures = {
+            let index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            dirty_paths
+                .iter()
+                .filter_map(|path| {
+                    index
+                        .entries
+                        .get(path)
+                        .map(|note| (path.clone(), note.signature.clone()))
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        let updates = collect_dirty_updates(dirty_paths, &existing_signatures)?;
+        // Phase 5 write-through: mirror dirty updates into the lexical
+        // index before they land in `notes_index`, so search no longer
+        // needs to clone+resync the full entries map on every query.
+        for update in &updates {
+            match update {
+                PendingIndexUpdate::Upsert(path, note) => {
+                    self.lexical.upsert_note(path, note)?;
+                }
+                PendingIndexUpdate::Remove(path) => {
+                    self.lexical.remove_note(path)?;
+                }
+            }
+        }
+        let projection_payloads: Vec<ProjectionPayload> = updates
+            .iter()
+            .map(|update| match update {
+                PendingIndexUpdate::Upsert(path, note) => ProjectionPayload::Upsert {
+                    path: path.clone(),
+                    note: note.clone(),
+                },
+                PendingIndexUpdate::Remove(path) => {
+                    ProjectionPayload::Remove { path: path.clone() }
+                }
+            })
+            .collect();
+        let changed = {
+            let mut index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            let changed = index.apply_pending_updates(updates);
+            index.mark_refreshed(changed);
+            changed
+        };
+        for payload in projection_payloads {
+            apply_projection_payload(payload);
+        }
+        let mut invalidation = self
+            .interactive_invalidation
+            .lock()
+            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+        invalidation.incremental_update_count =
+            invalidation.incremental_update_count.wrapping_add(1);
+        Ok(changed)
+    }
+
+    fn run_full_refresh(&self, notes_dir: &Path) -> Result<bool, String> {
+        let (existing_signatures, existing_paths) = {
+            let index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            (
+                index
+                    .entries
+                    .iter()
+                    .map(|(path, note)| (path.clone(), note.signature.clone()))
+                    .collect::<HashMap<_, _>>(),
+                index.entries.keys().cloned().collect::<Vec<_>>(),
+            )
+        };
+        let (updates, seen_paths) = collect_refresh_updates(notes_dir, &existing_signatures)?;
+        // Phase 5 write-through: incrementally update the lexical mirror
+        // for every changed/added entry, and remove stale entries that
+        // disappeared from disk.
+        for (path, note) in &updates {
+            self.lexical.upsert_note(path, note)?;
+        }
+        let stale_lexical_paths: Vec<PathBuf> = existing_paths
+            .iter()
+            .filter(|path| !seen_paths.contains(*path))
+            .cloned()
+            .collect();
+        for path in &stale_lexical_paths {
+            self.lexical.remove_note(path)?;
+        }
+        let projection_payloads: Vec<ProjectionPayload> = updates
+            .iter()
+            .map(|(path, note)| ProjectionPayload::Upsert {
+                path: path.clone(),
+                note: note.clone(),
+            })
+            .chain(
+                stale_lexical_paths
+                    .iter()
+                    .map(|path| ProjectionPayload::Remove { path: path.clone() }),
+            )
+            .collect();
+        let changed = {
+            let mut index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            index.apply_refresh_updates(updates, seen_paths)
+        };
+        for payload in projection_payloads {
+            apply_projection_payload(payload);
+        }
+        let mut invalidation = self
+            .interactive_invalidation
+            .lock()
+            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+        invalidation.full_refresh_count = invalidation.full_refresh_count.wrapping_add(1);
+        Ok(changed)
+    }
+
+    /// Background reconciliation: rescans the vault on disk and applies
+    /// any updates the watcher may have missed. Designed to be invoked
+    /// from a long-running background thread; the foreground hot path
+    /// never calls this directly.
+    pub(crate) fn reconcile_full_vault_scan(&self, notes_dir: &Path) -> Result<bool, String> {
+        self.run_full_refresh(notes_dir)
+    }
+
     fn clear_dirty_path(&self, path: &Path) -> Result<(), String> {
         let mut invalidation = self
             .interactive_invalidation
@@ -329,8 +443,33 @@ impl AppState {
 pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
     by_id: HashMap<String, PathBuf>,
+    /// Pre-built read model of open (non-completed) tasks for the
+    /// `list_recent_*` focus path. Maintained on every `insert_entry` /
+    /// `remove_entry` so the focus loader does not have to walk every
+    /// `IndexedNote` and re-clone per-task strings on each invocation.
+    /// Notes with zero open tasks contribute nothing — they are absent
+    /// from the map entirely.
+    open_tasks_by_path: HashMap<PathBuf, Vec<OpenTaskSummary>>,
     last_refresh_at: Option<Instant>,
     revision: u64,
+}
+
+/// Pre-computed slice of an open task plus the surrounding note metadata
+/// the focus loader needs. Strings are cloned once at index-update time
+/// so the read path can hand out `&OpenTaskSummary` borrows without
+/// touching `IndexedNote` again. Retained primarily for the in-memory
+/// open-task tests; the production focus path now reads from the
+/// SQLite-backed task projection.
+#[allow(dead_code)]
+#[derive(Clone)]
+pub(crate) struct OpenTaskSummary {
+    pub(crate) note_id: String,
+    pub(crate) task_key: String,
+    pub(crate) note_path_string: String,
+    pub(crate) note_title: String,
+    pub(crate) text: String,
+    pub(crate) line_number: usize,
+    pub(crate) note_modified_millis: u64,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -410,6 +549,16 @@ impl NotesIndex {
             .and_then(|path| self.entries.get(path).map(|note| (path, note)))
     }
 
+    /// Iterate the maintained open-task read model. Each yielded slice
+    /// contains the open tasks of a single note, keyed by its absolute
+    /// path; notes with no open tasks are absent from the iterator.
+    #[allow(dead_code)]
+    pub(crate) fn open_task_summaries(
+        &self,
+    ) -> impl Iterator<Item = (&PathBuf, &Vec<OpenTaskSummary>)> {
+        self.open_tasks_by_path.iter()
+    }
+
     fn insert_entry(&mut self, path: PathBuf, note: IndexedNote) {
         if let Some(previous) = self.entries.get(&path) {
             if previous.note_id != note.note_id {
@@ -420,6 +569,12 @@ impl NotesIndex {
             }
         }
         self.by_id.insert(note.note_id.clone(), path.clone());
+        let summaries = build_open_task_summaries(&path, &note);
+        if summaries.is_empty() {
+            self.open_tasks_by_path.remove(&path);
+        } else {
+            self.open_tasks_by_path.insert(path.clone(), summaries);
+        }
         self.entries.insert(path, note);
     }
 
@@ -428,6 +583,7 @@ impl NotesIndex {
         if self.by_id.get(&removed.note_id).map(PathBuf::as_path) == Some(path) {
             self.by_id.remove(&removed.note_id);
         }
+        self.open_tasks_by_path.remove(path);
         Some(removed)
     }
 
@@ -478,6 +634,32 @@ impl NotesIndex {
             self.revision = self.revision.wrapping_add(1);
         }
     }
+}
+
+/// Pre-build the open-task summaries for a single note. Returns an empty
+/// vector for notes whose tasks are all completed; the index drops empty
+/// entries entirely so iteration only walks notes with open work.
+fn build_open_task_summaries(path: &Path, note: &IndexedNote) -> Vec<OpenTaskSummary> {
+    let mut summaries = Vec::new();
+    let mut path_string: Option<String> = None;
+    for task in &note.tasks {
+        if task.completed {
+            continue;
+        }
+        let raw_path = path_string
+            .get_or_insert_with(|| path.to_string_lossy().into_owned())
+            .clone();
+        summaries.push(OpenTaskSummary {
+            note_id: note.note_id.clone(),
+            task_key: task_key(&note.note_id, task),
+            note_path_string: raw_path,
+            note_title: note.title.clone(),
+            text: task.text.clone(),
+            line_number: task.line_number,
+            note_modified_millis: note.modified_millis,
+        });
+    }
+    summaries
 }
 
 fn collect_dirty_updates(
@@ -1050,11 +1232,11 @@ fn toggle_task_line(line: &mut String) -> Option<()> {
 mod tests {
     use super::{
         build_indexed_note, build_tasks, collect_dirty_updates, collect_refresh_updates,
-        read_file_signature, toggle_task_in_markdown, NotesIndex,
+        read_file_signature, toggle_task_in_markdown, AppState, Duration, NotesIndex,
     };
     use crate::test_support::{fixture_path, load_fixture, load_json_fixture, TestDir};
     use serde_json::json;
-    use std::{collections::HashMap, fs};
+    use std::{collections::HashMap, fs, path::PathBuf};
 
     #[test]
     fn build_indexed_note_matches_project_atlas_fixture() {
@@ -1170,6 +1352,122 @@ gneauxghts:
 
         assert!(updates.is_empty());
         assert!(seen_paths.contains(&note_path));
+    }
+
+    #[test]
+    fn open_task_summaries_track_only_open_tasks_and_drop_completed_notes() {
+        let temp = TestDir::new("index-open-task-summaries");
+        let mixed_path = temp.path().join("Mixed.md");
+        let completed_only_path = temp.path().join("Done.md");
+        fs::write(
+            &mixed_path,
+            "# Mixed\n\n- [ ] Open one\n- [x] Done one\n- [ ] Open two\n",
+        )
+        .expect("write mixed note");
+        fs::write(&completed_only_path, "# Done\n\n- [x] Already done\n")
+            .expect("write completed note");
+
+        let mut index = NotesIndex::default();
+        let mixed_note = build_indexed_note(
+            &mixed_path,
+            &fs::read_to_string(&mixed_path).expect("read mixed"),
+            10,
+        );
+        let completed_note = build_indexed_note(
+            &completed_only_path,
+            &fs::read_to_string(&completed_only_path).expect("read completed"),
+            20,
+        );
+        index.upsert_note(mixed_path.clone(), mixed_note);
+        index.upsert_note(completed_only_path.clone(), completed_note);
+
+        let mut summaries: Vec<&PathBuf> =
+            index.open_task_summaries().map(|(path, _)| path).collect();
+        summaries.sort();
+        assert_eq!(summaries, vec![&mixed_path]);
+
+        let mixed_open: Vec<String> = index
+            .open_task_summaries()
+            .find(|(path, _)| *path == &mixed_path)
+            .map(|(_, summaries)| summaries.iter().map(|task| task.text.clone()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            mixed_open,
+            vec!["Open one".to_string(), "Open two".to_string()]
+        );
+
+        // Replace mixed note with one whose tasks are all complete; entry
+        // should disappear from the maintained read model.
+        fs::write(&mixed_path, "# Mixed\n\n- [x] Closed\n").expect("rewrite mixed");
+        let next_mixed = build_indexed_note(
+            &mixed_path,
+            &fs::read_to_string(&mixed_path).expect("read mixed"),
+            30,
+        );
+        index.upsert_note(mixed_path.clone(), next_mixed);
+        let summaries: Vec<&PathBuf> = index.open_task_summaries().map(|(path, _)| path).collect();
+        assert!(
+            summaries.is_empty(),
+            "completed-only notes should not show up"
+        );
+
+        // Removing a path drops its entry too.
+        index.remove_note(&completed_only_path);
+        assert!(index.open_task_summaries().next().is_none());
+    }
+
+    #[test]
+    fn ensure_interactive_index_skips_full_scan_after_cold_start() {
+        use crate::semantic::SemanticState;
+
+        let temp = TestDir::new("index-skip-full-scan");
+        fs::write(temp.path().join("First.md"), "# First\n\nBody").expect("write first");
+
+        let state =
+            AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
+
+        // First call is the cold start: this is allowed to do a full scan.
+        let cold = state
+            .ensure_interactive_index(temp.path(), Duration::from_millis(0), "test_cold")
+            .expect("cold start");
+        assert!(cold.used_full_refresh, "cold start must populate the index");
+        let cold_full_refresh_count = state
+            .interactive_invalidation
+            .lock()
+            .unwrap()
+            .full_refresh_count;
+
+        // Now write a new file *without* invalidating dirty paths and
+        // pause past the legacy max-age. The foreground call must NOT do
+        // another full scan; it should leave the new file unseen until
+        // the watcher (or background reconciliation) reports it.
+        fs::write(temp.path().join("Second.md"), "# Second\n\nBody").expect("write second");
+        std::thread::sleep(Duration::from_millis(50));
+        let warm = state
+            .ensure_interactive_index(temp.path(), Duration::from_millis(10), "test_warm")
+            .expect("warm call");
+        assert!(!warm.used_full_refresh, "warm call must not full-scan");
+        let warm_full_refresh_count = state
+            .interactive_invalidation
+            .lock()
+            .unwrap()
+            .full_refresh_count;
+        assert_eq!(
+            cold_full_refresh_count, warm_full_refresh_count,
+            "warm call must not increment the full-refresh counter"
+        );
+        assert_eq!(
+            state.notes_index.lock().unwrap().entries.len(),
+            1,
+            "warm foreground path must not pick up new files on its own"
+        );
+
+        // Background reconciliation, on the other hand, *does* discover
+        // the new file.
+        state
+            .reconcile_full_vault_scan(temp.path())
+            .expect("reconcile");
+        assert_eq!(state.notes_index.lock().unwrap().entries.len(), 2);
     }
 
     #[test]

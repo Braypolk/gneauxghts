@@ -1,6 +1,4 @@
-use super::index_bridge::{
-    read_indexed_note_from_path, remove_notes_index_entry, upsert_notes_index_entry,
-};
+use super::index_bridge::{remove_notes_index_entry, upsert_notes_index_entry};
 use super::{current_time_millis, prepare_notes_dir, NoteSession};
 use crate::{
     index::{build_indexed_note, AppState},
@@ -112,11 +110,6 @@ pub(crate) fn persist_note_session_with_outcome(
     // explicit forgotten-note commands and at startup instead.
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let previous_note = current_path
-        .as_deref()
-        .map(read_indexed_note_from_path)
-        .transpose()?
-        .flatten();
     let persisted_path = match mode {
         NotePersistenceMode::Save => {
             persist_note(&notes_dir, &title, &markdown, current_path.as_deref())?
@@ -150,14 +143,6 @@ pub(crate) fn persist_note_session_with_outcome(
     if let Some(note) = next_note.as_ref() {
         touch_recent_note_id(&mut persisted_state, note.note_id.clone());
     }
-    super::reconcile_note_task_timestamps(
-        &mut persisted_state,
-        current_path.as_deref(),
-        previous_note.as_ref(),
-        persisted_path.as_deref().map(Path::new),
-        next_note.as_ref(),
-        timestamp_millis,
-    );
     write_state(&notes_dir, &persisted_state)?;
 
     let removed_previous_path = current_path

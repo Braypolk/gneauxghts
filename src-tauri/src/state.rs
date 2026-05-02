@@ -1,5 +1,6 @@
 mod config;
 mod persistence;
+pub(crate) mod task_projection;
 
 #[allow(unused_imports)]
 pub(crate) use config::{
@@ -9,14 +10,13 @@ pub(crate) use config::{
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{
-    db_insert_forgotten_note, db_remove_forgotten_note, db_remove_task_timestamp,
-    db_set_hidden_task_key, db_set_last_opened_note_id, db_set_note_collapsed, db_set_note_hidden,
-    db_set_note_order, db_set_recent_note_ids, db_upsert_task_timestamp, derive_file_stem,
-    derive_file_stem_from_title_and_markdown, is_forgotten_note_path, is_valid_note_path,
-    persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup, push_unique,
-    read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
-    touch_recent_note_id, validate_current_path, write_state, write_state_with_lookup,
-    NoteIdLookup, PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
+    db_insert_forgotten_note, db_remove_forgotten_note, db_set_last_opened_note_id,
+    db_set_note_collapsed, db_set_note_hidden, db_set_note_order, db_set_recent_note_ids,
+    derive_file_stem, derive_file_stem_from_title_and_markdown, is_forgotten_note_path,
+    is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
+    push_unique, read_state, read_state_with_lookup, resolve_note_id_from_path,
+    resolve_note_path_by_id, touch_recent_note_id, validate_current_path, write_state,
+    write_state_with_lookup, NoteIdLookup, PersistedForgottenNote, PersistedState,
 };
 
 #[cfg(test)]
@@ -24,10 +24,10 @@ mod tests {
     use super::{
         derive_file_stem, derive_file_stem_from_title_and_markdown, forgotten_notes_root,
         initialize_app_data_dir, persist_note, read_state, resolve_note_id_from_path, write_state,
-        PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
+        PersistedForgottenNote, PersistedState,
     };
     use crate::test_support::{TestDir, TEST_ENV_GUARD};
-    use std::{collections::HashMap, fs};
+    use std::fs;
 
     #[test]
     fn derive_file_stem_sanitizes_invalid_characters_and_truncates() {
@@ -149,15 +149,6 @@ mod tests {
         let stale_forgotten_note = forgotten_dir.join("Missing Note.md");
         let live_note_id = resolve_note_id_from_path(&live_note).expect("live note id");
 
-        let mut task_timestamps = HashMap::new();
-        task_timestamps.insert(
-            "task-1".to_string(),
-            PersistedTaskTimestamps {
-                created_at_millis: 1,
-                updated_at_millis: 2,
-            },
-        );
-
         write_state(
             notes_dir,
             &PersistedState {
@@ -167,7 +158,6 @@ mod tests {
                     live_note_id.clone(),
                     live_note_id.clone(),
                 ],
-                hidden_task_keys: vec![String::new(), "task-1".to_string(), "task-1".to_string()],
                 hidden_note_ids: vec![
                     "missing-note".to_string(),
                     live_note_id.clone(),
@@ -183,7 +173,6 @@ mod tests {
                     live_note_id.clone(),
                     live_note_id.clone(),
                 ],
-                task_timestamps,
                 forgotten_notes: vec![
                     PersistedForgottenNote {
                         forgotten_path: stale_forgotten_note.to_string_lossy().into_owned(),
@@ -217,11 +206,9 @@ mod tests {
         let state = read_state(notes_dir).expect("read state");
         assert_eq!(state.last_opened_note_id, None);
         assert_eq!(state.recent_note_ids, vec![live_note_id.clone()]);
-        assert_eq!(state.hidden_task_keys, vec!["task-1".to_string()]);
         assert_eq!(state.hidden_note_ids, vec![live_note_id.clone()]);
         assert_eq!(state.note_order_note_ids, vec![live_note_id.clone()]);
         assert_eq!(state.collapsed_note_ids, vec![live_note_id]);
-        assert_eq!(state.task_timestamps.len(), 1);
         assert_eq!(state.forgotten_notes.len(), 1);
         assert_eq!(
             state.forgotten_notes[0].forgotten_path,

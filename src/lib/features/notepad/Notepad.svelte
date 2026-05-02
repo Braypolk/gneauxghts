@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick, untrack } from 'svelte';
   import {
@@ -8,32 +7,13 @@
     forgottenNoteRetentionPreference,
     rememberActionOptions
   } from '$lib/appSettings';
-  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
-  import {
-    EXACT_REMEMBER_ACTION,
-    rememberActionRequiresIntegrateSupport,
-    type RememberActionOption
-  } from '$lib/types/ai';
-  import type {
-    RelatedNoteItem,
-    RelatedNotesResponse,
-    SearchItem,
-    SemanticStatus
-  } from '$lib/types/semantic';
-  import type { EditorView } from '@codemirror/view';
-  import {
-    type EditorController,
-    type EditorSnapshot,
-    readEditorState,
-    setEditorCurrentSearchHighlightQuery
-  } from '$lib/features/notepad/editor/editor';
+  import { setEditorCurrentSearchHighlightQuery } from '$lib/features/notepad/editor/editor';
   import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
   import { focusEditorAtEnd, focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
   import { registerPendingNoteSaveHandler } from '$lib/features/notepad/navigation/pendingNoteSave';
   import {
     navigateToPendingTaskTarget,
     openRecentTask,
-    openResolvedNoteLink,
     openSearchResult,
     type NavigationContext,
     type OpenContext
@@ -41,16 +21,9 @@
   import { type SearchMode } from '$lib/features/notepad/search/search';
   import {
     createEmptySessionSnapshot,
-    createForgottenNote,
-    forgetNoteSession,
-    hasContent,
     loadCurrentVaultInfo,
     loadSavedNoteSession,
-    openNoteSession,
-    readNoteSession,
-    rememberWithAction,
     resolveAssetRootPath,
-    restoreForgottenNotes,
     saveNoteSession,
     storePastedImageAsset,
     type ForgottenNote,
@@ -59,32 +32,26 @@
   import { loadBootstrapPayload } from '$lib/features/notepad/session/bootstrap';
   import { appStore } from '$lib/app/appStore.svelte';
   import { type WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
-  import {
-    getNextSplitChoiceIndex,
-    getSplitChoiceByIndex,
-    getSplitChoiceForShortcut,
-    type SplitChoice
-  } from '$lib/features/notepad/splitPanePicker';
+  import type {
+    RelatedNoteItem,
+    SearchItem
+  } from '$lib/types/semantic';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
   import BottomBar from '$lib/features/notepad/ui/BottomBar.svelte';
   import NotepadPane, {
     type PaneViewModel,
     type PaneWorkspaceActions
   } from '$lib/features/notepad/NotepadPane.svelte';
-  import SlashMenu, {
-    type PaneSlashMenuModel
-  } from '$lib/features/notepad/editor/SlashMenu.svelte';
+  import SlashMenu from '$lib/features/notepad/editor/SlashMenu.svelte';
   import WikilinkAutocomplete from '$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte';
   import RelatedPanel from '$lib/features/notepad/related/RelatedPanel.svelte';
   import {
-    EMPTY_RELATED_REASON,
     getBottomSheetStyle,
     getCardStyle,
     getRelatedDrawerStyle
   } from '$lib/features/notepad/related/layout';
   import {
-    createNotepadRefreshController,
-    type VaultNoteChangeEvent
+    createNotepadRefreshController
   } from '$lib/features/notepad/orchestration/notepadRefreshController';
   import {
     createPaneSessionController,
@@ -94,32 +61,29 @@
     splitPickerPreviousNoteLabel as buildSplitPickerPreviousNoteLabel
   } from '$lib/features/notepad/orchestration/paneSessionController';
   import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
+  import { createNotepadCommands } from '$lib/features/notepad/orchestration/notepadCommands';
   import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
-  import { createNotepadSearchStore } from '$lib/features/notepad/search/store';
-  import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
+  import { createNotepadSearchStore } from '$lib/features/notepad/search/store.svelte';
   import { attachPaneSelectionTracking } from '$lib/features/notepad/editor/paneSelectionTracking';
-  import { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
+  import {
+    createPaneControllers as createPaneControllersFn,
+    type PaneControllerSetupDeps
+  } from '$lib/features/notepad/pane/paneControllers';
   import {
     getPaneIdForSlashMenuView,
     setSlashMenuListener
   } from '$lib/features/notepad/editor/slashMenuBridge';
   import type { SlashMenuSnapshot } from '$lib/features/notepad/editor/slashMenu';
-  import { createWikilinkRuntime } from '$lib/features/notepad/wikilinks/runtime';
   import {
     adoptSnapshotForPane,
     applySnapshotToNote,
-    createFreshDraftNote,
-    getActiveNote,
     getPaneNote,
     getPaneState,
     listReferencedNoteKeys,
     noteKeyFromPath,
     rekeyNote,
-    removeNoteIfUnreferenced,
     replaceReferencedNoteWithFreshDraft,
     setActivePane as setStoreActivePane,
-    setNoteStatus,
-    setPaneKind as setStoredPaneKind,
     setPaneNoteKey as setStoredPaneNoteKey,
     type NoteDraftState,
     type NoteKey
@@ -135,46 +99,41 @@
   import {
     bumpSharedEditorStateGeneration,
     cleanupNoteRuntime,
-    getEditorPaneCountForNote,
-    getSharedEditorResources,
-    getSharedEditorState,
-    getSharedEditorStateGeneration,
-    registerEditorPaneForNote,
     setSharedEditorState,
-    setSharedEditorStateGeneration,
-    transferNoteRuntime,
-    unregisterEditorPaneForNote
+    transferNoteRuntime
   } from '$lib/features/notepad/session/noteRuntime';
-  import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
   import { createDocumentSyncController } from '$lib/features/notepad/document/documentSyncController';
+  import { createDocumentPaneCoordinator } from '$lib/features/notepad/document/documentPaneCoordinator';
   import { workspaceStore } from '$lib/features/notepad/workspace/workspaceStore.svelte';
   import { createWorkspacePersistenceService } from '$lib/features/notepad/workspace/workspacePersistenceService';
+  import { createWorkspaceShortcutHandler } from '$lib/features/notepad/workspace/shortcuts';
   import { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
+  import { createPaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
+  import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
   import '$lib/features/notepad/editor/editor.css';
 
   type PaneId = NotepadPaneId;
-  type PaneKind = 'editor' | 'chat';
   const PENDING_MAP_NOTE_PATH_KEY = 'gneauxghts:pending-map-note-path';
+  const PANE_IDS_ALL = [PRIMARY_PANE_ID, SECONDARY_PANE_ID] as const;
 
   const paneTitleInputClass =
     'w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl';
 
   let workspaceShell = $state<HTMLDivElement | null>(null);
-  let semanticStatusUnlisten: UnlistenFn | null = null;
+  let vaultNoteChangeUnlisten: UnlistenFn | null = null;
 
   // workspaceStore owns pane order, active pane, and split picker chrome.
-  // We derive read-only locals so the rest of this file keeps reading the
-  // existing names.
   let paneOrder = $derived(workspaceStore.paneOrder);
   let activePaneId = $derived(workspaceStore.activePaneId);
 
   // Pane runtimes own pane-local state (refs, editor controller, readiness, slash menu, wikilink)
-  const paneRuntimes: Record<PaneId, PaneRuntime> = {} as Record<PaneId, PaneRuntime>;
+  const paneRuntimes: Record<PaneId, PaneRuntime> = {
+    [PRIMARY_PANE_ID]: new PaneRuntime(PRIMARY_PANE_ID),
+    [SECONDARY_PANE_ID]: new PaneRuntime(SECONDARY_PANE_ID)
+  };
 
   let canUnforget = $derived(notepadState.recentlyForgotten !== null);
-  let vaultNoteChangeUnlisten: UnlistenFn | null = null;
-  let semanticStatus = $state<SemanticStatus | null>(null);
   let currentSearchHighlightMode: SearchMode = 'all';
   let currentSearchHighlightQuery = '';
 
@@ -184,7 +143,7 @@
     getCurrentPath: () => getDocumentSession().currentNotePath,
     openSearchResult: handleSearchResultSelect,
     openRecentTask: handleRecentTaskSelect,
-    openNote: async (noteId, notePath) => openNotePath(notePath, { noteId }),
+    openNote: async (noteId, notePath) => commands.openNotePath(notePath, { noteId }),
     onSearchHighlightsChange: ({ searchMode, searchQuery }) => {
       currentSearchHighlightMode = searchMode;
       currentSearchHighlightQuery = searchQuery;
@@ -201,8 +160,6 @@
   let splitPickerPaneId = $derived(workspaceStore.splitPicker.paneId);
   let splitPickerSourceNoteKey = $derived(workspaceStore.splitPicker.sourceNoteKey);
   let splitPickerHighlightedIndex = $derived(workspaceStore.splitPicker.highlightedIndex);
-  // splitPickerFocusEl is bidirectional: bound by NotepadPane via bind:splitPickerFocusRoot,
-  // and propagated into workspaceStore via the effect below.
   let splitPickerFocusEl = $state<HTMLElement | null>(null);
   $effect(() => {
     workspaceStore.setSplitPickerFocusEl(splitPickerFocusEl);
@@ -216,9 +173,8 @@
     if (splitPickerPaneId === null || !splitPickerSourceNoteKey) {
       return null;
     }
-
     return findSplitPickerPreviousItem(
-      $searchState.recentNotes,
+      searchState.recentNotes,
       getSplitSourceNote(notepadState, splitPickerSourceNoteKey)
     );
   });
@@ -227,12 +183,13 @@
     buildSplitPickerPreviousNoteLabel(splitPickerPreviousItem)
   );
 
+  // ---------------------------------------------------------------------------
+  // State accessor helpers (kept as thin getters; the document/pane/command
+  // controllers below own all of the policy.)
+  // ---------------------------------------------------------------------------
+
   function getPaneKind(paneId: PaneId) {
     return getPaneState(notepadState, paneId).kind;
-  }
-
-  function getPaneController(paneId: PaneId) {
-    return paneRuntimes[paneId].controller;
   }
 
   function getPaneEditorRoot(paneId: PaneId) {
@@ -243,10 +200,43 @@
     return paneRuntimes[paneId].refs.titleInput;
   }
 
+  function getDocumentSession() {
+    return getPaneDocumentSession(getNavigationPaneId());
+  }
+
+  function getNoteByKey(noteKey: NoteKey) {
+    return notepadState.notesByKey[noteKey] ?? null;
+  }
+
+  function getPaneDocumentSession(paneId: PaneId) {
+    return getPaneNote(notepadState, paneId);
+  }
+
+  function setPaneDocumentSession(paneId: PaneId, document: NoteDraftState) {
+    setStoredPaneNoteKey(notepadState, paneId, document.key);
+    if (activePaneId === paneId) {
+      setStoreActivePane(notepadState, paneId);
+    }
+    return document;
+  }
+
+  function activatePaneSession(paneId: PaneId) {
+    workspaceStore.setActivePaneId(paneId);
+    return getPaneState(notepadState, paneId);
+  }
+
+  function setRecentlyForgotten(value: ForgottenNote | null) {
+    notepadState.recentlyForgotten = value;
+  }
+
+  function getCurrentMarkdown() {
+    return getDocumentSession().bodyMarkdown;
+  }
+
   function applySlashMenuSnapshotForPane(
     paneId: PaneId,
     snapshot: SlashMenuSnapshot,
-    view: EditorView
+    view: import('@codemirror/view').EditorView
   ) {
     if (!snapshot.open) {
       paneRuntimes[paneId].setSlashMenu({ open: false });
@@ -300,186 +290,14 @@
       currentNotePath: currentDoc.currentNotePath,
       stopPendingAutosave: cancelPendingAutosave,
       clearSearch,
-      openNotePath: async (noteId, notePath, options) => openNotePath(notePath, { noteId, ...options })
+      openNotePath: async (noteId, notePath, options) =>
+        commands.openNotePath(notePath, { noteId, ...options })
     };
   }
 
-  function getDocumentSession() {
-    return getPaneDocumentSession(getNavigationPaneId());
-  }
-
-  function getNoteByKey(noteKey: NoteKey) {
-    return notepadState.notesByKey[noteKey] ?? null;
-  }
-
-  function getPaneDocumentSession(paneId: PaneId) {
-    return getPaneNote(notepadState, paneId);
-  }
-
-  function setPaneDocumentSession(paneId: PaneId, document: NoteDraftState) {
-    setStoredPaneNoteKey(notepadState, paneId, document.key);
-    if (activePaneId === paneId) {
-      setStoreActivePane(notepadState, paneId);
-    }
-    return document;
-  }
-
-  function activatePaneSession(paneId: PaneId) {
-    workspaceStore.setActivePaneId(paneId);
-    return getPaneState(notepadState, paneId);
-  }
-
-  function setRecentlyForgotten(value: ForgottenNote | null) {
-    notepadState.recentlyForgotten = value;
-  }
-
-  function getCurrentMarkdown() {
-    return getDocumentSession().bodyMarkdown;
-  }
-
-  function flushPaneCursorSave(paneId: PaneId) {
-    paneRuntimes[paneId].flushCursorSave(() => {
-      paneControllers[paneId].editorLifecycleController.saveCursorPositionForDocument(
-        getPaneDocumentSession(paneId)
-      );
-    });
-  }
-
-  function schedulePaneCursorSave(paneId: PaneId) {
-    paneRuntimes[paneId].scheduleCursorSave(() => {
-      paneControllers[paneId].editorLifecycleController.saveCursorPositionForDocument(
-        getPaneDocumentSession(paneId)
-      );
-    });
-  }
-
-  function flushAllPendingCursorSaves() {
-    flushPaneCursorSave(PRIMARY_PANE_ID);
-    flushPaneCursorSave(SECONDARY_PANE_ID);
-  }
-
-  function registerPaneEditorForDocument(
-    paneId: PaneId,
-    document: NoteDraftState = getPaneDocumentSession(paneId)
-  ) {
-    registerEditorPaneForNote(document.key, paneId);
-  }
-
-  function unregisterPaneEditorForDocument(
-    paneId: PaneId,
-    document: NoteDraftState = getPaneDocumentSession(paneId)
-  ) {
-    unregisterEditorPaneForNote(document.key, paneId);
-  }
-
-  function markPaneDocumentGeneration(
-    paneId: PaneId,
-    document: NoteDraftState = getPaneDocumentSession(paneId)
-  ) {
-    paneRuntimes[paneId].ui.editorGeneration = getSharedEditorStateGeneration(document);
-  }
-
-  const documentSync = createDocumentSyncController<PaneId>({
-    getPaneIdsForDocument,
-    getPaneEditorGeneration: (paneId) => paneRuntimes[paneId].ui.editorGeneration,
-    setPaneEditorGeneration: (paneId, value) => {
-      paneRuntimes[paneId].ui.editorGeneration = value;
-    },
-    hasController: (paneId) => getPaneController(paneId) !== null,
-    applySharedEditorState: (paneId, document) =>
-      paneControllers[paneId].editorLifecycleController.applySharedEditorStateForDocument(document),
-    listReferencedNoteKeys: () => listReferencedNoteKeys(notepadState),
-    getNoteByKey
-  });
-
-  const flushDocumentEditorSync = documentSync.flushDocumentEditorSync;
-  const scheduleDocumentEditorSync = documentSync.scheduleDocumentEditorSync;
-  const flushAllPendingDocumentSyncs = documentSync.flushAllPendingDocumentSyncs;
-  const hasPendingDocumentSync = documentSync.hasPendingSync;
-
-  function saveCursorPositionForDocument(document: NoteDraftState = getDocumentSession()) {
-    for (const paneId of getPaneIdsForDocument(document)) {
-      paneRuntimes[paneId].flushCursorSave(() => {
-        paneControllers[paneId].editorLifecycleController.saveCursorPositionForDocument(document);
-      });
-    }
-  }
-
-  function saveSharedEditorStateForDocument(
-    document: NoteDraftState = getDocumentSession(),
-    editorState: EditorSnapshot | null = null,
-    preferredPaneId: PaneId = getNavigationPaneId()
-  ) {
-    const paneIds = getPaneIdsForDocument(document);
-    const paneId =
-      (paneIds.includes(preferredPaneId) ? preferredPaneId : paneIds[0]) ?? null;
-    if (!paneId) {
-      if (!getSharedEditorState(document) && editorState) {
-        setSharedEditorState(document, editorState);
-      }
-      return;
-    }
-
-    if (
-      getSharedEditorState(document) &&
-      paneRuntimes[paneId].ui.editorGeneration < getSharedEditorStateGeneration(document)
-    ) {
-      return;
-    }
-
-    paneControllers[paneId].editorLifecycleController.saveSharedEditorStateForDocument(
-      document,
-      editorState
-    );
-  }
-
-  function discardSharedEditorStateForDocument(document: NoteDraftState) {
-    setSharedEditorState(document, null);
-    setSharedEditorStateGeneration(document, 0);
-  }
-
-  async function replaceEditorContent(
-    nextMarkdown: string,
-    options: {
-      preserveScroll?: boolean;
-      restoreCursor?: boolean;
-    } = {}
-  ) {
-    const document = getDocumentSession();
-    for (const paneId of getPaneIdsForDocument(document)) {
-      await paneControllers[paneId].editorLifecycleController.replaceEditorContent(nextMarkdown, options);
-    }
-  }
-
-  async function replaceEditorContentInPlace(nextMarkdown: string) {
-    const document = getDocumentSession();
-    for (const paneId of getPaneIdsForDocument(document)) {
-      await paneControllers[paneId].editorLifecycleController.replaceEditorContentInPlace(nextMarkdown);
-    }
-  }
-
-  async function replaceEditorContentInPlaceForDocument(
-    nextMarkdown: string,
-    document: NoteDraftState
-  ) {
-    for (const paneId of getPaneIdsForDocument(document)) {
-      await paneControllers[paneId].editorLifecycleController.replaceEditorContentInPlaceForDocument(
-        nextMarkdown,
-        document
-      );
-    }
-  }
-
-  function closeWikilinkAutocomplete(paneId?: PaneId) {
-    if (paneId) {
-      paneControllers[paneId].wikilinkController.closeWikilinkAutocomplete();
-      return;
-    }
-
-    paneControllers[PRIMARY_PANE_ID].wikilinkController.closeWikilinkAutocomplete();
-    paneControllers[SECONDARY_PANE_ID].wikilinkController.closeWikilinkAutocomplete();
-  }
-
+  // ---------------------------------------------------------------------------
+  // Editor markdown change handler — used by the per-pane lifecycle controller.
+  // ---------------------------------------------------------------------------
   function handleEditorMarkdownChange(
     paneId: string,
     document: NoteDraftState,
@@ -490,14 +308,18 @@
     if (editorState) {
       setSharedEditorState(document, editorState);
       bumpSharedEditorStateGeneration(document);
-      markPaneDocumentGeneration(resolvedPaneId, document);
+      documents.markPaneDocumentGeneration(resolvedPaneId, document);
     }
 
     if (document.bodyMarkdown !== nextMarkdown) {
       document.bodyMarkdown = nextMarkdown;
       document.operationRevision += 1;
     }
-    if (getPaneIdsForDocument(document).some((pid) => paneRuntimes[pid].ui.isApplyingExternalContent)) {
+    if (
+      getPaneIdsForDocument(document).some(
+        (pid) => paneRuntimes[pid].ui.isApplyingExternalContent
+      )
+    ) {
       return;
     }
 
@@ -511,6 +333,384 @@
     scheduleRelatedIfNeeded();
   }
 
+  // ---------------------------------------------------------------------------
+  // Per-pane controllers (editor + wikilink) — built once, reused everywhere.
+  // ---------------------------------------------------------------------------
+  const paneControllerSetupDeps: PaneControllerSetupDeps<PaneId> = {
+    getPaneRuntime: (paneId) => paneRuntimes[paneId],
+    getPaneDocument: getPaneDocumentSession,
+    activatePaneSession,
+    cancelPendingAutosave: (note) => cancelPendingAutosave(note),
+    closeWikilinkAutocomplete: (paneId) => closeWikilinkAutocomplete(paneId),
+    handleEditorMarkdownChange,
+    getNavigationContext,
+    openNotePath: (notePath, options) => commands.openNotePath(notePath, options),
+    openWikilink,
+    handleActiveWikilinkChange,
+    setWikilinkAutocomplete: updatePaneWikilinkState
+  };
+
+  function rekeyNoteWithRuntime(note: NoteDraftState, snapshot: SessionSnapshot) {
+    const nextKey = noteKeyFromPath(snapshot.currentNotePath);
+    if (!nextKey || nextKey === note.key) {
+      return note;
+    }
+
+    const previousKey = note.key;
+    const nextNote = rekeyNote(notepadState, previousKey, nextKey) ?? note;
+    transferNoteRuntime(previousKey, nextKey);
+    if (!getNoteByKey(previousKey)) {
+      cleanupNoteRuntime(previousKey);
+    }
+    return nextNote;
+  }
+
+  const {
+    cancelPendingAutosave,
+    enqueueSave,
+    flushPendingAutosave,
+    getNoteSaveQueue,
+    hasCleanBuffer,
+    invalidatePendingSaveResults,
+    scheduleAutosave
+  } = createNotepadPersistenceController({
+    getDocumentSession,
+    saveNoteSession,
+    rekeyNoteWithRuntime
+  });
+
+  const paneControllers = {
+    [PRIMARY_PANE_ID]: createPaneControllersFn(PRIMARY_PANE_ID, paneControllerSetupDeps),
+    [SECONDARY_PANE_ID]: createPaneControllersFn(SECONDARY_PANE_ID, paneControllerSetupDeps)
+  } as const;
+
+  // ---------------------------------------------------------------------------
+  // Cross-pane document fanout (replace, save, register, mark generation).
+  // ---------------------------------------------------------------------------
+  const documents = createDocumentPaneCoordinator<PaneId>({
+    getPaneRuntime: (paneId) => paneRuntimes[paneId],
+    getEditorLifecycleController: (paneId) =>
+      paneControllers[paneId].editorLifecycleController,
+    getVisiblePaneIds,
+    getPaneIdsForDocument,
+    getPaneKind,
+    getNavigationDocument: getDocumentSession,
+    getNavigationPaneId,
+    getPaneDocument: getPaneDocumentSession,
+    getNoteByKey
+  });
+
+  // ---------------------------------------------------------------------------
+  // Document-sync controller (rAF-batched fanout of editor state).
+  // ---------------------------------------------------------------------------
+  const documentSync = createDocumentSyncController<PaneId>({
+    getPaneIdsForDocument,
+    getPaneEditorGeneration: (paneId) => paneRuntimes[paneId].ui.editorGeneration,
+    setPaneEditorGeneration: (paneId, value) => {
+      paneRuntimes[paneId].ui.editorGeneration = value;
+    },
+    hasController: (paneId) => paneRuntimes[paneId].controller !== null,
+    applySharedEditorState: (paneId, document) =>
+      paneControllers[paneId].editorLifecycleController.applySharedEditorStateForDocument(
+        document
+      ),
+    listReferencedNoteKeys: () => listReferencedNoteKeys(notepadState),
+    getNoteByKey
+  });
+
+  const flushDocumentEditorSync = documentSync.flushDocumentEditorSync;
+  const scheduleDocumentEditorSync = documentSync.scheduleDocumentEditorSync;
+  const flushAllPendingDocumentSyncs = documentSync.flushAllPendingDocumentSyncs;
+  const hasPendingDocumentSync = documentSync.hasPendingSync;
+
+  // ---------------------------------------------------------------------------
+  // Pane editor lifecycle (queued mount/destroy + ensurePaneEditors barrier).
+  // ---------------------------------------------------------------------------
+  function paneShouldMountEditor(paneId: PaneId): boolean {
+    return (
+      notepadRuntimeState.hasLoadedInitialSession &&
+      paneOrder.includes(paneId) &&
+      getPaneKind(paneId) === 'editor' &&
+      splitPickerPaneId !== paneId
+    );
+  }
+
+  const paneLifecycle = createPaneEditorLifecycle<PaneId>({
+    paneIds: PANE_IDS_ALL,
+    getPaneRuntime: (paneId) => paneRuntimes[paneId],
+    getEditorLifecycleController: (paneId) =>
+      paneControllers[paneId].editorLifecycleController,
+    getPaneDocument: getPaneDocumentSession,
+    paneShouldMountEditor,
+    registerPaneEditorForDocument: documents.registerPaneEditorForDocument,
+    unregisterPaneEditorForDocument: documents.unregisterPaneEditorForDocument,
+    markPaneDocumentGeneration: documents.markPaneDocumentGeneration,
+    saveSharedEditorStateForDocument: documents.saveSharedEditorStateForDocument,
+    closeWikilinkAutocomplete: (paneId) => closeWikilinkAutocomplete(paneId)
+  });
+
+  const workspacePersistence = createWorkspacePersistenceService({
+    listReferencedNoteKeys: () => listReferencedNoteKeys(notepadState),
+    getNoteByKey,
+    flushDocumentEditorSync,
+    flushAllPaneCursorSaves: () => documents.flushAllPendingCursorSaves(),
+    flushPendingAutosave,
+    cancelPendingAutosave,
+    enqueueSave
+  });
+
+  // ---------------------------------------------------------------------------
+  // Remember capability — derive directly from appStore so we have a single
+  // source of truth instead of mirroring SemanticStatus locally.
+  // ---------------------------------------------------------------------------
+  let semanticStatus = $derived(appStore.semanticStatus);
+
+  function integrateDisabledReason() {
+    if (!semanticStatus) return 'Integrate needs semantic search status.';
+    if (!semanticStatus.platformSupported) {
+      return semanticStatus.disabledReason ?? 'Integrate is unavailable on this platform.';
+    }
+    if (!semanticStatus.settings.semanticSearchEnabled) {
+      return 'Enable semantic search in Settings to use integrate.';
+    }
+    if (semanticStatus.indexedNotes === 0) {
+      return 'Integrate needs at least one indexed note in the vault.';
+    }
+    return null;
+  }
+
+  function canIntegrate() {
+    return integrateDisabledReason() === null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Search / related store accessors.
+  // ---------------------------------------------------------------------------
+  const {
+    clearSearch,
+    scheduleSearch,
+    loadRecentNotes,
+    loadRecentTasks,
+    openRecentNoteItem,
+    openRecentNoteByIndex,
+    openRecentTaskByIndex,
+    handleSearchInput,
+    handleSearchModeChange,
+    handleSearchFocus,
+    requestSearchFocus
+  } = searchState;
+
+  const {
+    updateDrawerLayout: updateRelatedDrawerLayoutController,
+    clearSelectedRelatedText: clearSelectedRelatedTextController,
+    scheduleRelated,
+    handleRelatedScopeChange,
+    toggleRelatedPanel: toggleRelatedPanelController,
+    updateSelectedRelatedText: updateSelectedRelatedTextController
+  } = relatedState;
+
+  function scheduleSearchIfNeeded() {
+    if (searchState.searchQuery.trim() !== '') {
+      scheduleSearch();
+    }
+  }
+
+  function scheduleRelatedIfNeeded(options: { immediate?: boolean } = {}) {
+    if (!$relatedState.isPanelCollapsed) {
+      scheduleRelated(options);
+    }
+  }
+
+  function syncCurrentFileSearchHighlights(
+    query: string = currentSearchHighlightQuery,
+    mode: SearchMode = currentSearchHighlightMode
+  ) {
+    for (const paneId of getEditorPaneIds()) {
+      setEditorCurrentSearchHighlightQuery(paneRuntimes[paneId].controller, null);
+    }
+
+    const trimmedQuery = query.trim();
+    if (mode !== 'current' || trimmedQuery === '' || trimmedQuery.startsWith('/')) {
+      return;
+    }
+
+    for (const paneId of getPaneIdsForDocument(getDocumentSession())) {
+      setEditorCurrentSearchHighlightQuery(paneRuntimes[paneId].controller, trimmedQuery);
+    }
+  }
+
+  $effect(() => {
+    getDocumentSession().key;
+    untrack(() => {
+      syncCurrentFileSearchHighlights();
+    });
+  });
+
+  function updatePaneWikilinkState(paneId: PaneId, nextState: WikilinkAutocompleteState) {
+    paneRuntimes[paneId].setWikilinkAutocomplete(nextState);
+  }
+
+  function closeWikilinkAutocomplete(paneId?: PaneId) {
+    if (paneId) {
+      paneControllers[paneId].wikilinkController.closeWikilinkAutocomplete();
+      return;
+    }
+    paneControllers[PRIMARY_PANE_ID].wikilinkController.closeWikilinkAutocomplete();
+    paneControllers[SECONDARY_PANE_ID].wikilinkController.closeWikilinkAutocomplete();
+  }
+
+  function handleActiveWikilinkChange(paneId: PaneId, nextActiveWikilink: ActiveWikilink | null) {
+    paneControllers[paneId].wikilinkController.handleActiveWikilinkChange(nextActiveWikilink);
+  }
+
+  function handleWikilinkKeydown(event: KeyboardEvent) {
+    if (splitPickerPaneId !== null) {
+      return false;
+    }
+    return paneControllers[getNavigationPaneId()].wikilinkController.handleAutocompleteKeydown(event);
+  }
+
+  async function openWikilink(paneId: PaneId, rawTarget: string) {
+    workspaceStore.setActivePaneId(paneId);
+    await paneControllers[paneId].wikilinkController.openWikilink(rawTarget);
+  }
+
+  function handleWikilinkSuggestionSelect(paneId: PaneId, value: string) {
+    const state = paneRuntimes[paneId].ui.wikilinkAutocomplete;
+    const nextIndex = state.suggestions.findIndex((suggestion) => suggestion.value === value);
+    if (nextIndex === -1) return;
+
+    updatePaneWikilinkState(paneId, { ...state, selectedIndex: nextIndex });
+    paneControllers[paneId].wikilinkController.selectWikilinkSuggestion(value);
+  }
+
+  function updateRelatedDrawerLayout() {
+    updateRelatedDrawerLayoutController(workspaceShell);
+  }
+
+  function clearSelectedRelatedText() {
+    clearSelectedRelatedTextController();
+  }
+
+  function updateSelectedRelatedText(paneId: PaneId = getNavigationPaneId()) {
+    if (splitPickerPaneId === paneId) {
+      clearSelectedRelatedText();
+      return;
+    }
+    if (getPaneKind(paneId) !== 'editor') {
+      clearSelectedRelatedText();
+      return;
+    }
+    updateSelectedRelatedTextController(getPaneEditorRoot(paneId));
+  }
+
+  function toggleRelatedPanel() {
+    toggleRelatedPanelController(workspaceShell);
+  }
+
+  // ---------------------------------------------------------------------------
+  // High-level commands (open / forget / unforget / remember / split / close /
+  // setKind / split-picker / switch-pane). Encapsulated in notepadCommands so
+  // the component does not own every flow body.
+  // ---------------------------------------------------------------------------
+  const commands = createNotepadCommands<PaneId>({
+    state: notepadState,
+    primaryPaneId: PRIMARY_PANE_ID,
+    paneIdsAll: PANE_IDS_ALL,
+    getActivePaneId: () => activePaneId,
+    getPaneOrder: () => paneOrder,
+    getPaneKind,
+    getPaneDocument: getPaneDocumentSession,
+    getNavigationDocument: getDocumentSession,
+    getNavigationPaneId,
+    getNextPaneId,
+    getPaneRuntime: (paneId) => paneRuntimes[paneId],
+    getNoteByKey,
+    getOpenContext,
+    getNavigationContext,
+    getNoteSaveQueue,
+    setActivePaneId: (paneId) => workspaceStore.setActivePaneId(paneId),
+    setPaneOrder: (order) => workspaceStore.setPaneOrder(order),
+    removePane: (paneId) => workspaceStore.removePane(paneId),
+    beginSplitPicker: (paneId, sourceNoteKey) =>
+      workspaceStore.beginSplitPicker(paneId, sourceNoteKey),
+    resetSplitPicker: () => workspaceStore.resetSplitPicker(),
+    setSplitPickerHighlight: (index) => workspaceStore.setSplitPickerHighlight(index),
+    getSplitPickerPaneId: () => splitPickerPaneId,
+    getSplitPickerSourceNoteKey: () => splitPickerSourceNoteKey,
+    getSplitPickerHighlightedIndex: () => splitPickerHighlightedIndex,
+    getSplitPickerPreviousItem: () => splitPickerPreviousItem,
+    getSplitPickerFocusEl: () => splitPickerFocusEl,
+    activatePaneSession,
+    setPaneDocumentSession,
+    documents,
+    paneLifecycle,
+    cancelPendingAutosave,
+    enqueueSave,
+    invalidatePendingSaveResults,
+    scheduleAutosave,
+    hasCleanBuffer,
+    clearSearch,
+    scheduleSearchIfNeeded,
+    scheduleRelatedIfNeeded,
+    clearSelectedRelatedText,
+    loadRecentNotes,
+    setRecentlyForgotten,
+    closeWikilinkAutocomplete,
+    flushDocumentEditorSync,
+    scheduleDocumentEditorSync,
+    flushAllPendingDocumentSyncs,
+    hasPendingDocumentSync,
+    forgottenNoteRetentionPreference: () => $forgottenNoteRetentionPreference,
+    cleanUpApplyPolicyPreference: () => $cleanUpApplyPolicyPreference,
+    rememberActionOptions: () => $rememberActionOptions,
+    canIntegrate,
+    getPaneTitleInput,
+    getPaneEditorRoot,
+    isRefreshingFromDisk: () => notepadState.isRefreshingFromDisk,
+    setRefreshingFromDisk: (value) => {
+      notepadState.isRefreshingFromDisk = value;
+    },
+    updateSelectedRelatedText
+  });
+
+  const defaultRememberShortcutAction = $derived.by(() =>
+    commands.resolveRememberAction($defaultRememberActionPreference)
+  );
+
+  // ---------------------------------------------------------------------------
+  // Refresh controller (window focus / vault changes / visibility).
+  // ---------------------------------------------------------------------------
+  function refreshDerivedViews() {
+    void loadRecentNotes();
+    void loadRecentTasks();
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded({ immediate: true });
+  }
+
+  const refreshController = createNotepadRefreshController({
+    getDocumentSession: () => getDocumentSession(),
+    refreshDerivedViews,
+    updateRelatedDrawerLayout,
+    refreshCurrentNoteIfChanged: commands.refreshCurrentNoteIfChanged,
+    getNoteByKey,
+    getPaneIdsForDocument,
+    replaceNoteAcrossPanes: documents.replaceNoteAcrossPanes,
+    replaceReferencedNoteWithFreshDraft: (noteKey) =>
+      replaceReferencedNoteWithFreshDraft(notepadState, noteKey),
+    noteKeyFromPath
+  });
+
+  const {
+    handleWindowFocus,
+    handleWindowResize,
+    handleVisibilityChange,
+    handleVaultNoteChanged
+  } = refreshController;
+
+  // ---------------------------------------------------------------------------
+  // Title editing / search-result selection / related-item selection.
+  // ---------------------------------------------------------------------------
   function handleTitleInput(paneId: PaneId, event: Event) {
     activatePaneSession(paneId);
     const paneDocument = getPaneDocumentSession(paneId);
@@ -543,12 +743,12 @@
 
   async function handleSearchResultSelect(result: SearchItem) {
     await openSearchResult(getOpenContext(), getNavigationContext(), result);
-    saveCursorPositionForDocument();
+    documents.saveCursorPositionForDocument();
   }
 
   async function handleRecentTaskSelect(task: RecentTaskItem) {
     await openRecentTask(getOpenContext(), getNavigationContext(), task);
-    saveCursorPositionForDocument();
+    documents.saveCursorPositionForDocument();
   }
 
   async function handleRelatedItemSelect(item: RelatedNoteItem) {
@@ -566,1072 +766,32 @@
       startLine: item.startLine,
       endLine: item.endLine
     });
-    saveCursorPositionForDocument();
+    documents.saveCursorPositionForDocument();
   }
 
-  async function handleGlobalKeydown(event: KeyboardEvent) {
-    if (handleWikilinkKeydown(event)) {
-      return;
-    }
-
-    if (handleSplitPickerGlobalKeydown(event)) {
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'splitWorkspace')) {
-      if (event.repeat || paneOrder.length > 1) {
-        return;
-      }
-
-      const preferTitle = document.activeElement === getPaneTitleInput(activePaneId);
-      event.preventDefault();
-      await splitWorkspace();
-      focusPaneAfterShortcut(activePaneId, { preferTitle });
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'closePane')) {
-      if (event.repeat || paneOrder.length < 2) {
-        return;
-      }
-
-      const preferTitle = document.activeElement === getPaneTitleInput(activePaneId);
-      event.preventDefault();
-      await closePane(activePaneId);
-      focusPaneAfterShortcut(activePaneId, { preferTitle });
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'rememberCurrentNote')) {
-      if (event.repeat) {
-        return;
-      }
-
-      event.preventDefault();
-      await rememberCurrentNote(defaultRememberShortcutAction);
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'switchPane')) {
-      if (event.repeat || paneOrder.length < 2) {
-        return;
-      }
-
-      event.preventDefault();
-      await switchActivePane();
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'toggleRelatedPanel')) {
-      event.preventDefault();
-      toggleRelatedPanel();
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'goToPreviousNote')) {
-      event.preventDefault();
-      void openRecentNoteByIndex(0);
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'searchAll')) {
-      event.preventDefault();
-      requestSearchFocus('all');
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'searchCurrent')) {
-      event.preventDefault();
-      requestSearchFocus('current');
-    }
-  }
-
-  function refreshDerivedViews() {
-    void loadRecentNotes();
-    void loadRecentTasks();
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded({ immediate: true });
-  }
-
-  const refreshController = createNotepadRefreshController({
-    getDocumentSession: () => getDocumentSession(),
-    refreshDerivedViews,
-    updateRelatedDrawerLayout,
-    refreshCurrentNoteIfChanged,
-    getNoteByKey,
-    getPaneIdsForDocument,
-    replaceNoteAcrossPanes,
-    replaceReferencedNoteWithFreshDraft: (noteKey) =>
-      replaceReferencedNoteWithFreshDraft(notepadState, noteKey),
-    noteKeyFromPath
-  });
-
-  const {
-    handleWindowFocus,
-    handleWindowResize,
-    handleVisibilityChange,
-    handleVaultNoteChanged
-  } = refreshController;
-
-  async function loadRememberCapabilities() {
-    try {
-      semanticStatus = await invoke<SemanticStatus>('get_semantic_status');
-    } catch (error) {
-      console.error('Failed to load semantic status for remember modes:', error);
-      semanticStatus = null;
-    }
-  }
-
-  function integrateDisabledReason() {
-    if (!semanticStatus) {
-      return 'Integrate needs semantic search status.';
-    }
-    if (!semanticStatus.platformSupported) {
-      return semanticStatus.disabledReason ?? 'Integrate is unavailable on this platform.';
-    }
-    if (!semanticStatus.settings.semanticSearchEnabled) {
-      return 'Enable semantic search in Settings to use integrate.';
-    }
-    if (semanticStatus.indexedNotes === 0) {
-      return 'Integrate needs at least one indexed note in the vault.';
-    }
-    return null;
-  }
-
-  function canIntegrate() {
-    return integrateDisabledReason() === null;
-  }
-
-  const {
-    clearSearch,
-    scheduleSearch,
-    loadRecentNotes,
-    loadRecentTasks,
-    openRecentNoteItem,
+  // ---------------------------------------------------------------------------
+  // Global keyboard dispatch (delegated to workspace/shortcuts module).
+  // ---------------------------------------------------------------------------
+  const handleGlobalKeydown = createWorkspaceShortcutHandler<PaneId>({
+    getPaneOrder: () => paneOrder,
+    getActivePaneId: () => activePaneId,
+    getPaneTitleInput,
+    splitWorkspace: commands.splitWorkspace,
+    closePane: commands.closePane,
+    switchActivePane: commands.switchActivePane,
+    rememberCurrentNote: commands.rememberCurrentNote,
+    getDefaultRememberShortcutAction: () => defaultRememberShortcutAction,
+    toggleRelatedPanel,
     openRecentNoteByIndex,
-    openRecentTaskByIndex,
-    handleSearchInput,
-    handleSearchModeChange,
-    handleSearchFocus,
-    requestSearchFocus
-  } = searchState;
-
-  const {
-    updateDrawerLayout: updateRelatedDrawerLayoutController,
-    clearSelectedRelatedText: clearSelectedRelatedTextController,
-    scheduleRelated,
-    handleRelatedScopeChange,
-    toggleRelatedPanel: toggleRelatedPanelController,
-    updateSelectedRelatedText: updateSelectedRelatedTextController
-  } = relatedState;
-
-  function scheduleSearchIfNeeded() {
-    if ($searchState.searchQuery.trim() !== '') {
-      scheduleSearch();
-    }
-  }
-
-  function scheduleRelatedIfNeeded(options: { immediate?: boolean } = {}) {
-    if (!$relatedState.isPanelCollapsed) {
-      scheduleRelated(options);
-    }
-  }
-
-  function syncCurrentFileSearchHighlights(
-    query: string = currentSearchHighlightQuery,
-    mode: SearchMode = currentSearchHighlightMode
-  ) {
-    for (const paneId of getEditorPaneIds()) {
-      setEditorCurrentSearchHighlightQuery(getPaneController(paneId), null);
-    }
-
-    const trimmedQuery = query.trim();
-    if (mode !== 'current' || trimmedQuery === '' || trimmedQuery.startsWith('/')) {
-      return;
-    }
-
-    for (const paneId of getPaneIdsForDocument(getDocumentSession())) {
-      setEditorCurrentSearchHighlightQuery(getPaneController(paneId), trimmedQuery);
-    }
-  }
-
-  $effect(() => {
-    getDocumentSession().key;
-    untrack(() => {
-      syncCurrentFileSearchHighlights();
-    });
+    requestSearchFocus,
+    focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
+    handleSplitPickerGlobalKeydown: commands.handleSplitPickerGlobalKeydown,
+    handleWikilinkKeydown
   });
 
-  function updatePaneWikilinkState(paneId: PaneId, nextState: WikilinkAutocompleteState) {
-    paneRuntimes[paneId].setWikilinkAutocomplete(nextState);
-  }
-
-  function createPaneRuntimeFn(paneId: PaneId) {
-    const editorLifecycleController = createEditorLifecycleController({
-      getController: () => getPaneController(paneId),
-      getPaneId: () => paneId,
-      setController: (value) => {
-        paneRuntimes[paneId].setController(value);
-      },
-      getShellElement: () => paneRuntimes[paneId].refs.paneCard,
-      getEditorShell: () => paneRuntimes[paneId].refs.editorShell,
-      getEditorRoot: () => getPaneEditorRoot(paneId),
-      getDocumentSession: () => getPaneDocumentSession(paneId),
-      getSharedEditorState,
-      setSharedEditorState,
-      setIsEditorReady: (value) => {
-        paneRuntimes[paneId].setIsEditorReady(value);
-      },
-      setIsApplyingExternalContent: (value) => {
-        paneRuntimes[paneId].setIsApplyingExternalContent(value);
-      },
-      handleEditorMarkdownChange,
-      getSharedEditorResources,
-      getViewCallbacks: () => ({
-        onOpenLink: (rawTarget) => {
-          activatePaneSession(paneId);
-          void openWikilink(paneId, rawTarget);
-        },
-        onActiveWikilinkChange: (activeWikilink) => {
-          handleActiveWikilinkChange(paneId, activeWikilink);
-        }
-      }),
-      closeTransientUi: () => closeWikilinkAutocomplete(paneId)
-    });
-
-    const wikilinkController = createWikilinkRuntime({
-      getState: () => paneRuntimes[paneId].ui.wikilinkAutocomplete,
-      setState: (value) => {
-        updatePaneWikilinkState(paneId, value);
-      },
-      getCurrentNoteId: () => getPaneDocumentSession(paneId).currentNoteId,
-      getCurrentPath: () => getPaneDocumentSession(paneId).currentNotePath,
-      getCurrentTitle: () => getPaneDocumentSession(paneId).title,
-      getCurrentMarkdown: () => getPaneDocumentSession(paneId).bodyMarkdown,
-      getEditorController: () => getPaneController(paneId),
-      cancelPendingAutosave,
-      openNotePath: async (noteId, notePath, options) => {
-        activatePaneSession(paneId);
-        return openNotePath(notePath, { noteId, ...options });
-      },
-      getNavigationContext: () => getNavigationContext(paneId),
-      saveCursorPositionForNote: () => {
-        editorLifecycleController.saveCursorPositionForDocument();
-      }
-    });
-
-    return {
-      editorLifecycleController,
-      wikilinkController
-    };
-  }
-
-  function rekeyNoteWithRuntime(note: NoteDraftState, snapshot: SessionSnapshot) {
-    const nextKey = noteKeyFromPath(snapshot.currentNotePath);
-    if (!nextKey || nextKey === note.key) {
-      return note;
-    }
-
-    const previousKey = note.key;
-    const nextNote = rekeyNote(notepadState, previousKey, nextKey) ?? note;
-    transferNoteRuntime(previousKey, nextKey);
-    if (!getNoteByKey(previousKey)) {
-      cleanupNoteRuntime(previousKey);
-    }
-    return nextNote;
-  }
-
-  const {
-    cancelPendingAutosave,
-    enqueueSave,
-    flushPendingAutosave,
-    getNoteSaveQueue,
-    hasCleanBuffer,
-    invalidatePendingSaveResults,
-    scheduleAutosave,
-    awaitAllSaveQueues
-  } = createNotepadPersistenceController({
-    getDocumentSession,
-    saveNoteSession,
-    rekeyNoteWithRuntime
-  });
-
-  const workspacePersistence = createWorkspacePersistenceService({
-    listReferencedNoteKeys: () => listReferencedNoteKeys(notepadState),
-    getNoteByKey,
-    flushDocumentEditorSync,
-    flushAllPaneCursorSaves: () => flushAllPendingCursorSaves(),
-    flushPendingAutosave,
-    cancelPendingAutosave,
-    enqueueSave
-  });
-
-  const paneControllers = {
-    [PRIMARY_PANE_ID]: createPaneRuntimeFn(PRIMARY_PANE_ID),
-    [SECONDARY_PANE_ID]: createPaneRuntimeFn(SECONDARY_PANE_ID)
-  } as const;
-
-  async function replaceNoteAcrossPanes(
-    previousNote: NoteDraftState,
-    nextNote: NoteDraftState,
-    { restoreCursor = false }: { restoreCursor?: boolean } = {}
-  ) {
-    for (const paneId of getVisiblePaneIds()) {
-      if (getPaneKind(paneId) !== 'editor') {
-        continue;
-      }
-
-      if (getPaneDocumentSession(paneId).key !== nextNote.key) {
-        continue;
-      }
-
-      if (!getPaneController(paneId)) {
-        markPaneDocumentGeneration(paneId, nextNote);
-        continue;
-      }
-
-      if (previousNote.key === nextNote.key) {
-        // Same note identity — safe in-place buffer replace (avoids full destroy + create).
-        await paneControllers[paneId].editorLifecycleController.replaceEditorContentInPlaceForDocument(
-          nextNote.bodyMarkdown,
-          nextNote
-        );
-      } else {
-        // Different note — full teardown + recreate to bind the correct FileEditorRuntime.
-        unregisterPaneEditorForDocument(paneId, previousNote);
-        await paneControllers[paneId].editorLifecycleController.replaceEditorContent(
-          nextNote.bodyMarkdown,
-          {
-            restoreCursor,
-            suppressReadyReset: true
-          }
-        );
-        if (getPaneController(paneId)) {
-          registerPaneEditorForDocument(paneId, nextNote);
-        }
-      }
-      markPaneDocumentGeneration(paneId, nextNote);
-    }
-
-    if (!getNoteByKey(previousNote.key)) {
-      cleanupNoteRuntime(previousNote.key);
-    }
-  }
-
-  async function loadSavedNote() {
-    try {
-      const snapshot = await loadSavedNoteSession();
-      adoptSnapshotForPane(notepadState, PRIMARY_PANE_ID, snapshot);
-      setStoreActivePane(notepadState, PRIMARY_PANE_ID);
-    } catch (error) {
-      console.error('Failed to load saved note:', error);
-      applySnapshotToNote(getPaneDocumentSession(PRIMARY_PANE_ID), createEmptySessionSnapshot());
-    }
-  }
-
-  async function loadAssetRoot() {
-    try {
-      const vaultInfo = await loadCurrentVaultInfo();
-      updateSharedEditorResourceConfig(
-        resolveAssetRootPath(vaultInfo.currentPath),
-        storePastedImageAsset
-      );
-    } catch (error) {
-      console.error('Failed to load vault info for image assets:', error);
-      updateSharedEditorResourceConfig(null, storePastedImageAsset);
-    }
-  }
-
-  function consumePendingMapNotePath() {
-    const notePath = window.sessionStorage.getItem(PENDING_MAP_NOTE_PATH_KEY);
-    if (!notePath) {
-      return null;
-    }
-
-    window.sessionStorage.removeItem(PENDING_MAP_NOTE_PATH_KEY);
-    return notePath;
-  }
-
-  async function refreshCurrentNoteIfChanged() {
-    const note = getDocumentSession();
-    const currentPath = note.currentNotePath;
-    if (
-      !currentPath ||
-      !getPaneIdsForDocument(note).some((paneId) => paneRuntimes[paneId].ui.isEditorReady) ||
-      notepadState.isRefreshingFromDisk ||
-      !hasCleanBuffer(note)
-    ) {
-      return;
-    }
-
-    notepadState.isRefreshingFromDisk = true;
-    try {
-      const session = await readNoteSession(note.currentNoteId, currentPath);
-      if (getDocumentSession().key !== note.key || !hasCleanBuffer(note)) {
-        return;
-      }
-
-      if (
-        session.lastSavedTitle === note.lastSavedTitle &&
-        session.lastSavedMarkdown === note.lastSavedMarkdown &&
-        session.lastSavedNoteId === note.lastSavedNoteId &&
-        session.lastSavedPath === note.lastSavedPath
-      ) {
-        return;
-      }
-
-      applySnapshotToNote(note, session);
-      setRecentlyForgotten(null);
-      await replaceEditorContentInPlace(session.bodyMarkdown);
-      clearSelectedRelatedText();
-      scheduleSearchIfNeeded();
-      scheduleRelatedIfNeeded({ immediate: true });
-    } catch (error) {
-      console.error('Failed to refresh note from disk:', error);
-    } finally {
-      notepadState.isRefreshingFromDisk = false;
-    }
-  }
-
-  async function clearNotepad(options: { canRestore?: boolean } = {}) {
-    const canRestore = options.canRestore ?? true;
-    const note = getDocumentSession();
-    const notePathToClear = note.currentNotePath;
-
-    if (notePathToClear) {
-      saveCursorPositionForDocument(note);
-      saveSharedEditorStateForDocument(note);
-      cancelPendingAutosave(note);
-      await enqueueSave(note);
-    }
-
-    const draft = {
-      title: note.title,
-      bodyMarkdown: note.bodyMarkdown,
-      currentNoteId: note.currentNoteId,
-      currentNotePath: note.currentNotePath
-    };
-    const hasDraftContent = hasContent(draft);
-    let forgottenPath: string | null = null;
-
-    if (notePathToClear) {
-      try {
-        setNoteStatus(note, 'forgetting');
-        const forgottenNoteSummary = await forgetNoteSession(
-          notePathToClear,
-          $forgottenNoteRetentionPreference
-        );
-        forgottenPath = forgottenNoteSummary?.forgottenPath ?? null;
-      } catch (error) {
-        console.error('Failed to forget note:', error);
-        setNoteStatus(note, 'error');
-        return;
-      }
-    }
-
-    invalidatePendingSaveResults(note);
-    cancelPendingAutosave(note);
-    discardSharedEditorStateForDocument(note);
-    const freshDraft = replaceReferencedNoteWithFreshDraft(notepadState, note.key);
-    cleanupNoteRuntime(note.key);
-    setRecentlyForgotten(
-      canRestore && hasDraftContent ? createForgottenNote(draft, forgottenPath) : null
-    );
-    await replaceNoteAcrossPanes(note, freshDraft);
-    clearSelectedRelatedText();
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded({ immediate: true });
-    void loadRecentNotes();
-  }
-
-  async function unforgetNotepad() {
-    const forgottenNote = notepadState.recentlyForgotten;
-    if (!forgottenNote) {
-      return;
-    }
-
-    if (forgottenNote.forgottenPath) {
-      try {
-        const restoredNotes = await restoreForgottenNotes([forgottenNote.forgottenPath]);
-        const restoredPath = restoredNotes[0]?.restoredPath;
-        if (!restoredPath) {
-          return;
-        }
-
-        const previousNote = getDocumentSession();
-        const restoredNote = adoptSnapshotForPane(
-          notepadState,
-          activePaneId,
-          await openNoteSession(null, restoredPath)
-        );
-        setRecentlyForgotten(null);
-        await replaceNoteAcrossPanes(previousNote, restoredNote, { restoreCursor: true });
-        clearSelectedRelatedText();
-        scheduleSearchIfNeeded();
-        scheduleRelatedIfNeeded({ immediate: true });
-        void loadRecentNotes();
-        return;
-      } catch (error) {
-        console.error('Failed to restore forgotten note:', error);
-        return;
-      }
-    }
-
-    const note = getDocumentSession();
-    applySnapshotToNote(note, {
-      ...forgottenNote,
-      lastSavedTitle: '',
-      lastSavedMarkdown: '',
-      lastSavedNoteId: null,
-      lastSavedPath: null
-    });
-    setRecentlyForgotten(null);
-    await replaceEditorContent(note.bodyMarkdown);
-    scheduleAutosave(note);
-    clearSelectedRelatedText();
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded({ immediate: true });
-    void loadRecentNotes();
-  }
-
-  function resolveRememberAction(actionId: string): RememberActionOption {
-    return (
-      $rememberActionOptions.find((option) => option.id === actionId) ??
-      $rememberActionOptions.find((option) => option.id === 'exact') ??
-      EXACT_REMEMBER_ACTION
-    );
-  }
-
-  const defaultRememberShortcutAction = $derived.by(() =>
-    resolveRememberAction($defaultRememberActionPreference)
-  );
-
-  async function rememberCurrentNote(action: RememberActionOption) {
-    flushAllPendingDocumentSyncs();
-    flushAllPendingCursorSaves();
-    const resolvedAction =
-      rememberActionRequiresIntegrateSupport(action) && !canIntegrate()
-        ? resolveRememberAction('exact')
-        : action;
-    const note = getDocumentSession();
-    saveCursorPositionForDocument(note);
-    saveSharedEditorStateForDocument(note);
-    cancelPendingAutosave(note);
-    await getNoteSaveQueue(note.key);
-    const operationRevision = note.operationRevision;
-    setNoteStatus(note, 'remembering');
-
-    await rememberWithAction(
-      resolvedAction,
-      $cleanUpApplyPolicyPreference,
-      note.title,
-      note.bodyMarkdown,
-      note.currentNotePath
-    );
-
-    if (note.operationRevision !== operationRevision) {
-      return;
-    }
-
-    setRecentlyForgotten(null);
-    invalidatePendingSaveResults(note);
-    cancelPendingAutosave(note);
-    discardSharedEditorStateForDocument(note);
-    const freshDraft = replaceReferencedNoteWithFreshDraft(notepadState, note.key);
-    await replaceNoteAcrossPanes(note, freshDraft);
-    clearSearch();
-    clearSelectedRelatedText();
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded({ immediate: true });
-    void loadRecentNotes();
-  }
-
-  async function openNotePath(
-    notePath: string | null,
-    options: {
-      noteId?: string | null;
-      currentNoteAlreadySaved?: boolean;
-      focusEditorAfterOpen?: boolean;
-    } = {}
-  ) {
-    const paneId = activePaneId;
-    const previousDocument = getPaneDocumentSession(paneId);
-    if (!options.noteId && !notePath) {
-      return;
-    }
-
-    if (hasPendingDocumentSync(previousDocument)) {
-      flushDocumentEditorSync(previousDocument);
-    }
-    flushAllPendingCursorSaves();
-    saveCursorPositionForDocument(previousDocument);
-    saveSharedEditorStateForDocument(previousDocument);
-    if (
-      !(options.currentNoteAlreadySaved ?? false) &&
-      (previousDocument.currentNoteId !== (options.noteId ?? null) ||
-        previousDocument.currentNotePath !== notePath)
-    ) {
-      cancelPendingAutosave(previousDocument);
-      void enqueueSave(previousDocument);
-    }
-
-    const requestGeneration = paneRuntimes[paneId].bumpOpenRequestGeneration();
-    setNoteStatus(previousDocument, 'opening');
-
-    const session = await openNoteSession(options.noteId ?? null, notePath);
-    if (paneRuntimes[paneId].getOpenRequestGeneration() !== requestGeneration) {
-      return;
-    }
-
-    const nextDocument = adoptSnapshotForPane(notepadState, paneId, session);
-    setRecentlyForgotten(null);
-    closeWikilinkAutocomplete(paneId);
-    clearSelectedRelatedText();
-
-    if (
-      paneRuntimes[paneId].ui.isEditorReady &&
-      getPaneKind(paneId) === 'editor' &&
-      getPaneController(paneId)
-    ) {
-      await replaceNoteAcrossPanes(previousDocument, nextDocument, { restoreCursor: true });
-    }
-
-    if ((options.focusEditorAfterOpen ?? true) && getPaneKind(paneId) === 'editor') {
-      await tick();
-      focusPaneAfterShortcut(paneId, { preferTitle: false });
-    }
-
-    setNoteStatus(nextDocument, 'idle');
-    if (!getNoteByKey(previousDocument.key)) {
-      cleanupNoteRuntime(previousDocument.key);
-    }
-    scheduleRelatedIfNeeded({ immediate: true });
-  }
-
-  function handleActiveWikilinkChange(paneId: PaneId, nextActiveWikilink: ActiveWikilink | null) {
-    paneControllers[paneId].wikilinkController.handleActiveWikilinkChange(nextActiveWikilink);
-  }
-
-  function handleWikilinkKeydown(event: KeyboardEvent) {
-    if (splitPickerPaneId !== null) {
-      return false;
-    }
-
-    return paneControllers[getNavigationPaneId()].wikilinkController.handleAutocompleteKeydown(event);
-  }
-
-  async function openWikilink(paneId: PaneId, rawTarget: string) {
-    workspaceStore.setActivePaneId(paneId);
-    await paneControllers[paneId].wikilinkController.openWikilink(rawTarget);
-  }
-
-  function handleWikilinkSuggestionSelect(paneId: PaneId, value: string) {
-    const state = paneRuntimes[paneId].ui.wikilinkAutocomplete;
-    const nextIndex = state.suggestions.findIndex((suggestion) => suggestion.value === value);
-    if (nextIndex === -1) {
-      return;
-    }
-
-    updatePaneWikilinkState(paneId, {
-      ...state,
-      selectedIndex: nextIndex
-    });
-    paneControllers[paneId].wikilinkController.selectWikilinkSuggestion(value);
-  }
-
-  function updateRelatedDrawerLayout() {
-    updateRelatedDrawerLayoutController(workspaceShell);
-  }
-
-  function clearSelectedRelatedText() {
-    clearSelectedRelatedTextController();
-  }
-
-  function updateSelectedRelatedText(paneId: PaneId = getNavigationPaneId()) {
-    if (splitPickerPaneId === paneId) {
-      clearSelectedRelatedText();
-      return;
-    }
-
-    if (getPaneKind(paneId) !== 'editor') {
-      clearSelectedRelatedText();
-      return;
-    }
-
-    updateSelectedRelatedTextController(getPaneEditorRoot(paneId));
-  }
-
-  function toggleRelatedPanel() {
-    toggleRelatedPanelController(workspaceShell);
-  }
-
-  function paneShouldMountEditor(paneId: PaneId): boolean {
-    return (
-      notepadRuntimeState.hasLoadedInitialSession &&
-      paneOrder.includes(paneId) &&
-      getPaneKind(paneId) === 'editor' &&
-      splitPickerPaneId !== paneId
-    );
-  }
-
-  /**
-   * Per-pane mount/destroy queue. Serializes lifecycle transitions so that
-   * the use:editor action and any explicit ensurePaneEditors() barrier do
-   * not race when both attempt to mount/destroy the same pane in the same
-   * microtask.
-   */
-  const paneEditorQueues: Record<PaneId, Promise<void>> = {
-    [PRIMARY_PANE_ID]: Promise.resolve(),
-    [SECONDARY_PANE_ID]: Promise.resolve()
-  };
-
-  function enqueuePaneEditorOp(paneId: PaneId, op: () => Promise<void>): Promise<void> {
-    const queue = paneEditorQueues[paneId].then(op).catch((error) => {
-      console.error(`Pane editor lifecycle (${paneId}) failed:`, error);
-    });
-    paneEditorQueues[paneId] = queue;
-    return queue;
-  }
-
-  /**
-   * Mount the editor for a single pane. Idempotent: if already mounted,
-   * returns immediately. Serialized per-pane so concurrent callers (the
-   * use:editor action and ensurePaneEditors) do not race.
-   */
-  function mountPaneEditor(paneId: PaneId): Promise<void> {
-    return enqueuePaneEditorOp(paneId, async () => {
-      if (getPaneController(paneId)) return;
-      const editorRoot = getPaneEditorRoot(paneId);
-      if (!editorRoot) return;
-      const paneDocument = getPaneDocumentSession(paneId);
-
-      await paneControllers[paneId].editorLifecycleController.createEditor(paneDocument.bodyMarkdown);
-      if (getPaneController(paneId)) {
-        registerPaneEditorForDocument(paneId, paneDocument);
-      }
-      paneControllers[paneId].editorLifecycleController.restoreCursorPositionForDocument(paneDocument);
-      documentSync.markPaneDocumentGeneration(paneId, paneDocument);
-    });
-  }
-
-  /**
-   * Destroy the editor for a single pane. Idempotent: if not mounted,
-   * returns immediately. Serialized per-pane.
-   */
-  function destroyPaneEditor(paneId: PaneId): Promise<void> {
-    return enqueuePaneEditorOp(paneId, async () => {
-      const controller = getPaneController(paneId);
-      if (!controller) return;
-      const paneDocument = getPaneDocumentSession(paneId);
-
-      unregisterPaneEditorForDocument(paneId, paneDocument);
-      paneControllers[paneId].editorLifecycleController.saveCursorPositionForDocument(paneDocument);
-      if (paneRuntimes[paneId].ui.editorGeneration >= getSharedEditorStateGeneration(paneDocument)) {
-        saveSharedEditorStateForDocument(paneDocument, readEditorState(controller), paneId);
-      }
-      await paneControllers[paneId].editorLifecycleController.destroyEditor();
-      paneRuntimes[paneId].ui.isEditorReady = false;
-      closeWikilinkAutocomplete(paneId);
-    });
-  }
-
-  /**
-   * Reconcile every pane's editor mount state with the workspace. Used as
-   * an explicit barrier in async flows that need to wait for editors to be
-   * ready (split/close/setKind/onMount). Reactively, the use:editor action
-   * also drives the same mount/destroy transitions.
-   */
-  async function ensurePaneEditors() {
-    for (const paneId of [PRIMARY_PANE_ID, SECONDARY_PANE_ID] as const) {
-      if (paneShouldMountEditor(paneId)) {
-        await mountPaneEditor(paneId);
-      } else {
-        await destroyPaneEditor(paneId);
-      }
-    }
-  }
-
-  function activatePane(paneId: PaneId) {
-    flushDocumentEditorSync(getPaneDocumentSession(paneId));
-    activatePaneSession(paneId);
-    updateSelectedRelatedText(paneId);
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded({ immediate: true });
-  }
-
-  async function splitWorkspace() {
-    if (paneOrder.length === 2) {
-      activatePaneSession(SECONDARY_PANE_ID);
-      await tick();
-      focusPaneAfterShortcut(SECONDARY_PANE_ID, {
-        preferTitle: document.activeElement === getPaneTitleInput(activePaneId)
-      });
-      return;
-    }
-
-    const sourcePaneId = paneOrder[0] ?? activePaneId;
-    const targetPaneId =
-      sourcePaneId === PRIMARY_PANE_ID ? SECONDARY_PANE_ID : PRIMARY_PANE_ID;
-    const sharedDocument = getPaneDocumentSession(sourcePaneId);
-
-    await loadRecentNotes();
-
-    const placeholderDraft = createFreshDraftNote(notepadState);
-    setStoredPaneKind(notepadState, targetPaneId, 'editor');
-    setPaneDocumentSession(targetPaneId, placeholderDraft);
-    workspaceStore.beginSplitPicker(targetPaneId, sharedDocument.key);
-
-    workspaceStore.setPaneOrder([PRIMARY_PANE_ID, SECONDARY_PANE_ID]);
-    activatePaneSession(targetPaneId);
-    await tick();
-    await ensurePaneEditors();
-    updateSelectedRelatedText(targetPaneId);
-    splitPickerFocusEl?.focus({ preventScroll: true });
-  }
-
-  async function closePane(paneId: PaneId) {
-    if (paneOrder.length === 1) {
-      return;
-    }
-
-    const wasSplitPicker = splitPickerPaneId === paneId;
-    const orphanPlaceholderKey = wasSplitPicker ? getPaneDocumentSession(paneId).key : null;
-
-    workspaceStore.removePane(paneId);
-
-    if (wasSplitPicker) {
-      resetSplitPickerState();
-      const anchorPane = (paneOrder[0] ?? PRIMARY_PANE_ID) as PaneId;
-      setPaneDocumentSession(paneId, getPaneDocumentSession(anchorPane));
-      setStoredPaneKind(notepadState, paneId, 'editor');
-      if (orphanPlaceholderKey) {
-        removeNoteIfUnreferenced(notepadState, orphanPlaceholderKey);
-        cleanupNoteRuntime(orphanPlaceholderKey);
-      }
-    }
-
-    if (getPaneController(paneId)) {
-      await ensurePaneEditors();
-    }
-
-    activatePaneSession((paneOrder[0] ?? PRIMARY_PANE_ID) as PaneId);
-    updateSelectedRelatedText();
-  }
-
-  function focusPaneAfterShortcut(paneId: PaneId, options: { preferTitle?: boolean } = {}) {
-    if (splitPickerPaneId === paneId && splitPickerFocusEl) {
-      splitPickerFocusEl.focus({ preventScroll: true });
-      return;
-    }
-
-    const titleInput = getPaneTitleInput(paneId);
-    if (options.preferTitle && titleInput) {
-      focusInputAtEnd(titleInput);
-      return;
-    }
-
-    const cmContent = findCmContentElement(getPaneEditorRoot(paneId));
-    if (cmContent instanceof HTMLElement) {
-      cmContent.focus({ preventScroll: true });
-      return;
-    }
-
-    titleInput?.focus();
-  }
-
-  function moveSplitPickerHighlight(direction: 1 | -1) {
-    workspaceStore.setSplitPickerHighlight(
-      getNextSplitChoiceIndex(
-        splitPickerHighlightedIndex,
-        direction,
-        splitPickerPreviousItem !== null
-      )
-    );
-  }
-
-  async function confirmSplitPickerChoiceByHighlight() {
-    const paneId = splitPickerPaneId;
-    if (!paneId) {
-      return;
-    }
-
-    const choice = getSplitChoiceByIndex(splitPickerHighlightedIndex, splitPickerPreviousItem !== null);
-    if (choice) {
-      await resolveSplitPickerChoice(paneId, choice);
-    }
-  }
-
-  function handleSplitPickerGlobalKeydown(event: KeyboardEvent): boolean {
-    if (splitPickerPaneId === null || activePaneId !== splitPickerPaneId || event.repeat) {
-      return false;
-    }
-
-    const target = event.target;
-    if (
-      target instanceof HTMLInputElement ||
-      target instanceof HTMLTextAreaElement ||
-      target instanceof HTMLSelectElement
-    ) {
-      return false;
-    }
-
-    if (target instanceof HTMLElement && target.closest('[data-notepad-bottom-bar]')) {
-      return false;
-    }
-
-    if (event.metaKey || event.ctrlKey || event.altKey) {
-      return false;
-    }
-
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      moveSplitPickerHighlight(1);
-      return true;
-    }
-
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      moveSplitPickerHighlight(-1);
-      return true;
-    }
-
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void confirmSplitPickerChoiceByHighlight();
-      return true;
-    }
-
-    const shortcutChoice = getSplitChoiceForShortcut(event.key, splitPickerPreviousItem !== null);
-    if (shortcutChoice === null) {
-      return false;
-    }
-
-    event.preventDefault();
-    void resolveSplitPickerChoice(splitPickerPaneId, shortcutChoice);
-    return true;
-  }
-
-  function resetSplitPickerState() {
-    workspaceStore.resetSplitPicker();
-  }
-
-  async function finalizeSplitPickerSelection(paneId: PaneId) {
-    await tick();
-    await ensurePaneEditors();
-    updateSelectedRelatedText(paneId);
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded({ immediate: true });
-  }
-
-  async function resolveSplitPickerChoice(paneId: PaneId, choice: SplitChoice) {
-    if (splitPickerPaneId !== paneId) {
-      return;
-    }
-
-    const sourceKey = splitPickerSourceNoteKey;
-    const previousItem = splitPickerPreviousItem;
-    const placeholderKey = getPaneDocumentSession(paneId).key;
-
-    resetSplitPickerState();
-    activatePaneSession(paneId);
-
-    if (choice === 'current') {
-      if (!sourceKey) {
-        return;
-      }
-
-      const shared = getNoteByKey(sourceKey);
-      if (!shared) {
-        return;
-      }
-
-      setStoredPaneKind(notepadState, paneId, 'editor');
-      setPaneDocumentSession(paneId, shared);
-      removeNoteIfUnreferenced(notepadState, placeholderKey);
-      cleanupNoteRuntime(placeholderKey);
-      await finalizeSplitPickerSelection(paneId);
-      flushDocumentEditorSync(shared);
-      return;
-    }
-
-    if (choice === 'previous') {
-      if (!previousItem) {
-        return;
-      }
-
-      setStoredPaneKind(notepadState, paneId, 'editor');
-      if (previousItem.notePath) {
-        await openNotePath(previousItem.notePath, { noteId: previousItem.noteId ?? null });
-      } else {
-        await openSearchResult(getOpenContext(), getNavigationContext(paneId), previousItem);
-      }
-
-      await finalizeSplitPickerSelection(paneId);
-      return;
-    }
-
-    if (choice === 'new') {
-      setStoredPaneKind(notepadState, paneId, 'editor');
-      const newDraft = createFreshDraftNote(notepadState);
-      setPaneDocumentSession(paneId, newDraft);
-      removeNoteIfUnreferenced(notepadState, placeholderKey);
-      cleanupNoteRuntime(placeholderKey);
-      await finalizeSplitPickerSelection(paneId);
-      flushDocumentEditorSync(newDraft);
-      return;
-    }
-
-    setStoredPaneKind(notepadState, paneId, 'chat');
-    const chatDraft = createFreshDraftNote(notepadState);
-    setPaneDocumentSession(paneId, chatDraft);
-    removeNoteIfUnreferenced(notepadState, placeholderKey);
-    cleanupNoteRuntime(placeholderKey);
-    await finalizeSplitPickerSelection(paneId);
-  }
-
-  async function switchActivePane(direction: 1 | -1 = 1) {
-    const currentPaneId = activePaneId;
-    const nextPaneId = getNextPaneId(currentPaneId, direction);
-    if (!nextPaneId) {
-      return;
-    }
-
-    const preferTitle = document.activeElement === getPaneTitleInput(currentPaneId);
-    activatePane(nextPaneId);
-    await tick();
-    focusPaneAfterShortcut(nextPaneId, { preferTitle });
-  }
-
-  async function setPaneKind(paneId: PaneId, kind: PaneKind) {
-    if (kind === getPaneKind(paneId)) {
-      return;
-    }
-
-    const document = getPaneDocumentSession(paneId);
-    setStoredPaneKind(notepadState, paneId, kind);
-    activatePaneSession(paneId);
-    await tick();
-    await ensurePaneEditors();
-    flushDocumentEditorSync(document);
-    updateSelectedRelatedText();
-  }
-
-  async function handleBottomBarCommand(command: string) {
-    const normalized = command.trim().toLowerCase();
-    switch (normalized) {
-      case '/chat':
-        clearSearch();
-        await setPaneKind(activePaneId, 'chat');
-        return true;
-      case '/edit':
-        clearSearch();
-        await setPaneKind(activePaneId, 'editor');
-        return true;
-      default:
-        return false;
-    }
-  }
-
+  // ---------------------------------------------------------------------------
+  // Pane view-model + actions wired into NotepadPane.svelte.
+  // ---------------------------------------------------------------------------
   function getPaneViewModel(paneId: PaneId): PaneViewModel {
     const paneKind = getPaneKind(paneId);
     const paneDocument = getPaneDocumentSession(paneId);
@@ -1660,29 +820,62 @@
       splitPickerPreviousNoteLabel,
       editorLifecycle: {
         shouldMount: paneShouldMountEditor(paneId),
-        mount: () => mountPaneEditor(paneId),
-        destroy: () => destroyPaneEditor(paneId)
+        mount: () => paneLifecycle.mountPaneEditor(paneId),
+        destroy: () => paneLifecycle.destroyPaneEditor(paneId)
       }
     };
   }
 
   const paneActions: PaneWorkspaceActions = {
-    onActivate: activatePane,
-    onClose: closePane,
-    onSplit: splitWorkspace,
+    onActivate: commands.activatePane,
+    onClose: commands.closePane,
+    onSplit: commands.splitWorkspace,
     onTitleInput: handleTitleInput,
     onTitleBlur: handleTitleBlur,
     onTitleKeydown: handleTitleKeydown,
     onSplitHighlightChange: (index: number) => {
       workspaceStore.setSplitPickerHighlight(index);
     },
-    onSplitChoose: resolveSplitPickerChoice
+    onSplitChoose: commands.resolveSplitPickerChoice
   };
 
-  // Initialize pane runtimes after all function declarations to avoid TDZ in runes mode
-  paneRuntimes[PRIMARY_PANE_ID] = new PaneRuntime(PRIMARY_PANE_ID);
-  paneRuntimes[SECONDARY_PANE_ID] = new PaneRuntime(SECONDARY_PANE_ID);
+  // ---------------------------------------------------------------------------
+  // Bootstrap / asset root / saved-note fallbacks.
+  // ---------------------------------------------------------------------------
+  async function loadSavedNote() {
+    try {
+      const snapshot = await loadSavedNoteSession();
+      adoptSnapshotForPane(notepadState, PRIMARY_PANE_ID, snapshot);
+      setStoreActivePane(notepadState, PRIMARY_PANE_ID);
+    } catch (error) {
+      console.error('Failed to load saved note:', error);
+      applySnapshotToNote(getPaneDocumentSession(PRIMARY_PANE_ID), createEmptySessionSnapshot());
+    }
+  }
 
+  async function loadAssetRoot() {
+    try {
+      const vaultInfo = await loadCurrentVaultInfo();
+      updateSharedEditorResourceConfig(
+        resolveAssetRootPath(vaultInfo.currentPath),
+        storePastedImageAsset
+      );
+    } catch (error) {
+      console.error('Failed to load vault info for image assets:', error);
+      updateSharedEditorResourceConfig(null, storePastedImageAsset);
+    }
+  }
+
+  function consumePendingMapNotePath() {
+    const notePath = window.sessionStorage.getItem(PENDING_MAP_NOTE_PATH_KEY);
+    if (!notePath) return null;
+    window.sessionStorage.removeItem(PENDING_MAP_NOTE_PATH_KEY);
+    return notePath;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mount / unmount lifecycle.
+  // ---------------------------------------------------------------------------
   onMount(() => {
     let mounted = true;
     const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(
@@ -1708,12 +901,8 @@
       await tick();
       if (!mounted || !paneRuntimes[PRIMARY_PANE_ID].refs.editorRoot) return;
       if (notepadRuntimeState.hasLoadedInitialSession) {
-        await Promise.all([loadAssetRoot(), loadRememberCapabilities()]);
+        await loadAssetRoot();
       } else {
-        // Single bundled startup call replaces the parallel fan-out of
-        // load_note_session + get_vault_info + get_semantic_status. Falls
-        // back to the legacy individual invokes if the bundled command is
-        // unavailable or errors.
         try {
           const bootstrap = await loadBootstrapPayload();
           adoptSnapshotForPane(notepadState, PRIMARY_PANE_ID, bootstrap.session);
@@ -1722,47 +911,40 @@
             resolveAssetRootPath(bootstrap.vault.currentPath),
             storePastedImageAsset
           );
-          semanticStatus = bootstrap.semanticStatus;
+          if (bootstrap.semanticStatus) {
+            appStore.setSemanticStatus(bootstrap.semanticStatus);
+          }
         } catch (error) {
           console.error('bootstrap_app failed, falling back to individual invokes:', error);
-          await Promise.all([loadSavedNote(), loadAssetRoot(), loadRememberCapabilities()]);
+          await Promise.all([loadSavedNote(), loadAssetRoot()]);
         }
         notepadRuntimeState.hasLoadedInitialSession = true;
       }
       if (!mounted || !paneRuntimes[PRIMARY_PANE_ID].refs.editorRoot) return;
       try {
-        await ensurePaneEditors();
+        await paneLifecycle.ensurePaneEditors();
         updateRelatedDrawerLayout();
         scheduleRelatedIfNeeded({ immediate: true });
         const pendingMapNotePath = consumePendingMapNotePath();
         if (pendingMapNotePath) {
-          await openNotePath(pendingMapNotePath, { focusEditorAfterOpen: false });
+          await commands.openNotePath(pendingMapNotePath, { focusEditorAfterOpen: false });
         }
         const pendingTaskTarget = consumePendingTaskTarget();
         if (pendingTaskTarget) {
-          await openNotePath(pendingTaskTarget.notePath, {
+          await commands.openNotePath(pendingTaskTarget.notePath, {
             noteId: pendingTaskTarget.noteId,
             focusEditorAfterOpen: false
           });
           await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
         }
-        // Break-the-app: subscribe through the unified AppStore so the
-        // page no longer opens its own raw `listen('vault-note-changed', ...)` /
-        // `listen('semantic-status-changed', ...)` listeners. The AppStore
-        // owns one IPC subscription per channel and re-broadcasts to all
-        // consumers; this avoids redundant listeners and lets the store
-        // mirror semantic status into a single source of truth.
+        // Subscribe to vault note + semantic status changes through the
+        // unified AppStore so the page no longer opens raw IPC listeners.
         const appVaultListen = appStore.subscribeVaultNoteChanged((payload) => {
           void handleVaultNoteChanged(payload);
         });
         vaultNoteChangeUnlisten = () => appVaultListen();
-        const appSemanticListen = appStore.subscribeSemanticStatusChanged((status) => {
-          semanticStatus = status;
-        });
-        semanticStatusUnlisten = () => appSemanticListen();
-        if (appStore.semanticStatus) {
-          semanticStatus = appStore.semanticStatus;
-        }
+        // Semantic status is now a $derived(appStore.semanticStatus); no
+        // local mirroring is required.
       } catch (err) {
         console.error('Notepad init failed:', err);
       }
@@ -1776,9 +958,9 @@
       setSlashMenuListener(null);
       mounted = false;
       flushAllPendingDocumentSyncs();
-      flushAllPendingCursorSaves();
-      saveCursorPositionForDocument();
-      saveSharedEditorStateForDocument();
+      documents.flushAllPendingCursorSaves();
+      documents.saveCursorPositionForDocument();
+      documents.saveSharedEditorStateForDocument();
       flushPendingAutosave();
       paneControllers[PRIMARY_PANE_ID].editorLifecycleController.dispose();
       paneControllers[SECONDARY_PANE_ID].editorLifecycleController.dispose();
@@ -1788,25 +970,24 @@
       unregisterPendingNoteSaveHandler();
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
-      semanticStatusUnlisten?.();
-      semanticStatusUnlisten = null;
       shellResizeObserver?.disconnect();
-      unregisterPaneEditorForDocument(PRIMARY_PANE_ID);
-      unregisterPaneEditorForDocument(SECONDARY_PANE_ID);
+      documents.unregisterPaneEditorForDocument(PRIMARY_PANE_ID);
+      documents.unregisterPaneEditorForDocument(SECONDARY_PANE_ID);
       void paneControllers[PRIMARY_PANE_ID].editorLifecycleController.destroyEditor();
       void paneControllers[SECONDARY_PANE_ID].editorLifecycleController.destroyEditor();
     };
   });
 
+  // Selection tracking per pane (cursor save scheduling + related text update).
   function trackPaneSelection(paneId: PaneId) {
     return attachPaneSelectionTracking({
       paneId,
       isEditorReady: paneRuntimes[paneId].ui.isEditorReady,
       editorRoot: paneRuntimes[paneId].refs.editorRoot,
       isActivePaneInEditorMode: () => activePaneId === paneId && getPaneKind(paneId) === 'editor',
-      persistCursorPosition: () => schedulePaneCursorSave(paneId),
+      persistCursorPosition: () => documents.schedulePaneCursorSave(paneId),
       updateSelectedRelatedText: () => updateSelectedRelatedText(paneId),
-      flushPendingCursorSave: () => flushPaneCursorSave(paneId)
+      flushPendingCursorSave: () => documents.flushPaneCursorSave(paneId)
     });
   }
 
@@ -1849,24 +1030,24 @@
       <BottomBar
         forget={{
           canUnforget,
-          onForget: () => void clearNotepad(),
-          onUnforget: () => void unforgetNotepad()
+          onForget: () => void commands.clearNotepad(),
+          onUnforget: () => void commands.unforgetNotepad()
         }}
         remember={{
           rememberActions: $rememberActionOptions,
           defaultRememberActionId: $defaultRememberActionPreference,
           integrateEnabled: canIntegrate(),
           integrateDisabledReason: integrateDisabledReason(),
-          onRemember: (action) => void rememberCurrentNote(action)
+          onRemember: (action) => void commands.rememberCurrentNote(action)
         }}
         search={{
-          searchMode: $searchState.searchMode,
-          searchQuery: $searchState.searchQuery,
-          searchResults: $searchState.searchResults,
-          recentNotes: $searchState.recentNotes,
-          recentTasks: $searchState.recentTasks,
-          isSearching: $searchState.isSearching,
-          focusRequest: $searchState.focusRequest,
+          searchMode: searchState.searchMode,
+          searchQuery: searchState.searchQuery,
+          searchResults: searchState.searchResults,
+          recentNotes: searchState.recentNotes,
+          recentTasks: searchState.recentTasks,
+          isSearching: searchState.isSearching,
+          focusRequest: searchState.focusRequest,
           onSearchInput: handleSearchInput,
           onSearchModeChange: handleSearchModeChange,
           onSearchSelect: (result) =>
@@ -1884,7 +1065,7 @@
           onRecentNoteShortcut: (index) => void openRecentNoteByIndex(index),
           onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
           onSearchFocus: handleSearchFocus,
-          onCommand: (command) => handleBottomBarCommand(command)
+          onCommand: (command) => commands.handleBottomBarCommand(command)
         }}
       />
     </div>
@@ -1998,4 +1179,3 @@
     onSelect={(suggestion) => handleWikilinkSuggestionSelect(SECONDARY_PANE_ID, suggestion.value)}
   />
 </div>
-

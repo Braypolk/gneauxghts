@@ -13,9 +13,16 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::Mutex,
+    thread,
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager};
+
+/// How often the background reconciliation loop sweeps the vault on disk
+/// to catch any events the file-system watcher may have missed. The
+/// foreground hot path (search/recents/wikilinks) never blocks on this
+/// scan; it only consumes the watcher dirty-path queue.
+const BACKGROUND_RECONCILE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Window during which a watcher event for a path written by this app is
 /// treated as a self-save and ignored. The watcher would otherwise re-read
@@ -83,7 +90,31 @@ pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherH
     watcher
         .watch(&notes_dir, RecursiveMode::Recursive)
         .map_err(|err| err.to_string())?;
+    spawn_background_reconcile_loop(app_handle);
     Ok(VaultWatcherHandle { watcher })
+}
+
+/// Periodic full-vault rescan that runs entirely off the request path.
+/// Catches up on file-system events the OS watcher dropped (e.g. on
+/// network shares, large bursts) without ever blocking a search or focus
+/// command. The thread is detached: it lives for the rest of the
+/// process and exits naturally when the host process tears down.
+fn spawn_background_reconcile_loop(app_handle: AppHandle) {
+    thread::spawn(move || loop {
+        thread::sleep(BACKGROUND_RECONCILE_INTERVAL);
+        let Some(state) = app_handle.try_state::<crate::index::AppState>() else {
+            continue;
+        };
+        let Ok(notes_dir) = notes_root() else {
+            continue;
+        };
+        if !notes_dir.exists() {
+            continue;
+        }
+        if let Err(error) = state.reconcile_full_vault_scan(&notes_dir) {
+            eprintln!("vault reconcile error: {error}");
+        }
+    });
 }
 
 fn handle_watch_result(

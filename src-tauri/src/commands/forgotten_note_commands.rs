@@ -57,14 +57,6 @@ pub(crate) fn forget_note(
             fs::write(&forgotten_path, &forgotten_markdown).map_err(|err| err.to_string())?;
         }
 
-        super::reconcile_note_task_timestamps(
-            &mut persisted_state,
-            Some(note_path.as_path()),
-            previous_note.as_ref(),
-            None,
-            None,
-            current_time_millis()?,
-        );
         let raw_path = note_path.to_string_lossy().into_owned();
         let note_id = previous_note
             .as_ref()
