@@ -36,7 +36,7 @@ pub(crate) fn list_recent_notes(
     limit: usize,
     current_path: Option<String>,
 ) -> Result<Vec<NoteSearchResult>, String> {
-    let notes_dir = prepare_notes_dir(true)?;
+    let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let mut persisted_state = read_state(&notes_dir)?;

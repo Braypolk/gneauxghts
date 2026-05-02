@@ -8,10 +8,61 @@ use notify::{
     Watcher,
 };
 use serde::Serialize;
-use std::{collections::HashSet, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub(crate) const VAULT_NOTE_CHANGED_EVENT: &str = "vault-note-changed";
+
+/// Window during which a watcher event for a path written by this app is
+/// treated as a self-save and ignored. The watcher would otherwise re-read
+/// the file, queue a redundant semantic indexing job, mark the in-memory
+/// index dirty, and emit a frontend event for our own write.
+const SELF_SAVE_DEDUPE_WINDOW: Duration = Duration::from_millis(2_500);
+
+static RECENT_SELF_SAVES: Mutex<Option<HashMap<PathBuf, Instant>>> = Mutex::new(None);
+
+/// Mark `path` as recently written by the app itself. Subsequent watcher
+/// events that arrive within [`SELF_SAVE_DEDUPE_WINDOW`] for the same path
+/// are skipped.
+pub(crate) fn record_self_save(path: &Path) {
+    let now = Instant::now();
+    let Ok(mut guard) = RECENT_SELF_SAVES.lock() else {
+        return;
+    };
+    let entry = guard.get_or_insert_with(HashMap::new);
+    prune_self_save_map(entry, now);
+    entry.insert(path.to_path_buf(), now);
+}
+
+fn consume_self_save(path: &Path) -> bool {
+    let now = Instant::now();
+    let Ok(mut guard) = RECENT_SELF_SAVES.lock() else {
+        return false;
+    };
+    let Some(entry) = guard.as_mut() else {
+        return false;
+    };
+    prune_self_save_map(entry, now);
+    if let Some(stamp) = entry.get(path) {
+        if now.duration_since(*stamp) <= SELF_SAVE_DEDUPE_WINDOW {
+            // Leave the entry in place: a single save on disk often produces
+            // multiple `notify` events (Create + Modify(Data) + Modify(Any))
+            // and we want to swallow all of them inside the window.
+            return true;
+        }
+    }
+    false
+}
+
+fn prune_self_save_map(entry: &mut HashMap<PathBuf, Instant>, now: Instant) {
+    entry.retain(|_, stamp| now.duration_since(*stamp) <= SELF_SAVE_DEDUPE_WINDOW);
+}
 
 #[allow(dead_code)]
 pub(crate) struct VaultWatcherHandle {
@@ -64,6 +115,13 @@ fn handle_watch_result(
 
     for path in event.paths {
         if !seen_paths.insert(path.clone()) || !is_watchable_markdown_path(&path, &notes_dir) {
+            continue;
+        }
+        if consume_self_save(&path) {
+            // The app just wrote this file itself; the in-memory index has
+            // already been updated and the semantic queue already has the
+            // post-save markdown. Skip the redundant reread and event
+            // amplification.
             continue;
         }
         handle_watched_path_change(app_handle, &state, &notes_dir, &path)?;

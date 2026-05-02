@@ -107,7 +107,9 @@ pub(crate) fn persist_note_session_with_outcome(
     current_path: Option<String>,
     mode: NotePersistenceMode,
 ) -> Result<PersistNoteOutcome, String> {
-    let notes_dir = prepare_notes_dir(true)?;
+    // Save is a hot path; the throttled forgotten-note cleanup runs from
+    // explicit forgotten-note commands and at startup instead.
+    let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let previous_note = current_path
         .as_deref()

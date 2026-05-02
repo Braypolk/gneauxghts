@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Columns2, X } from 'lucide-svelte';
   import SplitPaneContentPicker from '$lib/features/notepad/SplitPaneContentPicker.svelte';
+  import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
   import type { SplitChoice } from '$lib/features/notepad/splitPanePicker';
@@ -29,6 +30,18 @@ export interface PaneViewModel {
   splitPickerHighlightedIndex: number;
   splitPickerCurrentNoteLabel: string;
   splitPickerPreviousNoteLabel: string | null;
+  /**
+   * Editor lifecycle hooks for the use:editor action wired on the editor
+   * root. When shouldMount is true, the action invokes mount() once the
+   * root node is in the DOM; when shouldMount drops to false, it calls
+   * destroy(). The action also calls destroy() if the host node is
+   * unmounted while the editor is still mounted.
+   */
+  editorLifecycle: {
+    shouldMount: boolean;
+    mount: (node: HTMLDivElement) => Promise<void> | void;
+    destroy: () => Promise<void> | void;
+  };
 }
 
 /**
@@ -126,7 +139,11 @@ let {
             </div>
           {/if}
 
-          <div bind:this={pane.refs.editorRoot} class="h-full min-h-full"></div>
+          <div
+            bind:this={pane.refs.editorRoot}
+            class="h-full min-h-full"
+            use:editorAction={viewModel.editorLifecycle}
+          ></div>
         </div>
       </div>
     {:else}

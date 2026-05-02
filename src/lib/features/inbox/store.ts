@@ -9,8 +9,14 @@ import {
   getApprovedChangesForSession,
   syncProposalSessionFromInboxItem
 } from '$lib/features/proposals/session';
-import type { ClearInboxResult, InboxItemDetail, InboxListItem } from '$lib/types/ai';
+import type {
+  ClearInboxResult,
+  InboxItemDetail,
+  InboxListItem,
+  InboxMutationDelta
+} from '$lib/types/ai';
 import {
+  applyInboxListSnapshot,
   initializeInboxListResource,
   refreshInboxList,
   subscribeInboxListResource,
@@ -230,6 +236,27 @@ export function createInboxStore() {
     await refreshInboxList({ background });
   }
 
+  function applyInboxMutationDelta(delta: InboxMutationDelta) {
+    applyInboxListSnapshot(delta.items);
+    if (delta.item) {
+      setSelectedItem(delta.item, { preserveSelections: false });
+    } else {
+      // The mutation removed the selected item from the inbox; pick the
+      // next available item (or clear) using the canonical list we just
+      // applied.
+      const fallback = delta.items[0]?.id ?? null;
+      if (fallback === null) {
+        activeDetailRequest += 1;
+        selectedListItemVersion = null;
+        patch({ selectedId: null, selectedItem: null });
+        clearProposalSession();
+      } else {
+        void selectInboxItem(fallback, { preserveSelections: false });
+      }
+    }
+    latestListFingerprint = listFingerprint(delta.items);
+  }
+
   async function runInboxAction(
     command: 'approve_inbox_item' | 'reject_inbox_item' | 'retry_inbox_item'
   ) {
@@ -240,8 +267,9 @@ export function createInboxStore() {
 
     patch({ isMutating: true });
     try {
-      await invoke<InboxItemDetail | null>(command, { id: selectedId });
-      await loadInbox({ background: false });
+      const delta = await invoke<InboxMutationDelta>(command, { id: selectedId });
+      applyInboxMutationDelta(delta);
+      patch({ errorMessage: '' });
     } catch (error) {
       console.error(`Failed to run ${command}:`, error);
       patch({ errorMessage: 'Unable to update the Inbox item.' });
@@ -253,8 +281,11 @@ export function createInboxStore() {
   async function clearInbox() {
     patch({ isMutating: true });
     try {
-      await invoke<ClearInboxResult>('clear_inbox');
-      await loadInbox({ background: false });
+      const result = await invoke<ClearInboxResult>('clear_inbox');
+      applyInboxListSnapshot(result.items);
+      latestListFingerprint = listFingerprint(result.items);
+      // Selection may now point at an item that no longer exists; sync.
+      await syncSelectedInboxItem(result.items);
       patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to clear inbox:', error);
@@ -273,16 +304,15 @@ export function createInboxStore() {
     patch({ isMutating: true });
     try {
       const changes = getApprovedChangesForSession(get(activeProposalSession));
-      if (changes.length === 0) {
-        await invoke<InboxItemDetail | null>('reject_inbox_item', { id: selectedId });
-      } else {
-        await invoke<InboxItemDetail | null>('approve_inbox_item_with_changes', {
-          id: selectedId,
-          changes
-        });
-      }
+      const delta =
+        changes.length === 0
+          ? await invoke<InboxMutationDelta>('reject_inbox_item', { id: selectedId })
+          : await invoke<InboxMutationDelta>('approve_inbox_item_with_changes', {
+              id: selectedId,
+              changes
+            });
       clearProposalSession();
-      await loadInbox({ background: false });
+      applyInboxMutationDelta(delta);
     } catch (error) {
       console.error('Failed to approve edited changes:', error);
       patch({ errorMessage: 'Unable to approve the selected changes.' });

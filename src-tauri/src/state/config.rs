@@ -88,7 +88,6 @@ pub(crate) fn default_notes_root() -> Result<PathBuf, String> {
     Ok(home.join("Documents").join(NOTES_DIRECTORY_NAME))
 }
 
-
 pub(crate) fn read_vault_config() -> Result<VaultConfig, String> {
     let path = vault_config_path()?;
     if !path.is_file() {

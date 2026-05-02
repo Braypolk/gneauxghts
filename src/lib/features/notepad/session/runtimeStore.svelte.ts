@@ -1,6 +1,6 @@
-import type { EditorSnapshot, SharedEditorResources } from '$lib/features/notepad/editor/editor';
+import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
-import { createNotepadState, type NoteKey } from '$lib/features/notepad/state/noteStore';
+import { createNotepadState } from '$lib/features/notepad/state/noteStore';
 
 export const PRIMARY_PANE_ID = 'notepad-primary' as const;
 export const SECONDARY_PANE_ID = 'notepad-secondary' as const;
@@ -17,21 +17,13 @@ export const notepadRuntimeState = $state({
 
 export const notepadState = notepadRuntimeState.notepadState;
 
-export const sharedEditorResourcesByNoteKey = new Map<NoteKey, SharedEditorResources>();
-export const sharedEditorStateByNoteKey = new Map<NoteKey, EditorSnapshot | null>();
-export const sharedEditorStateGenerationByNoteKey = new Map<NoteKey, number>();
-export const noteSaveTimers = new Map<NoteKey, ReturnType<typeof window.setTimeout>>();
-export const noteSaveQueues = new Map<NoteKey, Promise<void>>();
-export const documentSyncFrameIds = new Map<NoteKey, number>();
-
 export function updateSharedEditorResourceConfig(
   assetRootPath: string | null,
   storePastedImage: (file: File) => Promise<StoredImageAsset>
 ) {
   notepadRuntimeState.assetRootPath = assetRootPath;
 
-  for (const resources of sharedEditorResourcesByNoteKey.values()) {
-    resources.imagesConfig.assetRootPath = assetRootPath;
-    resources.imagesConfig.storePastedImage = storePastedImage;
+  for (const runtime of documentRegistry.values()) {
+    runtime.applyResourceConfig(assetRootPath, storePastedImage);
   }
 }

@@ -1,3 +1,4 @@
+import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
 import {
   shouldSkipAutosave,
   type SessionSnapshot,
@@ -11,8 +12,6 @@ import {
 
 export interface PersistenceControllerParams {
   getDocumentSession: () => NoteDraftState;
-  timers: Map<NoteKey, ReturnType<typeof window.setTimeout>>;
-  queues: Map<NoteKey, Promise<void>>;
   saveNoteSession: (
     title: string,
     markdown: string,
@@ -22,6 +21,10 @@ export interface PersistenceControllerParams {
     note: NoteDraftState,
     snapshot: SessionSnapshot,
   ) => NoteDraftState;
+  /** @deprecated retained for backward compatibility; per-note timers now live in DocumentRegistry. */
+  timers?: Map<NoteKey, ReturnType<typeof window.setTimeout>>;
+  /** @deprecated retained for backward compatibility; per-note queues now live in DocumentRegistry. */
+  queues?: Map<NoteKey, Promise<void>>;
 }
 
 export function createNotepadPersistenceController(
@@ -43,21 +46,23 @@ export function createNotepadPersistenceController(
     note.operationRevision += 1;
   }
 
-  function getNoteSaveQueue(noteKey: NoteKey) {
-    return params.queues.get(noteKey) ?? Promise.resolve();
+  function getNoteSaveQueue(noteKey: NoteDraftState["key"]) {
+    return documentRegistry.get(noteKey)?.getSaveQueue() ?? Promise.resolve();
   }
 
   function queueNoteOperation(
     note: NoteDraftState,
     operation: () => Promise<void>,
   ) {
-    const queue = getNoteSaveQueue(note.key)
+    const runtime = documentRegistry.ensure(note.key);
+    const queue = runtime
+      .getSaveQueue()
       .then(operation)
       .catch((error) => {
         console.error("Notepad note operation failed:", error);
         setNoteStatus(note, "error");
       });
-    params.queues.set(note.key, queue);
+    runtime.setSaveQueue(queue);
     return queue;
   }
 
@@ -98,23 +103,17 @@ export function createNotepadPersistenceController(
   function cancelPendingAutosave(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    const pendingTimer = params.timers.get(note.key);
-    if (!pendingTimer) {
-      return;
-    }
-
-    window.clearTimeout(pendingTimer);
-    params.timers.delete(note.key);
+    documentRegistry.get(note.key)?.clearSaveTimer();
   }
 
   function scheduleAutosave(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    cancelPendingAutosave(note);
-    params.timers.set(
-      note.key,
+    const runtime = documentRegistry.ensure(note.key);
+    runtime.clearSaveTimer();
+    runtime.setSaveTimer(
       window.setTimeout(() => {
-        params.timers.delete(note.key);
+        runtime.clearSaveTimer();
         void enqueueSave(note);
       }, 1000),
     );
@@ -129,14 +128,22 @@ export function createNotepadPersistenceController(
   function flushPendingAutosave(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    const pendingTimer = params.timers.get(note.key);
-    if (!pendingTimer) {
+    const runtime = documentRegistry.get(note.key);
+    if (!runtime || runtime.getSaveTimer() === null) {
       return;
     }
 
-    window.clearTimeout(pendingTimer);
-    params.timers.delete(note.key);
+    runtime.clearSaveTimer();
     void enqueueSave(note);
+  }
+
+  /** Iterate every running save queue and await it. */
+  async function awaitAllSaveQueues() {
+    const queues: Promise<void>[] = [];
+    for (const runtime of documentRegistry.values()) {
+      queues.push(runtime.getSaveQueue());
+    }
+    await Promise.all(queues);
   }
 
   return {
@@ -149,5 +156,6 @@ export function createNotepadPersistenceController(
     persistNote,
     queueNoteOperation,
     scheduleAutosave,
+    awaitAllSaveQueues,
   };
 }

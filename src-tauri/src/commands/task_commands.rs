@@ -1,7 +1,7 @@
 use super::index_bridge::upsert_notes_index_entry;
 use super::{
     current_time_millis, prepare_notes_dir, RecentTaskItem, TaskFilter, TaskListItem,
-    INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+    TaskMutationDelta, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
 use crate::{
     index::{
@@ -9,8 +9,10 @@ use crate::{
         toggle_task_in_markdown, AppState, IndexedNote, NotesIndex,
     },
     state::{
-        push_unique, read_state, resolve_note_path_by_id, validate_current_path, write_state,
-        PersistedState, PersistedTaskTimestamps,
+        db_remove_task_timestamp, db_set_hidden_task_key, db_set_note_collapsed,
+        db_set_note_hidden, db_set_note_order, db_upsert_task_timestamp, read_state,
+        resolve_note_path_by_id, validate_current_path, write_state, PersistedState,
+        PersistedTaskTimestamps,
     },
 };
 use std::{
@@ -260,66 +262,58 @@ pub(super) fn list_tasks(
 }
 
 pub(super) fn set_task_hidden(task_key: String, hidden: bool) -> Result<(), String> {
-    let notes_dir = prepare_notes_dir(false)?;
-
-    let mut state = read_state(&notes_dir)?;
-    if hidden {
-        push_unique(&mut state.hidden_task_keys, task_key);
-    } else {
-        state
-            .hidden_task_keys
-            .retain(|existing_key| existing_key != &task_key);
+    // Row-scoped write: avoids the previous full DELETE+INSERT rewrite of
+    // every app-state table. Empty / whitespace-only keys are still ignored
+    // for parity with the old `dedupe_hidden_task_keys` pruning behaviour.
+    let _ = prepare_notes_dir(false)?;
+    if task_key.is_empty() {
+        return Ok(());
     }
-    write_state(&notes_dir, &state)
+    db_set_hidden_task_key(&task_key, hidden)
 }
 
 pub(super) fn set_note_hidden(note_id: String, hidden: bool) -> Result<(), String> {
-    let notes_dir = prepare_notes_dir(false)?;
-
-    let mut state = read_state(&notes_dir)?;
-    if hidden {
-        push_unique(&mut state.hidden_note_ids, note_id);
-    } else {
-        state
-            .hidden_note_ids
-            .retain(|existing_note_id| existing_note_id != &note_id);
-    }
-    write_state(&notes_dir, &state)
+    let _ = prepare_notes_dir(false)?;
+    db_set_note_hidden(&note_id, hidden)
 }
 
 pub(super) fn set_note_collapsed(note_id: String, collapsed: bool) -> Result<(), String> {
-    let notes_dir = prepare_notes_dir(false)?;
-
-    let mut state = read_state(&notes_dir)?;
-    if collapsed {
-        push_unique(&mut state.collapsed_note_ids, note_id);
-    } else {
-        state
-            .collapsed_note_ids
-            .retain(|existing_note_id| existing_note_id != &note_id);
-    }
-    write_state(&notes_dir, &state)
+    let _ = prepare_notes_dir(false)?;
+    db_set_note_collapsed(&note_id, collapsed)
 }
 
-pub(super) fn set_note_order(note_ids: Vec<String>) -> Result<(), String> {
+pub(super) fn set_note_order(
+    state: State<'_, AppState>,
+    note_ids: Vec<String>,
+) -> Result<(), String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let mut normalized_note_ids = Vec::new();
     let mut seen = HashSet::new();
 
     for note_id in note_ids {
-        let Some(_validated_path) = resolve_note_path_by_id(&notes_dir, &note_id)? else {
-            continue;
-        };
-
-        if seen.insert(note_id.clone()) {
-            normalized_note_ids.push(note_id);
+        if !seen.contains(&note_id) {
+            let resolved = {
+                let index_lookup = state
+                    .notes_index
+                    .lock()
+                    .ok()
+                    .and_then(|index| index.path_for_note_id(&note_id).cloned());
+                match index_lookup {
+                    Some(path) => Some(path),
+                    None => resolve_note_path_by_id(&notes_dir, &note_id)?,
+                }
+            };
+            if resolved.is_none() {
+                continue;
+            }
+            if seen.insert(note_id.clone()) {
+                normalized_note_ids.push(note_id);
+            }
         }
     }
 
-    let mut state = read_state(&notes_dir)?;
-    state.note_order_note_ids = normalized_note_ids;
-    write_state(&notes_dir, &state)
+    db_set_note_order(&normalized_note_ids)
 }
 
 pub(super) fn toggle_task(
@@ -327,39 +321,50 @@ pub(super) fn toggle_task(
     note_path: String,
     line_number: usize,
     task_text: String,
-) -> Result<(), String> {
+) -> Result<TaskMutationDelta, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let note_path = validate_current_path(Some(note_path), &notes_dir)?
         .ok_or_else(|| "Missing note path".to_string())?;
     let markdown = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
     let updated_markdown = toggle_task_in_markdown(&markdown, line_number, &task_text)?;
+    crate::vault_watcher::record_self_save(&note_path);
     fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
     let timestamp_millis = current_time_millis()?;
     let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
-    let Some(toggled_task_key) =
-        find_task_key_for_line(&note_path, &updated_note, line_number, &task_text)
-    else {
-        upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
-        return Ok(());
-    };
+    let toggled_task_key =
+        find_task_key_for_line(&note_path, &updated_note, line_number, &task_text);
 
-    let mut persisted_state = read_state(&notes_dir)?;
-    let fallback_timestamp = updated_note.modified_millis;
-    let timestamps = persisted_state
-        .task_timestamps
-        .entry(toggled_task_key)
-        .or_insert(PersistedTaskTimestamps {
-            created_at_millis: fallback_timestamp,
-            updated_at_millis: fallback_timestamp,
-        });
-    timestamps.updated_at_millis = timestamp_millis;
-    write_state(&notes_dir, &persisted_state)?;
-    upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
+    if let Some(toggled_task_key) = toggled_task_key.as_ref() {
+        // Row-scoped upsert of the toggled task timestamp; no need to rewrite every
+        // app-state table on a single task toggle.
+        let mut persisted_state = read_state(&notes_dir)?;
+        let fallback_timestamp = updated_note.modified_millis;
+        let timestamps = persisted_state
+            .task_timestamps
+            .entry(toggled_task_key.clone())
+            .or_insert(PersistedTaskTimestamps {
+                created_at_millis: fallback_timestamp,
+                updated_at_millis: fallback_timestamp,
+            });
+        timestamps.updated_at_millis = timestamp_millis;
+        let updated_timestamps = timestamps.clone();
+        db_upsert_task_timestamp(toggled_task_key, &updated_timestamps)?;
+    }
+
+    upsert_notes_index_entry(&state, note_path.clone(), updated_note.clone())?;
     state
         .semantic
         .queue_note_update(&note_path, updated_markdown, timestamp_millis)?;
-    Ok(())
+
+    let delta = build_task_mutation_delta(
+        &notes_dir,
+        &note_path,
+        &updated_note,
+        toggled_task_key,
+        false,
+    )?;
+    Ok(delta)
 }
 
 pub(super) fn delete_task(
@@ -368,29 +373,94 @@ pub(super) fn delete_task(
     line_number: usize,
     task_text: String,
     task_key: String,
-) -> Result<(), String> {
+) -> Result<TaskMutationDelta, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let note_path = validate_current_path(Some(note_path), &notes_dir)?
         .ok_or_else(|| "Missing note path".to_string())?;
     let markdown = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
     let updated_markdown = delete_task_in_markdown(&markdown, line_number, &task_text)?;
+    crate::vault_watcher::record_self_save(&note_path);
     fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
     let timestamp_millis = current_time_millis()?;
     let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
-    upsert_notes_index_entry(&state, note_path.clone(), updated_note)?;
+    upsert_notes_index_entry(&state, note_path.clone(), updated_note.clone())?;
 
-    let mut persisted_state = read_state(&notes_dir)?;
-    persisted_state
-        .hidden_task_keys
-        .retain(|key| key != &task_key);
-    persisted_state.task_timestamps.remove(&task_key);
-    write_state(&notes_dir, &persisted_state)?;
+    // Row-scoped: clear hidden flag + drop the timestamp for the deleted task
+    // without rewriting the rest of app-state.
+    db_set_hidden_task_key(&task_key, false)?;
+    db_remove_task_timestamp(&task_key)?;
 
     state
         .semantic
         .queue_note_update(&note_path, updated_markdown, timestamp_millis)?;
-    Ok(())
+
+    let delta =
+        build_task_mutation_delta(&notes_dir, &note_path, &updated_note, Some(task_key), true)?;
+    Ok(delta)
+}
+
+fn build_task_mutation_delta(
+    notes_dir: &Path,
+    note_path: &Path,
+    updated_note: &IndexedNote,
+    affected_task_key: Option<String>,
+    removed: bool,
+) -> Result<TaskMutationDelta, String> {
+    let persisted_state = read_state(notes_dir)?;
+    let raw_path = note_path.to_string_lossy().into_owned();
+    let hidden_task_keys = persisted_state
+        .hidden_task_keys
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let note_hidden = persisted_state
+        .hidden_note_ids
+        .iter()
+        .any(|note_id| note_id == &updated_note.note_id);
+    let note_collapsed = persisted_state
+        .collapsed_note_ids
+        .iter()
+        .any(|note_id| note_id == &updated_note.note_id);
+
+    let mut note_tasks = Vec::with_capacity(updated_note.tasks.len());
+    for task in &updated_note.tasks {
+        let key = task_key(&updated_note.note_id, task);
+        let timestamps = persisted_state
+            .task_timestamps
+            .get(&key)
+            .cloned()
+            .unwrap_or(PersistedTaskTimestamps {
+                created_at_millis: updated_note.modified_millis,
+                updated_at_millis: updated_note.modified_millis,
+            });
+        note_tasks.push(TaskListItem {
+            note_id: updated_note.note_id.clone(),
+            task_key: key.clone(),
+            note_path: raw_path.clone(),
+            file_name: updated_note.file_name.clone(),
+            note_title: updated_note.title.clone(),
+            section_label: task.section_label.clone(),
+            text: task.text.clone(),
+            completed: task.completed,
+            hidden: hidden_task_keys.contains(key.as_str()),
+            note_hidden,
+            note_collapsed,
+            depth: task.depth,
+            line_number: task.line_number,
+            editor_line_number: task.editor_line_number,
+            created_at_millis: timestamps.created_at_millis,
+            updated_at_millis: timestamps.updated_at_millis,
+        });
+    }
+
+    Ok(TaskMutationDelta {
+        note_id: updated_note.note_id.clone(),
+        note_path: raw_path,
+        note_tasks,
+        affected_task_key,
+        removed,
+    })
 }
 
 pub(super) fn reconcile_note_task_timestamps(

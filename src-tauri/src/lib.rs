@@ -14,9 +14,7 @@ mod vault_watcher;
 
 use index::AppState;
 use semantic::SemanticState;
-use state::{
-    initialize_app_data_dir, initialize_documents_dir, notes_root,
-};
+use state::{initialize_app_data_dir, initialize_documents_dir, notes_root};
 use std::path::PathBuf;
 use tauri::{Manager, RunEvent};
 
@@ -40,6 +38,10 @@ pub fn run() {
             app.manage(AppState::new(semantic)?);
             app.manage(ai::AiState::new(app.handle().clone())?);
             app.manage(vault_watcher::start_vault_watcher(app.handle().clone())?);
+            // Run the forgotten-note cleanup once at startup so we still purge
+            // expired entries even though we no longer trigger it on every
+            // save/open/list hot path.
+            let _ = commands::startup_cleanup_expired_forgotten_notes();
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())

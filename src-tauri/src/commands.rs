@@ -9,9 +9,12 @@ mod task_commands;
 pub(crate) mod wikilink_commands;
 
 pub(crate) use note_session::{
-    load_note_session_from_notes_dir, open_note_from_notes_dir, read_note_session_from_path,
-    resolve_note_path_input,
+    load_note_session_from_notes_dir_with_state, open_note_from_notes_dir_with_state,
+    read_note_session_from_path, resolve_note_path_input_with_state,
 };
+
+#[cfg(test)]
+pub(crate) use note_session::{load_note_session_from_notes_dir, open_note_from_notes_dir};
 
 use crate::{
     index::AppState,
@@ -114,6 +117,28 @@ pub(crate) struct TaskListItem {
     updated_at_millis: u64,
 }
 
+/// Delta returned by task mutation commands so the frontend can update its
+/// store without re-fetching the full master task list. `note_tasks`
+/// contains the canonical task items for the note that was mutated, in the
+/// order they appear in the index. The frontend replaces all tasks for
+/// `note_id` with these and merges them back into its sorted list.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskMutationDelta {
+    pub(crate) note_id: String,
+    pub(crate) note_path: String,
+    pub(crate) note_tasks: Vec<TaskListItem>,
+    /// Task key that was directly affected by the mutation, when known.
+    /// For toggle this is the toggled task's key (which may differ from the
+    /// frontend's pre-mutation key if the note was rewritten on disk).
+    /// For delete this is the deleted task's key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) affected_task_key: Option<String>,
+    /// True when the mutation removed the task. Helpful for the frontend to
+    /// drop the row instead of relying on the absence of a key in `note_tasks`.
+    pub(crate) removed: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecentTaskItem {
@@ -146,38 +171,85 @@ pub(crate) struct RestoredForgottenNote {
     title: String,
 }
 
+/// Minimum interval between background passes of `cleanup_expired_forgotten_notes`.
+/// The cleanup used to run on every save/open/list invocation; throttling it
+/// keeps it off interactive hot paths while still giving the same eventual
+/// purge guarantees.
+const FORGOTTEN_NOTE_CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 5);
+
+static LAST_FORGOTTEN_NOTE_CLEANUP_AT: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+
+fn maybe_run_forgotten_note_cleanup(notes_dir: &Path) -> Result<(), String> {
+    let mut last = LAST_FORGOTTEN_NOTE_CLEANUP_AT
+        .lock()
+        .map_err(|_| "Forgotten note cleanup lock poisoned".to_string())?;
+    let due = last
+        .map(|previous| previous.elapsed() >= FORGOTTEN_NOTE_CLEANUP_INTERVAL)
+        .unwrap_or(true);
+    if !due {
+        return Ok(());
+    }
+    *last = Some(std::time::Instant::now());
+    drop(last);
+    forgotten_note_commands::cleanup_expired_forgotten_notes(notes_dir)
+}
+
+pub(crate) fn startup_cleanup_expired_forgotten_notes() -> Result<(), String> {
+    let notes_dir = notes_root()?;
+    fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
+    let mut last = LAST_FORGOTTEN_NOTE_CLEANUP_AT
+        .lock()
+        .map_err(|_| "Forgotten note cleanup lock poisoned".to_string())?;
+    *last = Some(std::time::Instant::now());
+    drop(last);
+    forgotten_note_commands::cleanup_expired_forgotten_notes(&notes_dir)
+}
+
 fn prepare_notes_dir(cleanup_forgotten_notes: bool) -> Result<PathBuf, String> {
+    prepare_notes_dir_with_state(cleanup_forgotten_notes, None)
+}
+
+fn prepare_notes_dir_with_state(
+    cleanup_forgotten_notes: bool,
+    _state: Option<&State<'_, AppState>>,
+) -> Result<PathBuf, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
     if cleanup_forgotten_notes {
-        forgotten_note_commands::cleanup_expired_forgotten_notes(&notes_dir)?;
+        // The previous behaviour ran the full forgotten-note cleanup on every
+        // save/open/list invocation. We now throttle to a background cadence
+        // so common interactive commands no longer pay for it.
+        maybe_run_forgotten_note_cleanup(&notes_dir)?;
     }
     Ok(notes_dir)
 }
 
 #[tauri::command]
-pub(crate) fn load_note_session() -> Result<NoteSession, String> {
-    let notes_dir = prepare_notes_dir(true)?;
-    load_note_session_from_notes_dir(&notes_dir)
+pub(crate) fn load_note_session(state: State<'_, AppState>) -> Result<NoteSession, String> {
+    let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
+    load_note_session_from_notes_dir_with_state(&notes_dir, Some(&state))
 }
 
 #[tauri::command]
 pub(crate) fn open_note(
+    state: State<'_, AppState>,
     note_id: Option<String>,
     path: Option<String>,
 ) -> Result<NoteSession, String> {
-    let notes_dir = prepare_notes_dir(false)?;
-    open_note_from_notes_dir(&notes_dir, note_id, path)
+    let notes_dir = prepare_notes_dir_with_state(false, Some(&state))?;
+    open_note_from_notes_dir_with_state(&notes_dir, note_id, path, Some(&state))
 }
 
 #[tauri::command]
 pub(crate) fn read_note(
+    state: State<'_, AppState>,
     note_id: Option<String>,
     path: Option<String>,
 ) -> Result<NoteSession, String> {
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir_with_state(false, Some(&state))?;
 
-    let note_path = resolve_note_path_input(&notes_dir, note_id, path)?;
+    let note_path = resolve_note_path_input_with_state(&notes_dir, note_id, path, Some(&state))?;
 
     read_note_session_from_path(&note_path)
 }
@@ -262,8 +334,11 @@ pub(crate) fn set_note_collapsed(note_id: String, collapsed: bool) -> Result<(),
 }
 
 #[tauri::command]
-pub(crate) fn set_note_order(note_ids: Vec<String>) -> Result<(), String> {
-    set_note_order_impl(note_ids)
+pub(crate) fn set_note_order(
+    state: State<'_, AppState>,
+    note_ids: Vec<String>,
+) -> Result<(), String> {
+    set_note_order_impl(state, note_ids)
 }
 
 #[tauri::command]
@@ -272,7 +347,7 @@ pub(crate) fn toggle_task(
     note_path: String,
     line_number: usize,
     task_text: String,
-) -> Result<(), String> {
+) -> Result<TaskMutationDelta, String> {
     toggle_task_impl(state, note_path, line_number, task_text)
 }
 
@@ -283,7 +358,7 @@ pub(crate) fn delete_task(
     line_number: usize,
     task_text: String,
     task_key: String,
-) -> Result<(), String> {
+) -> Result<TaskMutationDelta, String> {
     delete_task_impl(state, note_path, line_number, task_text, task_key)
 }
 
@@ -483,11 +558,11 @@ mod tests {
         let current_path = PathBuf::from("/tmp/current.md");
         let other_path = PathBuf::from("/tmp/other.md");
         let mut index = NotesIndex::default();
-        index.entries.insert(
+        index.upsert_note(
             current_path.clone(),
             build_indexed_note(&current_path, "# Current\n\nBody", 10),
         );
-        index.entries.insert(
+        index.upsert_note(
             other_path.clone(),
             build_indexed_note(&other_path, "# Other\n\nElsewhere", 20),
         );

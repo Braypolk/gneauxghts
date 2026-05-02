@@ -219,6 +219,7 @@ impl AppState {
 #[derive(Default)]
 pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
+    by_id: HashMap<String, PathBuf>,
     last_refresh_at: Option<Instant>,
     revision: u64,
 }
@@ -271,14 +272,14 @@ impl NotesIndex {
             return false;
         }
 
-        self.entries.insert(path, note);
+        self.insert_entry(path, note);
         self.last_refresh_at = Some(Instant::now());
         self.revision = self.revision.wrapping_add(1);
         true
     }
 
     pub(crate) fn remove_note(&mut self, path: &Path) -> bool {
-        if self.entries.remove(path).is_none() {
+        if self.remove_entry(path).is_none() {
             return false;
         }
         self.last_refresh_at = Some(Instant::now());
@@ -290,10 +291,35 @@ impl NotesIndex {
         self.revision
     }
 
+    pub(crate) fn path_for_note_id(&self, note_id: &str) -> Option<&PathBuf> {
+        self.by_id.get(note_id)
+    }
+
     pub(crate) fn get_note_by_note_id(&self, note_id: &str) -> Option<(&PathBuf, &IndexedNote)> {
-        self.entries
-            .iter()
-            .find(|(_, note)| note.note_id == note_id)
+        self.by_id
+            .get(note_id)
+            .and_then(|path| self.entries.get(path).map(|note| (path, note)))
+    }
+
+    fn insert_entry(&mut self, path: PathBuf, note: IndexedNote) {
+        if let Some(previous) = self.entries.get(&path) {
+            if previous.note_id != note.note_id {
+                let stale = self.by_id.get(&previous.note_id).cloned();
+                if stale.as_deref() == Some(path.as_path()) {
+                    self.by_id.remove(&previous.note_id);
+                }
+            }
+        }
+        self.by_id.insert(note.note_id.clone(), path.clone());
+        self.entries.insert(path, note);
+    }
+
+    fn remove_entry(&mut self, path: &Path) -> Option<IndexedNote> {
+        let removed = self.entries.remove(path)?;
+        if self.by_id.get(&removed.note_id).map(PathBuf::as_path) == Some(path) {
+            self.by_id.remove(&removed.note_id);
+        }
+        Some(removed)
     }
 
     fn apply_pending_updates(&mut self, updates: Vec<PendingIndexUpdate>) -> bool {
@@ -301,11 +327,11 @@ impl NotesIndex {
         for update in updates {
             match update {
                 PendingIndexUpdate::Upsert(path, note) => {
-                    self.entries.insert(path, note);
+                    self.insert_entry(path, note);
                     changed = true;
                 }
                 PendingIndexUpdate::Remove(path) => {
-                    changed = self.entries.remove(&path).is_some() || changed;
+                    changed = self.remove_entry(&path).is_some() || changed;
                 }
             }
         }
@@ -319,7 +345,7 @@ impl NotesIndex {
     ) -> bool {
         let mut changed = false;
         for (path, note) in updates {
-            self.entries.insert(path, note);
+            self.insert_entry(path, note);
             changed = true;
         }
 
@@ -330,7 +356,7 @@ impl NotesIndex {
             .cloned()
             .collect::<Vec<_>>();
         for stale_path in stale_paths {
-            changed = self.entries.remove(&stale_path).is_some() || changed;
+            changed = self.remove_entry(&stale_path).is_some() || changed;
         }
 
         self.mark_refreshed(changed);

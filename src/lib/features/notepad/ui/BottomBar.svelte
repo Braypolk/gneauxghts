@@ -11,66 +11,54 @@
     deriveBottomBarVisibleItems,
     type BottomBarVisibleItem
   } from '$lib/features/notepad/ui/bottomBarState';
-  import type { RecentTaskItem } from '$lib/features/notepad/model/types';
+  import type {
+    BottomBarForgetProps,
+    BottomBarRememberProps,
+    BottomBarSearchProps
+  } from '$lib/features/notepad/ui/bottomBarProps';
   import {
     rememberActionRequiresIntegrateSupport,
     type RememberActionOption
   } from '$lib/types/ai';
-  import type { SearchItem } from '$lib/types/semantic';
 
   interface Props {
-    canUnforget: boolean;
-    onForget: () => void;
-    onUnforget: () => void;
-    rememberActions: RememberActionOption[];
-    defaultRememberActionId: string;
-    integrateEnabled: boolean;
-    integrateDisabledReason: string | null;
-    onRemember: (action: RememberActionOption) => void;
-    searchMode: 'current' | 'all';
-    searchQuery: string;
-    searchResults: SearchItem[];
-    recentNotes: SearchItem[];
-    recentTasks: RecentTaskItem[];
-    isSearching: boolean;
-    onSearchInput: (value: string) => void;
-    onSearchModeChange: (mode: 'current' | 'all') => void | Promise<void>;
-    onSearchSelect: (result: SearchItem) => void;
-    onRecentNoteSelect: (result: SearchItem) => void;
-    onRecentTaskSelect: (task: RecentTaskItem) => void;
-    onRecentNoteShortcut: (index: number) => void | Promise<void>;
-    onRecentTaskShortcut: (index: number) => void | Promise<void>;
-    onSearchFocus: () => void;
-    onCommand?: (command: string) => boolean | Promise<boolean>;
-    focusRequest: number;
+    forget: BottomBarForgetProps;
+    remember: BottomBarRememberProps;
+    search: BottomBarSearchProps;
   }
 
   let {
-    canUnforget = false,
-    onForget,
-    onUnforget,
-    rememberActions,
-    defaultRememberActionId,
-    integrateEnabled,
-    integrateDisabledReason,
-    onRemember,
-    searchMode,
-    searchQuery,
-    searchResults,
-    recentNotes,
-    recentTasks,
-    isSearching,
-    onSearchInput,
-    onSearchModeChange,
-    onSearchSelect,
-    onRecentNoteSelect,
-    onRecentTaskSelect,
-    onRecentNoteShortcut,
-    onRecentTaskShortcut,
-    onSearchFocus,
-    onCommand,
-    focusRequest
+    forget,
+    remember,
+    search
   }: Props = $props();
+
+  const canUnforget = $derived(forget.canUnforget);
+  const onForget = $derived(forget.onForget);
+  const onUnforget = $derived(forget.onUnforget);
+
+  const rememberActions = $derived(remember.rememberActions);
+  const defaultRememberActionId = $derived(remember.defaultRememberActionId);
+  const integrateEnabled = $derived(remember.integrateEnabled);
+  const integrateDisabledReason = $derived(remember.integrateDisabledReason);
+  const onRemember = $derived(remember.onRemember);
+
+  const searchMode = $derived(search.searchMode);
+  const searchQuery = $derived(search.searchQuery);
+  const searchResults = $derived(search.searchResults);
+  const recentNotes = $derived(search.recentNotes);
+  const recentTasks = $derived(search.recentTasks);
+  const isSearching = $derived(search.isSearching);
+  const focusRequest = $derived(search.focusRequest);
+  const onSearchInput = $derived(search.onSearchInput);
+  const onSearchModeChange = $derived(search.onSearchModeChange);
+  const onSearchSelect = $derived(search.onSearchSelect);
+  const onRecentNoteSelect = $derived(search.onRecentNoteSelect);
+  const onRecentTaskSelect = $derived(search.onRecentTaskSelect);
+  const onRecentNoteShortcut = $derived(search.onRecentNoteShortcut);
+  const onRecentTaskShortcut = $derived(search.onRecentTaskShortcut);
+  const onSearchFocus = $derived(search.onSearchFocus);
+  const onCommand = $derived(search.onCommand);
 
   let searchInput = $state<HTMLInputElement | null>(null);
   let searchResultsViewport = $state<HTMLDivElement | null>(null);

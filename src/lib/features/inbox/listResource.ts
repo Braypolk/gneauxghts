@@ -29,6 +29,16 @@ function currentInboxItems() {
   return get(inboxListResource).items;
 }
 
+/**
+ * Apply a canonical inbox list returned by a mutation command directly to
+ * the resource. Bumps the request id so any in-flight refresh response is
+ * discarded — the snapshot is the authoritative state.
+ */
+export function applyInboxListSnapshot(items: InboxListItem[]): void {
+  activeRequest += 1;
+  patchInboxListResource({ items, errorMessage: '' });
+}
+
 export async function refreshInboxList({ background = false } = {}): Promise<InboxListItem[]> {
   const requestId = ++activeRequest;
 

@@ -67,6 +67,12 @@ export interface AiModelOption {
 export interface ClearInboxResult {
   cancelledJobs: number;
   removedJobs: number;
+  items: InboxListItem[];
+}
+
+export interface InboxMutationDelta {
+  item: InboxItemDetail | null;
+  items: InboxListItem[];
 }
 
 export interface AiDiagnosticsLastRun {

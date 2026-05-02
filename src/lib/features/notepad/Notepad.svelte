@@ -95,6 +95,7 @@
   import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
   import { createNotepadSearchStore } from '$lib/features/notepad/search/store';
   import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
+  import { attachPaneSelectionTracking } from '$lib/features/notepad/editor/paneSelectionTracking';
   import { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
   import {
     getPaneIdForSlashMenuView,
@@ -123,8 +124,6 @@
   } from '$lib/features/notepad/state/noteStore';
   import {
     notepadState,
-    noteSaveTimers,
-    noteSaveQueues,
     notepadRuntimeState,
     PRIMARY_PANE_ID,
     SECONDARY_PANE_ID,
@@ -134,35 +133,38 @@
   import {
     bumpSharedEditorStateGeneration,
     cleanupNoteRuntime,
-    clearDocumentSyncFrameId,
-    getDocumentSyncFrameId,
     getEditorPaneCountForNote,
     getSharedEditorResources,
     getSharedEditorState,
     getSharedEditorStateGeneration,
-    hasDocumentSyncFrameId,
     registerEditorPaneForNote,
-    setDocumentSyncFrameId,
     setSharedEditorState,
     setSharedEditorStateGeneration,
     transferNoteRuntime,
     unregisterEditorPaneForNote
   } from '$lib/features/notepad/session/noteRuntime';
+  import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
+  import { createDocumentSyncController } from '$lib/features/notepad/document/documentSyncController';
+  import { workspaceStore } from '$lib/features/notepad/workspace/workspaceStore.svelte';
+  import { createWorkspacePersistenceService } from '$lib/features/notepad/workspace/workspacePersistenceService';
   import { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
+  import '$lib/features/notepad/editor/editor.css';
 
   type PaneId = NotepadPaneId;
   type PaneKind = 'editor' | 'chat';
   const PENDING_MAP_NOTE_PATH_KEY = 'gneauxghts:pending-map-note-path';
 
-  const cmContentInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
   const paneTitleInputClass =
     'w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl';
 
   let workspaceShell = $state<HTMLDivElement | null>(null);
 
-  let paneOrder = $state<PaneId[]>([...notepadRuntimeState.paneOrder]);
-  let activePaneId = $state<PaneId>(notepadRuntimeState.activePaneId);
+  // workspaceStore owns pane order, active pane, and split picker chrome.
+  // We derive read-only locals so the rest of this file keeps reading the
+  // existing names.
+  let paneOrder = $derived(workspaceStore.paneOrder);
+  let activePaneId = $derived(workspaceStore.activePaneId);
 
   // Pane runtimes own pane-local state (refs, editor controller, readiness, slash menu, wikilink)
   const paneRuntimes: Record<PaneId, PaneRuntime> = {} as Record<PaneId, PaneRuntime>;
@@ -172,11 +174,6 @@
   let semanticStatus = $state<SemanticStatus | null>(null);
   let currentSearchHighlightMode: SearchMode = 'all';
   let currentSearchHighlightQuery = '';
-
-  $effect(() => {
-    notepadRuntimeState.paneOrder = paneOrder;
-    notepadRuntimeState.activePaneId = activePaneId;
-  });
 
   const searchState = createNotepadSearchStore({
     getCurrentTitle: () => getDocumentSession().title,
@@ -198,10 +195,15 @@
     getCurrentPath: () => getDocumentSession().currentNotePath
   });
 
-  let splitPickerPaneId = $state<PaneId | null>(null);
-  let splitPickerSourceNoteKey = $state<NoteKey | null>(null);
-  let splitPickerHighlightedIndex = $state(0);
+  let splitPickerPaneId = $derived(workspaceStore.splitPicker.paneId);
+  let splitPickerSourceNoteKey = $derived(workspaceStore.splitPicker.sourceNoteKey);
+  let splitPickerHighlightedIndex = $derived(workspaceStore.splitPicker.highlightedIndex);
+  // splitPickerFocusEl is bidirectional: bound by NotepadPane via bind:splitPickerFocusRoot,
+  // and propagated into workspaceStore via the effect below.
   let splitPickerFocusEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    workspaceStore.setSplitPickerFocusEl(splitPickerFocusEl);
+  });
 
   let splitPickerCurrentNoteLabel = $derived.by(() =>
     splitPickerNoteLabel(getSplitSourceNote(notepadState, splitPickerSourceNoteKey))
@@ -320,8 +322,7 @@
   }
 
   function activatePaneSession(paneId: PaneId) {
-    activePaneId = paneId;
-    setStoreActivePane(notepadState, paneId);
+    workspaceStore.setActivePaneId(paneId);
     return getPaneState(notepadState, paneId);
   }
 
@@ -375,60 +376,23 @@
     paneRuntimes[paneId].ui.editorGeneration = getSharedEditorStateGeneration(document);
   }
 
-  function flushDocumentEditorSync(document: NoteDraftState) {
-    const frameId = getDocumentSyncFrameId(document.key);
-    if (frameId !== undefined) {
-      clearDocumentSyncFrameId(document.key);
-    }
+  const documentSync = createDocumentSyncController<PaneId>({
+    getPaneIdsForDocument,
+    getPaneEditorGeneration: (paneId) => paneRuntimes[paneId].ui.editorGeneration,
+    setPaneEditorGeneration: (paneId, value) => {
+      paneRuntimes[paneId].ui.editorGeneration = value;
+    },
+    hasController: (paneId) => getPaneController(paneId) !== null,
+    applySharedEditorState: (paneId, document) =>
+      paneControllers[paneId].editorLifecycleController.applySharedEditorStateForDocument(document),
+    listReferencedNoteKeys: () => listReferencedNoteKeys(notepadState),
+    getNoteByKey
+  });
 
-    if (getEditorPaneCountForNote(document.key) > 0) {
-      return;
-    }
-
-    const sharedEditorState = getSharedEditorState(document);
-    if (!sharedEditorState) {
-      return;
-    }
-
-    for (const paneId of getPaneIdsForDocument(document)) {
-      if (paneRuntimes[paneId].ui.editorGeneration >= getSharedEditorStateGeneration(document)) {
-        continue;
-      }
-
-      const controller = getPaneController(paneId);
-      if (!controller) {
-        markPaneDocumentGeneration(paneId, document);
-        continue;
-      }
-
-      if (paneControllers[paneId].editorLifecycleController.applySharedEditorStateForDocument(document)) {
-        markPaneDocumentGeneration(paneId, document);
-      }
-    }
-  }
-
-  function scheduleDocumentEditorSync(document: NoteDraftState) {
-    if (getDocumentSyncFrameId(document.key) !== undefined) {
-      return;
-    }
-
-    const frameId = window.requestAnimationFrame(() => {
-      clearDocumentSyncFrameId(document.key);
-      flushDocumentEditorSync(document);
-    });
-    setDocumentSyncFrameId(document.key, frameId);
-  }
-
-  function flushAllPendingDocumentSyncs() {
-    const noteKeys = new Set<NoteKey>(listReferencedNoteKeys(notepadState));
-
-    for (const noteKey of noteKeys) {
-      const document = getNoteByKey(noteKey);
-      if (document) {
-        flushDocumentEditorSync(document);
-      }
-    }
-  }
+  const flushDocumentEditorSync = documentSync.flushDocumentEditorSync;
+  const scheduleDocumentEditorSync = documentSync.scheduleDocumentEditorSync;
+  const flushAllPendingDocumentSyncs = documentSync.flushAllPendingDocumentSyncs;
+  const hasPendingDocumentSync = documentSync.hasPendingSync;
 
   function saveCursorPositionForDocument(document: NoteDraftState = getDocumentSession()) {
     for (const paneId of getPaneIdsForDocument(document)) {
@@ -881,13 +845,22 @@
     getNoteSaveQueue,
     hasCleanBuffer,
     invalidatePendingSaveResults,
-    scheduleAutosave
+    scheduleAutosave,
+    awaitAllSaveQueues
   } = createNotepadPersistenceController({
     getDocumentSession,
-    timers: noteSaveTimers,
-    queues: noteSaveQueues,
     saveNoteSession,
     rekeyNoteWithRuntime
+  });
+
+  const workspacePersistence = createWorkspacePersistenceService({
+    listReferencedNoteKeys: () => listReferencedNoteKeys(notepadState),
+    getNoteByKey,
+    flushDocumentEditorSync,
+    flushAllPaneCursorSaves: () => flushAllPendingCursorSaves(),
+    flushPendingAutosave,
+    cancelPendingAutosave,
+    enqueueSave
   });
 
   const paneControllers = {
@@ -1184,7 +1157,7 @@
       return;
     }
 
-    if (hasDocumentSyncFrameId(previousDocument.key)) {
+    if (hasPendingDocumentSync(previousDocument)) {
       flushDocumentEditorSync(previousDocument);
     }
     flushAllPendingCursorSaves();
@@ -1245,7 +1218,7 @@
   }
 
   async function openWikilink(paneId: PaneId, rawTarget: string) {
-    activePaneId = paneId;
+    workspaceStore.setActivePaneId(paneId);
     await paneControllers[paneId].wikilinkController.openWikilink(rawTarget);
   }
 
@@ -1289,36 +1262,87 @@
     toggleRelatedPanelController(workspaceShell);
   }
 
-  async function ensurePaneEditors() {
-    for (const paneId of [PRIMARY_PANE_ID, SECONDARY_PANE_ID] as const) {
-      const shouldMount =
-        paneOrder.includes(paneId) &&
-        getPaneKind(paneId) === 'editor' &&
-        splitPickerPaneId !== paneId;
-      const controller = getPaneController(paneId);
+  function paneShouldMountEditor(paneId: PaneId): boolean {
+    return (
+      paneOrder.includes(paneId) &&
+      getPaneKind(paneId) === 'editor' &&
+      splitPickerPaneId !== paneId
+    );
+  }
+
+  /**
+   * Per-pane mount/destroy queue. Serializes lifecycle transitions so that
+   * the use:editor action and any explicit ensurePaneEditors() barrier do
+   * not race when both attempt to mount/destroy the same pane in the same
+   * microtask.
+   */
+  const paneEditorQueues: Record<PaneId, Promise<void>> = {
+    [PRIMARY_PANE_ID]: Promise.resolve(),
+    [SECONDARY_PANE_ID]: Promise.resolve()
+  };
+
+  function enqueuePaneEditorOp(paneId: PaneId, op: () => Promise<void>): Promise<void> {
+    const queue = paneEditorQueues[paneId].then(op).catch((error) => {
+      console.error(`Pane editor lifecycle (${paneId}) failed:`, error);
+    });
+    paneEditorQueues[paneId] = queue;
+    return queue;
+  }
+
+  /**
+   * Mount the editor for a single pane. Idempotent: if already mounted,
+   * returns immediately. Serialized per-pane so concurrent callers (the
+   * use:editor action and ensurePaneEditors) do not race.
+   */
+  function mountPaneEditor(paneId: PaneId): Promise<void> {
+    return enqueuePaneEditorOp(paneId, async () => {
+      if (getPaneController(paneId)) return;
+      const editorRoot = getPaneEditorRoot(paneId);
+      if (!editorRoot) return;
       const paneDocument = getPaneDocumentSession(paneId);
 
-      if (shouldMount && !controller && getPaneEditorRoot(paneId)) {
-        await paneControllers[paneId].editorLifecycleController.createEditor(paneDocument.bodyMarkdown);
-        if (getPaneController(paneId)) {
-          registerPaneEditorForDocument(paneId, paneDocument);
-        }
-        paneControllers[paneId].editorLifecycleController.restoreCursorPositionForDocument(
-          paneDocument
-        );
-        markPaneDocumentGeneration(paneId, paneDocument);
-        continue;
+      await paneControllers[paneId].editorLifecycleController.createEditor(paneDocument.bodyMarkdown);
+      if (getPaneController(paneId)) {
+        registerPaneEditorForDocument(paneId, paneDocument);
       }
+      paneControllers[paneId].editorLifecycleController.restoreCursorPositionForDocument(paneDocument);
+      documentSync.markPaneDocumentGeneration(paneId, paneDocument);
+    });
+  }
 
-      if (!shouldMount && controller) {
-        unregisterPaneEditorForDocument(paneId, paneDocument);
-        paneControllers[paneId].editorLifecycleController.saveCursorPositionForDocument(paneDocument);
-        if (paneRuntimes[paneId].ui.editorGeneration >= getSharedEditorStateGeneration(paneDocument)) {
-          saveSharedEditorStateForDocument(paneDocument, readEditorState(controller), paneId);
-        }
-        await paneControllers[paneId].editorLifecycleController.destroyEditor();
-        paneRuntimes[paneId].ui.isEditorReady = false;
-        closeWikilinkAutocomplete(paneId);
+  /**
+   * Destroy the editor for a single pane. Idempotent: if not mounted,
+   * returns immediately. Serialized per-pane.
+   */
+  function destroyPaneEditor(paneId: PaneId): Promise<void> {
+    return enqueuePaneEditorOp(paneId, async () => {
+      const controller = getPaneController(paneId);
+      if (!controller) return;
+      const paneDocument = getPaneDocumentSession(paneId);
+
+      unregisterPaneEditorForDocument(paneId, paneDocument);
+      paneControllers[paneId].editorLifecycleController.saveCursorPositionForDocument(paneDocument);
+      if (paneRuntimes[paneId].ui.editorGeneration >= getSharedEditorStateGeneration(paneDocument)) {
+        saveSharedEditorStateForDocument(paneDocument, readEditorState(controller), paneId);
+      }
+      await paneControllers[paneId].editorLifecycleController.destroyEditor();
+      paneRuntimes[paneId].ui.isEditorReady = false;
+      closeWikilinkAutocomplete(paneId);
+    });
+  }
+
+  /**
+   * Reconcile every pane's editor mount state with the workspace. Used as
+   * an explicit barrier in async flows that need to wait for editors to be
+   * ready (split/close/setKind/onMount). Reactively, the use:editor action
+   * also drives the same mount/destroy transitions.
+   */
+  async function ensurePaneEditors() {
+    for (const paneId of [PRIMARY_PANE_ID, SECONDARY_PANE_ID] as const) {
+      if (paneShouldMountEditor(paneId)) {
+        await mountPaneEditor(paneId);
+      } else {
+        await destroyPaneEditor(paneId);
       }
     }
   }
@@ -1351,11 +1375,9 @@
     const placeholderDraft = createFreshDraftNote(notepadState);
     setStoredPaneKind(notepadState, targetPaneId, 'editor');
     setPaneDocumentSession(targetPaneId, placeholderDraft);
-    splitPickerPaneId = targetPaneId;
-    splitPickerSourceNoteKey = sharedDocument.key;
-    splitPickerHighlightedIndex = 0;
+    workspaceStore.beginSplitPicker(targetPaneId, sharedDocument.key);
 
-    paneOrder = [PRIMARY_PANE_ID, SECONDARY_PANE_ID];
+    workspaceStore.setPaneOrder([PRIMARY_PANE_ID, SECONDARY_PANE_ID]);
     activatePaneSession(targetPaneId);
     await tick();
     await ensurePaneEditors();
@@ -1371,7 +1393,7 @@
     const wasSplitPicker = splitPickerPaneId === paneId;
     const orphanPlaceholderKey = wasSplitPicker ? getPaneDocumentSession(paneId).key : null;
 
-    paneOrder = paneOrder.filter((candidate) => candidate !== paneId);
+    workspaceStore.removePane(paneId);
 
     if (wasSplitPicker) {
       resetSplitPickerState();
@@ -1414,10 +1436,12 @@
   }
 
   function moveSplitPickerHighlight(direction: 1 | -1) {
-    splitPickerHighlightedIndex = getNextSplitChoiceIndex(
-      splitPickerHighlightedIndex,
-      direction,
-      splitPickerPreviousItem !== null
+    workspaceStore.setSplitPickerHighlight(
+      getNextSplitChoiceIndex(
+        splitPickerHighlightedIndex,
+        direction,
+        splitPickerPreviousItem !== null
+      )
     );
   }
 
@@ -1484,10 +1508,7 @@
   }
 
   function resetSplitPickerState() {
-    splitPickerPaneId = null;
-    splitPickerSourceNoteKey = null;
-    splitPickerHighlightedIndex = 0;
-    splitPickerFocusEl = null;
+    workspaceStore.resetSplitPicker();
   }
 
   async function finalizeSplitPickerSelection(paneId: PaneId) {
@@ -1632,7 +1653,12 @@
         : 'This placeholder reserves the pane contract for a future chat implementation while keeping the workspace architecture aligned around split panes and a shared note session.',
       splitPickerHighlightedIndex,
       splitPickerCurrentNoteLabel,
-      splitPickerPreviousNoteLabel
+      splitPickerPreviousNoteLabel,
+      editorLifecycle: {
+        shouldMount: paneShouldMountEditor(paneId),
+        mount: () => mountPaneEditor(paneId),
+        destroy: () => destroyPaneEditor(paneId)
+      }
     };
   }
 
@@ -1644,7 +1670,7 @@
     onTitleBlur: handleTitleBlur,
     onTitleKeydown: handleTitleKeydown,
     onSplitHighlightChange: (index: number) => {
-      splitPickerHighlightedIndex = index;
+      workspaceStore.setSplitPickerHighlight(index);
     },
     onSplitChoose: resolveSplitPickerChoice
   };
@@ -1655,13 +1681,9 @@
 
   onMount(() => {
     let mounted = true;
-    const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(async () => {
-      flushAllPendingDocumentSyncs();
-      flushAllPendingCursorSaves();
-      cancelPendingAutosave();
-      await enqueueSave();
-      await Promise.all([...noteSaveQueues.values()]);
-    });
+    const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(
+      workspacePersistence.flushAllForNavigation
+    );
     const shellResizeObserver =
       typeof ResizeObserver === 'undefined'
         ? null
@@ -1743,69 +1765,20 @@
     };
   });
 
-  function attachPaneSelectionTracking(
-    paneId: PaneId,
-    isEditorReady: boolean,
-    editorRoot: HTMLDivElement | null
-  ) {
-    if (!isEditorReady || !editorRoot) {
-      return;
-    }
-
-    const cmContent = findCmContentElement(editorRoot);
-    if (!(cmContent instanceof HTMLElement)) {
-      return;
-    }
-
-    const persistCursorPosition = () => {
-      schedulePaneCursorSave(paneId);
-    };
-
-    let selectionFrameId: number | null = null;
-    const handleSelectionChange = () => {
-      if (selectionFrameId !== null) {
-        return;
-      }
-
-      selectionFrameId = window.requestAnimationFrame(() => {
-        selectionFrameId = null;
-        if (activePaneId !== paneId || getPaneKind(paneId) !== 'editor') {
-          return;
-        }
-
-        updateSelectedRelatedText(paneId);
-      });
-    };
-
-    const handleKeyboardSelectionChange = (event: KeyboardEvent) => {
-      if (!event.shiftKey && !(event.metaKey && event.key.toLowerCase() === 'a')) {
-        return;
-      }
-
-      handleSelectionChange();
-    };
-
-    for (const eventName of cmContentInteractionEvents) {
-      cmContent.addEventListener(eventName, persistCursorPosition);
-      cmContent.addEventListener(eventName, handleSelectionChange);
-    }
-    cmContent.addEventListener('keyup', handleKeyboardSelectionChange);
-
-    return () => {
-      if (selectionFrameId !== null) {
-        window.cancelAnimationFrame(selectionFrameId);
-      }
-      flushPaneCursorSave(paneId);
-      for (const eventName of cmContentInteractionEvents) {
-        cmContent.removeEventListener(eventName, persistCursorPosition);
-        cmContent.removeEventListener(eventName, handleSelectionChange);
-      }
-      cmContent.removeEventListener('keyup', handleKeyboardSelectionChange);
-    };
+  function trackPaneSelection(paneId: PaneId) {
+    return attachPaneSelectionTracking({
+      paneId,
+      isEditorReady: paneRuntimes[paneId].ui.isEditorReady,
+      editorRoot: paneRuntimes[paneId].refs.editorRoot,
+      isActivePaneInEditorMode: () => activePaneId === paneId && getPaneKind(paneId) === 'editor',
+      persistCursorPosition: () => schedulePaneCursorSave(paneId),
+      updateSelectedRelatedText: () => updateSelectedRelatedText(paneId),
+      flushPendingCursorSave: () => flushPaneCursorSave(paneId)
+    });
   }
 
-  $effect(() => attachPaneSelectionTracking(PRIMARY_PANE_ID, paneRuntimes[PRIMARY_PANE_ID].ui.isEditorReady, paneRuntimes[PRIMARY_PANE_ID].refs.editorRoot));
-  $effect(() => attachPaneSelectionTracking(SECONDARY_PANE_ID, paneRuntimes[SECONDARY_PANE_ID].ui.isEditorReady, paneRuntimes[SECONDARY_PANE_ID].refs.editorRoot));
+  $effect(() => trackPaneSelection(PRIMARY_PANE_ID));
+  $effect(() => trackPaneSelection(SECONDARY_PANE_ID));
 </script>
 
 <svelte:window onkeydowncapture={handleGlobalKeydown} onfocus={handleWindowFocus} onresize={handleWindowResize} />
@@ -1841,39 +1814,45 @@
 
     <div class="notepad-bottom-bar absolute left-0 right-0 z-30">
       <BottomBar
-        {canUnforget}
-        searchMode={$searchState.searchMode}
-        searchQuery={$searchState.searchQuery}
-        searchResults={$searchState.searchResults}
-        recentNotes={$searchState.recentNotes}
-        recentTasks={$searchState.recentTasks}
-        isSearching={$searchState.isSearching}
-        rememberActions={$rememberActionOptions}
-        defaultRememberActionId={$defaultRememberActionPreference}
-        integrateEnabled={canIntegrate()}
-        integrateDisabledReason={integrateDisabledReason()}
-        focusRequest={$searchState.focusRequest}
-        onForget={() => void clearNotepad()}
-        onUnforget={() => void unforgetNotepad()}
-        onRemember={(action) => void rememberCurrentNote(action)}
-        onSearchInput={handleSearchInput}
-        onSearchModeChange={handleSearchModeChange}
-        onSearchSelect={(result) =>
-          void handleSearchResultSelect(result).catch((error) => {
-            console.error('Failed to open searched note:', error);
-          })}
-        onRecentNoteSelect={(result) =>
-          void openRecentNoteItem(result).catch((error) => {
-            console.error('Failed to open recent note:', error);
-          })}
-        onRecentTaskSelect={(task) =>
-          void handleRecentTaskSelect(task).catch((error) => {
-            console.error('Failed to open recent task:', error);
-          })}
-        onRecentNoteShortcut={(index) => void openRecentNoteByIndex(index)}
-        onRecentTaskShortcut={(index) => void openRecentTaskByIndex(index)}
-        onSearchFocus={handleSearchFocus}
-        onCommand={(command) => handleBottomBarCommand(command)}
+        forget={{
+          canUnforget,
+          onForget: () => void clearNotepad(),
+          onUnforget: () => void unforgetNotepad()
+        }}
+        remember={{
+          rememberActions: $rememberActionOptions,
+          defaultRememberActionId: $defaultRememberActionPreference,
+          integrateEnabled: canIntegrate(),
+          integrateDisabledReason: integrateDisabledReason(),
+          onRemember: (action) => void rememberCurrentNote(action)
+        }}
+        search={{
+          searchMode: $searchState.searchMode,
+          searchQuery: $searchState.searchQuery,
+          searchResults: $searchState.searchResults,
+          recentNotes: $searchState.recentNotes,
+          recentTasks: $searchState.recentTasks,
+          isSearching: $searchState.isSearching,
+          focusRequest: $searchState.focusRequest,
+          onSearchInput: handleSearchInput,
+          onSearchModeChange: handleSearchModeChange,
+          onSearchSelect: (result) =>
+            void handleSearchResultSelect(result).catch((error) => {
+              console.error('Failed to open searched note:', error);
+            }),
+          onRecentNoteSelect: (result) =>
+            void openRecentNoteItem(result).catch((error) => {
+              console.error('Failed to open recent note:', error);
+            }),
+          onRecentTaskSelect: (task) =>
+            void handleRecentTaskSelect(task).catch((error) => {
+              console.error('Failed to open recent task:', error);
+            }),
+          onRecentNoteShortcut: (index) => void openRecentNoteByIndex(index),
+          onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
+          onSearchFocus: handleSearchFocus,
+          onCommand: (command) => handleBottomBarCommand(command)
+        }}
       />
     </div>
   </div>
@@ -1987,359 +1966,3 @@
   />
 </div>
 
-<style>
-  .notepad-shell {
-    --editor-left-padding: 0rem;
-    --editor-handle-lane-width: 2.75rem;
-    --editor-right-padding: 1rem;
-    --editor-readable-width: 100%;
-    --editor-top-padding: 4.6rem;
-    --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
-    --related-drawer-gap: 1rem;
-    --related-drawer-peek-width: 2.75rem;
-    --related-bottom-offset: calc(6.1rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
-    overflow: visible;
-  }
-
-  @media (min-width: 640px) {
-    .notepad-shell {
-      /* --editor-left-padding: 0rem; */
-      --editor-handle-lane-width: 3rem;
-      --editor-right-padding: 1.4rem;
-      --editor-readable-width: 40rem;
-      --editor-top-padding: 5.3rem;
-      --editor-bottom-padding: 100%;
-    }
-  }
-
-  @media (min-width: 1280px) {
-    .notepad-shell {
-      /* --editor-left-padding: 1.25rem; */
-      --editor-handle-lane-width: 3.1rem;
-      --editor-right-padding: 1.8rem;
-      --editor-readable-width: 42rem;
-    }
-  }
-
-  .notepad-editor-shell {
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    overscroll-behavior-y: contain;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .notepad-card {
-    transition: width 300ms ease-out;
-    will-change: width;
-  }
-
-  .notepad-bottom-bar {
-    bottom: var(--keyboard-inset-height, 0px);
-    transition: bottom 180ms ease;
-  }
-
-  .notepad-editor-shell.notepad-editor-shell--slash-open {
-    overflow: hidden;
-    overscroll-behavior: none;
-    touch-action: none;
-  }
-
-  .related-drawer {
-    overflow: visible;
-  }
-
-  .related-drawer-handle {
-    outline: none;
-  }
-
-  .related-drawer-handle-pill {
-    writing-mode: horizontal-tb;
-  }
-
-  .related-bottom-sheet {
-    --related-bottom-sheet-toggle-height: 2.75rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    align-items: flex-end;
-    max-width: calc(100% - 1rem);
-  }
-
-  .related-bottom-sheet-anchor {
-    position: relative;
-    width: 100%;
-    height: 100%;
-  }
-
-  .related-bottom-sheet-panel {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: calc(var(--related-bottom-sheet-toggle-height) + 0.75rem);
-  }
-
-  .related-bottom-sheet-backdrop {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: calc(var(--related-bottom-sheet-toggle-height) + 0.75rem);
-    left: 0;
-    border-radius: 1.8rem;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-  }
-
-  .related-bottom-sheet-toggle {
-    position: absolute;
-    right: 0;
-    bottom: 0;
-  }
-
-  .notepad-shell,
-  .notepad-editor-shell :global(.gn-editor-root) {
-    --crepe-color-background: var(--card);
-    --crepe-color-on-background: var(--foreground);
-    --crepe-color-surface: color-mix(in oklab, var(--card) 92%, var(--background));
-    --crepe-color-surface-low: color-mix(in oklab, var(--muted) 74%, var(--card));
-    --crepe-color-on-surface: var(--card-foreground);
-    --crepe-color-on-surface-variant: var(--muted-foreground);
-    --crepe-color-outline: color-mix(in oklab, var(--border) 82%, var(--foreground));
-    --crepe-color-primary: var(--foreground);
-    --crepe-color-secondary: var(--accent);
-    --crepe-color-on-secondary: var(--accent-foreground);
-    --crepe-color-inverse: var(--foreground);
-    --crepe-color-on-inverse: var(--background);
-    --crepe-color-inline-code: var(--destructive);
-    --crepe-color-error: var(--destructive);
-    --crepe-color-hover: color-mix(in oklab, var(--accent) 82%, transparent);
-    --crepe-color-selected: color-mix(in oklab, var(--accent) 92%, var(--background));
-    --crepe-color-inline-area: color-mix(in oklab, var(--muted) 80%, var(--background));
-    --gn-editor-selection-background: color-mix(in oklab, var(--foreground) 42%, var(--background));
-    --gn-editor-selection-color: var(--background);
-    --gn-task-checkbox-border: color-mix(in oklab, var(--foreground) 20%, var(--card) 80%);
-    --gn-task-checkbox-bg: color-mix(in oklab, var(--card) 92%, var(--muted) 8%);
-    --gn-task-checkbox-checked-border: color-mix(in oklab, var(--foreground) 28%, var(--card) 72%);
-    --gn-task-checkbox-checked-bg: color-mix(in oklab, var(--foreground) 18%, var(--card) 82%);
-    --gn-task-checkbox-check: color-mix(in oklab, var(--foreground) 88%, white 12%);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root) {
-    position: relative;
-    height: 100%;
-    min-height: 100%;
-    width: 100%;
-    max-width: 100%;
-    overflow-x: clip;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .notepad-block-handle [data-role='add']) {
-    display: none;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly) {
-    color: var(--foreground);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-content) {
-    max-width: 100%;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h1) {
-    margin: 0;
-    padding-top: 1.15rem;
-    padding-bottom: 0.45rem;
-    font-size: 1.75rem;
-    font-weight: 700;
-    line-height: 1.3;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h2) {
-    margin: 0;
-    padding-top: 1.05rem;
-    padding-bottom: 0.4rem;
-    font-size: 1.375rem;
-    font-weight: 700;
-    line-height: 1.35;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h3),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h4),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h5),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h6) {
-    margin: 0;
-    padding-top: 0.9rem;
-    padding-bottom: 0.35rem;
-    font-weight: 700;
-    line-height: 1.28;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h3) {
-    font-size: 1.125rem;
-    line-height: 1.45;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h4) {
-    font-size: 1rem;
-    line-height: 1.5;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h5) {
-    font-size: 0.875rem;
-    line-height: 1.55;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h6) {
-    font-size: 0.8125rem;
-    line-height: 1.55;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-quote-line) {
-    margin: 0;
-    padding-top: 0.65rem;
-    padding-bottom: 0.65rem;
-    padding-left: 1rem;
-    border-left: 3px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
-    color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-inline) {
-    padding: 0.12rem 0.35rem;
-    border-radius: 0.4rem;
-    background: color-mix(in oklab, var(--muted) 80%, var(--background));
-    color: var(--destructive);
-    font-family: var(--font-mono);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-block),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-container) {
-    margin: 0.65rem 0;
-    border-radius: 1rem;
-    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-    background: color-mix(in oklab, var(--muted) 76%, var(--background));
-    overflow: hidden;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-header) {
-    border-bottom: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-    background: color-mix(in oklab, var(--muted) 64%, var(--background));
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-line),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-block-line) {
-    font-family: var(--font-mono);
-    font-size: 0.92rem;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-line) {
-    margin: 0;
-    padding-top: 0.12rem;
-    padding-bottom: 0.12rem;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol) {
-    display: block !important;
-    align-items: initial !important;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-indent) {
-    display: none !important;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul .cm-draftly-list-mark-ul),
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol .cm-draftly-list-mark-ol) {
-    display: inline-block;
-    width: 1rem;
-    vertical-align: top;
-    position: relative;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-content) {
-    display: inline;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-checkbox) {
-    border-color: var(--gn-task-checkbox-border);
-    background: var(--gn-task-checkbox-bg);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-checkbox.checked) {
-    border-color: var(--gn-task-checkbox-checked-border);
-    background: var(--gn-task-checkbox-checked-bg);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-current-search-highlight) {
-    border-radius: 0.28rem;
-    background: color-mix(in oklab, var(--accent) 76%, var(--foreground) 24%);
-    box-shadow:
-      inset 0 0 0 1px color-mix(in oklab, var(--foreground) 18%, transparent),
-      0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent);
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-wikilink) {
-    border-radius: 0.35rem;
-    background: color-mix(in oklab, var(--accent) 54%, transparent);
-    color: color-mix(in oklab, var(--foreground) 88%, var(--accent-foreground) 12%);
-    cursor: pointer;
-    text-decoration: underline;
-    text-decoration-thickness: 0.08em;
-    text-underline-offset: 0.14em;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-image-upload-placeholder) {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.45rem 0.7rem;
-    border-radius: 999px;
-    border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-    background: color-mix(in oklab, var(--card) 92%, var(--background));
-    color: color-mix(in oklab, var(--foreground) 72%, transparent);
-    font-size: 0.92rem;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-image-embed) {
-    display: inline-flex;
-    position: relative;
-    margin: 0.5rem 0;
-    border-radius: 1rem;
-    overflow: hidden;
-    background: color-mix(in oklab, var(--muted) 74%, var(--background));
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-image-embed img) {
-    display: block;
-    max-width: 100%;
-    height: auto;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .cm-editor.cm-draftly .gn-image-embed-resize-handle) {
-    position: absolute;
-    right: 0.35rem;
-    bottom: 0.35rem;
-    width: 0.95rem;
-    height: 0.95rem;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--foreground) 72%, transparent);
-    box-shadow: 0 0 0 2px color-mix(in oklab, var(--background) 84%, transparent);
-    cursor: nwse-resize;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .notepad-block-drop-indicator) {
-    position: fixed;
-    z-index: 7;
-    height: 0;
-    border-top: 3px solid color-mix(in oklab, var(--accent) 88%, var(--foreground) 12%);
-    border-radius: 999px;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 90ms ease;
-  }
-
-  .notepad-editor-shell :global(.gn-editor-root .notepad-block-drop-indicator[data-show='true']) {
-    opacity: 1;
-  }
-
-</style>

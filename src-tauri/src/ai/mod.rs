@@ -212,6 +212,19 @@ pub(crate) struct AiModelOption {
 pub(crate) struct ClearInboxResult {
     pub(crate) cancelled_jobs: usize,
     pub(crate) removed_jobs: usize,
+    /// Canonical inbox list after the clear, so the frontend can apply it
+    /// without an extra `list_inbox_items` round trip.
+    pub(crate) items: Vec<InboxListItem>,
+}
+
+/// Delta returned by inbox mutation commands so the frontend can apply the
+/// updated list and selected detail without an additional
+/// `list_inbox_items` / `get_inbox_item` round trip.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InboxMutationDelta {
+    pub(crate) item: Option<InboxItemDetail>,
+    pub(crate) items: Vec<InboxListItem>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -818,7 +831,7 @@ pub(crate) fn get_inbox_item(
 pub(crate) fn approve_inbox_item(
     ai: State<'_, AiState>,
     id: i64,
-) -> Result<Option<InboxItemDetail>, String> {
+) -> Result<InboxMutationDelta, String> {
     approve_inbox_item_impl(&ai, id)
 }
 
@@ -827,7 +840,7 @@ pub(crate) fn approve_inbox_item_with_changes(
     ai: State<'_, AiState>,
     id: i64,
     changes: Vec<AiChange>,
-) -> Result<Option<InboxItemDetail>, String> {
+) -> Result<InboxMutationDelta, String> {
     approve_inbox_item_with_changes_impl(&ai, id, changes)
 }
 
@@ -835,7 +848,7 @@ pub(crate) fn approve_inbox_item_with_changes(
 pub(crate) fn reject_inbox_item(
     ai: State<'_, AiState>,
     id: i64,
-) -> Result<Option<InboxItemDetail>, String> {
+) -> Result<InboxMutationDelta, String> {
     reject_inbox_item_impl(&ai, id)
 }
 
@@ -843,7 +856,7 @@ pub(crate) fn reject_inbox_item(
 pub(crate) fn retry_inbox_item(
     ai: State<'_, AiState>,
     id: i64,
-) -> Result<Option<InboxItemDetail>, String> {
+) -> Result<InboxMutationDelta, String> {
     retry_inbox_item_impl(&ai, id)
 }
 

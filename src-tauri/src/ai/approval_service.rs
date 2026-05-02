@@ -1,8 +1,9 @@
 use super::{
     content_hash, current_time_millis, default_summary_for_job, fallback_title_for_path,
-    is_valid_note_path, job_status_to_str, load_job, non_empty_summary, notes_root, open_database,
-    persist_note, should_skip_job_update, to_detail_item, update_job_status, AiChange, AiJobStatus,
-    AiState, ClearInboxResult, InboxItemDetail, ResolvedRememberAction, StoredAiJob,
+    is_valid_note_path, job_status_to_str, list_jobs, load_job, non_empty_summary, notes_root,
+    open_database, persist_note, should_skip_job_update, to_detail_item, to_list_item,
+    update_job_status, AiChange, AiJobStatus, AiState, ClearInboxResult, InboxItemDetail,
+    InboxListItem, InboxMutationDelta, ResolvedRememberAction, StoredAiJob,
 };
 use rusqlite::params;
 use std::{
@@ -12,31 +13,44 @@ use std::{
 };
 use tauri::{AppHandle, Emitter};
 
-pub(super) fn approve_inbox_item(ai: &AiState, id: i64) -> Result<Option<InboxItemDetail>, String> {
+fn current_inbox_items(ai: &AiState) -> Result<Vec<InboxListItem>, String> {
+    let connection = ai.connection()?;
+    let jobs = list_jobs(&connection)?;
+    Ok(jobs.into_iter().map(to_list_item).collect())
+}
+
+fn make_delta(ai: &AiState, item: Option<InboxItemDetail>) -> Result<InboxMutationDelta, String> {
+    Ok(InboxMutationDelta {
+        item,
+        items: current_inbox_items(ai)?,
+    })
+}
+
+pub(super) fn approve_inbox_item(ai: &AiState, id: i64) -> Result<InboxMutationDelta, String> {
     let connection = ai.connection()?;
     let Some(job) = load_job(&connection, id)? else {
-        return Ok(None);
+        return make_delta(ai, None);
     };
     if job.status != AiJobStatus::PendingApproval {
-        return Ok(Some(to_detail_item(&job)?));
+        return make_delta(ai, Some(to_detail_item(&job)?));
     }
 
     let updated = apply_pending_job(ai, &job)?;
     ai.emit_inbox_changed()?;
-    Ok(Some(to_detail_item(&updated)?))
+    make_delta(ai, Some(to_detail_item(&updated)?))
 }
 
 pub(super) fn approve_inbox_item_with_changes(
     ai: &AiState,
     id: i64,
     changes: Vec<AiChange>,
-) -> Result<Option<InboxItemDetail>, String> {
+) -> Result<InboxMutationDelta, String> {
     let connection = ai.connection()?;
     let Some(job) = load_job(&connection, id)? else {
-        return Ok(None);
+        return make_delta(ai, None);
     };
     if job.status != AiJobStatus::PendingApproval {
-        return Ok(Some(to_detail_item(&job)?));
+        return make_delta(ai, Some(to_detail_item(&job)?));
     }
 
     if changes.is_empty() {
@@ -52,7 +66,7 @@ pub(super) fn approve_inbox_item_with_changes(
             job.metrics.clone(),
         )?;
         ai.emit_inbox_changed()?;
-        return Ok(Some(to_detail_item(&updated)?));
+        return make_delta(ai, Some(to_detail_item(&updated)?));
     }
 
     validate_override_changes(&job, &changes)?;
@@ -69,13 +83,13 @@ pub(super) fn approve_inbox_item_with_changes(
     )?;
     let applied = apply_pending_job(ai, &updated)?;
     ai.emit_inbox_changed()?;
-    Ok(Some(to_detail_item(&applied)?))
+    make_delta(ai, Some(to_detail_item(&applied)?))
 }
 
-pub(super) fn reject_inbox_item(ai: &AiState, id: i64) -> Result<Option<InboxItemDetail>, String> {
+pub(super) fn reject_inbox_item(ai: &AiState, id: i64) -> Result<InboxMutationDelta, String> {
     let connection = ai.connection()?;
     let Some(job) = load_job(&connection, id)? else {
-        return Ok(None);
+        return make_delta(ai, None);
     };
     let updated = update_job_status(
         &connection,
@@ -89,16 +103,16 @@ pub(super) fn reject_inbox_item(ai: &AiState, id: i64) -> Result<Option<InboxIte
         job.metrics.clone(),
     )?;
     ai.emit_inbox_changed()?;
-    Ok(Some(to_detail_item(&updated)?))
+    make_delta(ai, Some(to_detail_item(&updated)?))
 }
 
-pub(super) fn retry_inbox_item(ai: &AiState, id: i64) -> Result<Option<InboxItemDetail>, String> {
+pub(super) fn retry_inbox_item(ai: &AiState, id: i64) -> Result<InboxMutationDelta, String> {
     let connection = ai.connection()?;
     let Some(job) = load_job(&connection, id)? else {
-        return Ok(None);
+        return make_delta(ai, None);
     };
     if job.kind.is_exact() {
-        return Ok(Some(to_detail_item(&job)?));
+        return make_delta(ai, Some(to_detail_item(&job)?));
     }
     let retry_id = ai.enqueue_job(
         ResolvedRememberAction {
@@ -113,7 +127,7 @@ pub(super) fn retry_inbox_item(ai: &AiState, id: i64) -> Result<Option<InboxItem
     )?;
     let retried =
         load_job(&connection, retry_id)?.ok_or_else(|| "Retry job disappeared".to_string())?;
-    Ok(Some(to_detail_item(&retried)?))
+    make_delta(ai, Some(to_detail_item(&retried)?))
 }
 
 pub(super) fn clear_inbox(ai: &AiState) -> Result<ClearInboxResult, String> {
@@ -137,9 +151,12 @@ pub(super) fn clear_inbox(ai: &AiState) -> Result<ClearInboxResult, String> {
         )
         .map_err(|err| err.to_string())?;
     ai.emit_inbox_changed()?;
+    drop(connection);
+    let items = current_inbox_items(ai)?;
     Ok(ClearInboxResult {
         cancelled_jobs,
         removed_jobs,
+        items,
     })
 }
 

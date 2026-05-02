@@ -4,25 +4,27 @@ mod persistence;
 #[allow(unused_imports)]
 pub(crate) use config::{
     app_data_dir, current_vault_info, default_notes_root, forgotten_notes_root,
-    initialize_app_data_dir, initialize_documents_dir, notes_root,
-    read_vault_config, set_notes_root, write_vault_config, VaultConfig, VaultInfo,
+    initialize_app_data_dir, initialize_documents_dir, notes_root, read_vault_config,
+    set_notes_root, write_vault_config, VaultConfig, VaultInfo,
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{
-    derive_file_stem, derive_file_stem_from_title_and_markdown, is_forgotten_note_path,
-    is_valid_note_path, persist_note, prune_recent_note_ids, push_unique,
-    read_state, resolve_note_id_from_path, resolve_note_path_by_id, touch_recent_note_id,
-    validate_current_path, write_state, PersistedForgottenNote, PersistedState,
-    PersistedTaskTimestamps,
+    db_insert_forgotten_note, db_remove_forgotten_note, db_remove_task_timestamp,
+    db_set_hidden_task_key, db_set_last_opened_note_id, db_set_note_collapsed, db_set_note_hidden,
+    db_set_note_order, db_set_recent_note_ids, db_upsert_task_timestamp, derive_file_stem,
+    derive_file_stem_from_title_and_markdown, is_forgotten_note_path, is_valid_note_path,
+    persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup, push_unique,
+    read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
+    touch_recent_note_id, validate_current_path, write_state, write_state_with_lookup,
+    NoteIdLookup, PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
 };
 
 #[cfg(test)]
 mod tests {
     use super::{
         derive_file_stem, derive_file_stem_from_title_and_markdown, forgotten_notes_root,
-        initialize_app_data_dir, persist_note, read_state,
-        resolve_note_id_from_path, write_state, PersistedForgottenNote, PersistedState,
-        PersistedTaskTimestamps,
+        initialize_app_data_dir, persist_note, read_state, resolve_note_id_from_path, write_state,
+        PersistedForgottenNote, PersistedState, PersistedTaskTimestamps,
     };
     use crate::test_support::{TestDir, TEST_ENV_GUARD};
     use std::{collections::HashMap, fs};
@@ -226,5 +228,4 @@ mod tests {
             live_forgotten_note.to_string_lossy()
         );
     }
-
 }

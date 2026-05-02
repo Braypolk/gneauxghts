@@ -51,6 +51,8 @@ pub(crate) fn forget_note(
         .0;
 
         if note_path.exists() {
+            crate::vault_watcher::record_self_save(note_path);
+            crate::vault_watcher::record_self_save(&forgotten_path);
             fs::rename(note_path, &forgotten_path).map_err(|err| err.to_string())?;
             fs::write(&forgotten_path, &forgotten_markdown).map_err(|err| err.to_string())?;
         }
@@ -163,6 +165,8 @@ pub(crate) fn restore_forgotten_notes(
         let restored_markdown =
             note::prepare_note_markdown(&markdown, Some(&markdown), Some(None))?.0;
         let timestamp_millis = current_time_millis()?;
+        crate::vault_watcher::record_self_save(&forgotten_path);
+        crate::vault_watcher::record_self_save(&restored_path);
         fs::rename(&forgotten_path, &restored_path).map_err(|err| err.to_string())?;
         fs::write(&restored_path, &restored_markdown).map_err(|err| err.to_string())?;
 

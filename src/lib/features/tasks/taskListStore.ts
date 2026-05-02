@@ -37,6 +37,14 @@ export interface TaskGroup {
 
 export type TaskFilter = 'open' | 'completed' | 'all';
 
+export interface TaskMutationDelta {
+  noteId: string;
+  notePath: string;
+  noteTasks: TaskItem[];
+  affectedTaskKey?: string;
+  removed: boolean;
+}
+
 interface TaskListState {
   filter: TaskFilter;
   showHidden: boolean;
@@ -143,6 +151,41 @@ export function createTaskListStore() {
     return previousTasks;
   }
 
+  function applyTaskMutationDelta(delta: TaskMutationDelta) {
+    update((state) => {
+      const tasks = state.tasks;
+      // Find the first index of any task belonging to the mutated note so
+      // we can splice the canonical tasks back in at the same position. If
+      // the note has no existing tasks (first task created), append at the
+      // end of the list — load() will canonicalise on the next refresh.
+      const firstIndex = tasks.findIndex((task) => task.noteId === delta.noteId);
+      const remaining = tasks.filter((task) => task.noteId !== delta.noteId);
+      const insertionIndex = firstIndex === -1 ? remaining.length : firstIndex;
+
+      // Filter the canonical note tasks against the current filter so the
+      // post-mutation visible list keeps matching the active filter.
+      const filteredNoteTasks = delta.noteTasks.filter((task) => {
+        switch (state.filter) {
+          case 'open':
+            return !task.completed;
+          case 'completed':
+            return task.completed;
+          case 'all':
+          default:
+            return true;
+        }
+      });
+
+      const nextTasks = [
+        ...remaining.slice(0, insertionIndex),
+        ...filteredNoteTasks,
+        ...remaining.slice(insertionIndex)
+      ];
+
+      return { ...state, tasks: nextTasks };
+    });
+  }
+
   async function toggleNoteCollapsed(group: TaskGroup) {
     const previousTasks = updateTasksOptimistically((tasks) =>
       tasks.map((candidate) =>
@@ -199,13 +242,13 @@ export function createTaskListStore() {
     }));
 
     try {
-      await invoke('toggle_task', {
+      const delta = await invoke<TaskMutationDelta>('toggle_task', {
         notePath: task.notePath,
         lineNumber: task.lineNumber,
         taskText: task.text
       });
+      applyTaskMutationDelta(delta);
       patch({ errorMessage: '' });
-      await load({ background: true });
     } catch (error) {
       console.error('Failed to toggle task:', error);
       patch({ errorMessage: 'Unable to update task completion.' });
@@ -356,14 +399,14 @@ export function createTaskListStore() {
     }));
 
     try {
-      await invoke('delete_task', {
+      const delta = await invoke<TaskMutationDelta>('delete_task', {
         notePath: task.notePath,
         lineNumber: task.lineNumber,
         taskText: task.text,
         taskKey: task.taskKey
       });
+      applyTaskMutationDelta(delta);
       patch({ errorMessage: '' });
-      await load({ background: true });
     } catch (error) {
       console.error('Failed to delete task:', error);
       patch({ errorMessage: 'Unable to delete task.' });
