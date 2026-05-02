@@ -18,6 +18,7 @@ import {
   loadSemanticSlice,
   loadSemanticStatusSlice,
 } from "./loaders/semanticLoader";
+import { loadSettingsViewSlice } from "./loaders/settingsViewLoader";
 import { loadVaultInfoSlice } from "./loaders/vaultLoader";
 
 type SettingsTab = "general" | "forgotten";
@@ -86,6 +87,7 @@ export function createSettingsStore() {
   let semanticStateRequest: Promise<void> | null = null;
   let forgottenNotesRequest: Promise<void> | null = null;
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
+  let semanticStatusUnlisten: UnlistenFn | null = null;
 
   function patch(partial: Partial<SettingsState>) {
     update((state) => ({ ...state, ...partial }));
@@ -196,22 +198,44 @@ export function createSettingsStore() {
 
     semanticStateRequest = (async () => {
       try {
-        const [semantic, nextVaultInfo] = await Promise.all([
-          loadSemanticSlice(),
-          loadVaultInfoSlice(),
-        ]);
-
-        update((state) => ({
-          ...state,
-          semanticStatus: semantic.status,
-          semanticSettings: semantic.settings,
-          semanticDebug: semantic.debug,
-          vaultInfo: nextVaultInfo,
-          vaultPathInput:
-            state.vaultPathInput.trim() === ""
-              ? nextVaultInfo.currentPath
-              : state.vaultPathInput,
-        }));
+        // Prefer the bundled get_settings_view command which collapses
+        // the four parallel invokes into one. Fall back to the legacy
+        // parallel fan-out if the bundled command errors so the
+        // settings panel keeps working.
+        try {
+          const view = await loadSettingsViewSlice();
+          update((state) => ({
+            ...state,
+            semanticStatus: view.semanticStatus,
+            semanticSettings: view.semanticSettings,
+            semanticDebug: view.semanticDebug,
+            vaultInfo: view.vault,
+            vaultPathInput:
+              state.vaultPathInput.trim() === ""
+                ? view.vault.currentPath
+                : state.vaultPathInput,
+          }));
+        } catch (bundledError) {
+          console.warn(
+            "get_settings_view failed, falling back to individual loads:",
+            bundledError,
+          );
+          const [semantic, nextVaultInfo] = await Promise.all([
+            loadSemanticSlice(),
+            loadVaultInfoSlice(),
+          ]);
+          update((state) => ({
+            ...state,
+            semanticStatus: semantic.status,
+            semanticSettings: semantic.settings,
+            semanticDebug: semantic.debug,
+            vaultInfo: nextVaultInfo,
+            vaultPathInput:
+              state.vaultPathInput.trim() === ""
+                ? nextVaultInfo.currentPath
+                : state.vaultPathInput,
+          }));
+        }
         syncSemanticPolling();
       } catch (error) {
         console.error("Failed to load semantic settings:", error);
@@ -434,6 +458,17 @@ export function createSettingsStore() {
     vaultNoteChangeUnlisten = await listen("vault-note-changed", () => {
       scheduleVaultChangeRefresh();
     });
+    // Backend pushes `semantic-status-changed` after mutations (settings
+    // save, rebuild/pause/resume, vault change). Reduce to listening
+    // instead of polling those code paths; we still poll while indexing
+    // is in progress because background workers don't currently emit.
+    semanticStatusUnlisten = await listen<SemanticStatus>(
+      "semantic-status-changed",
+      ({ payload }) => {
+        patch({ semanticStatus: payload });
+        syncSemanticPolling();
+      },
+    );
   }
 
   function dispose() {
@@ -444,6 +479,8 @@ export function createSettingsStore() {
     }
     vaultNoteChangeUnlisten?.();
     vaultNoteChangeUnlisten = null;
+    semanticStatusUnlisten?.();
+    semanticStatusUnlisten = null;
   }
 
   return {

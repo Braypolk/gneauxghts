@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 import type { NoteLinkSuggestion, ResolvedNoteLink } from '$lib/features/notepad/model/types';
+import { callWithDraft, computeDraftHash } from '$lib/features/notepad/search/draftRef';
 
 export interface WikilinkAutocompleteState {
   active: boolean;
@@ -117,13 +118,32 @@ export async function autocompleteNoteLinks(
   currentTitle: string,
   currentMarkdown: string
 ) {
-  return invoke<NoteLinkSuggestion[]>('autocomplete_note_links', {
-    rawTarget,
+  if (!wikilinkNeedsCurrentMarkdown(rawTarget)) {
+    return invoke<NoteLinkSuggestion[]>('autocomplete_note_links', {
+      rawTarget,
+      currentPath,
+      currentTitle,
+      currentMarkdown: null,
+      currentBodyHash: null,
+      limit: 8
+    });
+  }
+
+  const hash = computeDraftHash(currentMarkdown);
+  return callWithDraft(
     currentPath,
-    currentTitle,
-    currentMarkdown: wikilinkNeedsCurrentMarkdown(rawTarget) ? currentMarkdown : null,
-    limit: 8
-  });
+    hash,
+    currentMarkdown,
+    (resolvedMarkdown, currentBodyHash) =>
+      invoke<NoteLinkSuggestion[]>('autocomplete_note_links', {
+        rawTarget,
+        currentPath,
+        currentTitle,
+        currentMarkdown: resolvedMarkdown,
+        currentBodyHash,
+        limit: 8
+      })
+  );
 }
 
 export async function resolveNoteLink(
@@ -132,10 +152,28 @@ export async function resolveNoteLink(
   currentTitle: string,
   currentMarkdown: string
 ) {
-  return invoke<ResolvedNoteLink | null>('resolve_note_link', {
-    rawTarget,
+  if (!wikilinkNeedsCurrentMarkdown(rawTarget)) {
+    return invoke<ResolvedNoteLink | null>('resolve_note_link', {
+      rawTarget,
+      currentPath,
+      currentTitle,
+      currentMarkdown: null,
+      currentBodyHash: null
+    });
+  }
+
+  const hash = computeDraftHash(currentMarkdown);
+  return callWithDraft(
     currentPath,
-    currentTitle,
-    currentMarkdown: wikilinkNeedsCurrentMarkdown(rawTarget) ? currentMarkdown : null
-  });
+    hash,
+    currentMarkdown,
+    (resolvedMarkdown, currentBodyHash) =>
+      invoke<ResolvedNoteLink | null>('resolve_note_link', {
+        rawTarget,
+        currentPath,
+        currentTitle,
+        currentMarkdown: resolvedMarkdown,
+        currentBodyHash
+      })
+  );
 }

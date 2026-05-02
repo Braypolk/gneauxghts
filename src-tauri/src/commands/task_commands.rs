@@ -16,7 +16,8 @@ use crate::{
     },
 };
 use std::{
-    collections::{HashMap, HashSet},
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap, HashSet},
     fs,
     path::Path,
     sync::{LazyLock, Mutex},
@@ -49,6 +50,35 @@ impl SortableRecentTaskItem {
             text_lower: item.text.to_lowercase(),
             item,
         }
+    }
+}
+
+impl PartialEq for SortableRecentTaskItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for SortableRecentTaskItem {}
+
+impl PartialOrd for SortableRecentTaskItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SortableRecentTaskItem {
+    /// Ordering matches the sort comparator: a "greater" task is one that
+    /// would appear earlier in the final sorted output (more recent, then
+    /// title/line/text tiebreakers reversed so that the comparator agrees
+    /// with the original `sort_by` semantics).
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.item
+            .updated_at_millis
+            .cmp(&other.item.updated_at_millis)
+            .then_with(|| other.note_title_lower.cmp(&self.note_title_lower))
+            .then_with(|| other.item.line_number.cmp(&self.item.line_number))
+            .then_with(|| other.text_lower.cmp(&self.text_lower))
     }
 }
 
@@ -86,6 +116,30 @@ pub(super) fn list_recent_tasks(
         .map_err(|_| "Search index lock poisoned".to_string())?;
     let did_sync_task_timestamps = should_sync_task_timestamps(&index)?
         && sync_task_timestamps_from_index(&mut persisted_state, &index);
+
+    let tasks = select_recent_tasks(&persisted_state, &index, limit);
+
+    drop(index);
+    if did_sync_task_timestamps {
+        write_state(&notes_dir, &persisted_state)?;
+    }
+
+    Ok(tasks)
+}
+
+/// Pure top-N selection over the in-memory notes index. The caller is
+/// responsible for `read_state`/`ensure_interactive_index`/locking so that
+/// the result can be combined with other reads (e.g. the focus loader)
+/// without redundant work.
+pub(super) fn select_recent_tasks(
+    persisted_state: &PersistedState,
+    index: &NotesIndex,
+    limit: usize,
+) -> Vec<RecentTaskItem> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
     let hidden_task_keys = persisted_state
         .hidden_task_keys
         .iter()
@@ -97,13 +151,16 @@ pub(super) fn list_recent_tasks(
         .map(String::as_str)
         .collect::<HashSet<_>>();
 
-    let mut tasks = Vec::new();
+    // Bounded top-N selection: keep the heap at most `limit` large so we
+    // avoid materializing every open task in the vault on each focus.
+    let mut heap: BinaryHeap<Reverse<SortableRecentTaskItem>> = BinaryHeap::with_capacity(limit);
 
     for (path, note) in &index.entries {
-        let raw_path = path.to_string_lossy().into_owned();
         if hidden_note_ids.contains(note.note_id.as_str()) {
             continue;
         }
+
+        let mut raw_path: Option<String> = None;
 
         for task in &note.tasks {
             if task.completed {
@@ -121,35 +178,47 @@ pub(super) fn list_recent_tasks(
                 .map(|timestamps| timestamps.updated_at_millis)
                 .unwrap_or(note.modified_millis);
 
-            tasks.push(SortableRecentTaskItem::new(RecentTaskItem {
+            // Cheap pre-filter: once the heap is full, only allocate the
+            // RecentTaskItem if this candidate could possibly displace the
+            // current min (i.e. it is at least as recent as the worst kept).
+            if heap.len() >= limit {
+                let worst_updated_at = heap.peek().map(|entry| entry.0.item.updated_at_millis);
+                if worst_updated_at.is_some_and(|worst| updated_at_millis < worst) {
+                    continue;
+                }
+            }
+
+            let raw_path_str = raw_path
+                .get_or_insert_with(|| path.to_string_lossy().into_owned())
+                .clone();
+
+            let candidate = SortableRecentTaskItem::new(RecentTaskItem {
                 note_id: note.note_id.clone(),
                 task_key,
-                note_path: raw_path.clone(),
+                note_path: raw_path_str,
                 note_title: note.title.clone(),
                 text: task.text.clone(),
                 line_number: task.line_number,
                 updated_at_millis,
-            }));
+            });
+
+            if heap.len() < limit {
+                heap.push(Reverse(candidate));
+            } else if let Some(worst) = heap.peek() {
+                if candidate > worst.0 {
+                    heap.pop();
+                    heap.push(Reverse(candidate));
+                }
+            }
         }
     }
 
-    drop(index);
-    if did_sync_task_timestamps {
-        write_state(&notes_dir, &persisted_state)?;
-    }
+    let mut sorted = heap.into_iter().map(|entry| entry.0).collect::<Vec<_>>();
+    // Heap iteration is unordered; produce final descending order using the
+    // heap ordering (which already matches the desired comparator).
+    sorted.sort_by(|left, right| right.cmp(left));
 
-    tasks.sort_by(|left, right| {
-        right
-            .item
-            .updated_at_millis
-            .cmp(&left.item.updated_at_millis)
-            .then_with(|| left.note_title_lower.cmp(&right.note_title_lower))
-            .then_with(|| left.item.line_number.cmp(&right.item.line_number))
-            .then_with(|| left.text_lower.cmp(&right.text_lower))
-    });
-    tasks.truncate(limit);
-
-    Ok(tasks.into_iter().map(|task| task.item).collect())
+    sorted.into_iter().map(|task| task.item).collect()
 }
 
 pub(super) fn list_tasks(
@@ -316,7 +385,7 @@ pub(super) fn set_note_order(
     db_set_note_order(&normalized_note_ids)
 }
 
-pub(super) fn toggle_task(
+pub(crate) fn toggle_task(
     state: State<'_, AppState>,
     note_path: String,
     line_number: usize,
@@ -367,7 +436,7 @@ pub(super) fn toggle_task(
     Ok(delta)
 }
 
-pub(super) fn delete_task(
+pub(crate) fn delete_task(
     state: State<'_, AppState>,
     note_path: String,
     line_number: usize,
@@ -544,7 +613,7 @@ pub(super) fn sync_task_timestamps_from_index(
     changed || existing_count != state.task_timestamps.len()
 }
 
-fn should_sync_task_timestamps(index: &NotesIndex) -> Result<bool, String> {
+pub(super) fn should_sync_task_timestamps(index: &NotesIndex) -> Result<bool, String> {
     let revision = index.revision();
     let mut last_synced_revision = TASK_TIMESTAMP_SYNC_REVISION
         .lock()

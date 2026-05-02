@@ -13,7 +13,7 @@ use std::{
     thread,
     time::Instant,
 };
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 pub(super) enum WorkerSignal {
     Wake,
@@ -157,12 +157,17 @@ fn process_job(app_handle: &AppHandle, db_path: &Path, job: StoredAiJob) -> Resu
 }
 
 fn emit_inbox_changed(app_handle: &AppHandle) -> Result<(), String> {
-    app_handle
-        .emit(
-            super::INBOX_CHANGED_EVENT,
-            serde_json::json!({ "updated": true }),
-        )
-        .map_err(|err| err.to_string())
+    if let Some(app_data) = app_handle.try_state::<crate::app::AppData>() {
+        app_data.events.inbox_changed();
+        Ok(())
+    } else {
+        app_handle
+            .emit(
+                super::INBOX_CHANGED_EVENT,
+                serde_json::json!({ "updated": true }),
+            )
+            .map_err(|err| err.to_string())
+    }
 }
 
 #[cfg(test)]

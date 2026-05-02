@@ -19,6 +19,44 @@ pub(crate) struct AppState {
     pub(crate) lexical: Arc<LexicalIndex>,
     pub(crate) semantic: Arc<SemanticState>,
     interactive_invalidation: Mutex<InteractiveInvalidationState>,
+    /// Phase 5: bounded cache of recent draft bodies keyed by `(path, hash)`.
+    /// Frontend sends only `hash` for keystroke-driven requests; backend
+    /// re-uses the body it captured from the most recent request that did
+    /// include the body, keeping the IPC payload small.
+    draft_cache: Mutex<DraftCache>,
+}
+
+#[derive(Default)]
+pub(crate) struct DraftCache {
+    /// Bounded map of `(path, hash) -> body`. We only need to remember the
+    /// last few drafts: the active note's most recent body plus a couple of
+    /// adjacent revisions to absorb out-of-order requests.
+    entries: std::collections::VecDeque<(String, String, String)>,
+}
+
+const DRAFT_CACHE_MAX_ENTRIES: usize = 6;
+
+impl DraftCache {
+    fn cache_key(path: Option<&str>, hash: &str) -> String {
+        format!("{}|{}", path.unwrap_or(""), hash)
+    }
+
+    pub(crate) fn get(&self, path: Option<&str>, hash: &str) -> Option<String> {
+        let key = Self::cache_key(path, hash);
+        self.entries
+            .iter()
+            .find(|(cached_key, _, _)| cached_key == &key)
+            .map(|(_, _, body)| body.clone())
+    }
+
+    pub(crate) fn put(&mut self, path: Option<&str>, hash: &str, body: String) {
+        let key = Self::cache_key(path, hash);
+        self.entries.retain(|(cached_key, _, _)| cached_key != &key);
+        self.entries.push_back((key, hash.to_string(), body));
+        while self.entries.len() > DRAFT_CACHE_MAX_ENTRIES {
+            self.entries.pop_front();
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -50,7 +88,51 @@ impl AppState {
             lexical: Arc::new(LexicalIndex::new()?),
             semantic: Arc::new(semantic),
             interactive_invalidation: Mutex::new(InteractiveInvalidationState::default()),
+            draft_cache: Mutex::new(DraftCache::default()),
         })
+    }
+
+    /// Phase 5: resolve the markdown body for a draft reference.
+    ///
+    /// - If `body_not_needed` is set, returns `None` (caller doesn't require it).
+    /// - If the request inlines the body, the cache is updated and the body is
+    ///   returned.
+    /// - Otherwise the cache is consulted by `(path, hash)`. A cache miss
+    ///   returns an explicit error so the frontend can retry with the body.
+    pub(crate) fn resolve_draft_body(
+        &self,
+        draft: &crate::commands::DraftRef,
+    ) -> Result<Option<String>, String> {
+        if draft.body_not_needed {
+            return Ok(None);
+        }
+
+        if let Some(body) = draft.body.as_ref() {
+            if let Some(hash) = draft.hash.as_deref() {
+                let mut cache = self
+                    .draft_cache
+                    .lock()
+                    .map_err(|_| "Draft cache lock poisoned".to_string())?;
+                cache.put(draft.path.as_deref(), hash, body.clone());
+            }
+            return Ok(Some(body.clone()));
+        }
+
+        let Some(hash) = draft.hash.as_deref() else {
+            return Ok(None);
+        };
+
+        let cache = self
+            .draft_cache
+            .lock()
+            .map_err(|_| "Draft cache lock poisoned".to_string())?;
+        match cache.get(draft.path.as_deref(), hash) {
+            Some(body) => Ok(Some(body)),
+            None => Err(format!(
+                "draft-cache-miss:{}",
+                draft.path.as_deref().unwrap_or("")
+            )),
+        }
     }
 
     pub(crate) fn upsert_note_indexes(
@@ -134,6 +216,19 @@ impl AppState {
                     .collect::<HashMap<_, _>>()
             };
             let updates = collect_dirty_updates(dirty_paths, &existing_signatures)?;
+            // Phase 5 write-through: mirror dirty updates into the lexical
+            // index before they land in `notes_index`, so search no longer
+            // needs to clone+resync the full entries map on every query.
+            for update in &updates {
+                match update {
+                    PendingIndexUpdate::Upsert(path, note) => {
+                        self.lexical.upsert_note(path, note)?;
+                    }
+                    PendingIndexUpdate::Remove(path) => {
+                        self.lexical.remove_note(path)?;
+                    }
+                }
+            }
             {
                 let mut index = self
                     .notes_index
@@ -172,6 +267,20 @@ impl AppState {
                 };
                 let (updates, seen_paths) =
                     collect_refresh_updates(notes_dir, &existing_signatures)?;
+                // Phase 5 write-through: incrementally update the lexical
+                // mirror for every changed/added entry, and remove stale
+                // entries that disappeared from disk.
+                for (path, note) in &updates {
+                    self.lexical.upsert_note(path, note)?;
+                }
+                let stale_lexical_paths: Vec<PathBuf> = existing_signatures
+                    .keys()
+                    .filter(|path| !seen_paths.contains(*path))
+                    .cloned()
+                    .collect();
+                for path in stale_lexical_paths {
+                    self.lexical.remove_note(&path)?;
+                }
                 {
                     let mut index = self
                         .notes_index

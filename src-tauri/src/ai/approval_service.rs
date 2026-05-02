@@ -11,7 +11,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 fn current_inbox_items(ai: &AiState) -> Result<Vec<InboxListItem>, String> {
     let connection = ai.connection()?;
@@ -424,12 +424,17 @@ fn apply_job_changes(job: &StoredAiJob) -> Result<(), ApplyError> {
 }
 
 fn emit_inbox_changed(app_handle: &AppHandle) -> Result<(), String> {
-    app_handle
-        .emit(
-            super::INBOX_CHANGED_EVENT,
-            serde_json::json!({ "updated": true }),
-        )
-        .map_err(|err| err.to_string())
+    if let Some(app_data) = app_handle.try_state::<crate::app::AppData>() {
+        app_data.events.inbox_changed();
+        Ok(())
+    } else {
+        app_handle
+            .emit(
+                super::INBOX_CHANGED_EVENT,
+                serde_json::json!({ "updated": true }),
+            )
+            .map_err(|err| err.to_string())
+    }
 }
 
 enum ApplyError {

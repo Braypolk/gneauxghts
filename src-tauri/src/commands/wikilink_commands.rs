@@ -1,4 +1,5 @@
 use super::index_bridge::read_indexed_note_from_path;
+use super::search_commands::build_draft_ref;
 use super::{
     prepare_notes_dir, NoteLinkSuggestion, ResolvedNoteLink, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
@@ -21,17 +22,29 @@ pub(super) struct ParsedWikilinkTarget {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_note_link(
     state: State<'_, AppState>,
     raw_target: String,
     current_path: Option<String>,
     current_title: String,
     current_markdown: Option<String>,
+    current_body_hash: Option<String>,
 ) -> Result<Option<ResolvedNoteLink>, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_override = current_markdown.as_deref().and_then(|markdown| {
+    let mut draft = build_draft_ref(
+        current_path.as_deref(),
+        &current_title,
+        current_markdown,
+        current_body_hash,
+    );
+    if !wikilink_needs_current_markdown(&raw_target) {
+        draft.body_not_needed = true;
+    }
+    let resolved_markdown = state.resolve_draft_body(&draft)?;
+    let current_override = resolved_markdown.as_deref().and_then(|markdown| {
         build_current_override(current_path.as_deref(), &current_title, markdown)
     });
     let target = parse_wikilink_target(&raw_target);
@@ -66,18 +79,30 @@ pub(crate) fn resolve_note_link(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn autocomplete_note_links(
     state: State<'_, AppState>,
     raw_target: String,
     current_path: Option<String>,
     current_title: String,
     current_markdown: Option<String>,
+    current_body_hash: Option<String>,
     limit: usize,
 ) -> Result<Vec<NoteLinkSuggestion>, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let current_override = current_markdown.as_deref().and_then(|markdown| {
+    let mut draft = build_draft_ref(
+        current_path.as_deref(),
+        &current_title,
+        current_markdown,
+        current_body_hash,
+    );
+    if !wikilink_needs_current_markdown(&raw_target) {
+        draft.body_not_needed = true;
+    }
+    let resolved_markdown = state.resolve_draft_body(&draft)?;
+    let current_override = resolved_markdown.as_deref().and_then(|markdown| {
         build_current_override(current_path.as_deref(), &current_title, markdown)
     });
     let target = parse_wikilink_target(&raw_target);
@@ -116,6 +141,13 @@ pub(crate) fn autocomplete_note_links(
         target.note.as_deref().unwrap_or_default(),
         limit,
     )
+}
+
+/// Phase 5: section-anchor (`#`) targets are the only wikilink shape that
+/// needs the unsaved current-note body to resolve labels. Note-only targets
+/// resolve from the persistent index, so the frontend can omit the body.
+pub(super) fn wikilink_needs_current_markdown(raw_target: &str) -> bool {
+    raw_target.contains('#')
 }
 
 pub(super) fn parse_wikilink_target(raw_target: &str) -> ParsedWikilinkTarget {

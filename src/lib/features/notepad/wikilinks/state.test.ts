@@ -7,8 +7,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 describe('wikilink IPC payloads', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     invokeMock.mockReset();
+    const { forgetDraft } = await import('$lib/features/notepad/search/draftRef');
+    forgetDraft('/vault/current.md');
+    forgetDraft(null);
   });
 
   it('does not send current markdown for note-only autocomplete', async () => {
@@ -22,21 +25,45 @@ describe('wikilink IPC payloads', () => {
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
       currentMarkdown: null,
+      currentBodyHash: null,
       limit: 8
     });
   });
 
-  it('sends current markdown for same-note section autocomplete', async () => {
+  it('sends current markdown for same-note section autocomplete on first call', async () => {
     invokeMock.mockResolvedValueOnce([]);
     const { autocompleteNoteLinks } = await import('./state');
+    const { computeDraftHash } = await import('$lib/features/notepad/search/draftRef');
+    const body = 'large unsaved body';
 
-    await autocompleteNoteLinks('#Heading', '/vault/current.md', 'Current', 'large unsaved body');
+    await autocompleteNoteLinks('#Heading', '/vault/current.md', 'Current', body);
 
     expect(invokeMock).toHaveBeenCalledWith('autocomplete_note_links', {
       rawTarget: '#Heading',
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
-      currentMarkdown: 'large unsaved body',
+      currentMarkdown: body,
+      currentBodyHash: computeDraftHash(body),
+      limit: 8
+    });
+  });
+
+  it('omits markdown for section autocomplete after the backend has cached the hash', async () => {
+    invokeMock.mockResolvedValue([]);
+    const { autocompleteNoteLinks } = await import('./state');
+    const { computeDraftHash } = await import('$lib/features/notepad/search/draftRef');
+    const body = 'large unsaved body';
+
+    await autocompleteNoteLinks('#Heading', '/vault/current.md', 'Current', body);
+    invokeMock.mockClear();
+    await autocompleteNoteLinks('#Other', '/vault/current.md', 'Current', body);
+
+    expect(invokeMock).toHaveBeenCalledWith('autocomplete_note_links', {
+      rawTarget: '#Other',
+      currentPath: '/vault/current.md',
+      currentTitle: 'Current',
+      currentMarkdown: null,
+      currentBodyHash: computeDraftHash(body),
       limit: 8
     });
   });
@@ -51,7 +78,8 @@ describe('wikilink IPC payloads', () => {
       rawTarget: 'Project',
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
-      currentMarkdown: null
+      currentMarkdown: null,
+      currentBodyHash: null
     });
   });
 });

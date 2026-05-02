@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick, untrack } from 'svelte';
   import {
     cleanUpApplyPolicyPreference,
@@ -56,6 +56,8 @@
     type ForgottenNote,
     type SessionSnapshot
   } from '$lib/features/notepad/session/session';
+  import { loadBootstrapPayload } from '$lib/features/notepad/session/bootstrap';
+  import { appStore } from '$lib/app/appStore.svelte';
   import { type WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
   import {
     getNextSplitChoiceIndex,
@@ -159,6 +161,7 @@
     'w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl';
 
   let workspaceShell = $state<HTMLDivElement | null>(null);
+  let semanticStatusUnlisten: UnlistenFn | null = null;
 
   // workspaceStore owns pane order, active pane, and split picker chrome.
   // We derive read-only locals so the rest of this file keeps reading the
@@ -182,7 +185,7 @@
     openSearchResult: handleSearchResultSelect,
     openRecentTask: handleRecentTaskSelect,
     openNote: async (noteId, notePath) => openNotePath(notePath, { noteId }),
-    onSearchStateChange: ({ searchMode, searchQuery }) => {
+    onSearchHighlightsChange: ({ searchMode, searchQuery }) => {
       currentSearchHighlightMode = searchMode;
       currentSearchHighlightQuery = searchQuery;
       syncCurrentFileSearchHighlights(searchQuery, searchMode);
@@ -1264,6 +1267,7 @@
 
   function paneShouldMountEditor(paneId: PaneId): boolean {
     return (
+      notepadRuntimeState.hasLoadedInitialSession &&
       paneOrder.includes(paneId) &&
       getPaneKind(paneId) === 'editor' &&
       splitPickerPaneId !== paneId
@@ -1706,7 +1710,23 @@
       if (notepadRuntimeState.hasLoadedInitialSession) {
         await Promise.all([loadAssetRoot(), loadRememberCapabilities()]);
       } else {
-        await Promise.all([loadSavedNote(), loadAssetRoot(), loadRememberCapabilities()]);
+        // Single bundled startup call replaces the parallel fan-out of
+        // load_note_session + get_vault_info + get_semantic_status. Falls
+        // back to the legacy individual invokes if the bundled command is
+        // unavailable or errors.
+        try {
+          const bootstrap = await loadBootstrapPayload();
+          adoptSnapshotForPane(notepadState, PRIMARY_PANE_ID, bootstrap.session);
+          setStoreActivePane(notepadState, PRIMARY_PANE_ID);
+          updateSharedEditorResourceConfig(
+            resolveAssetRootPath(bootstrap.vault.currentPath),
+            storePastedImageAsset
+          );
+          semanticStatus = bootstrap.semanticStatus;
+        } catch (error) {
+          console.error('bootstrap_app failed, falling back to individual invokes:', error);
+          await Promise.all([loadSavedNote(), loadAssetRoot(), loadRememberCapabilities()]);
+        }
         notepadRuntimeState.hasLoadedInitialSession = true;
       }
       if (!mounted || !paneRuntimes[PRIMARY_PANE_ID].refs.editorRoot) return;
@@ -1726,12 +1746,23 @@
           });
           await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
         }
-        vaultNoteChangeUnlisten = await listen<VaultNoteChangeEvent>(
-          'vault-note-changed',
-          ({ payload }) => {
-            void handleVaultNoteChanged(payload);
-          }
-        );
+        // Break-the-app: subscribe through the unified AppStore so the
+        // page no longer opens its own raw `listen('vault-note-changed', ...)` /
+        // `listen('semantic-status-changed', ...)` listeners. The AppStore
+        // owns one IPC subscription per channel and re-broadcasts to all
+        // consumers; this avoids redundant listeners and lets the store
+        // mirror semantic status into a single source of truth.
+        const appVaultListen = appStore.subscribeVaultNoteChanged((payload) => {
+          void handleVaultNoteChanged(payload);
+        });
+        vaultNoteChangeUnlisten = () => appVaultListen();
+        const appSemanticListen = appStore.subscribeSemanticStatusChanged((status) => {
+          semanticStatus = status;
+        });
+        semanticStatusUnlisten = () => appSemanticListen();
+        if (appStore.semanticStatus) {
+          semanticStatus = appStore.semanticStatus;
+        }
       } catch (err) {
         console.error('Notepad init failed:', err);
       }
@@ -1757,6 +1788,8 @@
       unregisterPendingNoteSaveHandler();
       vaultNoteChangeUnlisten?.();
       vaultNoteChangeUnlisten = null;
+      semanticStatusUnlisten?.();
+      semanticStatusUnlisten = null;
       shellResizeObserver?.disconnect();
       unregisterPaneEditorForDocument(PRIMARY_PANE_ID);
       unregisterPaneEditorForDocument(SECONDARY_PANE_ID);

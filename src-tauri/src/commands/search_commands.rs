@@ -1,6 +1,11 @@
-use super::{prepare_notes_dir, SearchMode, INTERACTIVE_INDEX_REFRESH_MAX_AGE};
+use super::task_commands::{
+    select_recent_tasks, should_sync_task_timestamps, sync_task_timestamps_from_index,
+};
+use super::{
+    prepare_notes_dir, DraftRef, RecentTaskItem, SearchMode, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+};
 use crate::{
-    index::{build_current_override, normalize_search_text, AppState, NotesIndex},
+    index::{build_current_override, normalize_search_text, AppState, IndexedNote, NotesIndex},
     search::{
         build_recent_result, search_note, NoteSearchResult, ScoredSearchResult, MAX_SEARCH_RESULTS,
     },
@@ -10,8 +15,178 @@ use crate::{
         write_state,
     },
 };
-use std::{collections::HashMap, path::Path, time::Instant};
+use serde::Serialize;
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 use tauri::State;
+
+/// Phase 5: short-lived cache of search/related results. Keys include the
+/// query text, mode, current path, and current draft hash so that
+/// repeated keystrokes that resolve to the same input get a cached
+/// response. Cache TTL is intentionally tiny — just long enough to absorb
+/// double-fires from the editor.
+const SEARCH_RESULT_CACHE_TTL: Duration = Duration::from_millis(750);
+const SEARCH_RESULT_CACHE_MAX_ENTRIES: usize = 16;
+
+#[derive(Clone)]
+struct CachedSearchResults {
+    fingerprint: String,
+    inserted_at: Instant,
+    results: Vec<NoteSearchResult>,
+}
+
+static SEARCH_RESULT_CACHE: Mutex<Vec<CachedSearchResults>> = Mutex::new(Vec::new());
+
+fn search_cache_get(fingerprint: &str) -> Option<Vec<NoteSearchResult>> {
+    let mut cache = SEARCH_RESULT_CACHE.lock().ok()?;
+    let now = Instant::now();
+    cache.retain(|entry| now.duration_since(entry.inserted_at) <= SEARCH_RESULT_CACHE_TTL);
+    cache
+        .iter()
+        .find(|entry| entry.fingerprint == fingerprint)
+        .map(|entry| entry.results.clone())
+}
+
+fn search_cache_put(fingerprint: String, results: Vec<NoteSearchResult>) {
+    let Ok(mut cache) = SEARCH_RESULT_CACHE.lock() else {
+        return;
+    };
+    let now = Instant::now();
+    cache.retain(|entry| {
+        entry.fingerprint != fingerprint
+            && now.duration_since(entry.inserted_at) <= SEARCH_RESULT_CACHE_TTL
+    });
+    cache.push(CachedSearchResults {
+        fingerprint,
+        inserted_at: now,
+        results,
+    });
+    while cache.len() > SEARCH_RESULT_CACHE_MAX_ENTRIES {
+        cache.remove(0);
+    }
+}
+
+#[derive(Clone)]
+struct CachedRelatedResponse {
+    fingerprint: String,
+    inserted_at: Instant,
+    response: RelatedNotesResponse,
+}
+
+static RELATED_RESULT_CACHE: Mutex<Vec<CachedRelatedResponse>> = Mutex::new(Vec::new());
+
+fn related_cache_get(fingerprint: &str) -> Option<RelatedNotesResponse> {
+    let mut cache = RELATED_RESULT_CACHE.lock().ok()?;
+    let now = Instant::now();
+    cache.retain(|entry| now.duration_since(entry.inserted_at) <= SEARCH_RESULT_CACHE_TTL);
+    cache
+        .iter()
+        .find(|entry| entry.fingerprint == fingerprint)
+        .map(|entry| entry.response.clone())
+}
+
+fn related_cache_put(fingerprint: String, response: RelatedNotesResponse) {
+    let Ok(mut cache) = RELATED_RESULT_CACHE.lock() else {
+        return;
+    };
+    let now = Instant::now();
+    cache.retain(|entry| {
+        entry.fingerprint != fingerprint
+            && now.duration_since(entry.inserted_at) <= SEARCH_RESULT_CACHE_TTL
+    });
+    cache.push(CachedRelatedResponse {
+        fingerprint,
+        inserted_at: now,
+        response,
+    });
+    while cache.len() > SEARCH_RESULT_CACHE_MAX_ENTRIES {
+        cache.remove(0);
+    }
+}
+
+/// Phase: small cache of parsed current-note overrides keyed by the draft
+/// path + body hash. The body hash is the same content fingerprint that
+/// keys SEARCH_RESULT_CACHE, so two distinct queries against the same
+/// unsaved draft hit the cache instead of reparsing the note.
+const CURRENT_OVERRIDE_CACHE_TTL: Duration = Duration::from_secs(5);
+const CURRENT_OVERRIDE_CACHE_MAX_ENTRIES: usize = 4;
+
+#[derive(Clone)]
+struct CachedCurrentOverride {
+    fingerprint: String,
+    inserted_at: Instant,
+    note: Option<IndexedNote>,
+}
+
+static CURRENT_OVERRIDE_CACHE: Mutex<Vec<CachedCurrentOverride>> = Mutex::new(Vec::new());
+
+fn current_override_fingerprint(
+    current_path: Option<&Path>,
+    current_title: &str,
+    body_hash: &str,
+) -> String {
+    format!(
+        "{}|{}|{}",
+        current_path
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        current_title,
+        body_hash,
+    )
+}
+
+fn current_override_cache_get(fingerprint: &str) -> Option<Option<IndexedNote>> {
+    let mut cache = CURRENT_OVERRIDE_CACHE.lock().ok()?;
+    let now = Instant::now();
+    cache.retain(|entry| now.duration_since(entry.inserted_at) <= CURRENT_OVERRIDE_CACHE_TTL);
+    cache
+        .iter()
+        .find(|entry| entry.fingerprint == fingerprint)
+        .map(|entry| entry.note.clone())
+}
+
+fn current_override_cache_put(fingerprint: String, note: Option<IndexedNote>) {
+    let Ok(mut cache) = CURRENT_OVERRIDE_CACHE.lock() else {
+        return;
+    };
+    let now = Instant::now();
+    cache.retain(|entry| {
+        entry.fingerprint != fingerprint
+            && now.duration_since(entry.inserted_at) <= CURRENT_OVERRIDE_CACHE_TTL
+    });
+    cache.push(CachedCurrentOverride {
+        fingerprint,
+        inserted_at: now,
+        note,
+    });
+    while cache.len() > CURRENT_OVERRIDE_CACHE_MAX_ENTRIES {
+        cache.remove(0);
+    }
+}
+
+fn build_current_override_cached(
+    current_path: Option<&Path>,
+    current_title: &str,
+    current_markdown: &str,
+    body_hash: Option<&str>,
+) -> Option<IndexedNote> {
+    let Some(hash) = body_hash else {
+        return build_current_override(current_path, current_title, current_markdown);
+    };
+
+    let fingerprint = current_override_fingerprint(current_path, current_title, hash);
+    if let Some(cached) = current_override_cache_get(&fingerprint) {
+        return cached;
+    }
+
+    let parsed = build_current_override(current_path, current_title, current_markdown);
+    current_override_cache_put(fingerprint, parsed.clone());
+    parsed
+}
 
 #[derive(Clone)]
 struct HybridCandidate {
@@ -40,8 +215,9 @@ pub(crate) fn list_recent_notes(
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let mut persisted_state = read_state(&notes_dir)?;
-    prune_recent_note_ids(&mut persisted_state, &notes_dir);
-    write_state(&notes_dir, &persisted_state)?;
+    if prune_recent_note_ids(&mut persisted_state, &notes_dir) {
+        write_state(&notes_dir, &persisted_state)?;
+    }
 
     state.ensure_interactive_index(
         &notes_dir,
@@ -65,6 +241,65 @@ pub(crate) fn list_recent_notes(
     ))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecentFocusBundle {
+    recent_notes: Vec<NoteSearchResult>,
+    recent_tasks: Vec<RecentTaskItem>,
+}
+
+/// Combined focus loader: returns both recent notes and recent tasks in a
+/// single backend round-trip. This collapses two separate frontend calls
+/// (each performing its own `read_state` + `ensure_interactive_index` +
+/// optional `write_state`) into one shared traversal.
+#[tauri::command]
+pub(crate) fn list_recent_focus(
+    state: State<'_, AppState>,
+    limit: usize,
+    current_path: Option<String>,
+) -> Result<RecentFocusBundle, String> {
+    let notes_dir = prepare_notes_dir(false)?;
+
+    let current_path = validate_current_path(current_path, &notes_dir)?;
+    let mut persisted_state = read_state(&notes_dir)?;
+    let prune_changed = prune_recent_note_ids(&mut persisted_state, &notes_dir);
+
+    state.ensure_interactive_index(
+        &notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "list_recent_focus",
+    )?;
+    let index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Search index lock poisoned".to_string())?;
+
+    let task_sync_changed = should_sync_task_timestamps(&index)?
+        && sync_task_timestamps_from_index(&mut persisted_state, &index);
+
+    let current_note_id = current_path
+        .as_deref()
+        .map(resolve_note_id_from_path)
+        .transpose()?;
+    let recent_notes = collect_recent_note_results(
+        &persisted_state.recent_note_ids,
+        current_note_id.as_deref(),
+        &index,
+        limit,
+    );
+    let recent_tasks = select_recent_tasks(&persisted_state, &index, limit);
+
+    drop(index);
+    if prune_changed || task_sync_changed {
+        write_state(&notes_dir, &persisted_state)?;
+    }
+
+    Ok(RecentFocusBundle {
+        recent_notes,
+        recent_tasks,
+    })
+}
+
 pub(super) fn collect_recent_note_results(
     recent_note_ids: &[String],
     current_note_id: Option<&str>,
@@ -86,13 +321,15 @@ pub(super) fn collect_recent_note_results(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn search_notes(
     state: State<'_, AppState>,
     query: String,
     mode: SearchMode,
     current_path: Option<String>,
     current_title: String,
-    current_markdown: String,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let notes_dir = prepare_notes_dir(false)?;
 
@@ -110,6 +347,13 @@ pub(crate) fn search_notes(
     }
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
+    let draft = build_draft_ref(
+        current_path.as_deref(),
+        &current_title,
+        current_markdown,
+        current_body_hash,
+    );
+    let resolved_body = state.resolve_draft_body(&draft)?.unwrap_or_default();
     let mut candidates = collect_lexical_candidates(
         &state,
         &query,
@@ -117,7 +361,8 @@ pub(crate) fn search_notes(
         mode,
         current_path.as_deref(),
         &current_title,
-        &current_markdown,
+        &resolved_body,
+        draft.hash.as_deref(),
         &normalized_query,
         &query_terms,
     )?;
@@ -146,7 +391,8 @@ pub(crate) async fn search_notes_hybrid(
     mode: SearchMode,
     current_path: Option<String>,
     current_title: String,
-    current_markdown: String,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
     limit: usize,
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
@@ -168,6 +414,25 @@ pub(crate) async fn search_notes_hybrid(
     }
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
+    let draft = build_draft_ref(
+        current_path.as_deref(),
+        &current_title,
+        current_markdown,
+        current_body_hash,
+    );
+    let cache_fingerprint = build_search_fingerprint(
+        &normalized_query,
+        &mode,
+        current_path.as_deref(),
+        draft.hash.as_deref(),
+        limit,
+        lexical_weight,
+        semantic_weight,
+    );
+    if let Some(cached) = search_cache_get(&cache_fingerprint) {
+        return Ok(cached);
+    }
+    let resolved_body = state.resolve_draft_body(&draft)?.unwrap_or_default();
     let lexical_candidates = collect_lexical_candidates(
         &state,
         &query,
@@ -175,7 +440,8 @@ pub(crate) async fn search_notes_hybrid(
         mode.clone(),
         current_path.as_deref(),
         &current_title,
-        &current_markdown,
+        &resolved_body,
+        draft.hash.as_deref(),
         &normalized_query,
         &query_terms,
     )?;
@@ -205,7 +471,9 @@ pub(crate) async fn search_notes_hybrid(
                     metrics.search_duration_max_millis.max(elapsed);
             },
         );
-        return Ok(finalize_lexical_results(lexical_candidates, limit));
+        let results = finalize_lexical_results(lexical_candidates, limit);
+        search_cache_put(cache_fingerprint, results.clone());
+        return Ok(results);
     }
 
     let semantic = state.semantic.clone();
@@ -242,36 +510,113 @@ pub(crate) async fn search_notes_hybrid(
             metrics.search_duration_max_millis = metrics.search_duration_max_millis.max(elapsed);
         },
     );
+    search_cache_put(cache_fingerprint, ranked.clone());
     Ok(ranked)
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn get_related_notes(
     state: State<'_, AppState>,
     current_path: Option<String>,
     current_title: String,
-    current_markdown: String,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
     selected_text: Option<String>,
     limit: usize,
 ) -> Result<RelatedNotesResponse, String> {
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
+    let draft = build_draft_ref(
+        current_path.as_deref(),
+        &current_title,
+        current_markdown,
+        current_body_hash,
+    );
+    let fingerprint = build_related_fingerprint(
+        current_path.as_deref(),
+        draft.hash.as_deref(),
+        selected_text.as_deref(),
+        limit,
+    );
+    if let Some(cached) = related_cache_get(&fingerprint) {
+        return Ok(cached);
+    }
+    let resolved_body = state.resolve_draft_body(&draft)?.unwrap_or_default();
     let current_path_raw = current_path
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
     let semantic = state.semantic.clone();
 
-    tauri::async_runtime::spawn_blocking(move || {
+    let response = tauri::async_runtime::spawn_blocking(move || {
         semantic.related_notes(
             current_path_raw.as_deref(),
             &current_title,
-            &current_markdown,
+            &resolved_body,
             selected_text.as_deref(),
             limit.max(1),
         )
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+    related_cache_put(fingerprint, response.clone());
+    Ok(response)
+}
+
+pub(super) fn build_draft_ref(
+    current_path: Option<&Path>,
+    current_title: &str,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
+) -> DraftRef {
+    DraftRef {
+        path: current_path.map(|path| path.to_string_lossy().into_owned()),
+        title: current_title.to_string(),
+        hash: current_body_hash,
+        body: current_markdown,
+        body_not_needed: false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_search_fingerprint(
+    normalized_query: &str,
+    mode: &SearchMode,
+    current_path: Option<&Path>,
+    body_hash: Option<&str>,
+    limit: usize,
+    lexical_weight: Option<f32>,
+    semantic_weight: Option<f32>,
+) -> String {
+    format!(
+        "{}|{:?}|{}|{}|{}|{:?}|{:?}",
+        normalized_query,
+        mode,
+        current_path
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        body_hash.unwrap_or(""),
+        limit,
+        lexical_weight,
+        semantic_weight,
+    )
+}
+
+fn build_related_fingerprint(
+    current_path: Option<&Path>,
+    body_hash: Option<&str>,
+    selected_text: Option<&str>,
+    limit: usize,
+) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        current_path
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        body_hash.unwrap_or(""),
+        selected_text.unwrap_or(""),
+        limit,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -283,10 +628,16 @@ fn collect_lexical_candidates(
     current_path: Option<&Path>,
     current_title: &str,
     current_markdown: &str,
+    current_body_hash: Option<&str>,
     normalized_query: &str,
     query_terms: &[&str],
 ) -> Result<Vec<ScoredSearchResult>, String> {
-    let current_override = build_current_override(current_path, current_title, current_markdown);
+    let current_override = build_current_override_cached(
+        current_path,
+        current_title,
+        current_markdown,
+        current_body_hash,
+    );
     let mut candidates = Vec::new();
     match mode {
         SearchMode::Current => {
@@ -309,21 +660,16 @@ fn collect_lexical_candidates(
                 ));
             }
 
+            // Phase 5: `ensure_interactive_index` now write-throughs to the
+            // lexical mirror, so the search path no longer needs to clone the
+            // entire `notes_index.entries` and call `sync_with_notes_index`
+            // on every keystroke. Existing watcher + interactive entry points
+            // keep the Tantivy index in step with `notes_index`.
             state.ensure_interactive_index(
                 notes_dir,
                 INTERACTIVE_INDEX_REFRESH_MAX_AGE,
                 "search_notes_all",
             )?;
-            // Reconcile lexical on every "all" search: `notes_index` may have been
-            // refreshed elsewhere without updating the Tantivy mirror.
-            let lexical_entries = {
-                let notes_index = state
-                    .notes_index
-                    .lock()
-                    .map_err(|_| "Search index lock poisoned".to_string())?;
-                notes_index.entries.clone()
-            };
-            state.lexical.sync_with_notes_index(&lexical_entries)?;
 
             candidates.extend(state.lexical.search(
                 query,

@@ -70,6 +70,11 @@ impl LexicalIndex {
         })
     }
 
+    /// Phase 5: retained for tests and emergency reconciliation. The
+    /// production search path now relies on write-through updates from
+    /// [`AppState::ensure_interactive_index`], [`AppState::upsert_note_indexes`],
+    /// and [`AppState::remove_note_indexes`].
+    #[allow(dead_code)]
     pub(crate) fn sync_with_notes_index(
         &self,
         entries: &HashMap<PathBuf, IndexedNote>,

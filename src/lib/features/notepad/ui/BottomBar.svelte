@@ -111,8 +111,21 @@
     onForget: () => onForget()
   });
 
+  // Track only the materially distinguishing fingerprint of the visible
+  // items so transient writable-store flips (e.g. isSearching toggling on a
+  // keystroke that hasn't changed results yet) do not reset activeIndex.
+  const visibleItemsFingerprint = $derived(
+    `${searchQuery.trim() === '' ? 'recents' : 'search'}|${visibleItems.length}|${
+      visibleItems[0]
+        ? visibleItems[0].kind === 'task'
+          ? `t:${visibleItems[0].item.taskKey}`
+          : `n:${visibleItems[0].item.notePath ?? ''}|${visibleItems[0].item.fileName}|${visibleItems[0].item.sectionLabel ?? ''}|${visibleItems[0].item.matchText ?? ''}`
+        : ''
+    }`
+  );
+
   $effect(() => {
-    visibleItems;
+    visibleItemsFingerprint;
     bottomBarState.resetActiveIndex();
   });
 

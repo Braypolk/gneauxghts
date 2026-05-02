@@ -466,12 +466,17 @@ impl AiState {
     }
 
     fn emit_inbox_changed(&self) -> Result<(), String> {
-        self.app_handle
-            .emit(INBOX_CHANGED_EVENT, json!({ "updated": true }))
-            .map_err(|err| err.to_string())
+        if let Some(app_data) = self.app_handle.try_state::<crate::app::AppData>() {
+            app_data.events.inbox_changed();
+            Ok(())
+        } else {
+            self.app_handle
+                .emit(INBOX_CHANGED_EVENT, json!({ "updated": true }))
+                .map_err(|err| err.to_string())
+        }
     }
 
-    fn load_public_settings(&self) -> Result<AiSettings, String> {
+    pub(crate) fn load_public_settings(&self) -> Result<AiSettings, String> {
         let connection = self.connection()?;
         load_settings(&connection).map(public_ai_settings)
     }

@@ -5,7 +5,7 @@ mod index_bridge;
 pub(crate) mod note_persistence;
 mod note_session;
 pub(crate) mod search_commands;
-mod task_commands;
+pub(crate) mod task_commands;
 pub(crate) mod wikilink_commands;
 
 pub(crate) use note_session::{
@@ -17,12 +17,15 @@ pub(crate) use note_session::{
 pub(crate) use note_session::{load_note_session_from_notes_dir, open_note_from_notes_dir};
 
 use crate::{
+    ai::{AiSettings, AiState},
+    app::AppData,
     index::AppState,
     semantic::{
         debug::SemanticDebugSnapshot, embed::SemanticModelDownloadResult, SemanticSettings,
         SemanticStatus,
     },
-    state::{current_vault_info, notes_root, set_notes_root, VaultInfo},
+    services::{NoteService, SettingsService, TaskService},
+    state::{current_vault_info, notes_root, VaultInfo},
     time::current_time_millis,
 };
 use serde::{Deserialize, Serialize};
@@ -34,13 +37,13 @@ use std::{
 #[cfg(test)]
 use task_commands::find_task_key_for_line;
 use task_commands::{
-    delete_task as delete_task_impl, list_recent_tasks as list_recent_tasks_impl,
-    list_tasks as list_tasks_impl, reconcile_note_task_timestamps,
-    set_note_collapsed as set_note_collapsed_impl, set_note_hidden as set_note_hidden_impl,
-    set_note_order as set_note_order_impl, set_task_hidden as set_task_hidden_impl,
-    toggle_task as toggle_task_impl,
+    list_recent_tasks as list_recent_tasks_impl, list_tasks as list_tasks_impl,
+    reconcile_note_task_timestamps, set_note_collapsed as set_note_collapsed_impl,
+    set_note_hidden as set_note_hidden_impl, set_note_order as set_note_order_impl,
+    set_task_hidden as set_task_hidden_impl,
 };
 use tauri::State;
+use tauri::{AppHandle, Emitter, Manager};
 
 const INTERACTIVE_INDEX_REFRESH_MAX_AGE: Duration = Duration::from_millis(750);
 const ASSETS_DIRECTORY_NAME: &str = "assets";
@@ -49,10 +52,10 @@ const DEFAULT_PASTED_IMAGE_NAME: &str = "Pasted image";
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteSession {
-    note_id: Option<String>,
-    title: String,
-    markdown: String,
-    path: Option<String>,
+    pub(crate) note_id: Option<String>,
+    pub(crate) title: String,
+    pub(crate) markdown: String,
+    pub(crate) path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,6 +88,25 @@ pub(crate) struct StoredImageAsset {
 pub(crate) enum SearchMode {
     Current,
     All,
+}
+
+/// Phase 5: lightweight draft pointer used internally for search/related/
+/// wikilink flows. The frontend sends `currentMarkdown` and
+/// `currentBodyHash` as flat fields; commands assemble a `DraftRef` to call
+/// [`AppState::resolve_draft_body`], which either returns the inlined body
+/// (and caches it) or replays a cached body for repeat hashes — letting the
+/// frontend skip resending the full markdown on every keystroke.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DraftRef {
+    pub(crate) path: Option<String>,
+    #[allow(dead_code)]
+    pub(crate) title: String,
+    pub(crate) hash: Option<String>,
+    pub(crate) body: Option<String>,
+    /// When true, the caller does not need a current-note override
+    /// (e.g. wikilink resolution that targets a different note). The backend
+    /// can skip body resolution entirely.
+    pub(crate) body_not_needed: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -227,8 +249,10 @@ fn prepare_notes_dir_with_state(
 
 #[tauri::command]
 pub(crate) fn load_note_session(state: State<'_, AppState>) -> Result<NoteSession, String> {
-    let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
-    load_note_session_from_notes_dir_with_state(&notes_dir, Some(&state))
+    // Forgotten-note cleanup is throttled to startup + a 5-minute background
+    // pass; the service intentionally skips the per-call cleanup.
+    let _ = prepare_notes_dir_with_state(true, Some(&state))?;
+    NoteService::new().load_session(&state)
 }
 
 #[tauri::command]
@@ -237,8 +261,8 @@ pub(crate) fn open_note(
     note_id: Option<String>,
     path: Option<String>,
 ) -> Result<NoteSession, String> {
-    let notes_dir = prepare_notes_dir_with_state(false, Some(&state))?;
-    open_note_from_notes_dir_with_state(&notes_dir, note_id, path, Some(&state))
+    let _ = prepare_notes_dir_with_state(false, Some(&state))?;
+    NoteService::new().open(&state, note_id, path)
 }
 
 #[tauri::command]
@@ -256,50 +280,38 @@ pub(crate) fn read_note(
 
 #[tauri::command]
 pub(crate) fn get_vault_info() -> Result<VaultInfo, String> {
-    current_vault_info()
+    SettingsService::new().vault_info()
 }
 
 #[tauri::command]
-pub(crate) fn set_vault_directory(path: Option<String>) -> Result<VaultInfo, String> {
-    match path.as_deref().map(str::trim) {
-        Some("") => set_notes_root(None),
-        Some(path) => set_notes_root(Some(Path::new(path))),
-        None => set_notes_root(None),
-    }
+pub(crate) fn set_vault_directory(
+    state: State<'_, AppState>,
+    app_data: State<'_, AppData>,
+    path: Option<String>,
+) -> Result<VaultInfo, String> {
+    SettingsService::new().set_vault(&app_data, &state, path)
 }
 
 #[tauri::command]
 pub(crate) fn save_note(
     state: State<'_, AppState>,
+    app_data: State<'_, AppData>,
     title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<NoteSession, String> {
-    note_persistence::persist_note_session(
-        &state,
-        title,
-        markdown,
-        current_path,
-        note_persistence::NotePersistenceMode::Save,
-    )?
-    .ok_or_else(|| "Saved note session is missing".to_string())
+    NoteService::new().save(&app_data, &state, title, markdown, current_path)
 }
 
 #[tauri::command]
 pub(crate) fn remember_note(
     state: State<'_, AppState>,
+    app_data: State<'_, AppData>,
     title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<(), String> {
-    note_persistence::persist_note_session(
-        &state,
-        title,
-        markdown,
-        current_path,
-        note_persistence::NotePersistenceMode::Remember,
-    )?;
-    Ok(())
+    NoteService::new().remember(&app_data, &state, title, markdown, current_path)
 }
 
 #[tauri::command]
@@ -344,22 +356,31 @@ pub(crate) fn set_note_order(
 #[tauri::command]
 pub(crate) fn toggle_task(
     state: State<'_, AppState>,
+    app_data: State<'_, AppData>,
     note_path: String,
     line_number: usize,
     task_text: String,
 ) -> Result<TaskMutationDelta, String> {
-    toggle_task_impl(state, note_path, line_number, task_text)
+    TaskService::new().toggle(&app_data, state, note_path, line_number, task_text)
 }
 
 #[tauri::command]
 pub(crate) fn delete_task(
     state: State<'_, AppState>,
+    app_data: State<'_, AppData>,
     note_path: String,
     line_number: usize,
     task_text: String,
     task_key: String,
 ) -> Result<TaskMutationDelta, String> {
-    delete_task_impl(state, note_path, line_number, task_text, task_key)
+    TaskService::new().delete(
+        &app_data,
+        state,
+        note_path,
+        line_number,
+        task_text,
+        task_key,
+    )
 }
 
 #[tauri::command]
@@ -371,11 +392,13 @@ pub(crate) fn get_semantic_settings(
 
 #[tauri::command]
 pub(crate) fn set_semantic_settings(
+    app: AppHandle,
     state: State<'_, AppState>,
     settings: SemanticSettings,
 ) -> Result<SemanticSettings, String> {
     let next_settings = state.semantic.set_settings(settings)?;
     state.semantic.warmup_model_in_background();
+    emit_semantic_status_changed(&app, &state);
     Ok(next_settings)
 }
 
@@ -385,18 +408,33 @@ pub(crate) fn get_semantic_status(state: State<'_, AppState>) -> Result<Semantic
 }
 
 #[tauri::command]
-pub(crate) fn rebuild_semantic_index(state: State<'_, AppState>) -> Result<(), String> {
-    state.semantic.rebuild_index()
+pub(crate) fn rebuild_semantic_index(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.semantic.rebuild_index()?;
+    emit_semantic_status_changed(&app, &state);
+    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn pause_semantic_indexing(state: State<'_, AppState>) -> Result<(), String> {
-    state.semantic.pause_indexing()
+pub(crate) fn pause_semantic_indexing(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.semantic.pause_indexing()?;
+    emit_semantic_status_changed(&app, &state);
+    Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn resume_semantic_indexing(state: State<'_, AppState>) -> Result<(), String> {
-    state.semantic.resume_indexing()
+pub(crate) fn resume_semantic_indexing(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.semantic.resume_indexing()?;
+    emit_semantic_status_changed(&app, &state);
+    Ok(())
 }
 
 #[tauri::command]
@@ -427,6 +465,91 @@ pub(crate) fn get_semantic_debug_metrics(
 #[tauri::command]
 pub(crate) fn clear_semantic_debug_metrics(state: State<'_, AppState>) -> Result<(), String> {
     state.semantic.clear_debug_metrics()
+}
+
+/// Re-export of the typed event channel name so legacy callers keep
+/// linking against `commands::SEMANTIC_STATUS_CHANGED_EVENT`.
+pub(crate) use crate::app::events::SEMANTIC_STATUS_CHANGED_EVENT;
+
+/// Best-effort emit of the current semantic status to the frontend.
+/// Used by mutation commands so the UI can reduce/avoid polling.
+/// Now routed through the typed event bus when an [`AppData`] state is
+/// available; falls back to the raw AppHandle emit as a safety net.
+pub(crate) fn emit_semantic_status_changed(app: &AppHandle, state: &AppState) {
+    if let Ok(status) = state.semantic.get_status() {
+        if let Some(app_data) = app.try_state::<AppData>() {
+            app_data.events.semantic_status_changed(status);
+        } else {
+            let _ = app.emit(SEMANTIC_STATUS_CHANGED_EVENT, status);
+        }
+    }
+}
+
+/// Bundled startup payload returned by `bootstrap_app`. Consolidates the
+/// per-mount fan-out of `load_note_session` + `get_vault_info` +
+/// `get_semantic_status` + `get_ai_settings` (and the index revision) into
+/// a single round trip. The original commands continue to work for
+/// callers that already use them.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BootstrapAppPayload {
+    vault: VaultInfo,
+    note_session: NoteSession,
+    semantic_status: SemanticStatus,
+    ai_settings: Option<AiSettings>,
+    index_revision: u64,
+}
+
+#[tauri::command]
+pub(crate) fn bootstrap_app(
+    state: State<'_, AppState>,
+    ai: State<'_, AiState>,
+) -> Result<BootstrapAppPayload, String> {
+    let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
+    let note_session = load_note_session_from_notes_dir_with_state(&notes_dir, Some(&state))?;
+    let vault = current_vault_info()?;
+    let semantic_status = state.semantic.get_status()?;
+    let ai_settings = ai.load_public_settings().ok();
+    let index_revision = state.semantic.current_index_revision();
+    Ok(BootstrapAppPayload {
+        vault,
+        note_session,
+        semantic_status,
+        ai_settings,
+        index_revision,
+    })
+}
+
+/// Bundled settings payload returned by `get_settings_view`. Replaces the
+/// settings store's parallel fan-out of three semantic invokes plus
+/// `get_vault_info` and `get_ai_settings` with a single call.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SettingsViewPayload {
+    vault: VaultInfo,
+    semantic_status: SemanticStatus,
+    semantic_settings: SemanticSettings,
+    semantic_debug: SemanticDebugSnapshot,
+    ai_settings: Option<AiSettings>,
+}
+
+#[tauri::command]
+pub(crate) fn get_settings_view(
+    state: State<'_, AppState>,
+    ai: State<'_, AiState>,
+) -> Result<SettingsViewPayload, String> {
+    let vault = current_vault_info()?;
+    let semantic_status = state.semantic.get_status()?;
+    let semantic_settings = state.semantic.get_settings()?;
+    let semantic_debug = state.semantic.debug_snapshot()?;
+    let ai_settings = ai.load_public_settings().ok();
+    Ok(SettingsViewPayload {
+        vault,
+        semantic_status,
+        semantic_settings,
+        semantic_debug,
+        ai_settings,
+    })
 }
 
 #[cfg(test)]

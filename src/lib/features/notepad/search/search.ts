@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
+import { callWithDraft, computeDraftHash } from '$lib/features/notepad/search/draftRef';
 
 export type SearchMode = 'current' | 'all';
 const RECENT_ITEMS_LIMIT = 20;
@@ -24,14 +25,22 @@ export async function searchNotes(
   mode: SearchMode,
   context: SearchContext
 ) {
-  return invoke<SearchItem[]>('search_notes_hybrid', {
-    query,
-    mode,
-    currentPath: context.currentPath,
-    currentTitle: context.currentTitle,
-    currentMarkdown: context.currentMarkdown,
-    limit: 12
-  });
+  const hash = computeDraftHash(context.currentMarkdown);
+  return callWithDraft(
+    context.currentPath,
+    hash,
+    context.currentMarkdown,
+    (currentMarkdown, currentBodyHash) =>
+      invoke<SearchItem[]>('search_notes_hybrid', {
+        query,
+        mode,
+        currentPath: context.currentPath,
+        currentTitle: context.currentTitle,
+        currentMarkdown,
+        currentBodyHash,
+        limit: 12
+      })
+  );
 }
 
 export async function listRecentNotes(context: Pick<SearchContext, 'currentPath'>) {
@@ -47,16 +56,36 @@ export async function listRecentTasks() {
   });
 }
 
+export interface RecentFocusBundle {
+  recentNotes: SearchItem[];
+  recentTasks: RecentTaskItem[];
+}
+
+export async function listRecentFocus(context: Pick<SearchContext, 'currentPath'>) {
+  return invoke<RecentFocusBundle>('list_recent_focus', {
+    limit: RECENT_ITEMS_LIMIT,
+    currentPath: context.currentPath
+  });
+}
+
 export async function getRelatedNotes(
   context: SearchContext,
   selectedText: string | null,
   limit = 4
 ) {
-  return invoke<RelatedNotesResponse>('get_related_notes', {
-    currentPath: context.currentPath,
-    currentTitle: context.currentTitle,
-    currentMarkdown: context.currentMarkdown,
-    selectedText,
-    limit
-  });
+  const hash = computeDraftHash(context.currentMarkdown);
+  return callWithDraft(
+    context.currentPath,
+    hash,
+    context.currentMarkdown,
+    (currentMarkdown, currentBodyHash) =>
+      invoke<RelatedNotesResponse>('get_related_notes', {
+        currentPath: context.currentPath,
+        currentTitle: context.currentTitle,
+        currentMarkdown,
+        currentBodyHash,
+        selectedText,
+        limit
+      })
+  );
 }

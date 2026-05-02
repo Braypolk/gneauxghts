@@ -1,17 +1,21 @@
 mod ai;
+mod app;
 mod commands;
 mod index;
 mod lexical;
 mod note;
 mod path_utils;
+mod repositories;
 mod search;
 mod semantic;
+mod services;
 mod state;
 #[cfg(test)]
 mod test_support;
 mod time;
 mod vault_watcher;
 
+use app::AppData;
 use index::AppState;
 use semantic::SemanticState;
 use state::{initialize_app_data_dir, initialize_documents_dir, notes_root};
@@ -37,6 +41,11 @@ pub fn run() {
             };
             app.manage(AppState::new(semantic)?);
             app.manage(ai::AiState::new(app.handle().clone())?);
+            // Break-the-app: one managed `AppData` carrying the typed event
+            // bus and the `NoteCatalog` facade. Coexists with the
+            // pre-existing `AppState`/`AiState` so existing commands keep
+            // working while new code routes through services + events.
+            app.manage(AppData::new(app.handle().clone()));
             app.manage(vault_watcher::start_vault_watcher(app.handle().clone())?);
             // Run the forgotten-note cleanup once at startup so we still purge
             // expired entries even though we no longer trigger it on every
@@ -46,6 +55,8 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            commands::bootstrap_app,
+            commands::get_settings_view,
             commands::load_note_session,
             commands::open_note,
             commands::read_note,
@@ -64,6 +75,7 @@ pub fn run() {
             commands::forgotten_note_commands::restore_forgotten_notes,
             commands::forgotten_note_commands::delete_forgotten_notes,
             commands::search_commands::list_recent_notes,
+            commands::search_commands::list_recent_focus,
             commands::list_recent_tasks,
             commands::list_tasks,
             commands::set_note_collapsed,

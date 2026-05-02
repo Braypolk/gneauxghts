@@ -90,6 +90,7 @@ fn build_saved_note_session(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn persist_note_session(
     state: &State<'_, AppState>,
     title: String,

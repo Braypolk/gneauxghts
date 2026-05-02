@@ -7,8 +7,11 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 describe('notepad search IPC payloads', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     invokeMock.mockReset();
+    const { forgetDraft } = await import('./draftRef');
+    forgetDraft('/vault/current.md');
+    forgetDraft(null);
   });
 
   it('does not send current markdown for recent note loading', async () => {
@@ -25,14 +28,16 @@ describe('notepad search IPC payloads', () => {
     });
   });
 
-  it('still sends current markdown for active search results', async () => {
+  it('sends current markdown plus hash on the first search request', async () => {
     invokeMock.mockResolvedValueOnce([]);
     const { searchNotes } = await import('./search');
+    const { computeDraftHash } = await import('./draftRef');
+    const body = 'large unsaved body';
 
     await searchNotes('atlas', 'all', {
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
-      currentMarkdown: 'large unsaved body'
+      currentMarkdown: body
     });
 
     expect(invokeMock).toHaveBeenCalledWith('search_notes_hybrid', {
@@ -40,7 +45,66 @@ describe('notepad search IPC payloads', () => {
       mode: 'all',
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
-      currentMarkdown: 'large unsaved body',
+      currentMarkdown: body,
+      currentBodyHash: computeDraftHash(body),
+      limit: 12
+    });
+  });
+
+  it('omits current markdown when the backend has already cached this hash', async () => {
+    invokeMock.mockResolvedValue([]);
+    const { searchNotes } = await import('./search');
+    const { computeDraftHash } = await import('./draftRef');
+    const body = 'large unsaved body';
+
+    await searchNotes('atlas', 'all', {
+      currentPath: '/vault/current.md',
+      currentTitle: 'Current',
+      currentMarkdown: body
+    });
+    invokeMock.mockClear();
+
+    await searchNotes('atla', 'all', {
+      currentPath: '/vault/current.md',
+      currentTitle: 'Current',
+      currentMarkdown: body
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('search_notes_hybrid', {
+      query: 'atla',
+      mode: 'all',
+      currentPath: '/vault/current.md',
+      currentTitle: 'Current',
+      currentMarkdown: null,
+      currentBodyHash: computeDraftHash(body),
+      limit: 12
+    });
+  });
+
+  it('retries with the body when the backend reports a draft cache miss', async () => {
+    const { searchNotes } = await import('./search');
+    const { computeDraftHash, rememberDraft } = await import('./draftRef');
+    const body = 'large unsaved body';
+    const hash = computeDraftHash(body);
+    rememberDraft('/vault/current.md', hash);
+
+    invokeMock.mockRejectedValueOnce(`draft-cache-miss:/vault/current.md`);
+    invokeMock.mockResolvedValueOnce([]);
+
+    await searchNotes('atlas', 'all', {
+      currentPath: '/vault/current.md',
+      currentTitle: 'Current',
+      currentMarkdown: body
+    });
+
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenLastCalledWith('search_notes_hybrid', {
+      query: 'atlas',
+      mode: 'all',
+      currentPath: '/vault/current.md',
+      currentTitle: 'Current',
+      currentMarkdown: body,
+      currentBodyHash: hash,
       limit: 12
     });
   });

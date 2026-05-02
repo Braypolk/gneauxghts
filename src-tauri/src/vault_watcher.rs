@@ -1,4 +1,5 @@
 use crate::{
+    app::AppData,
     index::AppState,
     state::{is_forgotten_note_path, notes_root},
     time::current_time_millis,
@@ -7,7 +8,6 @@ use notify::{
     event::ModifyKind, Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode,
     Watcher,
 };
-use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -15,9 +15,7 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, Manager};
-
-pub(crate) const VAULT_NOTE_CHANGED_EVENT: &str = "vault-note-changed";
+use tauri::{AppHandle, Manager};
 
 /// Window during which a watcher event for a path written by this app is
 /// treated as a self-save and ignored. The watcher would otherwise re-read
@@ -67,13 +65,6 @@ fn prune_self_save_map(entry: &mut HashMap<PathBuf, Instant>, now: Instant) {
 #[allow(dead_code)]
 pub(crate) struct VaultWatcherHandle {
     watcher: RecommendedWatcher,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct VaultNoteChangeEvent {
-    note_path: String,
-    deleted: bool,
 }
 
 pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherHandle, String> {
@@ -165,15 +156,10 @@ fn handle_watched_path_change(
     }
 
     state.mark_notes_index_dirty(path, "watcher")?;
-    app_handle
-        .emit(
-            VAULT_NOTE_CHANGED_EVENT,
-            VaultNoteChangeEvent {
-                note_path: path.to_string_lossy().into_owned(),
-                deleted,
-            },
-        )
-        .map_err(|err| err.to_string())
+    if let Some(app_data) = app_handle.try_state::<AppData>() {
+        app_data.events.vault_note_changed(path, deleted);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

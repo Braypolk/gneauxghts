@@ -107,7 +107,7 @@ pub(crate) fn write_state_with_lookup(
     Ok(())
 }
 
-pub(crate) fn prune_recent_note_ids(state: &mut PersistedState, notes_dir: &Path) {
+pub(crate) fn prune_recent_note_ids(state: &mut PersistedState, notes_dir: &Path) -> bool {
     prune_recent_note_ids_with_lookup(state, notes_dir, &NoteIdLookup::Disk)
 }
 
@@ -115,7 +115,8 @@ pub(crate) fn prune_recent_note_ids_with_lookup(
     state: &mut PersistedState,
     notes_dir: &Path,
     lookup: &NoteIdLookup<'_>,
-) {
+) -> bool {
+    let original_len = state.recent_note_ids.len();
     let mut seen = HashSet::new();
     state.recent_note_ids.retain(|note_id| {
         lookup
@@ -123,7 +124,11 @@ pub(crate) fn prune_recent_note_ids_with_lookup(
             .map(|path| path.is_some() && seen.insert(note_id.clone()))
             .unwrap_or(false)
     });
-    state.recent_note_ids.truncate(MAX_RECENT_NOTES);
+    let mut changed = state.recent_note_ids.len() != original_len;
+    if state.recent_note_ids.len() > MAX_RECENT_NOTES {
+        state.recent_note_ids.truncate(MAX_RECENT_NOTES);
+        changed = true;
+    }
 
     if state.last_opened_note_id.as_ref().is_some_and(|note_id| {
         lookup
@@ -132,7 +137,10 @@ pub(crate) fn prune_recent_note_ids_with_lookup(
             .unwrap_or(true)
     }) {
         state.last_opened_note_id = None;
+        changed = true;
     }
+
+    changed
 }
 
 pub(crate) fn touch_recent_note_id(state: &mut PersistedState, note_id: String) {

@@ -7,6 +7,7 @@ import {
   runRecentSelection
 } from '$lib/features/notepad/search/recent';
 import {
+  listRecentFocus,
   listRecentNotes,
   listRecentTasks,
   searchNotes,
@@ -31,7 +32,13 @@ interface SearchStoreDeps {
   openSearchResult: (result: SearchItem) => Promise<void>;
   openRecentTask: (task: RecentTaskItem) => Promise<void>;
   openNote: (noteId: string | null, notePath: string | null) => Promise<void>;
-  onSearchStateChange?: (state: Pick<NotepadSearchState, 'searchMode' | 'searchQuery'>) => void;
+  /**
+   * Called only when the resolved (post-debounce) search query or mode
+   * changes so that side effects like editor highlight sync do not run
+   * on every keystroke. Also fires immediately on mode changes and when
+   * the query is cleared.
+   */
+  onSearchHighlightsChange?: (state: Pick<NotepadSearchState, 'searchMode' | 'searchQuery'>) => void;
 }
 
 function createInitialState(): NotepadSearchState {
@@ -53,7 +60,7 @@ export function createNotepadSearchStore({
   openSearchResult,
   openRecentTask,
   openNote,
-  onSearchStateChange
+  onSearchHighlightsChange
 }: SearchStoreDeps) {
   const store = writable<NotepadSearchState>(createInitialState());
   const { subscribe, update } = store;
@@ -62,14 +69,24 @@ export function createNotepadSearchStore({
   let activeSearchRequest = 0;
   let activeRecentNotesRequest = 0;
   let activeRecentTasksRequest = 0;
+  let lastEmittedHighlightQuery = '';
+  let lastEmittedHighlightMode: SearchMode = 'all';
 
   function patch(partial: Partial<NotepadSearchState>) {
     update((state) => ({ ...state, ...partial }));
   }
 
-  function emitSearchStateChange() {
+  function emitHighlightsChange() {
     const state = get(store);
-    onSearchStateChange?.({
+    if (
+      state.searchMode === lastEmittedHighlightMode &&
+      state.searchQuery === lastEmittedHighlightQuery
+    ) {
+      return;
+    }
+    lastEmittedHighlightMode = state.searchMode;
+    lastEmittedHighlightQuery = state.searchQuery;
+    onSearchHighlightsChange?.({
       searchMode: state.searchMode,
       searchQuery: state.searchQuery
     });
@@ -90,7 +107,7 @@ export function createNotepadSearchStore({
       searchResults: [],
       isSearching: false
     });
-    emitSearchStateChange();
+    emitHighlightsChange();
     activeSearchRequest += 1;
     clearPendingSearchTimer();
   }
@@ -107,6 +124,9 @@ export function createNotepadSearchStore({
 
     const requestId = ++activeSearchRequest;
     patch({ isSearching: true });
+    // The resolved query is now stable; sync editor highlights once per
+    // post-debounce search rather than on every keystroke.
+    emitHighlightsChange();
 
     try {
       const state = get(store);
@@ -120,18 +140,17 @@ export function createNotepadSearchStore({
         return;
       }
 
-      patch({ searchResults: results });
+      // Batch the results + isSearching flip into a single store update so
+      // subscribers (and Svelte 5 effect graphs) only see one notification
+      // instead of two back-to-back per completed search.
+      patch({ searchResults: results, isSearching: false });
     } catch (error) {
       if (requestId !== activeSearchRequest) {
         return;
       }
 
       console.error('Failed to search notes:', error);
-      patch({ searchResults: [] });
-    } finally {
-      if (requestId === activeSearchRequest) {
-        patch({ isSearching: false });
-      }
+      patch({ searchResults: [], isSearching: false });
     }
   }
 
@@ -254,7 +273,6 @@ export function createNotepadSearchStore({
 
   function handleSearchInput(value: string) {
     patch({ searchQuery: value });
-    emitSearchStateChange();
 
     if (value.trim() === '') {
       activeSearchRequest += 1;
@@ -263,24 +281,59 @@ export function createNotepadSearchStore({
         searchResults: [],
         isSearching: false
       });
+      // Empty query: clear highlights immediately.
+      emitHighlightsChange();
       return;
     }
 
+    // Highlights are emitted post-debounce inside runSearch so that we don't
+    // hit the editor on every keystroke.
     scheduleSearch();
   }
 
   async function handleSearchModeChange(mode: SearchMode) {
     patch({ searchMode: mode });
-    emitSearchStateChange();
+    // Mode changes are explicit and infrequent; refresh highlights immediately.
+    emitHighlightsChange();
     clearPendingSearchTimer();
     if (get(store).searchQuery.trim() !== '') {
       await runSearch(get(store).searchQuery);
     }
   }
 
+  async function loadRecentFocus() {
+    const notesRequestId = ++activeRecentNotesRequest;
+    const tasksRequestId = ++activeRecentTasksRequest;
+    try {
+      const bundle = await listRecentFocus({ currentPath: getCurrentPath() });
+      const notesIsLatest = notesRequestId === activeRecentNotesRequest;
+      const tasksIsLatest = tasksRequestId === activeRecentTasksRequest;
+      if (!notesIsLatest && !tasksIsLatest) {
+        return;
+      }
+      // Apply both halves in a single update so subscribers see notes and
+      // tasks land together rather than firing two writable-store updates.
+      update((state) => ({
+        ...state,
+        ...(notesIsLatest ? { recentNotes: bundle.recentNotes } : {}),
+        ...(tasksIsLatest ? { recentTasks: bundle.recentTasks } : {})
+      }));
+    } catch (error) {
+      console.error('Failed to load recent focus:', error);
+      const notesIsLatest = notesRequestId === activeRecentNotesRequest;
+      const tasksIsLatest = tasksRequestId === activeRecentTasksRequest;
+      if (notesIsLatest || tasksIsLatest) {
+        update((state) => ({
+          ...state,
+          ...(notesIsLatest ? { recentNotes: [] } : {}),
+          ...(tasksIsLatest ? { recentTasks: [] } : {})
+        }));
+      }
+    }
+  }
+
   function handleSearchFocus() {
-    void loadRecentNotes();
-    void loadRecentTasks();
+    void loadRecentFocus();
   }
 
   function requestSearchFocus(mode: SearchMode) {
@@ -288,7 +341,7 @@ export function createNotepadSearchStore({
       searchMode: mode,
       focusRequest: get(store).focusRequest + 1
     });
-    emitSearchStateChange();
+    emitHighlightsChange();
 
     if (get(store).searchQuery.trim() !== '') {
       void runSearch(get(store).searchQuery);
