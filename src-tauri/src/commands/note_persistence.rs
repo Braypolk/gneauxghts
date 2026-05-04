@@ -1,4 +1,4 @@
-use super::index_bridge::{remove_notes_index_entry, upsert_notes_index_entry};
+use super::index_bridge::{remove_notes_index_entry_for_save, upsert_notes_index_entry_for_save};
 use super::{current_time_millis, prepare_notes_dir, NoteSession};
 use crate::{
     index::{build_indexed_note, AppState},
@@ -150,10 +150,10 @@ pub(crate) fn persist_note_session_with_outcome(
         .filter(|previous_path| note_path_changed(previous_path, persisted_path.as_deref()));
 
     if let (Some(path), Some(next_note)) = (persisted_path.as_deref(), next_note.as_ref()) {
-        upsert_notes_index_entry(state, PathBuf::from(path), next_note.clone())?;
+        upsert_notes_index_entry_for_save(state, PathBuf::from(path), next_note.clone())?;
     }
     if let Some(previous_path) = removed_previous_path {
-        remove_notes_index_entry(state, previous_path)?;
+        remove_notes_index_entry_for_save(state, previous_path)?;
     }
 
     let sync_markdown = compute_sync_markdown(

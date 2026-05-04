@@ -8,11 +8,13 @@
 //! event bus) as method parameters or borrow them from
 //! [`crate::app::AppData`].
 
+pub(crate) mod background_index_queue;
 pub(crate) mod note_service;
 pub(crate) mod search_service;
 pub(crate) mod settings_service;
 pub(crate) mod task_service;
 
+pub(crate) use background_index_queue::BackgroundIndexQueue;
 pub(crate) use note_service::NoteService;
 #[allow(unused_imports)]
 pub(crate) use search_service::SearchService;

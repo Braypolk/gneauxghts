@@ -4,7 +4,8 @@ use crate::{
     note,
     state::{
         is_valid_note_path, read_state_with_lookup, resolve_note_path_by_id, touch_recent_note_id,
-        validate_current_path, write_state_with_lookup, NoteIdLookup, PersistedState,
+        validate_current_path, write_last_opened_and_recents, write_state_with_lookup,
+        NoteIdLookup, PersistedState,
     },
 };
 use std::{fs, path::Path, path::PathBuf};
@@ -71,8 +72,14 @@ pub(crate) fn load_note_session_from_notes_dir_with_state(
         app_state.map(|state| -> Box<dyn Fn(&str) -> Option<PathBuf> + '_> {
             Box::new(move |note_id: &str| lookup_path_in_index(state, note_id))
         });
+    let is_warm = app_state
+        .map(|state| state.has_warm_notes_index())
+        .unwrap_or(false);
     let lookup = match lookup_owned.as_deref() {
-        Some(closure) => NoteIdLookup::Index(closure),
+        Some(closure) => NoteIdLookup::Index {
+            lookup: closure,
+            is_warm,
+        },
         None => NoteIdLookup::Disk,
     };
     let mut persisted = read_state_with_lookup(notes_dir, &lookup)?;
@@ -94,7 +101,9 @@ pub(crate) fn load_note_session_from_notes_dir_with_state(
     }
 
     touch_recent_note_id(&mut persisted, last_opened_note_id);
-    write_state_with_lookup(notes_dir, &persisted, &lookup)?;
+    // Row-scoped write of the recents/last-opened only — same rationale as
+    // mark_note_opened.
+    write_last_opened_and_recents(&persisted)?;
     read_note_session_from_path(&note_path)
 }
 
@@ -125,8 +134,14 @@ pub(crate) fn open_note_from_notes_dir_with_state(
         app_state.map(|state| -> Box<dyn Fn(&str) -> Option<PathBuf> + '_> {
             Box::new(move |id: &str| lookup_path_in_index(state, id))
         });
+    let is_warm = app_state
+        .map(|state| state.has_warm_notes_index())
+        .unwrap_or(false);
     let lookup = match lookup_owned.as_deref() {
-        Some(closure) => NoteIdLookup::Index(closure),
+        Some(closure) => NoteIdLookup::Index {
+            lookup: closure,
+            is_warm,
+        },
         None => NoteIdLookup::Disk,
     };
     let persisted = read_state_with_lookup(notes_dir, &lookup)?;
@@ -136,7 +151,10 @@ pub(crate) fn open_note_from_notes_dir_with_state(
 
     let mut persisted = persisted;
     mark_note_opened(&mut persisted, resolved_note_id);
-    write_state_with_lookup(notes_dir, &persisted, &lookup)?;
+    // Row-scoped write: only the last_opened_note_id and recents change here.
+    // Avoid the full app_state rewrite that previously fired on every note
+    // switch and contended with concurrent open/save under rapid switching.
+    write_last_opened_and_recents(&persisted)?;
 
     Ok(session)
 }

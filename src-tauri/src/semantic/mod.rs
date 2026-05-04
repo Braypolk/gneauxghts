@@ -198,7 +198,15 @@ impl SemanticState {
             provider.model_info().dimensions,
             debug.clone(),
         )?);
-        ann.initialize(&connection)?;
+        // Drop the schema-setup connection before kicking off the
+        // background ANN load: deserializing the persisted HNSW graph +
+        // raw vectors can take hundreds of milliseconds on cold disks and
+        // used to run synchronously inside Tauri `setup` before first
+        // paint. The worker, search, and related-notes paths all already
+        // tolerate a not-yet-loaded ANN snapshot (see
+        // `AnnStatusState::default` and `related.rs` "warming up"
+        // handling), so we only need to keep the load off the main
+        // thread.
         drop(connection);
 
         let runtime = Arc::new(Mutex::new(RuntimeState::default()));
@@ -220,20 +228,34 @@ impl SemanticState {
         )?;
 
         let state = ActiveSemanticState {
-            db_path,
+            db_path: db_path.clone(),
             settings,
             provider,
-            runtime,
-            debug,
-            ann,
-            signal_tx,
-            pending,
-            wake_pending,
+            runtime: runtime.clone(),
+            debug: debug.clone(),
+            ann: ann.clone(),
+            signal_tx: signal_tx.clone(),
+            pending: pending.clone(),
+            wake_pending: wake_pending.clone(),
             index_revision,
             related_query_cache: Mutex::new(Vec::new()),
         };
-        state.enqueue_scan(false)?;
         state.warmup_model_in_background();
+        // Defer the persisted ANN snapshot load AND the initial vault
+        // scan onto a background thread. Running the scan only after the
+        // snapshot finishes loading prevents the worker from racing
+        // ahead, finding an empty in-memory ANN, and rebuilding the
+        // graph from scratch in SQLite — the load was already
+        // authoritative.
+        spawn_ann_initialize_and_scan_in_background(
+            ann,
+            db_path,
+            debug,
+            signal_tx,
+            wake_pending,
+            pending,
+            runtime,
+        );
         Ok(Self {
             inner: SemanticStateInner::Active(state),
         })
@@ -534,6 +556,7 @@ impl ActiveSemanticState {
             .map_err(|_| "Semantic settings lock poisoned".to_string())
     }
 
+    #[allow(dead_code)]
     fn enqueue_scan(&self, force: bool) -> Result<(), String> {
         let now = current_time_millis()?;
         {
@@ -779,4 +802,117 @@ impl DisabledSemanticState {
 fn disabled_settings(mut settings: SemanticSettings) -> SemanticSettings {
     settings.semantic_search_enabled = false;
     settings
+}
+
+/// Load the persisted HNSW snapshot off the startup hot path and only
+/// then queue the initial vault scan.
+///
+/// `AnnIndexState::initialize` reads the graph file, the raw vectors,
+/// and the manifest from disk and deserializes them into memory. On
+/// warm installs that snapshot can be tens of megabytes and the load
+/// alone blocked the Tauri `setup` callback long enough for the user
+/// to see a frozen window for several seconds. Moving it to a
+/// background thread lets `setup` return immediately; until the
+/// background thread finishes the ANN status reports `loaded=false,
+/// rebuild_pending=true` (the default) and search / related callers
+/// fall through to the existing "still warming up" path.
+///
+/// Holding the initial vault scan back until after the ANN snapshot
+/// has loaded prevents the indexing worker from racing ahead, finding
+/// an empty in-memory ANN, and rebuilding the graph from scratch when
+/// the saved snapshot was already authoritative.
+fn spawn_ann_initialize_and_scan_in_background(
+    ann: Arc<AnnIndexState>,
+    db_path: PathBuf,
+    debug: Arc<SemanticDebugState>,
+    signal_tx: Sender<WorkerSignal>,
+    wake_pending: Arc<AtomicBool>,
+    pending: Arc<Mutex<PendingIndexState>>,
+    runtime: Arc<Mutex<RuntimeState>>,
+) {
+    let _ = thread::Builder::new()
+        .name("semantic-ann-initialize".to_string())
+        .spawn(move || {
+            let started_at = Instant::now();
+            let connection_result = open_database(&db_path).and_then(|connection| {
+                ensure_schema(&connection)?;
+                Ok(connection)
+            });
+            match connection_result {
+                Ok(connection) => match ann.initialize(&connection) {
+                    Ok(()) => {
+                        let elapsed =
+                            started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                        debug.record_timing(
+                            "ann",
+                            "background_load_completed",
+                            None,
+                            elapsed,
+                            |_| {},
+                        );
+                    }
+                    Err(error) => {
+                        debug.record_with_metrics(
+                            "ann",
+                            "background_load_failed",
+                            Some(error),
+                            None,
+                            |metrics| metrics.ann_load_failure_count += 1,
+                        );
+                    }
+                },
+                Err(error) => {
+                    debug.record_with_metrics(
+                        "ann",
+                        "background_load_open_failed",
+                        Some(error),
+                        None,
+                        |metrics| metrics.ann_load_failure_count += 1,
+                    );
+                }
+            }
+            enqueue_initial_scan_after_warmup(
+                &signal_tx,
+                &wake_pending,
+                &pending,
+                &runtime,
+                &debug,
+            );
+        });
+}
+
+/// Mirrors `ActiveSemanticState::enqueue_scan` but only needs the
+/// channel + state handles passed in, so the background ANN-load thread
+/// can fire it without holding a `&self` reference. Errors are logged
+/// to the semantic debug stream rather than propagated, since the
+/// caller has nowhere to surface them.
+fn enqueue_initial_scan_after_warmup(
+    signal_tx: &Sender<WorkerSignal>,
+    wake_pending: &AtomicBool,
+    pending: &Mutex<PendingIndexState>,
+    runtime: &Mutex<RuntimeState>,
+    debug: &SemanticDebugState,
+) {
+    if let Ok(now) = current_time_millis() {
+        if let Ok(mut runtime_guard) = runtime.lock() {
+            runtime_guard.last_scan_requested_at_millis = Some(now);
+        }
+    }
+    debug.record_with_metrics(
+        "index",
+        "enqueue_full_scan_after_warmup",
+        None,
+        None,
+        |metrics| metrics.index_job_enqueued_count += 1,
+    );
+    if let Ok(mut pending_guard) = pending.lock() {
+        if !pending_guard.rebuild_requested {
+            pending_guard.full_scan_requested = true;
+            pending_guard.note_updates.clear();
+            pending_guard.deleted_notes.clear();
+        }
+    }
+    if !wake_pending.swap(true, Ordering::AcqRel) {
+        let _ = signal_tx.send(WorkerSignal::Wake);
+    }
 }

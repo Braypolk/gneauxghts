@@ -29,7 +29,6 @@
     type ForgottenNote,
     type SessionSnapshot
   } from '$lib/features/notepad/session/session';
-  import { loadBootstrapPayload } from '$lib/features/notepad/session/bootstrap';
   import { appStore } from '$lib/app/appStore.svelte';
   import { type WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
   import type {
@@ -904,18 +903,20 @@
         await loadAssetRoot();
       } else {
         try {
-          const bootstrap = await loadBootstrapPayload();
+          // Reuse the AppStore-owned bootstrap so we make a single
+          // `bootstrap_app` round trip per app launch. The +layout.svelte
+          // mount kicks this off; here we await the cached promise so the
+          // initial note session, asset root, and semantic status are all
+          // populated from one backend call.
+          const bootstrap = await appStore.bootstrap();
           adoptSnapshotForPane(notepadState, PRIMARY_PANE_ID, bootstrap.session);
           setStoreActivePane(notepadState, PRIMARY_PANE_ID);
           updateSharedEditorResourceConfig(
             resolveAssetRootPath(bootstrap.vault.currentPath),
             storePastedImageAsset
           );
-          if (bootstrap.semanticStatus) {
-            appStore.setSemanticStatus(bootstrap.semanticStatus);
-          }
         } catch (error) {
-          console.error('bootstrap_app failed, falling back to individual invokes:', error);
+          console.error('appStore.bootstrap failed, falling back to individual invokes:', error);
           await Promise.all([loadSavedNote(), loadAssetRoot()]);
         }
         notepadRuntimeState.hasLoadedInitialSession = true;

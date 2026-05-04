@@ -316,12 +316,14 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
           return;
         }
 
+        const paneId = getActivePaneId();
+        const requestGeneration = getPaneRuntime(paneId).bumpOpenRequestGeneration();
         const previousNote = getNavigationDocument();
-        const restoredNote = adoptSnapshotForPane(
-          state,
-          getActivePaneId(),
-          await openNoteSession(null, restoredPath)
-        );
+        const session = await openNoteSession(null, restoredPath);
+        if (getPaneRuntime(paneId).getOpenRequestGeneration() !== requestGeneration) {
+          return;
+        }
+        const restoredNote = adoptSnapshotForPane(state, paneId, session);
         setRecentlyForgotten(null);
         await documents.replaceNoteAcrossPanes(previousNote, restoredNote, { restoreCursor: true });
         clearSelectedRelatedText();
@@ -431,10 +433,20 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
 
     const requestGeneration = getPaneRuntime(paneId).bumpOpenRequestGeneration();
+    const isStale = () =>
+      getPaneRuntime(paneId).getOpenRequestGeneration() !== requestGeneration;
     setNoteStatus(previousDocument, 'opening');
 
-    const session = await openNoteSession(options.noteId ?? null, notePath);
-    if (getPaneRuntime(paneId).getOpenRequestGeneration() !== requestGeneration) {
+    let session;
+    try {
+      session = await openNoteSession(options.noteId ?? null, notePath);
+    } catch (error) {
+      if (isStale()) {
+        return;
+      }
+      throw error;
+    }
+    if (isStale()) {
       return;
     }
 
@@ -449,10 +461,19 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       getPaneRuntime(paneId).controller
     ) {
       await documents.replaceNoteAcrossPanes(previousDocument, nextDocument, { restoreCursor: true });
+      if (isStale()) {
+        // A newer open superseded us while replacing the editor buffer; do
+        // not reset focus or status — that would yank the user out of the
+        // newer note.
+        return;
+      }
     }
 
     if ((options.focusEditorAfterOpen ?? true) && getPaneKind(paneId) === 'editor') {
       await tick();
+      if (isStale()) {
+        return;
+      }
       focusPaneAfterShortcut(paneId, { preferTitle: false });
     }
 

@@ -15,8 +15,9 @@ pub(crate) use persistence::{
     derive_file_stem, derive_file_stem_from_title_and_markdown, is_forgotten_note_path,
     is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
     push_unique, read_state, read_state_with_lookup, resolve_note_id_from_path,
-    resolve_note_path_by_id, touch_recent_note_id, validate_current_path, write_state,
-    write_state_with_lookup, NoteIdLookup, PersistedForgottenNote, PersistedState,
+    resolve_note_path_by_id, touch_recent_note_id, validate_current_path,
+    write_last_opened_and_recents, write_state, write_state_with_lookup, NoteIdLookup,
+    PersistedForgottenNote, PersistedState,
 };
 
 #[cfg(test)]
@@ -214,5 +215,107 @@ mod tests {
             state.forgotten_notes[0].forgotten_path,
             live_forgotten_note.to_string_lossy()
         );
+    }
+
+    /// Cold-start prune retains unknown ids when the in-memory index has
+    /// not yet been populated. This is the regression test for the
+    /// first-note-switch hang: prior behaviour fell back to a per-id
+    /// vault walk for any id the index did not know about, producing
+    /// O(N_recents * N_files) disk IO on the first user-driven
+    /// `open_note`. With a cold `Index { is_warm: false }` lookup the
+    /// pruner now leaves unknown ids in place; they are dropped by the
+    /// next call once the background prewarm has populated the index.
+    #[test]
+    fn read_state_with_cold_index_lookup_retains_unknown_ids() {
+        use std::path::PathBuf;
+        let _guard = match TEST_ENV_GUARD.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let app_data_dir = TestDir::new("state-app-data-cold-retain");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        let temp = TestDir::new("state-cold-retain");
+        let notes_dir = temp.path();
+        // A real note exists on disk so write_state can persist; the
+        // cold Index lookup pretends not to know about it.
+        let live_note = notes_dir.join("Live Note.md");
+        fs::write(&live_note, "# Live Note\n\nBody").expect("write live note");
+        let live_note_id = resolve_note_id_from_path(&live_note).expect("live note id");
+
+        // Persist the seed state without going through any pruner so the
+        // unknown ids actually land in the database — production code
+        // would never persist garbage like this directly, but we need a
+        // stored row that proves the cold-read path leaves it alone.
+        super::db_set_last_opened_note_id(Some(&live_note_id)).expect("seed last opened");
+        super::db_set_recent_note_ids(&[live_note_id.clone(), "unknown-id".to_string()])
+            .expect("seed recents");
+        super::db_set_note_hidden("another-unknown", true).expect("seed hidden");
+        super::db_set_note_order(&["yet-another-unknown".to_string()]).expect("seed order");
+
+        // Cold index: the closure returns None for everything. Without
+        // the cold-mode retain, this would walk the vault per id and
+        // delete the unknown ids; with cold mode they must be retained.
+        let empty: Box<dyn Fn(&str) -> Option<PathBuf>> = Box::new(|_| None);
+        let cold_lookup = super::NoteIdLookup::Index {
+            lookup: &*empty,
+            is_warm: false,
+        };
+        let state = super::read_state_with_lookup(notes_dir, &cold_lookup).expect("read");
+        assert_eq!(
+            state.recent_note_ids,
+            vec![live_note_id.clone(), "unknown-id".to_string()],
+            "cold lookup must retain ids it cannot resolve",
+        );
+        assert_eq!(state.hidden_note_ids, vec!["another-unknown".to_string()]);
+        assert_eq!(
+            state.note_order_note_ids,
+            vec!["yet-another-unknown".to_string()],
+        );
+        assert_eq!(state.last_opened_note_id, Some(live_note_id));
+    }
+
+    /// Warm-index prune drops unknown ids cleanly. The lookup closure
+    /// here resolves only `live_note_id`; with `is_warm: true` the
+    /// pruner trusts the index and drops everything else without
+    /// touching the disk.
+    #[test]
+    fn read_state_with_warm_index_lookup_drops_unknown_ids() {
+        use std::path::PathBuf;
+        let _guard = match TEST_ENV_GUARD.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let app_data_dir = TestDir::new("state-app-data-warm-drop");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        let temp = TestDir::new("state-warm-drop");
+        let notes_dir = temp.path();
+        let live_note = notes_dir.join("Live Note.md");
+        fs::write(&live_note, "# Live Note\n\nBody").expect("write live note");
+        let live_note_id = resolve_note_id_from_path(&live_note).expect("live note id");
+
+        super::db_set_last_opened_note_id(Some("missing-id")).expect("seed last opened");
+        super::db_set_recent_note_ids(&[live_note_id.clone(), "missing-id".to_string()])
+            .expect("seed recents");
+        super::db_set_note_hidden("missing-id", true).expect("seed hidden");
+        super::db_set_note_order(&["missing-id".to_string()]).expect("seed order");
+
+        let live_note_owned = live_note.clone();
+        let live_id_for_closure = live_note_id.clone();
+        let resolver: Box<dyn Fn(&str) -> Option<PathBuf>> = Box::new(move |id| {
+            if id == live_id_for_closure {
+                Some(live_note_owned.clone())
+            } else {
+                None
+            }
+        });
+        let warm_lookup = super::NoteIdLookup::Index {
+            lookup: &*resolver,
+            is_warm: true,
+        };
+        let state = super::read_state_with_lookup(notes_dir, &warm_lookup).expect("read");
+        assert_eq!(state.recent_note_ids, vec![live_note_id]);
+        assert!(state.hidden_note_ids.is_empty());
+        assert!(state.note_order_note_ids.is_empty());
+        assert_eq!(state.last_opened_note_id, None);
     }
 }

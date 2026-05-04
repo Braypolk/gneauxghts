@@ -3,7 +3,7 @@ use crate::{index::is_note_file, note, path_utils::collect_markdown_files_recurs
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
@@ -16,20 +16,54 @@ use std::{
 /// startup or cold paths where the index has not been populated yet.
 pub(crate) enum NoteIdLookup<'a> {
     Disk,
-    Index(&'a (dyn Fn(&str) -> Option<PathBuf> + 'a)),
+    /// Index-backed lookup. `is_warm` is true once the in-memory index has
+    /// been populated by a full vault scan at least once. While the index
+    /// is cold (e.g. immediately after launch, before the background
+    /// prewarm thread has finished), `prune_state_in_place` retains
+    /// unknown note ids instead of doing per-id disk walks — they will
+    /// be pruned by the next call after the index warms up.
+    Index {
+        lookup: &'a (dyn Fn(&str) -> Option<PathBuf> + 'a),
+        is_warm: bool,
+    },
+}
+
+/// Outcome of a single id lookup. Distinct from `Option<PathBuf>` so the
+/// pruning step can tell "id is genuinely missing — drop it" apart from
+/// "index is cold and cannot confirm yet — retain for now". The prune
+/// path only needs the verdict; the actual path is unused here.
+enum NoteIdLookupOutcome {
+    Found,
+    Missing,
+    Unknown,
 }
 
 impl<'a> NoteIdLookup<'a> {
-    fn resolve(&self, notes_dir: &Path, note_id: &str) -> Result<Option<PathBuf>, String> {
+    /// Lookup variant used by the prune path. When the index is cold,
+    /// returns [`NoteIdLookupOutcome::Unknown`] for any id the index does
+    /// not know about, so the caller retains the id rather than doing an
+    /// O(N) disk walk to confirm it is missing.
+    fn resolve_for_prune(
+        &self,
+        notes_dir: &Path,
+        note_id: &str,
+    ) -> Result<NoteIdLookupOutcome, String> {
         match self {
-            NoteIdLookup::Disk => resolve_note_path_by_id(notes_dir, note_id),
-            NoteIdLookup::Index(lookup) => {
+            NoteIdLookup::Disk => match resolve_note_path_by_id(notes_dir, note_id)? {
+                Some(_) => Ok(NoteIdLookupOutcome::Found),
+                None => Ok(NoteIdLookupOutcome::Missing),
+            },
+            NoteIdLookup::Index { lookup, is_warm } => {
                 if let Some(path) = lookup(note_id) {
                     if is_valid_note_path(&path, notes_dir) {
-                        return Ok(Some(path));
+                        return Ok(NoteIdLookupOutcome::Found);
                     }
                 }
-                resolve_note_path_by_id(notes_dir, note_id)
+                if *is_warm {
+                    Ok(NoteIdLookupOutcome::Missing)
+                } else {
+                    Ok(NoteIdLookupOutcome::Unknown)
+                }
             }
         }
     }
@@ -96,6 +130,42 @@ pub(crate) fn write_state_with_lookup(
     Ok(())
 }
 
+/// Row-scoped write of just the `last_opened_note_id` and the recent notes
+/// ordering. Avoids the full app_state rewrite (which deletes/reinserts
+/// hidden, note_order, collapsed, and forgotten rows on every note switch).
+/// Used by `mark_note_opened` so rapid note switching does not contend on
+/// SQLite for state that did not change.
+pub(crate) fn write_last_opened_and_recents(state: &PersistedState) -> Result<(), String> {
+    with_state_database(|connection| {
+        let transaction = connection.transaction().map_err(|err| err.to_string())?;
+
+        transaction
+            .execute(
+                "INSERT INTO app_state (id, last_opened_note_id)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE
+                 SET last_opened_note_id = excluded.last_opened_note_id",
+                params![APP_STATE_SINGLETON_ID, state.last_opened_note_id.as_deref()],
+            )
+            .map_err(|err| err.to_string())?;
+
+        transaction
+            .execute("DELETE FROM app_state_recent_note_ids", [])
+            .map_err(|err| err.to_string())?;
+        for (index, note_id) in state.recent_note_ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO app_state_recent_note_ids (position, note_id) VALUES (?1, ?2)",
+                    params![to_i64(index)?, note_id],
+                )
+                .map_err(|err| err.to_string())?;
+        }
+
+        transaction.commit().map_err(|err| err.to_string())?;
+        Ok(())
+    })
+}
+
 pub(crate) fn prune_recent_note_ids(state: &mut PersistedState, notes_dir: &Path) -> bool {
     prune_recent_note_ids_with_lookup(state, notes_dir, &NoteIdLookup::Disk)
 }
@@ -105,14 +175,24 @@ pub(crate) fn prune_recent_note_ids_with_lookup(
     notes_dir: &Path,
     lookup: &NoteIdLookup<'_>,
 ) -> bool {
+    let resolver = PruneResolver::new(lookup, notes_dir);
+    prune_recent_note_ids_with_resolver(state, &resolver)
+}
+
+fn prune_recent_note_ids_with_resolver(
+    state: &mut PersistedState,
+    resolver: &PruneResolver<'_, '_>,
+) -> bool {
     let original_len = state.recent_note_ids.len();
     let mut seen = HashSet::new();
-    state.recent_note_ids.retain(|note_id| {
-        lookup
-            .resolve(notes_dir, note_id)
-            .map(|path| path.is_some() && seen.insert(note_id.clone()))
-            .unwrap_or(false)
-    });
+    state
+        .recent_note_ids
+        .retain(|note_id| match resolver.resolve(note_id) {
+            Ok(NoteIdLookupOutcome::Found) | Ok(NoteIdLookupOutcome::Unknown) => {
+                seen.insert(note_id.clone())
+            }
+            Ok(NoteIdLookupOutcome::Missing) | Err(_) => false,
+        });
     let mut changed = state.recent_note_ids.len() != original_len;
     if state.recent_note_ids.len() > MAX_RECENT_NOTES {
         state.recent_note_ids.truncate(MAX_RECENT_NOTES);
@@ -120,10 +200,10 @@ pub(crate) fn prune_recent_note_ids_with_lookup(
     }
 
     if state.last_opened_note_id.as_ref().is_some_and(|note_id| {
-        lookup
-            .resolve(notes_dir, note_id)
-            .map(|path| path.is_none())
-            .unwrap_or(true)
+        matches!(
+            resolver.resolve(note_id),
+            Ok(NoteIdLookupOutcome::Missing) | Err(_)
+        )
     }) {
         state.last_opened_note_id = None;
         changed = true;
@@ -272,21 +352,80 @@ pub(crate) fn derive_file_stem_from_title_and_markdown(title: &str, markdown: &s
 }
 
 fn prune_state_in_place(state: &mut PersistedState, notes_dir: &Path, lookup: &NoteIdLookup<'_>) {
-    prune_recent_note_ids_with_lookup(state, notes_dir, lookup);
-    prune_note_id_list(&mut state.hidden_note_ids, notes_dir, lookup);
-    prune_note_id_list(&mut state.note_order_note_ids, notes_dir, lookup);
-    prune_note_id_list(&mut state.collapsed_note_ids, notes_dir, lookup);
+    let resolver = PruneResolver::new(lookup, notes_dir);
+    prune_recent_note_ids_with_resolver(state, &resolver);
+    prune_note_id_list_with_resolver(&mut state.hidden_note_ids, &resolver);
+    prune_note_id_list_with_resolver(&mut state.note_order_note_ids, &resolver);
+    prune_note_id_list_with_resolver(&mut state.collapsed_note_ids, &resolver);
     prune_forgotten_notes(state, notes_dir);
 }
 
-fn prune_note_id_list(note_ids: &mut Vec<String>, notes_dir: &Path, lookup: &NoteIdLookup<'_>) {
+fn prune_note_id_list_with_resolver(note_ids: &mut Vec<String>, resolver: &PruneResolver<'_, '_>) {
     let mut seen = HashSet::new();
-    note_ids.retain(|note_id| {
-        lookup
-            .resolve(notes_dir, note_id)
-            .map(|path| path.is_some() && seen.insert(note_id.clone()))
-            .unwrap_or(false)
+    note_ids.retain(|note_id| match resolver.resolve(note_id) {
+        Ok(NoteIdLookupOutcome::Found) | Ok(NoteIdLookupOutcome::Unknown) => {
+            seen.insert(note_id.clone())
+        }
+        Ok(NoteIdLookupOutcome::Missing) | Err(_) => false,
     });
+}
+
+/// Per-`prune_state_in_place` call helper. For [`NoteIdLookup::Disk`] the
+/// resolver builds a single `note_id -> path` map by walking the vault
+/// once and reuses it for every id, avoiding the previous quadratic
+/// behaviour where each prune call walked the vault and read every file
+/// once per id in `recent_note_ids`/`hidden_note_ids`/etc.
+struct PruneResolver<'lookup, 'dir> {
+    lookup: &'lookup NoteIdLookup<'lookup>,
+    notes_dir: &'dir Path,
+    /// Batched note-id -> path map built lazily on first use when the
+    /// active lookup is [`NoteIdLookup::Disk`]. Wrapped in a `OnceCell`
+    /// so we pay the disk walk only when the prune actually needs it.
+    disk_index: std::cell::OnceCell<Result<HashMap<String, PathBuf>, String>>,
+}
+
+impl<'lookup, 'dir> PruneResolver<'lookup, 'dir> {
+    fn new(lookup: &'lookup NoteIdLookup<'lookup>, notes_dir: &'dir Path) -> Self {
+        Self {
+            lookup,
+            notes_dir,
+            disk_index: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn resolve(&self, note_id: &str) -> Result<NoteIdLookupOutcome, String> {
+        match self.lookup {
+            NoteIdLookup::Index { .. } => self.lookup.resolve_for_prune(self.notes_dir, note_id),
+            NoteIdLookup::Disk => {
+                let map = self
+                    .disk_index
+                    .get_or_init(|| collect_note_id_to_path_map(self.notes_dir))
+                    .as_ref()
+                    .map_err(|err| err.clone())?;
+                if map.contains_key(note_id) {
+                    Ok(NoteIdLookupOutcome::Found)
+                } else {
+                    Ok(NoteIdLookupOutcome::Missing)
+                }
+            }
+        }
+    }
+}
+
+fn collect_note_id_to_path_map(notes_dir: &Path) -> Result<HashMap<String, PathBuf>, String> {
+    let mut map = HashMap::new();
+    for path in collect_markdown_files_recursively(notes_dir)? {
+        if !is_valid_note_path(&path, notes_dir) {
+            continue;
+        }
+        let Ok(markdown) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(note_id) = note::note_id_from_path_or_markdown(Some(&path), &markdown) {
+            map.entry(note_id).or_insert(path);
+        }
+    }
+    Ok(map)
 }
 
 fn prune_forgotten_notes(state: &mut PersistedState, notes_dir: &Path) {

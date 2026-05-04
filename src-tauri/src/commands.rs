@@ -262,6 +262,11 @@ fn prepare_notes_dir_with_state(
 
 #[tauri::command]
 pub(crate) fn load_note_session(state: State<'_, AppState>) -> Result<NoteSession, String> {
+    // Foreground guard: while this IPC call is running the background
+    // index queue (cold-start prewarm + save-side projection) yields
+    // between per-note jobs so the SQLite state mutex stays free for
+    // `read_state_with_lookup` / `write_last_opened_and_recents`.
+    let _foreground_guard = state.foreground_guard();
     // Forgotten-note cleanup is throttled to startup + a 5-minute background
     // pass; the service intentionally skips the per-call cleanup.
     let _ = prepare_notes_dir_with_state(true, Some(&state))?;
@@ -274,6 +279,8 @@ pub(crate) fn open_note(
     note_id: Option<String>,
     path: Option<String>,
 ) -> Result<NoteSession, String> {
+    // See `load_note_session` for the rationale on the foreground guard.
+    let _foreground_guard = state.foreground_guard();
     let _ = prepare_notes_dir_with_state(false, Some(&state))?;
     NoteService::new().open(&state, note_id, path)
 }
@@ -284,6 +291,7 @@ pub(crate) fn read_note(
     note_id: Option<String>,
     path: Option<String>,
 ) -> Result<NoteSession, String> {
+    let _foreground_guard = state.foreground_guard();
     let notes_dir = prepare_notes_dir_with_state(false, Some(&state))?;
 
     let note_path = resolve_note_path_input_with_state(&notes_dir, note_id, path, Some(&state))?;
@@ -644,6 +652,60 @@ mod tests {
             Some(indexed_note.note_id.clone())
         );
         assert_eq!(state.recent_note_ids, vec![indexed_note.note_id]);
+    }
+
+    #[test]
+    fn open_note_row_scoped_write_preserves_unrelated_state_fields() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let app_data_dir = TestDir::new("commands-app-data-open-rowscope");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        let temp = TestDir::new("commands-open-note-rowscope");
+        let notes_dir = temp.path();
+        let note_path = notes_dir.join("Switch Target.md");
+        let other_path = notes_dir.join("Other.md");
+        let pinned_path = notes_dir.join("Pinned.md");
+        fs::write(&note_path, "# Switch Target\n\nBody").expect("write note");
+        fs::write(&other_path, "# Other\n\nBody").expect("write other note");
+        fs::write(&pinned_path, "# Pinned\n\nBody").expect("write pinned note");
+
+        let switch_target = build_indexed_note(&note_path, "# Switch Target\n\nBody", 10);
+        let other = build_indexed_note(&other_path, "# Other\n\nBody", 20);
+        let pinned = build_indexed_note(&pinned_path, "# Pinned\n\nBody", 30);
+
+        // Seed state with real-note-id entries in the unrelated fields so
+        // pruning won't drop them. The point of this test is to verify
+        // that switching notes does not clobber hidden/order/collapsed
+        // rows that were not changed.
+        write_state(
+            notes_dir,
+            &PersistedState {
+                last_opened_note_id: Some(other.note_id.clone()),
+                recent_note_ids: vec![other.note_id.clone()],
+                hidden_note_ids: vec![pinned.note_id.clone()],
+                note_order_note_ids: vec![pinned.note_id.clone()],
+                collapsed_note_ids: vec![pinned.note_id.clone()],
+                ..PersistedState::default()
+            },
+        )
+        .expect("seed state");
+
+        // Switching notes goes through the row-scoped write path.
+        open_note_from_notes_dir(notes_dir, Some(switch_target.note_id.clone()), None)
+            .expect("open note");
+        let state = read_state(notes_dir).expect("read state after switch");
+
+        assert_eq!(
+            state.last_opened_note_id,
+            Some(switch_target.note_id.clone())
+        );
+        assert_eq!(
+            state.recent_note_ids,
+            vec![switch_target.note_id, other.note_id]
+        );
+        // Unrelated fields must be preserved by the row-scoped write.
+        assert_eq!(state.hidden_note_ids, vec![pinned.note_id.clone()]);
+        assert_eq!(state.note_order_note_ids, vec![pinned.note_id.clone()]);
+        assert_eq!(state.collapsed_note_ids, vec![pinned.note_id]);
     }
 
     #[test]

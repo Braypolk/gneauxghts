@@ -166,6 +166,19 @@ impl LexicalIndex {
         commit_locked(&mut inner)
     }
 
+    /// Test-only: peek at whether a given path has a tracked lexical
+    /// signature. Used by the foreground/background gating test in
+    /// `index.rs` as the "did the queue process this job yet" signal,
+    /// since `upsert_note` is what the queue worker calls.
+    #[cfg(test)]
+    pub(crate) fn contains_signature_for_test(&self, path: &Path) -> bool {
+        let note_path = path.to_string_lossy().into_owned();
+        match self.inner.lock() {
+            Ok(inner) => inner.signatures.contains_key(&note_path),
+            Err(_) => false,
+        }
+    }
+
     pub(crate) fn search(
         &self,
         query_text: &str,

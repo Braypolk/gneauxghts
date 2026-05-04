@@ -182,14 +182,27 @@ export function createDocumentPaneCoordinator<TPaneId extends string>(
         // Same note identity — safe in-place buffer replace (avoids full destroy + create).
         await lifecycle.replaceEditorContentInPlaceForDocument(nextNote.bodyMarkdown, nextNote);
       } else {
-        // Different note — full teardown + recreate to bind the correct FileEditorRuntime.
+        // Different note — try an in-place runtime swap first to keep the
+        // existing EditorView and DOM mounted. Only fall back to a full
+        // destroy + recreate when the swap can't be applied (no live view,
+        // detached root, etc.).
         unregisterPaneEditorForDocument(paneId, previousNote);
-        await lifecycle.replaceEditorContent(nextNote.bodyMarkdown, {
-          restoreCursor,
-          suppressReadyReset: true
-        });
-        if (runtime.controller) {
-          registerPaneEditorForDocument(paneId, nextNote);
+        const swapped = lifecycle.swapEditorBuffer(nextNote);
+        if (swapped) {
+          if (runtime.controller) {
+            registerPaneEditorForDocument(paneId, nextNote);
+          }
+          if (restoreCursor) {
+            lifecycle.restoreCursorPositionForDocument(nextNote);
+          }
+        } else {
+          await lifecycle.replaceEditorContent(nextNote.bodyMarkdown, {
+            restoreCursor,
+            suppressReadyReset: true
+          });
+          if (runtime.controller) {
+            registerPaneEditorForDocument(paneId, nextNote);
+          }
         }
       }
       markPaneDocumentGeneration(paneId, nextNote);

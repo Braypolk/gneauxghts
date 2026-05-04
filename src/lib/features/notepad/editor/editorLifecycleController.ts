@@ -11,6 +11,7 @@ import {
   replaceEditorDocument,
   alignEditorScrollToSelection,
   restoreCursorPosition,
+  swapEditorRuntime,
   type EditorController,
   type EditorSnapshot,
   type EditorViewCallbacks,
@@ -103,6 +104,40 @@ export function createEditorLifecycleController({
     bindSlashMenuViewToPane(controller.view, getPaneId());
     setController(controller);
     setIsEditorReady(true);
+  }
+
+  /**
+   * In-place swap of the editor's bound note runtime — replaces the
+   * EditorView's state to match `nextDocument`'s content, rebuilds the
+   * pane extensions against the new note's [`SharedEditorResources`], and
+   * re-binds slash-menu / wikilinks. The EditorView and DOM stay mounted.
+   *
+   * Returns true on success. The caller should fall back to a full
+   * destroy/recreate when this returns false.
+   */
+  function swapEditorBuffer(nextDocument: NoteDraftState): boolean {
+    const controller = getController();
+    if (!controller) {
+      return false;
+    }
+
+    const ok = swapEditorRuntime(controller, {
+      sharedResources: getSharedEditorResources(nextDocument),
+      initialValue: nextDocument.bodyMarkdown,
+      initialState: null,
+      viewCallbacks: getViewCallbacks(),
+      onMarkdownChange: (nextMarkdown) => {
+        const editorState = readEditorState(getController());
+        handleEditorMarkdownChange(getPaneId(), nextDocument, nextMarkdown, editorState);
+        saveSharedEditorStateForDocument(nextDocument, editorState);
+      }
+    });
+    if (!ok) {
+      return false;
+    }
+    bindSlashMenuViewToPane(controller.view, getPaneId());
+    setIsEditorReady(true);
+    return true;
   }
 
   function saveCursorPositionForDocument(
@@ -396,6 +431,7 @@ export function createEditorLifecycleController({
   return {
     destroyEditor,
     createEditor,
+    swapEditorBuffer,
     saveCursorPositionForDocument,
     saveSharedEditorStateForDocument,
     discardSharedEditorStateForDocument,

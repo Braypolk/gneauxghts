@@ -1408,7 +1408,11 @@ export async function createEditor({
         viewInstance.update(transactions);
         return;
       }
-      runtime.dispatchFromPane(currentController, transactions);
+      // Read the runtime from the live controller so that an in-place
+      // editor swap (`swapEditorRuntime`) can re-bind the view to a new
+      // FileEditorRuntime without reconstructing the EditorView.
+      const liveRuntime = currentController.sharedResources?.runtime ?? runtime;
+      liveRuntime.dispatchFromPane(currentController, transactions);
     }
   });
 
@@ -1440,6 +1444,96 @@ export async function destroyEditor(controller: EditorController | null) {
   controller.sharedResources?.runtime.detachController(controller);
   controller.view.destroy();
   return null;
+}
+
+/**
+ * Swap the EditorView's underlying state to a new note in place — keep the
+ * existing EditorView and DOM, replace the document, selection, and the
+ * extensions that reference shared resources, and re-bind the controller
+ * to the new note's [`FileEditorRuntime`].
+ *
+ * This avoids the destroy+create cost on note switches: the DOM stays
+ * mounted, the scroll container does not unmount, and CodeMirror's measure
+ * cycle is not paid twice. Behaviour-wise this matches a fresh
+ * createEditor for the next note (extensions are rebuilt from the new
+ * shared resources, slash menu / wikilinks are re-registered, runtime
+ * dispatch routes through the new runtime via the controller indirection
+ * we established above).
+ *
+ * Returns true on success. On any unexpected condition (no controller, no
+ * view, missing root) returns false so the caller can fall back to the
+ * full destroy/recreate path.
+ */
+export function swapEditorRuntime(
+  controller: EditorController | null,
+  options: {
+    sharedResources: SharedEditorResources;
+    initialValue: string;
+    initialState?: EditorSnapshot | null;
+    viewCallbacks: EditorViewCallbacks;
+    onMarkdownChange: (markdown: string) => void;
+  }
+): boolean {
+  if (!controller) {
+    return false;
+  }
+
+  const view = controller.view;
+  if (!view) {
+    return false;
+  }
+
+  const editorRoot = view.dom.parentElement;
+  if (!(editorRoot instanceof HTMLDivElement)) {
+    return false;
+  }
+
+  const {
+    sharedResources: nextSharedResources,
+    initialValue,
+    initialState = null,
+    viewCallbacks,
+    onMarkdownChange
+  } = options;
+
+  // Detach from the previous runtime so it does not keep dispatching into
+  // this view via its broadcast list.
+  controller.sharedResources?.unregisterViewCallbacks(view);
+  controller.sharedResources?.runtime.detachController(controller);
+
+  const nextRuntime = nextSharedResources.runtime;
+  nextRuntime.ensureMarkdown(initialState?.markdown ?? initialValue);
+
+  const slashMenuApi = createSlashMenuPlugin();
+  const nextPaneKey = Symbol('editor-pane');
+  const extensions = [
+    ...draftly({
+      baseStyles: true,
+      defaultKeybindings: false,
+      history: false,
+      lineWrapping: true,
+      plugins: notepadDraftlyPlugins,
+      extensions: createPaneExtensions(() => controller, editorRoot, nextSharedResources, slashMenuApi)
+    })
+  ];
+
+  const nextState = createPaneState(
+    initialState?.markdown ?? nextRuntime.markdown,
+    extensions,
+    initialState?.selection ?? null
+  );
+
+  view.setState(nextState);
+
+  controller.sharedResources = nextSharedResources;
+  controller.paneKey = nextPaneKey;
+  controller.onMarkdownChange = onMarkdownChange;
+
+  nextSharedResources.registerViewCallbacks(view, viewCallbacks);
+  nextRuntime.attachController(controller);
+  slashMenuApi.register(view);
+
+  return true;
 }
 
 export function replaceEditorContent(

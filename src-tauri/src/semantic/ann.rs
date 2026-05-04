@@ -573,6 +573,34 @@ mod tests {
     };
 
     #[test]
+    fn defaults_to_warming_state_before_initialize_runs() {
+        // Startup-latency change: ANN snapshot load now happens on a
+        // background thread, so a freshly constructed `AnnIndexState`
+        // must report a "warming up" status (`loaded=false`,
+        // `rebuild_pending=true`) and `search` must return an empty
+        // result set instead of panicking. Search and related callers
+        // already key off these flags to fall through to a "still
+        // warming" UI message.
+        let temp = TestDir::new("ann-warming");
+        let semantic_dir = temp.path().join("semantic");
+        let ann = AnnIndexState::new(semantic_dir, 3, Arc::new(SemanticDebugState::new()))
+            .expect("create ann");
+
+        let status = ann.status_snapshot();
+        assert!(!status.loaded, "warming state must report loaded=false");
+        assert!(
+            status.rebuild_pending,
+            "warming state must request a rebuild so the worker repopulates",
+        );
+        assert_eq!(status.indexed_chunks, 0);
+
+        let hits = ann
+            .search(&[1.0, 0.0, 0.0], 8)
+            .expect("search must succeed even when ANN is still warming");
+        assert!(hits.is_empty(), "search returns empty until snapshot loads");
+    }
+
+    #[test]
     fn initialize_loads_matching_persisted_ann_snapshot() {
         let temp = TestDir::new("ann-load");
         let semantic_dir = temp.path().join("semantic");

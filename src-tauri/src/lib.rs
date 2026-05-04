@@ -19,7 +19,7 @@ use app::AppData;
 use index::AppState;
 use semantic::SemanticState;
 use state::{initialize_app_data_dir, initialize_documents_dir, notes_root};
-use std::path::PathBuf;
+use std::{path::PathBuf, thread};
 use tauri::{Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -46,11 +46,56 @@ pub fn run() {
             // pre-existing `AppState`/`AiState` so existing commands keep
             // working while new code routes through services + events.
             app.manage(AppData::new(app.handle().clone()));
-            app.manage(vault_watcher::start_vault_watcher(app.handle().clone())?);
-            // Run the forgotten-note cleanup once at startup so we still purge
-            // expired entries even though we no longer trigger it on every
-            // save/open/list hot path.
-            let _ = commands::startup_cleanup_expired_forgotten_notes();
+            // Vault watcher registration walks the notes directory tree
+            // recursively; on large vaults that adds noticeable latency to
+            // the Tauri `setup` callback before first paint. Move the
+            // registration plus the one-shot forgotten-note cleanup onto a
+            // background thread so the window can paint immediately. The
+            // watcher feeds `AppState` via `try_state`, so it is safe to
+            // attach after setup returns; events that arrive before the
+            // watcher is mounted simply trigger the existing periodic
+            // reconciliation pass.
+            let watcher_handle = app.handle().clone();
+            let _ = thread::Builder::new()
+                .name("vault-watcher-startup".to_string())
+                .spawn(move || {
+                    match vault_watcher::start_vault_watcher(watcher_handle.clone()) {
+                        Ok(handle) => {
+                            watcher_handle.manage(handle);
+                        }
+                        Err(error) => {
+                            eprintln!("vault watcher startup failed: {error}");
+                        }
+                    }
+                    if let Err(error) = commands::startup_cleanup_expired_forgotten_notes() {
+                        eprintln!("forgotten-note startup cleanup failed: {error}");
+                    }
+                    // Prewarm the in-memory `notes_index` so the first
+                    // user-driven `open_note` (and the autosave it triggers
+                    // on the previously-active note) does not pay the
+                    // cold-start vault-walk cost inside
+                    // `prune_state_in_place`. With a warm index, prune
+                    // resolves note ids via O(1) hashmap lookups instead
+                    // of walking the entire vault per id. Runs after the
+                    // watcher is mounted so any concurrent watcher events
+                    // are already feeding the dirty-path queue.
+                    //
+                    // Use the lightweight prewarm — it populates the
+                    // in-memory map with one brief lock swap and offloads
+                    // the heavy lexical/SQLite-projection writes to the
+                    // background queue, so foreground note switches in
+                    // the first seconds after launch do not contend on
+                    // the global SQLite state mutex.
+                    if let Some(state) = watcher_handle.try_state::<AppState>() {
+                        if let Ok(notes_dir) = notes_root() {
+                            if notes_dir.exists() {
+                                if let Err(error) = state.prewarm_notes_index(&notes_dir) {
+                                    eprintln!("notes-index prewarm failed: {error}");
+                                }
+                            }
+                        }
+                    }
+                });
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())

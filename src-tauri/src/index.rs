@@ -9,7 +9,10 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::UNIX_EPOCH,
     time::{Duration, Instant},
 };
@@ -24,6 +27,52 @@ pub(crate) struct AppState {
     /// re-uses the body it captured from the most recent request that did
     /// include the body, keeping the IPC payload small.
     draft_cache: Mutex<DraftCache>,
+    /// Background worker that absorbs save-side lexical and SQLite task
+    /// projection work. Save returns to the frontend after the file is on
+    /// disk and the in-memory notes_index is updated; lexical/projection
+    /// catch up shortly after.
+    pub(crate) background_index_queue: crate::services::BackgroundIndexQueue,
+    /// Counter of foreground IPC calls currently running on the hot path
+    /// (note open / load session). The startup prewarm and the periodic
+    /// background reconciler check it between per-note units of work and
+    /// yield while the foreground is active, so the SQLite state mutex
+    /// and the lexical writer do not stall a user-driven note switch.
+    foreground_activity: Arc<ForegroundActivity>,
+}
+
+/// Atomic counter of foreground IPC calls currently in flight on the hot
+/// path. Acquired via [`AppState::foreground_guard`] which decrements on
+/// drop, so callers can not forget to release.
+#[derive(Default)]
+pub(crate) struct ForegroundActivity {
+    in_flight: AtomicUsize,
+}
+
+impl ForegroundActivity {
+    pub(crate) fn is_busy(&self) -> bool {
+        self.in_flight.load(Ordering::Acquire) > 0
+    }
+}
+
+/// RAII guard returned by [`AppState::foreground_guard`]. While at least
+/// one guard is alive, [`ForegroundActivity::is_busy`] returns true and
+/// background workers (the cold-start prewarm, the periodic reconcile,
+/// the save-side index queue) will yield between per-note units of work.
+pub(crate) struct ForegroundGuard {
+    activity: Arc<ForegroundActivity>,
+}
+
+impl ForegroundGuard {
+    fn new(activity: Arc<ForegroundActivity>) -> Self {
+        activity.in_flight.fetch_add(1, Ordering::AcqRel);
+        Self { activity }
+    }
+}
+
+impl Drop for ForegroundGuard {
+    fn drop(&mut self) {
+        self.activity.in_flight.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 #[derive(Default)]
@@ -112,13 +161,52 @@ fn apply_projection_payload(payload: ProjectionPayload) {
 
 impl AppState {
     pub(crate) fn new(semantic: SemanticState) -> Result<Self, String> {
+        let lexical = Arc::new(LexicalIndex::new()?);
+        let foreground_activity = Arc::new(ForegroundActivity::default());
+        let background_index_queue = crate::services::BackgroundIndexQueue::new(
+            Arc::clone(&lexical),
+            Arc::clone(&foreground_activity),
+        );
         Ok(Self {
             notes_index: Mutex::new(NotesIndex::default()),
-            lexical: Arc::new(LexicalIndex::new()?),
+            lexical,
             semantic: Arc::new(semantic),
             interactive_invalidation: Mutex::new(InteractiveInvalidationState::default()),
             draft_cache: Mutex::new(DraftCache::default()),
+            background_index_queue,
+            foreground_activity,
         })
+    }
+
+    /// Acquire a guard that marks a foreground IPC call as in-flight.
+    /// While any guard is alive, background workers yield between
+    /// per-note units of work so the foreground call does not queue up
+    /// behind the SQLite state mutex or the lexical writer.
+    pub(crate) fn foreground_guard(&self) -> ForegroundGuard {
+        ForegroundGuard::new(Arc::clone(&self.foreground_activity))
+    }
+
+    /// Snapshot accessor for the shared foreground-busy flag. Background
+    /// workers consult this between per-note units of work via the
+    /// `Arc<ForegroundActivity>` they hold; this method exists for
+    /// integration tests that need to assert on the flag without
+    /// reaching into the queue.
+    #[cfg(test)]
+    pub(crate) fn is_foreground_busy(&self) -> bool {
+        self.foreground_activity.is_busy()
+    }
+
+    /// Returns true if the in-memory `notes_index` has been populated at
+    /// least once (cold start full scan completed). Callers on the hot
+    /// path that consult the index for note-id lookup use this to decide
+    /// whether to fall back to expensive disk scans or to skip pruning
+    /// stale ids until the background prewarm finishes.
+    pub(crate) fn has_warm_notes_index(&self) -> bool {
+        self.notes_index
+            .lock()
+            .ok()
+            .and_then(|index| index.last_refresh_at)
+            .is_some()
     }
 
     /// Phase 5: resolve the markdown body for a draft reference.
@@ -194,6 +282,32 @@ impl AppState {
         Ok(())
     }
 
+    /// Save-path index update.
+    ///
+    /// Updates the in-memory `notes_index` synchronously (cheap, and search
+    /// / recents / wikilinks read from it on the very next render) and
+    /// dispatches the heavy lexical + SQLite task projection work to the
+    /// background worker, so the save IPC returns to the frontend without
+    /// blocking the next `open_note`.
+    pub(crate) fn upsert_note_indexes_for_save(
+        &self,
+        path: PathBuf,
+        note: IndexedNote,
+    ) -> Result<(), String> {
+        let note_for_background = note.clone();
+        {
+            let mut index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            index.upsert_note(path.clone(), note);
+        }
+        self.clear_dirty_path(&path)?;
+        self.background_index_queue
+            .enqueue_upsert(path, note_for_background);
+        Ok(())
+    }
+
     pub(crate) fn remove_note_indexes(&self, path: &Path) -> Result<(), String> {
         self.lexical.remove_note(path)?;
         let mut index = self
@@ -205,6 +319,21 @@ impl AppState {
         let timestamp = crate::time::current_time_millis().unwrap_or(0);
         let _ = crate::state::task_projection::delete_tasks_for_note_path(path, timestamp);
         self.clear_dirty_path(path)?;
+        Ok(())
+    }
+
+    /// Save-path remove. Mirror of [`upsert_note_indexes_for_save`].
+    pub(crate) fn remove_note_indexes_for_save(&self, path: &Path) -> Result<(), String> {
+        {
+            let mut index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            index.remove_note(path);
+        }
+        self.clear_dirty_path(path)?;
+        self.background_index_queue
+            .enqueue_remove(path.to_path_buf());
         Ok(())
     }
 
@@ -427,6 +556,80 @@ impl AppState {
     /// never calls this directly.
     pub(crate) fn reconcile_full_vault_scan(&self, notes_dir: &Path) -> Result<bool, String> {
         self.run_full_refresh(notes_dir)
+    }
+
+    /// Lightweight cold-start prewarm. Populates the in-memory
+    /// `notes_index` (so `prune_state_in_place` resolves note ids via
+    /// O(1) hashmap lookups and so the first search/recents/wikilinks
+    /// call does not pay the full-vault scan) without performing the
+    /// heavy lexical writer commits or per-note SQLite task projection
+    /// transactions inline.
+    ///
+    /// Why this matters: the previous prewarm walked the vault, then on
+    /// the same thread did N lexical commits and N SQLite transactions
+    /// (one per note). The lexical writer mutex and the global SQLite
+    /// state mutex are also taken by foreground commands (`open_note`,
+    /// `load_note_session`, search, recents). On a vault with a few
+    /// hundred notes, that loop monopolised the SQLite mutex for several
+    /// seconds and the first user-driven note switch waited behind it.
+    ///
+    /// New shape:
+    ///
+    /// 1. Off-lock disk pass collects updates (unchanged).
+    /// 2. A single brief `notes_index` lock swap inserts every entry.
+    ///    `notes_index` is a plain in-memory map with no IPC contention,
+    ///    so the swap is cheap.
+    /// 3. The heavy lexical + SQLite projection writes are enqueued onto
+    ///    the existing [`crate::services::BackgroundIndexQueue`]. The
+    ///    queue worker yields between jobs while the foreground is
+    ///    busy, so a user-driven `open_note` is no longer queued
+    ///    behind hundreds of projection transactions.
+    ///
+    /// The 60-second background reconciler still calls the heavier
+    /// [`AppState::reconcile_full_vault_scan`], which catches genuine
+    /// drift after the foreground has settled.
+    pub(crate) fn prewarm_notes_index(&self, notes_dir: &Path) -> Result<bool, String> {
+        let existing_signatures = {
+            let index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            index
+                .entries
+                .iter()
+                .map(|(path, note)| (path.clone(), note.signature.clone()))
+                .collect::<HashMap<_, _>>()
+        };
+        let (updates, seen_paths) = collect_refresh_updates(notes_dir, &existing_signatures)?;
+
+        // Capture payloads for the background queue before we move
+        // `updates` into the in-memory swap below. The queue applies
+        // each (path, note) to the lexical writer and to the SQLite
+        // task projection one entry at a time, yielding while the
+        // foreground is busy.
+        let queue_payloads: Vec<(PathBuf, IndexedNote)> = updates
+            .iter()
+            .map(|(path, note)| (path.clone(), note.clone()))
+            .collect();
+
+        let changed = {
+            let mut index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            index.apply_refresh_updates(updates, seen_paths)
+        };
+
+        for (path, note) in queue_payloads {
+            self.background_index_queue.enqueue_upsert(path, note);
+        }
+
+        let mut invalidation = self
+            .interactive_invalidation
+            .lock()
+            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+        invalidation.full_refresh_count = invalidation.full_refresh_count.wrapping_add(1);
+        Ok(changed)
     }
 
     fn clear_dirty_path(&self, path: &Path) -> Result<(), String> {
@@ -1414,6 +1617,92 @@ gneauxghts:
         // Removing a path drops its entry too.
         index.remove_note(&completed_only_path);
         assert!(index.open_task_summaries().next().is_none());
+    }
+
+    #[test]
+    fn prewarm_notes_index_populates_in_memory_map_and_warms_state() {
+        use crate::semantic::SemanticState;
+
+        let temp = TestDir::new("index-prewarm-warms");
+        fs::write(temp.path().join("Alpha.md"), "# Alpha\n\nBody").expect("write alpha");
+        fs::write(temp.path().join("Beta.md"), "# Beta\n\nBody").expect("write beta");
+
+        let state =
+            AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
+        assert!(!state.has_warm_notes_index(), "starts cold");
+
+        state
+            .prewarm_notes_index(temp.path())
+            .expect("prewarm completes");
+
+        // The in-memory map must be populated (so prune resolves note
+        // ids via O(1) lookups) and the warm flag must flip.
+        assert_eq!(state.notes_index.lock().unwrap().entries.len(), 2);
+        assert!(state.has_warm_notes_index(), "prewarm warms the index");
+    }
+
+    #[test]
+    fn background_queue_yields_to_foreground_then_drains() {
+        use crate::semantic::SemanticState;
+
+        let temp = TestDir::new("index-bg-queue-yields");
+        let note_path = temp.path().join("Solo.md");
+        fs::write(&note_path, "# Solo\n\nBody").expect("write solo");
+
+        let state =
+            AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
+
+        // Hold a foreground guard, then push the note's payload through
+        // the prewarm — which enqueues it to the background queue. The
+        // queue worker should observe `is_busy() == true` and yield
+        // before processing, so the job stays unprocessed.
+        let guard = state.foreground_guard();
+        state
+            .prewarm_notes_index(temp.path())
+            .expect("prewarm completes");
+        // Give the worker a window to (incorrectly) process the job.
+        std::thread::sleep(Duration::from_millis(100));
+        // The notes_index map is populated regardless (that work happens
+        // on the prewarm thread, not the queue), so we use the lexical
+        // signatures map as the "did the queue process the job yet"
+        // signal: `lexical.upsert_note` is what the queue calls.
+        assert!(
+            !state.lexical.contains_signature_for_test(&note_path),
+            "queue must not process while foreground guard is alive"
+        );
+
+        // Release the guard; the worker should now drain the job.
+        drop(guard);
+        let drained_at = std::time::Instant::now();
+        loop {
+            if state.lexical.contains_signature_for_test(&note_path) {
+                break;
+            }
+            if drained_at.elapsed() > Duration::from_secs(5) {
+                panic!("queue did not drain after foreground released");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn foreground_guard_marks_state_busy_until_dropped() {
+        use crate::semantic::SemanticState;
+
+        let state =
+            AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
+        assert!(!state.is_foreground_busy(), "starts idle");
+
+        let outer = state.foreground_guard();
+        assert!(state.is_foreground_busy(), "guard marks busy");
+
+        let inner = state.foreground_guard();
+        assert!(state.is_foreground_busy(), "still busy with two guards");
+        drop(inner);
+        assert!(state.is_foreground_busy(), "still busy with one guard left");
+
+        drop(outer);
+        assert!(!state.is_foreground_busy(), "idle once both dropped");
     }
 
     #[test]
