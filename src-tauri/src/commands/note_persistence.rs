@@ -42,8 +42,13 @@ fn build_next_note(
                     build_indexed_note(Path::new(path), markdown, timestamp_millis)
                 })
         }
-        NotePersistenceMode::Remember => persisted_path
-            .map(|path| build_indexed_note(Path::new(path), original_markdown, timestamp_millis)),
+        NotePersistenceMode::Remember => persisted_path.map(|path| {
+            build_indexed_note(
+                Path::new(path),
+                persisted_markdown.unwrap_or(original_markdown),
+                timestamp_millis,
+            )
+        }),
     }
 }
 
@@ -123,10 +128,7 @@ pub(crate) fn persist_note_session_with_outcome(
         }
     };
     let timestamp_millis = current_time_millis()?;
-    let persisted_markdown = match mode {
-        NotePersistenceMode::Save => read_saved_markdown(persisted_path.as_deref())?,
-        NotePersistenceMode::Remember => None,
-    };
+    let persisted_markdown = read_saved_markdown(persisted_path.as_deref())?;
     let next_note = build_next_note(
         mode,
         persisted_path.as_deref(),

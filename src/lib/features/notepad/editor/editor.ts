@@ -491,6 +491,24 @@ function createLayoutTheme() {
   });
 }
 
+function createOverlayScrollMargins(editorRoot: HTMLDivElement) {
+  return EditorView.scrollMargins.of((view) => {
+    const topOverlay = editorRoot
+      .closest('[role="group"]')
+      ?.querySelector<HTMLElement>('.notepad-editor-top-overlay');
+
+    if (!topOverlay) {
+      return null;
+    }
+
+    const scrollerTop = view.scrollDOM.getBoundingClientRect().top;
+    const overlayBottom = topOverlay.getBoundingClientRect().bottom;
+    const top = Math.max(0, Math.ceil(overlayBottom - scrollerTop));
+
+    return top > 0 ? { top } : null;
+  });
+}
+
 function isMarkdownTableLine(text: string) {
   const trimmed = text.trim();
   return trimmed.includes('|') && trimmed !== '|';
@@ -1290,6 +1308,7 @@ function createPaneExtensions(
   return [
     searchQueryField,
     createLayoutTheme(),
+    createOverlayScrollMargins(editorRoot),
     createSearchHighlightExtension(),
     createPassiveTableExtension(),
     ...createWikilinkExtensions(sharedResources),

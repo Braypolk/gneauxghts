@@ -82,7 +82,7 @@ let {
   onfocusin={() => actions.onActivate(viewModel.paneId)}
 >
   <div class={viewModel.frameClass}>
-    <div class="absolute inset-x-0 top-0 z-20">
+    <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20">
       <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
       <div class="relative z-10 flex items-center justify-between gap-3 px-4 pt-4 pb-3">
         <div class="h-9 w-9 shrink-0" aria-hidden="true"></div>
