@@ -516,13 +516,15 @@ export function insertParagraphBelow(
   }
 
   const insertPos = block.moveTo;
-  const prefix = insertPos > 0 && view.state.sliceDoc(insertPos - 1, insertPos) !== '\n' ? '\n' : '';
-  const suffix = insertPos < view.state.doc.length ? '\n\n' : '\n';
-  const insert = `${prefix}${suffix}`;
-  const anchor = insertPos + prefix.length + 1;
+  const atDocEnd = insertPos >= view.state.doc.length;
+  // Open a single empty line directly below the current block. At the end of
+  // the document there is no trailing newline yet, so we add one and land the
+  // cursor after it; mid-document the block already ends in a newline, so we
+  // only need to create the new empty line.
+  const insert = atDocEnd ? '\n\n' : '\n';
   return applySpec(view, {
     changes: { from: insertPos, to: insertPos, insert },
-    selection: { anchor },
+    selection: { anchor: atDocEnd ? insertPos + 1 : insertPos },
     scrollIntoView: true
   });
 }
@@ -561,8 +563,11 @@ export function moveCurrentBlock(view: EditorView, direction: -1 | 1) {
     return false;
   }
 
+  // Preserve the caret's offset within the block so moving a line keeps the
+  // cursor at the same column instead of snapping it to the line start.
+  const caretOffset = Math.max(0, view.state.selection.main.head - current.from);
   const reordered = reorderText(view.state.doc.toString(), current, target, direction < 0);
-  return replaceWholeDoc(view, reordered.text, reordered.anchor);
+  return replaceWholeDoc(view, reordered.text, reordered.anchor + caretOffset);
 }
 
 export function moveBlockTo(view: EditorView, source: BlockDescriptor, target: BlockDescriptor, before: boolean) {

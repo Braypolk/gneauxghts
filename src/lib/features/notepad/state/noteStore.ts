@@ -11,6 +11,7 @@ export interface NoteDraftState extends SessionSnapshot {
   key: NoteKey;
   status: NoteStatus;
   operationRevision: number;
+  saveInvalidation: number;
 }
 
 export interface PaneState<TPaneId extends string = string> {
@@ -46,7 +47,8 @@ export function createNoteDraftState(
     key,
     ...snapshot,
     status: 'idle',
-    operationRevision: 0
+    operationRevision: 0,
+    saveInvalidation: 0
   };
 }
 

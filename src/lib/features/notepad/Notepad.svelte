@@ -47,7 +47,8 @@
   import {
     getBottomSheetStyle,
     getCardStyle,
-    getRelatedDrawerStyle
+    getRelatedDrawerStyle,
+    getRelatedGroupStyle
   } from '$lib/features/notepad/related/layout';
   import {
     createNotepadRefreshController
@@ -1001,6 +1002,10 @@
 
 <div bind:this={workspaceShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
   <div
+    class="notepad-related-group relative h-full min-h-0 w-full"
+    style={getRelatedGroupStyle($relatedState.panelPlacement, $relatedState.reservedWidth)}
+  >
+  <div
     class="notepad-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm sm:rounded-4xl sm:border"
     style={getCardStyle($relatedState.panelPlacement, $relatedState.reservedWidth)}
   >
@@ -1074,7 +1079,7 @@
 
   {#if $relatedState.panelPlacement === 'side'}
     <aside
-      class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch transition-[left] duration-300"
+      class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch"
       aria-label="Related notes panel"
       style={getRelatedDrawerStyle($relatedState.reservedWidth)}
     >
@@ -1118,7 +1123,10 @@
         </div>
       </div>
     </aside>
-  {:else}
+  {/if}
+  </div>
+
+  {#if $relatedState.panelPlacement !== 'side'}
     <div class="related-bottom-sheet pointer-events-none absolute z-20" style={getBottomSheetStyle()}>
       <div class="related-bottom-sheet-anchor pointer-events-none relative">
         <div

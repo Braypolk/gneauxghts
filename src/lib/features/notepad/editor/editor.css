@@ -41,6 +41,13 @@
   -webkit-overflow-scrolling: touch;
 }
 
+.notepad-related-group {
+  /* Single source of truth for how much horizontal room the related drawer
+     reserves. Both the card width and the drawer offset derive from this var
+     so the editor, the RELATED handle, and the panel translate as one piece. */
+  --related-reserved-width: 0px;
+}
+
 .notepad-card {
   transition: width 300ms ease-out;
   will-change: width;
@@ -59,6 +66,11 @@
 
 .related-drawer {
   overflow: visible;
+  /* Match the card's width transition exactly (same property timing/easing and
+     the same --related-reserved-width source) so the drawer and the editor edge
+     move together rather than as two independently animated pieces. */
+  transition: left 300ms ease-out;
+  will-change: left;
 }
 
 .related-drawer-handle {

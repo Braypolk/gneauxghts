@@ -3,6 +3,7 @@ import {
   cursorGroupRight,
   cursorLineBoundaryLeft,
   cursorLineBoundaryRight,
+  defaultKeymap,
   isolateHistory,
   redo,
   selectGroupLeft,
@@ -13,6 +14,7 @@ import {
 } from '@codemirror/commands';
 import {
   Annotation,
+  type EditorSelection as CmEditorSelection,
   EditorState,
   RangeSetBuilder,
   type Extension,
@@ -326,7 +328,15 @@ class FileEditorRuntime {
     }
 
     this.revision += 1;
-    this.broadcastTransactions(docChangedTransactions, null);
+    // History (undo/redo) transactions carry the selection that existed before
+    // the change. The root view holds the canonical history, so we forward that
+    // restored selection — and a scrollIntoView — to the pane that issued the
+    // undo. Without it the pane keeps a stale selection and the viewport jumps
+    // to the top of the document.
+    this.broadcastTransactions(docChangedTransactions, null, {
+      paneKey: preferredPaneKey,
+      selection: view.state.selection
+    });
     this.notifyMarkdownChange(preferredPaneKey);
   }
 
@@ -402,18 +412,28 @@ class FileEditorRuntime {
     };
   }
 
-  private broadcastTransactions(transactions: readonly Transaction[], sourcePaneKey: symbol | null) {
+  private broadcastTransactions(
+    transactions: readonly Transaction[],
+    sourcePaneKey: symbol | null,
+    restoreSelection: { paneKey: symbol | null; selection: CmEditorSelection } | null = null
+  ) {
     for (const [paneKey, controller] of this.paneControllers) {
       if (sourcePaneKey && paneKey === sourcePaneKey) {
         continue;
       }
 
-      const updates = transactions.map((transaction) =>
-        controller.view.state.update({
+      const updates = transactions.map((transaction, index) => {
+        // Apply the restored selection on the final change so it maps cleanly
+        // through the doc, and scroll it into view to keep the caret visible.
+        const applyHere =
+          restoreSelection?.paneKey === paneKey && index === transactions.length - 1;
+        return controller.view.state.update({
           changes: transaction.changes,
+          selection: applyHere ? restoreSelection.selection : undefined,
+          scrollIntoView: applyHere,
           annotations: [syncAnnotation.of(true), Transaction.addToHistory.of(false)]
-        })
-      );
+        });
+      });
       controller.view.update(updates);
     }
   }
@@ -1362,7 +1382,22 @@ function createPaneExtensions(
         return false;
       }
     }),
-    keymap.of([])
+    // Draftly is created with `defaultKeybindings: false`, so without this the
+    // editing surface falls back to the browser's raw contentEditable handling.
+    // We restore CodeMirror's keymap mainly for model-level Cmd+A (native
+    // select-all only reaches the virtualized DOM). Excluded keys keep their
+    // native/owner behavior:
+    //  - Enter / Mod-Enter: draftly list continuation + "insert block below".
+    //  - ArrowUp / ArrowDown (and their Shift selects): cursorLineUp/Down use a
+    //    goal x-coordinate that draftly's flex + absolutely-positioned list
+    //    indent throws off, so the caret skips indented list lines. Native
+    //    vertical motion honors the rendered geometry and behaves like VS Code.
+    // History stays owned by the shared root view (no historyKeymap here).
+    keymap.of(
+      defaultKeymap.filter(
+        (binding) => !['Enter', 'Mod-Enter', 'ArrowUp', 'ArrowDown'].includes(binding.key ?? '')
+      )
+    )
   ];
 }
 

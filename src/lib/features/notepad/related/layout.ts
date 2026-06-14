@@ -107,6 +107,14 @@ export function computeRelatedDrawerLayout(
   };
 }
 
+export function getRelatedGroupStyle(
+  relatedPanelPlacement: RelatedPanelPlacement,
+  relatedDrawerReservedWidth: number
+) {
+  const reserved = relatedPanelPlacement === 'bottom' ? 0 : relatedDrawerReservedWidth;
+  return `--related-reserved-width: ${reserved}px;`;
+}
+
 export function getCardStyle(
   relatedPanelPlacement: RelatedPanelPlacement,
   relatedDrawerReservedWidth: number
@@ -115,14 +123,14 @@ export function getCardStyle(
     return 'width: 100%;';
   }
 
-  return `width: calc(100% - ${relatedDrawerReservedWidth}px);`;
+  return 'width: calc(100% - var(--related-reserved-width));';
 }
 
 export function getRelatedDrawerStyle(
   relatedDrawerReservedWidth: number,
   viewportWidth?: number
 ) {
-  return `left: calc(100% + var(--related-drawer-gap) - ${relatedDrawerReservedWidth}px); width: ${getVisualRelatedDrawerWidth(viewportWidth)}px;`;
+  return `left: calc(100% + var(--related-drawer-gap) - var(--related-reserved-width)); width: ${getVisualRelatedDrawerWidth(viewportWidth)}px;`;
 }
 
 export function getBottomSheetStyle() {

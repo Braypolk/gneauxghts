@@ -73,7 +73,7 @@ describe("persistenceController", () => {
     expect(controller.hasCleanBuffer(note)).toBe(true);
   });
 
-  it("does not apply stale save results after a note revision changes", async () => {
+  it("does not apply save results after a deliberate invalidation", async () => {
     const note = dirtyNote();
     let resolveSave!: (snapshot: SessionSnapshot) => void;
     const savePromise = new Promise<SessionSnapshot>((resolve) => {
@@ -89,8 +89,7 @@ describe("persistenceController", () => {
 
     const save = controller.enqueueSave(note);
     await vi.waitFor(() => expect(note.status).toBe("saving"));
-    note.title = "Newer draft";
-    note.operationRevision += 1;
+    controller.invalidatePendingSaveResults(note);
     resolveSave(
       snapshot({
         title: "Draft",
@@ -101,7 +100,58 @@ describe("persistenceController", () => {
     );
     await save;
 
-    expect(note.title).toBe("Newer draft");
     expect(note.status).toBe("saving");
+  });
+
+  it("adopts the persisted path while keeping a newer draft typed during the save", async () => {
+    const note = createNoteDraftState({
+      title: "",
+      bodyMarkdown: "first line",
+      currentNoteId: null,
+      currentNotePath: null,
+      lastSavedTitle: "",
+      lastSavedMarkdown: "",
+      lastSavedNoteId: null,
+      lastSavedPath: null,
+    });
+    let resolveSave!: (snapshot: SessionSnapshot) => void;
+    const savePromise = new Promise<SessionSnapshot>((resolve) => {
+      resolveSave = resolve;
+    });
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note,
+      timers: new Map(),
+      queues: new Map(),
+      saveNoteSession: vi.fn().mockReturnValue(savePromise),
+      rekeyNoteWithRuntime: (currentNote) => currentNote,
+    });
+
+    const save = controller.enqueueSave(note);
+    await vi.waitFor(() => expect(note.status).toBe("saving"));
+    // User keeps typing while the disk write is in flight.
+    note.bodyMarkdown = "first line\nsecond line";
+    note.operationRevision += 1;
+    resolveSave(
+      snapshot({
+        title: "first line",
+        bodyMarkdown: "first line",
+        currentNoteId: "note-id",
+        currentNotePath: "/vault/first line.md",
+        lastSavedTitle: "first line",
+        lastSavedMarkdown: "first line",
+        lastSavedNoteId: "note-id",
+        lastSavedPath: "/vault/first line.md",
+      }),
+    );
+    await save;
+
+    // The persisted identity is adopted so the next autosave updates the
+    // same file instead of creating a duplicate.
+    expect(note.currentNotePath).toBe("/vault/first line.md");
+    expect(note.currentNoteId).toBe("note-id");
+    expect(note.lastSavedPath).toBe("/vault/first line.md");
+    // The newer draft body the user typed is preserved.
+    expect(note.bodyMarkdown).toBe("first line\nsecond line");
+    expect(note.status).toBe("idle");
   });
 });

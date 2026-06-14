@@ -96,9 +96,13 @@ export function createEditorLifecycleController({
       sharedResources: getSharedEditorResources(document),
       viewCallbacks: getViewCallbacks(),
       onMarkdownChange: (nextMarkdown) => {
+        // Resolve the pane's note at event time: a save can rekey/replace the
+        // note object after the editor is created, and a stale capture would
+        // route body edits to an orphaned note (splitting one note into two).
+        const liveDocument = getDocumentSession();
         const editorState = readEditorState(getController());
-        handleEditorMarkdownChange(getPaneId(), document, nextMarkdown, editorState);
-        saveSharedEditorStateForDocument(document, editorState);
+        handleEditorMarkdownChange(getPaneId(), liveDocument, nextMarkdown, editorState);
+        saveSharedEditorStateForDocument(liveDocument, editorState);
       }
     });
     bindSlashMenuViewToPane(controller.view, getPaneId());
@@ -127,9 +131,10 @@ export function createEditorLifecycleController({
       initialState: null,
       viewCallbacks: getViewCallbacks(),
       onMarkdownChange: (nextMarkdown) => {
+        const liveDocument = getDocumentSession();
         const editorState = readEditorState(getController());
-        handleEditorMarkdownChange(getPaneId(), nextDocument, nextMarkdown, editorState);
-        saveSharedEditorStateForDocument(nextDocument, editorState);
+        handleEditorMarkdownChange(getPaneId(), liveDocument, nextMarkdown, editorState);
+        saveSharedEditorStateForDocument(liveDocument, editorState);
       }
     });
     if (!ok) {

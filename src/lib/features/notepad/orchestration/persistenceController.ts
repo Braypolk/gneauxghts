@@ -43,7 +43,7 @@ export function createNotepadPersistenceController(
   function invalidatePendingSaveResults(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    note.operationRevision += 1;
+    note.saveInvalidation += 1;
   }
 
   function getNoteSaveQueue(noteKey: NoteDraftState["key"]) {
@@ -67,7 +67,7 @@ export function createNotepadPersistenceController(
   }
 
   async function persistNote(note: NoteDraftState) {
-    const operationRevision = note.operationRevision;
+    const saveInvalidation = note.saveInvalidation;
     const title = note.title;
     const markdown = note.bodyMarkdown;
     const currentNoteId = note.currentNoteId;
@@ -85,7 +85,7 @@ export function createNotepadPersistenceController(
       markdown,
       currentNotePath,
     );
-    if (note.operationRevision !== operationRevision) {
+    if (note.saveInvalidation !== saveInvalidation) {
       return;
     }
 
