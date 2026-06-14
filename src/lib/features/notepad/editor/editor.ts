@@ -1,4 +1,16 @@
-import { isolateHistory, redo, undo } from '@codemirror/commands';
+import {
+  cursorGroupLeft,
+  cursorGroupRight,
+  cursorLineBoundaryLeft,
+  cursorLineBoundaryRight,
+  isolateHistory,
+  redo,
+  selectGroupLeft,
+  selectGroupRight,
+  selectLineBoundaryLeft,
+  selectLineBoundaryRight,
+  undo
+} from '@codemirror/commands';
 import {
   Annotation,
   EditorState,
@@ -1318,6 +1330,32 @@ function createPaneExtensions(
     ...slashMenuApi.extension,
     createBlockHandleExtension(editorRoot, slashMenuApi.show),
     createEditorShortcuts(controller),
+    keymap.of([
+      {
+        mac: 'Alt-ArrowLeft',
+        run: cursorGroupLeft,
+        shift: selectGroupLeft,
+        preventDefault: true
+      },
+      {
+        mac: 'Alt-ArrowRight',
+        run: cursorGroupRight,
+        shift: selectGroupRight,
+        preventDefault: true
+      },
+      {
+        mac: 'Cmd-ArrowLeft',
+        run: cursorLineBoundaryLeft,
+        shift: selectLineBoundaryLeft,
+        preventDefault: true
+      },
+      {
+        mac: 'Cmd-ArrowRight',
+        run: cursorLineBoundaryRight,
+        shift: selectLineBoundaryRight,
+        preventDefault: true
+      }
+    ]),
     EditorView.domEventHandlers({
       focus: (_event, view) => {
         slashMenuApi.register(view);

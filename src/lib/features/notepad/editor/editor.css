@@ -269,6 +269,13 @@
   position: relative;
 }
 
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul .cm-draftly-list-mark-ul.cm-draftly-active,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol .cm-draftly-list-mark-ol.cm-draftly-active {
+  display: inline;
+  vertical-align: baseline;
+  width: auto;
+}
+
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-content {
   display: inline;
 }
