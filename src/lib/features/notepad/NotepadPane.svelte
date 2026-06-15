@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Columns2, X } from 'lucide-svelte';
+  import { Columns2, X } from '@lucide/svelte';
   import SplitPaneContentPicker from '$lib/features/notepad/SplitPaneContentPicker.svelte';
   import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';

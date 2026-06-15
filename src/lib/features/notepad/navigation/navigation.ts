@@ -137,7 +137,7 @@ function getEditorTargets(editorRoot: HTMLElement | null) {
   const matches = normalizeTargets(
     Array.from(
       surface.querySelectorAll(
-        '.cm-line.cm-draftly-line-h1, .cm-line.cm-draftly-line-h2, .cm-line.cm-draftly-line-h3, .cm-line.cm-draftly-line-h4, .cm-line.cm-draftly-line-h5, .cm-line.cm-draftly-line-h6, .cm-line.cm-draftly-quote-line, .cm-line.cm-draftly-code-block-line, .cm-line.cm-draftly-list-line-ul, .cm-line.cm-draftly-list-line-ol, .cm-line.cm-draftly-task-line, .cm-line'
+        '.cm-line.cm-gn-line-h1, .cm-line.cm-gn-line-h2, .cm-line.cm-gn-line-h3, .cm-line.cm-gn-line-h4, .cm-line.cm-gn-line-h5, .cm-line.cm-gn-line-h6, .cm-line.cm-gn-quote-line, .cm-line.cm-gn-code-block-line, .cm-line.cm-gn-list-line-ul, .cm-line.cm-gn-list-line-ol, .cm-line.cm-gn-task-line, .cm-line'
       )
     ).filter((node): node is HTMLElement => node instanceof HTMLElement)
   );

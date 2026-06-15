@@ -146,6 +146,19 @@
   --gn-task-checkbox-checked-border: color-mix(in oklab, var(--foreground) 28%, var(--card) 72%);
   --gn-task-checkbox-checked-bg: color-mix(in oklab, var(--foreground) 18%, var(--card) 82%);
   --gn-task-checkbox-check: color-mix(in oklab, var(--foreground) 88%, white 12%);
+  /* Fenced-code syntax-highlight palette, mapped onto the app theme so colors
+     track light/dark. Consumed by markdownHighlight.ts. */
+  --gn-code-keyword: color-mix(in oklab, var(--accent) 70%, var(--foreground) 30%);
+  --gn-code-name: var(--foreground);
+  --gn-code-property: color-mix(in oklab, var(--accent) 60%, var(--foreground) 40%);
+  --gn-code-variable: var(--foreground);
+  --gn-code-function: color-mix(in oklab, var(--accent) 80%, var(--foreground) 20%);
+  --gn-code-constant: var(--destructive);
+  --gn-code-type: color-mix(in oklab, var(--accent) 50%, var(--foreground) 50%);
+  --gn-code-operator: color-mix(in oklab, var(--foreground) 60%, var(--accent) 40%);
+  --gn-code-string: color-mix(in oklab, var(--foreground) 55%, green 45%);
+  --gn-code-comment: var(--muted-foreground);
+  --gn-code-invalid: var(--destructive);
 }
 
 .notepad-editor-shell .gn-editor-root {
@@ -161,15 +174,15 @@
   display: none;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn {
   color: var(--foreground);
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-content {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-content {
   max-width: 100%;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h1 {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h1 {
   margin: 0;
   padding-top: 1.15rem;
   padding-bottom: 0.45rem;
@@ -178,7 +191,7 @@
   line-height: 1.3;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h2 {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h2 {
   margin: 0;
   padding-top: 1.05rem;
   padding-bottom: 0.4rem;
@@ -187,10 +200,10 @@
   line-height: 1.35;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h3,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h4,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h5,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h6 {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h3,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h4,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h5,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h6 {
   margin: 0;
   padding-top: 0.9rem;
   padding-bottom: 0.35rem;
@@ -198,27 +211,27 @@
   line-height: 1.28;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h3 {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h3 {
   font-size: 1.125rem;
   line-height: 1.45;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h4 {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h4 {
   font-size: 1rem;
   line-height: 1.5;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h5 {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h5 {
   font-size: 0.875rem;
   line-height: 1.55;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-line.cm-draftly-line-h6 {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h6 {
   font-size: 0.8125rem;
   line-height: 1.55;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-quote-line {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-quote-line {
   margin: 0;
   padding-top: 0.65rem;
   padding-bottom: 0.65rem;
@@ -227,7 +240,7 @@
   color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-inline {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-inline {
   padding: 0.12rem 0.35rem;
   border-radius: 0.4rem;
   background: color-mix(in oklab, var(--muted) 80%, var(--background));
@@ -235,74 +248,111 @@
   font-family: var(--font-mono);
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-block,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-container {
-  margin: 0.65rem 0;
-  border-radius: 1rem;
-  border: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-  background: color-mix(in oklab, var(--muted) 76%, var(--background));
-  overflow: hidden;
-}
-
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-header {
-  border-bottom: 1px solid color-mix(in oklab, var(--border) 84%, transparent);
-  background: color-mix(in oklab, var(--muted) 64%, var(--background));
-}
-
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-line,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-code-block-line {
+/* Fenced code block: per-line background, rounded at the first/last line so
+   the block reads as one rounded surface while each line stays on normal block
+   flow (no wrapping container that would disturb caret geometry). */
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-block-line {
   font-family: var(--font-mono);
   font-size: 0.92rem;
+  background: color-mix(in oklab, var(--muted) 76%, var(--background));
+  padding-left: 0.85rem;
+  padding-right: 0.85rem;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-line {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-block-line-start {
+  border-top-left-radius: 0.75rem;
+  border-top-right-radius: 0.75rem;
+  padding-top: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-block-line-end {
+  border-bottom-left-radius: 0.75rem;
+  border-bottom-right-radius: 0.75rem;
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-fence {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+}
+
+/* Lists stay on normal block flow: indentation is left padding driven by the
+   nesting depth, so goal-column up/down arrow motion is preserved. */
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-list-line-ul,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-list-line-ol,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-task-line {
   margin: 0;
   padding-top: 0.12rem;
   padding-bottom: 0.12rem;
+  padding-left: calc(1.2rem * (var(--gn-depth, 0) + 1));
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol {
-  display: block !important;
-  align-items: initial !important;
-}
-
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-indent {
-  display: none !important;
-}
-
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul .cm-draftly-list-mark-ul,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol .cm-draftly-list-mark-ol {
-  display: inline-block;
-  width: 1rem;
-  vertical-align: top;
+/* Unordered marker: hide the raw bullet character (kept for caret width) and
+   paint a styled bullet in its place when the line is not being edited. */
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-list-mark-ul:not(.cm-gn-active) {
+  color: transparent;
   position: relative;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ul .cm-draftly-list-mark-ul.cm-draftly-active,
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-line-ol .cm-draftly-list-mark-ol.cm-draftly-active {
-  display: inline;
-  vertical-align: baseline;
-  width: auto;
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-list-mark-ul:not(.cm-gn-active)::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: color-mix(in oklab, var(--foreground) 70%, var(--accent) 30%);
+  font-weight: 700;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-list-content {
-  display: inline;
+/* Ordered marker: keep the number visible, just tint it. */
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-list-mark-ol {
+  color: color-mix(in oklab, var(--foreground) 70%, var(--accent) 30%);
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-checkbox {
-  border-color: var(--gn-task-checkbox-border);
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-task-marker {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-task-checkbox {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-right: 0.3em;
+  cursor: pointer;
+  user-select: none;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-task-checkbox input {
+  appearance: none;
+  margin: 0;
+  width: 1.05em;
+  height: 1.05em;
+  border: 1px solid var(--gn-task-checkbox-border);
+  border-radius: 0.28em;
   background: var(--gn-task-checkbox-bg);
+  cursor: pointer;
+  position: relative;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .cm-draftly-task-checkbox.checked {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-task-checkbox.checked input {
   border-color: var(--gn-task-checkbox-checked-border);
   background: var(--gn-task-checkbox-checked-bg);
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .gn-current-search-highlight {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-task-checkbox.checked input::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8em;
+  line-height: 1;
+  color: var(--gn-task-checkbox-check);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-current-search-highlight {
   border-radius: 0.28rem;
   background: color-mix(in oklab, var(--accent) 76%, var(--foreground) 24%);
   box-shadow:
@@ -310,7 +360,7 @@
     0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent);
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .gn-wikilink {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-wikilink {
   border-radius: 0.35rem;
   background: color-mix(in oklab, var(--accent) 54%, transparent);
   color: color-mix(in oklab, var(--foreground) 88%, var(--accent-foreground) 12%);
@@ -320,7 +370,98 @@
   text-underline-offset: 0.14em;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .gn-image-upload-placeholder {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-emphasis {
+  font-style: italic;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-strong {
+  font-weight: 700;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-strikethrough {
+  text-decoration: line-through;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-header-mark {
+  color: var(--muted-foreground);
+  font-weight: inherit;
+}
+
+/* Link: styled clickable text when not editing; raw markers tinted when editing.
+   The URL is carried in a hidden tooltip element read by the click handler. */
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-styled {
+  color: color-mix(in oklab, var(--accent) 78%, var(--foreground) 22%);
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.14em;
+  cursor: pointer;
+  position: relative;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-styled:hover {
+  color: var(--accent);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-text {
+  color: color-mix(in oklab, var(--accent) 78%, var(--foreground) 22%);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-marker {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-url {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-tooltip {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.4rem;
+  background: color-mix(in oklab, var(--popover, var(--card)) 92%, var(--foreground) 8%);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 20;
+  box-shadow: 0 2px 8px color-mix(in oklab, var(--foreground) 16%, transparent);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-tooltip-visible {
+  display: block;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-hr-line {
+  display: flex;
+  align-items: center;
+  padding-top: 0.75em;
+  padding-bottom: 0.75em;
+  border: none;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-hr-line::after {
+  content: '';
+  flex: 1;
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--border) 70%, var(--foreground) 30%);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-quote-content {
+  font-style: italic;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-upload-placeholder {
   display: inline-flex;
   align-items: center;
   padding: 0.45rem 0.7rem;
@@ -331,7 +472,7 @@
   font-size: 0.92rem;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .gn-image-embed {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed {
   display: inline-flex;
   position: relative;
   margin: 0.5rem 0;
@@ -340,13 +481,13 @@
   background: color-mix(in oklab, var(--muted) 74%, var(--background));
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .gn-image-embed img {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed img {
   display: block;
   max-width: 100%;
   height: auto;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-draftly .gn-image-embed-resize-handle {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed-resize-handle {
   position: absolute;
   right: 0.35rem;
   bottom: 0.35rem;

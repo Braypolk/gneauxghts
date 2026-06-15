@@ -542,9 +542,36 @@ function reorderText(text: string, source: BlockDescriptor, target: BlockDescrip
   };
 }
 
+// Compute the smallest single change that turns `oldText` into `newText` by
+// trimming the shared prefix and suffix. Block reorders/deletes rewrite most of
+// the document only in the middle, so a targeted change keeps untouched text
+// stable. This matters for undo: CodeMirror restores a caret on undo by mapping
+// the stored selection through the *inverse* change, and the inverse of a whole
+// document replacement (`from: 0, to: len`) collapses every position to 0 — the
+// caret (and viewport) jump to the top. A minimal change maps positions outside
+// the edited region to themselves, so undo/redo keep the caret near the edit.
+export function minimalDocChange(oldText: string, newText: string) {
+  const maxPrefix = Math.min(oldText.length, newText.length);
+  let from = 0;
+  while (from < maxPrefix && oldText.charCodeAt(from) === newText.charCodeAt(from)) {
+    from += 1;
+  }
+  let oldEnd = oldText.length;
+  let newEnd = newText.length;
+  while (
+    oldEnd > from &&
+    newEnd > from &&
+    oldText.charCodeAt(oldEnd - 1) === newText.charCodeAt(newEnd - 1)
+  ) {
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+  return { from, to: oldEnd, insert: newText.slice(from, newEnd) };
+}
+
 function replaceWholeDoc(view: EditorView, text: string, anchor: number) {
   return applySpec(view, {
-    changes: { from: 0, to: view.state.doc.length, insert: text },
+    changes: minimalDocChange(view.state.doc.toString(), text),
     selection: { anchor: Math.max(0, Math.min(anchor, text.length)) },
     scrollIntoView: true
   });

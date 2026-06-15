@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Feather } from 'lucide-svelte';
+  import { Feather } from '@lucide/svelte';
   let { class: className = '' }: { class?: string } = $props();
 </script>
 

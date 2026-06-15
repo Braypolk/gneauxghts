@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { House, ListTodo, Map, Settings } from 'lucide-svelte';
+  import { House, ListTodo, Map, Settings } from '@lucide/svelte';
   import FeatherWriting from './icons/FeatherWriting.svelte';
   import MailboxEmpty from './icons/MailboxEmpty.svelte';
   import MailboxFull from './icons/MailboxFull.svelte';

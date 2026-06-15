@@ -4,6 +4,10 @@ import {
   cursorLineBoundaryLeft,
   cursorLineBoundaryRight,
   defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  insertNewlineAndIndent,
   isolateHistory,
   redo,
   selectGroupLeft,
@@ -30,7 +34,8 @@ import {
   keymap,
   type DecorationSet
 } from '@codemirror/view';
-import { draftly } from 'draftly/src/editor/draftly';
+import { indentOnInput } from '@codemirror/language';
+import { insertNewlineContinueMarkup, markdownKeymap } from '@codemirror/lang-markdown';
 import { tick } from 'svelte';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
@@ -45,7 +50,8 @@ import {
   type BlockDescriptor
 } from '$lib/features/notepad/editor/blockTypes';
 import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
-import { notepadDraftlyPlugins } from '$lib/features/notepad/editor/draftlyPlugins';
+import { INDENT_SPACES, createIndentExtensions } from '$lib/features/notepad/editor/indentConfig';
+import { createMarkdownExtensions } from '$lib/features/notepad/markdown/markdownExtensions';
 import { getEditorContentSurface } from '$lib/features/notepad/editor/editorDom';
 import {
   createSlashMenuPlugin,
@@ -216,17 +222,54 @@ function readSelection(view: EditorView): EditorSelection {
   };
 }
 
+// CodeMirror baseline shared by the root state and every pane, mirroring the
+// flags draftly used previously: markdown editing keymap, soft wrapping, and
+// indent-on-input with Tab. `defaultKeymap` is intentionally NOT bundled here —
+// pane views add a filtered copy in createPaneExtensions, and the root view is
+// the headless history owner that never receives direct key events.
+// The single authoritative Enter handler. It ALWAYS handles Enter (returns
+// true), so the keypress never falls through to the browser's native
+// contentEditable handling — that fallback was inserting an extra line break on
+// top of CodeMirror's own, producing the reported "more than one new line".
+//
+// On a list item / blockquote it continues the Markdown markup
+// (`insertNewlineContinueMarkup`); on any other line that command declines and
+// we insert exactly one newline preserving indentation (`insertNewlineAndIndent`).
+// Mod-Enter ("insert block below") and Shift-Enter ("hard break") are owned by
+// the editor shortcuts and are not Enter, so they do not collide.
+export function markdownEnter(view: EditorView): boolean {
+  return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
+}
+
+// markdownKeymap minus its Enter binding: keep the Markdown-aware Backspace
+// (`deleteMarkupBackward`) but route Enter solely through `markdownEnter` so
+// there is exactly one Enter handler (the language sets addKeymap:false, so this
+// is the only place the markdown keys are registered).
+const markdownEditingKeymap = [
+  { key: 'Enter', run: markdownEnter },
+  ...markdownKeymap.filter((binding) => binding.key !== 'Enter')
+];
+
+function createMarkdownBaseExtensions(): Extension[] {
+  return [
+    createMarkdownExtensions(),
+    keymap.of(markdownEditingKeymap),
+    EditorView.lineWrapping,
+    createIndentExtensions(),
+    indentOnInput(),
+    keymap.of([indentWithTab])
+  ];
+}
+
 function createRootState(markdown: string) {
   return EditorState.create({
     doc: markdown,
     extensions: [
-      draftly({
-        baseStyles: false,
-        defaultKeybindings: false,
-        history: true,
-        lineWrapping: true,
-        plugins: notepadDraftlyPlugins
-      })
+      // The root view owns undo/redo history; panes sync into it and omit
+      // their own history (see createEditor).
+      history(),
+      keymap.of(historyKeymap),
+      createMarkdownBaseExtensions()
     ]
   });
 }
@@ -304,11 +347,7 @@ class FileEditorRuntime {
     }
 
     for (const transaction of docChangedTransactions) {
-      const spec = {
-        changes: transaction.changes,
-        annotations: collectHistoryAnnotations(transaction)
-      };
-      this.rootView.update([this.rootView.state.update(spec)]);
+      this.rootView.update([this.rootView.state.update(buildRootForwardSpec(transaction))]);
     }
 
     this.revision += 1;
@@ -445,6 +484,23 @@ class FileEditorRuntime {
   }
 }
 
+// Build the spec used to forward a pane's edit into the root view, which owns
+// the canonical undo history. CodeMirror stores each history event's selection
+// from the transaction's *start* state, so the root selection must follow the
+// editing pane's caret: otherwise it stays at the document top and undo/redo
+// restores position 0 (the viewport jumps to the top). Carrying
+// `transaction.newSelection` keeps the root caret in lockstep with the pane, so
+// each history entry records where the edit happened and undo/redo restores it.
+// Extracted as a pure helper so the selection-forwarding contract is testable
+// without mounting an EditorView.
+export function buildRootForwardSpec(transaction: Transaction) {
+  return {
+    changes: transaction.changes,
+    selection: transaction.newSelection,
+    annotations: collectHistoryAnnotations(transaction)
+  };
+}
+
 function collectHistoryAnnotations(transaction: Transaction) {
   const annotations = [];
   const userEvent = transaction.annotation(Transaction.userEvent);
@@ -460,24 +516,24 @@ function collectHistoryAnnotations(transaction: Transaction) {
 
 function createLayoutTheme() {
   return EditorView.theme({
-    '&.cm-editor.cm-draftly': {
+    '&.cm-editor.cm-gn': {
       height: '100%',
       minHeight: '100%',
       border: 'none',
       outline: 'none',
       background: 'transparent'
     },
-    '&.cm-editor.cm-draftly.cm-focused': {
+    '&.cm-editor.cm-gn.cm-focused': {
       outline: 'none'
     },
-    '&.cm-editor.cm-draftly .cm-cursor, &.cm-editor.cm-draftly .cm-dropCursor': {
+    '&.cm-editor.cm-gn .cm-cursor, &.cm-editor.cm-gn .cm-dropCursor': {
       borderLeftColor: 'var(--foreground) !important'
     },
-    '&.cm-editor.cm-draftly .cm-scroller': {
+    '&.cm-editor.cm-gn .cm-scroller': {
       fontFamily: 'inherit',
       lineHeight: '1.75'
     },
-    '&.cm-editor.cm-draftly .cm-content': {
+    '&.cm-editor.cm-gn .cm-content': {
       boxSizing: 'border-box',
       minHeight: '100%',
       maxWidth: '100%',
@@ -493,13 +549,13 @@ function createLayoutTheme() {
       whiteSpace: 'pre-wrap',
       wordBreak: 'break-word'
     },
-    '&.cm-editor.cm-draftly .cm-selectionBackground': {
+    '&.cm-editor.cm-gn .cm-selectionBackground': {
       backgroundColor: 'var(--gn-editor-selection-background) !important'
     },
-    '&.cm-editor.cm-draftly .cm-line': {
+    '&.cm-editor.cm-gn .cm-line': {
       paddingInline: 0
     },
-    '&.cm-editor.cm-draftly .gn-markdown-table-line': {
+    '&.cm-editor.cm-gn .gn-markdown-table-line': {
       fontFamily: 'var(--font-jetbrains-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
       fontSize: '0.92em',
       lineHeight: '1.7',
@@ -509,14 +565,14 @@ function createLayoutTheme() {
       overflowX: 'auto',
       whiteSpace: 'pre'
     },
-    '&.cm-editor.cm-draftly .gn-markdown-table-header': {
+    '&.cm-editor.cm-gn .gn-markdown-table-header': {
       fontWeight: '650',
       color: 'var(--foreground)',
       backgroundColor: 'color-mix(in oklab, var(--card) 88%, var(--foreground) 4%)',
       boxShadow:
         'inset 0 1px 0 color-mix(in oklab, var(--border) 76%, transparent), inset 0 -1px 0 color-mix(in oklab, var(--border) 82%, transparent)'
     },
-    '&.cm-editor.cm-draftly .gn-markdown-table-delimiter': {
+    '&.cm-editor.cm-gn .gn-markdown-table-delimiter': {
       color: 'var(--muted-foreground)',
       backgroundColor: 'color-mix(in oklab, var(--muted) 28%, var(--background))'
     }
@@ -688,12 +744,12 @@ function createEditorShortcuts(controller: () => EditorController | null) {
 
       if (keyboardShortcutMatchesEvent(event, 'editorIndentList')) {
         event.preventDefault();
-        return adjustListIndent(view, 2);
+        return adjustListIndent(view, INDENT_SPACES);
       }
 
       if (keyboardShortcutMatchesEvent(event, 'editorOutdentList')) {
         event.preventDefault();
-        return adjustListIndent(view, -2);
+        return adjustListIndent(view, -INDENT_SPACES);
       }
 
       return false;
@@ -743,9 +799,8 @@ function findRenderedMarkdownLinkUrl(target: EventTarget | null): string | null 
   }
 
   const element = target instanceof Text ? target.parentElement : target;
-  const linkElement =
-    element?.closest<HTMLElement>('.cm-draftly-link-styled, .cm-draftly-link-wrapper') ?? null;
-  const rawUrl = linkElement?.querySelector<HTMLElement>('.cm-draftly-link-tooltip')?.textContent;
+  const linkElement = element?.closest<HTMLElement>('.cm-gn-link-styled') ?? null;
+  const rawUrl = linkElement?.querySelector<HTMLElement>('.cm-gn-link-tooltip')?.textContent;
   const url = rawUrl?.trim();
 
   return url || null;
@@ -1382,22 +1437,17 @@ function createPaneExtensions(
         return false;
       }
     }),
-    // Draftly is created with `defaultKeybindings: false`, so without this the
+    // The markdown layer does not bundle defaultKeymap, so without this the
     // editing surface falls back to the browser's raw contentEditable handling.
     // We restore CodeMirror's keymap mainly for model-level Cmd+A (native
-    // select-all only reaches the virtualized DOM). Excluded keys keep their
-    // native/owner behavior:
-    //  - Enter / Mod-Enter: draftly list continuation + "insert block below".
-    //  - ArrowUp / ArrowDown (and their Shift selects): cursorLineUp/Down use a
-    //    goal x-coordinate that draftly's flex + absolutely-positioned list
-    //    indent throws off, so the caret skips indented list lines. Native
-    //    vertical motion honors the rendered geometry and behaves like VS Code.
-    // History stays owned by the shared root view (no historyKeymap here).
-    keymap.of(
-      defaultKeymap.filter(
-        (binding) => !['Enter', 'Mod-Enter', 'ArrowUp', 'ArrowDown'].includes(binding.key ?? '')
-      )
-    )
+    // select-all only reaches the virtualized DOM). Enter / Mod-Enter stay
+    // excluded here: Enter is owned by `markdownEnter` in the shared base keymap
+    // (the single authoritative handler), and Mod-Enter is the editor shortcut
+    // "insert block below". The old ArrowUp/ArrowDown exclusion is gone: list
+    // lines use padding-based block-flow indent instead of draftly's flex +
+    // absolute layout, so cursorLineUp/Down's goal-column geometry is correct
+    // again. History stays owned by the shared root view (no historyKeymap here).
+    keymap.of(defaultKeymap.filter((binding) => !['Enter', 'Mod-Enter'].includes(binding.key ?? '')))
   ];
 }
 
@@ -1477,14 +1527,8 @@ export async function createEditor({
   const slashMenuApi = createSlashMenuPlugin();
   let controller: EditorController | null = null;
   const extensions = [
-    ...draftly({
-      baseStyles: true,
-      defaultKeybindings: false,
-      history: false,
-      lineWrapping: true,
-      plugins: notepadDraftlyPlugins,
-      extensions: createPaneExtensions(() => controller, editorRoot, sharedResources, slashMenuApi)
-    })
+    ...createMarkdownBaseExtensions(),
+    ...createPaneExtensions(() => controller, editorRoot, sharedResources, slashMenuApi)
   ];
 
   const view = new EditorView({
@@ -1599,14 +1643,8 @@ export function swapEditorRuntime(
   const slashMenuApi = createSlashMenuPlugin();
   const nextPaneKey = Symbol('editor-pane');
   const extensions = [
-    ...draftly({
-      baseStyles: true,
-      defaultKeybindings: false,
-      history: false,
-      lineWrapping: true,
-      plugins: notepadDraftlyPlugins,
-      extensions: createPaneExtensions(() => controller, editorRoot, nextSharedResources, slashMenuApi)
-    })
+    ...createMarkdownBaseExtensions(),
+    ...createPaneExtensions(() => controller, editorRoot, nextSharedResources, slashMenuApi)
   ];
 
   const nextState = createPaneState(

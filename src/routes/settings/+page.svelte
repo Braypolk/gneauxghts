@@ -1,6 +1,6 @@
 <script lang="ts">
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { Monitor, Moon, RefreshCcw, Sun } from 'lucide-svelte';
+  import { Monitor, Moon, RefreshCcw, Sun } from '@lucide/svelte';
   import { onDestroy, onMount } from 'svelte';
   import AiRememberSettingsPanel from '$lib/features/settings/AiRememberSettingsPanel.svelte';
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';

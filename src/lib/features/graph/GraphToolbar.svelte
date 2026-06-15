@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Search, Maximize2, Clock, Palette } from 'lucide-svelte';
+  import { Search, Maximize2, Clock, Palette } from '@lucide/svelte';
   import {
     formatGraphDateShort,
     formatGraphFilterDate

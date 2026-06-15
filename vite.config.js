@@ -6,14 +6,37 @@ import { sveltekit } from "@sveltejs/kit/vite";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
+const languageDataVendorPath = new URL(
+  "./src/lib/vendor/codemirrorLanguageData.ts",
+  import.meta.url,
+).pathname;
+
+// Redirect `@codemirror/language-data` to the curated vendor subset, EXCEPT
+// when the importer is the vendor file itself — it needs the real package.
+// A plugin (rather than a static `resolve.alias`) is required because the
+// vendor file imports the bare specifier it aliases; a static alias would make
+// that import resolve back to the vendor file (a cycle that yields an undefined
+// `languages` export under Vitest's resolver).
+/** @returns {import("vite").Plugin} */
+function curatedLanguageData() {
+  return {
+    name: "gneauxghts:curated-language-data",
+    enforce: "pre",
+    resolveId(source, importer) {
+      if (source !== "@codemirror/language-data") {
+        return null;
+      }
+      if (importer && importer.startsWith(languageDataVendorPath)) {
+        return null;
+      }
+      return languageDataVendorPath;
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [sveltekit(), tailwindcss()],
-  resolve: {
-    alias: {
-      "@codemirror/language-data": new URL("./src/lib/vendor/codemirrorLanguageData.ts", import.meta.url).pathname,
-    },
-  },
+  plugins: [curatedLanguageData(), sveltekit(), tailwindcss()],
   build: {
     rollupOptions: {
       output: {
@@ -25,10 +48,6 @@ export default defineConfig(async () => ({
 
           if (id.includes("node_modules/mermaid")) {
             return "mermaid-vendor";
-          }
-
-          if (id.includes("node_modules/draftly/")) {
-            return "draftly-vendor";
           }
 
           if (id.includes("node_modules/@codemirror/view")) {

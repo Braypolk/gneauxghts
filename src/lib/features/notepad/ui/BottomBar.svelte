@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle, ChevronDown } from 'lucide-svelte';
+  import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle, ChevronDown } from '@lucide/svelte';
   import {
     forgetButtonDurationPreference,
     resolveForgetButtonDurationMs

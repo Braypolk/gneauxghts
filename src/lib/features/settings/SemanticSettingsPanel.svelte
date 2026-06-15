@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { RefreshCcw } from 'lucide-svelte';
+  import { RefreshCcw } from '@lucide/svelte';
   import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
 
   type SemanticAction =

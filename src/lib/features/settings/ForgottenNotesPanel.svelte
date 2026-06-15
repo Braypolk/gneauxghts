@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { RefreshCcw } from 'lucide-svelte';
+  import { RefreshCcw } from '@lucide/svelte';
   import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 
   type ForgottenAction = 'restore_forgotten_notes' | 'delete_forgotten_notes';
