@@ -24,9 +24,14 @@
   }
 }
 
+@media (min-width: 768px) {
+  .notepad-shell {
+    --editor-left-padding: 0.75rem;
+  }
+}
+
 @media (min-width: 1280px) {
   .notepad-shell {
-    /* --editor-left-padding: 1.25rem; */
     --editor-handle-lane-width: 3.1rem;
     --editor-right-padding: 1.8rem;
     --editor-readable-width: 42rem;

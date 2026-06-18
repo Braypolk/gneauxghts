@@ -1313,9 +1313,13 @@ function createBlockHandleExtension(
         const rootRect = this.#editorRoot.getBoundingClientRect();
         const styles = getComputedStyle(surface);
         const paddingLeft = Number.parseFloat(styles.paddingLeft || '0') || 0;
+        const handleWidth = this.#content.getBoundingClientRect().width;
         const nextMetrics = {
           rootTop: rootRect.top,
-          left: surfaceRect.left - rootRect.left + 8,
+          left:
+            surfaceRect.left -
+            rootRect.left +
+            Math.max(8, paddingLeft - handleWidth - 8),
           textLeft: surfaceRect.left + paddingLeft,
           paddingLeft,
           surfaceWidth: surfaceRect.width,
