@@ -1086,7 +1086,7 @@
       <div class="relative h-full min-h-0 w-full">
         <button
           type="button"
-          class="related-drawer-handle group absolute -mx-4 top-1/2 left-0 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center"
+          class="related-drawer-handle group absolute -mx-4 top-1/2 right-0 z-10 flex translate-x-1/2 -translate-y-1/2 items-center"
           aria-expanded={!$relatedState.isPanelCollapsed}
           aria-controls="related-drawer-panel"
           aria-label={$relatedState.isPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
@@ -1099,9 +1099,9 @@
 
         <div
           id="related-drawer-panel"
-          class={`absolute inset-y-0 left-0 flex w-full min-h-0 pl-4 transition-[opacity,transform] duration-300 ease-out ${
+          class={`absolute inset-y-0 left-0 flex w-full min-h-0 pr-4 transition-[opacity,transform] duration-300 ease-out ${
             $relatedState.isPanelCollapsed
-              ? 'pointer-events-none translate-x-3 opacity-0'
+              ? 'pointer-events-none -translate-x-3 opacity-0'
               : 'pointer-events-auto translate-x-0 opacity-100'
           }`}
         >

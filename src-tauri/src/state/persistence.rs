@@ -486,9 +486,12 @@ fn resolve_target_path(
 }
 
 fn state_database_path() -> Result<PathBuf, String> {
-    let app_data_dir = super::config::app_data_dir()?;
-    fs::create_dir_all(&app_data_dir).map_err(|err| err.to_string())?;
-    Ok(app_data_dir.join(APP_STATE_DB_FILE_NAME))
+    // Vault-local, portable: app-state.sqlite3 holds vault-specific UI state
+    // (recents, hidden/collapsed/order lists, forgotten-note metadata, open
+    // note) and so travels with the vault under `<vault>/.gneauxghts`.
+    let vault_data_dir = super::config::vault_data_dir()?;
+    fs::create_dir_all(&vault_data_dir).map_err(|err| err.to_string())?;
+    Ok(vault_data_dir.join(APP_STATE_DB_FILE_NAME))
 }
 
 struct StateDatabase {

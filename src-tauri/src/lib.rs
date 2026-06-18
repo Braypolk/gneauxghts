@@ -33,11 +33,22 @@ pub fn run() {
             }
 
             let notes_dir = notes_root()?;
+            // Scaffold the portable vault data dir (`<vault>/.gneauxghts`),
+            // its cache dir, and the vault manifest before any vault-local
+            // DB or cache is opened. Idempotent and cheap; safe to run on
+            // every launch.
+            state::ensure_vault_scaffold(&notes_dir)?;
+            let vault_data_dir = state::vault_data_dir()?;
             let semantic = if cfg!(target_os = "ios") {
                 SemanticState::new_disabled("Semantic search is disabled on iPhone builds for now.")
             } else {
                 let bundled_runtime_path = bundled_llama_server_path(app.handle());
-                SemanticState::new_with_runtime(app_data_dir, notes_dir, bundled_runtime_path)?
+                SemanticState::new_with_runtime(
+                    app_data_dir,
+                    vault_data_dir,
+                    notes_dir,
+                    bundled_runtime_path,
+                )?
             };
             app.manage(AppState::new(semantic)?);
             app.manage(ai::AiState::new(app.handle().clone())?);
@@ -98,7 +109,9 @@ pub fn run() {
                 });
             Ok(())
         })
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap_app,
             commands::get_settings_view,

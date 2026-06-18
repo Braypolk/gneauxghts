@@ -3,8 +3,8 @@ use super::{
     chunking::chunk_markdown,
     db::{
         content_hash, delete_note, ensure_schema, insert_job, load_existing_chunk_embeddings,
-        load_note_chunk_labels, load_stored_note_records, open_database, rebuild_edges, update_job,
-        upsert_note_chunks,
+        load_note_chunk_labels, load_stored_note_records, move_note, open_database, rebuild_edges,
+        update_job, upsert_note_chunks, EdgeRebuildStats,
     },
     debug::SemanticDebugState,
     embed::{EmbeddingInputKind, EmbeddingProvider},
@@ -34,6 +34,16 @@ pub(crate) struct PendingNoteUpdate {
     pub(crate) modified_millis: u64,
 }
 
+/// A note that moved on disk (rename or relocation) with unchanged content.
+/// Carries the freshest metadata so the destination row reflects the new path
+/// without re-embedding.
+#[derive(Clone)]
+pub(crate) struct PendingNoteMove {
+    pub(crate) new_path: PathBuf,
+    pub(crate) markdown: String,
+    pub(crate) modified_millis: u64,
+}
+
 #[derive(Default)]
 pub(crate) struct PendingIndexState {
     pub(crate) full_scan_requested: bool,
@@ -41,6 +51,9 @@ pub(crate) struct PendingIndexState {
     pub(crate) rebuild_requested: bool,
     pub(crate) note_updates: HashMap<PathBuf, PendingNoteUpdate>,
     pub(crate) deleted_notes: HashSet<PathBuf>,
+    /// Keyed by the OLD path; value carries the new path + content. Processed
+    /// before updates/deletes so a re-key reuses existing embeddings.
+    pub(crate) moved_notes: HashMap<PathBuf, PendingNoteMove>,
 }
 
 impl PendingIndexState {
@@ -49,6 +62,7 @@ impl PendingIndexState {
             && !self.rebuild_requested
             && self.note_updates.is_empty()
             && self.deleted_notes.is_empty()
+            && self.moved_notes.is_empty()
     }
 }
 
@@ -177,16 +191,20 @@ fn process_pending_jobs(
         let did_succeed = if batch.rebuild_requested {
             let job_notes_dir = notes_dir.to_path_buf();
             let job_provider = provider.clone();
+            let job_debug = debug.clone();
             run_job(
                 db_path,
                 runtime,
                 debug,
                 "Rebuilding semantic index",
-                move |connection| process_rebuild(connection, &job_notes_dir, &job_provider, ann),
+                move |connection| {
+                    process_rebuild(connection, &job_notes_dir, &job_provider, ann, &job_debug)
+                },
             )
         } else if batch.full_scan_requested {
             let job_notes_dir = notes_dir.to_path_buf();
             let job_provider = provider.clone();
+            let job_debug = debug.clone();
             let force = batch.force_full_scan;
             run_job(
                 db_path,
@@ -194,11 +212,19 @@ fn process_pending_jobs(
                 debug,
                 "Scanning notes",
                 move |connection| {
-                    process_full_scan(connection, &job_notes_dir, &job_provider, ann, force)
+                    process_full_scan(
+                        connection,
+                        &job_notes_dir,
+                        &job_provider,
+                        ann,
+                        force,
+                        &job_debug,
+                    )
                 },
             )
         } else {
             let job_provider = provider.clone();
+            let job_debug = debug.clone();
             run_job(
                 db_path,
                 runtime,
@@ -211,6 +237,8 @@ fn process_pending_jobs(
                         ann,
                         batch.note_updates,
                         batch.deleted_notes,
+                        batch.moved_notes,
+                        &job_debug,
                     )
                 },
             )
@@ -326,12 +354,22 @@ where
     }
 }
 
+/// Maximum inferred neighbors recorded per note during edge rebuild.
+const EDGE_NEIGHBORS_PER_NOTE: usize = 6;
+/// Minimum cosine similarity for two notes to be linked. Kept as an explicit
+/// constant (rather than reading `SemanticSettings::graph_min_score`) so that
+/// edge results stay byte-for-byte identical to prior releases; the settings
+/// field is not yet wired to this path and switching it on would silently
+/// change every vault's graph.
+const EDGE_MIN_SCORE: f32 = 0.42;
+
 fn process_full_scan(
     connection: &mut rusqlite::Connection,
     notes_dir: &Path,
     provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
     ann: &Arc<AnnIndexState>,
     force: bool,
+    debug: &Arc<SemanticDebugState>,
 ) -> Result<JobOutcome, String> {
     let stored = load_stored_note_records(connection)?;
     let mut seen_paths = HashSet::new();
@@ -376,14 +414,48 @@ fn process_full_scan(
         deleted_count += 1;
     }
 
-    rebuild_edges(connection, 6, 0.42)?;
+    let edge_started_at = Instant::now();
+    let edge_stats = rebuild_edges(connection, EDGE_NEIGHBORS_PER_NOTE, EDGE_MIN_SCORE)?;
+    record_edge_rebuild(
+        debug,
+        &edge_stats,
+        edge_started_at.elapsed().as_millis() as u64,
+    );
     if scanned_count > 0 || deleted_count > 0 || force || ann.needs_rebuild() {
         ann.rebuild_from_connection(connection)?;
     }
+    debug.sample_rss("index", "full_scan_completed");
     Ok(JobOutcome {
         scanned_count: scanned_count + deleted_count,
         embedded_count,
     })
+}
+
+fn record_edge_rebuild(
+    debug: &Arc<SemanticDebugState>,
+    stats: &EdgeRebuildStats,
+    duration_millis: u64,
+) {
+    debug.record_timing(
+        "index",
+        "edge_rebuild",
+        Some(format!(
+            "notes={} edges={} dim={} comparisons={}",
+            stats.note_count, stats.edge_count, stats.dimensions, stats.comparisons
+        )),
+        duration_millis,
+        |metrics| {
+            metrics.edge_rebuild_count += 1;
+            metrics.edge_rebuild_note_count = stats.note_count as u64;
+            metrics.edge_rebuild_edge_count = stats.edge_count as u64;
+            metrics.edge_rebuild_dimensions = stats.dimensions as u64;
+            metrics.edge_rebuild_comparisons_total += stats.comparisons;
+            metrics.edge_rebuild_duration_total_millis += duration_millis;
+            metrics.edge_rebuild_duration_max_millis = metrics
+                .edge_rebuild_duration_max_millis
+                .max(duration_millis);
+        },
+    );
 }
 
 fn process_rebuild(
@@ -391,6 +463,7 @@ fn process_rebuild(
     notes_dir: &Path,
     provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
     ann: &Arc<AnnIndexState>,
+    debug: &Arc<SemanticDebugState>,
 ) -> Result<JobOutcome, String> {
     connection
         .execute_batch(
@@ -402,7 +475,7 @@ fn process_rebuild(
             ",
         )
         .map_err(|err| err.to_string())?;
-    process_full_scan(connection, notes_dir, provider, ann, true)
+    process_full_scan(connection, notes_dir, provider, ann, true, debug)
 }
 
 fn process_note_batch(
@@ -411,10 +484,37 @@ fn process_note_batch(
     ann: &Arc<AnnIndexState>,
     note_updates: HashMap<PathBuf, PendingNoteUpdate>,
     deleted_notes: HashSet<PathBuf>,
+    moved_notes: HashMap<PathBuf, PendingNoteMove>,
+    debug: &Arc<SemanticDebugState>,
 ) -> Result<JobOutcome, String> {
     let mut scanned_count = 0usize;
     let mut embedded_count = 0usize;
     let mut needs_ann_rebuild = ann.needs_rebuild();
+
+    // Process moves first: re-key existing rows from old path to new path,
+    // reusing stored embeddings (no embedding-server calls). A successful move
+    // changes chunk ann_labels, so the ANN graph must rebuild afterwards. If
+    // the source row is missing (never indexed), fall back to a normal index
+    // of the new path so the content still gets embedded.
+    for (old_path, moved) in moved_notes {
+        let old_path_str = old_path.to_string_lossy().into_owned();
+        let new_path_str = moved.new_path.to_string_lossy().into_owned();
+        let moved_in_place = move_note(connection, &old_path_str, &new_path_str)?;
+        if moved_in_place {
+            needs_ann_rebuild = true;
+        } else {
+            let indexed_note = index_note_content(
+                connection,
+                provider,
+                &moved.new_path,
+                &moved.markdown,
+                moved.modified_millis,
+            )?;
+            embedded_count += indexed_note.embedded_count;
+            needs_ann_rebuild = true;
+        }
+        scanned_count += 1;
+    }
 
     for note_path in deleted_notes {
         let path_str = note_path.to_string_lossy().into_owned();
@@ -448,12 +548,21 @@ fn process_note_batch(
     }
 
     if scanned_count > 0 {
-        rebuild_edges(connection, 6, 0.42)?;
+        let edge_started_at = Instant::now();
+        let edge_stats = rebuild_edges(connection, EDGE_NEIGHBORS_PER_NOTE, EDGE_MIN_SCORE)?;
+        record_edge_rebuild(
+            debug,
+            &edge_stats,
+            edge_started_at.elapsed().as_millis() as u64,
+        );
     }
     if needs_ann_rebuild {
         ann.rebuild_from_connection(connection)?;
     } else if scanned_count > 0 {
         ann.persist_current(connection)?;
+    }
+    if scanned_count > 0 {
+        debug.sample_rss("index", "note_batch_completed");
     }
 
     Ok(JobOutcome {
@@ -595,10 +704,8 @@ mod tests {
         let mut connection = open_database(&db_path).expect("open database");
         ensure_schema(&connection).expect("ensure schema");
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
-        let ann = Arc::new(
-            AnnIndexState::new(semantic_dir, 3, Arc::new(SemanticDebugState::new()))
-                .expect("create ann"),
-        );
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(AnnIndexState::new(semantic_dir, 3, debug.clone()).expect("create ann"));
 
         let note_path = notes_dir.join("external-delete.md");
         fs::write(
@@ -607,7 +714,7 @@ mod tests {
         )
         .expect("write note");
 
-        process_full_scan(&mut connection, &notes_dir, &provider, &ann, true)
+        process_full_scan(&mut connection, &notes_dir, &provider, &ann, true, &debug)
             .expect("initial full scan");
         assert_eq!(
             load_ann_index_signature(&connection)
@@ -618,7 +725,7 @@ mod tests {
         assert!(ann.status_snapshot().indexed_chunks > 0);
 
         fs::remove_file(&note_path).expect("remove note");
-        process_full_scan(&mut connection, &notes_dir, &provider, &ann, false)
+        process_full_scan(&mut connection, &notes_dir, &provider, &ann, false, &debug)
             .expect("scan after external delete");
 
         let signature = load_ann_index_signature(&connection).expect("load ann signature");
@@ -654,13 +761,11 @@ mod tests {
         let mut connection = open_database(&db_path).expect("open database");
         ensure_schema(&connection).expect("ensure schema");
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
-        let ann = Arc::new(
-            AnnIndexState::new(semantic_dir, 3, Arc::new(SemanticDebugState::new()))
-                .expect("create ann"),
-        );
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(AnnIndexState::new(semantic_dir, 3, debug.clone()).expect("create ann"));
 
-        let outcome =
-            process_full_scan(&mut connection, &notes_dir, &provider, &ann, true).expect("scan");
+        let outcome = process_full_scan(&mut connection, &notes_dir, &provider, &ann, true, &debug)
+            .expect("scan");
 
         assert_eq!(outcome.scanned_count, 1);
         assert!(outcome.embedded_count > 0);

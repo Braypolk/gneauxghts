@@ -1,8 +1,8 @@
 use super::{
     chunking::SemanticChunk,
     db::{
-        ann_label_for, load_ann_index_signature, load_chunks_with_embeddings, AnnIndexSignature,
-        StoredChunkRow,
+        ann_label_for, for_each_chunk_embedding, load_ann_index_signature,
+        load_chunk_embedding_dimensions, sum_chunk_text_bytes, AnnIndexSignature,
     },
     debug::SemanticDebugState,
 };
@@ -93,16 +93,19 @@ pub(crate) struct AnnIndexState {
 
 impl AnnIndexState {
     pub(crate) fn new(
-        semantic_dir: PathBuf,
+        cache_dir: PathBuf,
         dimensions: usize,
         debug: Arc<SemanticDebugState>,
     ) -> Result<Self, String> {
-        fs::create_dir_all(&semantic_dir).map_err(|err| err.to_string())?;
+        fs::create_dir_all(&cache_dir).map_err(|err| err.to_string())?;
+        // Vault-local, rebuildable HNSW snapshot sidecars under
+        // `<vault>/.gneauxghts/cache`. The graph file is the user-visible
+        // `hnsw.snapshot`; the raw vectors and manifest sit alongside it.
         Ok(Self {
             dimensions,
-            graph_path: semantic_dir.join("semantic.ann.hnsw"),
-            vectors_path: semantic_dir.join("semantic.ann.vecs"),
-            manifest_path: semantic_dir.join("semantic.ann.manifest.json"),
+            graph_path: cache_dir.join("hnsw.snapshot"),
+            vectors_path: cache_dir.join("hnsw.vectors"),
+            manifest_path: cache_dir.join("hnsw.manifest.json"),
             current: RwLock::new(None),
             status: Mutex::new(AnnStatusState::default()),
             debug,
@@ -283,10 +286,11 @@ impl AnnIndexState {
     pub(crate) fn rebuild_from_connection(&self, connection: &Connection) -> Result<(), String> {
         let started_at = Instant::now();
         let signature = load_ann_index_signature(connection)?;
-        let rows = load_chunks_with_embeddings(connection, None)?;
-        let manifest =
-            self.manifest_for_signature(&signature, infer_dimensions(&rows, self.dimensions));
-        let (graph, vectors) = build_snapshot(&rows, &manifest)?;
+        let dimensions = load_chunk_embedding_dimensions(connection)?
+            .filter(|dimensions| *dimensions > 0)
+            .unwrap_or_else(|| self.dimensions.max(1));
+        let manifest = self.manifest_for_signature(&signature, dimensions);
+        let (graph, vectors) = build_snapshot_streaming(connection, &manifest)?;
 
         self.persist_parts(&graph, &vectors, &manifest)?;
         let dumped_at =
@@ -306,14 +310,27 @@ impl AnnIndexState {
         }
         self.set_status(true, false, false, signature.chunk_count, Some(dumped_at));
 
+        let text_bytes = sum_chunk_text_bytes(connection).unwrap_or(0);
+        let chunk_count = signature.chunk_count as u64;
+        let dimensions = dimensions as u64;
         let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        self.debug
-            .record_timing("ann", "rebuild_completed", None, elapsed, |metrics| {
+        self.debug.record_timing(
+            "ann",
+            "rebuild_completed",
+            Some(format!(
+                "chunks={chunk_count} dim={dimensions} textBytes={text_bytes}"
+            )),
+            elapsed,
+            |metrics| {
                 metrics.ann_rebuild_count += 1;
+                metrics.ann_rebuild_chunk_count = chunk_count;
+                metrics.ann_rebuild_text_bytes = text_bytes;
                 metrics.ann_rebuild_duration_total_millis += elapsed;
                 metrics.ann_rebuild_duration_max_millis =
                     metrics.ann_rebuild_duration_max_millis.max(elapsed);
-            });
+            },
+        );
+        self.debug.sample_rss("ann", "rebuild_completed");
         Ok(())
     }
 
@@ -475,8 +492,12 @@ impl AnnIndexState {
     }
 }
 
-fn build_snapshot(
-    rows: &[StoredChunkRow],
+/// Build the HNSW graph and vector store by streaming chunk embeddings straight
+/// from SQLite. Unlike collecting a `Vec<StoredChunkRow>` first, this keeps only
+/// the graph plus one embedding row resident at a time, and never loads chunk
+/// text into memory at all.
+fn build_snapshot_streaming(
+    connection: &Connection,
     manifest: &AnnManifest,
 ) -> Result<(AnnGraph, AnnVectors), String> {
     let graph = Hnsw::new(
@@ -489,7 +510,7 @@ fn build_snapshot(
     let vectors = InMemoryVectorStore::<f32>::new(manifest.dimensions, manifest.max_nodes);
     let mut seen_labels = HashSet::new();
 
-    for row in rows {
+    for_each_chunk_embedding(connection, |row| {
         if row.embedding.len() != manifest.dimensions {
             return Err(format!(
                 "ANN embedding dimension mismatch for {}:{} expected={} actual={}",
@@ -504,17 +525,11 @@ fn build_snapshot(
         }
         graph
             .set(&vectors, row.ann_label, row.embedding.as_slice())
-            .map_err(|err| err.to_string())?;
-    }
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })?;
 
     Ok((graph, vectors))
-}
-
-fn infer_dimensions(rows: &[StoredChunkRow], fallback: usize) -> usize {
-    rows.first()
-        .map(|row| row.embedding.len())
-        .filter(|dimensions| *dimensions > 0)
-        .unwrap_or(fallback.max(1))
 }
 
 fn desired_capacity(chunk_count: usize) -> usize {
@@ -624,6 +639,31 @@ mod tests {
             .search(&[1.0, 0.0, 0.0], 8)
             .expect("ann search")
             .is_empty());
+    }
+
+    #[test]
+    fn snapshot_persists_to_hnsw_snapshot_in_cache_dir() {
+        // The rebuildable ANN snapshot must land at `<cache>/hnsw.snapshot`
+        // (with sibling vectors + manifest) so it lives under the vault's
+        // `.gneauxghts/cache` rather than the old `semantic.ann.*` names.
+        let temp = TestDir::new("ann-snapshot-path");
+        let cache_dir = temp.path().join("cache");
+        let db_path = temp.path().join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        seed_chunks(&mut connection, "notes/snap.md", 4, 3).expect("seed chunks");
+
+        let ann = AnnIndexState::new(cache_dir.clone(), 3, Arc::new(SemanticDebugState::new()))
+            .expect("create ann");
+        ann.rebuild_from_connection(&connection)
+            .expect("rebuild ann from db");
+
+        assert!(
+            cache_dir.join("hnsw.snapshot").is_file(),
+            "graph snapshot must be cache/hnsw.snapshot"
+        );
+        assert!(cache_dir.join("hnsw.vectors").is_file());
+        assert!(cache_dir.join("hnsw.manifest.json").is_file());
     }
 
     #[test]

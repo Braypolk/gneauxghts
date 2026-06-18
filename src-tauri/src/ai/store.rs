@@ -372,10 +372,15 @@ pub(super) fn ensure_default_settings(connection: &Connection) -> Result<(), Str
     Ok(())
 }
 
+/// Load non-secret provider config from the vault-local `ai.sqlite3`.
+///
+/// `api_key` is intentionally returned as `None`: secrets live only in the
+/// app-global secret store and are layered in by the caller (`AiState`). The
+/// vault-local `api_key` column always stays `NULL`.
 pub(super) fn load_settings(connection: &Connection) -> Result<StoredAiSettings, String> {
     connection
         .query_row(
-            "SELECT provider_kind, base_url, model, api_key FROM ai_settings WHERE id = 1",
+            "SELECT provider_kind, base_url, model FROM ai_settings WHERE id = 1",
             [],
             |row| {
                 let provider_kind = str_to_provider_kind(row.get::<_, String>(0)?.as_str())
@@ -390,13 +395,16 @@ pub(super) fn load_settings(connection: &Connection) -> Result<StoredAiSettings,
                     provider_kind,
                     base_url: row.get(1)?,
                     model: row.get(2)?,
-                    api_key: row.get(3)?,
+                    api_key: None,
                 })
             },
         )
         .map_err(|err| err.to_string())
 }
 
+/// Persist non-secret provider config to the vault-local DB. The `api_key`
+/// column is always written `NULL`: a portable vault must never carry a
+/// credential. The secret itself is stored separately by the caller.
 pub(super) fn save_settings(
     connection: &Connection,
     settings: &StoredAiSettings,
@@ -407,14 +415,13 @@ pub(super) fn save_settings(
              SET provider_kind = ?1,
                  base_url = ?2,
                  model = ?3,
-                 api_key = ?4,
-                 updated_at_millis = ?5
+                 api_key = NULL,
+                 updated_at_millis = ?4
              WHERE id = 1",
             params![
                 provider_kind_to_str(&settings.provider_kind),
                 settings.base_url,
                 settings.model,
-                settings.api_key,
                 current_time_millis()?,
             ],
         )

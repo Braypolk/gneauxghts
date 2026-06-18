@@ -2,12 +2,13 @@ use crate::{
     commands::note_persistence::{persist_note_session_with_outcome, NotePersistenceMode},
     index::AppState,
     semantic::db::content_hash,
-    state::{app_data_dir, is_valid_note_path, notes_root, persist_note},
+    state::{is_valid_note_path, notes_root, persist_note},
     time::current_time_millis,
 };
 mod approval_service;
 mod provider;
 mod remember_orchestrator;
+mod secret_store;
 mod store;
 use approval_service::{
     approve_inbox_item as approve_inbox_item_impl,
@@ -423,7 +424,11 @@ pub(crate) struct AiState {
 
 impl AiState {
     pub(crate) fn new(app_handle: AppHandle) -> Result<Self, String> {
-        let db_path = app_data_dir()?.join("ai").join(AI_DB_FILE_NAME);
+        // Vault-local, portable: ai.sqlite3 holds vault-specific AI content
+        // (jobs, proposals, history) + non-secret provider config under
+        // `<vault>/.gneauxghts`. Secrets live in the app-global secret store.
+        let db_path = crate::state::vault_data_dir()?.join(AI_DB_FILE_NAME);
+
         {
             let connection = open_database(&db_path)?;
             ensure_schema(&connection)?;
@@ -478,29 +483,52 @@ impl AiState {
 
     pub(crate) fn load_public_settings(&self) -> Result<AiSettings, String> {
         let connection = self.connection()?;
-        load_settings(&connection).map(public_ai_settings)
+        Self::load_settings_with_secret(&connection).map(public_ai_settings)
+    }
+
+    /// Load provider config from the vault DB and layer the API key in from
+    /// the app-global secret store. The vault DB never holds the secret, so
+    /// it must be merged here for any caller that needs the live key.
+    fn load_settings_with_secret(connection: &Connection) -> Result<StoredAiSettings, String> {
+        let mut settings = load_settings(connection)?;
+        settings.api_key = secret_store::get_secret(secret_store::AI_API_KEY)?;
+        Ok(settings)
     }
 
     fn save_settings(&self, update: AiSettingsUpdate) -> Result<AiSettings, String> {
         let connection = self.connection()?;
-        let current = load_settings(&connection)?;
+        let current = Self::load_settings_with_secret(&connection)?;
+        // Whether the caller explicitly supplied a key field (Some, possibly
+        // empty) — distinct from leaving it untouched (None).
+        let api_key_provided = update.api_key.is_some();
+        // Resolve the next key: an explicit new value replaces it, an
+        // explicit empty value clears it, and `None` leaves the existing
+        // global secret untouched.
+        let next_api_key = match update.api_key {
+            Some(api_key) => {
+                let trimmed = api_key.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            }
+            None => current.api_key.clone(),
+        };
         let next = StoredAiSettings {
             provider_kind: update.provider_kind,
             base_url: normalize_base_url(&update.base_url),
             model: update.model.trim().to_string(),
-            api_key: match update.api_key {
-                Some(api_key) => {
-                    let trimmed = api_key.trim().to_string();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed)
-                    }
-                }
-                None => current.api_key,
-            },
+            api_key: next_api_key.clone(),
         };
+        // Non-secret provider config goes to the vault DB (api_key column is
+        // forced NULL there); the secret goes only to the global store. When
+        // the caller passed an explicit api_key we always write it through
+        // (covering the "clear" case); otherwise we leave the store as-is.
         save_settings(&connection, &next)?;
+        if api_key_provided {
+            secret_store::set_secret(secret_store::AI_API_KEY, next_api_key.as_deref())?;
+        }
         Ok(public_ai_settings(next))
     }
 
@@ -625,7 +653,8 @@ pub(crate) async fn list_ai_models(
         let connection = open_database(&db_path)?;
         ensure_schema(&connection)?;
         ensure_default_settings(&connection)?;
-        let settings = load_settings(&connection)?;
+        let mut settings = load_settings(&connection)?;
+        settings.api_key = secret_store::get_secret(secret_store::AI_API_KEY)?;
         let provider_kind = settings.provider_kind.clone();
         if provider_kind != AiProviderKind::OpenAiCompatible {
             return Err(
@@ -1543,6 +1572,54 @@ mod tests {
         parse_integrate_edit_response, parse_model_json, AiChange, AiJobStatus, AiProviderKind,
         RememberMode, SourceSnapshot, StoredAiJob, TargetNoteContext,
     };
+
+    mod secret_split {
+        use super::super::store::{
+            ensure_default_settings, ensure_schema, load_settings, open_database, save_settings,
+            StoredAiSettings,
+        };
+        use super::super::AiProviderKind;
+        use crate::test_support::{TestDir, TEST_ENV_GUARD};
+        use rusqlite::Connection;
+
+        fn raw_stored_api_key(connection: &Connection) -> Option<String> {
+            connection
+                .query_row("SELECT api_key FROM ai_settings WHERE id = 1", [], |row| {
+                    row.get::<_, Option<String>>(0)
+                })
+                .expect("read raw api_key")
+        }
+
+        #[test]
+        fn save_settings_never_writes_api_key_into_vault_db() {
+            let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+            let dir = TestDir::new("ai-vault-no-secret");
+            let db_path = dir.path().join("ai.sqlite3");
+            let connection = open_database(&db_path).expect("open");
+            ensure_schema(&connection).expect("schema");
+            ensure_default_settings(&connection).expect("defaults");
+
+            // Even when StoredAiSettings carries a key, the vault DB column
+            // must be written NULL — the portable vault never holds secrets.
+            save_settings(
+                &connection,
+                &StoredAiSettings {
+                    provider_kind: AiProviderKind::OpenAiCompatible,
+                    base_url: "https://api.example.com/v1".to_string(),
+                    model: "gpt-x".to_string(),
+                    api_key: Some("sk-should-not-persist".to_string()),
+                },
+            )
+            .expect("save");
+
+            assert_eq!(raw_stored_api_key(&connection), None);
+            // Non-secret provider config is still persisted to the vault DB.
+            let reloaded = load_settings(&connection).expect("reload");
+            assert_eq!(reloaded.base_url, "https://api.example.com/v1");
+            assert_eq!(reloaded.model, "gpt-x");
+            assert_eq!(reloaded.api_key, None);
+        }
+    }
 
     #[test]
     fn parse_model_json_accepts_code_fences() {

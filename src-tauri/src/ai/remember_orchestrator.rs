@@ -61,7 +61,10 @@ fn process_job(app_handle: &AppHandle, db_path: &Path, job: StoredAiJob) -> Resu
     let started_at = Instant::now();
     let connection = open_database(db_path)?;
     ensure_schema(&connection)?;
-    let settings = load_settings(&connection)?;
+    let mut settings = load_settings(&connection)?;
+    // The vault DB never holds the API key; layer it in from the app-global
+    // secret store before building a provider that will authenticate.
+    settings.api_key = super::secret_store::get_secret(super::secret_store::AI_API_KEY)?;
     let provider = build_provider(&settings)?;
     let proposal = if job.kind.is_exact() {
         return Ok(());

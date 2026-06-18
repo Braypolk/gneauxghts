@@ -606,6 +606,8 @@ mod tests {
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-load-session");
         let notes_dir = temp.path();
+        crate::state::set_notes_root_override(Some(notes_dir.to_path_buf()))
+            .expect("override notes root");
         let stale_note_id = "missing-note".to_string();
         write_state(
             notes_dir,
@@ -635,6 +637,8 @@ mod tests {
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-open-note");
         let notes_dir = temp.path();
+        crate::state::set_notes_root_override(Some(notes_dir.to_path_buf()))
+            .expect("override notes root");
         let note_path = notes_dir.join("Open Me.md");
         fs::write(&note_path, "# Open Me\n\nBody").expect("write note");
 
@@ -661,6 +665,8 @@ mod tests {
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-open-note-rowscope");
         let notes_dir = temp.path();
+        crate::state::set_notes_root_override(Some(notes_dir.to_path_buf()))
+            .expect("override notes root");
         let note_path = notes_dir.join("Switch Target.md");
         let other_path = notes_dir.join("Other.md");
         let pinned_path = notes_dir.join("Pinned.md");
@@ -715,6 +721,8 @@ mod tests {
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-read-note");
         let notes_dir = temp.path();
+        crate::state::set_notes_root_override(Some(notes_dir.to_path_buf()))
+            .expect("override notes root");
         let note_path = notes_dir.join("Read Me.md");
         let existing_open_path = notes_dir.join("Already Open.md");
         fs::write(&note_path, "# Read Me\n\nBody").expect("write note");

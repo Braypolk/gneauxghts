@@ -12,7 +12,9 @@ use crate::ai::AiState;
 use crate::app::AppData;
 use crate::index::AppState;
 use crate::semantic::{debug::SemanticDebugSnapshot, SemanticSettings, SemanticStatus};
-use crate::state::{current_vault_info, set_notes_root, VaultInfo};
+use crate::state::{
+    current_vault_info, ensure_vault_scaffold, set_notes_root, vault_root, VaultInfo,
+};
 use serde::Serialize;
 use std::path::Path;
 use tauri::State;
@@ -64,6 +66,17 @@ impl SettingsService {
             Some("") | None => set_notes_root(None),
             Some(raw) => set_notes_root(Some(Path::new(raw))),
         }?;
+        // Scaffold the newly-selected vault's `.gneauxghts` data/cache dirs
+        // and manifest up front so that, on the next launch, opening this
+        // vault finds a clean, initialized layout. Vault-local DBs and the
+        // HNSW cache still initialize lazily on that launch; live switching
+        // is intentionally deferred (globals, DB handles, and the watcher
+        // are bound once at startup), so `VaultInfo.requires_restart`
+        // remains true and the UI prompts for a restart. Best-effort: a
+        // scaffold failure here must not block recording the new path.
+        if let Ok(new_root) = vault_root() {
+            let _ = ensure_vault_scaffold(&new_root);
+        }
         if let Ok(status) = app_state.semantic.get_status() {
             app_data.events.semantic_status_changed(status);
         }

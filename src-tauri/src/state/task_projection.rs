@@ -808,6 +808,10 @@ mod tests {
     fn setup_app_data(label: &str) -> TestDir {
         let app_data = TestDir::new(label);
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("set app data dir");
+        // app-state.sqlite3 (which backs the task projection) is now
+        // vault-local; isolate it inside this test's temp dir.
+        crate::state::set_notes_root_override(Some(app_data.path().to_path_buf()))
+            .expect("override notes root");
         app_data
     }
 

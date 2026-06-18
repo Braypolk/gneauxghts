@@ -4,9 +4,11 @@ pub(crate) mod task_projection;
 
 #[allow(unused_imports)]
 pub(crate) use config::{
-    app_data_dir, current_vault_info, default_notes_root, forgotten_notes_root,
-    initialize_app_data_dir, initialize_documents_dir, notes_root, read_vault_config,
-    set_notes_root, write_vault_config, VaultConfig, VaultInfo,
+    app_data_dir, current_vault_info, default_notes_root, ensure_vault_scaffold,
+    forgotten_notes_root, global_secrets_db_path, initialize_app_data_dir,
+    initialize_documents_dir, notes_root, read_vault_config, read_vault_manifest_for,
+    set_notes_root, set_notes_root_override, vault_data_dir, vault_root, write_vault_config,
+    VaultConfig, VaultInfo, VaultManifest, VAULT_CACHE_DIR_NAME,
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{
@@ -141,6 +143,9 @@ mod tests {
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-pruning");
         let notes_dir = temp.path();
+        // app-state.sqlite3 is now vault-local: point the active vault at the
+        // test notes dir so the DB lands in an isolated temp `.gneauxghts`.
+        super::set_notes_root_override(Some(notes_dir.to_path_buf())).expect("override notes root");
         let live_note = notes_dir.join("Live Note.md");
         fs::write(&live_note, "# Live Note\n\nBody").expect("write live note");
         let forgotten_dir = forgotten_notes_root(notes_dir);
@@ -236,6 +241,7 @@ mod tests {
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-cold-retain");
         let notes_dir = temp.path();
+        super::set_notes_root_override(Some(notes_dir.to_path_buf())).expect("override notes root");
         // A real note exists on disk so write_state can persist; the
         // cold Index lookup pretends not to know about it.
         let live_note = notes_dir.join("Live Note.md");
@@ -289,6 +295,7 @@ mod tests {
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-warm-drop");
         let notes_dir = temp.path();
+        super::set_notes_root_override(Some(notes_dir.to_path_buf())).expect("override notes root");
         let live_note = notes_dir.join("Live Note.md");
         fs::write(&live_note, "# Live Note\n\nBody").expect("write live note");
         let live_note_id = resolve_note_id_from_path(&live_note).expect("live note id");

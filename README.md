@@ -17,11 +17,39 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 ## How Notes Are Stored
 
 - Notes live in `~/Documents/Gneauxghts`
-- Local app metadata, AI workflow state, and semantic indexes live in app data SQLite databases
 - Notes are plain `.md` files
 - File names are derived from the first Markdown heading or first non-empty line
+- Vault-local durable state and caches live in a portable `.gneauxghts`
+  directory inside the vault, so a vault folder is self-contained and movable:
 
-This means your notes stay easy to back up or edit outside the app.
+  ```
+  MyVault/
+    Notes.md
+    Projects/Example.md
+    assets/pasted-image.png
+    .forgotten/old-note.md
+    .gneauxghts/
+      vault.json            # vault id + schema/version + timestamps
+      app-state.sqlite3     # recents, hidden/order/collapsed, forgotten meta
+      semantic.sqlite3      # semantic index store
+      ai.sqlite3            # AI jobs / proposals / history + provider config
+      cache/                # rebuildable caches
+        hnsw.snapshot       # ANN graph snapshot (+ hnsw.vectors / manifest)
+        lexical/            # reserved for the lexical index
+        graph/              # reserved for the graph cache
+  ```
+
+- Secrets (provider API keys) are **never** written into the portable vault.
+  They live in a machine-global secret store (`secrets.sqlite3`) under the OS
+  app-data directory, so moving or sharing a vault cannot leak credentials.
+- Large, device-specific model files stay global under app data as well.
+- Each vault starts fresh: opening a vault scaffolds a new `.gneauxghts`
+  layout in place. There is no import from older global app-data databases.
+- Switching the vault directory takes effect on the next launch; the newly
+  selected vault's `.gneauxghts` layout is scaffolded immediately.
+
+This means your notes stay easy to back up or edit outside the app, and the
+whole vault (notes + index + state) travels as one folder.
 
 ## Keyboard Shortcuts
 

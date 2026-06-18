@@ -17,7 +17,9 @@ use self::{
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
-    indexer::{spawn_indexing_worker, PendingIndexState, PendingNoteUpdate, WorkerSignal},
+    indexer::{
+        spawn_indexing_worker, PendingIndexState, PendingNoteMove, PendingNoteUpdate, WorkerSignal,
+    },
     related::{build_excerpt, related_scope_label},
     similarity::cosine_similarity,
 };
@@ -171,12 +173,22 @@ struct DisabledSemanticState {
 impl SemanticState {
     pub(crate) fn new_with_runtime(
         app_data_dir: PathBuf,
+        vault_data_dir: PathBuf,
         notes_dir: PathBuf,
         bundled_runtime_path: Option<PathBuf>,
     ) -> Result<Self, String> {
         fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-        let semantic_dir = app_data_dir.join("semantic");
-        let db_path = semantic_dir.join("semantic.sqlite3");
+        // Vault-local, portable: semantic.sqlite3 lives directly under
+        // `<vault>/.gneauxghts`; the rebuildable ANN/HNSW + lexical/graph
+        // sidecars live under `<vault>/.gneauxghts/cache`.
+        fs::create_dir_all(&vault_data_dir).map_err(|err| err.to_string())?;
+        let cache_dir = vault_data_dir.join(crate::state::VAULT_CACHE_DIR_NAME);
+        fs::create_dir_all(&cache_dir).map_err(|err| err.to_string())?;
+        let db_path = vault_data_dir.join("semantic.sqlite3");
+
+        // The model cache (large, device-specific, non-portable) stays
+        // GLOBAL in app_data_dir; only the index + caches are vault-local.
+        let semantic_dir = cache_dir.clone();
         let connection = open_database(&db_path)?;
         ensure_schema(&connection)?;
         let stored_settings = load_semantic_settings(&connection)?;
@@ -345,6 +357,60 @@ impl SemanticState {
         }
     }
 
+    /// Enqueue a note move (rename/relocation with unchanged content). The
+    /// indexer re-keys the stored rows from `old_path` to `new_path`, reusing
+    /// existing embeddings. `markdown`/`modified_millis` are the destination
+    /// content, used only as a fallback if the source was never indexed.
+    pub(crate) fn queue_note_move(
+        &self,
+        old_path: &Path,
+        new_path: &Path,
+        markdown: String,
+        modified_millis: u64,
+    ) -> Result<(), String> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => {
+                state.debug.record_with_metrics(
+                    "index",
+                    "enqueue_move_note",
+                    Some(format!(
+                        "{} -> {}",
+                        old_path.to_string_lossy(),
+                        new_path.to_string_lossy()
+                    )),
+                    None,
+                    |metrics| metrics.index_job_enqueued_count += 1,
+                );
+                {
+                    let mut pending = state
+                        .pending
+                        .lock()
+                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                    if pending.rebuild_requested || pending.full_scan_requested {
+                        return Ok(());
+                    }
+                    // The destination is now authoritative: drop any pending
+                    // delete/update that targeted either endpoint so the move
+                    // is the single source of truth for this batch.
+                    pending.deleted_notes.remove(old_path);
+                    pending.deleted_notes.remove(new_path);
+                    pending.note_updates.remove(old_path);
+                    pending.note_updates.remove(new_path);
+                    pending.moved_notes.insert(
+                        old_path.to_path_buf(),
+                        PendingNoteMove {
+                            new_path: new_path.to_path_buf(),
+                            markdown,
+                            modified_millis,
+                        },
+                    );
+                }
+                state.request_wake()
+            }
+            SemanticStateInner::Disabled(_) => Ok(()),
+        }
+    }
+
     pub(crate) fn rebuild_index(&self) -> Result<(), String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
@@ -365,6 +431,7 @@ impl SemanticState {
                     pending.force_full_scan = false;
                     pending.note_updates.clear();
                     pending.deleted_notes.clear();
+                    pending.moved_notes.clear();
                 }
                 state.request_wake()
             }
@@ -407,6 +474,21 @@ impl SemanticState {
             SemanticStateInner::Active(state) => Some(state.db_path.clone()),
             SemanticStateInner::Disabled(_) => None,
         }
+    }
+
+    /// Return the content hash currently stored for `note_path`, if the note is
+    /// indexed. Used by the vault watcher to detect content-identical renames
+    /// (a removed path whose stored hash matches a newly-present path) so the
+    /// move can reuse existing embeddings. Returns `None` when disabled, the
+    /// note is not indexed, or the lookup fails (callers fall back to a plain
+    /// delete + index).
+    pub(crate) fn stored_content_hash(&self, note_path: &Path) -> Option<String> {
+        let SemanticStateInner::Active(state) = &self.inner else {
+            return None;
+        };
+        let connection = open_database(&state.db_path).ok()?;
+        let record = load_note_record(&connection, &note_path.to_string_lossy()).ok()??;
+        Some(record.content_hash)
     }
 
     pub(crate) fn embedding_provider(&self) -> Option<Arc<dyn EmbeddingProvider + Send + Sync>> {
@@ -587,6 +669,7 @@ impl ActiveSemanticState {
                 pending.force_full_scan |= force;
                 pending.note_updates.clear();
                 pending.deleted_notes.clear();
+                pending.moved_notes.clear();
             }
         }
         self.request_wake()
@@ -910,6 +993,7 @@ fn enqueue_initial_scan_after_warmup(
             pending_guard.full_scan_requested = true;
             pending_guard.note_updates.clear();
             pending_guard.deleted_notes.clear();
+            pending_guard.moved_notes.clear();
         }
     }
     if !wake_pending.swap(true, Ordering::AcqRel) {

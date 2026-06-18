@@ -3,7 +3,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
@@ -18,6 +18,21 @@ const MODEL_FILENAME: &str = "jina-embeddings-v5-text-nano-retrieval-Q6_K.gguf";
 const HF_REPO_GGUF_FILE: &str = "v5-nano-retrieval-Q6_K.gguf";
 const QUERY_PREFIX: &str = "Query: ";
 const DOCUMENT_PREFIX: &str = "Document: ";
+
+/// Default llama-server context window. The Jina runtime's resident memory is
+/// dominated by this KV-cache allocation, so it is the main lever for the
+/// embedding process's footprint. Operators can override it via
+/// `GNEAUXGHTS_LLAMA_CTX_SIZE` to trade context length for memory; the default
+/// is unchanged so out-of-the-box embedding quality is not affected.
+const DEFAULT_LLAMA_CTX_SIZE: u32 = 8192;
+const MIN_LLAMA_CTX_SIZE: u32 = 512;
+
+/// Maximum size (bytes) the llama-server stdout/stderr logs may reach before the
+/// active file is rotated to a `.1` sibling. Overridable via
+/// `GNEAUXGHTS_LLAMA_LOG_MAX_BYTES`. Default 5 MiB keeps logs useful for
+/// debugging while preventing the verbose runtime chatter from growing
+/// unbounded across a long-running session.
+const DEFAULT_LLAMA_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 /// First load of a large GGUF on slower disks/CPUs can exceed tens of seconds.
 const LLAMA_SERVER_READY_TIMEOUT: Duration = Duration::from_secs(240);
@@ -209,10 +224,6 @@ impl JinaLlamaEmbeddingProvider {
         fs::create_dir_all(&self.model_dir).map_err(|err| startup_error(err.to_string()))?;
         let stdout_path = self.model_dir.join("llama-server.stdout.log");
         let stderr_path = self.model_dir.join("llama-server.stderr.log");
-        let stdout =
-            fs::File::create(&stdout_path).map_err(|err| startup_error(err.to_string()))?;
-        let stderr =
-            fs::File::create(&stderr_path).map_err(|err| startup_error(err.to_string()))?;
 
         let mut command = Command::new(&runtime_binary);
         command.env("LLAMA_CACHE", &self.model_dir);
@@ -224,7 +235,7 @@ impl JinaLlamaEmbeddingProvider {
         }
         let ModelSource::LocalFile(model_path) = model_source;
         command.arg("-m").arg(model_path);
-        let child = command
+        let mut child = command
             .arg("--embeddings")
             .arg("--pooling")
             .arg("last")
@@ -233,11 +244,27 @@ impl JinaLlamaEmbeddingProvider {
             .arg("--port")
             .arg(port.to_string())
             .arg("--ctx-size")
-            .arg("8192")
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr))
+            .arg(resolve_llama_ctx_size().to_string())
+            // Suppress llama-server's debug-level chatter (the per-request
+            // `srv update:` prompt-cache dumps that otherwise dominate the log).
+            // Warnings, errors and the request log are still emitted.
+            .arg("--log-verbosity")
+            .arg("0")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|err| startup_error(err.to_string()))?;
+
+        // Drain the child's stdout/stderr through size-capped rotating sinks so
+        // the logs stay useful for debugging without growing without bound. The
+        // reader threads exit on their own when the child is terminated and its
+        // pipes close (EOF), so there is nothing extra to track for shutdown.
+        if let Some(out) = child.stdout.take() {
+            spawn_rotating_log_drain(out, stdout_path.clone());
+        }
+        if let Some(err) = child.stderr.take() {
+            spawn_rotating_log_drain(err, stderr_path.clone());
+        }
 
         {
             let mut runtime = self
@@ -906,6 +933,95 @@ fn with_prefix(text: &str, prefix: &str) -> String {
     format!("{prefix}{text}")
 }
 
+/// Resolve the per-file byte cap for the llama-server logs, honoring the
+/// `GNEAUXGHTS_LLAMA_LOG_MAX_BYTES` override when it parses to a non-zero value.
+fn resolve_llama_log_max_bytes() -> u64 {
+    env::var("GNEAUXGHTS_LLAMA_LOG_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|bytes| *bytes > 0)
+        .unwrap_or(DEFAULT_LLAMA_LOG_MAX_BYTES)
+}
+
+/// Spawn a detached thread that copies everything the child writes on `reader`
+/// (its piped stdout or stderr) into `path`, rotating the file to a single `.1`
+/// backup whenever it would exceed the configured byte cap. This bounds total
+/// on-disk log usage to ~2x the cap (current + one rotated generation) no matter
+/// how long the runtime stays up. The thread ends naturally at EOF, i.e. when
+/// the child process is terminated and its pipe closes.
+fn spawn_rotating_log_drain<R: Read + Send + 'static>(reader: R, path: PathBuf) {
+    thread::spawn(move || {
+        let max_bytes = resolve_llama_log_max_bytes();
+        let mut reader = BufReader::new(reader);
+        let mut writer = match RotatingLogWriter::open(path, max_bytes) {
+            Ok(writer) => writer,
+            Err(_) => return,
+        };
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) => break, // EOF: child exited / pipe closed.
+                Ok(_) => {
+                    if writer.write_all(&line).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = writer.flush();
+    });
+}
+
+/// A minimal size-capped, single-backup rotating log sink. When a write would
+/// push the active file past `max_bytes`, the current file is renamed to
+/// `<path>.1` (replacing any prior backup) and a fresh file is started.
+struct RotatingLogWriter {
+    path: PathBuf,
+    max_bytes: u64,
+    written: u64,
+    file: BufWriter<fs::File>,
+}
+
+impl RotatingLogWriter {
+    fn open(path: PathBuf, max_bytes: u64) -> io::Result<Self> {
+        let file = fs::File::create(&path)?;
+        Ok(Self {
+            path,
+            max_bytes,
+            written: 0,
+            file: BufWriter::new(file),
+        })
+    }
+
+    fn rotate(&mut self) -> io::Result<()> {
+        self.file.flush()?;
+        let backup = self.path.with_extension("log.1");
+        // Best-effort rotation: if the rename fails we just keep appending to a
+        // fresh file rather than letting a logging hiccup take down embedding.
+        let _ = fs::rename(&self.path, &backup);
+        self.file = BufWriter::new(fs::File::create(&self.path)?);
+        self.written = 0;
+        Ok(())
+    }
+}
+
+impl Write for RotatingLogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.written.saturating_add(buf.len() as u64) > self.max_bytes && self.written > 0 {
+            self.rotate()?;
+        }
+        let n = self.file.write(buf)?;
+        self.written = self.written.saturating_add(n as u64);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.file.flush()
+    }
+}
+
 fn read_tail_utf8_lossy(path: &Path, max_bytes: usize) -> String {
     let Ok(mut file) = fs::File::open(path) else {
         return String::new();
@@ -950,6 +1066,18 @@ fn format_llama_server_exit(stderr_path: &Path, status: ExitStatus) -> String {
     }
 
     message
+}
+
+/// Resolve the llama-server `--ctx-size`, honoring the `GNEAUXGHTS_LLAMA_CTX_SIZE`
+/// override when it parses to a sane value. Falls back to `DEFAULT_LLAMA_CTX_SIZE`
+/// for unset, empty, non-numeric, or too-small values so a typo can never shrink
+/// the window below something the model can use.
+fn resolve_llama_ctx_size() -> u32 {
+    env::var("GNEAUXGHTS_LLAMA_CTX_SIZE")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|size| *size >= MIN_LLAMA_CTX_SIZE)
+        .unwrap_or(DEFAULT_LLAMA_CTX_SIZE)
 }
 
 fn find_open_port() -> Result<u16, String> {
@@ -1062,4 +1190,63 @@ fn is_valid_gguf_file(path: &Path) -> bool {
 #[allow(dead_code)]
 fn _debug_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_llama_ctx_size_honors_valid_override_and_floors_typos() {
+        // Mutates a process-global env var; keep all cases in one serial test and
+        // restore the prior value so parallel tests are not affected.
+        let key = "GNEAUXGHTS_LLAMA_CTX_SIZE";
+        let previous = env::var_os(key);
+
+        env::remove_var(key);
+        assert_eq!(resolve_llama_ctx_size(), DEFAULT_LLAMA_CTX_SIZE);
+
+        env::set_var(key, "4096");
+        assert_eq!(resolve_llama_ctx_size(), 4096);
+
+        env::set_var(key, "  2048  ");
+        assert_eq!(
+            resolve_llama_ctx_size(),
+            2048,
+            "surrounding whitespace trimmed"
+        );
+
+        env::set_var(key, "not-a-number");
+        assert_eq!(
+            resolve_llama_ctx_size(),
+            DEFAULT_LLAMA_CTX_SIZE,
+            "non-numeric falls back to default"
+        );
+
+        env::set_var(key, "0");
+        assert_eq!(
+            resolve_llama_ctx_size(),
+            DEFAULT_LLAMA_CTX_SIZE,
+            "below MIN floor falls back to default"
+        );
+
+        env::set_var(key, (MIN_LLAMA_CTX_SIZE - 1).to_string());
+        assert_eq!(
+            resolve_llama_ctx_size(),
+            DEFAULT_LLAMA_CTX_SIZE,
+            "just under MIN floor falls back to default"
+        );
+
+        env::set_var(key, MIN_LLAMA_CTX_SIZE.to_string());
+        assert_eq!(
+            resolve_llama_ctx_size(),
+            MIN_LLAMA_CTX_SIZE,
+            "exactly MIN is accepted"
+        );
+
+        match previous {
+            Some(value) => env::set_var(key, value),
+            None => env::remove_var(key),
+        }
+    }
 }

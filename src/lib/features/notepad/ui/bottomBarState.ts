@@ -169,6 +169,11 @@ export function createBottomBarState({
     onSearchInput((event.currentTarget as HTMLInputElement).value);
   }
 
+  function handleSearchClear() {
+    onSearchInput('');
+    searchInput?.focus();
+  }
+
   function handleSearchFocus() {
     setSearchFocused(true);
     onSearchFocus();
@@ -444,6 +449,7 @@ export function createBottomBarState({
     toggleRememberMenu,
     resetActiveIndex,
     handleSearchInput,
+    handleSearchClear,
     handleSearchFocus,
     handleSearchBlur,
     handleSearchModeClick,

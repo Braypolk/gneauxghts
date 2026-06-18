@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle, ChevronDown } from '@lucide/svelte';
+  import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle, ChevronDown, X } from '@lucide/svelte';
   import {
     forgetButtonDurationPreference,
     resolveForgetButtonDurationMs
@@ -271,37 +271,43 @@
         <Undo2 class="h-5 w-5 min-[700px]:hidden" />
       </button>
     {:else}
-      <button
-        type="button"
-        class={`relative isolate inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-background p-0 font-medium text-muted-foreground shadow-sm transition-[color,background-color,border-color,box-shadow] duration-200 hover:border-destructive/40 hover:text-muted-foreground active:text-destructive min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5 ${
-          $bottomBarState.isHoldingForget
-            ? 'border-destructive/70 text-destructive animate-[forget-hold-pulse_0.95s_ease-in-out_infinite_alternate]'
-            : ''
+      <div
+        class={`inline-flex shrink-0 items-center rounded-full border bg-background p-1 text-muted-foreground shadow-sm ${
+          $bottomBarState.isHoldingForget ? 'border-destructive/70' : 'border-border'
         }`}
-        style={`--forget-progress: ${$bottomBarState.forgetHoldProgress};`}
-        aria-label={bottomBarState.getForgetButtonAriaLabel()}
-        onclick={bottomBarState.handleForgetClick}
-        onpointerdown={bottomBarState.handleForgetPointerDown}
-        onpointerup={bottomBarState.cancelForgetHold}
-        onpointerleave={bottomBarState.cancelForgetHold}
-        onpointercancel={bottomBarState.cancelForgetHold}
-        onkeydown={bottomBarState.handleForgetKeyDown}
-        onkeyup={bottomBarState.handleForgetKeyUp}
       >
-        <span
-          class="absolute inset-0 z-0 origin-left rounded-[inherit] bg-destructive/35 transition-[transform,opacity] duration-150 ease-linear"
-          style="transform: scaleX(var(--forget-progress, 0)); opacity: calc(0.14 + (var(--forget-progress, 0) * 0.58));"
-          aria-hidden="true"
-        ></span>
-        <span class="relative z-10 hidden transition duration-200 min-[700px]:inline">
-          Forget
-        </span>
-        <Eraser
-          class={`relative z-10 h-5 w-5 transition-transform duration-200 min-[700px]:hidden ${
-            $bottomBarState.isHoldingForget ? '-translate-y-px' : ''
+        <button
+          type="button"
+          class={`relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2 ${
+            $bottomBarState.isHoldingForget
+              ? 'text-destructive animate-[forget-hold-pulse_0.95s_ease-in-out_infinite_alternate]'
+              : ''
           }`}
-        />
-      </button>
+          style={`--forget-progress: ${$bottomBarState.forgetHoldProgress};`}
+          aria-label={bottomBarState.getForgetButtonAriaLabel()}
+          onclick={bottomBarState.handleForgetClick}
+          onpointerdown={bottomBarState.handleForgetPointerDown}
+          onpointerup={bottomBarState.cancelForgetHold}
+          onpointerleave={bottomBarState.cancelForgetHold}
+          onpointercancel={bottomBarState.cancelForgetHold}
+          onkeydown={bottomBarState.handleForgetKeyDown}
+          onkeyup={bottomBarState.handleForgetKeyUp}
+        >
+          <span
+            class="absolute inset-0 z-0 origin-left rounded-[inherit] bg-destructive/55 transition-[transform,opacity] duration-150 ease-linear"
+            style="transform: scaleX(var(--forget-progress, 0)); opacity: calc(0.14 + (var(--forget-progress, 0) * 0.58));"
+            aria-hidden="true"
+          ></span>
+          <span class="relative z-10 hidden min-[700px]:inline">
+            Forget
+          </span>
+          <Eraser
+            class={`relative z-10 h-5 w-5 transition-transform duration-200 min-[700px]:hidden ${
+              $bottomBarState.isHoldingForget ? '-translate-y-px' : ''
+            }`}
+          />
+        </button>
+      </div>
     {/if}
 
     <div
@@ -326,6 +332,17 @@
       </div>
 
       <div class="search-mode-toggle flex shrink-0 items-center gap-1 rounded-full bg-card/80 p-1">
+        {#if searchQuery.length > 0}
+          <button
+            type="button"
+            class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:h-9 sm:w-9"
+            aria-label="Clear search"
+            onmousedown={(event) => event.preventDefault()}
+            onclick={bottomBarState.handleSearchClear}
+          >
+            <X class="h-4 w-4" />
+          </button>
+        {/if}
         <button
           type="button"
           class="search-mode-button inline-flex h-8 w-8 items-center justify-center rounded-full bg-transparent text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground sm:h-9 sm:w-9"

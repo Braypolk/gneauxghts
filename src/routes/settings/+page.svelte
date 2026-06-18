@@ -1,6 +1,6 @@
 <script lang="ts">
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { Monitor, Moon, RefreshCcw, Sun } from '@lucide/svelte';
+  import { Monitor, Moon, RefreshCcw, Sun, FolderOpen } from '@lucide/svelte';
   import { onDestroy, onMount } from 'svelte';
   import AiRememberSettingsPanel from '$lib/features/settings/AiRememberSettingsPanel.svelte';
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
@@ -60,6 +60,24 @@
       $settings.forgottenNotes.every((note) =>
         $settings.selectedForgottenPaths.includes(note.forgottenPath)
       )
+  );
+
+  function normalizeVaultPath(path: string) {
+    return path.trim().replace(/[\\/]+$/u, '');
+  }
+
+  let selectedVaultPath = $derived(
+    $settings.vaultPathInput.trim() || $settings.vaultInfo?.currentPath || ''
+  );
+  let savedVaultPath = $derived($settings.vaultInfo?.currentPath ?? '');
+  let hasUnsavedVaultChange = $derived(
+    Boolean(savedVaultPath) &&
+      normalizeVaultPath(selectedVaultPath) !== normalizeVaultPath(savedVaultPath)
+  );
+  let vaultNeedsRestart = $derived(
+    Boolean($settings.activeVaultPath) &&
+      Boolean(savedVaultPath) &&
+      normalizeVaultPath(savedVaultPath) !== normalizeVaultPath($settings.activeVaultPath)
   );
 
   function handleVisibilityChange() {
@@ -296,7 +314,7 @@
               <p class="text-sm font-medium">Vault Directory</p>
               <p class="mt-0.5 text-xs text-muted-foreground">
                 {#if $settings.vaultInfo?.canConfigurePath ?? true}
-                  Desktop vaults can live in any normal folder. Changing the directory updates future note IO and takes full effect after restarting the app.
+                  Choose a folder for your notes. The new vault takes full effect after you restart the app.
                 {:else}
                   iPhone builds currently keep notes inside the app sandbox. Custom vault locations are disabled for now.
                 {/if}
@@ -304,41 +322,86 @@
             </div>
           </div>
 
-          <div class="grid gap-4 md:grid-cols-[1fr_auto]">
-            <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-              <span class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Path</span>
-              <input
-                class="mt-3 w-full bg-transparent text-sm font-medium outline-none"
-                value={$settings.vaultPathInput}
-                oninput={(event) =>
-                  settings.setVaultPathInput((event.currentTarget as HTMLInputElement).value)}
-                placeholder={$settings.vaultInfo?.defaultPath ?? 'Vault path'}
-                disabled={!($settings.vaultInfo?.canConfigurePath ?? true)}
-              />
-            </label>
+          <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Selected folder</p>
+            <p class="mt-3 break-all text-sm font-medium">
+              {#if selectedVaultPath}
+                {selectedVaultPath}
+              {:else}
+                <span class="text-muted-foreground">No folder selected yet</span>
+              {/if}
+            </p>
+            {#if hasUnsavedVaultChange}
+              <p class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                This folder is not applied yet. Save it, then restart the app.
+              </p>
+            {/if}
+          </div>
 
-            <div class="flex items-center gap-2 md:justify-end">
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              class="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+              type="button"
+              disabled={
+                $settings.isPickingVault ||
+                $settings.isSavingVault ||
+                !($settings.vaultInfo?.canConfigurePath ?? true)
+              }
+              onclick={() => void settings.pickVaultDirectory()}
+            >
+              <FolderOpen class="h-4 w-4" />
+              {$settings.isPickingVault ? 'Opening picker…' : 'Choose folder'}
+            </button>
+            <button
+              class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+              type="button"
+              disabled={$settings.isSavingVault || !($settings.vaultInfo?.canConfigurePath ?? true)}
+              onclick={() => {
+                settings.setVaultPathInput($settings.vaultInfo?.defaultPath ?? '');
+                void settings.saveVaultDirectory();
+              }}
+            >
+              Use default
+            </button>
+            <button
+              class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+              type="button"
+              disabled={
+                $settings.isSavingVault ||
+                !($settings.vaultInfo?.canConfigurePath ?? true) ||
+                !hasUnsavedVaultChange
+              }
+              onclick={() => void settings.saveVaultDirectory()}
+            >
+              {$settings.isSavingVault ? 'Saving…' : 'Apply folder'}
+            </button>
+          </div>
+
+          {#if vaultNeedsRestart}
+            <div class="rounded-3xl border border-amber-300/70 bg-amber-50 px-5 py-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+              <p class="font-medium">Restart required</p>
+              <p class="mt-1 text-sm text-amber-800 dark:text-amber-200">
+                The app is still using
+                <span class="font-medium break-all">{$settings.activeVaultPath}</span>.
+                Restart now to open notes from
+                <span class="font-medium break-all">{savedVaultPath}</span>.
+              </p>
               <button
-                class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                class="mt-4 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-60"
                 type="button"
-                disabled={$settings.isSavingVault || !($settings.vaultInfo?.canConfigurePath ?? true)}
-                onclick={() => {
-                  settings.setVaultPathInput($settings.vaultInfo?.defaultPath ?? '');
-                  void settings.saveVaultDirectory();
-                }}
+                disabled={$settings.isRestarting}
+                onclick={() => void settings.restartApp()}
               >
-                Use default
-              </button>
-              <button
-                class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
-                type="button"
-                disabled={$settings.isSavingVault || !($settings.vaultInfo?.canConfigurePath ?? true)}
-                onclick={() => void settings.saveVaultDirectory()}
-              >
-                {$settings.isSavingVault ? 'Saving…' : 'Save vault'}
+                {$settings.isRestarting ? 'Restarting…' : 'Restart app'}
               </button>
             </div>
-          </div>
+          {/if}
+
+          {#if $settings.vaultSaveError}
+            <div class="rounded-3xl border border-destructive/40 bg-destructive/10 px-5 py-4 text-sm text-destructive">
+              {$settings.vaultSaveError}
+            </div>
+          {/if}
 
           {#if $settings.vaultInfo?.pathConfigurationNote}
             <div class="rounded-3xl border border-sky-300/60 bg-sky-50 px-5 py-4 text-sm text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
@@ -349,8 +412,8 @@
           {#if $settings.vaultInfo}
             <div class="grid gap-4 md:grid-cols-3">
               <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Current vault</p>
-                <p class="mt-2 text-sm font-medium break-all">{$settings.vaultInfo.currentPath}</p>
+                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Active vault</p>
+                <p class="mt-2 text-sm font-medium break-all">{$settings.activeVaultPath}</p>
               </div>
               <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
                 <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Forgotten notes</p>

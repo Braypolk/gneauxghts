@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { get, writable } from "svelte/store";
 import type { ForgottenNoteSummary } from "$lib/types/forgottenNotes";
 import type { VaultInfo } from "$lib/types/vault";
@@ -42,7 +44,11 @@ interface SettingsState {
   semanticDebug: SemanticDebugSnapshot | null;
   vaultInfo: VaultInfo | null;
   vaultPathInput: string;
+  activeVaultPath: string;
+  vaultSaveError: string | null;
   isSavingVault: boolean;
+  isPickingVault: boolean;
+  isRestarting: boolean;
   activeTab: SettingsTab;
   activeGeneralSection: GeneralSection;
   forgottenNotes: ForgottenNoteSummary[];
@@ -62,7 +68,11 @@ function createInitialState(): SettingsState {
     semanticDebug: null,
     vaultInfo: null,
     vaultPathInput: "",
+    activeVaultPath: "",
+    vaultSaveError: null,
     isSavingVault: false,
+    isPickingVault: false,
+    isRestarting: false,
     activeTab: "general",
     activeGeneralSection: "appearance",
     forgottenNotes: [],
@@ -101,8 +111,61 @@ export function createSettingsStore() {
     patch({ activeGeneralSection });
   }
 
+  function applyVaultInfo(nextVaultInfo: VaultInfo, resetInput = false) {
+    update((state) => ({
+      ...state,
+      vaultInfo: nextVaultInfo,
+      vaultPathInput: resetInput
+        ? nextVaultInfo.currentPath
+        : state.vaultPathInput.trim() === ""
+          ? nextVaultInfo.currentPath
+          : state.vaultPathInput,
+      activeVaultPath:
+        state.activeVaultPath === ""
+          ? nextVaultInfo.currentPath
+          : state.activeVaultPath,
+      vaultSaveError: null,
+    }));
+  }
+
+  async function pickVaultDirectory() {
+    const state = get(store);
+    if (!(state.vaultInfo?.canConfigurePath ?? true)) {
+      return;
+    }
+
+    patch({ isPickingVault: true, vaultSaveError: null });
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath:
+          state.vaultPathInput.trim() || state.vaultInfo?.currentPath || undefined,
+        title: "Choose vault folder",
+      });
+      if (typeof selected === "string" && selected.trim() !== "") {
+        patch({ vaultPathInput: selected });
+      }
+    } catch (error) {
+      console.error("Failed to pick vault directory:", error);
+      patch({ vaultSaveError: String(error) });
+    } finally {
+      patch({ isPickingVault: false });
+    }
+  }
+
+  async function restartApp() {
+    patch({ isRestarting: true });
+    try {
+      await relaunch();
+    } catch (error) {
+      console.error("Failed to restart app:", error);
+      patch({ vaultSaveError: String(error), isRestarting: false });
+    }
+  }
+
   function setVaultPathInput(vaultPathInput: string) {
-    patch({ vaultPathInput });
+    patch({ vaultPathInput, vaultSaveError: null });
   }
 
   function setSelectedForgottenPaths(
@@ -158,15 +221,7 @@ export function createSettingsStore() {
 
   async function loadVaultInfo() {
     try {
-      const nextVaultInfo = await loadVaultInfoSlice();
-      update((state) => ({
-        ...state,
-        vaultInfo: nextVaultInfo,
-        vaultPathInput:
-          state.vaultPathInput.trim() === ""
-            ? nextVaultInfo.currentPath
-            : state.vaultPathInput,
-      }));
+      applyVaultInfo(await loadVaultInfoSlice());
     } catch (error) {
       console.error("Failed to load vault info:", error);
     }
@@ -209,12 +264,8 @@ export function createSettingsStore() {
             semanticStatus: view.semanticStatus,
             semanticSettings: view.semanticSettings,
             semanticDebug: view.semanticDebug,
-            vaultInfo: view.vault,
-            vaultPathInput:
-              state.vaultPathInput.trim() === ""
-                ? view.vault.currentPath
-                : state.vaultPathInput,
           }));
+          applyVaultInfo(view.vault);
         } catch (bundledError) {
           console.warn(
             "get_settings_view failed, falling back to individual loads:",
@@ -229,12 +280,8 @@ export function createSettingsStore() {
             semanticStatus: semantic.status,
             semanticSettings: semantic.settings,
             semanticDebug: semantic.debug,
-            vaultInfo: nextVaultInfo,
-            vaultPathInput:
-              state.vaultPathInput.trim() === ""
-                ? nextVaultInfo.currentPath
-                : state.vaultPathInput,
           }));
+          applyVaultInfo(nextVaultInfo);
         }
         syncSemanticPolling();
       } catch (error) {
@@ -404,7 +451,7 @@ export function createSettingsStore() {
   }
 
   async function saveVaultDirectory() {
-    patch({ isSavingVault: true });
+    patch({ isSavingVault: true, vaultSaveError: null });
     try {
       const state = get(store);
       const nextVaultInfo = await invoke<VaultInfo>("set_vault_directory", {
@@ -413,11 +460,10 @@ export function createSettingsStore() {
             ? null
             : state.vaultPathInput.trim(),
       });
-      patch({
-        vaultInfo: nextVaultInfo,
-      });
+      applyVaultInfo(nextVaultInfo, true);
     } catch (error) {
       console.error("Failed to save vault directory:", error);
+      patch({ vaultSaveError: String(error) });
     } finally {
       patch({ isSavingVault: false });
     }
@@ -491,6 +537,8 @@ export function createSettingsStore() {
     setActiveTab,
     setActiveGeneralSection,
     setVaultPathInput,
+    pickVaultDirectory,
+    restartApp,
     loadForgottenNotes,
     runForgottenAction,
     toggleForgottenSelection,

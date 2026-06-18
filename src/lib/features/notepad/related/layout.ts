@@ -123,14 +123,15 @@ export function getCardStyle(
     return 'width: 100%;';
   }
 
-  return 'width: calc(100% - var(--related-reserved-width));';
+  return 'margin-left: var(--related-reserved-width); width: calc(100% - var(--related-reserved-width));';
 }
 
 export function getRelatedDrawerStyle(
   relatedDrawerReservedWidth: number,
   viewportWidth?: number
 ) {
-  return `left: calc(100% + var(--related-drawer-gap) - var(--related-reserved-width)); width: ${getVisualRelatedDrawerWidth(viewportWidth)}px;`;
+  const visualWidth = getVisualRelatedDrawerWidth(viewportWidth);
+  return `left: calc(var(--related-reserved-width) - var(--related-drawer-gap) - ${visualWidth}px); width: ${visualWidth}px;`;
 }
 
 export function getBottomSheetStyle() {
