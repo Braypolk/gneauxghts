@@ -1,9 +1,11 @@
+use super::block_ops::apply_update_note_via_ops;
 use super::{
-    content_hash, current_time_millis, default_summary_for_job, fallback_title_for_path,
-    is_valid_note_path, job_status_to_str, list_jobs, load_job, non_empty_summary, notes_root,
-    open_database, persist_note, should_skip_job_update, to_detail_item, to_list_item,
-    update_job_status, AiChange, AiJobStatus, AiState, ClearInboxResult, InboxItemDetail,
-    InboxListItem, InboxMutationDelta, ResolvedRememberAction, StoredAiJob,
+    body_markdown_from_path_and_raw, content_hash, current_time_millis, default_summary_for_job,
+    fallback_title_for_path, is_valid_note_path, job_status_to_str, list_jobs, load_job,
+    non_empty_summary, notes_root, open_database, persist_note, should_skip_job_update,
+    to_detail_item, to_list_item, update_job_status, AiChange, AiJobStatus, AiState,
+    ClearInboxResult, InboxItemDetail, InboxListItem, InboxMutationDelta, ResolvedRememberAction,
+    StoredAiJob,
 };
 use rusqlite::params;
 use std::{
@@ -395,10 +397,22 @@ fn apply_job_changes(job: &StoredAiJob) -> Result<(), ApplyError> {
                 } else {
                     new_title.clone()
                 };
+                // Apply the body as minimal block-level edits instead of overwriting
+                // the whole body. The file-level `content_hash` gate above already
+                // guarantees the live file matches the base the proposal was generated
+                // against, so the bridge reproduces `new_markdown` byte-for-byte while
+                // touching only changed blocks. If anything diverges (stale block or a
+                // round-trip mismatch) the bridge declines and we write `new_markdown`
+                // verbatim — exactly the v1 result. Never a partially-applied body.
+                let live_raw = fs::read_to_string(&current_path)
+                    .map_err(|err| ApplyError::Stale(err.to_string()))?;
+                let live_body = body_markdown_from_path_and_raw(path, &live_raw);
+                let outcome =
+                    apply_update_note_via_ops(&live_body, new_markdown, &live_body);
                 persist_note(
                     &notes_dir,
                     &resolved_title,
-                    new_markdown,
+                    &outcome.text,
                     Some(current_path.as_path()),
                 )
                 .map_err(ApplyError::Failed)?
@@ -437,6 +451,7 @@ fn emit_inbox_changed(app_handle: &AppHandle) -> Result<(), String> {
     }
 }
 
+#[derive(Debug)]
 enum ApplyError {
     Stale(String),
     Failed(String),
@@ -444,8 +459,156 @@ enum ApplyError {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_job_changes, validate_override_changes};
+    use super::{
+        apply_job_changes, body_markdown_from_path_and_raw, content_hash, persist_note,
+        validate_job_changes, validate_override_changes, ApplyError,
+    };
     use crate::ai::{AiChange, AiJobStatus, RememberMode, SourceSnapshot, StoredAiJob};
+    use crate::state::{initialize_app_data_dir, set_notes_root_override};
+    use crate::test_support::{TestDir, TEST_ENV_GUARD};
+    use std::fs;
+    use std::path::Path;
+
+    fn job_for_update(path: &str, source_hash: &str, change: AiChange) -> StoredAiJob {
+        StoredAiJob {
+            id: 1,
+            kind: RememberMode::CleanUp,
+            action_id: "cleanUp".to_string(),
+            action_label: "Clean Up".to_string(),
+            action_prompt: None,
+            status: AiJobStatus::PendingApproval,
+            source: SourceSnapshot {
+                path: path.to_string(),
+                title: "Source".to_string(),
+                markdown: String::new(),
+                content_hash: source_hash.to_string(),
+            },
+            requires_approval: true,
+            summary: String::new(),
+            proposed_changes: vec![change],
+            failure_reason: None,
+            provider_kind: None,
+            model: None,
+            metrics: None,
+            created_at_millis: 0,
+            updated_at_millis: 0,
+            retry_of_job_id: None,
+        }
+    }
+
+    fn body_of(path: &Path) -> String {
+        let raw = fs::read_to_string(path).expect("read note");
+        body_markdown_from_path_and_raw(&path.to_string_lossy(), &raw)
+    }
+
+    #[test]
+    fn live_apply_updates_note_body_to_proposed_body() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let app_data = TestDir::new("approval-apply-appdata");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("set app data");
+        let vault = TestDir::new("approval-apply-vault");
+        set_notes_root_override(Some(vault.path().to_path_buf())).expect("set override");
+
+        let stored = persist_note(
+            vault.path(),
+            "Note",
+            "First paragraph.\n\nSecond paragraph.\n",
+            None,
+        )
+        .expect("persist base")
+        .expect("path");
+        let path = std::path::PathBuf::from(&stored);
+        let source_hash = content_hash(&fs::read_to_string(&path).expect("read raw"));
+
+        let proposed_body = "First paragraph.\n\nEdited paragraph.\n";
+        let job = job_for_update(
+            &stored,
+            &source_hash,
+            AiChange::UpdateNote {
+                path: stored.clone(),
+                base_content_hash: source_hash.clone(),
+                new_title: "Note".to_string(),
+                new_markdown: proposed_body.to_string(),
+            },
+        );
+
+        apply_job_changes(&job).expect("apply succeeds");
+        assert_eq!(body_of(&path), proposed_body);
+
+        set_notes_root_override(None).expect("clear override");
+    }
+
+    #[test]
+    fn live_apply_no_op_change_keeps_body_byte_identical() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let app_data = TestDir::new("approval-noop-appdata");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("set app data");
+        let vault = TestDir::new("approval-noop-vault");
+        set_notes_root_override(Some(vault.path().to_path_buf())).expect("set override");
+
+        let original_body = "First paragraph.\n\nSecond paragraph.\n";
+        let stored = persist_note(vault.path(), "Note", original_body, None)
+            .expect("persist base")
+            .expect("path");
+        let path = std::path::PathBuf::from(&stored);
+        let source_hash = content_hash(&fs::read_to_string(&path).expect("read raw"));
+        let before_body = body_of(&path);
+
+        let job = job_for_update(
+            &stored,
+            &source_hash,
+            AiChange::UpdateNote {
+                path: stored.clone(),
+                base_content_hash: source_hash.clone(),
+                new_title: "Note".to_string(),
+                new_markdown: before_body.clone(),
+            },
+        );
+
+        apply_job_changes(&job).expect("apply succeeds");
+        assert_eq!(body_of(&path), before_body);
+
+        set_notes_root_override(None).expect("clear override");
+    }
+
+    #[test]
+    fn live_apply_fails_stale_when_file_changed_after_snapshot() {
+        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let app_data = TestDir::new("approval-stale-appdata");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("set app data");
+        let vault = TestDir::new("approval-stale-vault");
+        set_notes_root_override(Some(vault.path().to_path_buf())).expect("set override");
+
+        let stored = persist_note(
+            vault.path(),
+            "Note",
+            "First paragraph.\n\nSecond paragraph.\n",
+            None,
+        )
+        .expect("persist base")
+        .expect("path");
+        let path = std::path::PathBuf::from(&stored);
+        let source_hash = content_hash(&fs::read_to_string(&path).expect("read raw"));
+
+        let job = job_for_update(
+            &stored,
+            &source_hash,
+            AiChange::UpdateNote {
+                path: stored.clone(),
+                base_content_hash: source_hash.clone(),
+                new_title: "Note".to_string(),
+                new_markdown: "First paragraph.\n\nEdited paragraph.\n".to_string(),
+            },
+        );
+
+        // Simulate the user editing the note after the proposal was generated.
+        fs::write(&path, "Totally different on-disk content.\n").expect("mutate");
+
+        let error = apply_job_changes(&job).expect_err("stale should fail safely");
+        assert!(matches!(error, ApplyError::Stale(_)));
+
+        set_notes_root_override(None).expect("clear override");
+    }
 
     #[test]
     fn delete_note_is_rejected_for_cleanup_jobs() {

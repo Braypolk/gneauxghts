@@ -192,6 +192,7 @@ pub(super) fn to_detail_item(job: &StoredAiJob) -> Result<InboxItemDetail, Strin
         metrics: job.metrics.clone(),
         proposed_changes: job.proposed_changes.clone(),
         change_previews: build_change_previews(&job.proposed_changes)?,
+        proposals: derive_proposals(&job.proposed_changes, &job.source.markdown),
         created_at_millis: job.created_at_millis,
         updated_at_millis: job.updated_at_millis,
     })
@@ -465,7 +466,10 @@ pub(super) fn insert_job(connection: &Connection, job: &StoredAiJob) -> Result<i
                 job.source.content_hash,
                 if job.requires_approval { 1 } else { 0 },
                 job.summary,
-                serialize_changes(&job.proposed_changes)?,
+                serialize_changes_with_base(
+                    &job.proposed_changes,
+                    Some(job.source.markdown.as_str()),
+                )?,
                 job.failure_reason,
                 job.provider_kind.as_ref().map(provider_kind_to_str),
                 job.model,
@@ -635,6 +639,7 @@ pub(super) fn update_job_status(
     metrics: Option<AiRunMetrics>,
 ) -> Result<StoredAiJob, String> {
     let current = load_job(connection, id)?.ok_or_else(|| "Inbox item not found".to_string())?;
+    let base_body = current.source.markdown.clone();
     let next_summary = summary.unwrap_or(current.summary);
     let next_failure_reason = failure_reason.or(current.failure_reason);
     let next_changes = proposed_changes.unwrap_or(current.proposed_changes);
@@ -660,7 +665,7 @@ pub(super) fn update_job_status(
                 job_status_to_str(&status),
                 next_summary,
                 next_failure_reason,
-                serialize_changes(&next_changes)?,
+                serialize_changes_with_base(&next_changes, Some(base_body.as_str()))?,
                 next_provider_kind.as_ref().map(provider_kind_to_str),
                 next_model,
                 serialize_metrics(&next_metrics)?,
@@ -745,18 +750,119 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredAiJob> {
     })
 }
 
-fn serialize_changes(changes: &[AiChange]) -> Result<Option<String>, String> {
+/// Schema-v2 storage envelope for `proposed_changes_json`.
+///
+/// **Additive, shape-detected, back-compatible.** v1 blobs are a JSON *array* of
+/// `AiChange`; this envelope is a JSON *object* carrying `schemaVersion`. On read
+/// we shape-detect (array ⇒ v1, object ⇒ v2) so old blobs deserialize byte-for-byte
+/// as before. The envelope keeps the verbatim v1 `changes` (so every existing
+/// `Vec<AiChange>` consumer — preview, inbox, the whole-file apply gate — is
+/// unaffected) *and* the derived native `ChangeProposal`s alongside, so apply can
+/// run block-level ops without any prompt/generation change.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProposedChangesEnvelope {
+    schema_version: u32,
+    changes: Vec<AiChange>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    proposals: Vec<super::block_ops::ChangeProposal>,
+}
+
+/// Build the schema-v2 native-op proposals for the `UpdateNote` changes, deriving
+/// block-replacement ops from `base_body` (the job's source snapshot) → the
+/// proposed `new_markdown`. Generation stays whole-file; storage becomes op-native.
+fn derive_proposals(changes: &[AiChange], base_body: &str) -> Vec<super::block_ops::ChangeProposal> {
+    changes
+        .iter()
+        .filter_map(|change| match change {
+            AiChange::UpdateNote {
+                path,
+                base_content_hash,
+                new_markdown,
+                ..
+            } => Some(super::block_ops::change_proposal_from_update_note(
+                0,
+                path.clone(),
+                base_content_hash.clone(),
+                base_body,
+                new_markdown,
+                String::new(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Serialize proposed changes as the schema-v2 envelope when there is a base body
+/// to derive ops against; otherwise fall back to the bare v1 array. Empty ⇒ `None`.
+fn serialize_changes_with_base(
+    changes: &[AiChange],
+    base_body: Option<&str>,
+) -> Result<Option<String>, String> {
     if changes.is_empty() {
         return Ok(None);
     }
-    serde_json::to_string(changes)
-        .map(Some)
-        .map_err(|err| err.to_string())
+    match base_body {
+        Some(base_body) => {
+            let envelope = ProposedChangesEnvelope {
+                schema_version: super::block_ops::CHANGE_PROPOSAL_SCHEMA_VERSION,
+                changes: changes.to_vec(),
+                proposals: derive_proposals(changes, base_body),
+            };
+            serde_json::to_string(&envelope)
+                .map(Some)
+                .map_err(|err| err.to_string())
+        }
+        None => serde_json::to_string(changes)
+            .map(Some)
+            .map_err(|err| err.to_string()),
+    }
 }
 
+/// Shape-detect the stored blob: a JSON array is a v1 `Vec<AiChange>` (untouched);
+/// a JSON object is the schema-v2 envelope, from which we surface the verbatim v1
+/// `changes` for all existing consumers.
 fn deserialize_changes(value: Option<&str>) -> Result<Vec<AiChange>, String> {
     match value {
-        Some(value) => serde_json::from_str(value).map_err(|err| err.to_string()),
+        Some(value) => {
+            let raw: serde_json::Value =
+                serde_json::from_str(value).map_err(|err| err.to_string())?;
+            match raw {
+                serde_json::Value::Array(_) => {
+                    serde_json::from_value(raw).map_err(|err| err.to_string())
+                }
+                serde_json::Value::Object(_) => {
+                    let envelope: ProposedChangesEnvelope =
+                        serde_json::from_value(raw).map_err(|err| err.to_string())?;
+                    Ok(envelope.changes)
+                }
+                _ => Err("unexpected proposed_changes_json shape".to_string()),
+            }
+        }
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Read the native schema-v2 `ChangeProposal`s from a stored blob, if present.
+/// Returns an empty vec for v1 (array) blobs or empty storage — so apply can opt
+/// into op-native handling when proposals exist and fall back otherwise.
+#[allow(dead_code)]
+pub(super) fn deserialize_proposals(
+    value: Option<&str>,
+) -> Result<Vec<super::block_ops::ChangeProposal>, String> {
+    match value {
+        Some(value) => {
+            let raw: serde_json::Value =
+                serde_json::from_str(value).map_err(|err| err.to_string())?;
+            match raw {
+                serde_json::Value::Object(_) => {
+                    let envelope: ProposedChangesEnvelope =
+                        serde_json::from_value(raw).map_err(|err| err.to_string())?;
+                    Ok(envelope.proposals)
+                }
+                _ => Ok(Vec::new()),
+            }
+        }
         None => Ok(Vec::new()),
     }
 }
@@ -857,5 +963,169 @@ pub(super) fn str_to_provider_kind(value: &str) -> Result<AiProviderKind, String
         "openAiCompatible" => Ok(AiProviderKind::OpenAiCompatible),
         "llamaServer" => Ok(AiProviderKind::LlamaServer),
         _ => Err(format!("Unknown ai provider kind: {value}")),
+    }
+}
+
+#[cfg(test)]
+mod proposed_changes_storage_tests {
+    use super::super::block_ops::{apply_operations, CHANGE_PROPOSAL_SCHEMA_VERSION};
+    use super::*;
+    use std::collections::HashSet;
+
+    fn update_note(path: &str, base_hash: &str, body: &str) -> AiChange {
+        AiChange::UpdateNote {
+            path: path.to_string(),
+            base_content_hash: base_hash.to_string(),
+            new_title: String::new(),
+            new_markdown: body.to_string(),
+        }
+    }
+
+    // --- v1 back-compat: an array blob deserializes exactly as before. ----------
+
+    #[test]
+    fn v1_array_blob_deserializes_unchanged() {
+        let v1 = update_note("/notes/A.md", "hash-a", "first\n\nsecond");
+        let blob = serde_json::to_string(&vec![v1]).expect("serialize v1 array");
+        // A v1 blob is a JSON array (the historical wire shape).
+        assert!(blob.trim_start().starts_with('['));
+
+        let changes = deserialize_changes(Some(&blob)).expect("deserialize v1 array");
+        assert_eq!(changes.len(), 1);
+        match &changes[0] {
+            AiChange::UpdateNote {
+                path, new_markdown, ..
+            } => {
+                assert_eq!(path, "/notes/A.md");
+                assert_eq!(new_markdown, "first\n\nsecond");
+            }
+            other => panic!("expected updateNote, got {other:?}"),
+        }
+        // v1 blobs carry no native proposals.
+        assert!(deserialize_proposals(Some(&blob))
+            .expect("no proposals for v1")
+            .is_empty());
+    }
+
+    #[test]
+    fn empty_changes_serialize_to_none() {
+        assert!(serialize_changes_with_base(&[], Some("base"))
+            .expect("serialize empty")
+            .is_none());
+        assert!(deserialize_changes(None).expect("none deserializes").is_empty());
+    }
+
+    // --- v2 storage: derive + persist ops at storage time. ---------------------
+
+    #[test]
+    fn v2_envelope_round_trips_changes_and_native_proposals() {
+        let base = "alpha\n\nbeta\n\ngamma";
+        let proposed = "alpha\n\nBETA EDITED\n\ngamma";
+        let changes = vec![update_note("/notes/B.md", "hash-b", proposed)];
+
+        let blob = serialize_changes_with_base(&changes, Some(base))
+            .expect("serialize v2")
+            .expect("non-empty");
+        // A v2 blob is a JSON object with schemaVersion.
+        assert!(blob.trim_start().starts_with('{'));
+        assert!(blob.contains("\"schemaVersion\""));
+
+        // v1 consumers still see the verbatim changes.
+        let surfaced = deserialize_changes(Some(&blob)).expect("surface v1 changes");
+        assert_eq!(surfaced.len(), 1);
+        match &surfaced[0] {
+            AiChange::UpdateNote { new_markdown, .. } => assert_eq!(new_markdown, proposed),
+            other => panic!("expected updateNote, got {other:?}"),
+        }
+
+        // Native proposals are present and target the changed file.
+        let proposals = deserialize_proposals(Some(&blob)).expect("surface proposals");
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].schema_version, CHANGE_PROPOSAL_SCHEMA_VERSION);
+        assert_eq!(proposals[0].file_path, "/notes/B.md");
+        assert!(!proposals[0].operations.is_empty());
+        assert_eq!(
+            proposals[0].full_file_fallback.as_deref(),
+            Some(proposed),
+            "fallback preserves the verbatim proposed body"
+        );
+    }
+
+    #[test]
+    fn v2_native_proposal_applies_through_apply_operations() {
+        let base = "alpha\n\nbeta\n\ngamma";
+        let proposed = "alpha\n\nBETA EDITED\n\ngamma";
+        let changes = vec![update_note("/notes/C.md", "hash-c", proposed)];
+
+        let blob = serialize_changes_with_base(&changes, Some(base))
+            .expect("serialize v2")
+            .expect("non-empty");
+        let proposals = deserialize_proposals(Some(&blob)).expect("surface proposals");
+        let proposal = &proposals[0];
+
+        // Accept all derived ops and run them through the live apply path against
+        // the unchanged base — the structured edits reproduce the proposed body.
+        let accepted: HashSet<String> = proposal
+            .operations
+            .iter()
+            .map(|op| op.op_id().to_string())
+            .collect();
+        let result = apply_operations(base, &proposal.operations, &accepted);
+        assert!(result.stale_op_ids.is_empty(), "no ops should be stale");
+        assert_eq!(result.text, proposed);
+    }
+
+    #[test]
+    fn v2_delete_only_changes_carry_no_proposals_but_surface_changes() {
+        let changes = vec![AiChange::DeleteNote {
+            path: "/notes/D.md".to_string(),
+            base_content_hash: "hash-d".to_string(),
+        }];
+        let blob = serialize_changes_with_base(&changes, Some("anything"))
+            .expect("serialize")
+            .expect("non-empty");
+
+        // The v1 deleteNote still surfaces for preview/apply.
+        let surfaced = deserialize_changes(Some(&blob)).expect("surface");
+        assert!(matches!(surfaced[0], AiChange::DeleteNote { .. }));
+        // No UpdateNote ⇒ no derived ops.
+        assert!(deserialize_proposals(Some(&blob))
+            .expect("proposals")
+            .is_empty());
+    }
+
+    // --- detail-item surfacing: proposals are derived against the source body. --
+
+    #[test]
+    fn derive_proposals_surfaces_one_proposal_per_update_note() {
+        let base = "alpha\n\nbeta\n\ngamma";
+        let changes = vec![
+            update_note("/notes/E.md", "hash-e", "alpha\n\nBETA EDITED\n\ngamma"),
+            AiChange::CreateNote {
+                suggested_title: "New".to_string(),
+                markdown: "# New".to_string(),
+            },
+            AiChange::DeleteNote {
+                path: "/notes/F.md".to_string(),
+                base_content_hash: "hash-f".to_string(),
+            },
+        ];
+
+        let proposals = derive_proposals(&changes, base);
+        // Only the UpdateNote yields a proposal; create/delete are skipped.
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0].file_path, "/notes/E.md");
+        assert_eq!(proposals[0].base_content_hash, "hash-e");
+        assert_eq!(proposals[0].schema_version, CHANGE_PROPOSAL_SCHEMA_VERSION);
+        assert!(!proposals[0].operations.is_empty());
+    }
+
+    #[test]
+    fn derive_proposals_is_empty_without_update_notes() {
+        let changes = vec![AiChange::CreateNote {
+            suggested_title: "New".to_string(),
+            markdown: "# New".to_string(),
+        }];
+        assert!(derive_proposals(&changes, "anything").is_empty());
     }
 }

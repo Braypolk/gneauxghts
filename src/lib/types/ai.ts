@@ -1,3 +1,5 @@
+import type { ChangeProposal } from '$lib/features/notepad/blocks/blockOps';
+
 export type RememberMode =
   | 'exact'
   | 'cleanUp'
@@ -155,6 +157,12 @@ export interface InboxItemDetail {
   metrics: AiRunMetrics | null;
   proposedChanges: AiChange[];
   changePreviews: AiChangePreview[];
+  /**
+   * Schema-v2 native block-op proposals derived for `updateNote` changes
+   * (empty for legacy v1 jobs / non-update changes). Surfaced so the inbox can
+   * render op-level cards from persisted ops; apply still re-derives live.
+   */
+  proposals: ChangeProposal[];
   createdAtMillis: number;
   updatedAtMillis: number;
 }

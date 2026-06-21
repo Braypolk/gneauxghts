@@ -67,7 +67,7 @@ pub(crate) fn extract_file_name_title_and_body(
     let normalized = strip_frontmatter(markdown);
     (
         fallback_title.to_string(),
-        strip_leading_title_heading(&normalized),
+        strip_leading_title_heading(&normalized, fallback_title),
     )
 }
 
@@ -137,14 +137,14 @@ fn sanitize_file_stem(value: &str, default_name: &str, max_len: usize) -> String
     cleaned.chars().take(max_len).collect()
 }
 
-fn strip_leading_title_heading(markdown: &str) -> String {
+fn strip_leading_title_heading(markdown: &str, title: &str) -> String {
     let normalized = markdown.replace("\r\n", "\n");
     let mut lines = normalized.lines().map(str::to_string).collect::<Vec<_>>();
     let Some(first_content_index) = lines.iter().position(|line| !line.trim().is_empty()) else {
         return normalized;
     };
 
-    let Some(_) = lines[first_content_index]
+    let Some(heading) = lines[first_content_index]
         .trim()
         .strip_prefix("# ")
         .map(str::trim)
@@ -152,6 +152,10 @@ fn strip_leading_title_heading(markdown: &str) -> String {
     else {
         return normalized;
     };
+
+    if heading != title.trim() {
+        return normalized;
+    }
 
     lines.remove(first_content_index);
     if lines
@@ -438,6 +442,17 @@ mod tests {
 
         assert_eq!(title, "Launch Plan");
         assert_eq!(body, "Body");
+    }
+
+    #[test]
+    fn extract_file_name_title_and_body_preserves_body_heading_that_is_not_file_name() {
+        let (title, body) = extract_file_name_title_and_body(
+            "---\ngneauxghts:\n  id: 01TEST\n---\n\n# Meeting Notes\n\nBody",
+            "Launch Plan",
+        );
+
+        assert_eq!(title, "Launch Plan");
+        assert_eq!(body, "# Meeting Notes\n\nBody");
     }
 
     #[test]

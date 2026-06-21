@@ -13,7 +13,8 @@
   import {
     activeProposalSession,
     getSelectedApprovedChangeCount,
-    toggleProposalChange
+    toggleProposalChange,
+    toggleProposalOp
   } from '$lib/features/proposals/session';
   const inboxStore = createInboxStore();
 
@@ -221,6 +222,7 @@
                   {reviewChanges}
                   showOpenButtons={$inboxStore.selectedItem.status === 'pendingApproval'}
                   onToggleChange={toggleProposalChange}
+                  onToggleOp={toggleProposalOp}
                   onOpenPath={(path) => void inboxStore.openProposalPathInNotepad(path)}
                 />
               </div>

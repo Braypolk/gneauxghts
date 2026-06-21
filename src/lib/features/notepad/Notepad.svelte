@@ -1,6 +1,12 @@
 <script lang="ts">
   import { type UnlistenFn } from '@tauri-apps/api/event';
+  import { goto } from '$app/navigation';
   import { onMount, tick, untrack } from 'svelte';
+  import {
+    activeProposalSession,
+    getPendingProposalNotice,
+    getReviewOverlayModel
+  } from '$lib/features/proposals/session';
   import {
     cleanUpApplyPolicyPreference,
     defaultRememberActionPreference,
@@ -818,6 +824,14 @@
       splitPickerHighlightedIndex,
       splitPickerCurrentNoteLabel,
       splitPickerPreviousNoteLabel,
+      pendingProposalNotice:
+        paneKind === 'editor'
+          ? getPendingProposalNotice($activeProposalSession, paneDocument.currentNotePath)
+          : null,
+      reviewOverlay:
+        paneKind === 'editor'
+          ? getReviewOverlayModel($activeProposalSession, paneDocument.currentNotePath)
+          : null,
       editorLifecycle: {
         shouldMount: paneShouldMountEditor(paneId),
         mount: () => paneLifecycle.mountPaneEditor(paneId),
@@ -836,7 +850,10 @@
     onSplitHighlightChange: (index: number) => {
       workspaceStore.setSplitPickerHighlight(index);
     },
-    onSplitChoose: commands.resolveSplitPickerChoice
+    onSplitChoose: commands.resolveSplitPickerChoice,
+    onOpenInbox: () => {
+      void goto('/inbox');
+    }
   };
 
   // ---------------------------------------------------------------------------
@@ -1092,8 +1109,10 @@
           aria-label={$relatedState.isPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
           onclick={toggleRelatedPanel}
         >
-          <span class="related-drawer-handle-pill flex h-28 w-7 items-center justify-center rounded-full border border-border/70 bg-card/92 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground shadow-lg backdrop-blur-md transition group-hover:text-foreground">
-            <span class="-rotate-90">RELATED</span>
+          <span class="related-drawer-handle-pill flex h-28 w-7 items-center justify-center rounded-full border border-border/70 bg-card/92 p-1 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground shadow-lg backdrop-blur-md">
+            <span class="flex h-full w-full items-center justify-center rounded-full transition-colors group-hover:bg-accent group-hover:text-accent-foreground">
+              <span class="-rotate-90">RELATED</span>
+            </span>
           </span>
         </button>
 

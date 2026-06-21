@@ -6,6 +6,8 @@ use crate::{
     time::current_time_millis,
 };
 mod approval_service;
+mod block_ops;
+mod block_segment;
 mod provider;
 mod remember_orchestrator;
 mod secret_store;
@@ -339,6 +341,10 @@ pub(crate) struct InboxItemDetail {
     pub(crate) metrics: Option<AiRunMetrics>,
     pub(crate) proposed_changes: Vec<AiChange>,
     pub(crate) change_previews: Vec<AiChangePreview>,
+    /// Schema-v2 native block-op proposals derived for `UpdateNote` changes
+    /// (empty for legacy v1 jobs or non-update changes). Surfaced so the inbox UI
+    /// can render op-level cards from persisted ops; apply still re-derives live.
+    pub(crate) proposals: Vec<block_ops::ChangeProposal>,
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
 }
@@ -1081,14 +1087,111 @@ fn run_edit_job(
             ]
         }
     });
-    if let Some(prompt) = user_instructions {
+    if let Some(prompt) = user_instructions.clone() {
         user_prompt["userInstructions"] = Value::String(prompt);
     }
+
+    // Phase B: try native operation generation first for the single-note edit
+    // path. The model is asked for typed block operations referencing the block
+    // listing we send; we validate + reconstruct the proposed markdown locally.
+    // ANY failure (provider error, parse error, validation, stale, or an empty
+    // op list) falls through to the unchanged whole-file generation below — the
+    // full-file fallback is never removed.
+    if let Some(proposal) = try_native_edit_job(job, provider, &profile, user_instructions.as_deref())
+    {
+        return Ok(proposal);
+    }
+
     let completion = provider.complete_json(profile.system_prompt, &user_prompt.to_string())?;
     let proposal: CleanUpProposal = parse_model_json(&completion.text)?;
     Ok(GeneratedProposal {
         summary: proposal.summary,
         changes: proposal.changes,
+        provider_kind: provider.provider_kind(),
+        model: completion.model,
+        metrics: usage_to_metrics(completion.usage),
+    })
+}
+
+/// Phase B native-op attempt for the single-note edit path. Returns
+/// `Some(proposal)` only when the model produced valid operations that
+/// reconstruct cleanly against the source; returns `None` on any failure so the
+/// caller falls back to whole-file generation. This function never errors out of
+/// `run_edit_job` — every failure mode degrades to the fallback.
+///
+/// The reconstructed body is emitted as a standard `AiChange::UpdateNote`, so
+/// all downstream storage/preview/apply is identical to the whole-file path.
+/// Native ops differ only in *how the proposed body was produced* (targeted ops
+/// vs. a full rewrite) — storage still derives v2 proposals from base→proposed.
+fn try_native_edit_job(
+    job: &StoredAiJob,
+    provider: &dyn GenerationProvider,
+    profile: &EditPromptProfile,
+    user_instructions: Option<&str>,
+) -> Option<GeneratedProposal> {
+    let blocks = block_ops::build_block_listing(&job.source.markdown);
+    if blocks.is_empty() {
+        // Nothing to address with block ops (empty note) — use the whole-file path.
+        return None;
+    }
+
+    let mut native_rules: Vec<&str> = profile.rules.clone();
+    native_rules.push(
+        "Return operations that reference blockId and anchorHash values from the provided blocks array exactly.",
+    );
+    native_rules.push(
+        "Prefer the smallest set of targeted operations; do not rewrite blocks you are not changing.",
+    );
+    native_rules.push(
+        "For replaceBlock and renameHeading set new_text to the full replacement block text.",
+    );
+
+    // Integrate/custom-advanced may delete; the single-note edit path may not, so
+    // do not offer deleteBlock here (kept aligned with permitted_kinds_for_mode).
+    let mut native_prompt = json!({
+        "task": remember_mode_to_str(&job.kind),
+        "mode": remember_mode_to_str(&job.kind),
+        "sourceNote": {
+            "path": job.source.path,
+            "title": job.source.title,
+            "baseContentHash": job.source.content_hash
+        },
+        "blocks": blocks,
+        "rules": native_rules,
+        "outputSchema": {
+            "summary": "string",
+            "operations": [
+                {
+                    "kind": "replaceBlock | insertAfter | insertBefore | renameHeading",
+                    "blockId": "string (copy from blocks)",
+                    "anchorHash": "string (copy from blocks)",
+                    "newText": "string"
+                }
+            ]
+        }
+    });
+    if let Some(prompt) = user_instructions {
+        native_prompt["userInstructions"] = Value::String(prompt.to_string());
+    }
+
+    let completion = provider
+        .complete_json(profile.system_prompt, &native_prompt.to_string())
+        .ok()?;
+    let response: block_ops::NativeOpsResponse = parse_model_json(&completion.text).ok()?;
+
+    // Single-note edit path never deletes blocks (mirrors validate_job_changes).
+    let reconstruct =
+        block_ops::reconstruct_from_native_ops(&job.source.markdown, response, false).ok()?;
+
+    let change = AiChange::UpdateNote {
+        path: job.source.path.clone(),
+        base_content_hash: job.source.content_hash.clone(),
+        new_title: job.source.title.clone(),
+        new_markdown: reconstruct.proposed_markdown,
+    };
+    Some(GeneratedProposal {
+        summary: reconstruct.summary,
+        changes: vec![change],
         provider_kind: provider.provider_kind(),
         model: completion.model,
         metrics: usage_to_metrics(completion.usage),
@@ -1731,5 +1834,169 @@ mod tests {
             str_to_job_status("pendingApproval").expect("parse status"),
             AiJobStatus::PendingApproval
         );
+    }
+
+    mod native_edit_generation {
+        use super::super::provider::{GenerationProvider, ModelCompletion, UsageTotals};
+        use super::super::{run_edit_job, AiChange, AiProviderKind};
+        use super::super::{AiJobStatus, RememberMode, SourceSnapshot, StoredAiJob};
+        use std::cell::RefCell;
+
+        const NOTE: &str = "# Title\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n";
+
+        /// A provider that returns scripted JSON for each successive call, so we can
+        /// exercise the native-op-first / whole-file-fallback flow without a network.
+        struct ScriptedProvider {
+            responses: RefCell<Vec<String>>,
+        }
+
+        impl ScriptedProvider {
+            fn new(responses: Vec<String>) -> Self {
+                Self {
+                    responses: RefCell::new(responses),
+                }
+            }
+        }
+
+        impl GenerationProvider for ScriptedProvider {
+            fn complete_json(&self, _system: &str, _user: &str) -> Result<ModelCompletion, String> {
+                let mut queue = self.responses.borrow_mut();
+                if queue.is_empty() {
+                    return Err("no scripted response".to_string());
+                }
+                Ok(ModelCompletion {
+                    text: queue.remove(0),
+                    model: "test-model".to_string(),
+                    usage: UsageTotals::default(),
+                })
+            }
+            fn provider_kind(&self) -> AiProviderKind {
+                AiProviderKind::OpenAiCompatible
+            }
+        }
+
+        fn edit_job() -> StoredAiJob {
+            StoredAiJob {
+                id: 1,
+                kind: RememberMode::CleanUp,
+                action_id: "cleanUp".to_string(),
+                action_label: "Clean up".to_string(),
+                action_prompt: None,
+                status: AiJobStatus::Running,
+                source: SourceSnapshot {
+                    path: "/notes/x.md".to_string(),
+                    title: "Title".to_string(),
+                    markdown: NOTE.to_string(),
+                    content_hash: "base-hash".to_string(),
+                },
+                requires_approval: true,
+                summary: String::new(),
+                proposed_changes: Vec::new(),
+                failure_reason: None,
+                provider_kind: None,
+                model: None,
+                metrics: None,
+                created_at_millis: 0,
+                updated_at_millis: 0,
+                retry_of_job_id: None,
+            }
+        }
+
+        fn native_replace_payload() -> String {
+            let block = &super::super::block_segment::segment_markdown(NOTE)[1];
+            serde_json::json!({
+                "summary": "Tightened the first paragraph.",
+                "operations": [
+                    {
+                        "kind": "replaceBlock",
+                        "blockId": block.block_id,
+                        "anchorHash": block.anchor_hash,
+                        "newText": "First paragraph EDITED."
+                    }
+                ]
+            })
+            .to_string()
+        }
+
+        #[test]
+        fn native_path_reconstructs_body_as_update_note() {
+            let provider = ScriptedProvider::new(vec![native_replace_payload()]);
+            let proposal = run_edit_job(&edit_job(), &provider).expect("generate");
+            assert_eq!(proposal.summary, "Tightened the first paragraph.");
+            assert_eq!(proposal.changes.len(), 1);
+            match &proposal.changes[0] {
+                AiChange::UpdateNote {
+                    path,
+                    base_content_hash,
+                    new_title,
+                    new_markdown,
+                } => {
+                    assert_eq!(path, "/notes/x.md");
+                    assert_eq!(base_content_hash, "base-hash");
+                    assert_eq!(new_title, "Title");
+                    assert!(new_markdown.contains("First paragraph EDITED."));
+                    // Untouched blocks preserved exactly (targeted edit, no rewrite).
+                    assert!(new_markdown.contains("Second paragraph."));
+                    assert!(new_markdown.contains("Third paragraph."));
+                }
+                other => panic!("expected updateNote, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn falls_back_to_whole_file_when_native_returns_no_operations() {
+            // 1st call (native attempt) → empty operations ⇒ rejected.
+            // 2nd call (whole-file path) → standard changes envelope.
+            let native_empty = r#"{"summary":"no ops","operations":[]}"#.to_string();
+            let whole_file = serde_json::json!({
+                "summary": "Whole-file rewrite.",
+                "changes": [{
+                    "kind": "updateNote",
+                    "path": "/notes/x.md",
+                    "baseContentHash": "base-hash",
+                    "newTitle": "Title",
+                    "newMarkdown": "# Title\n\nFully rewritten body.\n"
+                }]
+            })
+            .to_string();
+            let provider = ScriptedProvider::new(vec![native_empty, whole_file]);
+            let proposal = run_edit_job(&edit_job(), &provider).expect("generate");
+            assert_eq!(proposal.summary, "Whole-file rewrite.");
+            match &proposal.changes[0] {
+                AiChange::UpdateNote { new_markdown, .. } => {
+                    assert!(new_markdown.contains("Fully rewritten body."));
+                }
+                other => panic!("expected updateNote, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn falls_back_to_whole_file_when_native_op_is_invalid() {
+            // Native attempt references an unknown block ⇒ validation fails ⇒ fallback.
+            let native_bad = serde_json::json!({
+                "summary": "bad ops",
+                "operations": [{
+                    "kind": "replaceBlock",
+                    "blockId": "b_nope",
+                    "anchorHash": "00000000",
+                    "newText": "X."
+                }]
+            })
+            .to_string();
+            let whole_file = serde_json::json!({
+                "summary": "Fallback rewrite.",
+                "changes": [{
+                    "kind": "updateNote",
+                    "path": "/notes/x.md",
+                    "baseContentHash": "base-hash",
+                    "newTitle": "Title",
+                    "newMarkdown": "# Title\n\nFallback body.\n"
+                }]
+            })
+            .to_string();
+            let provider = ScriptedProvider::new(vec![native_bad, whole_file]);
+            let proposal = run_edit_job(&edit_job(), &provider).expect("generate");
+            assert_eq!(proposal.summary, "Fallback rewrite.");
+        }
     }
 }
