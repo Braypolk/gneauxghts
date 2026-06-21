@@ -108,14 +108,6 @@ impl DraftCache {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct InteractiveRefreshOutcome {
-    pub(crate) revision: u64,
-    pub(crate) changed: bool,
-    pub(crate) used_full_refresh: bool,
-    pub(crate) epoch: u64,
-}
-
 #[derive(Default)]
 struct InteractiveInvalidationState {
     epoch: u64,
@@ -373,7 +365,7 @@ impl AppState {
         notes_dir: &Path,
         _max_age: Duration,
         source: &str,
-    ) -> Result<InteractiveRefreshOutcome, String> {
+    ) -> Result<(), String> {
         let dirty_paths = {
             let mut invalidation = self
                 .interactive_invalidation
@@ -387,11 +379,9 @@ impl AppState {
         };
 
         let had_dirty_paths = !dirty_paths.is_empty();
-        let mut changed = false;
-        let mut used_full_refresh = false;
 
         if had_dirty_paths {
-            changed = self.apply_dirty_paths(dirty_paths)?;
+            self.apply_dirty_paths(dirty_paths)?;
         }
 
         let cold_start = self
@@ -405,26 +395,10 @@ impl AppState {
             // single full scan is unavoidable. Subsequent invocations rely
             // on watcher dirty paths plus the background reconciliation
             // loop and never reach this branch again.
-            changed = self.run_full_refresh(notes_dir)? || changed;
-            used_full_refresh = true;
+            self.run_full_refresh(notes_dir)?;
         }
 
-        let revision = self
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?
-            .revision();
-        let epoch = self
-            .interactive_invalidation
-            .lock()
-            .map_err(|_| "Interactive invalidation lock poisoned".to_string())?
-            .epoch;
-        Ok(InteractiveRefreshOutcome {
-            revision,
-            changed,
-            used_full_refresh,
-            epoch,
-        })
+        Ok(())
     }
 
     fn apply_dirty_paths(&self, dirty_paths: Vec<PathBuf>) -> Result<bool, String> {
@@ -1716,15 +1690,15 @@ gneauxghts:
             AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
 
         // First call is the cold start: this is allowed to do a full scan.
-        let cold = state
+        state
             .ensure_interactive_index(temp.path(), Duration::from_millis(0), "test_cold")
             .expect("cold start");
-        assert!(cold.used_full_refresh, "cold start must populate the index");
         let cold_full_refresh_count = state
             .interactive_invalidation
             .lock()
             .unwrap()
             .full_refresh_count;
+        assert_eq!(cold_full_refresh_count, 1, "cold start must populate the index");
 
         // Now write a new file *without* invalidating dirty paths and
         // pause past the legacy max-age. The foreground call must NOT do
@@ -1732,10 +1706,9 @@ gneauxghts:
         // the watcher (or background reconciliation) reports it.
         fs::write(temp.path().join("Second.md"), "# Second\n\nBody").expect("write second");
         std::thread::sleep(Duration::from_millis(50));
-        let warm = state
+        state
             .ensure_interactive_index(temp.path(), Duration::from_millis(10), "test_warm")
             .expect("warm call");
-        assert!(!warm.used_full_refresh, "warm call must not full-scan");
         let warm_full_refresh_count = state
             .interactive_invalidation
             .lock()

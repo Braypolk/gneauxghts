@@ -520,7 +520,7 @@
     }
   }
 
-  function scheduleRelatedIfNeeded(options: { immediate?: boolean } = {}) {
+  function scheduleRelatedIfNeeded(options: { immediate: boolean } = { immediate: false }) {
     if (!$relatedState.isPanelCollapsed) {
       scheduleRelated(options);
     }
@@ -555,7 +555,7 @@
     paneRuntimes[paneId].setWikilinkAutocomplete(nextState);
   }
 
-  function closeWikilinkAutocomplete(paneId?: PaneId) {
+  function closeWikilinkAutocomplete(paneId: PaneId | null = null) {
     if (paneId) {
       paneControllers[paneId].wikilinkController.closeWikilinkAutocomplete();
       return;

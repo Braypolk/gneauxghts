@@ -356,11 +356,7 @@ where
 
 /// Maximum inferred neighbors recorded per note during edge rebuild.
 const EDGE_NEIGHBORS_PER_NOTE: usize = 6;
-/// Minimum cosine similarity for two notes to be linked. Kept as an explicit
-/// constant (rather than reading `SemanticSettings::graph_min_score`) so that
-/// edge results stay byte-for-byte identical to prior releases; the settings
-/// field is not yet wired to this path and switching it on would silently
-/// change every vault's graph.
+/// Minimum cosine similarity for two notes to be linked.
 const EDGE_MIN_SCORE: f32 = 0.42;
 
 fn process_full_scan(

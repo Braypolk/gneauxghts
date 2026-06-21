@@ -17,7 +17,7 @@ pub(crate) mod catalog;
 pub(crate) mod events;
 
 pub(crate) use catalog::NoteCatalog;
-pub(crate) use events::{AppEvent, EventBus};
+pub(crate) use events::EventBus;
 
 use tauri::AppHandle;
 

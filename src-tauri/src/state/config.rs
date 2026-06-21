@@ -299,13 +299,10 @@ pub(crate) fn ensure_vault_scaffold(vault_root: &Path) -> Result<VaultManifest, 
     fs::create_dir_all(vault_data_dir_for(vault_root)).map_err(|err| err.to_string())?;
     let cache_dir = vault_cache_dir_for(vault_root);
     fs::create_dir_all(&cache_dir).map_err(|err| err.to_string())?;
-    // Reserve the rebuildable sidecar cache subdirs that the layout calls
-    // for. The lexical index is currently RAM-only and the graph cache is
-    // derived on demand, so these may stay empty; creating them keeps the
-    // on-disk layout stable and gives those subsystems a home if/when they
-    // start persisting.
+    // Reserve the rebuildable sidecar cache subdirs that the layout calls for.
+    // The lexical index is currently RAM-only, so this may stay empty; creating
+    // it keeps the on-disk layout stable if it starts persisting.
     fs::create_dir_all(cache_dir.join("lexical")).map_err(|err| err.to_string())?;
-    fs::create_dir_all(cache_dir.join("graph")).map_err(|err| err.to_string())?;
 
     let app_version = env!("CARGO_PKG_VERSION").to_string();
     let now = now_millis();

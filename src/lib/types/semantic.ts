@@ -3,8 +3,6 @@ export interface SemanticSettings {
   localOnlyMode: boolean;
   lexicalWeight: number;
   semanticWeight: number;
-  graphMinScore: number;
-  strongestLinksOnly: boolean;
 }
 
 export interface SemanticModelInfo {

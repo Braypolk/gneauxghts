@@ -1,4 +1,4 @@
-import { LanguageDescription } from '@codemirror/language';
+import type { LanguageDescription } from '@codemirror/language';
 import { languages as allLanguages } from '@codemirror/language-data';
 
 // Curated subset of CodeMirror's language catalog used for fenced-code-block

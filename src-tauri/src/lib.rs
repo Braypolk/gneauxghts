@@ -5,7 +5,6 @@ mod index;
 mod lexical;
 mod note;
 mod path_utils;
-mod repositories;
 mod search;
 mod semantic;
 mod services;

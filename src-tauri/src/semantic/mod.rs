@@ -43,8 +43,6 @@ pub(crate) struct SemanticSettings {
     pub(crate) local_only_mode: bool,
     pub(crate) lexical_weight: f32,
     pub(crate) semantic_weight: f32,
-    pub(crate) graph_min_score: f32,
-    pub(crate) strongest_links_only: bool,
 }
 
 impl Default for SemanticSettings {
@@ -54,8 +52,6 @@ impl Default for SemanticSettings {
             local_only_mode: true,
             lexical_weight: 0.5,
             semantic_weight: 0.4,
-            graph_min_score: 0.46,
-            strongest_links_only: false,
         }
     }
 }
@@ -468,13 +464,6 @@ impl SemanticState {
         }
     }
 
-    pub(crate) fn db_path(&self) -> Option<PathBuf> {
-        match &self.inner {
-            SemanticStateInner::Active(state) => Some(state.db_path.clone()),
-            SemanticStateInner::Disabled(_) => None,
-        }
-    }
-
     /// Return the content hash currently stored for `note_path`, if the note is
     /// indexed. Used by the vault watcher to detect content-identical renames
     /// (a removed path whose stored hash matches a newly-present path) so the
@@ -488,13 +477,6 @@ impl SemanticState {
         let connection = open_database(&state.db_path).ok()?;
         let record = load_note_record(&connection, &note_path.to_string_lossy()).ok()??;
         Some(record.content_hash)
-    }
-
-    pub(crate) fn embedding_provider(&self) -> Option<Arc<dyn EmbeddingProvider + Send + Sync>> {
-        match &self.inner {
-            SemanticStateInner::Active(state) => Some(state.provider.clone()),
-            SemanticStateInner::Disabled(_) => None,
-        }
     }
 
     pub(crate) fn debug_snapshot(&self) -> Result<SemanticDebugSnapshot, String> {

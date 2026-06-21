@@ -36,7 +36,6 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
       cache/                # rebuildable caches
         hnsw.snapshot       # ANN graph snapshot (+ hnsw.vectors / manifest)
         lexical/            # reserved for the lexical index
-        graph/              # reserved for the graph cache
   ```
 
 - Secrets (provider API keys) are **never** written into the portable vault.
