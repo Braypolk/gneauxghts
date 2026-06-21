@@ -120,7 +120,6 @@
   import '$lib/features/notepad/editor/editor.css';
 
   type PaneId = NotepadPaneId;
-  const PENDING_MAP_NOTE_PATH_KEY = 'gneauxghts:pending-map-note-path';
   const PANE_IDS_ALL = [PRIMARY_PANE_ID, SECONDARY_PANE_ID] as const;
 
   const paneTitleInputClass =
@@ -883,13 +882,6 @@
     }
   }
 
-  function consumePendingMapNotePath() {
-    const notePath = window.sessionStorage.getItem(PENDING_MAP_NOTE_PATH_KEY);
-    if (!notePath) return null;
-    window.sessionStorage.removeItem(PENDING_MAP_NOTE_PATH_KEY);
-    return notePath;
-  }
-
   // ---------------------------------------------------------------------------
   // Mount / unmount lifecycle.
   // ---------------------------------------------------------------------------
@@ -944,10 +936,6 @@
         await paneLifecycle.ensurePaneEditors();
         updateRelatedDrawerLayout();
         scheduleRelatedIfNeeded({ immediate: true });
-        const pendingMapNotePath = consumePendingMapNotePath();
-        if (pendingMapNotePath) {
-          await commands.openNotePath(pendingMapNotePath, { focusEditorAfterOpen: false });
-        }
         const pendingTaskTarget = consumePendingTaskTarget();
         if (pendingTaskTarget) {
           await commands.openNotePath(pendingTaskTarget.notePath, {

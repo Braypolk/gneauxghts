@@ -137,8 +137,7 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
 
     migrate_chunk_ann_labels(connection)?;
-    migrate_note_columns(connection)?;
-    migrate_graph_positions(connection)
+    migrate_note_columns(connection)
 }
 
 pub(crate) fn load_semantic_settings(
@@ -1088,86 +1087,6 @@ fn migrate_note_columns(connection: &Connection) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn migrate_graph_positions(connection: &Connection) -> Result<(), String> {
-    connection
-        .execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS graph_positions (
-                note_path TEXT PRIMARY KEY,
-                x REAL NOT NULL,
-                y REAL NOT NULL,
-                updated_at_millis INTEGER NOT NULL
-            );
-            ",
-        )
-        .map_err(|err| err.to_string())
-}
-
-pub(crate) struct StoredGraphPosition {
-    pub(crate) note_path: String,
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-}
-
-pub(crate) fn load_graph_positions_for_notes(
-    connection: &Connection,
-    note_paths: &[String],
-) -> Result<Vec<StoredGraphPosition>, String> {
-    if note_paths.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut positions = Vec::new();
-
-    for paths_chunk in note_paths.chunks(SQLITE_SAFE_VARIABLE_LIMIT) {
-        let placeholders = std::iter::repeat_n("?", paths_chunk.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT note_path, x, y FROM graph_positions WHERE note_path IN ({placeholders})"
-        );
-        let mut statement = connection.prepare(&sql).map_err(|err| err.to_string())?;
-        let params = rusqlite::params_from_iter(paths_chunk.iter());
-        let mut rows = statement.query(params).map_err(|err| err.to_string())?;
-
-        while let Some(row) = rows.next().map_err(|err| err.to_string())? {
-            positions.push(StoredGraphPosition {
-                note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
-                x: row.get::<_, f64>(1).map_err(|err| err.to_string())?,
-                y: row.get::<_, f64>(2).map_err(|err| err.to_string())?,
-            });
-        }
-    }
-
-    Ok(positions)
-}
-
-pub(crate) fn save_graph_positions(
-    connection: &mut Connection,
-    positions: &[(String, f64, f64)],
-) -> Result<(), String> {
-    let updated_at_millis = current_time_millis()?;
-    let transaction = connection.transaction().map_err(|err| err.to_string())?;
-
-    for (note_path, x, y) in positions {
-        transaction
-            .execute(
-                "
-                INSERT INTO graph_positions (note_path, x, y, updated_at_millis)
-                VALUES (?1, ?2, ?3, ?4)
-                ON CONFLICT(note_path) DO UPDATE SET
-                    x = excluded.x,
-                    y = excluded.y,
-                    updated_at_millis = excluded.updated_at_millis
-                ",
-                params![note_path, x, y, updated_at_millis],
-            )
-            .map_err(|err| err.to_string())?;
-    }
-
-    transaction.commit().map_err(|err| err.to_string())
 }
 
 pub(crate) struct StoredEdge {

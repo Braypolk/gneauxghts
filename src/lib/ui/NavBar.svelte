@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { House, ListTodo, Map, Settings } from '@lucide/svelte';
+  import { House, ListTodo, Settings } from '@lucide/svelte';
   import FeatherWriting from './icons/FeatherWriting.svelte';
   import MailboxEmpty from './icons/MailboxEmpty.svelte';
   import MailboxFull from './icons/MailboxFull.svelte';
@@ -13,7 +13,6 @@
   const navLinks = [
     { href: '/', label: 'Note', icon: House },
     { href: '/inbox', label: 'Inbox', icon: MailboxEmpty },
-    { href: '/map', label: 'Map', icon: Map },
     { href: '/list', label: 'List', icon: ListTodo }
   ] as const;
   const settingsHref = '/settings';
@@ -84,8 +83,7 @@
     const shortcutEntries = [
       ['navNote', navLinks[0]],
       ['navInbox', navLinks[1]],
-      ['navMap', navLinks[2]],
-      ['navList', navLinks[3]]
+      ['navList', navLinks[2]]
     ] as const;
 
     for (const [shortcutId, targetLink] of shortcutEntries) {

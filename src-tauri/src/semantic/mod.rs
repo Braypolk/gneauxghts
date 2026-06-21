@@ -1,6 +1,5 @@
 pub(crate) mod ann;
 pub(crate) mod chunking;
-pub(crate) mod cluster;
 pub(crate) mod db;
 pub(crate) mod debug;
 pub(crate) mod embed;
