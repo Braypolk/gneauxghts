@@ -2,17 +2,12 @@ import { goto } from '$app/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { get, writable } from 'svelte/store';
 import { storePendingTaskTarget } from '$lib/taskNavigation';
+import { appStore } from '$lib/app/appStore.svelte';
 
 export interface TaskItem {
   noteId: string;
   taskKey: string;
-  /**
-   * Stable internal task id assigned by the SQLite task projection.
-   * Optional in the wire format so existing call sites can keep using
-   * `taskKey`; new consumers may prefer this identifier when text or
-   * position changes invalidate the derived key.
-   */
-  taskId?: string;
+  taskId: string;
   notePath: string;
   fileName: string;
   noteTitle: string;
@@ -44,20 +39,19 @@ export interface TaskGroup {
 
 export type TaskFilter = 'open' | 'completed' | 'all';
 
-export interface TaskMutationDelta {
+interface TaskListGroupPatch {
   noteId: string;
-  notePath: string;
-  noteTasks: TaskItem[];
-  affectedTaskKey?: string;
-  removed: boolean;
+  notePath?: string | null;
+  group?: TaskGroup | null;
 }
 
 interface TaskListState {
   filter: TaskFilter;
   showHidden: boolean;
-  tasks: TaskItem[];
+  groups: TaskGroup[];
   togglingTaskKeys: Record<string, boolean>;
   deletingTaskKeys: Record<string, boolean>;
+  mutatingNoteIds: Record<string, boolean>;
   isLoading: boolean;
   errorMessage: string;
 }
@@ -68,9 +62,10 @@ function createInitialState(): TaskListState {
   return {
     filter: 'all',
     showHidden: false,
-    tasks: [],
+    groups: [],
     togglingTaskKeys: {},
     deletingTaskKeys: {},
+    mutatingNoteIds: {},
     isLoading: true,
     errorMessage: ''
   };
@@ -80,6 +75,9 @@ export function createTaskListStore() {
   const store = writable<TaskListState>(createInitialState());
   const { subscribe, update } = store;
   let activeRequest = 0;
+  let disposeNoteSaved: (() => void) | null = null;
+  let disposeVaultNoteChanged: (() => void) | null = null;
+  let disposeVaultChanged: (() => void) | null = null;
 
   function patch(partial: Partial<TaskListState>) {
     update((state) => ({ ...state, ...partial }));
@@ -109,11 +107,12 @@ export function createTaskListStore() {
     }
 
     try {
-      const nextTasks = await invoke<TaskItem[]>('list_tasks', { filter: get(store).filter });
+      const { filter, showHidden } = get(store);
+      const nextGroups = await invoke<TaskGroup[]>('list_tasks', { filter, showHidden });
 
       if (requestId !== activeRequest) return;
       patch({
-        tasks: nextTasks,
+        groups: nextGroups,
         errorMessage: ''
       });
     } catch (error) {
@@ -131,15 +130,16 @@ export function createTaskListStore() {
     if (get(store).filter === filter) return;
     patch({ filter });
     persistTaskFilter(filter);
-    void load({ background: get(store).tasks.length > 0 });
+    void load({ background: get(store).groups.length > 0 });
   }
 
   function refresh() {
-    void load({ background: get(store).tasks.length > 0 });
+    void load({ background: get(store).groups.length > 0 });
   }
 
   function toggleShowHidden() {
     patch({ showHidden: !get(store).showHidden });
+    void load({ background: get(store).groups.length > 0 });
   }
 
   function handleWindowFocus() {
@@ -152,94 +152,101 @@ export function createTaskListStore() {
     }
   }
 
-  function updateTasksOptimistically(transform: (tasks: TaskItem[]) => TaskItem[]) {
-    const previousTasks = get(store).tasks;
-    patch({ tasks: transform(previousTasks) });
-    return previousTasks;
+  function currentViewParams() {
+    const { filter, showHidden } = get(store);
+    return { filter, showHidden };
   }
 
-  function applyTaskMutationDelta(delta: TaskMutationDelta) {
+  function setNoteMutating(noteId: string, mutating: boolean) {
     update((state) => {
-      const tasks = state.tasks;
-      // Find the first index of any task belonging to the mutated note so
-      // we can splice the canonical tasks back in at the same position. If
-      // the note has no existing tasks (first task created), append at the
-      // end of the list — load() will canonicalise on the next refresh.
-      const firstIndex = tasks.findIndex((task) => task.noteId === delta.noteId);
-      const remaining = tasks.filter((task) => task.noteId !== delta.noteId);
-      const insertionIndex = firstIndex === -1 ? remaining.length : firstIndex;
-
-      // Filter the canonical note tasks against the current filter so the
-      // post-mutation visible list keeps matching the active filter.
-      const filteredNoteTasks = delta.noteTasks.filter((task) => {
-        switch (state.filter) {
-          case 'open':
-            return !task.completed;
-          case 'completed':
-            return task.completed;
-          case 'all':
-          default:
-            return true;
-        }
-      });
-
-      const nextTasks = [
-        ...remaining.slice(0, insertionIndex),
-        ...filteredNoteTasks,
-        ...remaining.slice(insertionIndex)
-      ];
-
-      return { ...state, tasks: nextTasks };
+      const mutatingNoteIds = { ...state.mutatingNoteIds };
+      if (mutating) {
+        mutatingNoteIds[noteId] = true;
+      } else {
+        delete mutatingNoteIds[noteId];
+      }
+      return { ...state, mutatingNoteIds };
     });
   }
 
-  async function toggleNoteCollapsed(group: TaskGroup) {
-    const previousTasks = updateTasksOptimistically((tasks) =>
-      tasks.map((candidate) =>
-        candidate.noteId === group.noteId
-          ? { ...candidate, noteCollapsed: !group.noteCollapsed }
-          : candidate
-      )
-    );
+  function applyGroupPatch(groupPatch: TaskListGroupPatch) {
+    const existingIndex = get(store).groups.findIndex((group) => group.noteId === groupPatch.noteId);
 
+    if (groupPatch.group && existingIndex === -1) {
+      void load({ background: true });
+      return;
+    }
+
+    update((state) => {
+      if (!groupPatch.group) {
+        if (existingIndex === -1) return state;
+        return {
+          ...state,
+          groups: state.groups.filter((group) => group.noteId !== groupPatch.noteId)
+        };
+      }
+
+      const groups = [...state.groups];
+      groups[existingIndex] = groupPatch.group;
+      return { ...state, groups };
+    });
+  }
+
+  async function refreshGroup(noteId: string) {
     try {
-      await invoke('set_note_collapsed', {
-        noteId: group.noteId,
-        collapsed: !group.noteCollapsed
+      const groupPatch = await invoke<TaskListGroupPatch>('get_task_group', {
+        noteId,
+        ...currentViewParams()
       });
+      applyGroupPatch(groupPatch);
+      patch({ errorMessage: '' });
+    } catch (error) {
+      console.error('Failed to refresh task group:', error);
+      void load({ background: true });
+    }
+  }
+
+  async function toggleNoteCollapsed(group: TaskGroup) {
+    if (get(store).mutatingNoteIds[group.noteId]) return;
+    setNoteMutating(group.noteId, true);
+    try {
+      const groupPatch = await invoke<TaskListGroupPatch>('set_note_collapsed', {
+        noteId: group.noteId,
+        collapsed: !group.noteCollapsed,
+        ...currentViewParams()
+      });
+      applyGroupPatch(groupPatch);
       patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to update collapsed note state:', error);
-      patch({
-        tasks: previousTasks,
-        errorMessage: 'Unable to save collapsed files.'
-      });
+      patch({ errorMessage: 'Unable to save collapsed files.' });
+    } finally {
+      setNoteMutating(group.noteId, false);
     }
   }
 
   async function setTaskHidden(task: TaskItem, hidden: boolean) {
-    const previousTasks = updateTasksOptimistically((tasks) =>
-      tasks.map((candidate) =>
-        candidate.taskKey === task.taskKey ? { ...candidate, hidden } : candidate
-      )
-    );
-
+    if (get(store).mutatingNoteIds[task.noteId]) return;
+    setNoteMutating(task.noteId, true);
     try {
-      await invoke('set_task_hidden', {
-        taskKey: task.taskKey,
-        hidden
+      const groupPatch = await invoke<TaskListGroupPatch>('set_task_hidden', {
+        taskId: task.taskId,
+        hidden,
+        ...currentViewParams()
       });
+      applyGroupPatch(groupPatch);
       patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to update hidden task state:', error);
-      patch({
-        tasks: previousTasks,
-        errorMessage: 'Unable to update hidden tasks.'
-      });
+      patch({ errorMessage: 'Unable to update hidden tasks.' });
+    } finally {
+      setNoteMutating(task.noteId, false);
     }
   }
 
   async function toggleTask(task: TaskItem) {
+    if (get(store).mutatingNoteIds[task.noteId]) return;
+    setNoteMutating(task.noteId, true);
     update((state) => ({
       ...state,
       togglingTaskKeys: {
@@ -249,12 +256,11 @@ export function createTaskListStore() {
     }));
 
     try {
-      const delta = await invoke<TaskMutationDelta>('toggle_task', {
-        notePath: task.notePath,
-        lineNumber: task.lineNumber,
-        taskText: task.text
+      const groupPatch = await invoke<TaskListGroupPatch>('toggle_task', {
+        taskId: task.taskId,
+        ...currentViewParams()
       });
-      applyTaskMutationDelta(delta);
+      applyGroupPatch(groupPatch);
       patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to toggle task:', error);
@@ -268,79 +274,31 @@ export function createTaskListStore() {
           togglingTaskKeys: nextTogglingTaskKeys
         };
       });
+      setNoteMutating(task.noteId, false);
     }
   }
 
   async function setNoteHidden(group: TaskGroup, hidden: boolean) {
-    const previousTasks = updateTasksOptimistically((tasks) =>
-      tasks.map((candidate) =>
-        candidate.noteId === group.noteId ? { ...candidate, noteHidden: hidden } : candidate
-      )
-    );
-
+    if (get(store).mutatingNoteIds[group.noteId]) return;
+    setNoteMutating(group.noteId, true);
     try {
-      await invoke('set_note_hidden', {
+      const groupPatch = await invoke<TaskListGroupPatch>('set_note_hidden', {
         noteId: group.noteId,
-        hidden
+        hidden,
+        ...currentViewParams()
       });
+      applyGroupPatch(groupPatch);
       patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to update hidden note state:', error);
-      patch({
-        tasks: previousTasks,
-        errorMessage: 'Unable to update hidden files.'
-      });
+      patch({ errorMessage: 'Unable to update hidden files.' });
+    } finally {
+      setNoteMutating(group.noteId, false);
     }
   }
 
   function buildNoteOrder() {
-    const noteIds = [];
-    const seen = new Set<string>();
-
-    for (const task of get(store).tasks) {
-      if (seen.has(task.noteId)) continue;
-      seen.add(task.noteId);
-      noteIds.push(task.noteId);
-    }
-
-    return noteIds;
-  }
-
-  async function moveNote(group: TaskGroup, direction: 'up' | 'down') {
-    const noteOrder = buildNoteOrder();
-    const currentIndex = noteOrder.indexOf(group.noteId);
-    if (currentIndex === -1) return;
-
-    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (targetIndex < 0 || targetIndex >= noteOrder.length) return;
-
-    [noteOrder[currentIndex], noteOrder[targetIndex]] = [noteOrder[targetIndex], noteOrder[currentIndex]];
-
-    const previousTasks = get(store).tasks;
-    const noteRank = new Map(noteOrder.map((noteId, index) => [noteId, index]));
-    patch({
-      tasks: [...previousTasks].sort((left, right) => {
-        const leftRank = noteRank.get(left.noteId) ?? Number.MAX_SAFE_INTEGER;
-        const rightRank = noteRank.get(right.noteId) ?? Number.MAX_SAFE_INTEGER;
-
-        return (
-          leftRank - rightRank ||
-          left.lineNumber - right.lineNumber ||
-          left.text.localeCompare(right.text)
-        );
-      })
-    });
-
-    try {
-      await invoke('set_note_order', { noteIds: noteOrder });
-      patch({ errorMessage: '' });
-    } catch (error) {
-      console.error('Failed to save note order:', error);
-      patch({
-        tasks: previousTasks,
-        errorMessage: 'Unable to save note order.'
-      });
-    }
+    return get(store).groups.map((group) => group.noteId);
   }
 
   async function reorderNote(fromIndex: number, toIndex: number) {
@@ -352,19 +310,14 @@ export function createTaskListStore() {
     const [movedNoteId] = noteOrder.splice(fromIndex, 1);
     noteOrder.splice(toIndex, 0, movedNoteId);
 
-    const previousTasks = get(store).tasks;
+    const previousGroups = get(store).groups;
     const noteRank = new Map(noteOrder.map((noteId, index) => [noteId, index]));
     patch({
-      tasks: [...previousTasks].sort((left, right) => {
-        const leftRank = noteRank.get(left.noteId) ?? Number.MAX_SAFE_INTEGER;
-        const rightRank = noteRank.get(right.noteId) ?? Number.MAX_SAFE_INTEGER;
-
-        return (
-          leftRank - rightRank ||
-          left.lineNumber - right.lineNumber ||
-          left.text.localeCompare(right.text)
-        );
-      })
+      groups: [...previousGroups].sort(
+        (left, right) =>
+          (noteRank.get(left.noteId) ?? Number.MAX_SAFE_INTEGER) -
+          (noteRank.get(right.noteId) ?? Number.MAX_SAFE_INTEGER)
+      )
     });
 
     try {
@@ -373,7 +326,7 @@ export function createTaskListStore() {
     } catch (error) {
       console.error('Failed to save note order:', error);
       patch({
-        tasks: previousTasks,
+        groups: previousGroups,
         errorMessage: 'Unable to save note order.'
       });
     }
@@ -397,6 +350,8 @@ export function createTaskListStore() {
   }
 
   async function deleteTask(task: TaskItem) {
+    if (get(store).mutatingNoteIds[task.noteId]) return;
+    setNoteMutating(task.noteId, true);
     update((state) => ({
       ...state,
       deletingTaskKeys: {
@@ -406,13 +361,11 @@ export function createTaskListStore() {
     }));
 
     try {
-      const delta = await invoke<TaskMutationDelta>('delete_task', {
-        notePath: task.notePath,
-        lineNumber: task.lineNumber,
-        taskText: task.text,
-        taskKey: task.taskKey
+      const groupPatch = await invoke<TaskListGroupPatch>('delete_task', {
+        taskId: task.taskId,
+        ...currentViewParams()
       });
-      applyTaskMutationDelta(delta);
+      applyGroupPatch(groupPatch);
       patch({ errorMessage: '' });
     } catch (error) {
       console.error('Failed to delete task:', error);
@@ -426,6 +379,7 @@ export function createTaskListStore() {
           deletingTaskKeys: nextDeletingTaskKeys
         };
       });
+      setNoteMutating(task.noteId, false);
     }
   }
 
@@ -435,7 +389,35 @@ export function createTaskListStore() {
       patch({ filter: storedFilter });
     }
 
+    void appStore.bootstrap().then(() => {
+      disposeNoteSaved?.();
+      disposeVaultNoteChanged?.();
+      disposeVaultChanged?.();
+      disposeNoteSaved = appStore.subscribeNoteSaved((event) => {
+        if (event.noteId) {
+          void refreshGroup(event.noteId);
+        } else {
+          void load({ background: true });
+        }
+      });
+      disposeVaultNoteChanged = appStore.subscribeVaultNoteChanged((event) => {
+        if (event.source === 'taskMutation') return;
+        void load({ background: true });
+      });
+      disposeVaultChanged = appStore.subscribeVaultChanged(() => {
+        void load({ background: true });
+      });
+    });
     void load();
+
+    return () => {
+      disposeNoteSaved?.();
+      disposeVaultNoteChanged?.();
+      disposeVaultChanged?.();
+      disposeNoteSaved = null;
+      disposeVaultNoteChanged = null;
+      disposeVaultChanged = null;
+    };
   }
 
   return {
@@ -451,7 +433,6 @@ export function createTaskListStore() {
     setTaskHidden,
     toggleTask,
     setNoteHidden,
-    moveNote,
     reorderNote,
     openTask,
     deleteTask

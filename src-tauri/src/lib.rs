@@ -135,6 +135,7 @@ pub fn run() {
             commands::search_commands::list_recent_focus,
             commands::list_recent_tasks,
             commands::list_tasks,
+            commands::get_task_group,
             commands::set_note_collapsed,
             commands::set_note_hidden,
             commands::set_note_order,

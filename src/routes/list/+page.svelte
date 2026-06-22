@@ -17,7 +17,6 @@
   import {
     createTaskListStore,
     type TaskFilter,
-    type TaskGroup,
     type TaskItem
   } from '$lib/features/tasks/taskListStore';
 
@@ -29,49 +28,8 @@
 
   const taskList = createTaskListStore();
 
-  const groupedTasks = $derived.by(() => {
-    const groups = new Map<string, TaskGroup>();
-
-    for (const task of $taskList.tasks) {
-      if (!$taskList.showHidden && task.noteHidden) {
-        continue;
-      }
-
-      const existingGroup = groups.get(task.noteId);
-      if (existingGroup) {
-        existingGroup.noteHidden = task.noteHidden;
-        existingGroup.noteCollapsed = task.noteCollapsed;
-        if (task.hidden) {
-          existingGroup.hiddenCount += 1;
-        } else {
-          existingGroup.visibleCount += 1;
-        }
-        if ($taskList.showHidden || !task.hidden) {
-          existingGroup.displayTasks.push(task);
-          existingGroup.displayCount += 1;
-        }
-        continue;
-      }
-
-      groups.set(task.noteId, {
-        noteId: task.noteId,
-        notePath: task.notePath,
-        noteTitle: task.noteTitle,
-        fileName: task.fileName,
-        noteHidden: task.noteHidden,
-        noteCollapsed: task.noteCollapsed,
-        displayTasks: $taskList.showHidden || !task.hidden ? [task] : [],
-        hiddenCount: task.hidden ? 1 : 0,
-        visibleCount: task.hidden ? 0 : 1,
-        displayCount: $taskList.showHidden || !task.hidden ? 1 : 0
-      });
-    }
-
-    return Array.from(groups.values()).filter((group) => group.displayCount > 0);
-  });
-
   const taskCountLabel = $derived.by(() => {
-    const count = groupedTasks.reduce((sum, group) => sum + group.displayCount, 0);
+    const count = $taskList.groups.reduce((sum, group) => sum + group.displayCount, 0);
     const noun = count === 1 ? 'task' : 'tasks';
 
     if ($taskList.filter === 'open') return `${count} open ${noun}`;
@@ -114,11 +72,11 @@
   }
 
   onMount(() => {
-    taskList.initialize();
+    return taskList.initialize();
   });
 
   afterNavigate(() => {
-    void taskList.load({ background: $taskList.tasks.length > 0 });
+    void taskList.load({ background: $taskList.groups.length > 0 });
   });
 </script>
 
@@ -188,7 +146,7 @@
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-destructive/25 bg-destructive/10 px-6 text-sm font-medium text-destructive">
             {$taskList.errorMessage}
           </div>
-        {:else if groupedTasks.length === 0}
+        {:else if $taskList.groups.length === 0}
           <div class="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-center">
             <p class="text-lg font-medium text-foreground">No matching tasks yet</p>
             <p class="mt-2 max-w-md text-sm text-muted-foreground">
@@ -198,13 +156,13 @@
           </div>
         {:else}
           <div class="space-y-4">
-            {#each groupedTasks as group, index}
+            {#each $taskList.groups as group, index}
               <section
                 class={`overflow-hidden rounded-[1.35rem] border ${
                   group.noteHidden ? 'border-border bg-muted' : 'border-border bg-card'
                 } ${dragSrcIndex === index ? 'opacity-50' : ''} ${dragOverIndex === index && dragSrcIndex !== index ? 'ring-2 ring-primary/50' : ''}`}
                 role="group"
-                draggable="true"
+                draggable={!$taskList.mutatingNoteIds[group.noteId]}
                 ondragstart={(e) => {
                   const under = document.elementFromPoint(e.clientX, e.clientY);
                   if (!under?.closest('[data-drag-handle]')) {
@@ -232,8 +190,9 @@
 
                   <button
                     type="button"
-                    class="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-foreground"
+                    class="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-foreground disabled:cursor-wait disabled:opacity-60"
                     onclick={() => void taskList.toggleNoteCollapsed(group)}
+                    disabled={!!$taskList.mutatingNoteIds[group.noteId]}
                   >
                     <span class="shrink-0 text-muted-foreground">
                       {#if group.noteCollapsed}
@@ -269,8 +228,9 @@
                     <div class="flex items-center gap-1">
                       <button
                         type="button"
-                        class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                        class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-wait disabled:opacity-45"
                         onclick={() => void taskList.setNoteHidden(group, !group.noteHidden)}
+                        disabled={!!$taskList.mutatingNoteIds[group.noteId]}
                       >
                         {#if group.noteHidden}
                           <Eye class="h-3.5 w-3.5" />
@@ -304,7 +264,7 @@
                             type="button"
                             class="shrink-0 text-muted-foreground transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-45"
                             onclick={() => void taskList.toggleTask(task)}
-                            disabled={!!$taskList.togglingTaskKeys[task.taskKey]}
+                            disabled={!!$taskList.togglingTaskKeys[task.taskKey] || !!$taskList.mutatingNoteIds[group.noteId]}
                             aria-label={task.completed ? `Mark ${task.text} incomplete` : `Mark ${task.text} complete`}
                           >
                             {#if task.completed}
@@ -342,8 +302,9 @@
 
                             <button
                               type="button"
-                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-wait disabled:opacity-45"
                               onclick={() => void taskList.setTaskHidden(task, !task.hidden)}
+                              disabled={!!$taskList.mutatingNoteIds[group.noteId]}
                             >
                               {#if task.hidden}
                                 <Eye class="h-3.5 w-3.5" />
@@ -358,7 +319,7 @@
                               type="button"
                               class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-wait disabled:opacity-45"
                               onclick={() => void taskList.deleteTask(task)}
-                              disabled={!!$taskList.deletingTaskKeys[task.taskKey]}
+                              disabled={!!$taskList.deletingTaskKeys[task.taskKey] || !!$taskList.mutatingNoteIds[group.noteId]}
                               aria-label={`Delete task: ${task.text}`}
                             >
                               <Trash2 class="h-3.5 w-3.5" />

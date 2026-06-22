@@ -7,7 +7,6 @@
 //! original event channel names (e.g. `vault-note-changed`) so the contract
 //! across IPC is preserved.
 
-use crate::commands::TaskMutationDelta;
 use crate::semantic::SemanticStatus;
 use crate::state::VaultInfo;
 use serde::Serialize;
@@ -19,7 +18,6 @@ pub(crate) const VAULT_NOTE_CHANGED_EVENT: &str = "vault-note-changed";
 pub(crate) const SEMANTIC_STATUS_CHANGED_EVENT: &str = "semantic-status-changed";
 pub(crate) const INBOX_CHANGED_EVENT: &str = "inbox-changed";
 pub(crate) const NOTE_SAVED_EVENT: &str = "note-saved";
-pub(crate) const TASK_LIST_CHANGED_EVENT: &str = "task-list-changed";
 pub(crate) const VAULT_CHANGED_EVENT: &str = "vault-changed";
 
 /// Stable channel identifier each `AppEvent` is emitted on. Returning the
@@ -34,13 +32,18 @@ pub(crate) struct EventChannel(pub &'static str);
 /// so downstream code can pattern-match on intent. A few existing events
 /// (`InboxChanged`, `SemanticStatusChanged`, `VaultNoteChanged`) preserve
 /// the exact channel name and payload shape the frontend already listens
-/// to; new events (`NoteSaved`, `TaskListChanged`, `VaultChanged`) are
+/// to; new events (`NoteSaved`, `VaultChanged`) are
 /// additive and do not require frontend changes to ship.
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum AppEvent {
     /// External (non-self) note change observed by the vault watcher.
-    VaultNoteChanged { note_path: String, deleted: bool },
+    VaultNoteChanged {
+        note_path: String,
+        deleted: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+    },
     /// Semantic indexer status snapshot (count of indexed notes, queue
     /// depth, etc.). Pushed instead of polled.
     SemanticStatusChanged(SemanticStatus),
@@ -55,8 +58,6 @@ pub(crate) enum AppEvent {
         title: String,
         revision: u64,
     },
-    /// One or more task rows changed; payload is the mutation delta.
-    TaskListChanged(TaskMutationDelta),
     /// Vault location or note count changed; carries the fresh `VaultInfo`.
     VaultChanged(VaultInfo),
 }
@@ -68,7 +69,6 @@ impl AppEvent {
             AppEvent::SemanticStatusChanged(_) => SEMANTIC_STATUS_CHANGED_EVENT,
             AppEvent::InboxChanged => INBOX_CHANGED_EVENT,
             AppEvent::NoteSaved { .. } => NOTE_SAVED_EVENT,
-            AppEvent::TaskListChanged(_) => TASK_LIST_CHANGED_EVENT,
             AppEvent::VaultChanged(_) => VAULT_CHANGED_EVENT,
         })
     }
@@ -79,9 +79,11 @@ impl AppEvent {
     /// `settings/store.ts` keep working unchanged.
     fn legacy_payload(&self) -> Value {
         match self {
-            AppEvent::VaultNoteChanged { note_path, deleted } => {
-                json!({ "notePath": note_path, "deleted": deleted })
-            }
+            AppEvent::VaultNoteChanged {
+                note_path,
+                deleted,
+                source,
+            } => json!({ "notePath": note_path, "deleted": deleted, "source": source }),
             AppEvent::SemanticStatusChanged(status) => {
                 serde_json::to_value(status).unwrap_or_else(|_| json!({}))
             }
@@ -97,9 +99,6 @@ impl AppEvent {
                 "title": title,
                 "revision": revision,
             }),
-            AppEvent::TaskListChanged(delta) => {
-                serde_json::to_value(delta).unwrap_or_else(|_| json!({}))
-            }
             AppEvent::VaultChanged(info) => {
                 serde_json::to_value(info).unwrap_or_else(|_| json!({}))
             }
@@ -138,6 +137,15 @@ impl EventBus {
         self.emit(AppEvent::VaultNoteChanged {
             note_path: path.to_string_lossy().into_owned(),
             deleted,
+            source: None,
+        });
+    }
+
+    pub(crate) fn vault_note_changed_from_source(&self, path: &Path, deleted: bool, source: &str) {
+        self.emit(AppEvent::VaultNoteChanged {
+            note_path: path.to_string_lossy().into_owned(),
+            deleted,
+            source: Some(source.to_string()),
         });
     }
 
@@ -162,10 +170,6 @@ impl EventBus {
             title,
             revision,
         });
-    }
-
-    pub(crate) fn task_list_changed(&self, delta: TaskMutationDelta) {
-        self.emit(AppEvent::TaskListChanged(delta));
     }
 
     pub(crate) fn vault_changed(&self, info: VaultInfo) {

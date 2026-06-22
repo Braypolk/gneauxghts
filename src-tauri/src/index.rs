@@ -276,17 +276,17 @@ impl AppState {
 
     /// Save-path index update.
     ///
-    /// Updates the in-memory `notes_index` synchronously (cheap, and search
-    /// / recents / wikilinks read from it on the very next render) and
-    /// dispatches the heavy lexical + SQLite task projection work to the
-    /// background worker, so the save IPC returns to the frontend without
-    /// blocking the next `open_note`.
+    /// Updates the in-memory `notes_index` and single-note task projection
+    /// synchronously so search, recents, wikilinks, and the task list can
+    /// react to `note-saved` immediately. The heavier lexical indexing work
+    /// still runs through the background worker.
     pub(crate) fn upsert_note_indexes_for_save(
         &self,
         path: PathBuf,
         note: IndexedNote,
     ) -> Result<(), String> {
         let note_for_background = note.clone();
+        let note_for_projection = note.clone();
         {
             let mut index = self
                 .notes_index
@@ -294,6 +294,17 @@ impl AppState {
                 .map_err(|_| "Search index lock poisoned".to_string())?;
             index.upsert_note(path.clone(), note);
         }
+        let timestamp = if note_for_projection.modified_millis == 0 {
+            crate::time::current_time_millis().unwrap_or(0)
+        } else {
+            note_for_projection.modified_millis
+        };
+        let _ = crate::state::task_projection::reconcile_note_tasks(
+            &path,
+            Some(&note_for_projection),
+            &note_for_projection.note_id,
+            timestamp,
+        );
         self.clear_dirty_path(&path)?;
         self.background_index_queue
             .enqueue_upsert(path, note_for_background);

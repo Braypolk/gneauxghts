@@ -520,7 +520,7 @@
     }
   }
 
-  function scheduleRelatedIfNeeded(options: { immediate: boolean } = { immediate: false }) {
+  function scheduleRelatedIfNeeded(options: { immediate?: boolean } = { immediate: false }) {
     if (!$relatedState.isPanelCollapsed) {
       scheduleRelated(options);
     }
@@ -698,6 +698,7 @@
     refreshDerivedViews,
     updateRelatedDrawerLayout,
     refreshCurrentNoteIfChanged: commands.refreshCurrentNoteIfChanged,
+    refreshCurrentNoteFromTaskMutation: commands.refreshCurrentNoteFromTaskMutation,
     getNoteByKey,
     getPaneIdsForDocument,
     replaceNoteAcrossPanes: documents.replaceNoteAcrossPanes,
@@ -934,6 +935,7 @@
       if (!mounted || !paneRuntimes[PRIMARY_PANE_ID].refs.editorRoot) return;
       try {
         await paneLifecycle.ensurePaneEditors();
+        await commands.refreshCurrentNoteFromTaskMutation();
         updateRelatedDrawerLayout();
         scheduleRelatedIfNeeded({ immediate: true });
         const pendingTaskTarget = consumePendingTaskTarget();

@@ -7,6 +7,7 @@ import type {
 export interface VaultNoteChangeEvent {
   notePath: string;
   deleted: boolean;
+  source?: string | null;
 }
 
 interface NotepadRefreshControllerParams {
@@ -14,6 +15,7 @@ interface NotepadRefreshControllerParams {
   refreshDerivedViews: () => void | Promise<void>;
   updateRelatedDrawerLayout: () => void;
   refreshCurrentNoteIfChanged: () => Promise<void>;
+  refreshCurrentNoteFromTaskMutation: () => Promise<void>;
   getNoteByKey: (noteKey: NoteKey) => NoteDraftState | null;
   getPaneIdsForDocument: (document: NoteDraftState) => NotepadPaneId[];
   replaceNoteAcrossPanes: (
@@ -50,7 +52,11 @@ export function createNotepadRefreshController(
   async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
     const documentSession = params.getDocumentSession();
     if (documentSession.currentNotePath === payload.notePath) {
-      await params.refreshCurrentNoteIfChanged();
+      if (payload.source === "taskMutation") {
+        await params.refreshCurrentNoteFromTaskMutation();
+      } else {
+        await params.refreshCurrentNoteIfChanged();
+      }
     } else if (payload.deleted) {
       const noteKey = params.noteKeyFromPath(payload.notePath);
       if (noteKey) {

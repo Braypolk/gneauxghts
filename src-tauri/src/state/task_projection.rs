@@ -20,8 +20,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Outcome of reconciling a note's tasks against the projection.
-/// Reported back to callers so they can build a `TaskMutationDelta`
-/// (or similar event payload) without re-querying.
+/// Reported back to callers that need the affected task rows without
+/// re-querying.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ReconcileOutcome {
@@ -481,37 +481,19 @@ fn soft_delete_task_row(
     Ok(())
 }
 
-/// Update a task's hidden flag by `task_key`. Returns the affected
-/// `task_id`s.
-pub(crate) fn set_hidden_for_task_key(task_key: &str, hidden: bool) -> Result<Vec<String>, String> {
+pub(crate) fn set_hidden_for_task_id(task_id: &str, hidden: bool) -> Result<(), String> {
     with_state_database_internal(|connection| {
         ensure_state_schema_idempotent(connection)?;
         ensure_task_projection_schema(connection)?;
-        let mut statement = connection
-            .prepare(
-                "SELECT task_id FROM app_state_note_tasks
-                 WHERE task_key = ?1 AND deleted_at_millis IS NULL",
-            )
-            .map_err(|err| err.to_string())?;
-        let rows = statement
-            .query_map(params![task_key], |row| row.get::<_, String>(0))
-            .map_err(|err| err.to_string())?;
-        let mut task_ids = Vec::new();
-        for row in rows {
-            task_ids.push(row.map_err(|err| err.to_string())?);
-        }
-        drop(statement);
-
         connection
             .execute(
                 "UPDATE app_state_note_tasks
                  SET hidden = ?1
-                 WHERE task_key = ?2 AND deleted_at_millis IS NULL",
-                params![if hidden { 1_i64 } else { 0_i64 }, task_key],
+                 WHERE task_id = ?2 AND deleted_at_millis IS NULL",
+                params![if hidden { 1_i64 } else { 0_i64 }, task_id],
             )
             .map_err(|err| err.to_string())?;
-
-        Ok(task_ids)
+        Ok(())
     })
 }
 
@@ -581,6 +563,20 @@ pub(crate) fn load_tasks_for_note_id(note_id: &str) -> Result<Vec<TaskRecord>, S
             params![note_id],
         )
     })
+}
+
+pub(crate) fn load_task_by_id(task_id: &str) -> Result<Option<TaskRecord>, String> {
+    let tasks = with_state_database_internal(|connection| {
+        ensure_state_schema_idempotent(connection)?;
+        ensure_task_projection_schema(connection)?;
+        load_tasks_where(
+            connection,
+            "task_id = ?1 AND deleted_at_millis IS NULL
+             LIMIT 1",
+            params![task_id],
+        )
+    })?;
+    Ok(tasks.into_iter().next())
 }
 
 /// Read live tasks ordered for the master list. The caller supplies the

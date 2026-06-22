@@ -33,8 +33,6 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-#[cfg(test)]
-use task_commands::find_task_key_for_line;
 use task_commands::{
     list_recent_tasks as list_recent_tasks_impl, list_tasks as list_tasks_impl,
     set_note_collapsed as set_note_collapsed_impl, set_note_hidden as set_note_hidden_impl,
@@ -128,12 +126,7 @@ pub(crate) enum TaskFilter {
 pub(crate) struct TaskListItem {
     note_id: String,
     task_key: String,
-    /// Stable internal task id assigned by the SQLite task projection.
-    /// Optional in the wire format so existing frontend code can ignore
-    /// it; new consumers can use it instead of the derived `task_key`
-    /// for cross-save identity.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    task_id: Option<String>,
+    task_id: String,
     note_path: String,
     file_name: String,
     note_title: String,
@@ -151,26 +144,29 @@ pub(crate) struct TaskListItem {
     updated_at_millis: u64,
 }
 
-/// Delta returned by task mutation commands so the frontend can update its
-/// store without re-fetching the full master task list. `note_tasks`
-/// contains the canonical task items for the note that was mutated, in the
-/// order they appear in the index. The frontend replaces all tasks for
-/// `note_id` with these and merges them back into its sorted list.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TaskMutationDelta {
+pub(crate) struct TaskListGroup {
     pub(crate) note_id: String,
     pub(crate) note_path: String,
-    pub(crate) note_tasks: Vec<TaskListItem>,
-    /// Task key that was directly affected by the mutation, when known.
-    /// For toggle this is the toggled task's key (which may differ from the
-    /// frontend's pre-mutation key if the note was rewritten on disk).
-    /// For delete this is the deleted task's key.
+    pub(crate) note_title: String,
+    pub(crate) file_name: String,
+    pub(crate) note_hidden: bool,
+    pub(crate) note_collapsed: bool,
+    pub(crate) display_tasks: Vec<TaskListItem>,
+    pub(crate) hidden_count: usize,
+    pub(crate) visible_count: usize,
+    pub(crate) display_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskListGroupPatch {
+    pub(crate) note_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) affected_task_key: Option<String>,
-    /// True when the mutation removed the task. Helpful for the frontend to
-    /// drop the row instead of relying on the absence of a key in `note_tasks`.
-    pub(crate) removed: bool,
+    pub(crate) note_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) group: Option<TaskListGroup>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -346,23 +342,49 @@ pub(crate) fn list_recent_tasks(
 pub(crate) fn list_tasks(
     state: State<'_, AppState>,
     filter: TaskFilter,
-) -> Result<Vec<TaskListItem>, String> {
-    list_tasks_impl(state, filter)
+    show_hidden: bool,
+) -> Result<Vec<TaskListGroup>, String> {
+    list_tasks_impl(state, filter, show_hidden)
 }
 
 #[tauri::command]
-pub(crate) fn set_task_hidden(task_key: String, hidden: bool) -> Result<(), String> {
-    set_task_hidden_impl(task_key, hidden)
+pub(crate) fn get_task_group(
+    state: State<'_, AppState>,
+    note_id: String,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
+    task_commands::get_task_group(state, note_id, filter, show_hidden)
 }
 
 #[tauri::command]
-pub(crate) fn set_note_hidden(note_id: String, hidden: bool) -> Result<(), String> {
-    set_note_hidden_impl(note_id, hidden)
+pub(crate) fn set_task_hidden(
+    task_id: String,
+    hidden: bool,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
+    set_task_hidden_impl(task_id, hidden, filter, show_hidden)
 }
 
 #[tauri::command]
-pub(crate) fn set_note_collapsed(note_id: String, collapsed: bool) -> Result<(), String> {
-    set_note_collapsed_impl(note_id, collapsed)
+pub(crate) fn set_note_hidden(
+    note_id: String,
+    hidden: bool,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
+    set_note_hidden_impl(note_id, hidden, filter, show_hidden)
+}
+
+#[tauri::command]
+pub(crate) fn set_note_collapsed(
+    note_id: String,
+    collapsed: bool,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
+    set_note_collapsed_impl(note_id, collapsed, filter, show_hidden)
 }
 
 #[tauri::command]
@@ -377,30 +399,22 @@ pub(crate) fn set_note_order(
 pub(crate) fn toggle_task(
     state: State<'_, AppState>,
     app_data: State<'_, AppData>,
-    note_path: String,
-    line_number: usize,
-    task_text: String,
-) -> Result<TaskMutationDelta, String> {
-    TaskService::new().toggle(&app_data, state, note_path, line_number, task_text)
+    task_id: String,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
+    TaskService::new().toggle(&app_data, state, task_id, filter, show_hidden)
 }
 
 #[tauri::command]
 pub(crate) fn delete_task(
     state: State<'_, AppState>,
     app_data: State<'_, AppData>,
-    note_path: String,
-    line_number: usize,
-    task_text: String,
-    task_key: String,
-) -> Result<TaskMutationDelta, String> {
-    TaskService::new().delete(
-        &app_data,
-        state,
-        note_path,
-        line_number,
-        task_text,
-        task_key,
-    )
+    task_id: String,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
+    TaskService::new().delete(&app_data, state, task_id, filter, show_hidden)
 }
 
 #[tauri::command]
@@ -584,11 +598,11 @@ mod tests {
         parse_wikilink_target, resolve_note_link_target, ParsedWikilinkTarget,
     };
     use super::{
-        find_task_key_for_line, load_note_session_from_notes_dir, open_note_from_notes_dir,
-        read_note_session_from_path, NoteSession, RecentTaskItem, ResolvedNoteLink, TaskListItem,
+        load_note_session_from_notes_dir, open_note_from_notes_dir, read_note_session_from_path,
+        NoteSession, RecentTaskItem, ResolvedNoteLink, TaskListItem,
     };
     use crate::{
-        index::{build_indexed_note, task_key, NotesIndex},
+        index::{build_indexed_note, NotesIndex},
         note,
         search::{NoteSearchResult, ScoredSearchResult},
         state::initialize_app_data_dir,
@@ -790,23 +804,6 @@ mod tests {
     }
 
     #[test]
-    fn find_task_key_for_line_prefers_exact_line_then_nearest_match() {
-        let note_path = PathBuf::from("/tmp/project.md");
-        let note = build_indexed_note(
-            &note_path,
-            "# Project\n\n- [ ] Duplicate\n- [ ] Another\n- [ ] Duplicate\n",
-            10,
-        );
-
-        let exact = find_task_key_for_line(&note_path, &note, 5, "Duplicate").expect("exact key");
-        let nearest =
-            find_task_key_for_line(&note_path, &note, 99, "Duplicate").expect("nearest key");
-
-        assert_eq!(exact, task_key(&note.note_id, &note.tasks[2]));
-        assert_eq!(nearest, task_key(&note.note_id, &note.tasks[2]));
-    }
-
-    #[test]
     fn merge_hybrid_candidates_applies_labels_scores_and_limit() {
         let lexical = vec![
             ScoredSearchResult {
@@ -1002,7 +999,7 @@ mod tests {
         let task = TaskListItem {
             note_id: "note-1".to_string(),
             task_key: "task-key".to_string(),
-            task_id: Some("t_note1_abc123".to_string()),
+            task_id: "t_note1_abc123".to_string(),
             note_path: "/notes/title.md".to_string(),
             file_name: "title".to_string(),
             note_title: "Title".to_string(),

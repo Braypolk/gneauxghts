@@ -206,9 +206,10 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     scheduleRelatedIfNeeded({ immediate: true });
   }
 
-  async function refreshCurrentNoteIfChanged() {
+  async function refreshCurrentNoteFromDisk(options: { force?: boolean } = {}) {
     const note = getNavigationDocument();
     const currentPath = note.currentNotePath;
+    const force = options.force ?? false;
     const editorReady = getEditorPaneCountForNote(note.key) > 0
       || getPaneOrder().some(
         (paneId) => getPaneDocument(paneId).key === note.key && getPaneRuntime(paneId).ui.isEditorReady
@@ -217,7 +218,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       !currentPath ||
       !editorReady ||
       isRefreshingFromDisk() ||
-      !hasCleanBuffer(note)
+      (!force && !hasCleanBuffer(note))
     ) {
       return;
     }
@@ -225,7 +226,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     setRefreshingFromDisk(true);
     try {
       const session = await readNoteSession(note.currentNoteId, currentPath);
-      if (getNavigationDocument().key !== note.key || !hasCleanBuffer(note)) {
+      if (getNavigationDocument().key !== note.key || (!force && !hasCleanBuffer(note))) {
         return;
       }
 
@@ -249,6 +250,14 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     } finally {
       setRefreshingFromDisk(false);
     }
+  }
+
+  async function refreshCurrentNoteIfChanged() {
+    await refreshCurrentNoteFromDisk();
+  }
+
+  async function refreshCurrentNoteFromTaskMutation() {
+    await refreshCurrentNoteFromDisk({ force: true });
   }
 
   async function clearNotepad(options: { canRestore?: boolean } = {}) {
@@ -739,6 +748,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     activatePane,
     focusPaneAfterShortcut,
     refreshCurrentNoteIfChanged,
+    refreshCurrentNoteFromTaskMutation,
     clearNotepad,
     unforgetNotepad,
     rememberCurrentNote,

@@ -26,6 +26,7 @@ type Listener<T> = (payload: T) => void;
 type VaultNoteChangedPayload = {
   notePath: string;
   deleted: boolean;
+  source?: string | null;
 };
 
 type NoteSavedPayload = {
@@ -33,14 +34,6 @@ type NoteSavedPayload = {
   notePath: string | null;
   title: string;
   revision: number;
-};
-
-type TaskListChangedPayload = {
-  noteId: string;
-  notePath: string;
-  noteTasks: unknown[];
-  affectedTaskKey?: string;
-  removed: boolean;
 };
 
 class AppStore {
@@ -57,7 +50,6 @@ class AppStore {
   #semanticStatusListeners = new Set<Listener<SemanticStatus>>();
   #inboxChangedListeners = new Set<Listener<void>>();
   #noteSavedListeners = new Set<Listener<NoteSavedPayload>>();
-  #taskListChangedListeners = new Set<Listener<TaskListChangedPayload>>();
   #vaultChangedListeners = new Set<Listener<VaultInfo>>();
 
   #unlisteners: UnlistenFn[] = [];
@@ -111,11 +103,6 @@ class AppStore {
   subscribeNoteSaved(listener: Listener<NoteSavedPayload>): () => void {
     this.#noteSavedListeners.add(listener);
     return () => this.#noteSavedListeners.delete(listener);
-  }
-
-  subscribeTaskListChanged(listener: Listener<TaskListChangedPayload>): () => void {
-    this.#taskListChangedListeners.add(listener);
-    return () => this.#taskListChangedListeners.delete(listener);
   }
 
   subscribeVaultChanged(listener: Listener<VaultInfo>): () => void {
@@ -176,17 +163,6 @@ class AppStore {
           this.indexRevision = event.payload.revision;
         }
         for (const listener of this.#noteSavedListeners) {
-          try {
-            listener(event.payload);
-          } catch {
-            // continue dispatching
-          }
-        }
-      })
-    );
-    this.#unlisteners.push(
-      await listen<TaskListChangedPayload>('task-list-changed', (event) => {
-        for (const listener of this.#taskListChangedListeners) {
           try {
             listener(event.payload);
           } catch {
