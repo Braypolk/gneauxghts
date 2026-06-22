@@ -7,11 +7,6 @@ import type {
   ForgottenNoteSummary,
   RestoredForgottenNote,
 } from "$lib/types/forgottenNotes";
-import type {
-  CleanUpApplyPolicy,
-  RememberActionOption,
-  RememberDispatchResult,
-} from "$lib/types/ai";
 import type { VaultInfo } from "$lib/types/vault";
 
 export interface ForgottenNote {
@@ -158,22 +153,6 @@ export async function rememberNoteSession(
   currentPath: string | null,
 ) {
   await invoke("remember_note", { title, markdown, currentPath });
-}
-
-export async function rememberWithAction(
-  action: RememberActionOption,
-  cleanUpApplyPolicy: CleanUpApplyPolicy,
-  title: string,
-  markdown: string,
-  currentPath: string | null,
-) {
-  return invoke<RememberDispatchResult>("remember_with_action", {
-    action,
-    cleanUpApplyPolicy,
-    title,
-    markdown,
-    currentPath,
-  });
 }
 
 function formatPastedImageTimestamp(date: Date) {

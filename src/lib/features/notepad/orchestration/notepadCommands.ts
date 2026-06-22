@@ -1,13 +1,5 @@
 import { tick } from 'svelte';
-import type {
-  CleanUpApplyPolicyPreference,
-  ForgottenNoteRetentionPreference
-} from '$lib/appSettings';
-import {
-  EXACT_REMEMBER_ACTION,
-  rememberActionRequiresIntegrateSupport,
-  type RememberActionOption
-} from '$lib/types/ai';
+import type { ForgottenNoteRetentionPreference } from '$lib/appSettings';
 import {
   openSearchResult,
   type NavigationContext,
@@ -19,7 +11,7 @@ import {
   hasContent,
   openNoteSession,
   readNoteSession,
-  rememberWithAction,
+  rememberNoteSession,
   restoreForgottenNotes,
   type ForgottenNote
 } from '$lib/features/notepad/session/session';
@@ -111,9 +103,6 @@ export interface NotepadCommandsDeps<TPaneId extends string> {
   hasPendingDocumentSync: (document: NoteDraftState) => boolean;
   // ---- preferences / capabilities ----
   forgottenNoteRetentionPreference: () => ForgottenNoteRetentionPreference;
-  cleanUpApplyPolicyPreference: () => CleanUpApplyPolicyPreference;
-  rememberActionOptions: () => RememberActionOption[];
-  canIntegrate: () => boolean;
   // ---- DOM helpers ----
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   getPaneEditorRoot: (paneId: TPaneId) => HTMLElement | null;
@@ -167,9 +156,6 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     flushAllPendingDocumentSyncs,
     hasPendingDocumentSync,
     forgottenNoteRetentionPreference,
-    cleanUpApplyPolicyPreference,
-    rememberActionOptions,
-    canIntegrate,
     getPaneTitleInput,
     getPaneEditorRoot,
     isRefreshingFromDisk,
@@ -363,22 +349,9 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     void loadRecentNotes();
   }
 
-  function resolveRememberAction(actionId: string): RememberActionOption {
-    const options = rememberActionOptions();
-    return (
-      options.find((option) => option.id === actionId) ??
-      options.find((option) => option.id === 'exact') ??
-      EXACT_REMEMBER_ACTION
-    );
-  }
-
-  async function rememberCurrentNote(action: RememberActionOption) {
+  async function rememberCurrentNote() {
     flushAllPendingDocumentSyncs();
     documents.flushAllPendingCursorSaves();
-    const resolvedAction =
-      rememberActionRequiresIntegrateSupport(action) && !canIntegrate()
-        ? resolveRememberAction('exact')
-        : action;
     const note = getNavigationDocument();
     documents.saveCursorPositionForDocument(note);
     documents.saveSharedEditorStateForDocument(note);
@@ -387,13 +360,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     const operationRevision = note.operationRevision;
     setNoteStatus(note, 'remembering');
 
-    await rememberWithAction(
-      resolvedAction,
-      cleanUpApplyPolicyPreference(),
-      note.title,
-      note.bodyMarkdown,
-      note.currentNotePath
-    );
+    await rememberNoteSession(note.title, note.bodyMarkdown, note.currentNotePath);
 
     if (note.operationRevision !== operationRevision) {
       return;
@@ -752,7 +719,6 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     clearNotepad,
     unforgetNotepad,
     rememberCurrentNote,
-    resolveRememberAction,
     openNotePath,
     splitWorkspace,
     closePane,

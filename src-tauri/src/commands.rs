@@ -16,7 +16,6 @@ pub(crate) use note_session::{
 pub(crate) use note_session::{load_note_session_from_notes_dir, open_note_from_notes_dir};
 
 use crate::{
-    ai::{AiSettings, AiState},
     app::AppData,
     index::AppState,
     semantic::{
@@ -521,7 +520,7 @@ pub(crate) fn emit_semantic_status_changed(app: &AppHandle, state: &AppState) {
 
 /// Bundled startup payload returned by `bootstrap_app`. Consolidates the
 /// per-mount fan-out of `load_note_session` + `get_vault_info` +
-/// `get_semantic_status` + `get_ai_settings` (and the index revision) into
+/// `get_semantic_status` (and the index revision) into
 /// a single round trip. The original commands continue to work for
 /// callers that already use them.
 #[derive(Debug, Serialize)]
@@ -530,33 +529,27 @@ pub(crate) struct BootstrapAppPayload {
     vault: VaultInfo,
     note_session: NoteSession,
     semantic_status: SemanticStatus,
-    ai_settings: Option<AiSettings>,
     index_revision: u64,
 }
 
 #[tauri::command]
-pub(crate) fn bootstrap_app(
-    state: State<'_, AppState>,
-    ai: State<'_, AiState>,
-) -> Result<BootstrapAppPayload, String> {
+pub(crate) fn bootstrap_app(state: State<'_, AppState>) -> Result<BootstrapAppPayload, String> {
     let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
     let note_session = load_note_session_from_notes_dir_with_state(&notes_dir, Some(&state))?;
     let vault = current_vault_info()?;
     let semantic_status = state.semantic.get_status()?;
-    let ai_settings = ai.load_public_settings().ok();
     let index_revision = state.semantic.current_index_revision();
     Ok(BootstrapAppPayload {
         vault,
         note_session,
         semantic_status,
-        ai_settings,
         index_revision,
     })
 }
 
 /// Bundled settings payload returned by `get_settings_view`. Replaces the
 /// settings store's parallel fan-out of three semantic invokes plus
-/// `get_vault_info` and `get_ai_settings` with a single call.
+/// `get_vault_info` with a single call.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsViewPayload {
@@ -564,25 +557,19 @@ pub(crate) struct SettingsViewPayload {
     semantic_status: SemanticStatus,
     semantic_settings: SemanticSettings,
     semantic_debug: SemanticDebugSnapshot,
-    ai_settings: Option<AiSettings>,
 }
 
 #[tauri::command]
-pub(crate) fn get_settings_view(
-    state: State<'_, AppState>,
-    ai: State<'_, AiState>,
-) -> Result<SettingsViewPayload, String> {
+pub(crate) fn get_settings_view(state: State<'_, AppState>) -> Result<SettingsViewPayload, String> {
     let vault = current_vault_info()?;
     let semantic_status = state.semantic.get_status()?;
     let semantic_settings = state.semantic.get_settings()?;
     let semantic_debug = state.semantic.debug_snapshot()?;
-    let ai_settings = ai.load_public_settings().ok();
     Ok(SettingsViewPayload {
         vault,
         semantic_status,
         semantic_settings,
         semantic_debug,
-        ai_settings,
     })
 }
 

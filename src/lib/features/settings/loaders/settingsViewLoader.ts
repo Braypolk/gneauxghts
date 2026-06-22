@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AiSettings } from '$lib/types/ai';
 import type {
   SemanticDebugSnapshot,
   SemanticSettings,
@@ -12,7 +11,6 @@ export interface SettingsViewPayload {
   semanticStatus: SemanticStatus;
   semanticSettings: SemanticSettings;
   semanticDebug: SemanticDebugSnapshot;
-  aiSettings: AiSettings | null;
 }
 
 export function loadSettingsViewSlice() {

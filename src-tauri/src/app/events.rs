@@ -16,7 +16,6 @@ use tauri::{AppHandle, Emitter};
 
 pub(crate) const VAULT_NOTE_CHANGED_EVENT: &str = "vault-note-changed";
 pub(crate) const SEMANTIC_STATUS_CHANGED_EVENT: &str = "semantic-status-changed";
-pub(crate) const INBOX_CHANGED_EVENT: &str = "inbox-changed";
 pub(crate) const NOTE_SAVED_EVENT: &str = "note-saved";
 pub(crate) const VAULT_CHANGED_EVENT: &str = "vault-changed";
 
@@ -29,11 +28,7 @@ pub(crate) struct EventChannel(pub &'static str);
 /// Domain events emitted by the backend.
 ///
 /// The variants intentionally mirror the names from the architecture target
-/// so downstream code can pattern-match on intent. A few existing events
-/// (`InboxChanged`, `SemanticStatusChanged`, `VaultNoteChanged`) preserve
-/// the exact channel name and payload shape the frontend already listens
-/// to; new events (`NoteSaved`, `VaultChanged`) are
-/// additive and do not require frontend changes to ship.
+/// so downstream code can pattern-match on intent.
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum AppEvent {
@@ -47,9 +42,6 @@ pub(crate) enum AppEvent {
     /// Semantic indexer status snapshot (count of indexed notes, queue
     /// depth, etc.). Pushed instead of polled.
     SemanticStatusChanged(SemanticStatus),
-    /// Inbox mutation (queued, applied, rejected). Payload mirrors the
-    /// pre-existing `{"updated": true}` shape for backward compatibility.
-    InboxChanged,
     /// Local save completed; carries the canonical note id, path, and
     /// optional task delta so the frontend can splice instead of refetch.
     NoteSaved {
@@ -67,7 +59,6 @@ impl AppEvent {
         EventChannel(match self {
             AppEvent::VaultNoteChanged { .. } => VAULT_NOTE_CHANGED_EVENT,
             AppEvent::SemanticStatusChanged(_) => SEMANTIC_STATUS_CHANGED_EVENT,
-            AppEvent::InboxChanged => INBOX_CHANGED_EVENT,
             AppEvent::NoteSaved { .. } => NOTE_SAVED_EVENT,
             AppEvent::VaultChanged(_) => VAULT_CHANGED_EVENT,
         })
@@ -87,7 +78,6 @@ impl AppEvent {
             AppEvent::SemanticStatusChanged(status) => {
                 serde_json::to_value(status).unwrap_or_else(|_| json!({}))
             }
-            AppEvent::InboxChanged => json!({ "updated": true }),
             AppEvent::NoteSaved {
                 note_id,
                 note_path,
@@ -151,10 +141,6 @@ impl EventBus {
 
     pub(crate) fn semantic_status_changed(&self, status: SemanticStatus) {
         self.emit(AppEvent::SemanticStatusChanged(status));
-    }
-
-    pub(crate) fn inbox_changed(&self) {
-        self.emit(AppEvent::InboxChanged);
     }
 
     pub(crate) fn note_saved(

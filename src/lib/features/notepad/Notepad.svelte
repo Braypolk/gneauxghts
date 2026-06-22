@@ -1,18 +1,7 @@
 <script lang="ts">
   import { type UnlistenFn } from '@tauri-apps/api/event';
-  import { goto } from '$app/navigation';
   import { onMount, tick, untrack } from 'svelte';
-  import {
-    activeProposalSession,
-    getPendingProposalNotice,
-    getReviewOverlayModel
-  } from '$lib/features/proposals/session';
-  import {
-    cleanUpApplyPolicyPreference,
-    defaultRememberActionPreference,
-    forgottenNoteRetentionPreference,
-    rememberActionOptions
-  } from '$lib/appSettings';
+  import { forgottenNoteRetentionPreference } from '$lib/appSettings';
   import { setEditorCurrentSearchHighlightQuery } from '$lib/features/notepad/editor/editor';
   import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
   import { focusEditorAtEnd, focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
@@ -465,30 +454,6 @@
   });
 
   // ---------------------------------------------------------------------------
-  // Remember capability — derive directly from appStore so we have a single
-  // source of truth instead of mirroring SemanticStatus locally.
-  // ---------------------------------------------------------------------------
-  let semanticStatus = $derived(appStore.semanticStatus);
-
-  function integrateDisabledReason() {
-    if (!semanticStatus) return 'Integrate needs semantic search status.';
-    if (!semanticStatus.platformSupported) {
-      return semanticStatus.disabledReason ?? 'Integrate is unavailable on this platform.';
-    }
-    if (!semanticStatus.settings.semanticSearchEnabled) {
-      return 'Enable semantic search in Settings to use integrate.';
-    }
-    if (semanticStatus.indexedNotes === 0) {
-      return 'Integrate needs at least one indexed note in the vault.';
-    }
-    return null;
-  }
-
-  function canIntegrate() {
-    return integrateDisabledReason() === null;
-  }
-
-  // ---------------------------------------------------------------------------
   // Search / related store accessors.
   // ---------------------------------------------------------------------------
   const {
@@ -667,9 +632,6 @@
     flushAllPendingDocumentSyncs,
     hasPendingDocumentSync,
     forgottenNoteRetentionPreference: () => $forgottenNoteRetentionPreference,
-    cleanUpApplyPolicyPreference: () => $cleanUpApplyPolicyPreference,
-    rememberActionOptions: () => $rememberActionOptions,
-    canIntegrate,
     getPaneTitleInput,
     getPaneEditorRoot,
     isRefreshingFromDisk: () => notepadState.isRefreshingFromDisk,
@@ -678,10 +640,6 @@
     },
     updateSelectedRelatedText
   });
-
-  const defaultRememberShortcutAction = $derived.by(() =>
-    commands.resolveRememberAction($defaultRememberActionPreference)
-  );
 
   // ---------------------------------------------------------------------------
   // Refresh controller (window focus / vault changes / visibility).
@@ -786,7 +744,6 @@
     closePane: commands.closePane,
     switchActivePane: commands.switchActivePane,
     rememberCurrentNote: commands.rememberCurrentNote,
-    getDefaultRememberShortcutAction: () => defaultRememberShortcutAction,
     toggleRelatedPanel,
     openRecentNoteByIndex,
     requestSearchFocus,
@@ -824,14 +781,6 @@
       splitPickerHighlightedIndex,
       splitPickerCurrentNoteLabel,
       splitPickerPreviousNoteLabel,
-      pendingProposalNotice:
-        paneKind === 'editor'
-          ? getPendingProposalNotice($activeProposalSession, paneDocument.currentNotePath)
-          : null,
-      reviewOverlay:
-        paneKind === 'editor'
-          ? getReviewOverlayModel($activeProposalSession, paneDocument.currentNotePath)
-          : null,
       editorLifecycle: {
         shouldMount: paneShouldMountEditor(paneId),
         mount: () => paneLifecycle.mountPaneEditor(paneId),
@@ -850,10 +799,7 @@
     onSplitHighlightChange: (index: number) => {
       workspaceStore.setSplitPickerHighlight(index);
     },
-    onSplitChoose: commands.resolveSplitPickerChoice,
-    onOpenInbox: () => {
-      void goto('/inbox');
-    }
+    onSplitChoose: commands.resolveSplitPickerChoice
   };
 
   // ---------------------------------------------------------------------------
@@ -1047,11 +993,7 @@
           onUnforget: () => void commands.unforgetNotepad()
         }}
         remember={{
-          rememberActions: $rememberActionOptions,
-          defaultRememberActionId: $defaultRememberActionPreference,
-          integrateEnabled: canIntegrate(),
-          integrateDisabledReason: integrateDisabledReason(),
-          onRemember: (action) => void commands.rememberCurrentNote(action)
+          onRemember: () => void commands.rememberCurrentNote()
         }}
         search={{
           searchMode: searchState.searchMode,

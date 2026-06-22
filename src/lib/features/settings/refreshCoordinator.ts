@@ -13,7 +13,6 @@ export function refreshSettingsForVisibility(
 ) {
   switch (activeGeneralSection) {
     case "search":
-    case "ai":
       if (loaders.loadSemanticState) {
         return loaders.loadSemanticState();
       }

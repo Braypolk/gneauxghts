@@ -5,7 +5,6 @@ type ShortcutGroupId = 'navigation' | 'workspace' | 'search' | 'editor';
 
 export type KeyboardShortcutId =
   | 'navNote'
-  | 'navInbox'
   | 'navList'
   | 'navSettings'
   | 'splitWorkspace'
@@ -117,18 +116,11 @@ const shortcutDefinitionsBase = [
     defaultBinding: 'Meta+1'
   },
   {
-    id: 'navInbox',
-    label: 'Go to Inbox',
-    description: 'Open inbox view.',
-    group: 'navigation',
-    defaultBinding: 'Meta+2'
-  },
-  {
     id: 'navList',
     label: 'Go to List',
     description: 'Open list view.',
     group: 'navigation',
-    defaultBinding: 'Meta+3'
+    defaultBinding: 'Meta+2'
   },
   {
     id: 'navSettings',

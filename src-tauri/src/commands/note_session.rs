@@ -176,15 +176,6 @@ pub(crate) fn read_note_session_from_path(note_path: &Path) -> Result<NoteSessio
     })
 }
 
-#[cfg(test)]
-pub(crate) fn resolve_note_path_input(
-    notes_dir: &Path,
-    note_id: Option<String>,
-    path: Option<String>,
-) -> Result<PathBuf, String> {
-    resolve_note_path_input_with_state(notes_dir, note_id, path, None)
-}
-
 pub(crate) fn resolve_note_path_input_with_state(
     notes_dir: &Path,
     note_id: Option<String>,

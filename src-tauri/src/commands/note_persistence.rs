@@ -12,7 +12,6 @@ use tauri::State;
 pub(crate) struct PersistNoteOutcome {
     pub(crate) session: Option<NoteSession>,
     pub(crate) persisted_path: Option<String>,
-    pub(crate) persisted_markdown: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -190,7 +189,6 @@ pub(crate) fn persist_note_session_with_outcome(
     Ok(PersistNoteOutcome {
         session,
         persisted_path,
-        persisted_markdown: sync_markdown,
     })
 }
 

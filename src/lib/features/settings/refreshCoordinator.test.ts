@@ -15,13 +15,12 @@ function createLoaders(): SettingsRefreshLoaders {
 }
 
 describe("refreshCoordinator", () => {
-  it("loads semantic state for search and AI visibility", async () => {
+  it("loads semantic state for search visibility", async () => {
     const loaders = createLoaders();
 
     await refreshSettingsForVisibility("search", loaders);
-    await refreshSettingsForVisibility("ai", loaders);
 
-    expect(loaders.loadSemanticState).toHaveBeenCalledTimes(2);
+    expect(loaders.loadSemanticState).toHaveBeenCalledTimes(1);
     expect(loaders.loadSemanticStatus).not.toHaveBeenCalled();
   });
 

@@ -16,7 +16,6 @@ interface TextRange {
 
 export interface BottomBarState {
   isSearchFocused: boolean;
-  isRememberMenuOpen: boolean;
   activeIndex: number;
   lastHandledFocusRequest: number;
   isHoldingForget: boolean;
@@ -49,7 +48,6 @@ const FORGET_HOLD_COMPLETION_DELAY_MS = 100;
 function createInitialState(): BottomBarState {
   return {
     isSearchFocused: false,
-    isRememberMenuOpen: false,
     activeIndex: 0,
     lastHandledFocusRequest: 0,
     isHoldingForget: false,
@@ -139,14 +137,6 @@ export function createBottomBarState({
 
   function bindSearchResultsViewport(node: HTMLDivElement | null) {
     searchResultsViewport = node;
-  }
-
-  function setRememberMenuOpen(isRememberMenuOpen: boolean) {
-    patch({ isRememberMenuOpen });
-  }
-
-  function toggleRememberMenu() {
-    patch({ isRememberMenuOpen: !getState().isRememberMenuOpen });
   }
 
   function getState() {
@@ -445,8 +435,6 @@ export function createBottomBarState({
     subscribe,
     bindSearchInput,
     bindSearchResultsViewport,
-    setRememberMenuOpen,
-    toggleRememberMenu,
     resetActiveIndex,
     handleSearchInput,
     handleSearchClear,

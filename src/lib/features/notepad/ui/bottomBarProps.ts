@@ -1,5 +1,4 @@
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
-import type { RememberActionOption } from '$lib/types/ai';
 import type { SearchItem } from '$lib/types/semantic';
 
 /**
@@ -15,11 +14,7 @@ export interface BottomBarForgetProps {
  * Remember bundle: the action menu on the right of the bottom bar.
  */
 export interface BottomBarRememberProps {
-  rememberActions: RememberActionOption[];
-  defaultRememberActionId: string;
-  integrateEnabled: boolean;
-  integrateDisabledReason: string | null;
-  onRemember: (action: RememberActionOption) => void;
+  onRemember: () => void;
 }
 
 /**

@@ -5,13 +5,11 @@
 //! [`EventBus`] for domain events and a [`NoteCatalog`] read-model facade
 //! over the in-memory notes index.
 //!
-//! `AppState` (notes index, lexical, semantic) and `AiState` (AI/inbox)
-//! remain Tauri-managed in their own right so that existing commands,
-//! tests, and the vault watcher can continue to access them via
-//! `State<'_, AppState>` / `State<'_, AiState>`. New service code prefers
-//! taking the explicit pieces it needs through method parameters; the
-//! `AppData` aggregate is the canonical place to hold infrastructure that
-//! doesn't already have a home.
+//! `AppState` (notes index, lexical, semantic) remains Tauri-managed in its
+//! own right so existing commands, tests, and the vault watcher can access it
+//! via `State<'_, AppState>`. New service code prefers taking the explicit
+//! pieces it needs through method parameters; the `AppData` aggregate is the
+//! canonical place to hold infrastructure that doesn't already have a home.
 
 pub(crate) mod catalog;
 pub(crate) mod events;

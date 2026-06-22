@@ -1,4 +1,3 @@
-mod ai;
 mod app;
 mod commands;
 mod index;
@@ -50,11 +49,8 @@ pub fn run() {
                 )?
             };
             app.manage(AppState::new(semantic)?);
-            app.manage(ai::AiState::new(app.handle().clone())?);
             // Break-the-app: one managed `AppData` carrying the typed event
-            // bus and the `NoteCatalog` facade. Coexists with the
-            // pre-existing `AppState`/`AiState` so existing commands keep
-            // working while new code routes through services + events.
+            // bus and the `NoteCatalog` facade.
             app.manage(AppData::new(app.handle().clone()));
             // Vault watcher registration walks the notes directory tree
             // recursively; on large vaults that adds noticeable latency to
@@ -125,8 +121,6 @@ pub fn run() {
             commands::wikilink_commands::autocomplete_note_links,
             commands::save_note,
             commands::remember_note,
-            ai::remember_with_mode,
-            ai::remember_with_action,
             commands::forgotten_note_commands::forget_note,
             commands::forgotten_note_commands::list_forgotten_notes,
             commands::forgotten_note_commands::restore_forgotten_notes,
@@ -154,19 +148,7 @@ pub fn run() {
             commands::pause_semantic_indexing,
             commands::resume_semantic_indexing,
             commands::prepare_semantic_model,
-            commands::download_semantic_embedding_model,
-            ai::get_ai_settings,
-            ai::set_ai_settings,
-            ai::get_ai_diagnostics,
-            ai::clear_ai_diagnostics,
-            ai::list_ai_models,
-            ai::list_inbox_items,
-            ai::get_inbox_item,
-            ai::approve_inbox_item,
-            ai::approve_inbox_item_with_changes,
-            ai::reject_inbox_item,
-            ai::retry_inbox_item,
-            ai::clear_inbox
+            commands::download_semantic_embedding_model
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

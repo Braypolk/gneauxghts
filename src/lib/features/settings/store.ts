@@ -28,7 +28,6 @@ type GeneralSection =
   | "appearance"
   | "shortcuts"
   | "forgetting"
-  | "ai"
   | "vault"
   | "search";
 type ForgottenAction = "restore_forgotten_notes" | "delete_forgotten_notes";

@@ -2,21 +2,14 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { House, ListTodo, Settings } from '@lucide/svelte';
-  import FeatherWriting from './icons/FeatherWriting.svelte';
-  import MailboxEmpty from './icons/MailboxEmpty.svelte';
-  import MailboxFull from './icons/MailboxFull.svelte';
-  import { onDestroy, onMount } from 'svelte';
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
   import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
-  import { createNavStatusStore } from '$lib/ui/navStatusStore';
 
   const navLinks = [
     { href: '/', label: 'Note', icon: House },
-    { href: '/inbox', label: 'Inbox', icon: MailboxEmpty },
     { href: '/list', label: 'List', icon: ListTodo }
   ] as const;
   const settingsHref = '/settings';
-  const navStatusStore = createNavStatusStore();
 
   function isActive(href: string, pathname: string): boolean {
     if (href === '/') return pathname === '/';
@@ -82,8 +75,7 @@
 
     const shortcutEntries = [
       ['navNote', navLinks[0]],
-      ['navInbox', navLinks[1]],
-      ['navList', navLinks[2]]
+      ['navList', navLinks[1]]
     ] as const;
 
     for (const [shortcutId, targetLink] of shortcutEntries) {
@@ -97,13 +89,6 @@
     }
   }
 
-  onMount(() => {
-    navStatusStore.initialize();
-  });
-
-  onDestroy(() => {
-    navStatusStore.dispose();
-  });
 </script>
 
 <svelte:window onkeydown={handleGlobalShortcut} />
@@ -129,17 +114,7 @@
           aria-label={label}
           onclick={(event) => void handleNavClick(event, href)}
         >
-          {#if href === '/inbox'}
-            {#if $navStatusStore.inboxStatusIndicator === 'running'}
-              <FeatherWriting class="h-4 w-4 shrink-0" />
-            {:else if $navStatusStore.inboxStatusIndicator === 'pendingApproval'}
-              <MailboxFull class="h-4 w-4 shrink-0" />
-            {:else}
-              <MailboxEmpty class="h-4 w-4 shrink-0" />
-            {/if}
-          {:else}
-            <Icon class="h-4 w-4 shrink-0" />
-          {/if}
+          <Icon class="h-4 w-4 shrink-0" />
           <span class="hidden sm:inline">{label}</span>
         </a>
       {/each}

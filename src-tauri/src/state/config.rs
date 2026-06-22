@@ -326,15 +326,6 @@ pub(crate) fn ensure_vault_scaffold(vault_root: &Path) -> Result<VaultManifest, 
     Ok(manifest)
 }
 
-/// App-global secret store path. Secrets (provider API keys) intentionally
-/// live here in machine-global app data and are NEVER written into the
-/// portable vault, so moving/sharing a vault folder cannot leak credentials.
-pub(crate) fn global_secrets_db_path() -> Result<PathBuf, String> {
-    let dir = app_data_dir()?;
-    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
-    Ok(dir.join("secrets.sqlite3"))
-}
-
 pub(super) fn configured_app_data_dir() -> Result<Option<PathBuf>, String> {
     APP_DATA_DIR
         .lock()

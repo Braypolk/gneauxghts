@@ -5,10 +5,10 @@ pub(crate) mod task_projection;
 #[allow(unused_imports)]
 pub(crate) use config::{
     app_data_dir, current_vault_info, default_notes_root, ensure_vault_scaffold,
-    forgotten_notes_root, global_secrets_db_path, initialize_app_data_dir,
-    initialize_documents_dir, notes_root, read_vault_config, read_vault_manifest_for,
-    set_notes_root, set_notes_root_override, vault_data_dir, vault_root, write_vault_config,
-    VaultConfig, VaultInfo, VaultManifest, VAULT_CACHE_DIR_NAME,
+    forgotten_notes_root, initialize_app_data_dir, initialize_documents_dir, notes_root,
+    read_vault_config, read_vault_manifest_for, set_notes_root, set_notes_root_override,
+    vault_data_dir, vault_root, write_vault_config, VaultConfig, VaultInfo, VaultManifest,
+    VAULT_CACHE_DIR_NAME,
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{

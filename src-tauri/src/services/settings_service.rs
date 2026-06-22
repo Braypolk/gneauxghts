@@ -1,14 +1,12 @@
 //! Settings application service.
 //!
 //! Owns the cross-cutting "give me the current settings view" use case
-//! (vault info + semantic status/settings + AI settings) and the vault
+//! (vault info + semantic status/settings) and the vault
 //! switching command. Settings mutations emit
 //! [`crate::app::AppEvent::VaultChanged`] when the vault path changes
 //! and [`crate::app::AppEvent::SemanticStatusChanged`] when the semantic
 //! indexer status moves.
 
-use crate::ai::AiSettings;
-use crate::ai::AiState;
 use crate::app::AppData;
 use crate::index::AppState;
 use crate::semantic::{debug::SemanticDebugSnapshot, SemanticSettings, SemanticStatus};
@@ -27,7 +25,6 @@ pub(crate) struct SettingsView {
     pub semantic_status: SemanticStatus,
     pub semantic_settings: SemanticSettings,
     pub semantic_debug: SemanticDebugSnapshot,
-    pub ai_settings: Option<AiSettings>,
 }
 
 pub(crate) struct SettingsService;
@@ -45,14 +42,12 @@ impl SettingsService {
     pub(crate) fn settings_view(
         &self,
         app_state: &State<'_, AppState>,
-        ai: &State<'_, AiState>,
     ) -> Result<SettingsView, String> {
         Ok(SettingsView {
             vault: current_vault_info()?,
             semantic_status: app_state.semantic.get_status()?,
             semantic_settings: app_state.semantic.get_settings()?,
             semantic_debug: app_state.semantic.debug_snapshot()?,
-            ai_settings: ai.load_public_settings().ok(),
         })
     }
 

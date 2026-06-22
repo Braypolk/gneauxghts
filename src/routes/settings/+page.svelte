@@ -2,7 +2,6 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Monitor, Moon, RefreshCcw, Sun, FolderOpen } from '@lucide/svelte';
   import { onDestroy, onMount } from 'svelte';
-  import AiRememberSettingsPanel from '$lib/features/settings/AiRememberSettingsPanel.svelte';
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
   import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
@@ -40,7 +39,6 @@
       label: 'Forgetting',
       description: 'Forget button timing and trash retention'
     },
-    { id: 'ai', label: 'AI & Remember', description: 'Connection, defaults, and token usage' },
     { id: 'vault', label: 'Vault', description: 'Where your notes are stored' },
     { id: 'search', label: 'Semantic search', description: 'Local index and embeddings' }
   ];
@@ -305,8 +303,6 @@
                   tab.
                 </p>
               </div>
-            {:else if $settings.activeGeneralSection === 'ai'}
-              <AiRememberSettingsPanel />
             {:else if $settings.activeGeneralSection === 'vault'}
               <div class="flex flex-col gap-4">
           <div class="flex items-start justify-between gap-4">

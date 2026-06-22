@@ -1,7 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { SemanticStatus } from '$lib/types/semantic';
 import type { VaultInfo } from '$lib/types/vault';
-import type { AiSettings } from '$lib/types/ai';
 import {
   loadBootstrapPayload,
   type BootstrapAppResult
@@ -11,7 +10,7 @@ import {
  * Break-the-app: one frontend `AppStore`, bootstrapped once.
  *
  * Holds the cross-cutting backend snapshots (vault info, semantic status,
- * AI settings, last-known index revision) that previously lived inside
+ * last-known index revision) that previously lived inside
  * each feature store. Subscribes once to the typed event channels emitted
  * by the Rust event bus and exposes Svelte 5 runes so consumers can read
  * with reactivity but without owning their own listener.
@@ -39,7 +38,6 @@ type NoteSavedPayload = {
 class AppStore {
   vaultInfo = $state<VaultInfo | null>(null);
   semanticStatus = $state<SemanticStatus | null>(null);
-  aiSettings = $state<AiSettings | null>(null);
   indexRevision = $state<number>(0);
   ready = $state(false);
 
@@ -48,7 +46,6 @@ class AppStore {
   // `subscribeXxx` and removed via the returned dispose function.
   #vaultNoteChangedListeners = new Set<Listener<VaultNoteChangedPayload>>();
   #semanticStatusListeners = new Set<Listener<SemanticStatus>>();
-  #inboxChangedListeners = new Set<Listener<void>>();
   #noteSavedListeners = new Set<Listener<NoteSavedPayload>>();
   #vaultChangedListeners = new Set<Listener<VaultInfo>>();
 
@@ -62,7 +59,6 @@ class AppStore {
       const payload = await loadBootstrapPayload();
       this.vaultInfo = payload.vault;
       this.semanticStatus = payload.semanticStatus;
-      this.aiSettings = payload.aiSettings;
       this.indexRevision = payload.indexRevision ?? 0;
       await this.#attachListeners();
       this.ready = true;
@@ -95,11 +91,6 @@ class AppStore {
     return () => this.#semanticStatusListeners.delete(listener);
   }
 
-  subscribeInboxChanged(listener: Listener<void>): () => void {
-    this.#inboxChangedListeners.add(listener);
-    return () => this.#inboxChangedListeners.delete(listener);
-  }
-
   subscribeNoteSaved(listener: Listener<NoteSavedPayload>): () => void {
     this.#noteSavedListeners.add(listener);
     return () => this.#noteSavedListeners.delete(listener);
@@ -116,10 +107,6 @@ class AppStore {
 
   setVaultInfo(info: VaultInfo | null): void {
     this.vaultInfo = info;
-  }
-
-  setAiSettings(settings: AiSettings | null): void {
-    this.aiSettings = settings;
   }
 
   async #attachListeners(): Promise<void> {
@@ -140,17 +127,6 @@ class AppStore {
         for (const listener of this.#semanticStatusListeners) {
           try {
             listener(event.payload);
-          } catch {
-            // continue dispatching
-          }
-        }
-      })
-    );
-    this.#unlisteners.push(
-      await listen('inbox-changed', () => {
-        for (const listener of this.#inboxChangedListeners) {
-          try {
-            listener();
           } catch {
             // continue dispatching
           }
