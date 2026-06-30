@@ -1,26 +1,26 @@
 <script lang="ts">
   import { Columns2, X } from '@lucide/svelte';
-  import SplitPaneContentPicker from '$lib/features/notepad/SplitPaneContentPicker.svelte';
+  import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
   import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import type {
     PaneViewModel,
     PaneWorkspaceActions
   } from '$lib/features/notepad/notepadPane.types';
-  import type { SplitChoice } from '$lib/features/notepad/splitPanePicker';
+  import type { PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
 
   interface Props {
     pane: PaneRuntime;
     viewModel: PaneViewModel;
     actions: PaneWorkspaceActions;
-    splitPickerFocusRoot?: HTMLElement | null;
+    paneCommandFocusRoot?: HTMLElement | null;
   }
 
   let {
     pane,
     viewModel,
     actions,
-    splitPickerFocusRoot = $bindable<HTMLElement | null>(null)
+    paneCommandFocusRoot = $bindable<HTMLElement | null>(null)
   }: Props = $props();
 
   let titleDraft = $state<string | null>(null);
@@ -87,7 +87,7 @@
           bind:this={pane.refs.editorShell}
           class="notepad-editor-shell relative h-full flex-1"
           class:notepad-editor-shell--slash-open={viewModel.isSlashMenuOpen}
-          class:notepad-editor-shell--picker-open={viewModel.isSplitPickerOpen}
+          class:notepad-editor-shell--pane-command-open={viewModel.isPaneCommandOpen}
         >
           {#if !viewModel.isEditorReady}
             <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
@@ -103,18 +103,25 @@
             use:editorAction={viewModel.editorLifecycle}
           ></div>
 
-          {#if viewModel.isSplitPickerOpen}
+          {#if viewModel.isPaneCommandOpen}
             <div class="pointer-events-none absolute inset-0 z-20">
-              <div class="notepad-picker-surface pointer-events-none box-border">
-                <SplitPaneContentPicker
-                  bind:focusRoot={splitPickerFocusRoot}
-                  highlightedIndex={viewModel.splitPickerHighlightedIndex}
-                  mode={viewModel.splitPickerMode}
+              <div class="notepad-pane-command-surface pointer-events-auto box-border cursor-default">
+                <div class="w-full flex items-center pb-6 gap-3">
+                  <div class="flex-1 h-[1px] rounded-full bg-border/70"></div>
+                  <span class="text-base md:text-lg text-muted-foreground/80 select-none">or</span>
+                  <div class="flex-1 h-[1px] rounded-full bg-border/70"></div>
+                </div>
+
+                <PaneCommandPicker
+                  bind:focusRoot={paneCommandFocusRoot}
+                  highlightedIndex={viewModel.paneCommandHighlightedIndex}
+                  mode={viewModel.paneCommandMode}
                   presentation="embedded"
-                  currentNoteLabel={viewModel.splitPickerCurrentNoteLabel}
-                  previousNoteLabel={viewModel.splitPickerPreviousNoteLabel}
-                  onHighlightChange={actions.onSplitHighlightChange}
-                  onChoose={(choice: SplitChoice) => void actions.onSplitChoose(viewModel.paneId, choice)}
+                  currentNoteLabel={viewModel.paneCommandCurrentNoteLabel}
+                  previousNoteLabel={viewModel.paneCommandPreviousNoteLabel}
+                  previousNoteShortcutLabel={viewModel.paneCommandPreviousNoteShortcutLabel}
+                  onHighlightChange={actions.onPaneCommandHighlightChange}
+                  onChoose={(choice: PaneCommandChoice) => void actions.onPaneCommandChoose(viewModel.paneId, choice)}
                 />
               </div>
             </div>

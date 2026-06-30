@@ -14,7 +14,7 @@ import type {
 } from '$lib/features/notepad/state/noteStore';
 import type { WorkspaceStore, NotepadPaneId } from '$lib/features/notepad/workspace/workspaceStore.svelte';
 import type { SearchItem } from '$lib/types/semantic';
-import type { SplitPickerMode } from '$lib/features/notepad/splitPanePicker';
+import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 
 export type PaneKind = 'editor' | 'chat';
 
@@ -24,16 +24,19 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
   setActivePaneId: (paneId: TPaneId) => void;
   setPaneOrder: (order: TPaneId[]) => void;
   removePane: (paneId: TPaneId) => void;
-  beginSplitPicker: (paneId: TPaneId, sourceNoteKey: NoteKey) => void;
-  beginStartPicker: (paneId: TPaneId, sourceNoteKey: NoteKey) => void;
-  resetSplitPicker: () => void;
-  setSplitPickerHighlight: (index: number) => void;
-  getSplitPickerPaneId: () => TPaneId | null;
-  getSplitPickerSourceNoteKey: () => NoteKey | null;
-  getSplitPickerHighlightedIndex: () => number;
-  getSplitPickerMode: () => SplitPickerMode;
-  getSplitPickerPreviousItem: () => SearchItem | null;
-  getSplitPickerFocusEl: () => HTMLElement | null;
+  beginPaneCommand: (
+    paneId: TPaneId,
+    sourceNoteKey: NoteKey,
+    mode: PaneCommandMode
+  ) => void;
+  resetPaneCommand: () => void;
+  setPaneCommandHighlight: (index: number) => void;
+  getPaneCommandPaneId: () => TPaneId | null;
+  getPaneCommandSourceNoteKey: () => NoteKey | null;
+  getPaneCommandHighlightedIndex: () => number;
+  getPaneCommandMode: () => PaneCommandMode;
+  getPaneCommandPreviousItem: () => SearchItem | null;
+  getPaneCommandFocusEl: () => HTMLElement | null;
 }
 
 export interface NotepadPaneCommands<TPaneId extends string> {
@@ -99,14 +102,14 @@ export interface NotepadCommandsDeps<TPaneId extends string> {
   forgottenNoteRetentionPreference: () => ForgottenNoteRetentionPreference;
 }
 
-export interface NotepadSplitPickerAccess {
+export interface NotepadPaneCommandAccess {
   getPreviousItem: () => SearchItem | null;
   getFocusEl: () => HTMLElement | null;
 }
 
 export function createNotepadWorkspaceCommands<TPaneId extends string>(
   workspace: WorkspaceStore,
-  splitPicker: NotepadSplitPickerAccess
+  paneCommand: NotepadPaneCommandAccess
 ): NotepadWorkspaceCommands<TPaneId> {
   return {
     getActivePaneId: () => workspace.activePaneId as TPaneId,
@@ -114,17 +117,15 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
     setActivePaneId: (paneId) => workspace.setActivePaneId(paneId as NotepadPaneId),
     setPaneOrder: (order) => workspace.setPaneOrder(order as NotepadPaneId[]),
     removePane: (paneId) => workspace.removePane(paneId as NotepadPaneId),
-    beginSplitPicker: (paneId, sourceNoteKey) =>
-      workspace.beginSplitPicker(paneId as NotepadPaneId, sourceNoteKey),
-    beginStartPicker: (paneId, sourceNoteKey) =>
-      workspace.beginStartPicker(paneId as NotepadPaneId, sourceNoteKey),
-    resetSplitPicker: () => workspace.resetSplitPicker(),
-    setSplitPickerHighlight: (index) => workspace.setSplitPickerHighlight(index),
-    getSplitPickerPaneId: () => workspace.splitPicker.paneId as TPaneId | null,
-    getSplitPickerSourceNoteKey: () => workspace.splitPicker.sourceNoteKey,
-    getSplitPickerHighlightedIndex: () => workspace.splitPicker.highlightedIndex,
-    getSplitPickerMode: () => workspace.splitPicker.mode,
-    getSplitPickerPreviousItem: splitPicker.getPreviousItem,
-    getSplitPickerFocusEl: splitPicker.getFocusEl
+    beginPaneCommand: (paneId, sourceNoteKey, mode) =>
+      workspace.beginPaneCommand(paneId as NotepadPaneId, sourceNoteKey, mode),
+    resetPaneCommand: () => workspace.resetPaneCommand(),
+    setPaneCommandHighlight: (index) => workspace.setPaneCommandHighlight(index),
+    getPaneCommandPaneId: () => workspace.paneCommand.paneId as TPaneId | null,
+    getPaneCommandSourceNoteKey: () => workspace.paneCommand.sourceNoteKey,
+    getPaneCommandHighlightedIndex: () => workspace.paneCommand.highlightedIndex,
+    getPaneCommandMode: () => workspace.paneCommand.mode,
+    getPaneCommandPreviousItem: paneCommand.getPreviousItem,
+    getPaneCommandFocusEl: paneCommand.getFocusEl
   };
 }

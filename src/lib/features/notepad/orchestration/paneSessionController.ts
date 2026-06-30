@@ -30,7 +30,7 @@ export function searchItemMatchesSplitSource(
   return false;
 }
 
-export function splitPickerNoteLabel(note: NoteDraftState | null | undefined) {
+export function paneCommandNoteLabel(note: NoteDraftState | null | undefined) {
   if (!note) {
     return 'Untitled note';
   }
@@ -48,11 +48,11 @@ export function splitPickerNoteLabel(note: NoteDraftState | null | undefined) {
   return 'Untitled note';
 }
 
-export function splitPickerPreviousNoteLabel(item: SearchItem | null) {
+export function paneCommandPreviousNoteLabel(item: SearchItem | null) {
   return item ? item.fileName?.trim() || item.notePath || 'Recent note' : null;
 }
 
-export function findSplitPickerPreviousItem(
+export function findPaneCommandPreviousItem(
   recentNotes: SearchItem[],
   source: NoteDraftState | null | undefined
 ) {

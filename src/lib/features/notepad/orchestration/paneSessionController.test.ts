@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createPaneSessionController,
-  findSplitPickerPreviousItem,
-  splitPickerNoteLabel,
-  splitPickerPreviousNoteLabel
+  findPaneCommandPreviousItem,
+  paneCommandNoteLabel,
+  paneCommandPreviousNoteLabel
 } from './paneSessionController';
 import { createNoteDraftState, type NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import type { SearchItem } from '$lib/types/semantic';
@@ -52,7 +52,7 @@ describe('paneSessionController', () => {
     expect(activatePaneSession).toHaveBeenCalledWith('secondary');
   });
 
-  it('keeps split picker previous-note choices off the source note', () => {
+  it('keeps pane command previous-note choices off the source note', () => {
     const source = createNoteDraftState({
       title: '',
       bodyMarkdown: '',
@@ -64,7 +64,7 @@ describe('paneSessionController', () => {
       lastSavedPath: '/vault/Source.md'
     });
 
-    const previous = findSplitPickerPreviousItem(
+    const previous = findPaneCommandPreviousItem(
       [
         searchItem({ noteId: 'source-id', notePath: '/vault/Source.md', fileName: 'Source' }),
         searchItem({ noteId: 'other-id', notePath: '/vault/Other.md', fileName: 'Other' })
@@ -73,7 +73,7 @@ describe('paneSessionController', () => {
     );
 
     expect(previous?.notePath).toBe('/vault/Other.md');
-    expect(splitPickerNoteLabel(source)).toBe('Source');
-    expect(splitPickerPreviousNoteLabel(previous)).toBe('Other');
+    expect(paneCommandNoteLabel(source)).toBe('Source');
+    expect(paneCommandPreviousNoteLabel(previous)).toBe('Other');
   });
 });

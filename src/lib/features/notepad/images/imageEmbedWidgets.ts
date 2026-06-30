@@ -86,15 +86,11 @@ async function loadImageAssetUrl(fileName: string) {
 }
 
 function preserveEditorScrollPosition(view: EditorView, runUpdate: () => void) {
-  const scrollContainer = view.dom.closest<HTMLElement>('.notepad-editor-shell');
-  const previousTop = scrollContainer?.scrollTop ?? 0;
-  const previousLeft = scrollContainer?.scrollLeft ?? 0;
+  const scrollContainer = view.scrollDOM;
+  const previousTop = scrollContainer.scrollTop;
+  const previousLeft = scrollContainer.scrollLeft;
 
   runUpdate();
-
-  if (!scrollContainer) {
-    return;
-  }
 
   scrollContainer.scrollTop = previousTop;
   scrollContainer.scrollLeft = previousLeft;

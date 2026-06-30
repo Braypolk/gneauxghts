@@ -13,11 +13,11 @@ import {
   restoreForgottenNotes,
 } from '$lib/features/notepad/session/session';
 import {
-  getSplitChoiceByIndex,
-  getSplitChoiceForShortcut,
-  getNextSplitChoiceIndex,
-  type SplitChoice
-} from '$lib/features/notepad/splitPanePicker';
+  getPaneCommandChoiceByIndex,
+  getPaneCommandForShortcut,
+  getNextPaneCommandIndex,
+  type PaneCommandChoice
+} from '$lib/features/notepad/paneCommandPicker';
 import {
   adoptSnapshotForPane,
   applySnapshotToNote,
@@ -27,6 +27,7 @@ import {
   setNoteStatus,
   setPaneKind as setStoredPaneKind,
   type NoteDraftState,
+  type NoteKey,
 } from '$lib/features/notepad/state/noteStore';
 import {
   cleanupNoteRuntime,
@@ -44,16 +45,14 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const getPaneOrder = workspace.getPaneOrder;
   const setPaneOrder = workspace.setPaneOrder;
   const removePane = workspace.removePane;
-  const beginSplitPicker = workspace.beginSplitPicker;
-  const beginStartPicker = workspace.beginStartPicker;
-  const resetSplitPicker = workspace.resetSplitPicker;
-  const setSplitPickerHighlight = workspace.setSplitPickerHighlight;
-  const getSplitPickerPaneId = workspace.getSplitPickerPaneId;
-  const getSplitPickerSourceNoteKey = workspace.getSplitPickerSourceNoteKey;
-  const getSplitPickerHighlightedIndex = workspace.getSplitPickerHighlightedIndex;
-  const getSplitPickerMode = workspace.getSplitPickerMode;
-  const getSplitPickerPreviousItem = workspace.getSplitPickerPreviousItem;
-  const getSplitPickerFocusEl = workspace.getSplitPickerFocusEl;
+  const beginPaneCommand = workspace.beginPaneCommand;
+  const resetPaneCommand = workspace.resetPaneCommand;
+  const setPaneCommandHighlight = workspace.setPaneCommandHighlight;
+  const getPaneCommandPaneId = workspace.getPaneCommandPaneId;
+  const getPaneCommandSourceNoteKey = workspace.getPaneCommandSourceNoteKey;
+  const getPaneCommandHighlightedIndex = workspace.getPaneCommandHighlightedIndex;
+  const getPaneCommandMode = workspace.getPaneCommandMode;
+  const getPaneCommandPreviousItem = workspace.getPaneCommandPreviousItem;
 
   const getPaneKind = panes.getPaneKind;
   const getPaneDocument = panes.getPaneDocument;
@@ -93,8 +92,6 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const setRefreshingFromDisk = refresh.setRefreshingFromDisk;
 
   const paneCommands = createPaneCommandGroup<TPaneId, NoteDraftState>({
-    getSplitPickerPaneId,
-    getSplitPickerFocusEl,
     getPaneTitleInput,
     getPaneEditorRoot,
     getPaneDocument,
@@ -160,8 +157,19 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     await refreshCurrentNoteFromDisk({ force: true });
   }
 
+  async function openStartPaneCommand(paneId: TPaneId, noteKey: NoteKey) {
+    await loadRecentNotes();
+    beginPaneCommand(paneId, noteKey, 'start');
+    activatePaneSession(paneId);
+    await tick();
+    await paneLifecycle.ensurePaneEditors();
+    updateSelectedRelatedText(paneId);
+    await focusEditorAtEnd(getPaneEditorRoot(paneId));
+  }
+
   async function clearNotepad(options: { canRestore?: boolean } = {}) {
     const canRestore = options.canRestore ?? true;
+    const paneId = getNavigationPaneId();
     const note = getNavigationDocument();
     const notePathToClear = note.currentNotePath;
 
@@ -208,7 +216,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     clearSelectedRelatedText();
     scheduleSearchIfNeeded();
     scheduleRelatedIfNeeded({ immediate: true });
-    void loadRecentNotes();
+    await openStartPaneCommand(paneId, freshDraft.key);
   }
 
   async function unforgetNotepad() {
@@ -216,6 +224,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     if (!forgottenNote) {
       return;
     }
+
+    resetPaneCommand();
 
     if (forgottenNote.forgottenPath) {
       try {
@@ -303,13 +313,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       note = getNavigationDocument();
     }
 
-    await loadRecentNotes();
-    beginStartPicker(paneId, note.key);
-    activatePaneSession(paneId);
-    await tick();
-    await paneLifecycle.ensurePaneEditors();
-    updateSelectedRelatedText(paneId);
-    await focusEditorAtEnd(getPaneEditorRoot(paneId));
+    await openStartPaneCommand(paneId, note.key);
   }
 
   async function openNotePath(
@@ -325,6 +329,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     if (!options.noteId && !notePath) {
       return;
     }
+
+    resetPaneCommand();
 
     if (hasPendingDocumentSync(previousDocument)) {
       flushDocumentEditorSync(previousDocument);
@@ -415,7 +421,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     const placeholderDraft = createFreshDraftNote(state);
     setStoredPaneKind(state, targetPaneId, 'editor');
     setPaneDocumentSession(targetPaneId, placeholderDraft);
-    beginSplitPicker(targetPaneId, sharedDocument.key);
+    beginPaneCommand(targetPaneId, sharedDocument.key, 'split');
 
     setPaneOrder([primary, secondary]);
     activatePaneSession(targetPaneId);
@@ -431,13 +437,13 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return;
     }
 
-    const wasSplitPicker = getSplitPickerPaneId() === paneId;
-    const orphanPlaceholderKey = wasSplitPicker ? getPaneDocument(paneId).key : null;
+    const wasPaneCommand = getPaneCommandPaneId() === paneId;
+    const orphanPlaceholderKey = wasPaneCommand ? getPaneDocument(paneId).key : null;
 
     removePane(paneId);
 
-    if (wasSplitPicker) {
-      resetSplitPicker();
+    if (wasPaneCommand) {
+      resetPaneCommand();
       const remainingOrder = getPaneOrder();
       const anchorPane = (remainingOrder[0] ?? primaryPaneId) as TPaneId;
       setPaneDocumentSession(paneId, getPaneDocument(anchorPane));
@@ -499,17 +505,18 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     focusPaneAfterShortcut(nextPaneId, { preferTitle });
   }
 
-  function moveSplitPickerHighlight(direction: 1 | -1) {
-    setSplitPickerHighlight(
-      getNextSplitChoiceIndex(
-        getSplitPickerHighlightedIndex(),
+  function movePaneCommandHighlight(direction: 1 | -1) {
+    setPaneCommandHighlight(
+      getNextPaneCommandIndex(
+        getPaneCommandHighlightedIndex(),
         direction,
-        getSplitPickerPreviousItem() !== null
+        getPaneCommandPreviousItem() !== null,
+        getPaneCommandMode()
       )
     );
   }
 
-  async function finalizeSplitPickerSelection(paneId: TPaneId) {
+  async function finalizePaneCommandSelection(paneId: TPaneId) {
     await tick();
     await paneLifecycle.ensurePaneEditors();
     updateSelectedRelatedText(paneId);
@@ -517,17 +524,24 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     scheduleRelatedIfNeeded({ immediate: true });
   }
 
-  async function resolveSplitPickerChoice(paneId: TPaneId, choice: SplitChoice) {
-    if (getSplitPickerPaneId() !== paneId) {
+  async function resolvePaneCommandChoice(paneId: TPaneId, choice: PaneCommandChoice) {
+    if (getPaneCommandPaneId() !== paneId) {
       return;
     }
 
-    const sourceKey = getSplitPickerSourceNoteKey();
-    const previousItem = getSplitPickerPreviousItem();
-    const placeholderKey = getPaneDocument(paneId).key;
+    const sourceKey = getPaneCommandSourceNoteKey();
+    const previousItem = getPaneCommandPreviousItem();
+    const placeholderDocument = getPaneDocument(paneId);
+    const placeholderKey = placeholderDocument.key;
 
-    resetSplitPicker();
+    resetPaneCommand();
     activatePaneSession(paneId);
+
+    if (choice === 'typing') {
+      await finalizePaneCommandSelection(paneId);
+      await focusEditorAtEnd(getPaneEditorRoot(paneId));
+      return;
+    }
 
     if (choice === 'current') {
       if (!sourceKey) return;
@@ -537,11 +551,21 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
       setStoredPaneKind(state, paneId, 'editor');
       setPaneDocumentSession(paneId, shared);
+
+      if (
+        getPaneKind(paneId) === 'editor' &&
+        getPaneRuntime(paneId).controller
+      ) {
+        await documents.replaceNoteAcrossPanes(placeholderDocument, shared, {
+          restoreCursor: true
+        });
+      }
+
       if (placeholderKey !== shared.key) {
         removeNoteIfUnreferenced(state, placeholderKey);
         cleanupNoteRuntime(placeholderKey);
       }
-      await finalizeSplitPickerSelection(paneId);
+      await finalizePaneCommandSelection(paneId);
       flushDocumentEditorSync(shared);
       return;
     }
@@ -556,38 +580,38 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
         await openSearchResult(getOpenContext(), getNavigationContext(paneId), previousItem);
       }
 
-      await finalizeSplitPickerSelection(paneId);
+      await finalizePaneCommandSelection(paneId);
       return;
     }
 
-    if (choice === 'new') {
-      setStoredPaneKind(state, paneId, 'editor');
-      const newDraft = createFreshDraftNote(state);
-      setPaneDocumentSession(paneId, newDraft);
+    if (choice === 'thoughtPartner') {
+      setStoredPaneKind(state, paneId, 'chat');
+      const chatDraft = createFreshDraftNote(state);
+      setPaneDocumentSession(paneId, chatDraft);
       removeNoteIfUnreferenced(state, placeholderKey);
       cleanupNoteRuntime(placeholderKey);
-      await finalizeSplitPickerSelection(paneId);
-      flushDocumentEditorSync(newDraft);
+      await finalizePaneCommandSelection(paneId);
       return;
     }
   }
 
-  async function confirmSplitPickerChoiceByHighlight() {
-    const paneId = getSplitPickerPaneId();
+  async function confirmPaneCommandChoiceByHighlight() {
+    const paneId = getPaneCommandPaneId();
     if (!paneId) return;
 
-    const choice = getSplitChoiceByIndex(
-      getSplitPickerHighlightedIndex(),
-      getSplitPickerPreviousItem() !== null
+    const choice = getPaneCommandChoiceByIndex(
+      getPaneCommandHighlightedIndex(),
+      getPaneCommandPreviousItem() !== null,
+      getPaneCommandMode()
     );
     if (choice) {
-      await resolveSplitPickerChoice(paneId, choice);
+      await resolvePaneCommandChoice(paneId, choice);
     }
   }
 
-  function handleSplitPickerGlobalKeydown(event: KeyboardEvent): boolean {
-    const splitPaneId = getSplitPickerPaneId();
-    if (splitPaneId === null || getActivePaneId() !== splitPaneId || event.repeat) {
+  function handlePaneCommandGlobalKeydown(event: KeyboardEvent): boolean {
+    const pickerPaneId = getPaneCommandPaneId();
+    if (pickerPaneId === null || getActivePaneId() !== pickerPaneId || event.repeat) {
       return false;
     }
 
@@ -608,45 +632,38 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return false;
     }
 
-    const pickerFocusEl = getSplitPickerFocusEl();
-    const targetIsInsidePicker =
-      target instanceof Node && pickerFocusEl?.contains(target) === true;
-
-    if (!targetIsInsidePicker) {
-      if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
-        resetSplitPicker();
-      }
-      return false;
-    }
-
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      moveSplitPickerHighlight(1);
+      movePaneCommandHighlight(1);
       return true;
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      moveSplitPickerHighlight(-1);
+      movePaneCommandHighlight(-1);
       return true;
     }
 
     if (event.key === 'Enter') {
       event.preventDefault();
-      void confirmSplitPickerChoiceByHighlight();
+      void confirmPaneCommandChoiceByHighlight();
       return true;
     }
 
-    const shortcutChoice = getSplitChoiceForShortcut(
+    const shortcutChoice = getPaneCommandForShortcut(
       event.key,
-      getSplitPickerPreviousItem() !== null
+      getPaneCommandPreviousItem() !== null,
+      getPaneCommandMode()
     );
     if (shortcutChoice === null) {
+      if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
+        resetPaneCommand();
+      }
       return false;
     }
 
     event.preventDefault();
-    void resolveSplitPickerChoice(splitPaneId, shortcutChoice);
+    void resolvePaneCommandChoice(pickerPaneId, shortcutChoice);
     return true;
   }
 
@@ -665,10 +682,10 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     setPaneKind,
     handleBottomBarCommand,
     switchActivePane,
-    resolveSplitPickerChoice,
-    handleSplitPickerGlobalKeydown,
-    moveSplitPickerHighlight,
-    confirmSplitPickerChoiceByHighlight
+    resolvePaneCommandChoice,
+    handlePaneCommandGlobalKeydown,
+    movePaneCommandHighlight,
+    confirmPaneCommandChoiceByHighlight
   };
 }
 

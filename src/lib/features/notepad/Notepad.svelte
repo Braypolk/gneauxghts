@@ -56,10 +56,10 @@
   } from '$lib/features/notepad/orchestration/notepadRefreshController';
   import {
     createPaneSessionController,
-    findSplitPickerPreviousItem,
+    findPaneCommandPreviousItem,
     getSplitSourceNote,
-    splitPickerNoteLabel,
-    splitPickerPreviousNoteLabel as buildSplitPickerPreviousNoteLabel
+    paneCommandNoteLabel,
+    paneCommandPreviousNoteLabel as buildPaneCommandPreviousNoteLabel
   } from '$lib/features/notepad/orchestration/paneSessionController';
   import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
   import { createNotepadCommands } from '$lib/features/notepad/orchestration/notepadCommands';
@@ -117,6 +117,7 @@
   import { createPaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
   import { formatNoteTitle } from '$lib/features/notepad/model/document';
+  import { formatShortcutBinding, keyboardShortcutBindings } from '$lib/keyboardShortcuts';
   import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
   import '$lib/features/notepad/editor/editor.css';
 
@@ -129,7 +130,7 @@
   let workspaceShell = $state<HTMLDivElement | null>(null);
   let vaultNoteChangeUnlisten: UnlistenFn | null = null;
 
-  // workspaceStore owns pane order, active pane, and split picker chrome.
+  // workspaceStore owns pane order, active pane, and pane command chrome.
   let paneOrder = $derived(workspaceStore.paneOrder);
   let activePaneId = $derived(workspaceStore.activePaneId);
 
@@ -168,31 +169,34 @@
     getCurrentPath: () => featureHost.getActiveDocumentSnapshot().currentNotePath
   });
 
-  let splitPickerPaneId = $derived(workspaceStore.splitPicker.paneId);
-  let splitPickerSourceNoteKey = $derived(workspaceStore.splitPicker.sourceNoteKey);
-  let splitPickerMode = $derived(workspaceStore.splitPicker.mode);
-  let splitPickerHighlightedIndex = $derived(workspaceStore.splitPicker.highlightedIndex);
-  let splitPickerFocusEl = $state<HTMLElement | null>(null);
+  let paneCommandPaneId = $derived(workspaceStore.paneCommand.paneId);
+  let paneCommandSourceNoteKey = $derived(workspaceStore.paneCommand.sourceNoteKey);
+  let paneCommandMode = $derived(workspaceStore.paneCommand.mode);
+  let paneCommandHighlightedIndex = $derived(workspaceStore.paneCommand.highlightedIndex);
+  let paneCommandFocusEl = $state<HTMLElement | null>(null);
   $effect(() => {
-    workspaceStore.setSplitPickerFocusEl(splitPickerFocusEl);
+    workspaceStore.setPaneCommandFocusEl(paneCommandFocusEl);
   });
 
-  let splitPickerCurrentNoteLabel = $derived.by(() =>
-    splitPickerNoteLabel(getSplitSourceNote(notepadState, splitPickerSourceNoteKey))
+  let paneCommandCurrentNoteLabel = $derived.by(() =>
+    paneCommandNoteLabel(getSplitSourceNote(notepadState, paneCommandSourceNoteKey))
   );
 
-  let splitPickerPreviousItem = $derived.by((): SearchItem | null => {
-    if (splitPickerPaneId === null || !splitPickerSourceNoteKey) {
+  let paneCommandPreviousItem = $derived.by((): SearchItem | null => {
+    if (paneCommandPaneId === null || !paneCommandSourceNoteKey) {
       return null;
     }
-    return findSplitPickerPreviousItem(
+    return findPaneCommandPreviousItem(
       searchState.recentNotes,
-      getSplitSourceNote(notepadState, splitPickerSourceNoteKey)
+      getSplitSourceNote(notepadState, paneCommandSourceNoteKey)
     );
   });
 
-  let splitPickerPreviousNoteLabel = $derived(
-    buildSplitPickerPreviousNoteLabel(splitPickerPreviousItem)
+  let paneCommandPreviousNoteLabel = $derived(
+    buildPaneCommandPreviousNoteLabel(paneCommandPreviousItem)
+  );
+  let paneCommandPreviousNoteShortcutLabel = $derived(
+    formatShortcutBinding($keyboardShortcutBindings.goToPreviousNote)
   );
 
   // ---------------------------------------------------------------------------
@@ -327,11 +331,11 @@
       document.bodyMarkdown = nextMarkdown;
       document.operationRevision += 1;
       if (
-        splitPickerPaneId === resolvedPaneId &&
-        splitPickerMode !== null &&
+        paneCommandPaneId === resolvedPaneId &&
+        paneCommandMode !== null &&
         nextMarkdown.trim() !== ''
       ) {
-        workspaceStore.resetSplitPicker();
+        workspaceStore.resetPaneCommand();
       }
     }
     if (
@@ -572,7 +576,7 @@
   }
 
   function handleWikilinkKeydown(event: KeyboardEvent) {
-    if (splitPickerPaneId !== null) {
+    if (paneCommandPaneId !== null) {
       return false;
     }
     return paneControllers[getNavigationPaneId()].wikilinkController.handleAutocompleteKeydown(event);
@@ -601,7 +605,7 @@
   }
 
   function updateSelectedRelatedText(paneId: PaneId = getNavigationPaneId()) {
-    if (splitPickerPaneId === paneId) {
+    if (paneCommandPaneId === paneId) {
       clearSelectedRelatedText();
       return;
     }
@@ -622,12 +626,12 @@
 
   // ---------------------------------------------------------------------------
   // High-level commands (open / forget / unforget / remember / split / close /
-  // setKind / split-picker / switch-pane). Encapsulated in notepadCommands so
+  // setKind / pane-command / switch-pane). Encapsulated in notepadCommands so
   // the component does not own every flow body.
   // ---------------------------------------------------------------------------
   const notepadWorkspaceCommands = createNotepadWorkspaceCommands<PaneId>(workspaceStore, {
-    getPreviousItem: () => splitPickerPreviousItem,
-    getFocusEl: () => splitPickerFocusEl
+    getPreviousItem: () => paneCommandPreviousItem,
+    getFocusEl: () => paneCommandFocusEl
   });
 
   const notepadPaneCommands: NotepadPaneCommands<PaneId> = {
@@ -751,8 +755,8 @@
 
   function handleTitleInput(paneId: PaneId) {
     activatePaneSession(paneId);
-    if (splitPickerPaneId === paneId) {
-      workspaceStore.resetSplitPicker();
+    if (paneCommandPaneId === paneId) {
+      workspaceStore.resetPaneCommand();
     }
   }
 
@@ -789,16 +793,19 @@
   }
 
   async function handleSearchResultSelect(result: SearchItem) {
+    workspaceStore.resetPaneCommand();
     await openSearchResult(getOpenContext(), getNavigationContext(), result);
     documents.saveCursorPositionForDocument();
   }
 
   async function handleRecentTaskSelect(task: RecentTaskItem) {
+    workspaceStore.resetPaneCommand();
     await openRecentTask(getOpenContext(), getNavigationContext(), task);
     documents.saveCursorPositionForDocument();
   }
 
   async function handleRelatedItemSelect(item: RelatedNoteItem) {
+    workspaceStore.resetPaneCommand();
     await openSearchResult(getOpenContext(), getNavigationContext(), {
       noteId: item.noteId,
       notePath: item.notePath,
@@ -831,7 +838,7 @@
     openRecentNoteByIndex,
     requestSearchFocus,
     focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
-    handleSplitPickerGlobalKeydown: commands.handleSplitPickerGlobalKeydown,
+    handlePaneCommandGlobalKeydown: commands.handlePaneCommandGlobalKeydown,
     handleWikilinkKeydown
   });
 
@@ -852,7 +859,7 @@
       paneKind,
       isEditorReady: paneRuntimes[paneId].ui.isEditorReady,
       isSlashMenuOpen: paneRuntimes[paneId].ui.slashMenu.open,
-      isSplitPickerOpen: splitPickerPaneId === paneId,
+      isPaneCommandOpen: paneCommandPaneId === paneId,
       showCloseButton: paneOrder.length > 1,
       titleClass: paneTitleInputClass,
       titlePlaceholder: paneKind === 'editor' ? 'Title' : 'Chat title',
@@ -861,10 +868,11 @@
       chatDescription: isPrimaryPane
         ? 'Chat panes are scaffolded for the multipane layout. This pane already tracks focus, title chrome, and close behavior, but the actual chat experience is still a placeholder in this pass.'
         : 'This placeholder reserves the pane contract for a future chat implementation while keeping the workspace architecture aligned around split panes and a shared note session.',
-      splitPickerHighlightedIndex,
-      splitPickerMode,
-      splitPickerCurrentNoteLabel,
-      splitPickerPreviousNoteLabel,
+      paneCommandHighlightedIndex,
+      paneCommandMode,
+      paneCommandCurrentNoteLabel,
+      paneCommandPreviousNoteLabel,
+      paneCommandPreviousNoteShortcutLabel,
       editorLifecycle: {
         shouldMount: paneShouldMountEditor(paneId),
         mount: () => paneLifecycle.mountPaneEditor(paneId),
@@ -881,10 +889,10 @@
     onTitleInput: handleTitleInput,
     onTitleBlur: handleTitleBlur,
     onTitleKeydown: handleTitleKeydown,
-    onSplitHighlightChange: (index: number) => {
-      workspaceStore.setSplitPickerHighlight(index);
+    onPaneCommandHighlightChange: (index: number) => {
+      workspaceStore.setPaneCommandHighlight(index);
     },
-    onSplitChoose: commands.resolveSplitPickerChoice
+    onPaneCommandChoose: commands.resolvePaneCommandChoice
   };
 
   // ---------------------------------------------------------------------------
@@ -1065,7 +1073,7 @@
           pane={paneRuntimes[paneId]}
           viewModel={getPaneViewModel(paneId)}
           actions={paneActions}
-          bind:splitPickerFocusRoot={splitPickerFocusEl}
+          bind:paneCommandFocusRoot={paneCommandFocusEl}
         />
       {/each}
     </div>

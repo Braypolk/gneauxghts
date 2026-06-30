@@ -12,8 +12,8 @@ export interface WorkspaceShortcutDeps<TPaneId extends string> {
   openRecentNoteByIndex: (index: number) => void | Promise<void>;
   requestSearchFocus: (mode: 'all' | 'current') => void;
   focusPaneAfterShortcut: (paneId: TPaneId, options?: { preferTitle?: boolean }) => void;
-  /** Splitting-picker keydown branch — return true if handled. */
-  handleSplitPickerGlobalKeydown: (event: KeyboardEvent) => boolean;
+  /** Pane content-picker keydown branch — return true if handled. */
+  handlePaneCommandGlobalKeydown: (event: KeyboardEvent) => boolean;
   /** Wikilink keydown branch — return true if handled. */
   handleWikilinkKeydown: (event: KeyboardEvent) => boolean;
 }
@@ -31,7 +31,7 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
       return;
     }
 
-    if (deps.handleSplitPickerGlobalKeydown(event)) {
+    if (deps.handlePaneCommandGlobalKeydown(event)) {
       return;
     }
 

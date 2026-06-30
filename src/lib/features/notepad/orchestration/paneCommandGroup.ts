@@ -1,9 +1,8 @@
+import { EditorView } from '@codemirror/view';
 import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
 import { focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
 
 export interface PaneCommandGroupDeps<TPaneId extends string, TDocument> {
-  getSplitPickerPaneId: () => TPaneId | null;
-  getSplitPickerFocusEl: () => HTMLElement | null;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   getPaneEditorRoot: (paneId: TPaneId) => HTMLElement | null;
   getPaneDocument: (paneId: TPaneId) => TDocument;
@@ -18,11 +17,6 @@ export function createPaneCommandGroup<TPaneId extends string, TDocument>(
   deps: PaneCommandGroupDeps<TPaneId, TDocument>
 ) {
   function focusPaneAfterShortcut(paneId: TPaneId, options: { preferTitle?: boolean } = {}) {
-    if (deps.getSplitPickerPaneId() === paneId && deps.getSplitPickerFocusEl()) {
-      deps.getSplitPickerFocusEl()?.focus({ preventScroll: true });
-      return;
-    }
-
     const titleInput = deps.getPaneTitleInput(paneId);
     if (options.preferTitle && titleInput) {
       focusInputAtEnd(titleInput);
@@ -31,6 +25,12 @@ export function createPaneCommandGroup<TPaneId extends string, TDocument>(
 
     const cmContent = findCmContentElement(deps.getPaneEditorRoot(paneId));
     if (cmContent instanceof HTMLElement) {
+      const view = EditorView.findFromDOM(cmContent);
+      if (view) {
+        view.focus();
+        return;
+      }
+
       cmContent.focus({ preventScroll: true });
       return;
     }

@@ -1826,26 +1826,13 @@ export function restoreCursorPosition(
   return true;
 }
 
-function pickVerticalScrollTarget(view: EditorView, outerShell: HTMLElement | null): HTMLElement {
-  const inner = view.scrollDOM;
-  if (inner.scrollHeight > inner.clientHeight + 1) {
-    return inner;
-  }
-  if (outerShell && outerShell.scrollHeight > outerShell.clientHeight + 1) {
-    return outerShell;
-  }
-  return inner;
-}
-
 /**
- * Scroll the editor's vertical scroll container (usually CodeMirror's `scrollDOM`)
+ * Scroll CodeMirror's vertical scroll container
  * so the caret sits near `fractionFromTop` of the visible viewport (0 = top).
- * `outerShell` is optional; when the inner scroller does not overflow, the shell
- * is used if it scrolls (some layouts scroll the pane wrapper instead).
  */
 export function alignEditorScrollToSelection(
   controller: EditorController | null,
-  outerShell: HTMLElement | null,
+  _outerShell: HTMLElement | null,
   fractionFromTop = 0.25
 ): boolean {
   if (!controller) {
@@ -1853,7 +1840,7 @@ export function alignEditorScrollToSelection(
   }
 
   const view = controller.view;
-  const scrollEl = pickVerticalScrollTarget(view, outerShell);
+  const scrollEl = view.scrollDOM;
   const head = view.state.selection.main.head;
   const coords = view.coordsAtPos(head);
   if (!coords) {

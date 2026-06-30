@@ -171,6 +171,16 @@ export function createEditorLifecycleController({
     setSharedEditorState(document, null);
   }
 
+  function restoreEditorScrollTop(scrollTop: number) {
+    const scrollEl = getController()?.view.scrollDOM;
+    if (!scrollEl) {
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+    scrollEl.scrollTop = Math.max(0, Math.min(scrollTop, maxScrollTop));
+  }
+
   function restoreCursorPositionForDocument(
     document: NoteDraftState = getDocumentSession(),
     position: CursorPosition | null = loadCursorPosition(
@@ -200,8 +210,7 @@ export function createEditorLifecycleController({
       return;
     }
 
-    const editorShell = getEditorShell();
-    const scrollTop = preserveScroll ? (editorShell?.scrollTop ?? 0) : 0;
+    const scrollTop = preserveScroll ? (getController()?.view.scrollDOM.scrollTop ?? 0) : 0;
     const document = getDocumentSession();
     const shouldRestoreFocus = restoreCursor && (getController()?.view.hasFocus ?? false);
 
@@ -281,17 +290,16 @@ export function createEditorLifecycleController({
       getController()?.view.focus();
     }
 
-    const nextEditorShell = getEditorShell();
-    if (preserveScroll && nextEditorShell) {
+    if (preserveScroll) {
       await tick();
-      nextEditorShell.scrollTop = Math.min(scrollTop, nextEditorShell.scrollHeight);
+      restoreEditorScrollTop(scrollTop);
     }
   }
 
   async function replaceEditorContentInPlace(nextMarkdown: string) {
     const controller = getController();
     const cursorPosition = readCursorPosition(controller);
-    const scrollTop = getEditorShell()?.scrollTop ?? 0;
+    const scrollTop = controller?.view.scrollDOM.scrollTop ?? 0;
 
     setIsApplyingExternalContent(true);
     try {
@@ -310,10 +318,7 @@ export function createEditorLifecycleController({
       restoreCursorPosition(controller, cursorPosition, { scrollIntoView: false });
       await tick();
 
-      const editorShell = getEditorShell();
-      if (editorShell) {
-        editorShell.scrollTop = Math.min(scrollTop, editorShell.scrollHeight);
-      }
+      restoreEditorScrollTop(scrollTop);
     } finally {
       setIsApplyingExternalContent(false);
     }
@@ -404,7 +409,7 @@ export function createEditorLifecycleController({
     }
 
     const controller = getController();
-    const scrollTop = getEditorShell()?.scrollTop ?? 0;
+    const scrollTop = controller?.view.scrollDOM.scrollTop ?? 0;
     const cursorPosition = readCursorPosition(controller);
 
     setIsApplyingExternalContent(true);
@@ -421,10 +426,7 @@ export function createEditorLifecycleController({
       }
 
       closeTransientUi();
-      const editorShell = getEditorShell();
-      if (editorShell) {
-        editorShell.scrollTop = Math.min(scrollTop, editorShell.scrollHeight);
-      }
+      restoreEditorScrollTop(scrollTop);
       return true;
     } finally {
       setIsApplyingExternalContent(false);

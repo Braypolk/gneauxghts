@@ -1,5 +1,5 @@
 import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
-import type { SplitChoice, SplitPickerMode } from '$lib/features/notepad/splitPanePicker';
+import type { PaneCommandChoice, PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 
 type PaneKind = 'editor' | 'chat';
 
@@ -15,17 +15,18 @@ export interface PaneViewModel {
   frameClass: string;
   isEditorReady: boolean;
   isSlashMenuOpen: boolean;
-  isSplitPickerOpen: boolean;
+  isPaneCommandOpen: boolean;
   showCloseButton: boolean;
   titleClass: string;
   titlePlaceholder: string;
   titleValue: string;
   titleReadonly: boolean;
   chatDescription: string;
-  splitPickerHighlightedIndex: number;
-  splitPickerMode: SplitPickerMode;
-  splitPickerCurrentNoteLabel: string;
-  splitPickerPreviousNoteLabel: string | null;
+  paneCommandHighlightedIndex: number;
+  paneCommandMode: PaneCommandMode;
+  paneCommandCurrentNoteLabel: string;
+  paneCommandPreviousNoteLabel: string | null;
+  paneCommandPreviousNoteShortcutLabel: string;
   /**
    * Editor lifecycle hooks for the use:editor action wired on the editor
    * root. When shouldMount is true, the action invokes mount() once the
@@ -51,6 +52,6 @@ export interface PaneWorkspaceActions {
   onTitleInput: (paneId: NotepadPaneId) => void;
   onTitleBlur: (paneId: NotepadPaneId, rawTitle: string) => void;
   onTitleKeydown: (paneId: NotepadPaneId, event: KeyboardEvent) => void;
-  onSplitHighlightChange: (index: number) => void;
-  onSplitChoose: (paneId: NotepadPaneId, choice: SplitChoice) => void | Promise<void>;
+  onPaneCommandHighlightChange: (index: number) => void;
+  onPaneCommandChoose: (paneId: NotepadPaneId, choice: PaneCommandChoice) => void | Promise<void>;
 }

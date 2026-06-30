@@ -9,26 +9,25 @@ import {
   setActivePane as setStoreActivePane,
   type NoteKey
 } from '$lib/features/notepad/state/noteStore';
-import type { SplitPickerMode } from '$lib/features/notepad/splitPanePicker';
+import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 
 /**
- * Split picker UI state. The split picker is a transient overlay shown in a
- * pane while the user picks how to populate it (current note / previous /
- * new / chat). It is workspace-level rather than pane-local because only
- * one pane can host the picker at a time, and Notepad.svelte already wired
- * its lifecycle.
+ * Pane command UI state. The pane command overlay is shown while the user
+ * chooses how to populate or repurpose a pane (typing, current note,
+ * previous note, thought partner). It is workspace-level rather than
+ * pane-local because only one pane can host the overlay at a time.
  */
-export interface SplitPickerState {
+export interface PaneCommandState {
   paneId: NotepadPaneId | null;
   sourceNoteKey: NoteKey | null;
-  mode: SplitPickerMode;
+  mode: PaneCommandMode;
   highlightedIndex: number;
   focusEl: HTMLElement | null;
 }
 
 /**
  * WorkspaceStore owns workspace-level pane state: pane order, active pane,
- * and split picker chrome. It mirrors notepadRuntimeState (which persists
+ * and pane command chrome. It mirrors notepadRuntimeState (which persists
  * across navigation) so that effects in Notepad.svelte don't have to track
  * the same state in multiple places.
  *
@@ -37,7 +36,7 @@ export interface SplitPickerState {
 export class WorkspaceStore {
   paneOrder = $state<NotepadPaneId[]>([...notepadRuntimeState.paneOrder]);
   activePaneId = $state<NotepadPaneId>(notepadRuntimeState.activePaneId);
-  splitPicker = $state<SplitPickerState>({
+  paneCommand = $state<PaneCommandState>({
     paneId: null,
     sourceNoteKey: null,
     mode: 'split',
@@ -67,44 +66,38 @@ export class WorkspaceStore {
     this.setPaneOrder(this.paneOrder.filter((candidate) => candidate !== paneId));
   }
 
-  beginSplitPicker(paneId: NotepadPaneId, sourceNoteKey: NoteKey): void {
-    this.splitPicker = {
+  beginPaneCommand(
+    paneId: NotepadPaneId,
+    sourceNoteKey: NoteKey,
+    mode: PaneCommandMode
+  ): void {
+    this.paneCommand = {
       paneId,
       sourceNoteKey,
-      mode: 'split',
+      mode,
       highlightedIndex: 0,
-      focusEl: this.splitPicker.focusEl
+      focusEl: this.paneCommand.focusEl
     };
   }
 
-  beginStartPicker(paneId: NotepadPaneId, sourceNoteKey: NoteKey): void {
-    this.splitPicker = {
-      paneId,
-      sourceNoteKey,
-      mode: 'start',
-      highlightedIndex: 0,
-      focusEl: this.splitPicker.focusEl
-    };
+  setPaneCommandHighlight(index: number): void {
+    this.paneCommand = { ...this.paneCommand, highlightedIndex: index };
   }
 
-  setSplitPickerHighlight(index: number): void {
-    this.splitPicker = { ...this.splitPicker, highlightedIndex: index };
-  }
-
-  setSplitPickerFocusEl(el: HTMLElement | null): void {
+  setPaneCommandFocusEl(el: HTMLElement | null): void {
     // Mutate the focusEl field in place rather than spreading and
-    // reassigning splitPicker. The previous spread read this.splitPicker
+    // reassigning paneCommand. The previous spread read this.paneCommand
     // before writing it, which trapped any caller wrapped in a Svelte
     // $effect into an effect_update_depth_exceeded loop (the read-write
-    // pattern marks splitPicker as both a dep and a target). Mutation +
+    // pattern marks paneCommand as both a dep and a target). Mutation +
     // equality guard avoids both the dep-tracking read and redundant
     // invalidations.
-    if (this.splitPicker.focusEl === el) return;
-    this.splitPicker.focusEl = el;
+    if (this.paneCommand.focusEl === el) return;
+    this.paneCommand.focusEl = el;
   }
 
-  resetSplitPicker(): void {
-    this.splitPicker = {
+  resetPaneCommand(): void {
+    this.paneCommand = {
       paneId: null,
       sourceNoteKey: null,
       mode: 'split',
