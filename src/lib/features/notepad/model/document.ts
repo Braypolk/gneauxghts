@@ -28,6 +28,10 @@ export function parseStoredMarkdown(markdown: string): ParsedNoteDocument {
   };
 }
 
+export function formatNoteTitle(title: string) {
+  return title.trim();
+}
+
 export function composeMarkdown(noteTitle: string, noteBody: string) {
   const normalizedBody = noteBody.replace(/\r\n/g, '\n');
   const trimmedTitle = noteTitle.trim();

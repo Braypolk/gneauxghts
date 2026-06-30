@@ -3,6 +3,7 @@ pub(crate) mod forgotten_note_commands;
 mod index_bridge;
 pub(crate) mod note_persistence;
 mod note_session;
+pub(crate) mod proposal_commands;
 pub(crate) mod search_commands;
 pub(crate) mod task_commands;
 pub(crate) mod wikilink_commands;
@@ -881,7 +882,7 @@ mod tests {
 
     #[test]
     fn resolve_note_link_target_prefers_paragraph_numbers_and_falls_back_to_title() {
-        let note_path = PathBuf::from("/tmp/project.md");
+        let note_path = PathBuf::from("/tmp/project-atlas.md");
         let note = build_indexed_note(
             &note_path,
             "# Project Atlas\n\nFirst paragraph.\n\n## Ideas\n\nSecond paragraph with link target.\n",
@@ -892,7 +893,7 @@ mod tests {
         let heading_target = resolve_note_link_target(&note_path, &note, Some("Ideas"));
         let fallback_target = resolve_note_link_target(&note_path, &note, Some("Missing"));
 
-        assert_eq!(paragraph_target.note_path, "/tmp/project.md");
+        assert_eq!(paragraph_target.note_path, "/tmp/project-atlas.md");
         assert_eq!(paragraph_target.section_label, "Paragraph 2");
         assert_eq!(paragraph_target.match_text, "## Ideas");
 
@@ -900,7 +901,7 @@ mod tests {
         assert_eq!(heading_target.match_text, "## Ideas");
 
         assert_eq!(fallback_target.section_label, "Title");
-        assert_eq!(fallback_target.match_text, "project");
+        assert_eq!(fallback_target.match_text, "project-atlas");
     }
 
     #[test]

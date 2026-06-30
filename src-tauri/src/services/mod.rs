@@ -8,11 +8,13 @@
 //! [`crate::app::AppData`].
 
 pub(crate) mod background_index_queue;
+pub(crate) mod current_document;
 pub(crate) mod note_service;
 pub(crate) mod settings_service;
 pub(crate) mod task_service;
 
 pub(crate) use background_index_queue::BackgroundIndexQueue;
+pub(crate) use current_document::{resolve_current_document, CurrentDocumentRequest};
 pub(crate) use note_service::NoteService;
 pub(crate) use settings_service::SettingsService;
 pub(crate) use task_service::TaskService;

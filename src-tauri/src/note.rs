@@ -153,7 +153,7 @@ fn strip_leading_title_heading(markdown: &str, title: &str) -> String {
         return normalized;
     };
 
-    if heading != title.trim() {
+    if title_match_key(heading) != title_match_key(title) {
         return normalized;
     }
 
@@ -166,6 +166,14 @@ fn strip_leading_title_heading(markdown: &str, title: &str) -> String {
     }
 
     lines.join("\n")
+}
+
+fn title_match_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 pub(crate) fn prepare_note_markdown(

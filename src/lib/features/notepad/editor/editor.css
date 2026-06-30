@@ -71,6 +71,16 @@
   touch-action: none;
 }
 
+.notepad-editor-shell.notepad-editor-shell--picker-open {
+  --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.notepad-editor-shell.notepad-editor-shell--picker-open .cm-scroller {
+  overflow: hidden !important;
+}
+
 .related-drawer {
   overflow: visible;
   /* Match the card's width transition exactly (same property timing/easing and
@@ -177,6 +187,17 @@
   overflow-x: clip;
 }
 
+.notepad-picker-surface {
+  position: absolute;
+  top: calc(var(--editor-top-padding) + 5.25rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, calc(var(--editor-readable-width) + var(--editor-left-padding) + var(--editor-handle-lane-width) + var(--editor-right-padding)));
+  max-width: 100%;
+  padding-left: calc(var(--editor-left-padding) + var(--editor-handle-lane-width));
+  padding-right: var(--editor-right-padding);
+}
+
 .notepad-editor-shell .gn-editor-root .notepad-block-handle [data-role='add'] {
   display: none;
 }
@@ -187,6 +208,19 @@
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-content {
   max-width: 100%;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-placeholder {
+  color: color-mix(in oklab, var(--muted-foreground) 72%, transparent);
+  pointer-events: none;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line:empty {
+  min-height: 1.75em;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn.cm-focused .cm-cursor {
+  border-left: 1.5px solid var(--foreground) !important;
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h1 {

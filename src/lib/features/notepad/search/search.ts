@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
+import type {
+  RetrievalContextResponse,
+  RetrievalContextScope
+} from '$lib/types/semantic';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import { callWithDraft, computeDraftHash } from '$lib/features/notepad/search/draftRef';
 
@@ -86,6 +90,34 @@ export async function getRelatedNotes(
         currentBodyHash,
         selectedText,
         limit
+      })
+  );
+}
+
+export async function retrieveNoteContext(
+  scope: RetrievalContextScope,
+  context: SearchContext,
+  options: {
+    query?: string | null;
+    selectedText?: string | null;
+    limit?: number;
+  } = {}
+) {
+  const hash = computeDraftHash(context.currentMarkdown);
+  return callWithDraft(
+    context.currentPath,
+    hash,
+    context.currentMarkdown,
+    (currentMarkdown, currentBodyHash) =>
+      invoke<RetrievalContextResponse>('retrieve_note_context', {
+        scope,
+        query: options.query ?? null,
+        currentPath: context.currentPath,
+        currentTitle: context.currentTitle,
+        currentMarkdown,
+        currentBodyHash,
+        selectedText: options.selectedText ?? null,
+        limit: options.limit ?? 8
       })
   );
 }

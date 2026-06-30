@@ -166,8 +166,8 @@ const shortcutDefinitionsBase = [
   },
   {
     id: 'rememberCurrentNote',
-    label: 'Remember Current Note',
-    description: 'Run default remember action.',
+    label: 'New Idea',
+    description: 'Save the current note if needed, then start a fresh note.',
     group: 'workspace',
     defaultBinding: 'Meta+s'
   },

@@ -7,12 +7,13 @@ use crate::{
         build_recent_result, search_note, NoteSearchResult, ScoredSearchResult, MAX_SEARCH_RESULTS,
     },
     semantic::{RelatedNotesResponse, SemanticChunkMatch},
+    services::{resolve_current_document, CurrentDocumentRequest},
     state::{
         prune_recent_note_ids, read_state, resolve_note_id_from_path,
         task_projection::list_recent_open_tasks, validate_current_path, write_state,
     },
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::{
     collections::HashMap,
@@ -246,6 +247,41 @@ pub(crate) struct RecentFocusBundle {
     recent_tasks: Vec<RecentTaskItem>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum RetrievalContextScope {
+    Note,
+    Selection,
+    Query,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RetrievalContextItem {
+    note_id: Option<String>,
+    note_path: Option<String>,
+    note_title: String,
+    section_label: String,
+    excerpt: String,
+    match_text: String,
+    source: String,
+    reason: String,
+    score: f32,
+    lexical_score: Option<f32>,
+    semantic_score: Option<f32>,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RetrievalContextResponse {
+    status: String,
+    scope: String,
+    reason: Option<String>,
+    items: Vec<RetrievalContextItem>,
+}
+
 /// Combined focus loader: returns both recent notes and recent tasks in a
 /// single backend round-trip. This collapses two separate frontend calls
 /// (each performing its own `read_state` + `ensure_interactive_index` +
@@ -356,13 +392,17 @@ pub(crate) fn search_notes(
     }
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let draft = build_draft_ref(
-        current_path.as_deref(),
-        &current_title,
-        current_markdown,
-        current_body_hash,
-    );
-    let resolved_body = state.resolve_draft_body(&draft)?.unwrap_or_default();
+    let resolved_current = resolve_current_document(
+        &state,
+        CurrentDocumentRequest::from_path(
+            current_path.as_deref(),
+            current_title.clone(),
+            current_markdown,
+            current_body_hash,
+        ),
+    )?;
+    let draft = resolved_current.draft;
+    let resolved_body = resolved_current.body.unwrap_or_default();
     let mut candidates = collect_lexical_candidates(
         &state,
         &query,
@@ -423,12 +463,16 @@ pub(crate) async fn search_notes_hybrid(
     }
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let draft = build_draft_ref(
-        current_path.as_deref(),
-        &current_title,
-        current_markdown,
-        current_body_hash,
-    );
+    let resolved_current = resolve_current_document(
+        &state,
+        CurrentDocumentRequest::from_path(
+            current_path.as_deref(),
+            current_title.clone(),
+            current_markdown,
+            current_body_hash,
+        ),
+    )?;
+    let draft = resolved_current.draft;
     let cache_fingerprint = build_search_fingerprint(
         &normalized_query,
         &mode,
@@ -441,7 +485,7 @@ pub(crate) async fn search_notes_hybrid(
     if let Some(cached) = search_cache_get(&cache_fingerprint) {
         return Ok(cached);
     }
-    let resolved_body = state.resolve_draft_body(&draft)?.unwrap_or_default();
+    let resolved_body = resolved_current.body.unwrap_or_default();
     let lexical_candidates = collect_lexical_candidates(
         &state,
         &query,
@@ -536,12 +580,16 @@ pub(crate) async fn get_related_notes(
 ) -> Result<RelatedNotesResponse, String> {
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
-    let draft = build_draft_ref(
-        current_path.as_deref(),
-        &current_title,
-        current_markdown,
-        current_body_hash,
-    );
+    let resolved_current = resolve_current_document(
+        &state,
+        CurrentDocumentRequest::from_path(
+            current_path.as_deref(),
+            current_title.clone(),
+            current_markdown,
+            current_body_hash,
+        ),
+    )?;
+    let draft = resolved_current.draft;
     let fingerprint = build_related_fingerprint(
         current_path.as_deref(),
         draft.hash.as_deref(),
@@ -551,7 +599,7 @@ pub(crate) async fn get_related_notes(
     if let Some(cached) = related_cache_get(&fingerprint) {
         return Ok(cached);
     }
-    let resolved_body = state.resolve_draft_body(&draft)?.unwrap_or_default();
+    let resolved_body = resolved_current.body.unwrap_or_default();
     let current_path_raw = current_path
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
@@ -570,6 +618,169 @@ pub(crate) async fn get_related_notes(
     .map_err(|err| err.to_string())??;
     related_cache_put(fingerprint, response.clone());
     Ok(response)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn retrieve_note_context(
+    state: State<'_, AppState>,
+    scope: RetrievalContextScope,
+    query: Option<String>,
+    current_path: Option<String>,
+    current_title: String,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
+    selected_text: Option<String>,
+    limit: usize,
+) -> Result<RetrievalContextResponse, String> {
+    let notes_dir = prepare_notes_dir(false)?;
+    let current_path = validate_current_path(current_path, &notes_dir)?;
+    let resolved_current = resolve_current_document(
+        &state,
+        CurrentDocumentRequest::from_path(
+            current_path.as_deref(),
+            current_title.clone(),
+            current_markdown,
+            current_body_hash,
+        ),
+    )?;
+    let resolved_body = resolved_current.body.unwrap_or_default();
+    let current_path_raw = current_path
+        .as_deref()
+        .map(|path| path.to_string_lossy().into_owned());
+    let effective_limit = limit.max(1);
+
+    match scope {
+        RetrievalContextScope::Query => {
+            let Some(query) = query.filter(|value| !value.trim().is_empty()) else {
+                return Ok(RetrievalContextResponse {
+                    status: "insufficientContent".to_string(),
+                    scope: "query".to_string(),
+                    reason: Some("Provide a query to retrieve note context.".to_string()),
+                    items: Vec::new(),
+                });
+            };
+            let normalized_query = normalize_search_text(&query);
+            let query_terms = normalized_query
+                .split_whitespace()
+                .filter(|term| !term.is_empty())
+                .collect::<Vec<_>>();
+            let lexical_candidates = collect_lexical_candidates(
+                &state,
+                &query,
+                &notes_dir,
+                SearchMode::All,
+                current_path.as_deref(),
+                &current_title,
+                &resolved_body,
+                resolved_current.draft.hash.as_deref(),
+                &normalized_query,
+                &query_terms,
+            )?;
+            let settings = state.semantic.get_settings()?;
+            let semantic_matches = if settings.semantic_search_enabled {
+                let semantic = state.semantic.clone();
+                let semantic_query = query.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    semantic.semantic_matches_for_text(
+                        &semantic_query,
+                        current_path_raw.as_deref(),
+                        effective_limit.saturating_mul(3),
+                    )
+                })
+                .await
+                .map_err(|err| err.to_string())??
+            } else {
+                Vec::new()
+            };
+            let merged = merge_hybrid_candidates(
+                lexical_candidates,
+                semantic_matches,
+                &normalized_query,
+                current_path.as_deref(),
+                effective_limit,
+                settings.lexical_weight.max(0.0),
+                settings.semantic_weight.max(0.0),
+            );
+            return Ok(RetrievalContextResponse {
+                status: "ready".to_string(),
+                scope: "query".to_string(),
+                reason: None,
+                items: merged.into_iter().map(context_item_from_search).collect(),
+            });
+        }
+        RetrievalContextScope::Note | RetrievalContextScope::Selection => {
+            let semantic = state.semantic.clone();
+            let response = tauri::async_runtime::spawn_blocking(move || {
+                semantic.related_notes(
+                    current_path_raw.as_deref(),
+                    &current_title,
+                    &resolved_body,
+                    match scope {
+                        RetrievalContextScope::Selection => selected_text.as_deref(),
+                        _ => None,
+                    },
+                    effective_limit,
+                )
+            })
+            .await
+            .map_err(|err| err.to_string())??;
+            Ok(RetrievalContextResponse {
+                status: response.status,
+                scope: response.scope,
+                reason: response.reason,
+                items: response
+                    .items
+                    .into_iter()
+                    .map(|item| RetrievalContextItem {
+                        note_id: None,
+                        note_path: Some(item.note_path),
+                        note_title: item.note_title,
+                        section_label: item.section_label,
+                        excerpt: item.excerpt,
+                        match_text: item.match_text,
+                        source: "semantic".to_string(),
+                        reason: "related".to_string(),
+                        score: item.score,
+                        lexical_score: None,
+                        semantic_score: Some(item.score),
+                        start_line: Some(item.start_line),
+                        end_line: Some(item.end_line),
+                    })
+                    .collect(),
+            })
+        }
+    }
+}
+
+fn context_item_from_search(result: NoteSearchResult) -> RetrievalContextItem {
+    let source = if result.reason_labels.iter().any(|label| label == "keyword")
+        && result.reason_labels.iter().any(|label| label == "semantic")
+    {
+        "hybrid"
+    } else if result.reason_labels.iter().any(|label| label == "semantic") {
+        "semantic"
+    } else {
+        "lexical"
+    };
+    RetrievalContextItem {
+        note_id: result.note_id,
+        note_path: result.note_path,
+        note_title: result.file_name,
+        section_label: result.section_label,
+        excerpt: result.excerpt,
+        match_text: result.match_text,
+        source: source.to_string(),
+        reason: result.reason_labels.join(","),
+        score: result
+            .semantic_score
+            .or(result.lexical_score)
+            .unwrap_or_default(),
+        lexical_score: result.lexical_score,
+        semantic_score: result.semantic_score,
+        start_line: result.start_line,
+        end_line: result.end_line,
+    }
 }
 
 pub(super) fn build_draft_ref(

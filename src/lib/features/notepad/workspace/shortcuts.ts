@@ -7,7 +7,7 @@ export interface WorkspaceShortcutDeps<TPaneId extends string> {
   splitWorkspace: () => Promise<void>;
   closePane: (paneId: TPaneId) => Promise<void>;
   switchActivePane: () => Promise<void>;
-  rememberCurrentNote: () => Promise<void>;
+  startNewNoteFlow: () => Promise<void>;
   toggleRelatedPanel: () => void;
   openRecentNoteByIndex: (index: number) => void | Promise<void>;
   requestSearchFocus: (mode: 'all' | 'current') => void;
@@ -67,7 +67,7 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
       }
 
       event.preventDefault();
-      await deps.rememberCurrentNote();
+      await deps.startNewNoteFlow();
       return;
     }
 

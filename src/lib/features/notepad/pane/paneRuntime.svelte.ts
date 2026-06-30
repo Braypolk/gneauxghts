@@ -1,5 +1,5 @@
 import type { EditorController } from '$lib/features/notepad/editor/editor';
-import type { PaneSlashMenuModel } from '$lib/features/notepad/editor/SlashMenu.svelte';
+import type { PaneSlashMenuModel } from '$lib/features/notepad/editor/slashMenu';
 import {
   createWikilinkAutocompleteState,
   type WikilinkAutocompleteState

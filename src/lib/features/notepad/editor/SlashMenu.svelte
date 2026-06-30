@@ -3,7 +3,7 @@
   import type { VirtualElement } from '@floating-ui/dom';
   import type { EditorView } from '@codemirror/view';
   import { blockTypeIcons } from '$lib/features/notepad/editor/blockTypes';
-  import type { SlashMenuGroupWithItems } from '$lib/features/notepad/editor/slashMenu';
+  import type { PaneSlashMenuModel, SlashMenuGroupWithItems } from '$lib/features/notepad/editor/slashMenu';
   import {
     getSlashMenuFloatingReference,
     slashMenuActivateGroupFromUi,
@@ -12,16 +12,6 @@
     slashMenuPickFromUi,
     slashMenuSetHoverFromUi
   } from '$lib/features/notepad/editor/slashMenu';
-
-  export type PaneSlashMenuModel =
-    | { open: false }
-    | {
-        open: true;
-        view: EditorView;
-        anchorPos: number;
-        groups: SlashMenuGroupWithItems[];
-        hoverIndex: number;
-      };
 
   interface Props {
     menu: PaneSlashMenuModel;

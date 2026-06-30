@@ -1,15 +1,15 @@
-export type SplitChoice = 'current' | 'previous' | 'new' | 'chat';
+export type SplitChoice = 'current' | 'previous' | 'new';
+export type SplitPickerMode = 'split' | 'start';
 
-const SPLIT_CHOICES: readonly SplitChoice[] = ['current', 'previous', 'new', 'chat'];
+const SPLIT_CHOICES: readonly SplitChoice[] = ['current', 'previous', 'new'];
 const SPLIT_OPTION_IDS: Readonly<Record<SplitChoice, string>> = {
   current: 'split-choice-current',
   previous: 'split-choice-previous',
-  new: 'split-choice-new',
-  chat: 'split-choice-chat'
+  new: 'split-choice-new'
 };
 
 function getEnabledIndexes(hasPrevious: boolean): readonly number[] {
-  return hasPrevious ? [0, 1, 2, 3] : [0, 2, 3];
+  return hasPrevious ? [0, 1, 2] : [0, 2];
 }
 
 export function getSplitChoiceByIndex(
@@ -41,7 +41,7 @@ export function getNextSplitChoiceIndex(
 
 export function getSplitChoiceForShortcut(key: string, hasPrevious: boolean): SplitChoice | null {
   const shortcutIndex = Number(key);
-  if (!Number.isInteger(shortcutIndex) || shortcutIndex < 1 || shortcutIndex > 4) {
+  if (!Number.isInteger(shortcutIndex) || shortcutIndex < 1 || shortcutIndex > 3) {
     return null;
   }
 

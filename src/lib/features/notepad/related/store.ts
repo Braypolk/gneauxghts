@@ -271,6 +271,16 @@ export function createRelatedNotesStore({
     scheduleRelated({ immediate: true });
   }
 
+  function collapseRelatedPanel(shellEl: HTMLDivElement | null) {
+    if (get(store).isPanelCollapsed) {
+      return;
+    }
+
+    patch({ isPanelCollapsed: true });
+    updateDrawerLayout(shellEl);
+    cancelRelatedAssessment();
+  }
+
   function dispose() {
     cancelRelatedAssessment();
   }
@@ -286,6 +296,7 @@ export function createRelatedNotesStore({
     runRelatedNotes,
     handleRelatedScopeChange,
     toggleRelatedPanel,
+    collapseRelatedPanel,
     dispose
   };
 }

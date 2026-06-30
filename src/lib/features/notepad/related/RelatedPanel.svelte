@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { X } from '@lucide/svelte';
   import type { RelatedNoteItem } from '$lib/types/semantic';
 
   interface RelatedPanelProps {
@@ -10,6 +11,7 @@
     hasSelection: boolean;
     onScopeChange: (scope: 'note' | 'selection') => void;
     onSelect: (item: RelatedNoteItem) => void;
+    onClose: () => void;
   }
 
   let {
@@ -20,38 +22,50 @@
     loading,
     hasSelection,
     onScopeChange,
-    onSelect
+    onSelect,
+    onClose
   }: RelatedPanelProps = $props();
 </script>
 
 <aside class="related-panel flex h-full min-h-0 flex-col rounded-[1.8rem] border border-border/80 bg-card/50">
   <div class="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
     <h2 class="text-sm font-semibold tracking-[0.08em] text-foreground/88 uppercase">Related</h2>
-    <div class="flex items-center gap-1 rounded-full border border-border/70 bg-background/60 p-1">
-      <button
-        type="button"
-        class={`rounded-full px-3 py-1 text-xs font-medium transition ${
-          scope === 'note'
-            ? 'bg-foreground text-background shadow-sm'
-            : 'text-muted-foreground hover:text-foreground'
-        }`}
-        onclick={() => onScopeChange('note')}
-      >
-        Note
-      </button>
-      {#if hasSelection}
+    <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1 rounded-full border border-border/70 bg-background/60 p-1">
         <button
           type="button"
           class={`rounded-full px-3 py-1 text-xs font-medium transition ${
-            scope === 'selection'
+            scope === 'note'
               ? 'bg-foreground text-background shadow-sm'
               : 'text-muted-foreground hover:text-foreground'
           }`}
-          onclick={() => onScopeChange('selection')}
+          onclick={() => onScopeChange('note')}
         >
-          Selection
+          Note
         </button>
-      {/if}
+        {#if hasSelection}
+          <button
+            type="button"
+            class={`rounded-full px-3 py-1 text-xs font-medium transition ${
+              scope === 'selection'
+                ? 'bg-foreground text-background shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            onclick={() => onScopeChange('selection')}
+          >
+            Selection
+          </button>
+        {/if}
+      </div>
+      <button
+        type="button"
+        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        onclick={onClose}
+        aria-label="Close related panel"
+        title="Close related panel"
+      >
+        <X class="h-4 w-4" />
+      </button>
     </div>
   </div>
 

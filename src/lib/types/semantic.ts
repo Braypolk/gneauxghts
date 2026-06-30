@@ -163,3 +163,28 @@ export interface RelatedNotesResponse {
   reason: string | null;
   items: RelatedNoteItem[];
 }
+
+export type RetrievalContextScope = 'note' | 'selection' | 'query';
+
+export interface RetrievalContextItem {
+  noteId: string | null;
+  notePath: string | null;
+  noteTitle: string;
+  sectionLabel: string;
+  excerpt: string;
+  matchText: string;
+  source: 'lexical' | 'semantic' | 'hybrid' | string;
+  reason: string;
+  score: number;
+  lexicalScore: number | null;
+  semanticScore: number | null;
+  startLine: number | null;
+  endLine: number | null;
+}
+
+export interface RetrievalContextResponse {
+  status: 'ready' | 'insufficientContent' | 'unavailable' | string;
+  scope: RetrievalContextScope;
+  reason: string | null;
+  items: RetrievalContextItem[];
+}

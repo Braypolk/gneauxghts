@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle, X } from '@lucide/svelte';
   import {
     forgetButtonDurationPreference,
@@ -54,6 +54,8 @@
 
   let searchInput = $state<HTMLInputElement | null>(null);
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
+  let forgetButton = $state<HTMLButtonElement | null>(null);
+  let forgetCancelButton = $state<HTMLButtonElement | null>(null);
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
 
@@ -113,6 +115,16 @@
   });
 
   $effect(() => {
+    if (!$bottomBarState.isForgetConfirmOpen) {
+      return;
+    }
+
+    void tick().then(() => {
+      forgetCancelButton?.focus();
+    });
+  });
+
+  $effect(() => {
     focusRequest;
     bottomBarState.handleFocusRequest(focusRequest);
   });
@@ -168,6 +180,30 @@
   function handleRemember() {
     onRemember();
   }
+
+  function closeForgetConfirm(restoreFocusToForgetButton = false) {
+    bottomBarState.closeForgetConfirm();
+    void tick().then(() => {
+      if (restoreFocusToForgetButton) {
+        forgetButton?.focus();
+        return;
+      }
+
+      forgetButton?.blur();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    });
+  }
+
+  function handleForgetConfirmKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape') {
+      return;
+    }
+
+    event.preventDefault();
+    closeForgetConfirm();
+  }
 </script>
 
 <div
@@ -191,13 +227,57 @@
       </button>
     {:else}
       <div
-        class={`inline-flex shrink-0 items-center rounded-full border bg-background p-1 text-muted-foreground shadow-sm ${
+        class={`relative inline-flex shrink-0 items-center rounded-full border bg-background p-1 text-muted-foreground shadow-sm ${
           $bottomBarState.isHoldingForget ? 'border-destructive/70' : 'border-border'
         }`}
       >
+        {#if $bottomBarState.isForgetConfirmOpen}
+          <div
+            id="forget-confirm-popover"
+            class="absolute bottom-[calc(100%+0.75rem)] left-0 z-40 w-[min(18rem,calc(100vw-1.5rem))] rounded-[1.2rem] border border-border bg-popover/95 p-3 text-popover-foreground shadow-xl backdrop-blur-md"
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby="forget-confirm-title"
+            aria-describedby="forget-confirm-description"
+            tabindex="-1"
+            onkeydown={handleForgetConfirmKeydown}
+          >
+            <div class="flex items-start gap-3">
+              <div class="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/12 text-destructive">
+                <Eraser class="h-4 w-4" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <p id="forget-confirm-title" class="text-sm font-semibold">Forget this note?</p>
+                <p id="forget-confirm-description" class="mt-1 text-xs leading-5 text-muted-foreground">
+                  The note moves to Forgotten Notes and can be restored from Settings.
+                </p>
+              </div>
+            </div>
+            <div class="mt-3 flex justify-end gap-2">
+              <button
+                bind:this={forgetCancelButton}
+                type="button"
+                class="inline-flex h-8 items-center rounded-full px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                onclick={() => closeForgetConfirm(true)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="inline-flex h-8 items-center rounded-full bg-destructive px-3 text-xs font-semibold text-destructive-foreground transition-colors hover:bg-destructive/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive"
+                onclick={bottomBarState.confirmForget}
+              >
+                Forget
+              </button>
+            </div>
+          </div>
+        {/if}
         <button
+          bind:this={forgetButton}
           type="button"
-          class={`relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2 ${
+          aria-expanded={$bottomBarState.isForgetConfirmOpen}
+          aria-controls={$bottomBarState.isForgetConfirmOpen ? 'forget-confirm-popover' : undefined}
+          class={`relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2 ${
             $bottomBarState.isHoldingForget
               ? 'text-destructive animate-[forget-hold-pulse_0.95s_ease-in-out_infinite_alternate]'
               : ''
@@ -418,10 +498,10 @@
         class="inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2"
         type="button"
         onclick={handleRemember}
-        aria-label="Remember"
-        title="Remember"
+        aria-label="New Idea"
+        title="New Idea"
       >
-        <span class="hidden min-[700px]:inline">Remember</span>
+        <span class="hidden min-[700px]:inline">New Idea</span>
         <Brain class="h-5 w-5 min-[700px]:hidden" />
       </button>
     </div>

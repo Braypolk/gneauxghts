@@ -3,6 +3,11 @@
   import { onMount, tick, untrack } from 'svelte';
   import { forgottenNoteRetentionPreference } from '$lib/appSettings';
   import { setEditorCurrentSearchHighlightQuery } from '$lib/features/notepad/editor/editor';
+  import { createEditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
+  import {
+    createNotepadFeatureHost,
+    type NotepadFeatureHost
+  } from '$lib/features/notepad/host';
   import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
   import { focusEditorAtEnd, focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
   import { registerPendingNoteSaveHandler } from '$lib/features/notepad/navigation/pendingNoteSave';
@@ -32,10 +37,11 @@
   } from '$lib/types/semantic';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
   import BottomBar from '$lib/features/notepad/ui/BottomBar.svelte';
-  import NotepadPane, {
-    type PaneViewModel,
-    type PaneWorkspaceActions
-  } from '$lib/features/notepad/NotepadPane.svelte';
+  import NotepadPane from '$lib/features/notepad/NotepadPane.svelte';
+  import type {
+    PaneViewModel,
+    PaneWorkspaceActions
+  } from '$lib/features/notepad/notepadPane.types';
   import SlashMenu from '$lib/features/notepad/editor/SlashMenu.svelte';
   import WikilinkAutocomplete from '$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte';
   import RelatedPanel from '$lib/features/notepad/related/RelatedPanel.svelte';
@@ -57,6 +63,11 @@
   } from '$lib/features/notepad/orchestration/paneSessionController';
   import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
   import { createNotepadCommands } from '$lib/features/notepad/orchestration/notepadCommands';
+  import {
+    createNotepadWorkspaceCommands,
+    type NotepadDerivedViewCommands,
+    type NotepadPaneCommands
+  } from '$lib/features/notepad/orchestration/notepadCommandFacades';
   import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
   import { createNotepadSearchStore } from '$lib/features/notepad/search/store.svelte';
   import { attachPaneSelectionTracking } from '$lib/features/notepad/editor/paneSelectionTracking';
@@ -105,6 +116,7 @@
   import { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import { createPaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
+  import { formatNoteTitle } from '$lib/features/notepad/model/document';
   import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
   import '$lib/features/notepad/editor/editor.css';
 
@@ -126,6 +138,11 @@
     [PRIMARY_PANE_ID]: new PaneRuntime(PRIMARY_PANE_ID),
     [SECONDARY_PANE_ID]: new PaneRuntime(SECONDARY_PANE_ID)
   };
+  const editorCapabilities = {
+    [PRIMARY_PANE_ID]: createEditorCapabilityAdapter(() => paneRuntimes[PRIMARY_PANE_ID].controller),
+    [SECONDARY_PANE_ID]: createEditorCapabilityAdapter(() => paneRuntimes[SECONDARY_PANE_ID].controller)
+  } as const;
+  let featureHost: NotepadFeatureHost;
 
   let canUnforget = $derived(notepadState.recentlyForgotten !== null);
   let currentSearchHighlightMode: SearchMode = 'all';
@@ -146,13 +163,14 @@
   });
 
   const relatedState = createRelatedNotesStore({
-    getCurrentTitle: () => getDocumentSession().title,
-    getCurrentMarkdown,
-    getCurrentPath: () => getDocumentSession().currentNotePath
+    getCurrentTitle: () => featureHost.getActiveDocumentSnapshot().title,
+    getCurrentMarkdown: () => featureHost.getActiveDocumentSnapshot().bodyMarkdown,
+    getCurrentPath: () => featureHost.getActiveDocumentSnapshot().currentNotePath
   });
 
   let splitPickerPaneId = $derived(workspaceStore.splitPicker.paneId);
   let splitPickerSourceNoteKey = $derived(workspaceStore.splitPicker.sourceNoteKey);
+  let splitPickerMode = $derived(workspaceStore.splitPicker.mode);
   let splitPickerHighlightedIndex = $derived(workspaceStore.splitPicker.highlightedIndex);
   let splitPickerFocusEl = $state<HTMLElement | null>(null);
   $effect(() => {
@@ -308,6 +326,13 @@
     if (document.bodyMarkdown !== nextMarkdown) {
       document.bodyMarkdown = nextMarkdown;
       document.operationRevision += 1;
+      if (
+        splitPickerPaneId === resolvedPaneId &&
+        splitPickerMode !== null &&
+        nextMarkdown.trim() !== ''
+      ) {
+        workspaceStore.resetSplitPicker();
+      }
     }
     if (
       getPaneIdsForDocument(document).some(
@@ -359,6 +384,23 @@
     return nextNote;
   }
 
+  function isTitleInputFocusedForNote(note: NoteDraftState) {
+    for (const paneId of getPaneIdsForDocument(note)) {
+      const titleInput = getPaneTitleInput(paneId);
+      if (titleInput && document.activeElement === titleInput) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const persistence = createNotepadPersistenceController({
+    getDocumentSession,
+    saveNoteSession,
+    rekeyNoteWithRuntime,
+    isTitleEditing: isTitleInputFocusedForNote
+  });
+
   const {
     cancelPendingAutosave,
     enqueueSave,
@@ -367,11 +409,7 @@
     hasCleanBuffer,
     invalidatePendingSaveResults,
     scheduleAutosave
-  } = createNotepadPersistenceController({
-    getDocumentSession,
-    saveNoteSession,
-    rekeyNoteWithRuntime
-  });
+  } = persistence;
 
   const paneControllers = {
     [PRIMARY_PANE_ID]: createPaneControllersFn(PRIMARY_PANE_ID, paneControllerSetupDeps),
@@ -424,8 +462,7 @@
     return (
       notepadRuntimeState.hasLoadedInitialSession &&
       paneOrder.includes(paneId) &&
-      getPaneKind(paneId) === 'editor' &&
-      splitPickerPaneId !== paneId
+      getPaneKind(paneId) === 'editor'
     );
   }
 
@@ -476,6 +513,7 @@
     scheduleRelated,
     handleRelatedScopeChange,
     toggleRelatedPanel: toggleRelatedPanelController,
+    collapseRelatedPanel: collapseRelatedPanelController,
     updateSelectedRelatedText: updateSelectedRelatedTextController
   } = relatedState;
 
@@ -578,17 +616,21 @@
     toggleRelatedPanelController(workspaceShell);
   }
 
+  function closeRelatedPanel() {
+    collapseRelatedPanelController(workspaceShell);
+  }
+
   // ---------------------------------------------------------------------------
   // High-level commands (open / forget / unforget / remember / split / close /
   // setKind / split-picker / switch-pane). Encapsulated in notepadCommands so
   // the component does not own every flow body.
   // ---------------------------------------------------------------------------
-  const commands = createNotepadCommands<PaneId>({
-    state: notepadState,
-    primaryPaneId: PRIMARY_PANE_ID,
-    paneIdsAll: PANE_IDS_ALL,
-    getActivePaneId: () => activePaneId,
-    getPaneOrder: () => paneOrder,
+  const notepadWorkspaceCommands = createNotepadWorkspaceCommands<PaneId>(workspaceStore, {
+    getPreviousItem: () => splitPickerPreviousItem,
+    getFocusEl: () => splitPickerFocusEl
+  });
+
+  const notepadPaneCommands: NotepadPaneCommands<PaneId> = {
     getPaneKind,
     getPaneDocument: getPaneDocumentSession,
     getNavigationDocument: getDocumentSession,
@@ -598,47 +640,75 @@
     getNoteByKey,
     getOpenContext,
     getNavigationContext,
-    getNoteSaveQueue,
-    setActivePaneId: (paneId) => workspaceStore.setActivePaneId(paneId),
-    setPaneOrder: (order) => workspaceStore.setPaneOrder(order),
-    removePane: (paneId) => workspaceStore.removePane(paneId),
-    beginSplitPicker: (paneId, sourceNoteKey) =>
-      workspaceStore.beginSplitPicker(paneId, sourceNoteKey),
-    resetSplitPicker: () => workspaceStore.resetSplitPicker(),
-    setSplitPickerHighlight: (index) => workspaceStore.setSplitPickerHighlight(index),
-    getSplitPickerPaneId: () => splitPickerPaneId,
-    getSplitPickerSourceNoteKey: () => splitPickerSourceNoteKey,
-    getSplitPickerHighlightedIndex: () => splitPickerHighlightedIndex,
-    getSplitPickerPreviousItem: () => splitPickerPreviousItem,
-    getSplitPickerFocusEl: () => splitPickerFocusEl,
     activatePaneSession,
     setPaneDocumentSession,
-    documents,
-    paneLifecycle,
-    cancelPendingAutosave,
-    enqueueSave,
-    invalidatePendingSaveResults,
-    scheduleAutosave,
-    hasCleanBuffer,
+    getPaneTitleInput,
+    getPaneEditorRoot,
+    updateSelectedRelatedText,
+    closeWikilinkAutocomplete
+  };
+
+  const notepadDerivedViewCommands: NotepadDerivedViewCommands<PaneId> = {
     clearSearch,
     scheduleSearchIfNeeded,
     scheduleRelatedIfNeeded,
     clearSelectedRelatedText,
     loadRecentNotes,
     setRecentlyForgotten,
-    closeWikilinkAutocomplete,
-    flushDocumentEditorSync,
-    scheduleDocumentEditorSync,
-    flushAllPendingDocumentSyncs,
-    hasPendingDocumentSync,
-    forgottenNoteRetentionPreference: () => $forgottenNoteRetentionPreference,
-    getPaneTitleInput,
-    getPaneEditorRoot,
-    isRefreshingFromDisk: () => notepadState.isRefreshingFromDisk,
-    setRefreshingFromDisk: (value) => {
-      notepadState.isRefreshingFromDisk = value;
+    closeWikilinkAutocomplete
+  };
+
+  const commands = createNotepadCommands<PaneId>({
+    state: notepadState,
+    primaryPaneId: PRIMARY_PANE_ID,
+    paneIdsAll: PANE_IDS_ALL,
+    workspace: notepadWorkspaceCommands,
+    panes: notepadPaneCommands,
+    persistence,
+    derivedViews: notepadDerivedViewCommands,
+    documentSync,
+    documents,
+    paneLifecycle,
+    refresh: {
+      isRefreshingFromDisk: () => notepadState.isRefreshingFromDisk,
+      setRefreshingFromDisk: (value) => {
+        notepadState.isRefreshingFromDisk = value;
+      }
     },
-    updateSelectedRelatedText
+    forgottenNoteRetentionPreference: () => $forgottenNoteRetentionPreference
+  });
+
+  featureHost = createNotepadFeatureHost({
+    getActiveDocument: getDocumentSession,
+    getActiveEditor: () => editorCapabilities[getNavigationPaneId()] ?? null,
+    focusActiveEditor: async (options = {}) => {
+      if (options.preferTitle) {
+        focusTitleAtEnd();
+        return;
+      }
+      await focusEditorAtEnd(getPaneEditorRoot(getNavigationPaneId()));
+    },
+    saveActiveDocument: async () => {
+      await enqueueSave(getDocumentSession());
+    },
+    refreshActiveDocument: async (options = {}) => {
+      if (options.force) {
+        await commands.refreshCurrentNoteFromTaskMutation();
+      } else {
+        await commands.refreshCurrentNoteIfChanged();
+      }
+    },
+    replaceActiveDocumentMarkdown: async (markdown) => {
+      const document = getDocumentSession();
+      if (document.bodyMarkdown !== markdown) {
+        document.bodyMarkdown = markdown;
+        document.operationRevision += 1;
+      }
+      await documents.replaceEditorContentInPlace(markdown);
+      scheduleAutosave(document);
+      scheduleSearchIfNeeded();
+      scheduleRelatedIfNeeded({ immediate: true });
+    }
   });
 
   // ---------------------------------------------------------------------------
@@ -675,16 +745,26 @@
   // ---------------------------------------------------------------------------
   // Title editing / search-result selection / related-item selection.
   // ---------------------------------------------------------------------------
-  function handleTitleInput(paneId: PaneId, event: Event) {
+  function handleTitleFocus(paneId: PaneId) {
     activatePaneSession(paneId);
-    const paneDocument = getPaneDocumentSession(paneId);
+  }
 
-    const nextTitle = (event.currentTarget as HTMLInputElement).value;
-    if (paneDocument.title !== nextTitle) {
-      paneDocument.title = nextTitle;
+  function handleTitleInput(paneId: PaneId) {
+    activatePaneSession(paneId);
+    if (splitPickerPaneId === paneId) {
+      workspaceStore.resetSplitPicker();
+    }
+  }
+
+  function commitPaneTitle(paneId: PaneId, rawTitle: string) {
+    const paneDocument = getPaneDocumentSession(paneId);
+    const formattedTitle = formatNoteTitle(rawTitle);
+
+    if (paneDocument.title !== formattedTitle) {
+      paneDocument.title = formattedTitle;
       paneDocument.operationRevision += 1;
     }
-    if (paneDocument.title.trim() !== '' || paneDocument.bodyMarkdown.trim() !== '') {
+    if (formattedTitle !== '' || paneDocument.bodyMarkdown.trim() !== '') {
       setRecentlyForgotten(null);
     }
     scheduleAutosave(paneDocument);
@@ -692,17 +772,20 @@
     scheduleRelatedIfNeeded();
   }
 
-  function handleTitleBlur() {
+  function handleTitleBlur(paneId: PaneId, rawTitle: string) {
+    commitPaneTitle(paneId, rawTitle);
     flushPendingAutosave();
   }
 
-  function handleTitleKeydown(event: KeyboardEvent) {
+  function handleTitleKeydown(paneId: PaneId, event: KeyboardEvent) {
     if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
       return;
     }
 
     event.preventDefault();
-    void focusEditorAtEnd(getPaneEditorRoot(getNavigationPaneId()));
+    const titleInput = event.currentTarget as HTMLInputElement;
+    titleInput.blur();
+    void focusEditorAtEnd(getPaneEditorRoot(paneId));
   }
 
   async function handleSearchResultSelect(result: SearchItem) {
@@ -743,7 +826,7 @@
     splitWorkspace: commands.splitWorkspace,
     closePane: commands.closePane,
     switchActivePane: commands.switchActivePane,
-    rememberCurrentNote: commands.rememberCurrentNote,
+    startNewNoteFlow: commands.startNewNoteFlow,
     toggleRelatedPanel,
     openRecentNoteByIndex,
     requestSearchFocus,
@@ -774,11 +857,12 @@
       titleClass: paneTitleInputClass,
       titlePlaceholder: paneKind === 'editor' ? 'Title' : 'Chat title',
       titleValue: paneDocument.title,
-      titleReadonly: splitPickerPaneId === paneId,
+      titleReadonly: false,
       chatDescription: isPrimaryPane
         ? 'Chat panes are scaffolded for the multipane layout. This pane already tracks focus, title chrome, and close behavior, but the actual chat experience is still a placeholder in this pass.'
         : 'This placeholder reserves the pane contract for a future chat implementation while keeping the workspace architecture aligned around split panes and a shared note session.',
       splitPickerHighlightedIndex,
+      splitPickerMode,
       splitPickerCurrentNoteLabel,
       splitPickerPreviousNoteLabel,
       editorLifecycle: {
@@ -793,6 +877,7 @@
     onActivate: commands.activatePane,
     onClose: commands.closePane,
     onSplit: commands.splitWorkspace,
+    onTitleFocus: handleTitleFocus,
     onTitleInput: handleTitleInput,
     onTitleBlur: handleTitleBlur,
     onTitleKeydown: handleTitleKeydown,
@@ -993,7 +1078,7 @@
           onUnforget: () => void commands.unforgetNotepad()
         }}
         remember={{
-          onRemember: () => void commands.rememberCurrentNote()
+          onRemember: () => void commands.startNewNoteFlow()
         }}
         search={{
           searchMode: searchState.searchMode,
@@ -1065,6 +1150,7 @@
               loading={$relatedState.isLoading}
               hasSelection={!!$relatedState.selectedText}
               onScopeChange={handleRelatedScopeChange}
+              onClose={closeRelatedPanel}
               onSelect={(item) =>
                 void handleRelatedItemSelect(item).catch((error) => {
                   console.error('Failed to open related note:', error);
@@ -1100,6 +1186,7 @@
             loading={$relatedState.isLoading}
             hasSelection={!!$relatedState.selectedText}
             onScopeChange={handleRelatedScopeChange}
+            onClose={closeRelatedPanel}
             onSelect={(item) =>
               void handleRelatedItemSelect(item).catch((error) => {
                 console.error('Failed to open related note:', error);

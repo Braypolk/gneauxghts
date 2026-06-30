@@ -9,6 +9,7 @@ import {
   setActivePane as setStoreActivePane,
   type NoteKey
 } from '$lib/features/notepad/state/noteStore';
+import type { SplitPickerMode } from '$lib/features/notepad/splitPanePicker';
 
 /**
  * Split picker UI state. The split picker is a transient overlay shown in a
@@ -20,6 +21,7 @@ import {
 export interface SplitPickerState {
   paneId: NotepadPaneId | null;
   sourceNoteKey: NoteKey | null;
+  mode: SplitPickerMode;
   highlightedIndex: number;
   focusEl: HTMLElement | null;
 }
@@ -32,12 +34,13 @@ export interface SplitPickerState {
  *
  * Methods mutate notepadState as needed so the noteStore stays in sync.
  */
-class WorkspaceStore {
+export class WorkspaceStore {
   paneOrder = $state<NotepadPaneId[]>([...notepadRuntimeState.paneOrder]);
   activePaneId = $state<NotepadPaneId>(notepadRuntimeState.activePaneId);
   splitPicker = $state<SplitPickerState>({
     paneId: null,
     sourceNoteKey: null,
+    mode: 'split',
     highlightedIndex: 0,
     focusEl: null
   });
@@ -68,6 +71,17 @@ class WorkspaceStore {
     this.splitPicker = {
       paneId,
       sourceNoteKey,
+      mode: 'split',
+      highlightedIndex: 0,
+      focusEl: this.splitPicker.focusEl
+    };
+  }
+
+  beginStartPicker(paneId: NotepadPaneId, sourceNoteKey: NoteKey): void {
+    this.splitPicker = {
+      paneId,
+      sourceNoteKey,
+      mode: 'start',
       highlightedIndex: 0,
       focusEl: this.splitPicker.focusEl
     };
@@ -93,6 +107,7 @@ class WorkspaceStore {
     this.splitPicker = {
       paneId: null,
       sourceNoteKey: null,
+      mode: 'split',
       highlightedIndex: 0,
       focusEl: null
     };

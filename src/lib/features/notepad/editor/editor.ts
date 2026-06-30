@@ -32,6 +32,7 @@ import {
   ViewPlugin,
   WidgetType,
   keymap,
+  placeholder,
   type DecorationSet
 } from '@codemirror/view';
 import { indentOnInput } from '@codemirror/language';
@@ -1401,6 +1402,7 @@ function createPaneExtensions(
     createLayoutTheme(),
     createOverlayScrollMargins(editorRoot),
     createSearchHighlightExtension(),
+    placeholder('Start typing here.'),
     createPassiveTableExtension(),
     ...createWikilinkExtensions(sharedResources),
     createExternalLinkClickExtension(),

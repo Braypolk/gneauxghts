@@ -3,74 +3,28 @@
   import SplitPaneContentPicker from '$lib/features/notepad/SplitPaneContentPicker.svelte';
   import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-  import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
+  import type {
+    PaneViewModel,
+    PaneWorkspaceActions
+  } from '$lib/features/notepad/notepadPane.types';
   import type { SplitChoice } from '$lib/features/notepad/splitPanePicker';
 
-  type PaneKind = 'editor' | 'chat';
+  interface Props {
+    pane: PaneRuntime;
+    viewModel: PaneViewModel;
+    actions: PaneWorkspaceActions;
+    splitPickerFocusRoot?: HTMLElement | null;
+  }
 
-  /**
- * View model describing everything NotepadPane.svelte needs to render.
- * Derived from the pane runtime + workspace-level chrome state.
- */
-export interface PaneViewModel {
-  paneId: NotepadPaneId;
-  paneKind: PaneKind;
-  ariaLabel: string;
-  bodyClass: string;
-  frameClass: string;
-  isEditorReady: boolean;
-  isSlashMenuOpen: boolean;
-  isSplitPickerOpen: boolean;
-  showCloseButton: boolean;
-  titleClass: string;
-  titlePlaceholder: string;
-  titleValue: string;
-  titleReadonly: boolean;
-  chatDescription: string;
-  splitPickerHighlightedIndex: number;
-  splitPickerCurrentNoteLabel: string;
-  splitPickerPreviousNoteLabel: string | null;
-  /**
-   * Editor lifecycle hooks for the use:editor action wired on the editor
-   * root. When shouldMount is true, the action invokes mount() once the
-   * root node is in the DOM; when shouldMount drops to false, it calls
-   * destroy(). The action also calls destroy() if the host node is
-   * unmounted while the editor is still mounted.
-   */
-  editorLifecycle: {
-    shouldMount: boolean;
-    mount: (node: HTMLDivElement) => Promise<void> | void;
-    destroy: () => Promise<void> | void;
-  };
-}
+  let {
+    pane,
+    viewModel,
+    actions,
+    splitPickerFocusRoot = $bindable<HTMLElement | null>(null)
+  }: Props = $props();
 
-/**
- * Small workspace action surface the pane can call into.
- */
-export interface PaneWorkspaceActions {
-  onActivate: (paneId: NotepadPaneId) => void;
-  onClose: (paneId: NotepadPaneId) => void | Promise<void>;
-  onSplit: () => void | Promise<void>;
-  onTitleInput: (paneId: NotepadPaneId, event: Event) => void;
-  onTitleBlur: () => void;
-  onTitleKeydown: (event: KeyboardEvent) => void;
-  onSplitHighlightChange: (index: number) => void;
-  onSplitChoose: (paneId: NotepadPaneId, choice: SplitChoice) => void | Promise<void>;
-}
-
-interface Props {
-  pane: PaneRuntime;
-  viewModel: PaneViewModel;
-  actions: PaneWorkspaceActions;
-  splitPickerFocusRoot?: HTMLElement | null;
-}
-
-let {
-  pane,
-  viewModel,
-  actions,
-  splitPickerFocusRoot = $bindable<HTMLElement | null>(null)
-}: Props = $props();
+  let titleDraft = $state<string | null>(null);
+  const displayedTitle = $derived(titleDraft ?? viewModel.titleValue);
 </script>
 
 <div
@@ -93,11 +47,25 @@ let {
               type="text"
               class={viewModel.titleClass}
               placeholder={viewModel.titlePlaceholder}
-              value={viewModel.titleValue}
+              value={displayedTitle}
               readonly={viewModel.titleReadonly}
-              oninput={(event) => actions.onTitleInput(viewModel.paneId, event)}
-              onblur={actions.onTitleBlur}
-              onkeydown={actions.onTitleKeydown}
+              onfocus={() => {
+                if (viewModel.titleReadonly) {
+                  return;
+                }
+                titleDraft = viewModel.titleValue;
+                actions.onTitleFocus(viewModel.paneId);
+              }}
+              oninput={(event) => {
+                titleDraft = (event.currentTarget as HTMLInputElement).value;
+                actions.onTitleInput(viewModel.paneId);
+              }}
+              onblur={() => {
+                const rawTitle = titleDraft ?? viewModel.titleValue;
+                titleDraft = null;
+                actions.onTitleBlur(viewModel.paneId, rawTitle);
+              }}
+              onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
             />
           </div>
         </div>
@@ -113,23 +81,13 @@ let {
       </div>
     </div>
 
-    {#if viewModel.isSplitPickerOpen}
-      <div class="flex min-h-0 flex-1">
-        <SplitPaneContentPicker
-          bind:focusRoot={splitPickerFocusRoot}
-          highlightedIndex={viewModel.splitPickerHighlightedIndex}
-          currentNoteLabel={viewModel.splitPickerCurrentNoteLabel}
-          previousNoteLabel={viewModel.splitPickerPreviousNoteLabel}
-          onHighlightChange={actions.onSplitHighlightChange}
-          onChoose={(choice) => void actions.onSplitChoose(viewModel.paneId, choice)}
-        />
-      </div>
-    {:else if viewModel.paneKind === 'editor'}
+    {#if viewModel.paneKind === 'editor'}
       <div class="flex h-full flex-1 min-h-0 flex-col">
         <div
           bind:this={pane.refs.editorShell}
           class="notepad-editor-shell relative h-full flex-1"
           class:notepad-editor-shell--slash-open={viewModel.isSlashMenuOpen}
+          class:notepad-editor-shell--picker-open={viewModel.isSplitPickerOpen}
         >
           {#if !viewModel.isEditorReady}
             <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
@@ -144,6 +102,23 @@ let {
             class="h-full min-h-full"
             use:editorAction={viewModel.editorLifecycle}
           ></div>
+
+          {#if viewModel.isSplitPickerOpen}
+            <div class="pointer-events-none absolute inset-0 z-20">
+              <div class="notepad-picker-surface pointer-events-none box-border">
+                <SplitPaneContentPicker
+                  bind:focusRoot={splitPickerFocusRoot}
+                  highlightedIndex={viewModel.splitPickerHighlightedIndex}
+                  mode={viewModel.splitPickerMode}
+                  presentation="embedded"
+                  currentNoteLabel={viewModel.splitPickerCurrentNoteLabel}
+                  previousNoteLabel={viewModel.splitPickerPreviousNoteLabel}
+                  onHighlightChange={actions.onSplitHighlightChange}
+                  onChoose={(choice: SplitChoice) => void actions.onSplitChoose(viewModel.paneId, choice)}
+                />
+              </div>
+            </div>
+          {/if}
         </div>
       </div>
     {:else}

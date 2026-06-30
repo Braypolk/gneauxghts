@@ -20,6 +20,7 @@ export interface BottomBarState {
   lastHandledFocusRequest: number;
   isHoldingForget: boolean;
   forgetHoldProgress: number;
+  isForgetConfirmOpen: boolean;
 }
 
 interface BottomBarStateDeps {
@@ -51,7 +52,8 @@ function createInitialState(): BottomBarState {
     activeIndex: 0,
     lastHandledFocusRequest: 0,
     isHoldingForget: false,
-    forgetHoldProgress: 0
+    forgetHoldProgress: 0,
+    isForgetConfirmOpen: false
   };
 }
 
@@ -126,6 +128,7 @@ export function createBottomBarState({
   let forgetHoldStartedAt = 0;
   let forgetHoldFrame: number | null = null;
   let forgetHoldTimeout: ReturnType<typeof window.setTimeout> | null = null;
+  let suppressNextForgetClick = false;
 
   function patch(partial: Partial<BottomBarState>) {
     update((state) => ({ ...state, ...partial }));
@@ -357,6 +360,21 @@ export function createBottomBarState({
     });
   }
 
+  function closeForgetConfirm() {
+    if (!getState().isForgetConfirmOpen) return;
+    patch({ isForgetConfirmOpen: false });
+  }
+
+  function openForgetConfirm() {
+    resetForgetHold();
+    patch({ isForgetConfirmOpen: true });
+  }
+
+  function confirmForget() {
+    closeForgetConfirm();
+    onForget();
+  }
+
   function tickForgetHoldProgress() {
     if (!getState().isHoldingForget || !isForgetHoldEnabled()) return;
 
@@ -375,6 +393,7 @@ export function createBottomBarState({
   function beginForgetHold() {
     if (!isForgetHoldEnabled() || getState().isHoldingForget) return;
 
+    closeForgetConfirm();
     clearForgetHoldFrame();
     clearForgetHoldTimeout();
     forgetHoldStartedAt = performance.now();
@@ -387,6 +406,7 @@ export function createBottomBarState({
       clearForgetHoldFrame();
       patch({ forgetHoldProgress: 1 });
       forgetHoldTimeout = window.setTimeout(() => {
+        suppressNextForgetClick = true;
         resetForgetHold();
         onForget();
       }, FORGET_HOLD_COMPLETION_DELAY_MS);
@@ -418,7 +438,16 @@ export function createBottomBarState({
   }
 
   function handleForgetClick() {
-    if (isForgetHoldEnabled()) return;
+    if (suppressNextForgetClick) {
+      suppressNextForgetClick = false;
+      return;
+    }
+
+    if (isForgetHoldEnabled()) {
+      openForgetConfirm();
+      return;
+    }
+
     onForget();
   }
 
@@ -428,6 +457,7 @@ export function createBottomBarState({
 
   function dispose() {
     setSearchFocused(false);
+    closeForgetConfirm();
     resetForgetHold();
   }
 
@@ -452,6 +482,8 @@ export function createBottomBarState({
     handleForgetKeyUp,
     handleForgetClick,
     cancelForgetHold,
+    closeForgetConfirm,
+    confirmForget,
     getForgetButtonAriaLabel,
     dispose
   };

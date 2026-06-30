@@ -21,6 +21,7 @@ export interface PersistenceControllerParams {
     note: NoteDraftState,
     snapshot: SessionSnapshot,
   ) => NoteDraftState;
+  isTitleEditing?: (note: NoteDraftState) => boolean;
   /** @deprecated retained for backward compatibility; per-note timers now live in DocumentRegistry. */
   timers?: Map<NoteKey, ReturnType<typeof window.setTimeout>>;
   /** @deprecated retained for backward compatibility; per-note queues now live in DocumentRegistry. */
@@ -93,7 +94,8 @@ export function createNotepadPersistenceController(
       note.title !== title ||
       note.bodyMarkdown !== markdown ||
       note.currentNoteId !== currentNoteId ||
-      note.currentNotePath !== currentNotePath;
+      note.currentNotePath !== currentNotePath ||
+      (params.isTitleEditing?.(note) ?? false);
 
     const savedNote = params.rekeyNoteWithRuntime(note, savedSession);
     applySnapshotToNote(savedNote, savedSession, { preserveDraft });

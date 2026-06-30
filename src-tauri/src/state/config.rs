@@ -303,6 +303,7 @@ pub(crate) fn ensure_vault_scaffold(vault_root: &Path) -> Result<VaultManifest, 
     // The lexical index is currently RAM-only, so this may stay empty; creating
     // it keeps the on-disk layout stable if it starts persisting.
     fs::create_dir_all(cache_dir.join("lexical")).map_err(|err| err.to_string())?;
+    fs::create_dir_all(cache_dir.join("graph")).map_err(|err| err.to_string())?;
 
     let app_version = env!("CARGO_PKG_VERSION").to_string();
     let now = now_millis();

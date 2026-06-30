@@ -54,6 +54,17 @@ export type SlashMenuSnapshot =
       hoverIndex: number;
     };
 
+/** Pane-local slash menu state, including the bound editor view for positioning. */
+export type PaneSlashMenuModel =
+  | { open: false }
+  | {
+      open: true;
+      view: EditorView;
+      anchorPos: number;
+      groups: SlashMenuGroupWithItems[];
+      hoverIndex: number;
+    };
+
 export interface SlashMenuAPI {
   show: (pos: number) => void;
   hide: () => void;

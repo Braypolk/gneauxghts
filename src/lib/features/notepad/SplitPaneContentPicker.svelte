@@ -2,11 +2,14 @@
   import {
     getSplitChoiceByIndex,
     getSplitOptionId,
-    type SplitChoice
+    type SplitChoice,
+    type SplitPickerMode
   } from '$lib/features/notepad/splitPanePicker';
 
   interface Props {
     highlightedIndex: number;
+    mode: SplitPickerMode;
+    presentation?: 'inline' | 'embedded';
     currentNoteLabel: string;
     previousNoteLabel: string | null;
     focusRoot?: HTMLElement | null;
@@ -16,6 +19,8 @@
 
   let {
     highlightedIndex,
+    mode,
+    presentation = 'inline',
     currentNoteLabel,
     previousNoteLabel,
     focusRoot = $bindable<HTMLElement | null>(null),
@@ -24,6 +29,16 @@
   }: Props = $props();
 
   const hasPrevious = $derived(previousNoteLabel !== null);
+  const isEmbedded = $derived(presentation === 'embedded');
+  const heading = $derived(mode === 'start' ? 'Start a note' : 'Choose pane content');
+  const description = $derived(
+    mode === 'start'
+      ? 'Start typing to use this blank note, or pick recent context below.'
+      : 'Fill the new pane with the current note, recent context, or a blank note.'
+  );
+  const pickerLabel = $derived(
+    mode === 'start' ? 'Choose how to start this note' : 'Choose content for this pane'
+  );
   const activeDescendantId = $derived.by(() => {
     const activeChoice = getSplitChoiceByIndex(highlightedIndex, hasPrevious) ?? 'current';
     return getSplitOptionId(activeChoice);
@@ -31,6 +46,17 @@
 
   function optionClass(index: number, enabled: boolean) {
     const active = highlightedIndex === index;
+    if (isEmbedded) {
+      return [
+        'pointer-events-auto flex w-full cursor-pointer select-none items-start gap-3 rounded-xl px-2 py-2 text-left text-sm transition-colors outline-none',
+        enabled
+          ? active
+            ? 'text-foreground'
+            : 'text-foreground/86 hover:bg-accent/30 hover:text-foreground'
+          : 'cursor-not-allowed text-muted-foreground/60'
+      ].join(' ');
+    }
+
     return [
       'flex w-full cursor-pointer select-none items-start gap-3 rounded-2xl border px-4 py-3 text-left text-sm transition-colors outline-none',
       enabled
@@ -40,20 +66,36 @@
         : 'cursor-not-allowed border-border/40 bg-muted/20 text-muted-foreground/70'
     ].join(' ');
   }
+
+  const rootClass = $derived(
+    isEmbedded
+      ? 'pointer-events-none w-full outline-none'
+      : 'flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-28 pb-16 outline-none'
+  );
+
+  const optionKeyClass = $derived(
+    isEmbedded
+      ? 'mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-xs font-medium text-muted-foreground/70'
+      : 'mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground'
+  );
 </script>
 
 <div
   bind:this={focusRoot}
+  data-split-picker={mode}
   role="listbox"
-  aria-label="Choose content for this pane"
+  aria-label={pickerLabel}
   aria-activedescendant={activeDescendantId}
   tabindex="0"
-  class="flex min-h-0 flex-1 flex-col items-center justify-center px-6 pt-28 pb-16 outline-none"
+  class={rootClass}
 >
-  <div class="w-full max-w-md space-y-3">
-    <div class="mb-2 text-center">
-      <div class="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Split pane</div>
-    </div>
+  <div class={isEmbedded ? 'w-full space-y-2' : 'w-full max-w-md space-y-3'}>
+    {#if !isEmbedded}
+      <div class="mb-4 text-center">
+        <div class="text-sm font-semibold text-foreground">{heading}</div>
+        <p class="mx-auto mt-1 max-w-sm text-xs leading-5 text-muted-foreground">{description}</p>
+      </div>
+    {/if}
 
     <button
       type="button"
@@ -65,10 +107,10 @@
       onmouseenter={() => onHighlightChange(0)}
       onfocus={() => onHighlightChange(0)}
     >
-      <span class="mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">1</span>
+      <span class={optionKeyClass}>1</span>
       <span>
-        <span class="font-medium">Current note</span>
-        <span class="mt-0.5 block text-xs text-muted-foreground">{currentNoteLabel}</span>
+        <span class="font-medium">{mode === 'start' ? 'Keep writing' : 'Current note'}</span>
+        <span class="mt-0.5 block text-xs text-muted-foreground/82">{currentNoteLabel}</span>
       </span>
     </button>
 
@@ -83,10 +125,10 @@
       onmouseenter={() => hasPrevious && onHighlightChange(1)}
       onfocus={() => hasPrevious && onHighlightChange(1)}
     >
-      <span class="mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">2</span>
+      <span class={optionKeyClass}>2</span>
       <span>
         <span class="font-medium">Previous note</span>
-        <span class="mt-0.5 block text-xs text-muted-foreground">
+        <span class="mt-0.5 block text-xs text-muted-foreground/82">
           {hasPrevious ? previousNoteLabel : 'No other recent note yet'}
         </span>
       </span>
@@ -102,27 +144,12 @@
       onmouseenter={() => onHighlightChange(2)}
       onfocus={() => onHighlightChange(2)}
     >
-      <span class="mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">3</span>
+      <span class={optionKeyClass}>3</span>
       <span>
         <span class="font-medium">New note</span>
-        <span class="mt-0.5 block text-xs text-muted-foreground">Start a fresh note in this pane</span>
-      </span>
-    </button>
-
-    <button
-      type="button"
-      id="split-choice-chat"
-      role="option"
-      aria-selected={highlightedIndex === 3}
-      class={optionClass(3, true)}
-      onclick={() => onChoose('chat')}
-      onmouseenter={() => onHighlightChange(3)}
-      onfocus={() => onHighlightChange(3)}
-    >
-      <span class="mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">4</span>
-      <span>
-        <span class="font-medium">Chat</span>
-        <span class="mt-0.5 block text-xs text-muted-foreground">LLM chat placeholder for this pane</span>
+        <span class="mt-0.5 block text-xs text-muted-foreground/82">
+          {mode === 'start' ? 'Open a clean page for the next thought' : 'Start a fresh note in this pane'}
+        </span>
       </span>
     </button>
   </div>
