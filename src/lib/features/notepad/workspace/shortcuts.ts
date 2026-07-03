@@ -1,4 +1,9 @@
+import type { UnlistenFn } from '@tauri-apps/api/event';
 import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
+
+function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
 
 export interface WorkspaceShortcutDeps<TPaneId extends string> {
   getPaneOrder: () => TPaneId[];
@@ -16,6 +21,57 @@ export interface WorkspaceShortcutDeps<TPaneId extends string> {
   handlePaneCommandGlobalKeydown: (event: KeyboardEvent) => boolean;
   /** Wikilink keydown branch — return true if handled. */
   handleWikilinkKeydown: (event: KeyboardEvent) => boolean;
+}
+
+type CloseActivePaneDeps<TPaneId extends string> = Pick<
+  WorkspaceShortcutDeps<TPaneId>,
+  'getPaneOrder' | 'getActivePaneId' | 'getPaneTitleInput' | 'closePane' | 'focusPaneAfterShortcut'
+>;
+
+async function closeActivePaneIfSplit<TPaneId extends string>(
+  deps: CloseActivePaneDeps<TPaneId>
+): Promise<void> {
+  if (deps.getPaneOrder().length < 2) {
+    return;
+  }
+
+  const activePaneId = deps.getActivePaneId();
+  const preferTitle = document.activeElement === deps.getPaneTitleInput(activePaneId);
+  await deps.closePane(activePaneId);
+  deps.focusPaneAfterShortcut(deps.getActivePaneId(), { preferTitle });
+}
+
+/**
+ * Intercept native window close (Cmd+W on macOS) so it closes the active
+ * split pane instead of quitting the app.
+ */
+export function registerWorkspaceWindowCloseHandler<TPaneId extends string>(
+  deps: CloseActivePaneDeps<TPaneId>
+): () => void {
+  if (!isTauriRuntime()) {
+    return () => {};
+  }
+
+  let unlisten: UnlistenFn | null = null;
+  let disposed = false;
+
+  void (async () => {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    if (disposed) {
+      return;
+    }
+
+    unlisten = await getCurrentWindow().onCloseRequested(async (event) => {
+      event.preventDefault();
+      await closeActivePaneIfSplit(deps);
+    });
+  })();
+
+  return () => {
+    disposed = true;
+    void unlisten?.();
+    unlisten = null;
+  };
 }
 
 /**
@@ -49,15 +105,13 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
     }
 
     if (keyboardShortcutMatchesEvent(event, 'closePane')) {
-      if (event.repeat || deps.getPaneOrder().length < 2) {
+      if (event.repeat) {
+        event.preventDefault();
         return;
       }
 
-      const activePaneId = deps.getActivePaneId();
-      const preferTitle = document.activeElement === deps.getPaneTitleInput(activePaneId);
       event.preventDefault();
-      await deps.closePane(activePaneId);
-      deps.focusPaneAfterShortcut(deps.getActivePaneId(), { preferTitle });
+      await closeActivePaneIfSplit(deps);
       return;
     }
 

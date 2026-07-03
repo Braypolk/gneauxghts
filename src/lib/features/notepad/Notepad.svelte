@@ -112,7 +112,10 @@
   import { createDocumentPaneCoordinator } from '$lib/features/notepad/document/documentPaneCoordinator';
   import { workspaceStore } from '$lib/features/notepad/workspace/workspaceStore.svelte';
   import { createWorkspacePersistenceService } from '$lib/features/notepad/workspace/workspacePersistenceService';
-  import { createWorkspaceShortcutHandler } from '$lib/features/notepad/workspace/shortcuts';
+  import {
+    createWorkspaceShortcutHandler,
+    registerWorkspaceWindowCloseHandler
+  } from '$lib/features/notepad/workspace/shortcuts';
   import { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import { createPaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
@@ -927,6 +930,13 @@
   // ---------------------------------------------------------------------------
   onMount(() => {
     let mounted = true;
+    const unregisterWindowCloseHandler = registerWorkspaceWindowCloseHandler({
+      getPaneOrder: () => paneOrder,
+      getActivePaneId: () => activePaneId,
+      getPaneTitleInput,
+      closePane: commands.closePane,
+      focusPaneAfterShortcut: commands.focusPaneAfterShortcut
+    });
     const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(
       workspacePersistence.flushAllForNavigation
     );
@@ -1003,6 +1013,7 @@
     }
 
     return () => {
+      unregisterWindowCloseHandler();
       setSlashMenuListener(null);
       mounted = false;
       flushAllPendingDocumentSyncs();
@@ -1132,6 +1143,7 @@
           aria-expanded={!$relatedState.isPanelCollapsed}
           aria-controls="related-drawer-panel"
           aria-label={$relatedState.isPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
+          title={$relatedState.isPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
           onclick={toggleRelatedPanel}
         >
           <span class="related-drawer-handle-pill flex h-28 w-7 items-center justify-center rounded-full border border-border/70 bg-card/92 p-1 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground shadow-lg backdrop-blur-md">
@@ -1208,6 +1220,7 @@
           aria-expanded={!$relatedState.isPanelCollapsed}
           aria-controls="related-drawer-panel"
           aria-label={$relatedState.isPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
+          title={$relatedState.isPanelCollapsed ? 'Expand related notes' : 'Collapse related notes'}
           onclick={toggleRelatedPanel}
         >
           RELATED

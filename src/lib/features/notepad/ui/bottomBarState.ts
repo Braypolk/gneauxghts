@@ -207,7 +207,9 @@ export function createBottomBarState({
 
   function getSearchPlaceholder() {
     if (!getState().isSearchFocused) return '';
-    return getSearchMode() === 'current' ? 'Current Gneauxght' : 'All Gneauxghts';
+    return getSearchMode() === 'current'
+      ? 'Search this note'
+      : 'Search all notes';
   }
 
   function handleRecentItemShortcut(event: KeyboardEvent) {
@@ -452,7 +454,9 @@ export function createBottomBarState({
   }
 
   function getForgetButtonAriaLabel() {
-    return isForgetHoldEnabled() ? 'Hold to forget' : 'Forget';
+    return isForgetHoldEnabled()
+      ? 'Forget this note. Hold the button or press to confirm.'
+      : 'Forget this note';
   }
 
   function dispose() {

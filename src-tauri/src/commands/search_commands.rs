@@ -4,7 +4,8 @@ use super::{
 use crate::{
     index::{build_current_override, normalize_search_text, AppState, IndexedNote, NotesIndex},
     search::{
-        build_recent_result, search_note, NoteSearchResult, ScoredSearchResult, MAX_SEARCH_RESULTS,
+        build_recent_result, search_note, search_note_exact_matches, NoteSearchResult,
+        ScoredSearchResult, MAX_SEARCH_RESULTS,
     },
     semantic::{RelatedNotesResponse, SemanticChunkMatch},
     services::{resolve_current_document, CurrentDocumentRequest},
@@ -461,6 +462,10 @@ pub(crate) async fn search_notes_hybrid(
     if query_terms.is_empty() {
         return Ok(Vec::new());
     }
+    let effective_limit = match mode {
+        SearchMode::Current => limit.max(200),
+        SearchMode::All => limit,
+    };
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
@@ -478,7 +483,7 @@ pub(crate) async fn search_notes_hybrid(
         &mode,
         current_path.as_deref(),
         draft.hash.as_deref(),
-        limit,
+        effective_limit,
         lexical_weight,
         semantic_weight,
     );
@@ -524,7 +529,7 @@ pub(crate) async fn search_notes_hybrid(
                     metrics.search_duration_max_millis.max(elapsed);
             },
         );
-        let results = finalize_lexical_results(lexical_candidates, limit);
+        let results = finalize_lexical_results(lexical_candidates, effective_limit);
         search_cache_put(cache_fingerprint, results.clone());
         return Ok(results);
     }
@@ -535,7 +540,7 @@ pub(crate) async fn search_notes_hybrid(
         semantic.semantic_matches_for_text(
             &semantic_query,
             current_path_raw.as_deref(),
-            limit.saturating_mul(3).max(limit),
+            effective_limit.saturating_mul(3).max(effective_limit),
         )
     })
     .await
@@ -546,7 +551,7 @@ pub(crate) async fn search_notes_hybrid(
         semantic_matches,
         &normalized_query,
         current_path.as_deref(),
-        limit,
+        effective_limit,
         lexical_weight,
         semantic_weight,
     );
@@ -862,12 +867,19 @@ fn collect_lexical_candidates(
     match mode {
         SearchMode::Current => {
             if let Some(current_note) = current_override.as_ref() {
-                candidates.extend(search_note(
+                candidates.extend(search_note_exact_matches(
                     current_path,
                     current_note,
                     normalized_query,
-                    query_terms,
                 ));
+                if candidates.is_empty() {
+                    candidates.extend(search_note(
+                        current_path,
+                        current_note,
+                        normalized_query,
+                        query_terms,
+                    ));
+                }
             }
         }
         SearchMode::All => {

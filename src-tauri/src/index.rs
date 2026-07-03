@@ -667,11 +667,19 @@ pub(crate) struct FileSignature {
 }
 
 #[derive(Clone)]
+pub(crate) struct IndexedParagraphLine {
+    pub(crate) start_offset: usize,
+    pub(crate) end_offset: usize,
+    pub(crate) line_number: usize,
+}
+
+#[derive(Clone)]
 pub(crate) struct IndexedParagraph {
     pub(crate) section_label: String,
     pub(crate) text: String,
     pub(crate) text_lower: String,
     pub(crate) paragraph_index: Option<usize>,
+    pub(crate) lines: Vec<IndexedParagraphLine>,
 }
 
 #[derive(Clone)]
@@ -1155,6 +1163,7 @@ fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {
             text_lower: normalized_title.to_lowercase(),
             text: normalized_title,
             paragraph_index: None,
+            lines: Vec::new(),
         });
     }
 
@@ -1169,7 +1178,7 @@ fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {
         body
     };
 
-    for line in body.lines() {
+    for (line_index, line) in body.lines().enumerate() {
         if line.trim().is_empty() {
             if let Some(paragraph) = finalize_paragraph(&current_lines, paragraph_number) {
                 paragraph_number += 1;
@@ -1179,7 +1188,7 @@ fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {
             continue;
         }
 
-        current_lines.push(line.trim());
+        current_lines.push((line_index + 1, line.trim()));
     }
 
     if let Some(paragraph) = finalize_paragraph(&current_lines, paragraph_number) {
@@ -1189,11 +1198,36 @@ fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {
     paragraphs
 }
 
-fn finalize_paragraph(lines: &[&str], paragraph_index: usize) -> Option<IndexedParagraph> {
-    let joined = lines.join(" ");
+fn finalize_paragraph(lines: &[(usize, &str)], paragraph_index: usize) -> Option<IndexedParagraph> {
+    let joined = lines
+        .iter()
+        .map(|(_, line)| *line)
+        .collect::<Vec<_>>()
+        .join(" ");
     let text = collapse_whitespace(&joined);
     if text.is_empty() {
         return None;
+    }
+
+    let mut line_spans = Vec::new();
+    let mut cursor = 0usize;
+    for (line_number, line) in lines {
+        let normalized_line = collapse_whitespace(line);
+        if normalized_line.is_empty() {
+            continue;
+        }
+
+        if cursor > 0 {
+            cursor += 1;
+        }
+
+        let start_offset = cursor;
+        cursor += normalized_line.len();
+        line_spans.push(IndexedParagraphLine {
+            start_offset,
+            end_offset: cursor,
+            line_number: *line_number,
+        });
     }
 
     Some(IndexedParagraph {
@@ -1201,6 +1235,7 @@ fn finalize_paragraph(lines: &[&str], paragraph_index: usize) -> Option<IndexedP
         text_lower: text.to_lowercase(),
         text,
         paragraph_index: Some(paragraph_index),
+        lines: line_spans,
     })
 }
 
@@ -1709,7 +1744,10 @@ gneauxghts:
             .lock()
             .unwrap()
             .full_refresh_count;
-        assert_eq!(cold_full_refresh_count, 1, "cold start must populate the index");
+        assert_eq!(
+            cold_full_refresh_count, 1,
+            "cold start must populate the index"
+        );
 
         // Now write a new file *without* invalidating dirty paths and
         // pause past the legacy max-age. The foreground call must NOT do

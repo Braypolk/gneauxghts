@@ -40,6 +40,8 @@
               : 'text-muted-foreground hover:text-foreground'
           }`}
           onclick={() => onScopeChange('note')}
+          aria-label="Show related notes for this note"
+          title="Related to this note"
         >
           Note
         </button>
@@ -52,6 +54,8 @@
                 : 'text-muted-foreground hover:text-foreground'
             }`}
             onclick={() => onScopeChange('selection')}
+            aria-label="Show related notes for the selected text"
+            title="Related to selection"
           >
             Selection
           </button>
@@ -89,6 +93,8 @@
             type="button"
             class="group w-full rounded-[1.2rem] border border-border/70 bg-background/72 px-4 py-3 text-left transition hover:border-foreground/18 hover:bg-background"
             onclick={() => onSelect(item)}
+            aria-label={`Open related note: ${item.noteTitle}, ${item.sectionLabel}`}
+            title={item.noteTitle}
           >
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">

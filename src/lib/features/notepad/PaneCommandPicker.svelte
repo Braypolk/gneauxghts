@@ -43,7 +43,15 @@
       : 'Fill the new pane with the current note, recent context, or a thought partner.'
   );
   const pickerLabel = $derived(
-    mode === 'start' ? 'Choose how to start this note' : 'Choose content for this pane'
+    mode === 'start'
+      ? 'Type to keep writing, or choose recent context or a thought partner'
+      : 'Choose content for this pane'
+  );
+  const pickerDescriptionId = $derived(`pane-command-${mode}-description`);
+  const pickerInstruction = $derived(
+    mode === 'start'
+      ? 'Start typing to keep writing. Use the numbered choices to reopen context or open a thought partner.'
+      : 'Use the numbered choices to fill the pane with this note, recent context, or a thought partner.'
   );
   const previousIndex = $derived(
     mode === 'split' ? PANE_COMMAND_SPLIT_INDEX.previous : PANE_COMMAND_START_INDEX.previous
@@ -95,6 +103,32 @@
       ? 'mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-xs font-medium text-muted-foreground/70'
       : 'mt-0.5 shrink-0 rounded-md bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground'
   );
+
+  const currentShortcutLabel = $derived(
+    getPaneCommandShortcutLabel(PANE_COMMAND_SPLIT_INDEX.current, mode)
+  );
+  const previousShortcutLabel = $derived(getPaneCommandShortcutLabel(previousIndex, mode));
+  const thoughtPartnerShortcutLabel = $derived(
+    getPaneCommandShortcutLabel(thoughtPartnerIndex, mode)
+  );
+  const currentOptionTitle = $derived(`Open current note (${currentShortcutLabel})`);
+  const previousOptionTitle = $derived(
+    hasPrevious
+      ? `Open previous note (${previousShortcutLabel})`
+      : 'No previous note available yet'
+  );
+  const thoughtPartnerOptionTitle = $derived(`Open thought partner (${thoughtPartnerShortcutLabel})`);
+  const currentOptionAriaLabel = $derived(
+    `Open current note, ${currentNoteLabel}. Press ${currentShortcutLabel}.`
+  );
+  const previousOptionAriaLabel = $derived(
+    hasPrevious
+      ? `Open previous note, ${previousNoteLabel}. Press ${previousShortcutLabel}.`
+      : 'No previous note available yet.'
+  );
+  const thoughtPartnerOptionAriaLabel = $derived(
+    `Open thought partner. Press ${thoughtPartnerShortcutLabel}.`
+  );
 </script>
 
 <div
@@ -102,10 +136,12 @@
   data-pane-command={mode}
   role="listbox"
   aria-label={pickerLabel}
+  aria-describedby={pickerDescriptionId}
   aria-activedescendant={activeDescendantId}
   tabindex="0"
   class={rootClass}
 >
+  <p id={pickerDescriptionId} class="sr-only">{pickerInstruction}</p>
   <div class={isEmbedded ? 'mx-auto w-full max-w-md space-y-2' : 'w-full max-w-md space-y-3'}>
     {#if !isEmbedded}
       <div class="mb-4 text-center">
@@ -120,6 +156,8 @@
         id="pane-command-current"
         role="option"
         aria-selected={highlightedIndex === PANE_COMMAND_SPLIT_INDEX.current}
+        aria-label={currentOptionAriaLabel}
+        title={currentOptionTitle}
         class={optionClass(PANE_COMMAND_SPLIT_INDEX.current, true)}
         onclick={() => onChoose('current')}
         onmouseenter={() => onHighlightChange(PANE_COMMAND_SPLIT_INDEX.current)}
@@ -141,6 +179,8 @@
       role="option"
       aria-selected={highlightedIndex === previousIndex}
       aria-disabled={!hasPrevious}
+      aria-label={previousOptionAriaLabel}
+      title={previousOptionTitle}
       class={optionClass(previousIndex, hasPrevious)}
       onclick={() => hasPrevious && onChoose('previous')}
       onmouseenter={() => hasPrevious && onHighlightChange(previousIndex)}
@@ -152,7 +192,9 @@
       <span>
         <span class="font-medium">
           Open Previous Note
-          <span class="font-normal text-muted-foreground/70">({previousNoteShortcutLabel})</span>
+          {#if previousNoteShortcutLabel}
+            <span class="font-normal text-muted-foreground/70">({previousNoteShortcutLabel})</span>
+          {/if}
         </span>
         <span class="mt-0.5 block text-xs text-muted-foreground/82">
           {hasPrevious ? previousNoteLabel : 'No other recent note yet'}
@@ -165,6 +207,8 @@
       id="pane-command-thought-partner"
       role="option"
       aria-selected={highlightedIndex === thoughtPartnerIndex}
+      aria-label={thoughtPartnerOptionAriaLabel}
+      title={thoughtPartnerOptionTitle}
       class={optionClass(thoughtPartnerIndex, true)}
       onclick={() => onChoose('thoughtPartner')}
       onmouseenter={() => onHighlightChange(thoughtPartnerIndex)}

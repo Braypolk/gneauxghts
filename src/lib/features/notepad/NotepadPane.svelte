@@ -70,11 +70,11 @@
           </div>
         </div>
         {#if viewModel.showCloseButton}
-          <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onClose(viewModel.paneId)} aria-label="Close pane">
+          <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onClose(viewModel.paneId)} aria-label="Close this pane" title="Close pane">
             <X class="h-4 w-4" />
           </button>
         {:else}
-          <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onSplit()} aria-label="Add pane">
+          <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onSplit()} aria-label="Add a pane beside this note" title="Add pane">
             <Columns2 class="h-4 w-4" />
           </button>
         {/if}

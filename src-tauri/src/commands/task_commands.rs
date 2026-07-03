@@ -9,9 +9,9 @@ use crate::{
         db_set_note_collapsed, db_set_note_hidden, db_set_note_order, read_state,
         resolve_note_path_by_id,
         task_projection::{
-            delete_single_task, list_recent_open_tasks, list_tasks_with_filter,
-            load_task_by_id, load_tasks_for_note_id, reconcile_note_tasks,
-            set_hidden_for_task_id, ProjectionFilter, TaskRecord,
+            delete_single_task, list_recent_open_tasks, list_tasks_with_filter, load_task_by_id,
+            load_tasks_for_note_id, reconcile_note_tasks, set_hidden_for_task_id, ProjectionFilter,
+            TaskRecord,
         },
         validate_current_path,
     },
@@ -370,7 +370,13 @@ pub(crate) fn delete_task_with_view(
 mod tests {
     use super::*;
 
-    fn record(note_id: &str, task_id: &str, text: &str, completed: bool, hidden: bool) -> TaskRecord {
+    fn record(
+        note_id: &str,
+        task_id: &str,
+        text: &str,
+        completed: bool,
+        hidden: bool,
+    ) -> TaskRecord {
         TaskRecord {
             task_id: task_id.to_string(),
             note_id: note_id.to_string(),
@@ -420,8 +426,12 @@ mod tests {
         let hidden = record("note-1", "task-2", "Hidden task", false, true);
         let no_hidden_notes = HashSet::new();
 
-        let hidden_off =
-            one_group(vec![visible.clone(), hidden.clone()], false, &no_hidden_notes).unwrap();
+        let hidden_off = one_group(
+            vec![visible.clone(), hidden.clone()],
+            false,
+            &no_hidden_notes,
+        )
+        .unwrap();
         assert_eq!(hidden_off.display_count, 1);
         assert_eq!(hidden_off.hidden_count, 1);
         assert_eq!(hidden_off.visible_count, 1);

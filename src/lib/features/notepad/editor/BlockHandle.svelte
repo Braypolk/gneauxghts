@@ -77,6 +77,7 @@
     class="notepad-block-handle__action"
     data-role="add"
     aria-label="Insert block"
+    title="Insert block"
   >
     {@html addIcon}
   </button>
@@ -86,6 +87,7 @@
     class="notepad-block-handle__action"
     data-role="drag"
     aria-label="Move block"
+    title="Move block"
   >
     {@html dragHandleIcon}
   </button>
