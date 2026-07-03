@@ -5,9 +5,10 @@ import {
   loadBootstrapPayload,
   type BootstrapAppResult
 } from '$lib/features/notepad/session/bootstrap';
+import { logDevError } from '$lib/logDevError';
 
 /**
- * Break-the-app: one frontend `AppStore`, bootstrapped once.
+ * Unified frontend `AppStore`, bootstrapped once at app startup.
  *
  * Holds the cross-cutting backend snapshots (vault info, semantic status,
  * last-known index revision) that previously lived inside
@@ -72,8 +73,8 @@ class AppStore {
     for (const unlisten of this.#unlisteners) {
       try {
         unlisten();
-      } catch {
-        // best effort
+      } catch (error) {
+        logDevError('[AppStore] dispose unlisten failed', error);
       }
     }
     this.#unlisteners = [];
@@ -114,9 +115,7 @@ class AppStore {
       try {
         listener(payload);
       } catch (error) {
-        if (import.meta.env.DEV) {
-          console.error(`[AppStore] ${channel} listener failed`, error);
-        }
+        logDevError(`[AppStore] ${channel} listener failed`, error);
       }
     }
   }

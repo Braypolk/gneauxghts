@@ -50,8 +50,8 @@ pub fn run() {
                 )?
             };
             app.manage(AppState::new(semantic)?);
-            // Break-the-app: one managed `AppData` carrying the typed event
-            // bus and the `NoteCatalog` facade.
+            // One managed `AppData` carrying the typed event bus and
+            // `NoteCatalog` facade.
             app.manage(AppData::new(app.handle().clone()));
             // Vault watcher registration walks the notes directory tree
             // recursively; on large vaults that adds noticeable latency to

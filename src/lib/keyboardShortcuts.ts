@@ -1,4 +1,5 @@
 import { get, writable } from 'svelte/store';
+import { logDevError } from '$lib/logDevError';
 
 type ModifierToken = 'Meta' | 'Ctrl' | 'Alt' | 'Shift';
 type ShortcutGroupId = 'navigation' | 'workspace' | 'search' | 'editor';
@@ -611,7 +612,8 @@ function readStoredKeyboardShortcutBindings(): KeyboardShortcutBindings {
     }
 
     return next;
-  } catch {
+  } catch (error) {
+    logDevError('Failed to parse stored keyboard shortcuts; using defaults', error);
     return { ...defaultKeyboardShortcutBindings };
   }
 }

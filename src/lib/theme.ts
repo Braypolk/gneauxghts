@@ -1,4 +1,6 @@
 import { get, writable } from 'svelte/store';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { isTauriRuntime } from '$lib/tauriRuntime';
 
 export type ThemePreference = 'auto' | 'light' | 'dark';
 export type ResolvedTheme = 'light' | 'dark';
@@ -144,7 +146,6 @@ async function readNativeTheme(): Promise<ResolvedTheme | null> {
     return null;
   }
 
-  const { getCurrentWindow } = await import('@tauri-apps/api/window');
   return await getCurrentWindow().theme();
 }
 
@@ -154,7 +155,6 @@ async function subscribeToSystemThemeChanges(): Promise<void> {
   }
 
   if (isTauriRuntime()) {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
     stopNativeThemeListener = await getCurrentWindow().onThemeChanged(({ payload }) => {
       if (get(themePreference) === 'auto') {
         applyResolvedTheme(payload);
@@ -180,8 +180,4 @@ async function subscribeToSystemThemeChanges(): Promise<void> {
 
 function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined';
-}
-
-function isTauriRuntime(): boolean {
-  return isBrowser() && '__TAURI_INTERNALS__' in window;
 }

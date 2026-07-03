@@ -1,9 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { page } from '$app/stores';
+  import { page } from '$app/state';
   import { House, ListTodo, Settings } from '@lucide/svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
   import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
+  import { isTauriRuntime } from '$lib/tauriRuntime';
 
   const navLinks = [
     { href: '/', label: 'Note', icon: House },
@@ -18,14 +20,14 @@
 
   const linkClass = (href: string) =>
     `relative inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors sm:h-auto sm:w-auto sm:min-w-[105px] sm:gap-2 sm:px-3 sm:py-2 ${
-      isActive(href, $page.url.pathname)
+      isActive(href, page.url.pathname)
         ? 'border-foreground/15 bg-card text-foreground shadow-sm'
         : 'border-transparent text-muted-foreground hover:border-border/80 hover:text-foreground'
     }`;
 
   const settingsButtonClass = () =>
     `rounded-full border border-border/80 p-2 shadow-sm transition-colors ${
-      isActive(settingsHref, $page.url.pathname)
+      isActive(settingsHref, page.url.pathname)
         ? 'bg-accent text-accent-foreground'
         : 'bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground'
     }`;
@@ -36,11 +38,10 @@
   }
 
   async function handleHeaderMouseDown(event: MouseEvent) {
-    if (event.button !== 0 || isInteractiveTarget(event.target)) {
+    if (event.button !== 0 || isInteractiveTarget(event.target) || !isTauriRuntime()) {
       return;
     }
 
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
     await getCurrentWindow().startDragging();
   }
 
@@ -49,7 +50,7 @@
   }
 
   async function navigateToHref(href: string) {
-    if ($page.url.pathname === href) {
+    if (page.url.pathname === href) {
       return;
     }
 

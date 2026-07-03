@@ -1,9 +1,7 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
-
-function isTauriRuntime(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
+import { isTauriRuntime } from '$lib/tauriRuntime';
 
 export interface WorkspaceShortcutDeps<TPaneId extends string> {
   getPaneOrder: () => TPaneId[];
@@ -56,7 +54,6 @@ export function registerWorkspaceWindowCloseHandler<TPaneId extends string>(
   let disposed = false;
 
   void (async () => {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
     if (disposed) {
       return;
     }

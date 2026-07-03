@@ -1,9 +1,8 @@
-//! Break-the-app: unified application data + typed event bus.
+//! Unified application infrastructure: typed event bus and shared read models.
 //!
-//! `AppData` is a Tauri-managed state object that exposes the new layered
-//! infrastructure introduced by the break-the-app rewrite: a typed
-//! [`EventBus`] for domain events and a [`NoteCatalog`] read-model facade
-//! over the in-memory notes index.
+//! `AppData` is a Tauri-managed state object that exposes cross-cutting
+//! infrastructure: a typed [`EventBus`] for domain events and a
+//! [`NoteCatalog`] read-model facade over the in-memory notes index.
 //!
 //! `AppState` (notes index, lexical, semantic) remains Tauri-managed in its
 //! own right so existing commands, tests, and the vault watcher can access it
@@ -19,8 +18,7 @@ pub(crate) use events::EventBus;
 
 use tauri::AppHandle;
 
-/// One Rust managed state object that holds break-the-app infrastructure
-/// shared across services and command modules.
+/// Tauri-managed state shared across services and command modules.
 pub(crate) struct AppData {
     #[allow(dead_code)]
     pub(crate) catalog: NoteCatalog,

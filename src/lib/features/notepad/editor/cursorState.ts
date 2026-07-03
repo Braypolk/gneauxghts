@@ -1,3 +1,5 @@
+import { logDevError } from '$lib/logDevError';
+
 export interface CursorPosition {
   anchor: number;
   head: number;
@@ -61,7 +63,8 @@ function readStoredCursorMap() {
     );
 
     return new Map(entries);
-  } catch {
+  } catch (error) {
+    logDevError('Failed to read stored cursor positions', error);
     return new Map<string, StoredCursorEntry>();
   }
 }
@@ -77,8 +80,8 @@ function writeStoredCursorMap(cursorMap: Map<string, StoredCursorEntry>) {
 
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(prunedEntries)));
-  } catch {
-    // Ignore storage failures and leave cursor restoration disabled for this write.
+  } catch (error) {
+    logDevError('Failed to persist cursor positions', error);
   }
 }
 

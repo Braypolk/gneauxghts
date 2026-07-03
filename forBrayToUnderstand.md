@@ -26,30 +26,6 @@ what is the correct way to handle shortcuts
 
 
 
-onMount(() => {
-    void initializeTheme();
-    // Break-the-app: bootstrap the unified AppStore once at the layout
-    // level so backend events have a single subscriber and downstream
-    // feature stores can read vault/semantic/AI snapshots from one place.
-    void appStore.bootstrap().catch(() => {
-      // Bootstrap is best-effort; feature stores fall back to their
-      // existing per-feature loads if AppStore boot fails.
-    });
-  });
-
-
-this should probably call out if it goes into that catch right?
-what does Break-the-app mean?
-
-
-
-'page' is deprecated.
-need to fix that
-
-
-const { getCurrentWindow } = await import('@tauri-apps/api/window');
-do i really need this as an await import?
-
 
 
 <SlashMenu menu={paneRuntimes[PRIMARY_PANE_ID].ui.slashMenu} boundsElement={paneRuntimes[PRIMARY_PANE_ID].refs.paneCard} />

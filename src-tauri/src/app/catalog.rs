@@ -1,8 +1,8 @@
 //! Note read-model facade.
 //!
-//! The break-the-app architecture asks for "one `NoteCatalog` keyed by note
-//! id and path." The canonical write-side store remains
-//! [`crate::index::NotesIndex`] inside the existing `AppState`; that index
+//! `NoteCatalog` provides one read-model keyed by note id and path. The
+//! canonical write-side store remains [`crate::index::NotesIndex`] inside
+//! the existing `AppState`; that index
 //! already maintains both `entries: HashMap<PathBuf, IndexedNote>` and
 //! `by_id: HashMap<String, PathBuf>`. Reimplementing storage here would
 //! force a costly second copy on every save.
