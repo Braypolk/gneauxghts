@@ -109,28 +109,36 @@ class AppStore {
     this.vaultInfo = info;
   }
 
+  #dispatchToListeners<T>(channel: string, listeners: Set<Listener<T>>, payload: T): void {
+    for (const listener of listeners) {
+      try {
+        listener(payload);
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.error(`[AppStore] ${channel} listener failed`, error);
+        }
+      }
+    }
+  }
+
   async #attachListeners(): Promise<void> {
     this.#unlisteners.push(
       await listen<VaultNoteChangedPayload>('vault-note-changed', (event) => {
-        for (const listener of this.#vaultNoteChangedListeners) {
-          try {
-            listener(event.payload);
-          } catch {
-            // continue dispatching to other listeners
-          }
-        }
+        this.#dispatchToListeners(
+          'vault-note-changed',
+          this.#vaultNoteChangedListeners,
+          event.payload
+        );
       })
     );
     this.#unlisteners.push(
       await listen<SemanticStatus>('semantic-status-changed', (event) => {
         this.semanticStatus = event.payload;
-        for (const listener of this.#semanticStatusListeners) {
-          try {
-            listener(event.payload);
-          } catch {
-            // continue dispatching
-          }
-        }
+        this.#dispatchToListeners(
+          'semantic-status-changed',
+          this.#semanticStatusListeners,
+          event.payload
+        );
       })
     );
     this.#unlisteners.push(
@@ -138,25 +146,13 @@ class AppStore {
         if (typeof event.payload.revision === 'number') {
           this.indexRevision = event.payload.revision;
         }
-        for (const listener of this.#noteSavedListeners) {
-          try {
-            listener(event.payload);
-          } catch {
-            // continue dispatching
-          }
-        }
+        this.#dispatchToListeners('note-saved', this.#noteSavedListeners, event.payload);
       })
     );
     this.#unlisteners.push(
       await listen<VaultInfo>('vault-changed', (event) => {
         this.vaultInfo = event.payload;
-        for (const listener of this.#vaultChangedListeners) {
-          try {
-            listener(event.payload);
-          } catch {
-            // continue dispatching
-          }
-        }
+        this.#dispatchToListeners('vault-changed', this.#vaultChangedListeners, event.payload);
       })
     );
   }
