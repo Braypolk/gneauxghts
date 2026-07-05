@@ -1,6 +1,17 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
-  import { Search, Eraser, Undo2, Brain, StickyNote, BookOpen, Circle, X } from '@lucide/svelte';
+  import {
+    Search,
+    Eraser,
+    Undo2,
+    Brain,
+    StickyNote,
+    BookOpen,
+    Circle,
+    X,
+    ChevronDown,
+    ChevronRight
+  } from '@lucide/svelte';
   import {
     forgetButtonDurationPreference,
     resolveForgetButtonDurationMs
@@ -17,6 +28,8 @@
     BottomBarSearchProps
   } from '$lib/features/notepad/ui/bottomBarProps';
   import type { SearchItem } from '$lib/types/semantic';
+
+  const RECENT_TASKS_COLLAPSED_STORAGE_KEY = 'gneauxghts:bottom-bar:recent-tasks-collapsed';
 
   interface Props {
     forget: BottomBarForgetProps;
@@ -64,12 +77,20 @@
   let forgetCancelButton = $state<HTMLButtonElement | null>(null);
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
+  let areRecentTasksCollapsed = $state(loadRecentTasksCollapsedPreference());
 
   const visibleSearchResults = $derived.by<SearchItem[]>(() =>
     searchMode === 'current' ? dedupeCurrentSearchResults(searchResults) : searchResults
   );
+  const visibleRecentTasks = $derived(
+    searchQuery.trim() === '' && !areRecentTasksCollapsed ? recentTasks : []
+  );
   const visibleItems = $derived.by<BottomBarVisibleItem[]>(() =>
-    deriveBottomBarVisibleItems(searchQuery, visibleSearchResults, recentNotes, recentTasks)
+    deriveBottomBarVisibleItems(searchQuery, visibleSearchResults, recentNotes, visibleRecentTasks)
+  );
+  const hasRecentContent = $derived(recentNotes.length > 0 || recentTasks.length > 0);
+  const hasVisibleSearchContent = $derived(
+    searchQuery.trim() === '' ? hasRecentContent : visibleItems.length > 0
   );
 
   const bottomBarState = createBottomBarState({
@@ -77,7 +98,7 @@
     getSearchQuery: () => searchQuery,
     getSearchResults: () => visibleSearchResults,
     getRecentNotes: () => recentNotes,
-    getRecentTasks: () => recentTasks,
+    getRecentTasks: () => visibleRecentTasks,
     getVisibleItems: () => visibleItems,
     getForgetHoldDurationMs: () => forgetHoldDurationMs,
     isForgetHoldEnabled: () => isForgetHoldEnabled,
@@ -168,6 +189,23 @@
 
   function getRecentTaskItemClass() {
     return 'search-result-item flex h-[3rem] w-full items-center gap-3 rounded-[1.1rem] px-4 py-1.5 text-left transition-colors hover:bg-accent';
+  }
+
+  function loadRecentTasksCollapsedPreference() {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return window.localStorage.getItem(RECENT_TASKS_COLLAPSED_STORAGE_KEY) === 'true';
+  }
+
+  function toggleRecentTasksCollapsed() {
+    areRecentTasksCollapsed = !areRecentTasksCollapsed;
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        RECENT_TASKS_COLLAPSED_STORAGE_KEY,
+        String(areRecentTasksCollapsed)
+      );
+    }
   }
 
   function getSearchResultItemClass(mode: 'current' | 'all') {
@@ -501,7 +539,7 @@
         <div class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]">
           {#if isSearching && searchQuery.trim() !== ''}
             <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
-          {:else if visibleItems.length === 0}
+          {:else if !hasVisibleSearchContent}
             <div class="px-4 py-3 text-sm text-muted-foreground">
               {#if searchQuery.trim() === ''}
                 Start typing to search {searchMode === 'current' ? 'this note' : 'all notes'}.
@@ -514,61 +552,76 @@
               bind:this={searchResultsViewport}
               class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
             >
+              {#if recentTasks.length > 0}
+                <section
+                  class={`min-w-0 flex-1 lg:order-2 ${
+                    recentNotes.length > 0
+                      ? 'border-b border-border/70 pb-2 lg:border-b-0 lg:border-l lg:border-border/70 lg:pb-0 lg:pl-3'
+                      : ''
+                  }`}
+                >
+                  <button
+                    type="button"
+                    class="flex w-full items-center justify-between gap-3 px-4 pb-2 pt-3 text-left text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground transition-colors hover:text-foreground"
+                    aria-expanded={!areRecentTasksCollapsed}
+                    onmousedown={(event) => event.preventDefault()}
+                    onclick={toggleRecentTasksCollapsed}
+                  >
+                    <span>Recent Tasks</span>
+                    <span class="inline-flex items-center">
+                      {#if areRecentTasksCollapsed}
+                        <ChevronRight class="h-3.5 w-3.5" />
+                      {:else}
+                        <ChevronDown class="h-3.5 w-3.5" />
+                      {/if}
+                    </span>
+                  </button>
+                  {#if !areRecentTasksCollapsed}
+                    <div class={getRecentTasksViewportClass()}>
+                      {#each recentTasks as item, index (`task-${item.taskKey}-${index}`)}
+                        <button
+                          type="button"
+                          data-search-result-active={index === $bottomBarState.activeIndex ? 'true' : 'false'}
+                          class={getRecentTaskItemClass()}
+                          class:bg-accent={index === $bottomBarState.activeIndex}
+                          aria-label={`Open recent task: ${item.text}`}
+                          title={`${item.text} - ${item.noteTitle}`}
+                          onmousedown={(event) => event.preventDefault()}
+                          onclick={() => bottomBarState.selectItem({ kind: 'task', item })}
+                        >
+                          <Circle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span class="min-w-0 flex-1 truncate text-sm font-medium text-popover-foreground">
+                            {item.text}
+                          </span>
+                          <span class="max-w-32 shrink-0 truncate text-xs font-medium text-muted-foreground">
+                            {item.noteTitle}
+                          </span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </section>
+              {/if}
+
               {#if recentNotes.length > 0}
-                <section class="min-w-0 flex-1 lg:pr-3">
+                <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
                   <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
                     Recent Notes
                   </div>
                   <div class={getRecentNotesViewportClass()}>
                     {#each recentNotes as item, index (`note-${item.notePath ?? 'current'}-${item.fileName}-${index}`)}
+                      {@const globalIndex = visibleRecentTasks.length + index}
                       <button
                         type="button"
-                        data-search-result-active={index === $bottomBarState.activeIndex ? 'true' : 'false'}
+                        data-search-result-active={globalIndex === $bottomBarState.activeIndex ? 'true' : 'false'}
                         class={getRecentNoteItemClass()}
-                        class:bg-accent={index === $bottomBarState.activeIndex}
+                        class:bg-accent={globalIndex === $bottomBarState.activeIndex}
                         aria-label={`Open recent note: ${item.fileName}`}
                         title={item.fileName}
                         onmousedown={(event) => event.preventDefault()}
                         onclick={() => bottomBarState.selectItem({ kind: 'note', item })}
                       >
                         <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
-                      </button>
-                    {/each}
-                  </div>
-                </section>
-              {/if}
-
-              {#if recentTasks.length > 0}
-                <section
-                  class={`min-w-0 flex-1 ${
-                    recentNotes.length > 0
-                      ? 'border-t border-border/70 pt-2 lg:border-t-0 lg:border-l lg:border-border/70 lg:pl-3 lg:pt-0'
-                      : ''
-                  }`}
-                >
-                  <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                    Recent Tasks
-                  </div>
-                  <div class={getRecentTasksViewportClass()}>
-                    {#each recentTasks as item, index (`task-${item.taskKey}-${index}`)}
-                      {@const globalIndex = recentNotes.length + index}
-                      <button
-                        type="button"
-                        data-search-result-active={globalIndex === $bottomBarState.activeIndex ? 'true' : 'false'}
-                        class={getRecentTaskItemClass()}
-                        class:bg-accent={globalIndex === $bottomBarState.activeIndex}
-                        aria-label={`Open recent task: ${item.text}`}
-                        title={`${item.text} - ${item.noteTitle}`}
-                        onmousedown={(event) => event.preventDefault()}
-                        onclick={() => bottomBarState.selectItem({ kind: 'task', item })}
-                      >
-                        <Circle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span class="min-w-0 flex-1 truncate text-sm font-medium text-popover-foreground">
-                          {item.text}
-                        </span>
-                        <span class="max-w-32 shrink-0 truncate text-xs font-medium text-muted-foreground">
-                          {item.noteTitle}
-                        </span>
                       </button>
                     {/each}
                   </div>
@@ -681,7 +734,7 @@
     --search-scope-control-active-hover-bg: color-mix(in oklab, var(--foreground) 22%, var(--background));
     --search-scope-control-active-ring: color-mix(in oklab, var(--foreground) 16%, transparent);
     --search-scope-active-fg: var(--foreground);
-    --search-scope-results-bg: color-mix(in oklab, var(--popover) 95%, transparent);
+    --search-scope-results-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 3%, var(--popover));
     --search-scope-results-border: var(--border);
     background: var(--search-scope-bg);
     border-color: var(--search-scope-border);
@@ -710,7 +763,7 @@
     --search-scope-control-active-hover-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 28%, var(--background));
     --search-scope-control-active-ring: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 38%, transparent);
     --search-scope-active-fg: color-mix(in oklab, oklch(0.45 0.0935 231.27) 82%, var(--foreground));
-    --search-scope-results-bg: color-mix(in oklab, var(--popover) 95%, transparent);
+    --search-scope-results-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 5%, var(--popover));
     --search-scope-results-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 26%, var(--border));
   }
 
@@ -726,7 +779,7 @@
     --search-scope-control-active-hover-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 36%, var(--background));
     --search-scope-control-active-ring: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 46%, transparent);
     --search-scope-active-fg: color-mix(in oklab, oklch(0.82 0.075 231.27) 88%, var(--foreground));
-    --search-scope-results-bg: color-mix(in oklab, var(--popover) 95%, transparent);
+    --search-scope-results-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 8%, var(--popover));
     --search-scope-results-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 32%, var(--border));
   }
 

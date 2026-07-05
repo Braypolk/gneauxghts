@@ -387,10 +387,18 @@
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-current-search-highlight {
   border-radius: 0.28rem;
-  background: color-mix(in oklab, var(--accent) 76%, var(--foreground) 24%);
+  background: color-mix(in oklab, oklch(0.86 0.16 84) 68%, transparent);
   box-shadow:
-    inset 0 0 0 1px color-mix(in oklab, var(--foreground) 18%, transparent),
-    0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent);
+    inset 0 0 0 1px color-mix(in oklab, oklch(0.58 0.16 70) 34%, transparent),
+    0 0 0 1px color-mix(in oklab, oklch(0.82 0.18 82) 18%, transparent);
+  padding-inline: 1px;
+}
+
+.dark .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-current-search-highlight {
+  background: color-mix(in oklab, oklch(0.78 0.18 76) 62%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, oklch(0.93 0.14 91) 28%, transparent),
+    0 0 0 1px color-mix(in oklab, oklch(0.88 0.18 84) 18%, transparent);
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-wikilink {

@@ -106,7 +106,7 @@
   </div>
 
   <div class="relative z-10 flex min-w-0 justify-start sm:justify-center">
-    <nav class="flex items-center gap-1 rounded-full border border-border/80 bg-card/70 p-1 shadow-sm backdrop-blur-md sm:gap-0 sm:p-0">
+    <nav class="flex items-center gap-1 rounded-full border border-border/80 bg-card/70 p-1 shadow-sm backdrop-blur-md sm:gap-1 sm:p-1">
       {#each navLinks as { href, label, icon }}
         {@const Icon = icon}
         <a

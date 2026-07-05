@@ -65,8 +65,8 @@ export function deriveBottomBarVisibleItems(
 ): BottomBarVisibleItem[] {
   if (searchQuery.trim() === '') {
     return [
-      ...recentNotes.map((item) => ({ kind: 'note' as const, item })),
-      ...recentTasks.map((item) => ({ kind: 'task' as const, item }))
+      ...recentTasks.map((item) => ({ kind: 'task' as const, item })),
+      ...recentNotes.map((item) => ({ kind: 'note' as const, item }))
     ];
   }
 

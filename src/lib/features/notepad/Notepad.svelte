@@ -936,6 +936,14 @@
     documents.saveCursorPositionForDocument();
   }
 
+  async function splitWorkspaceIfAllowed() {
+    if (window.innerWidth < 640) {
+      return;
+    }
+
+    await commands.splitWorkspace();
+  }
+
   // ---------------------------------------------------------------------------
   // Global keyboard dispatch (delegated to workspace/shortcuts module).
   // ---------------------------------------------------------------------------
@@ -943,7 +951,7 @@
     getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
     getPaneTitleInput,
-    splitWorkspace: commands.splitWorkspace,
+    splitWorkspace: splitWorkspaceIfAllowed,
     closePane: commands.closePane,
     switchActivePane: commands.switchActivePane,
     startNewNoteFlow: commands.startNewNoteFlow,
@@ -996,7 +1004,7 @@
   const paneActions: PaneWorkspaceActions = {
     onActivate: commands.activatePane,
     onClose: commands.closePane,
-    onSplit: commands.splitWorkspace,
+    onSplit: splitWorkspaceIfAllowed,
     onTitleFocus: handleTitleFocus,
     onTitleInput: handleTitleInput,
     onTitleBlur: handleTitleBlur,
