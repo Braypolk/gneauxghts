@@ -1,3 +1,5 @@
+import { getNextListSelectionIndex } from '$lib/ui/listSelection';
+
 export type PaneCommandChoice = 'typing' | 'current' | 'previous' | 'thoughtPartner';
 export type PaneCommandMode = 'split' | 'start';
 
@@ -21,25 +23,16 @@ export const PANE_COMMAND_SPLIT_INDEX = {
   thoughtPartner: 3
 } as const;
 
-function getEnabledIndexes(mode: PaneCommandMode, hasPrevious: boolean): readonly number[] {
-  const enabled: number[] = [PANE_COMMAND_TYPING_INDEX];
+function getPaneCommandOptionCount(mode: PaneCommandMode): number {
+  return mode === 'split' ? 4 : 3;
+}
 
-  if (mode === 'split') {
-    enabled.push(PANE_COMMAND_SPLIT_INDEX.current);
-  }
-
-  if (hasPrevious) {
-    enabled.push(
-      mode === 'split' ? PANE_COMMAND_SPLIT_INDEX.previous : PANE_COMMAND_START_INDEX.previous
-    );
-  }
-
-  enabled.push(
-    mode === 'split'
-      ? PANE_COMMAND_SPLIT_INDEX.thoughtPartner
-      : PANE_COMMAND_START_INDEX.thoughtPartner
-  );
-  return enabled;
+function isPaneCommandIndexDisabled(
+  index: number,
+  hasPrevious: boolean,
+  mode: PaneCommandMode
+): boolean {
+  return getPaneCommandChoiceByIndex(index, hasPrevious, mode) === null;
 }
 
 export function isHiddenPaneCommandIndex(highlightedIndex: number): boolean {
@@ -84,16 +77,11 @@ export function getNextPaneCommandIndex(
   hasPrevious: boolean,
   mode: PaneCommandMode = 'split'
 ): number {
-  const indexes = getEnabledIndexes(mode, hasPrevious);
-  const currentPosition = indexes.indexOf(highlightedIndex);
-  if (currentPosition < 0) {
-    return indexes[0] ?? PANE_COMMAND_TYPING_INDEX;
-  }
-  const basePosition = currentPosition;
-  return (
-    indexes[(basePosition + direction + indexes.length) % indexes.length] ??
-    PANE_COMMAND_TYPING_INDEX
-  );
+  return getNextListSelectionIndex(highlightedIndex, direction, {
+    optionCount: getPaneCommandOptionCount(mode),
+    isOptionDisabled: (index) => isPaneCommandIndexDisabled(index, hasPrevious, mode),
+    fallbackIndex: PANE_COMMAND_TYPING_INDEX
+  });
 }
 
 function getChoiceIndexForShortcut(

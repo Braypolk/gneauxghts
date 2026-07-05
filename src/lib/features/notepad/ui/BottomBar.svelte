@@ -184,11 +184,11 @@
   }
 
   function getRecentNoteItemClass() {
-    return 'search-result-item flex h-[2.75rem] w-full items-center rounded-[1.1rem] px-4 py-1.5 text-left transition-colors hover:bg-accent';
+    return 'search-result-item flex h-[2.75rem] w-full items-center rounded-[1.1rem] px-4 py-1.5 text-left transition-colors';
   }
 
   function getRecentTaskItemClass() {
-    return 'search-result-item flex h-[3rem] w-full items-center gap-3 rounded-[1.1rem] px-4 py-1.5 text-left transition-colors hover:bg-accent';
+    return 'search-result-item flex h-[3rem] w-full items-center gap-3 rounded-[1.1rem] px-4 py-1.5 text-left transition-colors';
   }
 
   function loadRecentTasksCollapsedPreference() {
@@ -210,8 +210,8 @@
 
   function getSearchResultItemClass(mode: 'current' | 'all') {
     return mode === 'current'
-      ? 'search-result-item grid min-h-10 w-full grid-cols-[minmax(0,1fr)_max-content] items-center gap-3 rounded-[0.9rem] px-3 py-2 text-left transition-colors hover:bg-accent'
-      : 'search-result-item flex w-full flex-col gap-2 rounded-[1.1rem] px-4 py-3 text-left transition-colors hover:bg-accent';
+      ? 'search-result-item grid min-h-10 w-full grid-cols-[minmax(0,1fr)_max-content] items-center gap-3 rounded-[0.9rem] px-3 py-2 text-left transition-colors'
+      : 'search-result-item flex w-full flex-col gap-2 rounded-[1.1rem] px-4 py-3 text-left transition-colors';
   }
 
   function getSearchResultTitleClass() {
@@ -536,7 +536,10 @@
       </div>
 
       {#if $bottomBarState.isSearchFocused}
-        <div class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]">
+        <div
+          class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]"
+          data-search-navigation-mode={$bottomBarState.searchNavigationMode}
+        >
           {#if isSearching && searchQuery.trim() !== ''}
             <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
           {:else if !hasVisibleSearchContent}
@@ -587,6 +590,7 @@
                           aria-label={`Open recent task: ${item.text}`}
                           title={`${item.text} - ${item.noteTitle}`}
                           onmousedown={(event) => event.preventDefault()}
+                          onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(index)}
                           onclick={() => bottomBarState.selectItem({ kind: 'task', item })}
                         >
                           <Circle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -619,6 +623,7 @@
                         aria-label={`Open recent note: ${item.fileName}`}
                         title={item.fileName}
                         onmousedown={(event) => event.preventDefault()}
+                        onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(globalIndex)}
                         onclick={() => bottomBarState.selectItem({ kind: 'note', item })}
                       >
                         <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
@@ -639,6 +644,7 @@
                   aria-label={`Open search result: ${searchMode === 'all' ? item.fileName : item.sectionLabel}`}
                   title={searchMode === 'all' ? item.fileName : item.sectionLabel}
                   onmousedown={(event) => event.preventDefault()}
+                  onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(index)}
                   onclick={() => bottomBarState.selectItem({ kind: 'search', item })}
                 >
                   {#if searchMode === 'current'}
@@ -749,6 +755,14 @@
     transition:
       background-color 160ms ease,
       border-color 160ms ease;
+  }
+
+  .search-result-item[data-search-result-active='true'] {
+    background: var(--accent);
+  }
+
+  .search-results-panel[data-search-navigation-mode='pointer'] .search-result-item:hover {
+    background: var(--accent);
   }
 
   .search-bar-shell[data-search-active='true'] {

@@ -1,6 +1,11 @@
 import { tick } from 'svelte';
 import { get, writable } from 'svelte/store';
 import { keyboardShortcutMatchesEvent, type KeyboardShortcutId } from '$lib/keyboardShortcuts';
+import {
+  moveListSelection,
+  pointListSelection,
+  type ListNavigationMode
+} from '$lib/ui/listSelection';
 import type { SearchItem } from '$lib/types/semantic';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 
@@ -17,6 +22,7 @@ interface TextRange {
 export interface BottomBarState {
   isSearchFocused: boolean;
   activeIndex: number;
+  searchNavigationMode: ListNavigationMode;
   lastHandledFocusRequest: number;
   isHoldingForget: boolean;
   forgetHoldProgress: number;
@@ -50,6 +56,7 @@ function createInitialState(): BottomBarState {
   return {
     isSearchFocused: false,
     activeIndex: 0,
+    searchNavigationMode: 'pointer',
     lastHandledFocusRequest: 0,
     isHoldingForget: false,
     forgetHoldProgress: 0,
@@ -147,7 +154,7 @@ export function createBottomBarState({
   }
 
   function resetActiveIndex() {
-    patch({ activeIndex: 0 });
+    patch({ activeIndex: 0, searchNavigationMode: 'pointer' });
   }
 
   function setSearchFocused(isSearchFocused: boolean) {
@@ -299,13 +306,29 @@ export function createBottomBarState({
 
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      patch({ activeIndex: (state.activeIndex + 1) % items.length });
+      const nextSelection = moveListSelection(
+        { activeIndex: state.activeIndex, navigationMode: state.searchNavigationMode },
+        1,
+        { optionCount: items.length }
+      );
+      patch({
+        activeIndex: nextSelection.activeIndex,
+        searchNavigationMode: nextSelection.navigationMode
+      });
       return;
     }
 
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      patch({ activeIndex: (state.activeIndex - 1 + items.length) % items.length });
+      const nextSelection = moveListSelection(
+        { activeIndex: state.activeIndex, navigationMode: state.searchNavigationMode },
+        -1,
+        { optionCount: items.length }
+      );
+      patch({
+        activeIndex: nextSelection.activeIndex,
+        searchNavigationMode: nextSelection.navigationMode
+      });
       return;
     }
 
@@ -338,6 +361,18 @@ export function createBottomBarState({
 
     const activeItem = viewport.querySelector<HTMLElement>('[data-search-result-active="true"]');
     activeItem?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function handleSearchItemPointerEnter(index: number) {
+    const nextSelection = pointListSelection(index, { optionCount: getVisibleItems().length });
+    if (!nextSelection) {
+      return;
+    }
+
+    patch({
+      activeIndex: nextSelection.activeIndex,
+      searchNavigationMode: nextSelection.navigationMode
+    });
   }
 
   function clearForgetHoldFrame() {
@@ -477,6 +512,7 @@ export function createBottomBarState({
     handleSearchModeClick,
     getSearchPlaceholder,
     handleSearchKeydown,
+    handleSearchItemPointerEnter,
     selectItem,
     handleFocusRequest,
     syncActiveItemIntoView,
