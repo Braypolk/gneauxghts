@@ -50,11 +50,20 @@
   }
 
   async function navigateToHref(href: string) {
-    if (page.url.pathname === href) {
+    const normalizedCurrentPath = page.url.pathname.endsWith('/') && page.url.pathname !== '/'
+      ? page.url.pathname.slice(0, -1)
+      : page.url.pathname;
+    const normalizedHref = href.endsWith('/') && href !== '/' ? href.slice(0, -1) : href;
+    if (normalizedCurrentPath === normalizedHref && window.location.pathname === href) {
       return;
     }
 
-    await awaitPendingNoteSave();
+    try {
+      await awaitPendingNoteSave();
+    } catch (error) {
+      console.error('Failed to flush pending note save before navigation:', error);
+    }
+
     await goto(href);
   }
 

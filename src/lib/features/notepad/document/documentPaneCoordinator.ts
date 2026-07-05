@@ -187,7 +187,7 @@ export function createDocumentPaneCoordinator<TPaneId extends string>(
         // destroy + recreate when the swap can't be applied (no live view,
         // detached root, etc.).
         unregisterPaneEditorForDocument(paneId, previousNote);
-        const swapped = lifecycle.swapEditorBuffer(nextNote);
+        const swapped = await lifecycle.swapEditorBuffer(nextNote);
         if (swapped) {
           if (runtime.controller) {
             registerPaneEditorForDocument(paneId, nextNote);
@@ -213,6 +213,53 @@ export function createDocumentPaneCoordinator<TPaneId extends string>(
     }
   }
 
+  async function replacePaneDocument(
+    paneId: TPaneId,
+    previousNote: NoteDraftState,
+    nextNote: NoteDraftState,
+    { restoreCursor = false }: { restoreCursor?: boolean } = {}
+  ): Promise<void> {
+    if (deps.getPaneKind(paneId) !== 'editor') {
+      return;
+    }
+
+    const runtime = deps.getPaneRuntime(paneId);
+    const lifecycle = deps.getEditorLifecycleController(paneId);
+
+    if (!runtime.controller) {
+      markPaneDocumentGeneration(paneId, nextNote);
+      return;
+    }
+
+    if (previousNote.key === nextNote.key) {
+      await lifecycle.replaceEditorContentInPlaceForDocument(nextNote.bodyMarkdown, nextNote);
+    } else {
+      unregisterPaneEditorForDocument(paneId, previousNote);
+      const swapped = await lifecycle.swapEditorBuffer(nextNote);
+      if (swapped) {
+        if (runtime.controller) {
+          registerPaneEditorForDocument(paneId, nextNote);
+        }
+        if (restoreCursor) {
+          lifecycle.restoreCursorPositionForDocument(nextNote);
+        }
+      } else {
+        await lifecycle.replaceEditorContent(nextNote.bodyMarkdown, {
+          restoreCursor,
+          suppressReadyReset: true
+        });
+        if (runtime.controller) {
+          registerPaneEditorForDocument(paneId, nextNote);
+        }
+      }
+    }
+
+    markPaneDocumentGeneration(paneId, nextNote);
+    if (!deps.getNoteByKey(previousNote.key)) {
+      cleanupNoteRuntime(previousNote.key);
+    }
+  }
+
   return {
     markPaneDocumentGeneration,
     registerPaneEditorForDocument,
@@ -225,6 +272,7 @@ export function createDocumentPaneCoordinator<TPaneId extends string>(
     discardSharedEditorStateForDocument,
     replaceEditorContent,
     replaceEditorContentInPlace,
+    replacePaneDocument,
     replaceNoteAcrossPanes
   };
 }

@@ -307,12 +307,45 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     void loadRecentNotes();
   }
 
+  async function rememberCurrentNoteForPane(paneId: TPaneId) {
+    flushAllPendingDocumentSyncs();
+    documents.flushAllPendingCursorSaves();
+    const note = getPaneDocument(paneId);
+    documents.saveCursorPositionForDocument(note);
+    documents.saveSharedEditorStateForDocument(note);
+    cancelPendingAutosave(note);
+    await getNoteSaveQueue(note.key);
+    const operationRevision = note.operationRevision;
+    setNoteStatus(note, 'remembering');
+
+    await rememberNoteSession(note.title, note.bodyMarkdown, note.currentNotePath);
+
+    if (note.operationRevision !== operationRevision) {
+      return note;
+    }
+
+    setNoteStatus(note, 'idle');
+    setRecentlyForgotten(null);
+    invalidatePendingSaveResults(note);
+    cancelPendingAutosave(note);
+
+    const freshDraft = createFreshDraftNote(state);
+    setPaneDocumentSession(paneId, freshDraft);
+    await documents.replacePaneDocument(paneId, note, freshDraft);
+    clearSearch();
+    clearSelectedRelatedText();
+    scheduleSearchIfNeeded();
+    scheduleRelatedIfNeeded({ immediate: true });
+    void loadRecentNotes();
+    return freshDraft;
+  }
+
   async function startNewNoteFlow() {
     let paneId = getNavigationPaneId();
     let note = getNavigationDocument();
 
     if (hasContent(note)) {
-      await rememberCurrentNote();
+      await rememberCurrentNoteForPane(paneId);
       paneId = getNavigationPaneId();
       note = getNavigationDocument();
     }

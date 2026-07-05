@@ -119,11 +119,13 @@ export function createEditorLifecycleController({
    * Returns true on success. The caller should fall back to a full
    * destroy/recreate when this returns false.
    */
-  function swapEditorBuffer(nextDocument: NoteDraftState): boolean {
+  async function swapEditorBuffer(nextDocument: NoteDraftState): Promise<boolean> {
     const controller = getController();
     if (!controller) {
       return false;
     }
+
+    await tick();
 
     const ok = swapEditorRuntime(controller, {
       sharedResources: getSharedEditorResources(nextDocument),
