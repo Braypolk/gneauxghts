@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveBottomBarVisibleItems } from './bottomBarState';
+import { createBottomBarState, deriveBottomBarVisibleItems } from './bottomBarState';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import type { SearchItem } from '$lib/types/semantic';
 
@@ -39,5 +39,44 @@ describe('deriveBottomBarVisibleItems', () => {
     const items = deriveBottomBarVisibleItems('', [], [searchItem()], [taskItem()]);
 
     expect(items.map((item) => item.kind)).toEqual(['task', 'note']);
+  });
+});
+
+describe('createBottomBarState', () => {
+  it('uses raw navigation results for next and previous search buttons', () => {
+    const visibleResults = [searchItem({ matchText: 'line grouped result' })];
+    const rawResults = [
+      searchItem({ matchText: 'first instance' }),
+      searchItem({ matchText: 'second instance' })
+    ];
+    const navigated: SearchItem[] = [];
+    const state = createBottomBarState({
+      getSearchMode: () => 'current',
+      getSearchQuery: () => 'found',
+      getSearchResults: () => visibleResults,
+      getSearchNavigationResults: () => rawResults,
+      getRecentNotes: () => [],
+      getRecentTasks: () => [],
+      getVisibleItems: () => [],
+      getForgetHoldDurationMs: () => 0,
+      isForgetHoldEnabled: () => false,
+      onSearchInput: () => {},
+      onSearchModeChange: () => {},
+      onSearchSelect: () => {},
+      onSearchNavigate: (result) => {
+        navigated.push(result);
+      },
+      onRecentNoteSelect: () => {},
+      onRecentTaskSelect: () => {},
+      onRecentNoteShortcut: () => {},
+      onRecentTaskShortcut: () => {},
+      onSearchFocus: () => {},
+      onForget: () => {}
+    });
+
+    state.navigateSearchResult(1);
+    state.navigateSearchResult(1);
+
+    expect(navigated.map((item) => item.matchText)).toEqual(['second instance', 'first instance']);
   });
 });

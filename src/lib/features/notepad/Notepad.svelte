@@ -915,7 +915,6 @@
   async function handleSearchResultSelect(result: SearchItem) {
     workspaceStore.resetPaneCommand();
     if (searchState.searchMode === 'current' && result.currentMatchRange) {
-      workspaceStore.resetPaneCommand();
       searchState.clearSearch();
       const paneId = getNavigationPaneId();
       activatePaneSession(paneId);
@@ -926,6 +925,19 @@
     }
 
     await openSearchResult(getOpenContext(), getNavigationContext(), result);
+    documents.saveCursorPositionForDocument();
+  }
+
+  async function handleSearchResultNavigate(result: SearchItem) {
+    if (searchState.searchMode !== 'current' || !result.currentMatchRange) {
+      return;
+    }
+
+    workspaceStore.resetPaneCommand();
+    const paneId = getNavigationPaneId();
+    activatePaneSession(paneId);
+    await tick();
+    focusEditorSearchRange(getPaneRuntime(paneId).controller, result.currentMatchRange);
     documents.saveCursorPositionForDocument();
   }
 
@@ -1259,6 +1271,10 @@
           onSearchSelect: (result) =>
             void handleSearchResultSelect(result).catch((error) => {
               console.error('Failed to open searched note:', error);
+            }),
+          onSearchNavigate: (result) =>
+            void handleSearchResultNavigate(result).catch((error) => {
+              console.error('Failed to navigate search result:', error);
             }),
           onRecentNoteSelect: (result) =>
             void openRecentNoteItem(result).catch((error) => {

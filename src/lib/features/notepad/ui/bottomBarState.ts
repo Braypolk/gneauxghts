@@ -33,6 +33,7 @@ interface BottomBarStateDeps {
   getSearchMode: () => 'current' | 'all';
   getSearchQuery: () => string;
   getSearchResults: () => SearchItem[];
+  getSearchNavigationResults?: () => SearchItem[];
   getRecentNotes: () => SearchItem[];
   getRecentTasks: () => RecentTaskItem[];
   getVisibleItems: () => BottomBarVisibleItem[];
@@ -41,6 +42,7 @@ interface BottomBarStateDeps {
   onSearchInput: (value: string) => void;
   onSearchModeChange: (mode: 'current' | 'all') => void | Promise<void>;
   onSearchSelect: (result: SearchItem) => void;
+  onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
   onRecentNoteSelect: (result: SearchItem) => void;
   onRecentTaskSelect: (task: RecentTaskItem) => void;
   onRecentNoteShortcut: (index: number) => void | Promise<void>;
@@ -111,6 +113,7 @@ export function createBottomBarState({
   getSearchMode,
   getSearchQuery,
   getSearchResults,
+  getSearchNavigationResults,
   getRecentNotes,
   getRecentTasks,
   getVisibleItems,
@@ -119,6 +122,7 @@ export function createBottomBarState({
   onSearchInput,
   onSearchModeChange,
   onSearchSelect,
+  onSearchNavigate,
   onRecentNoteSelect,
   onRecentTaskSelect,
   onRecentNoteShortcut,
@@ -170,8 +174,11 @@ export function createBottomBarState({
   }
 
   function handleSearchClear() {
+    const wasSearchFocused = getState().isSearchFocused;
     onSearchInput('');
-    searchInput?.focus();
+    if (wasSearchFocused) {
+      searchInput?.focus();
+    }
   }
 
   function handleSearchFocus() {
@@ -268,6 +275,25 @@ export function createBottomBarState({
     }
 
     onSearchSelect(item.item);
+  }
+
+  function navigateSearchResult(delta: 1 | -1) {
+    const results = getSearchNavigationResults?.() ?? getSearchResults();
+    if (getSearchQuery().trim() === '' || results.length === 0) {
+      return;
+    }
+
+    const state = getState();
+    const nextSelection = moveListSelection(
+      { activeIndex: state.activeIndex, navigationMode: state.searchNavigationMode },
+      delta,
+      { optionCount: results.length }
+    );
+    patch({
+      activeIndex: nextSelection.activeIndex,
+      searchNavigationMode: nextSelection.navigationMode
+    });
+    void onSearchNavigate?.(results[nextSelection.activeIndex]);
   }
 
   function handleSearchKeydown(event: KeyboardEvent) {
@@ -514,6 +540,7 @@ export function createBottomBarState({
     handleSearchKeydown,
     handleSearchItemPointerEnter,
     selectItem,
+    navigateSearchResult,
     handleFocusRequest,
     syncActiveItemIntoView,
     resetForgetHold,

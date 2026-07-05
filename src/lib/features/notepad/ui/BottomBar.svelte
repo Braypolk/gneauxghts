@@ -9,6 +9,7 @@
     BookOpen,
     Circle,
     X,
+    ChevronUp,
     ChevronDown,
     ChevronRight,
     CaseSensitive,
@@ -65,6 +66,7 @@
   const onMatchCaseChange = $derived(search.onMatchCaseChange);
   const onMatchWholeWordChange = $derived(search.onMatchWholeWordChange);
   const onSearchSelect = $derived(search.onSearchSelect);
+  const onSearchNavigate = $derived(search.onSearchNavigate);
   const onRecentNoteSelect = $derived(search.onRecentNoteSelect);
   const onRecentTaskSelect = $derived(search.onRecentTaskSelect);
   const onRecentNoteShortcut = $derived(search.onRecentNoteShortcut);
@@ -102,11 +104,15 @@
   const hasVisibleSearchContent = $derived(
     searchQuery.trim() === '' ? hasRecentContent : visibleItems.length > 0
   );
+  const canNavigateCurrentSearchResults = $derived(
+    searchMode === 'current' && searchQuery.trim() !== '' && searchResults.length > 0
+  );
 
   const bottomBarState = createBottomBarState({
     getSearchMode: () => searchMode,
     getSearchQuery: () => searchQuery,
     getSearchResults: () => visibleSearchResults,
+    getSearchNavigationResults: () => (searchMode === 'current' ? searchResults : visibleSearchResults),
     getRecentNotes: () => recentNotes,
     getRecentTasks: () => visibleRecentTasks,
     getVisibleItems: () => visibleItems,
@@ -115,6 +121,7 @@
     onSearchInput: (value) => onSearchInput(value),
     onSearchModeChange: (mode) => onSearchModeChange(mode),
     onSearchSelect: (result) => onSearchSelect(result),
+    onSearchNavigate: (result) => onSearchNavigate?.(result),
     onRecentNoteSelect: (result) => onRecentNoteSelect(result),
     onRecentTaskSelect: (task) => onRecentTaskSelect(task),
     onRecentNoteShortcut: (index) => onRecentNoteShortcut(index),
@@ -123,6 +130,7 @@
     onCommand: (command) => onCommand?.(command) ?? false,
     onForget: () => onForget()
   });
+  const isSearchExpanded = $derived($bottomBarState.isSearchFocused || searchQuery.trim() !== '');
 
   // Track only the materially distinguishing fingerprint of the visible
   // items so transient writable-store flips (e.g. isSearching toggling on a
@@ -509,6 +517,7 @@
       class="search-bar search-bar-shell relative flex max-w-2xl flex-1 min-w-0 items-center gap-2 overflow-visible rounded-full border pl-3 pr-1 sm:gap-3 sm:pl-5"
       data-search-mode={searchMode}
       data-search-active={$bottomBarState.isSearchFocused ? 'true' : 'false'}
+      data-search-expanded={isSearchExpanded ? 'true' : 'false'}
       onfocusin={bottomBarState.handleSearchFocus}
       onfocusout={bottomBarState.handleSearchBlur}
     >
@@ -544,6 +553,30 @@
             onclick={bottomBarState.handleSearchClear}
           >
             <X class="h-4 w-4" />
+          </button>
+        {/if}
+        {#if searchMode === 'current' && searchQuery.trim() !== ''}
+          <button
+            type="button"
+            class="search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+            aria-label="Previous match"
+            title="Previous match"
+            disabled={!canNavigateCurrentSearchResults}
+            onmousedown={(event) => event.preventDefault()}
+            onclick={() => bottomBarState.navigateSearchResult(-1)}
+          >
+            <ChevronUp class="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            class="search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+            aria-label="Next match"
+            title="Next match"
+            disabled={!canNavigateCurrentSearchResults}
+            onmousedown={(event) => event.preventDefault()}
+            onclick={() => bottomBarState.navigateSearchResult(1)}
+          >
+            <ChevronDown class="h-4 w-4" />
           </button>
         {/if}
         {#if $bottomBarState.isSearchFocused}
@@ -845,13 +878,13 @@
       max-width: 28rem;
     }
 
-    .search-bar-shell[data-search-active='true'] {
+    .search-bar-shell[data-search-expanded='true'] {
       flex: 1 1 42rem;
       max-width: 42rem;
     }
   }
 
-  .search-bar-shell[data-search-active='true'] .search-mode-label {
+  .search-bar-shell[data-search-expanded='true'] .search-mode-label {
     max-width: 5rem;
     opacity: 1;
     transform: translateX(0);
@@ -874,12 +907,12 @@
     background: var(--accent);
   }
 
-  .search-bar-shell[data-search-active='true'] {
+  .search-bar-shell[data-search-expanded='true'] {
     --search-scope-bg: var(--background);
     --search-scope-border: color-mix(in oklab, var(--border) 70%, transparent);
   }
 
-  .search-bar-shell[data-search-mode='all'][data-search-active='true'] {
+  .search-bar-shell[data-search-mode='all'][data-search-expanded='true'] {
     --search-scope-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 8%, var(--background));
     --search-scope-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 30%, var(--border));
     --search-scope-control-active-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 21%, var(--background));
@@ -890,12 +923,12 @@
     --search-scope-results-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 26%, var(--border));
   }
 
-  :global(.dark) .search-bar-shell[data-search-active='true'] {
+  :global(.dark) .search-bar-shell[data-search-expanded='true'] {
     --search-scope-bg: color-mix(in oklab, var(--background) 92%, var(--card));
     --search-scope-border: color-mix(in oklab, var(--border) 70%, transparent);
   }
 
-  :global(.dark) .search-bar-shell[data-search-mode='all'][data-search-active='true'] {
+  :global(.dark) .search-bar-shell[data-search-mode='all'][data-search-expanded='true'] {
     --search-scope-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 14%, var(--background));
     --search-scope-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 36%, var(--border));
     --search-scope-control-active-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 28%, var(--background));

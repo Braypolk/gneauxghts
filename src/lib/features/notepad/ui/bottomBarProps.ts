@@ -35,6 +35,7 @@ export interface BottomBarSearchProps {
   onMatchCaseChange: (enabled: boolean) => void | Promise<void>;
   onMatchWholeWordChange: (enabled: boolean) => void | Promise<void>;
   onSearchSelect: (result: SearchItem) => void;
+  onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
   onRecentNoteSelect: (result: SearchItem) => void;
   onRecentTaskSelect: (task: RecentTaskItem) => void;
   onRecentNoteShortcut: (index: number) => void | Promise<void>;
