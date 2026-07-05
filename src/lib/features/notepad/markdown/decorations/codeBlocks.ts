@@ -1,4 +1,5 @@
 import { Decoration } from '@codemirror/view';
+import { getWrapFormatSpec } from '../inlineFormatSpec';
 import type { MarkdownNodeDecorator } from './types';
 
 // Inline code (`code`) and fenced code blocks. Syntax highlighting of the
@@ -7,7 +8,8 @@ import type { MarkdownNodeDecorator } from './types';
 // per-line block styling, and conceal of the backtick fences / info string when
 // the block is not being edited.
 
-const inlineCodeMark = Decoration.mark({ class: 'cm-gn-code-inline' });
+const codeSpec = getWrapFormatSpec('code');
+const inlineCodeMark = Decoration.mark({ class: codeSpec.contentClass });
 const conceal = Decoration.replace({});
 const codeFenceMark = Decoration.mark({ class: 'cm-gn-code-fence' });
 const codeBlockLine = Decoration.line({ class: 'cm-gn-code-block-line' });
@@ -33,7 +35,7 @@ const decorateInline: MarkdownNodeDecorator = (ctx, node) => {
   }
 
   for (let child = node.node.firstChild; child; child = child.nextSibling) {
-    if (child.name === 'CodeMark' && child.to > child.from) {
+    if (child.name === codeSpec.markerNode && child.to > child.from) {
       ctx.decorations.push(conceal.range(child.from, child.to));
     }
   }

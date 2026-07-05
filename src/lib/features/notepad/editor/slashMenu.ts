@@ -3,9 +3,18 @@ import { EditorView } from '@codemirror/view';
 import {
   applyBlockTypeSelection,
   slashMenuGroups,
-  slashMenuOptionIds,
-  type EditorMenuOption
+  slashMenuOptionIds
 } from '$lib/features/notepad/editor/blockTypes';
+import {
+  buildEditorMenuModel,
+  type EditorMenuGroupWithItems,
+  type EditorMenuItemWithIndex
+} from '$lib/features/notepad/editor/editorMenuModel';
+import {
+  consumeMenuKeyEvent,
+  stepMenuHoverGroup,
+  stepMenuHoverIndex
+} from '$lib/features/notepad/editor/editorMenuKeyboard';
 import { emitSlashMenuUpdate } from '$lib/features/notepad/editor/slashMenuBridge';
 
 const slashMenuFloatingReferenceByView = new WeakMap<EditorView, HTMLElement>();
@@ -29,19 +38,11 @@ export function getSlashMenuFloatingReference(view: EditorView): HTMLElement | n
   return element;
 }
 
-export interface SlashMenuItemWithIndex extends EditorMenuOption {
-  index: number;
-}
-
-export interface SlashMenuGroupWithItems {
-  key: string;
-  label: string;
-  range: readonly [number, number];
-  items: SlashMenuItemWithIndex[];
-}
+export type SlashMenuItemWithIndex = EditorMenuItemWithIndex;
+export type SlashMenuGroupWithItems = EditorMenuGroupWithItems;
 
 interface SlashMenuModel {
-  groups: SlashMenuGroupWithItems[];
+  groups: EditorMenuGroupWithItems[];
   size: number;
 }
 
@@ -71,39 +72,7 @@ export interface SlashMenuAPI {
 }
 
 export function getSlashMenuState(filter = ''): SlashMenuModel {
-  const normalizedFilter = filter.trim().toLowerCase();
-  const groups: SlashMenuGroupWithItems[] = [];
-  let index = 0;
-
-  for (const group of slashMenuGroups) {
-    const items = group.items
-      .filter((item) => {
-        if (normalizedFilter === '') {
-          return true;
-        }
-        return item.label.toLowerCase().includes(normalizedFilter);
-      })
-      .map((item) => ({
-        ...item,
-        index: index++
-      }));
-
-    if (items.length === 0) {
-      continue;
-    }
-
-    groups.push({
-      key: group.key,
-      label: group.label,
-      range: [items[0].index, items[items.length - 1].index + 1],
-      items
-    });
-  }
-
-  return {
-    groups,
-    size: index
-  };
+  return buildEditorMenuModel(slashMenuGroups, filter);
 }
 
 function getSelectionLine(view: EditorView) {
@@ -154,12 +123,6 @@ function runSlashMenuSelection(view: EditorView, optionId: string) {
   }
 
   applyBlockTypeSelection(view, optionId);
-}
-
-function consumeKeyEvent(event: KeyboardEvent) {
-  event.preventDefault();
-  event.stopPropagation();
-  event.stopImmediatePropagation();
 }
 
 function getCurrentText(view: EditorView) {
@@ -255,59 +218,43 @@ class SlashMenuController {
     }
 
     if (event.key === 'Escape') {
-      consumeKeyEvent(event);
+      consumeMenuKeyEvent(event);
       this.hide();
       return;
     }
 
     if (event.key === 'ArrowDown') {
-      consumeKeyEvent(event);
-      this.setHoverIndex(this.#hoverIndex + 1);
+      consumeMenuKeyEvent(event);
+      this.setHoverIndex(stepMenuHoverIndex(this.#hoverIndex, 'down', this.#menuState.size));
       return;
     }
 
     if (event.key === 'ArrowUp') {
-      consumeKeyEvent(event);
-      this.setHoverIndex(this.#hoverIndex - 1);
+      consumeMenuKeyEvent(event);
+      this.setHoverIndex(stepMenuHoverIndex(this.#hoverIndex, 'up', this.#menuState.size));
       return;
     }
 
     if (event.key === 'ArrowLeft') {
-      consumeKeyEvent(event);
-      const group = this.#menuState.groups.find(
-        (candidate) =>
-          this.#hoverIndex >= candidate.range[0] && this.#hoverIndex < candidate.range[1]
-      );
-      if (!group) {
-        return;
-      }
-
-      const previousGroup = this.#menuState.groups[this.#menuState.groups.indexOf(group) - 1];
-      if (previousGroup) {
-        this.setHoverIndex(previousGroup.range[1] - 1);
+      consumeMenuKeyEvent(event);
+      const nextIndex = stepMenuHoverGroup(this.#hoverIndex, 'left', this.#menuState.groups);
+      if (nextIndex !== null) {
+        this.setHoverIndex(nextIndex);
       }
       return;
     }
 
     if (event.key === 'ArrowRight') {
-      consumeKeyEvent(event);
-      const group = this.#menuState.groups.find(
-        (candidate) =>
-          this.#hoverIndex >= candidate.range[0] && this.#hoverIndex < candidate.range[1]
-      );
-      if (!group) {
-        return;
-      }
-
-      const nextGroup = this.#menuState.groups[this.#menuState.groups.indexOf(group) + 1];
-      if (nextGroup) {
-        this.setHoverIndex(nextGroup.range[0]);
+      consumeMenuKeyEvent(event);
+      const nextIndex = stepMenuHoverGroup(this.#hoverIndex, 'right', this.#menuState.groups);
+      if (nextIndex !== null) {
+        this.setHoverIndex(nextIndex);
       }
       return;
     }
 
     if (event.key === 'Enter') {
-      consumeKeyEvent(event);
+      consumeMenuKeyEvent(event);
       const index = this.#hoverIndex;
       this.hide();
       queueMicrotask(() => {
@@ -365,10 +312,6 @@ class SlashMenuController {
       this.#emitOpen(this.#view);
     }
   };
-}
-
-export function refreshSlashMenuLayout(view: EditorView) {
-  slashControllers.get(view)?.sync(view);
 }
 
 export function slashMenuHandleKeydownFromUi(view: EditorView, event: KeyboardEvent) {

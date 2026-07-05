@@ -22,7 +22,7 @@ export interface PaneControllerSetupDeps<TPaneId extends string> {
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   activatePaneSession: (paneId: TPaneId) => unknown;
   cancelPendingAutosave: (note?: NoteDraftState) => void;
-  closeWikilinkAutocomplete: (paneId?: TPaneId) => void;
+  closeEditorTransientUi: (paneId: TPaneId) => void;
   handleEditorMarkdownChange: (
     paneId: string,
     document: NoteDraftState,
@@ -83,7 +83,7 @@ export function createPaneControllers<TPaneId extends string>(
         deps.handleActiveWikilinkChange(paneId, activeWikilink);
       }
     }),
-    closeTransientUi: () => deps.closeWikilinkAutocomplete(paneId)
+    closeTransientUi: () => deps.closeEditorTransientUi(paneId)
   });
 
   const wikilinkController = createWikilinkRuntime({

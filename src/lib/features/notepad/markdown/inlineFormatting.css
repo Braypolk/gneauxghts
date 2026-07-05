@@ -1,0 +1,31 @@
+/* Inline formatting render styles. Descendant selectors ensure emphasis/strikethrough
+   survive CodeMirror syntax-highlight spans that reset font-style to inherit. */
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-emphasis,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-emphasis * {
+  font-style: italic;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-strong,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-strong * {
+  font-weight: 700;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-strikethrough,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-strikethrough * {
+  text-decoration: line-through;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-highlight,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-highlight * {
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background: color-mix(in oklab, var(--foreground) 14%, var(--muted) 86%);
+  color: inherit;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-comment,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-comment * {
+  color: color-mix(in oklab, var(--foreground) 42%, var(--muted) 58%);
+  font-style: italic;
+}

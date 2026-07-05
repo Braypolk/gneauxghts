@@ -45,6 +45,7 @@ import {
 } from '@codemirror/search';
 import { tick } from 'svelte';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { createSelectionSurroundExtension } from '$lib/features/notepad/editor/selectionSurround';
 import {
   applyBlockTypeSelection,
   deleteCurrentBlock,
@@ -65,12 +66,14 @@ import {
   setSlashMenuFloatingReference,
   type SlashMenuAPI
 } from '$lib/features/notepad/editor/slashMenu';
+import { createSelectionMenuPlugin } from '$lib/features/notepad/editor/selectionMenu';
 import { mountBlockHandle } from '$lib/features/notepad/editor/blockHandleMount';
 import { createImageEmbedsExtension } from '$lib/features/notepad/images/imageEmbeds';
 import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 import { createImagePasteExtension } from '$lib/features/notepad/images/imagePaste';
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
 import { createWikilinksExtension, type ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
+import { applyInlineFormat } from '$lib/features/notepad/editor/inlineFormatting';
 import { keyboardShortcutMatchesEvent, usesNativeCutShortcut } from '$lib/keyboardShortcuts';
 
 interface CreateEditorOptions {
@@ -158,6 +161,11 @@ const emptySearchHighlightOptions: SearchHighlightOptions = {
 
 function clampPos(doc: EditorState['doc'], pos: number | null | undefined) {
   return Math.max(0, Math.min(pos ?? 0, doc.length));
+}
+
+function clampSelection(selection: EditorSelection, docLength: number): EditorSelection {
+  const clamp = (pos: number) => Math.max(0, Math.min(pos, docLength));
+  return { anchor: clamp(selection.anchor), head: clamp(selection.head) };
 }
 
 function normalizeSearchQuery(query: SearchHighlightOptions | string | null | undefined): SearchHighlightOptions {
@@ -275,6 +283,7 @@ function createMarkdownBaseExtensions(): Extension[] {
     EditorView.lineWrapping,
     createIndentExtensions(),
     indentOnInput(),
+    createSelectionSurroundExtension(),
     keymap.of([indentWithTab])
   ];
 }
@@ -414,8 +423,10 @@ class FileEditorRuntime {
       ]);
     }
 
+    const nextDocLength = markdown.length;
     for (const [paneKey, controller] of this.paneControllers) {
-      const selection = selectionByPaneKey.get(paneKey) ?? readSelection(controller.view);
+      const rawSelection = selectionByPaneKey.get(paneKey) ?? readSelection(controller.view);
+      const selection = clampSelection(rawSelection, nextDocLength);
       controller.view.dispatch(
         controller.view.state.update({
           changes: { from: 0, to: controller.view.state.doc.length, insert: markdown },
@@ -768,6 +779,21 @@ function createEditorShortcuts(controller: () => EditorController | null) {
       if (keyboardShortcutMatchesEvent(event, 'editorOutdentList')) {
         event.preventDefault();
         return adjustListIndent(view, -INDENT_SPACES);
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorBold')) {
+        event.preventDefault();
+        return applyInlineFormat(view, 'bold');
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorItalic')) {
+        event.preventDefault();
+        return applyInlineFormat(view, 'italic');
+      }
+
+      if (keyboardShortcutMatchesEvent(event, 'editorLink')) {
+        event.preventDefault();
+        return applyInlineFormat(view, 'link');
       }
 
       return false;
@@ -1411,7 +1437,8 @@ function createPaneExtensions(
   controller: () => EditorController | null,
   editorRoot: HTMLDivElement,
   sharedResources: SharedEditorResources | null,
-  slashMenuApi: ReturnType<typeof createSlashMenuPlugin>
+  slashMenuApi: ReturnType<typeof createSlashMenuPlugin>,
+  selectionMenuApi: ReturnType<typeof createSelectionMenuPlugin>
 ) {
   const imagesConfig = sharedResources?.imagesConfig ?? unavailableImagesConfig;
   return [
@@ -1426,6 +1453,7 @@ function createPaneExtensions(
     createImageEmbedsExtension(imagesConfig),
     ...createImagePasteExtension(imagesConfig),
     ...slashMenuApi.extension,
+    ...selectionMenuApi.extension,
     createBlockHandleExtension(editorRoot, slashMenuApi.show),
     createEditorShortcuts(controller),
     keymap.of([
@@ -1457,6 +1485,7 @@ function createPaneExtensions(
     EditorView.domEventHandlers({
       focus: (_event, view) => {
         slashMenuApi.register(view);
+        selectionMenuApi.register(view);
         return false;
       }
     }),
@@ -1470,7 +1499,13 @@ function createPaneExtensions(
     // lines use padding-based block-flow indent instead of draftly's flex +
     // absolute layout, so cursorLineUp/Down's goal-column geometry is correct
     // again. History stays owned by the shared root view (no historyKeymap here).
-    keymap.of(defaultKeymap.filter((binding) => !['Enter', 'Mod-Enter'].includes(binding.key ?? '')))
+    // Mod-i is excluded: defaultKeymap binds it to selectParentSyntax (expand
+    // selection by syntax node). We own Cmd+I for italic via editor shortcuts.
+    keymap.of(
+      defaultKeymap.filter(
+        (binding) => !['Enter', 'Mod-Enter', 'Mod-i'].includes(binding.key ?? '')
+      )
+    )
   ];
 }
 
@@ -1563,10 +1598,17 @@ export async function createEditor({
 
   const paneKey = Symbol('editor-pane');
   const slashMenuApi = createSlashMenuPlugin();
+  const selectionMenuApi = createSelectionMenuPlugin();
   let controller: EditorController | null = null;
   const extensions = [
     ...createMarkdownBaseExtensions(),
-    ...createPaneExtensions(() => controller, editorRoot, sharedResources, slashMenuApi)
+    ...createPaneExtensions(
+      () => controller,
+      editorRoot,
+      sharedResources,
+      slashMenuApi,
+      selectionMenuApi
+    )
   ];
 
   const view = new EditorView({
@@ -1600,6 +1642,7 @@ export async function createEditor({
   sharedResources?.registerViewCallbacks(view, viewCallbacks ?? defaultViewCallbacks);
   runtime.attachController(controller);
   slashMenuApi.register(view);
+  selectionMenuApi.register(view);
 
   return controller;
 }
@@ -1679,10 +1722,17 @@ export function swapEditorRuntime(
   nextRuntime.ensureMarkdown(initialState?.markdown ?? initialValue);
 
   const slashMenuApi = createSlashMenuPlugin();
+  const selectionMenuApi = createSelectionMenuPlugin();
   const nextPaneKey = Symbol('editor-pane');
   const extensions = [
     ...createMarkdownBaseExtensions(),
-    ...createPaneExtensions(() => controller, editorRoot, nextSharedResources, slashMenuApi)
+    ...createPaneExtensions(
+      () => controller,
+      editorRoot,
+      nextSharedResources,
+      slashMenuApi,
+      selectionMenuApi
+    )
   ];
 
   const nextState = createPaneState(
@@ -1700,6 +1750,7 @@ export function swapEditorRuntime(
   nextSharedResources.registerViewCallbacks(view, viewCallbacks);
   nextRuntime.attachController(controller);
   slashMenuApi.register(view);
+  selectionMenuApi.register(view);
 
   return true;
 }
@@ -1723,10 +1774,11 @@ export function replaceEditorContent(
     return runtime.applyExternalSnapshot(snapshot, controller, flushHistory);
   }
 
+  const selection = clampSelection(readSelection(controller.view), markdown.length);
   controller.view.dispatch(
     controller.view.state.update({
       changes: { from: 0, to: controller.view.state.doc.length, insert: markdown },
-      selection: readSelection(controller.view),
+      selection,
       annotations: [Transaction.addToHistory.of(false), isolateHistory.of('full')]
     })
   );

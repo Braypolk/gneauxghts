@@ -1,5 +1,6 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
+import { dispatchEditorChange } from '$lib/features/notepad/editor/editorDispatch';
 
 export interface EditorMenuOption {
   id: string;
@@ -317,9 +318,7 @@ export function describeBlockAt(state: EditorState, pos: number) {
 }
 
 function applySpec(view: EditorView, spec: TransactionSpec) {
-  view.dispatch(spec);
-  view.focus();
-  return true;
+  return dispatchEditorChange(view, spec);
 }
 
 function replaceBlock(view: EditorView, block: BlockDescriptor, insert: string, anchor?: number) {

@@ -26,6 +26,11 @@ vi.mock('$lib/features/notepad/editor/slashMenuBridge', () => ({
   unbindSlashMenuView: vi.fn()
 }));
 
+vi.mock('$lib/features/notepad/editor/selectionMenuBridge', () => ({
+  bindSelectionMenuViewToPane: vi.fn(),
+  unbindSelectionMenuView: vi.fn()
+}));
+
 vi.mock('$lib/features/notepad/navigation/navigation', () => ({
   waitForEditorPaint: vi.fn(async () => {})
 }));

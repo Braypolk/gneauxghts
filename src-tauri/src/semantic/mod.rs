@@ -11,8 +11,8 @@ use self::{
     ann::AnnIndexState,
     db::{
         content_hash, count_indexed_items, ensure_schema, load_chunks_by_ann_labels,
-        load_latest_job, load_note_record, load_related_note_previews, load_semantic_settings,
-        open_database, save_semantic_settings,
+        load_latest_job, load_note_record, load_related_note_previews, load_semantic_edges,
+        load_semantic_settings, open_database, save_semantic_settings, StoredSemanticEdge,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
@@ -607,6 +607,17 @@ impl SemanticState {
                 reason: Some(state.reason.clone()),
                 items: Vec::new(),
             }),
+        }
+    }
+
+    pub(crate) fn semantic_edges(&self, limit: usize) -> Result<Vec<StoredSemanticEdge>, String> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => {
+                let connection = open_database(&state.db_path)?;
+                ensure_schema(&connection)?;
+                load_semantic_edges(&connection, limit)
+            }
+            SemanticStateInner::Disabled(_) => Ok(Vec::new()),
         }
     }
 }

@@ -42,6 +42,12 @@ pub(crate) struct StoredRelatedNotePreview {
     pub(crate) score: f32,
 }
 
+pub(crate) struct StoredSemanticEdge {
+    pub(crate) source_note_path: String,
+    pub(crate) target_note_path: String,
+    pub(crate) score: f32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AnnIndexSignature {
     pub(crate) chunk_count: usize,
@@ -168,6 +174,37 @@ pub(crate) fn save_semantic_settings(
         )
         .map_err(|err| err.to_string())?;
     Ok(())
+}
+
+pub(crate) fn load_semantic_edges(
+    connection: &Connection,
+    limit: usize,
+) -> Result<Vec<StoredSemanticEdge>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT source_note_path, target_note_path, score
+            FROM edges
+            ORDER BY score DESC
+            LIMIT ?1
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = statement
+        .query_map(params![limit.max(1)], |row| {
+            Ok(StoredSemanticEdge {
+                source_note_path: row.get(0)?,
+                target_note_path: row.get(1)?,
+                score: row.get(2)?,
+            })
+        })
+        .map_err(|err| err.to_string())?;
+
+    let mut edges = Vec::new();
+    for row in rows {
+        edges.push(row.map_err(|err| err.to_string())?);
+    }
+    Ok(edges)
 }
 
 pub(crate) fn load_stored_note_records(

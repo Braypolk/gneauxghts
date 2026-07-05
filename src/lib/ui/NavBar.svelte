@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { House, ListTodo, Settings } from '@lucide/svelte';
+  import { Cloud, House, ListTodo, Settings } from '@lucide/svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
   import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
@@ -9,7 +9,8 @@
 
   const navLinks = [
     { href: '/', label: 'Note', icon: House },
-    { href: '/list', label: 'List', icon: ListTodo }
+    { href: '/list', label: 'List', icon: ListTodo },
+    { href: '/map', label: 'Map', icon: Cloud }
   ] as const;
   const settingsHref = '/settings';
 

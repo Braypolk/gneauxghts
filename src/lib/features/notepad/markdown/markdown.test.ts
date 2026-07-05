@@ -12,6 +12,7 @@ import { decorateInlineFormatting } from './decorations/inlineFormatting';
 import { decorateLink } from './decorations/links';
 import { decorateList } from './decorations/lists';
 import type { MarkdownNodeDecorator } from './decorations/types';
+import { obsidianMarkdownExtensions } from './obsidianMarkdownExtensions';
 
 // These tests exercise the decoration builders directly against a real Lezer
 // markdown syntax tree, without mounting an EditorView (the test environment is
@@ -35,7 +36,7 @@ function collect(
 ): DecorationSpec[] {
   const state = EditorState.create({
     doc,
-    extensions: [markdown({ base: markdownLanguage })]
+    extensions: [markdown({ base: markdownLanguage, extensions: obsidianMarkdownExtensions })]
   });
 
   const tree = ensureSyntaxTree(state, doc.length, 5000);
@@ -100,6 +101,15 @@ describe('inline formatting decorator', () => {
     expect(conceals).toHaveLength(2);
   });
 
+  it('renders underscore and asterisk italics', () => {
+    expect(classes(collect('_italic_', decorateInlineFormatting))).toContain('cm-gn-emphasis');
+    expect(classes(collect('*Italic text*', decorateInlineFormatting))).toContain('cm-gn-emphasis');
+  });
+
+  it('renders underscore bold markers', () => {
+    expect(classes(collect('__Bold text__', decorateInlineFormatting))).toContain('cm-gn-strong');
+  });
+
   it('keeps emphasis markers visible when the selection overlaps', () => {
     const specs = collect('_italic_', decorateInlineFormatting, () => true);
     expect(classes(specs)).toContain('cm-gn-emphasis');
@@ -109,6 +119,36 @@ describe('inline formatting decorator', () => {
   it('handles strikethrough', () => {
     const specs = collect('~~gone~~', decorateInlineFormatting);
     expect(classes(specs)).toContain('cm-gn-strikethrough');
+  });
+
+  it('handles highlight markers', () => {
+    const specs = collect('==Highlighted text==', decorateInlineFormatting);
+    expect(classes(specs)).toContain('cm-gn-highlight');
+    expect(specs.filter((s) => s.isReplace)).toHaveLength(2);
+  });
+
+  it('handles Obsidian comment markers', () => {
+    const specs = collect('Visible %%hidden note%% text', decorateInlineFormatting);
+    expect(classes(specs)).toContain('cm-gn-comment');
+    expect(specs.filter((s) => s.isReplace)).toHaveLength(2);
+  });
+
+  it('supports nested bold and italic', () => {
+    const specs = collect('**Bold text and _nested italic_ text**', decorateInlineFormatting);
+    expect(classes(specs)).toContain('cm-gn-strong');
+    expect(classes(specs)).toContain('cm-gn-emphasis');
+  });
+
+  it('supports bold and italic with triple markers', () => {
+    const specs = collect('***Bold and italic text***', decorateInlineFormatting);
+    expect(classes(specs)).toContain('cm-gn-strong');
+    expect(classes(specs)).toContain('cm-gn-emphasis');
+  });
+
+  it('conceals escape backslashes when not editing', () => {
+    const specs = collect(String.raw`\*\*This line will not be bold\*\*`, decorateInlineFormatting);
+    expect(classes(specs)).not.toContain('cm-gn-strong');
+    expect(specs.filter((s) => s.isReplace)).toHaveLength(4);
   });
 });
 

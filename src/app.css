@@ -86,6 +86,8 @@
   --spacing: 0.25rem;
   --app-shell-height: 100lvh;
   --keyboard-inset-height: 0px;
+  --selection-background: color-mix(in oklab, var(--foreground) 15%, var(--background));
+  --selection-color: var(--foreground);
 }
 
 .dark {
@@ -139,6 +141,8 @@
   --shadow-lg: 0px 1px 2px 0px hsl(0 0% 0% / 0.18), 0px 4px 6px -1px hsl(0 0% 0% / 0.18);
   --shadow-xl: 0px 1px 2px 0px hsl(0 0% 0% / 0.18), 0px 8px 10px -1px hsl(0 0% 0% / 0.18);
   --shadow-2xl: 0px 1px 2px 0px hsl(0 0% 0% / 0.45);
+  --selection-background: color-mix(in oklab, var(--foreground) 45%, var(--background));
+  --selection-color: var(--foreground);
 }
 
 html,
@@ -161,6 +165,16 @@ body {
   font-family: var(--font-sans);
   overscroll-behavior: none;
   touch-action: manipulation;
+}
+
+::selection {
+  background: var(--selection-background);
+  color: var(--selection-color);
+}
+
+::-moz-selection {
+  background: var(--selection-background);
+  color: var(--selection-color);
 }
 
 .app-shell {

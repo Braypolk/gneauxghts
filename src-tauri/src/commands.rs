@@ -29,6 +29,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     time::Duration,
@@ -178,6 +179,36 @@ pub(crate) struct RecentTaskItem {
     text: String,
     line_number: usize,
     updated_at_millis: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NoteMapNote {
+    note_id: String,
+    note_path: String,
+    file_name: String,
+    title: String,
+    section_labels: Vec<String>,
+    excerpt: String,
+    paragraph_count: usize,
+    task_count: usize,
+    modified_millis: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NoteMapEdge {
+    source_note_path: String,
+    target_note_path: String,
+    score: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NoteMapPayload {
+    notes: Vec<NoteMapNote>,
+    edges: Vec<NoteMapEdge>,
+    semantic_available: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -493,6 +524,96 @@ pub(crate) fn get_semantic_debug_metrics(
     state: State<'_, AppState>,
 ) -> Result<SemanticDebugSnapshot, String> {
     state.semantic.debug_snapshot()
+}
+
+#[tauri::command]
+pub(crate) fn get_note_map(state: State<'_, AppState>) -> Result<NoteMapPayload, String> {
+    let notes_dir = prepare_notes_dir(true)?;
+    state.ensure_interactive_index(
+        &notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "get_note_map",
+    )?;
+    let index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Search index lock poisoned".to_string())?;
+    let mut notes: Vec<NoteMapNote> = index
+        .entries
+        .iter()
+        .map(|(path, note)| {
+            let mut seen_sections = HashSet::new();
+            let section_labels = note
+                .paragraphs
+                .iter()
+                .filter_map(|paragraph| {
+                    let label = paragraph.section_label.trim();
+                    if label.is_empty() || !seen_sections.insert(label.to_string()) {
+                        return None;
+                    }
+                    Some(label.to_string())
+                })
+                .take(5)
+                .collect::<Vec<_>>();
+            let excerpt = note
+                .paragraphs
+                .iter()
+                .find_map(|paragraph| {
+                    let text = paragraph.text.trim();
+                    if text.is_empty() {
+                        return None;
+                    }
+                    Some(text.chars().take(220).collect::<String>())
+                })
+                .unwrap_or_default();
+
+            NoteMapNote {
+                note_id: note.note_id.clone(),
+                note_path: path.to_string_lossy().to_string(),
+                file_name: note.file_name.clone(),
+                title: note.title.clone(),
+                section_labels,
+                excerpt,
+                paragraph_count: note.paragraphs.len(),
+                task_count: note.tasks.len(),
+                modified_millis: note.modified_millis,
+            }
+        })
+        .collect();
+    drop(index);
+
+    notes.sort_by(|left, right| {
+        right
+            .modified_millis
+            .cmp(&left.modified_millis)
+            .then_with(|| left.title.cmp(&right.title))
+    });
+
+    let note_paths = notes
+        .iter()
+        .map(|note| note.note_path.as_str())
+        .collect::<HashSet<_>>();
+    let semantic_status = state.semantic.get_status()?;
+    let edges = state
+        .semantic
+        .semantic_edges(2_000)?
+        .into_iter()
+        .filter(|edge| {
+            note_paths.contains(edge.source_note_path.as_str())
+                && note_paths.contains(edge.target_note_path.as_str())
+        })
+        .map(|edge| NoteMapEdge {
+            source_note_path: edge.source_note_path,
+            target_note_path: edge.target_note_path,
+            score: edge.score,
+        })
+        .collect();
+
+    Ok(NoteMapPayload {
+        notes,
+        edges,
+        semantic_available: semantic_status.model_available && semantic_status.indexed_notes > 0,
+    })
 }
 
 #[tauri::command]

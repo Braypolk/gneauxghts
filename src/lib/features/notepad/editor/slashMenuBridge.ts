@@ -1,28 +1,14 @@
 import type { EditorView } from '@codemirror/view';
+import { createEditorMenuBridge } from '$lib/features/notepad/editor/editorMenuBridge';
 import type { SlashMenuSnapshot } from '$lib/features/notepad/editor/slashMenu';
 
-const viewToPaneId = new WeakMap<EditorView, string>();
+const bridge = createEditorMenuBridge<SlashMenuSnapshot>();
 
-export function bindSlashMenuViewToPane(view: EditorView, paneId: string) {
-  viewToPaneId.set(view, paneId);
-}
-
-export function unbindSlashMenuView(view: EditorView) {
-  viewToPaneId.delete(view);
-}
-
-export function getPaneIdForSlashMenuView(view: EditorView): string | undefined {
-  return viewToPaneId.get(view);
-}
-
-type Listener = (view: EditorView, snapshot: SlashMenuSnapshot) => void;
-
-let listener: Listener | null = null;
-
-export function setSlashMenuListener(fn: Listener | null) {
-  listener = fn;
-}
+export const bindSlashMenuViewToPane = bridge.bindViewToPane;
+export const unbindSlashMenuView = bridge.unbindView;
+export const getPaneIdForSlashMenuView = bridge.getPaneIdForView;
+export const setSlashMenuListener = bridge.setListener;
 
 export function emitSlashMenuUpdate(view: EditorView, snapshot: SlashMenuSnapshot) {
-  listener?.(view, snapshot);
+  bridge.emitUpdate(view, snapshot);
 }

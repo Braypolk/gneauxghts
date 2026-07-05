@@ -1,5 +1,6 @@
 import type { EditorController } from '$lib/features/notepad/editor/editor';
 import type { PaneSlashMenuModel } from '$lib/features/notepad/editor/slashMenu';
+import type { PaneSelectionMenuModel } from '$lib/features/notepad/editor/selectionMenu';
 import {
   createWikilinkAutocompleteState,
   type WikilinkAutocompleteState
@@ -15,6 +16,7 @@ export interface PaneUiState {
   wikilinkAutocomplete: WikilinkAutocompleteState;
   editorGeneration: number;
   slashMenu: PaneSlashMenuModel;
+  selectionMenu: PaneSelectionMenuModel;
 }
 
 /**
@@ -39,7 +41,8 @@ export class PaneRuntime {
     isApplyingExternalContent: false,
     wikilinkAutocomplete: createWikilinkAutocompleteState(),
     editorGeneration: 0,
-    slashMenu: { open: false }
+    slashMenu: { open: false },
+    selectionMenu: { open: false }
   });
   refs = $state<PaneDomRefs>({
     paneCard: null,
@@ -101,6 +104,10 @@ export class PaneRuntime {
 
   setSlashMenu(snapshot: PaneSlashMenuModel): void {
     this.ui.slashMenu = snapshot;
+  }
+
+  setSelectionMenu(snapshot: PaneSelectionMenuModel): void {
+    this.ui.selectionMenu = snapshot;
   }
 
   setWikilinkAutocomplete(state: WikilinkAutocompleteState): void {

@@ -21,6 +21,10 @@ import {
   bindSlashMenuViewToPane,
   unbindSlashMenuView
 } from '$lib/features/notepad/editor/slashMenuBridge';
+import {
+  bindSelectionMenuViewToPane,
+  unbindSelectionMenuView
+} from '$lib/features/notepad/editor/selectionMenuBridge';
 import { waitForEditorPaint } from '$lib/features/notepad/navigation/navigation';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 
@@ -77,6 +81,7 @@ export function createEditorLifecycleController({
     const controller = getController();
     if (controller) {
       unbindSlashMenuView(controller.view);
+      unbindSelectionMenuView(controller.view);
     }
     setController(await destroyEditorInstance(controller));
   }
@@ -106,6 +111,7 @@ export function createEditorLifecycleController({
       }
     });
     bindSlashMenuViewToPane(controller.view, getPaneId());
+    bindSelectionMenuViewToPane(controller.view, getPaneId());
     setController(controller);
     setIsEditorReady(true);
   }
@@ -143,6 +149,7 @@ export function createEditorLifecycleController({
       return false;
     }
     bindSlashMenuViewToPane(controller.view, getPaneId());
+    bindSelectionMenuViewToPane(controller.view, getPaneId());
     setIsEditorReady(true);
     return true;
   }

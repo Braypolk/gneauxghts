@@ -43,7 +43,10 @@ export type KeyboardShortcutId =
   | 'editorCutLine'
   | 'editorHardBreak'
   | 'editorIndentList'
-  | 'editorOutdentList';
+  | 'editorOutdentList'
+  | 'editorBold'
+  | 'editorItalic'
+  | 'editorLink';
 
 export interface KeyboardShortcutDefinition {
   id: KeyboardShortcutId;
@@ -255,6 +258,27 @@ const shortcutDefinitionsBase = [
     description: 'Outdent selected list item.',
     group: 'editor',
     defaultBinding: 'Shift+Tab'
+  },
+  {
+    id: 'editorBold',
+    label: 'Bold Text',
+    description: 'Wrap selected text in bold markers.',
+    group: 'editor',
+    defaultBinding: 'Meta+b'
+  },
+  {
+    id: 'editorItalic',
+    label: 'Italic Text',
+    description: 'Wrap selected text in italic markers.',
+    group: 'editor',
+    defaultBinding: 'Meta+i'
+  },
+  {
+    id: 'editorLink',
+    label: 'Link Text',
+    description: 'Wrap selected text in a markdown link.',
+    group: 'editor',
+    defaultBinding: 'Meta+k'
   }
 ] as const satisfies readonly KeyboardShortcutDefinition[];
 

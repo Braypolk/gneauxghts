@@ -1,11 +1,13 @@
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import type { Extension } from '@codemirror/state';
 import { languages } from '$lib/vendor/codemirrorLanguageData';
+import { obsidianMarkdownExtensions } from '$lib/features/notepad/markdown/obsidianMarkdownExtensions';
 
 // CodeMirror markdown language support, configured to mirror the behaviour the
 // editor relied on from draftly:
 //  - `base: markdownLanguage` selects the GFM-enabled dialect (strikethrough,
 //    task lists, tables, autolinks) rather than plain CommonMark.
+//  - `extensions` adds Obsidian-style `==highlight==` and `%%comment%%` parsing.
 //  - `codeLanguages` drives fenced-code-block syntax highlighting via lazily
 //    loaded language parsers (see codemirrorLanguageData for the curated list).
 //  - `pasteURLAsLink` keeps the "paste a URL over a selection → link" affordance.
@@ -19,6 +21,7 @@ import { languages } from '$lib/vendor/codemirrorLanguageData';
 export function createMarkdownLanguage(): Extension {
   return markdown({
     base: markdownLanguage,
+    extensions: obsidianMarkdownExtensions,
     codeLanguages: [...languages],
     completeHTMLTags: true,
     pasteURLAsLink: true,

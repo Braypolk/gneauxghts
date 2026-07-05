@@ -46,6 +46,7 @@
     PaneWorkspaceActions
   } from '$lib/features/notepad/notepadPane.types';
   import SlashMenu from '$lib/features/notepad/editor/SlashMenu.svelte';
+  import SelectionMenu from '$lib/features/notepad/editor/SelectionMenu.svelte';
   import WikilinkAutocomplete from '$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte';
   import RelatedPanelHost from '$lib/features/notepad/related/RelatedPanelHost.svelte';
   import {
@@ -81,9 +82,17 @@
     setSlashMenuListener
   } from '$lib/features/notepad/editor/slashMenuBridge';
   import {
+    getPaneIdForSelectionMenuView,
+    setSelectionMenuListener
+  } from '$lib/features/notepad/editor/selectionMenuBridge';
+  import {
     slashMenuHideFromUi,
     type SlashMenuSnapshot
   } from '$lib/features/notepad/editor/slashMenu';
+  import {
+    selectionMenuHideFromUi,
+    type SelectionMenuSnapshot
+  } from '$lib/features/notepad/editor/selectionMenu';
   import {
     adoptSnapshotForPane,
     applySnapshotToNote,
@@ -126,6 +135,7 @@
   import { formatShortcutBinding, keyboardShortcutBindings } from '$lib/keyboardShortcuts';
   import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
   import '$lib/features/notepad/editor/editor.css';
+  import '$lib/features/notepad/markdown/inlineFormatting.css';
 
   type PaneId = NotepadPaneId;
   const MAX_VISIBLE_PANES = 2;
@@ -148,6 +158,7 @@
   const paneControllers = {} as Record<PaneId, ReturnType<typeof createPaneControllersFn<PaneId>>>;
   const editorCapabilities = new Map<PaneId, ReturnType<typeof createEditorCapabilityAdapter>>();
   let activeSlashMenuPaneId = $state<PaneId | null>(null);
+  let activeSelectionMenuPaneId = $state<PaneId | null>(null);
   let activeWikilinkPaneId = $state<PaneId | null>(null);
   let featureHost: NotepadFeatureHost;
 
@@ -320,6 +331,44 @@
       groups: snapshot.groups,
       hoverIndex: snapshot.hoverIndex
     });
+    closeSelectionMenu(paneId);
+  }
+
+  function applySelectionMenuSnapshotForPane(
+    paneId: PaneId,
+    snapshot: SelectionMenuSnapshot,
+    view: import('@codemirror/view').EditorView
+  ) {
+    if (!snapshot.open) {
+      getPaneRuntime(paneId).setSelectionMenu({ open: false });
+      if (activeSelectionMenuPaneId === paneId) {
+        activeSelectionMenuPaneId = null;
+      }
+      return;
+    }
+    if (paneId !== workspaceStore.activePaneId) {
+      selectionMenuHideFromUi(view);
+      getPaneRuntime(paneId).setSelectionMenu({ open: false });
+      return;
+    }
+    for (const visiblePaneId of getVisiblePaneIds()) {
+      if (visiblePaneId !== paneId) {
+        closeSelectionMenu(visiblePaneId);
+      }
+    }
+    closeWikilinkAutocomplete();
+    closeSlashMenu(paneId);
+    activeSelectionMenuPaneId = paneId;
+    getPaneRuntime(paneId).setSelectionMenu({
+      open: true,
+      view,
+      selectionFrom: snapshot.selectionFrom,
+      selectionTo: snapshot.selectionTo,
+      groups: snapshot.groups,
+      hoverIndex: snapshot.hoverIndex,
+      blockPanelOpen: snapshot.blockPanelOpen,
+      activeInlineFormats: snapshot.activeInlineFormats
+    });
   }
 
   const paneSessionController = createPaneSessionController<PaneId>({
@@ -419,7 +468,11 @@
     getPaneDocument: getPaneDocumentSession,
     activatePaneSession,
     cancelPendingAutosave: (note) => cancelPendingAutosave(note),
-    closeWikilinkAutocomplete: (paneId) => closeWikilinkAutocomplete(paneId),
+    closeEditorTransientUi: (paneId) => {
+      closeSlashMenu(paneId);
+      closeSelectionMenu(paneId);
+      closeWikilinkAutocomplete(paneId);
+    },
     handleEditorMarkdownChange,
     getNavigationContext,
     openNotePath: (notePath, options) => commands.openNotePath(notePath, options),
@@ -618,6 +671,7 @@
   function updatePaneWikilinkState(paneId: PaneId, nextState: WikilinkAutocompleteState) {
     if (nextState.active) {
       closeSlashMenu();
+      closeSelectionMenu();
       for (const visiblePaneId of getVisiblePaneIds()) {
         if (visiblePaneId !== paneId) {
           getPaneControllers(visiblePaneId).wikilinkController.closeWikilinkAutocomplete();
@@ -626,6 +680,20 @@
     }
     getPaneRuntime(paneId).setWikilinkAutocomplete(nextState);
     activeWikilinkPaneId = nextState.active ? paneId : activeWikilinkPaneId === paneId ? null : activeWikilinkPaneId;
+  }
+
+  function closeSelectionMenu(paneId: PaneId | null = null) {
+    const paneIds = paneId ? [paneId] : getVisiblePaneIds();
+    for (const visiblePaneId of paneIds) {
+      const controller = getPaneRuntime(visiblePaneId).controller;
+      if (controller) {
+        selectionMenuHideFromUi(controller.view);
+      }
+      getPaneRuntime(visiblePaneId).setSelectionMenu({ open: false });
+    }
+    if (paneId === null || activeSelectionMenuPaneId === paneId) {
+      activeSelectionMenuPaneId = null;
+    }
   }
 
   function closeSlashMenu(paneId: PaneId | null = null) {
@@ -648,6 +716,7 @@
         continue;
       }
       closeSlashMenu(visiblePaneId);
+      closeSelectionMenu(visiblePaneId);
       closeWikilinkAutocomplete(visiblePaneId);
     }
   }
@@ -731,8 +800,12 @@
     await getNoteSaveQueue(document.key);
     closeWikilinkAutocomplete(paneId);
     getPaneRuntime(paneId).setSlashMenu({ open: false });
+    getPaneRuntime(paneId).setSelectionMenu({ open: false });
     if (activeSlashMenuPaneId === paneId) {
       activeSlashMenuPaneId = null;
+    }
+    if (activeSelectionMenuPaneId === paneId) {
+      activeSelectionMenuPaneId = null;
     }
     documents.unregisterPaneEditorForDocument(paneId, document);
     getPaneControllers(paneId).editorLifecycleController.dispose();
@@ -1101,6 +1174,13 @@
       }
     });
 
+    setSelectionMenuListener((view, snapshot) => {
+      const paneKey = getPaneIdForSelectionMenuView(view);
+      if (paneKey && paneKey in paneRuntimes) {
+        applySelectionMenuSnapshotForPane(paneKey as PaneId, snapshot, view);
+      }
+    });
+
     (async () => {
       await tick();
       if (!mounted || !getPaneRuntime(initialPaneId).refs.editorRoot) return;
@@ -1160,6 +1240,7 @@
     return () => {
       unregisterWindowCloseHandler();
       setSlashMenuListener(null);
+      setSelectionMenuListener(null);
       mounted = false;
       flushAllPendingDocumentSyncs();
       documents.flushAllPendingCursorSaves();
@@ -1340,6 +1421,13 @@
     <SlashMenu
       menu={getPaneRuntime(activeSlashMenuPaneId).ui.slashMenu}
       boundsElement={getPaneRuntime(activeSlashMenuPaneId).refs.paneCard}
+    />
+  {/if}
+
+  {#if activeSelectionMenuPaneId}
+    <SelectionMenu
+      menu={getPaneRuntime(activeSelectionMenuPaneId).ui.selectionMenu}
+      boundsElement={getPaneRuntime(activeSelectionMenuPaneId).refs.paneCard}
     />
   {/if}
 
