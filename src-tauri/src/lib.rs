@@ -137,7 +137,6 @@ pub fn run() {
             commands::set_task_hidden,
             commands::toggle_task,
             commands::delete_task,
-            commands::search_commands::search_notes,
             commands::search_commands::search_notes_hybrid,
             commands::search_commands::get_related_notes,
             commands::search_commands::retrieve_note_context,

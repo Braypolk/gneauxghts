@@ -2,7 +2,10 @@
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick, untrack } from 'svelte';
   import { forgottenNoteRetentionPreference } from '$lib/appSettings';
-  import { setEditorCurrentSearchHighlightQuery } from '$lib/features/notepad/editor/editor';
+  import {
+    focusEditorSearchRange,
+    setEditorCurrentSearchHighlightQuery
+  } from '$lib/features/notepad/editor/editor';
   import { createEditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
   import {
     createNotepadFeatureHost,
@@ -159,10 +162,10 @@
     openSearchResult: handleSearchResultSelect,
     openRecentTask: handleRecentTaskSelect,
     openNote: async (noteId, notePath) => commands.openNotePath(notePath, { noteId }),
-    onSearchHighlightsChange: ({ searchMode, searchQuery }) => {
+    onSearchHighlightsChange: ({ searchMode, searchQuery, matchCase, matchWholeWord }) => {
       currentSearchHighlightMode = searchMode;
       currentSearchHighlightQuery = searchQuery;
-      syncCurrentFileSearchHighlights(searchQuery, searchMode);
+      syncCurrentFileSearchHighlights(searchQuery, searchMode, { matchCase, matchWholeWord });
     }
   });
 
@@ -585,7 +588,8 @@
 
   function syncCurrentFileSearchHighlights(
     query: string = currentSearchHighlightQuery,
-    mode: SearchMode = currentSearchHighlightMode
+    mode: SearchMode = currentSearchHighlightMode,
+    options = { matchCase: searchState.matchCase, matchWholeWord: searchState.matchWholeWord }
   ) {
     for (const paneId of getEditorPaneIds()) {
       setEditorCurrentSearchHighlightQuery(getPaneRuntime(paneId).controller, null);
@@ -597,7 +601,10 @@
     }
 
     for (const paneId of getPaneIdsForDocument(getDocumentSession())) {
-      setEditorCurrentSearchHighlightQuery(getPaneRuntime(paneId).controller, trimmedQuery);
+      setEditorCurrentSearchHighlightQuery(getPaneRuntime(paneId).controller, {
+        query: trimmedQuery,
+        ...options
+      });
     }
   }
 
@@ -907,6 +914,17 @@
 
   async function handleSearchResultSelect(result: SearchItem) {
     workspaceStore.resetPaneCommand();
+    if (searchState.searchMode === 'current' && result.currentMatchRange) {
+      workspaceStore.resetPaneCommand();
+      searchState.clearSearch();
+      const paneId = getNavigationPaneId();
+      activatePaneSession(paneId);
+      await tick();
+      focusEditorSearchRange(getPaneRuntime(paneId).controller, result.currentMatchRange);
+      documents.saveCursorPositionForDocument();
+      return;
+    }
+
     await openSearchResult(getOpenContext(), getNavigationContext(), result);
     documents.saveCursorPositionForDocument();
   }
@@ -1227,6 +1245,8 @@
         search={{
           searchMode: searchState.searchMode,
           searchQuery: searchState.searchQuery,
+          matchCase: searchState.matchCase,
+          matchWholeWord: searchState.matchWholeWord,
           searchResults: searchState.searchResults,
           recentNotes: searchState.recentNotes,
           recentTasks: searchState.recentTasks,
@@ -1234,6 +1254,8 @@
           focusRequest: searchState.focusRequest,
           onSearchInput: handleSearchInput,
           onSearchModeChange: handleSearchModeChange,
+          onMatchCaseChange: searchState.handleMatchCaseChange,
+          onMatchWholeWordChange: searchState.handleMatchWholeWordChange,
           onSearchSelect: (result) =>
             void handleSearchResultSelect(result).catch((error) => {
               console.error('Failed to open searched note:', error);

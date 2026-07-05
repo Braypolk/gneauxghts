@@ -91,8 +91,63 @@ describe('NotepadSearchStore', () => {
     expect(searchNotesMock).toHaveBeenCalledTimes(1);
     expect(onSearchHighlightsChange).toHaveBeenCalledWith({
       searchMode: 'all',
-      searchQuery: 'foo'
+      searchQuery: 'foo',
+      matchCase: false,
+      matchWholeWord: false
     });
+  });
+
+  it('emits highlight option changes and reruns active searches', async () => {
+    const onSearchHighlightsChange = vi.fn();
+    const store = createNotepadSearchStore({
+      getCurrentTitle: () => 'Current',
+      getCurrentMarkdown: () => 'body',
+      getCurrentPath: () => '/vault/current.md',
+      openSearchResult: vi.fn(async () => {}),
+      openRecentTask: vi.fn(async () => {}),
+      openNote: vi.fn(async () => {}),
+      onSearchHighlightsChange
+    });
+    store.searchQuery = 'foo';
+    searchNotesMock.mockResolvedValue([]);
+
+    await store.handleMatchCaseChange(true);
+
+    expect(store.matchCase).toBe(true);
+    expect(searchNotesMock).toHaveBeenCalledTimes(1);
+    expect(onSearchHighlightsChange).toHaveBeenCalledWith({
+      searchMode: 'all',
+      searchQuery: 'foo',
+      matchCase: true,
+      matchWholeWord: false
+    });
+  });
+
+  it('builds current-note results locally without backend search', async () => {
+    const store = createNotepadSearchStore({
+      getCurrentTitle: () => 'Current',
+      getCurrentMarkdown: () => 'alpha\nbeta alpha',
+      getCurrentPath: () => '/vault/current.md',
+      openSearchResult: vi.fn(async () => {}),
+      openRecentTask: vi.fn(async () => {}),
+      openNote: vi.fn(async () => {})
+    });
+    store.searchMode = 'current';
+
+    await store.runSearch('alpha');
+
+    expect(searchNotesMock).not.toHaveBeenCalled();
+    expect(store.searchResults).toHaveLength(2);
+    expect(store.searchResults[0]?.currentMatchRange).toEqual({ from: 0, to: 5 });
+  });
+
+  it('still uses backend search for all-notes mode', async () => {
+    const store = createStore();
+    searchNotesMock.mockResolvedValue([]);
+
+    await store.runSearch('alpha');
+
+    expect(searchNotesMock).toHaveBeenCalledTimes(1);
   });
 
   it('updates recentNotes/recentTasks via shared focus loader', async () => {

@@ -4,8 +4,7 @@ use super::{
 use crate::{
     index::{build_current_override, normalize_search_text, AppState, IndexedNote, NotesIndex},
     search::{
-        build_recent_result, search_note, search_note_exact_matches, NoteSearchResult,
-        ScoredSearchResult, MAX_SEARCH_RESULTS,
+        build_recent_result, search_note, NoteSearchResult, ScoredSearchResult, MAX_SEARCH_RESULTS,
     },
     semantic::{RelatedNotesResponse, SemanticChunkMatch},
     services::{resolve_current_document, CurrentDocumentRequest},
@@ -368,73 +367,6 @@ pub(super) fn collect_recent_note_results(
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn search_notes(
-    state: State<'_, AppState>,
-    query: String,
-    mode: SearchMode,
-    current_path: Option<String>,
-    current_title: String,
-    current_markdown: Option<String>,
-    current_body_hash: Option<String>,
-) -> Result<Vec<NoteSearchResult>, String> {
-    let notes_dir = prepare_notes_dir(false)?;
-
-    let normalized_query = normalize_search_text(&query);
-    if normalized_query.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let query_terms = normalized_query
-        .split_whitespace()
-        .filter(|term| !term.is_empty())
-        .collect::<Vec<_>>();
-    if query_terms.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let current_path = validate_current_path(current_path, &notes_dir)?;
-    let resolved_current = resolve_current_document(
-        &state,
-        CurrentDocumentRequest::from_path(
-            current_path.as_deref(),
-            current_title.clone(),
-            current_markdown,
-            current_body_hash,
-        ),
-    )?;
-    let draft = resolved_current.draft;
-    let resolved_body = resolved_current.body.unwrap_or_default();
-    let mut candidates = collect_lexical_candidates(
-        &state,
-        &query,
-        &notes_dir,
-        mode,
-        current_path.as_deref(),
-        &current_title,
-        &resolved_body,
-        draft.hash.as_deref(),
-        &normalized_query,
-        &query_terms,
-    )?;
-
-    candidates.sort_by(|left, right| {
-        right
-            .score
-            .cmp(&left.score)
-            .then_with(|| left.result.file_name.cmp(&right.result.file_name))
-            .then_with(|| left.result.section_label.cmp(&right.result.section_label))
-            .then_with(|| left.result.note_path.cmp(&right.result.note_path))
-    });
-    candidates.truncate(MAX_SEARCH_RESULTS);
-
-    Ok(candidates
-        .into_iter()
-        .map(|candidate| candidate.result)
-        .collect())
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_notes_hybrid(
     state: State<'_, AppState>,
     query: String,
@@ -462,10 +394,7 @@ pub(crate) async fn search_notes_hybrid(
     if query_terms.is_empty() {
         return Ok(Vec::new());
     }
-    let effective_limit = match mode {
-        SearchMode::Current => limit.max(200),
-        SearchMode::All => limit,
-    };
+    let effective_limit = limit;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
@@ -495,7 +424,6 @@ pub(crate) async fn search_notes_hybrid(
         &state,
         &query,
         &notes_dir,
-        mode.clone(),
         current_path.as_deref(),
         &current_title,
         &resolved_body,
@@ -510,7 +438,6 @@ pub(crate) async fn search_notes_hybrid(
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
     let should_use_semantic = settings.semantic_search_enabled
-        && matches!(mode, SearchMode::All)
         && (normalized_query.len() >= 6 || query_terms.len() >= 2);
 
     if !should_use_semantic {
@@ -674,7 +601,6 @@ pub(crate) async fn retrieve_note_context(
                 &state,
                 &query,
                 &notes_dir,
-                SearchMode::All,
                 current_path.as_deref(),
                 &current_title,
                 &resolved_body,
@@ -849,7 +775,6 @@ fn collect_lexical_candidates(
     state: &State<'_, AppState>,
     query: &str,
     notes_dir: &Path,
-    mode: SearchMode,
     current_path: Option<&Path>,
     current_title: &str,
     current_markdown: &str,
@@ -864,54 +789,33 @@ fn collect_lexical_candidates(
         current_body_hash,
     );
     let mut candidates = Vec::new();
-    match mode {
-        SearchMode::Current => {
-            if let Some(current_note) = current_override.as_ref() {
-                candidates.extend(search_note_exact_matches(
-                    current_path,
-                    current_note,
-                    normalized_query,
-                ));
-                if candidates.is_empty() {
-                    candidates.extend(search_note(
-                        current_path,
-                        current_note,
-                        normalized_query,
-                        query_terms,
-                    ));
-                }
-            }
-        }
-        SearchMode::All => {
-            if let Some(current_note) = current_override.as_ref() {
-                candidates.extend(search_note(
-                    current_path,
-                    current_note,
-                    normalized_query,
-                    query_terms,
-                ));
-            }
-
-            // Phase 5: `ensure_interactive_index` now write-throughs to the
-            // lexical mirror, so the search path no longer needs to clone the
-            // entire `notes_index.entries` and call `sync_with_notes_index`
-            // on every keystroke. Existing watcher + interactive entry points
-            // keep the Tantivy index in step with `notes_index`.
-            state.ensure_interactive_index(
-                notes_dir,
-                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-                "search_notes_all",
-            )?;
-
-            candidates.extend(state.lexical.search(
-                query,
-                normalized_query,
-                query_terms,
-                MAX_SEARCH_RESULTS,
-                current_path,
-            )?);
-        }
+    if let Some(current_note) = current_override.as_ref() {
+        candidates.extend(search_note(
+            current_path,
+            current_note,
+            normalized_query,
+            query_terms,
+        ));
     }
+
+    // Phase 5: `ensure_interactive_index` now write-throughs to the
+    // lexical mirror, so the search path no longer needs to clone the
+    // entire `notes_index.entries` and call `sync_with_notes_index`
+    // on every keystroke. Existing watcher + interactive entry points
+    // keep the Tantivy index in step with `notes_index`.
+    state.ensure_interactive_index(
+        notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "search_notes_all",
+    )?;
+
+    candidates.extend(state.lexical.search(
+        query,
+        normalized_query,
+        query_terms,
+        MAX_SEARCH_RESULTS,
+        current_path,
+    )?);
 
     Ok(candidates)
 }

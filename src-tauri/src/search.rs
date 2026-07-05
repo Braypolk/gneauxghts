@@ -4,7 +4,6 @@ use std::path::Path;
 
 pub(crate) const MAX_SEARCH_RESULTS: usize = 12;
 const MAX_EXCERPT_LENGTH: usize = 180;
-const MAX_CURRENT_NOTE_SEARCH_RESULTS: usize = 200;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,68 +71,6 @@ pub(crate) fn search_note(
             )
         })
         .collect()
-}
-
-pub(crate) fn search_note_exact_matches(
-    note_path: Option<&Path>,
-    note: &IndexedNote,
-    normalized_query: &str,
-) -> Vec<ScoredSearchResult> {
-    if normalized_query.is_empty() {
-        return Vec::new();
-    }
-
-    let mut results = Vec::new();
-
-    for paragraph in &note.paragraphs {
-        for (match_offset, _) in paragraph.text_lower.match_indices(normalized_query) {
-            let (excerpt, all_highlight_ranges) = build_excerpt_and_highlights(
-                &paragraph.text,
-                &paragraph.text_lower,
-                match_offset,
-                &[normalized_query],
-            );
-            let highlight_ranges =
-                target_highlight_range(all_highlight_ranges, MAX_EXCERPT_LENGTH / 2);
-            let paragraph_index = paragraph.paragraph_index.unwrap_or(usize::MAX);
-            let line_number = line_number_for_offset(paragraph, match_offset);
-            let score = 10_000usize
-                .saturating_sub(paragraph_index.saturating_mul(10))
-                .saturating_sub(results.len().min(999));
-
-            results.push(ScoredSearchResult {
-                score,
-                result: NoteSearchResult {
-                    note_id: Some(note.note_id.clone()),
-                    note_path: note_path.map(|path| path.to_string_lossy().into_owned()),
-                    file_name: note.file_name.clone(),
-                    section_label: paragraph.section_label.clone(),
-                    excerpt,
-                    highlight_ranges,
-                    match_text: normalized_query.to_string(),
-                    reason_labels: Vec::new(),
-                    lexical_score: Some(score as f32),
-                    semantic_score: None,
-                    start_line: line_number,
-                    end_line: line_number,
-                },
-            });
-
-            if results.len() >= MAX_CURRENT_NOTE_SEARCH_RESULTS {
-                return results;
-            }
-        }
-    }
-
-    results
-}
-
-fn target_highlight_range(ranges: Vec<TextRange>, target_start: usize) -> Vec<TextRange> {
-    ranges
-        .into_iter()
-        .min_by_key(|range| range.start.abs_diff(target_start))
-        .map(|range| vec![range])
-        .unwrap_or_default()
 }
 
 pub(crate) fn build_recent_result(
@@ -401,7 +338,7 @@ fn char_index_to_byte_index(text: &str, char_index: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_recent_result, search_note, search_note_exact_matches};
+    use super::{build_recent_result, search_note};
     use crate::{
         index::{build_indexed_note, normalize_search_text},
         test_support::{fixture_path, load_fixture, load_json_fixture},
@@ -439,37 +376,6 @@ mod tests {
         assert_eq!(
             serde_json::Value::Array(actual),
             load_json_fixture("project-atlas.search-wording-changes.json")
-        );
-    }
-
-    #[test]
-    fn current_note_exact_search_returns_each_occurrence() {
-        let markdown = "- Did this once\n- did this twice\n- no match\n- did this third time";
-        let note_path = fixture_path("exact-current.md");
-        let note = build_indexed_note(&note_path, markdown, 42);
-
-        let results = search_note_exact_matches(Some(note_path.as_path()), &note, "did");
-
-        assert_eq!(results.len(), 3);
-        assert_eq!(
-            results
-                .iter()
-                .map(|candidate| candidate.result.match_text.as_str())
-                .collect::<Vec<_>>(),
-            vec!["did", "did", "did"]
-        );
-        assert!(results
-            .iter()
-            .all(|candidate| !candidate.result.highlight_ranges.is_empty()));
-        assert!(results
-            .iter()
-            .all(|candidate| candidate.result.highlight_ranges.len() == 1));
-        assert_eq!(
-            results
-                .iter()
-                .map(|candidate| candidate.result.start_line)
-                .collect::<Vec<_>>(),
-            vec![Some(1), Some(2), Some(4)]
         );
     }
 

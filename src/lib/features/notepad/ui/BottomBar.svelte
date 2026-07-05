@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import {
     Search,
     Eraser,
@@ -10,7 +10,9 @@
     Circle,
     X,
     ChevronDown,
-    ChevronRight
+    ChevronRight,
+    CaseSensitive,
+    WholeWord
   } from '@lucide/svelte';
   import {
     forgetButtonDurationPreference,
@@ -51,6 +53,8 @@
 
   const searchMode = $derived(search.searchMode);
   const searchQuery = $derived(search.searchQuery);
+  const matchCase = $derived(search.matchCase);
+  const matchWholeWord = $derived(search.matchWholeWord);
   const searchResults = $derived(search.searchResults);
   const recentNotes = $derived(search.recentNotes);
   const recentTasks = $derived(search.recentTasks);
@@ -58,6 +62,8 @@
   const focusRequest = $derived(search.focusRequest);
   const onSearchInput = $derived(search.onSearchInput);
   const onSearchModeChange = $derived(search.onSearchModeChange);
+  const onMatchCaseChange = $derived(search.onMatchCaseChange);
+  const onMatchWholeWordChange = $derived(search.onMatchWholeWordChange);
   const onSearchSelect = $derived(search.onSearchSelect);
   const onRecentNoteSelect = $derived(search.onRecentNoteSelect);
   const onRecentTaskSelect = $derived(search.onRecentTaskSelect);
@@ -78,12 +84,16 @@
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
   let areRecentTasksCollapsed = $state(loadRecentTasksCollapsedPreference());
+  let isAtLeastSmWidth = $state(false);
+  const areRecentTasksVisuallyCollapsed = $derived(
+    !isAtLeastSmWidth && areRecentTasksCollapsed
+  );
 
   const visibleSearchResults = $derived.by<SearchItem[]>(() =>
     searchMode === 'current' ? dedupeCurrentSearchResults(searchResults) : searchResults
   );
   const visibleRecentTasks = $derived(
-    searchQuery.trim() === '' && !areRecentTasksCollapsed ? recentTasks : []
+    searchQuery.trim() === '' && !areRecentTasksVisuallyCollapsed ? recentTasks : []
   );
   const visibleItems = $derived.by<BottomBarVisibleItem[]>(() =>
     deriveBottomBarVisibleItems(searchQuery, visibleSearchResults, recentNotes, visibleRecentTasks)
@@ -175,6 +185,20 @@
     bottomBarState.dispose();
   });
 
+  onMount(() => {
+    const mediaQuery = window.matchMedia('(min-width: 640px)');
+    const updateWidthState = () => {
+      isAtLeastSmWidth = mediaQuery.matches;
+    };
+
+    updateWidthState();
+    mediaQuery.addEventListener('change', updateWidthState);
+
+    return () => {
+      mediaQuery.removeEventListener('change', updateWidthState);
+    };
+  });
+
   function getRecentNotesViewportClass() {
     return 'h-[13.75rem] overflow-y-auto';
   }
@@ -239,10 +263,10 @@
   }
 
   function getCurrentSearchPreviewText(item: SearchItem) {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
+    const normalizedQuery = normalizeSearchText(searchQuery.trim());
     const excerpt = item.excerpt.trim();
 
-    if (normalizedQuery === '' || excerpt.toLowerCase().includes(normalizedQuery)) {
+    if (normalizedQuery === '' || normalizeSearchText(excerpt).includes(normalizedQuery)) {
       return excerpt;
     }
 
@@ -261,17 +285,30 @@
       return [{ text: previewText, highlighted: false }];
     }
 
-    const previewLower = previewText.toLowerCase();
-    const queryLower = trimmedQuery.toLowerCase();
+    const previewLower = normalizeSearchText(previewText);
+    const queryLower = normalizeSearchText(trimmedQuery);
     const ranges: Array<{ start: number; end: number }> = [];
     let cursor = previewLower.indexOf(queryLower);
 
     while (cursor !== -1) {
-      ranges.push({ start: cursor, end: cursor + trimmedQuery.length });
+      const end = cursor + trimmedQuery.length;
+      if (!matchWholeWord || isWholeWordSearchMatch(previewText, cursor, end)) {
+        ranges.push({ start: cursor, end });
+      }
       cursor = previewLower.indexOf(queryLower, cursor + trimmedQuery.length);
     }
 
     return buildHighlightedSegments(previewText, ranges);
+  }
+
+  function normalizeSearchText(text: string) {
+    return matchCase ? text : text.toLowerCase();
+  }
+
+  function isWholeWordSearchMatch(text: string, from: number, to: number) {
+    const before = from > 0 ? text[from - 1] : '';
+    const after = to < text.length ? text[to] : '';
+    return !/\p{L}|\p{N}|_/u.test(before) && !/\p{L}|\p{N}|_/u.test(after);
   }
 
   function dedupeCurrentSearchResults(results: SearchItem[]) {
@@ -509,6 +546,32 @@
             <X class="h-4 w-4" />
           </button>
         {/if}
+        {#if $bottomBarState.isSearchFocused}
+          <button
+            type="button"
+            class="search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
+            class:search-option-button-active={matchCase}
+            aria-label={matchCase ? 'Disable match case' : 'Enable match case'}
+            aria-pressed={matchCase}
+            title="Match case"
+            onmousedown={(event) => event.preventDefault()}
+            onclick={() => void onMatchCaseChange(!matchCase)}
+          >
+            <CaseSensitive class="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            class="search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
+            class:search-option-button-active={matchWholeWord}
+            aria-label={matchWholeWord ? 'Disable match whole word' : 'Enable match whole word'}
+            aria-pressed={matchWholeWord}
+            title="Match whole word"
+            onmousedown={(event) => event.preventDefault()}
+            onclick={() => void onMatchWholeWordChange(!matchWholeWord)}
+          >
+            <WholeWord class="h-4 w-4" />
+          </button>
+        {/if}
         <button
           type="button"
           class="search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
@@ -519,7 +582,7 @@
           title="Search this note only"
         >
           <StickyNote class="h-4 w-4" />
-          <span class="hidden min-[900px]:inline">This note</span>
+          <span class="search-mode-label hidden min-[900px]:inline-block">This note</span>
         </button>
         <button
           type="button"
@@ -531,7 +594,7 @@
           title="Search all notes"
         >
           <BookOpen class="h-4 w-4" />
-          <span class="hidden min-[900px]:inline">All notes</span>
+          <span class="search-mode-label hidden min-[900px]:inline-block">All notes</span>
         </button>
       </div>
 
@@ -563,23 +626,26 @@
                       : ''
                   }`}
                 >
-                  <button
-                    type="button"
-                    class="flex w-full items-center justify-between gap-3 px-4 pb-2 pt-3 text-left text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground transition-colors hover:text-foreground"
-                    aria-expanded={!areRecentTasksCollapsed}
-                    onmousedown={(event) => event.preventDefault()}
-                    onclick={toggleRecentTasksCollapsed}
+                  <div
+                    class="flex w-full items-center justify-between gap-3 px-4 pb-2 pt-3 text-left text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground"
                   >
                     <span>Recent Tasks</span>
-                    <span class="inline-flex items-center">
+                    <button
+                      type="button"
+                      class="inline-flex items-center rounded-full transition-colors hover:text-foreground sm:hidden"
+                      aria-label={areRecentTasksCollapsed ? 'Show recent tasks' : 'Hide recent tasks'}
+                      aria-expanded={!areRecentTasksCollapsed}
+                      onmousedown={(event) => event.preventDefault()}
+                      onclick={toggleRecentTasksCollapsed}
+                    >
                       {#if areRecentTasksCollapsed}
                         <ChevronRight class="h-3.5 w-3.5" />
                       {:else}
                         <ChevronDown class="h-3.5 w-3.5" />
                       {/if}
-                    </span>
-                  </button>
-                  {#if !areRecentTasksCollapsed}
+                    </button>
+                  </div>
+                  {#if !areRecentTasksVisuallyCollapsed}
                     <div class={getRecentTasksViewportClass()}>
                       {#each recentTasks as item, index (`task-${item.taskKey}-${index}`)}
                         <button
@@ -722,6 +788,28 @@
     box-shadow: inset 0 0 0 1px transparent;
   }
 
+  .search-option-button {
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+
+  .search-option-button-active {
+    background: var(--search-scope-control-active-bg);
+    color: var(--search-scope-active-fg);
+    box-shadow: inset 0 0 0 1px var(--search-scope-control-active-ring);
+  }
+
+  .search-mode-label {
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    transform: translateX(-0.25rem);
+    transition:
+      max-width 180ms ease,
+      opacity 120ms ease,
+      transform 160ms ease;
+    white-space: nowrap;
+  }
+
   .search-mode-button-active {
     background: var(--search-scope-control-active-bg);
     color: var(--search-scope-active-fg);
@@ -745,8 +833,29 @@
     background: var(--search-scope-bg);
     border-color: var(--search-scope-border);
     transition:
+      flex-basis 220ms ease,
+      max-width 220ms ease,
       background-color 160ms ease,
       border-color 160ms ease;
+  }
+
+  @media (min-width: 700px) {
+    .search-bar-shell {
+      flex: 0 1 24rem;
+      max-width: 28rem;
+    }
+
+    .search-bar-shell[data-search-active='true'] {
+      flex: 1 1 42rem;
+      max-width: 42rem;
+    }
+  }
+
+  .search-bar-shell[data-search-active='true'] .search-mode-label {
+    max-width: 5rem;
+    opacity: 1;
+    transform: translateX(0);
+    transition-delay: 90ms, 110ms, 90ms;
   }
 
   .search-results-panel {

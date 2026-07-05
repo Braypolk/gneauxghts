@@ -143,6 +143,7 @@ export interface SearchItem {
   semanticScore: number | null;
   startLine: number | null;
   endLine: number | null;
+  currentMatchRange?: { from: number; to: number };
 }
 
 export interface RelatedNoteItem {

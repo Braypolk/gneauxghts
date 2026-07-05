@@ -13,10 +13,13 @@ import {
   type SearchMode
 } from '$lib/features/notepad/search/search';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
+import { buildCurrentNoteSearchResults } from '$lib/features/notepad/search/currentNoteSearch';
 
 export interface NotepadSearchState {
   searchMode: SearchMode;
   searchQuery: string;
+  matchCase: boolean;
+  matchWholeWord: boolean;
   searchResults: SearchItem[];
   recentNotes: SearchItem[];
   recentTasks: RecentTaskItem[];
@@ -37,7 +40,7 @@ interface SearchStoreDeps {
    * on every keystroke. Also fires immediately on mode changes and when
    * the query is cleared.
    */
-  onSearchHighlightsChange?: (state: Pick<NotepadSearchState, 'searchMode' | 'searchQuery'>) => void;
+  onSearchHighlightsChange?: (state: Pick<NotepadSearchState, 'searchMode' | 'searchQuery' | 'matchCase' | 'matchWholeWord'>) => void;
 }
 
 /**
@@ -52,6 +55,8 @@ interface SearchStoreDeps {
 export class NotepadSearchStore {
   searchMode: SearchMode = $state('all');
   searchQuery = $state('');
+  matchCase = $state(false);
+  matchWholeWord = $state(false);
   searchResults = $state<SearchItem[]>([]);
   recentNotes = $state<SearchItem[]>([]);
   recentTasks = $state<RecentTaskItem[]>([]);
@@ -65,6 +70,8 @@ export class NotepadSearchStore {
   #activeRecentTasksRequest = 0;
   #lastEmittedHighlightQuery = '';
   #lastEmittedHighlightMode: SearchMode = 'all';
+  #lastEmittedMatchCase = false;
+  #lastEmittedMatchWholeWord = false;
 
   constructor(deps: SearchStoreDeps) {
     this.#deps = deps;
@@ -73,15 +80,21 @@ export class NotepadSearchStore {
   #emitHighlightsChange() {
     if (
       this.searchMode === this.#lastEmittedHighlightMode &&
-      this.searchQuery === this.#lastEmittedHighlightQuery
+      this.searchQuery === this.#lastEmittedHighlightQuery &&
+      this.matchCase === this.#lastEmittedMatchCase &&
+      this.matchWholeWord === this.#lastEmittedMatchWholeWord
     ) {
       return;
     }
     this.#lastEmittedHighlightMode = this.searchMode;
     this.#lastEmittedHighlightQuery = this.searchQuery;
+    this.#lastEmittedMatchCase = this.matchCase;
+    this.#lastEmittedMatchWholeWord = this.matchWholeWord;
     this.#deps.onSearchHighlightsChange?.({
       searchMode: this.searchMode,
-      searchQuery: this.searchQuery
+      searchQuery: this.searchQuery,
+      matchCase: this.matchCase,
+      matchWholeWord: this.matchWholeWord
     });
   }
 
@@ -117,6 +130,26 @@ export class NotepadSearchStore {
     this.#emitHighlightsChange();
 
     try {
+      if (this.searchMode === 'current') {
+        const results = buildCurrentNoteSearchResults({
+          title: this.#deps.getCurrentTitle(),
+          noteId: null,
+          notePath: this.#deps.getCurrentPath(),
+          markdown: this.#deps.getCurrentMarkdown(),
+          query: trimmedQuery,
+          matchCase: this.matchCase,
+          matchWholeWord: this.matchWholeWord
+        });
+
+        if (requestId !== this.#activeSearchRequest) {
+          return;
+        }
+
+        this.searchResults = results;
+        this.isSearching = false;
+        return;
+      }
+
       const results = await searchNotes(trimmedQuery, this.searchMode, {
         currentPath: this.#deps.getCurrentPath(),
         currentTitle: this.#deps.getCurrentTitle(),
@@ -291,6 +324,24 @@ export class NotepadSearchStore {
     if (this.searchQuery.trim() !== '') {
       await this.runSearch(this.searchQuery);
     }
+  };
+
+  #refreshSearchAfterOptionChange = async () => {
+    this.#emitHighlightsChange();
+    this.#clearPendingSearchTimer();
+    if (this.searchQuery.trim() !== '') {
+      await this.runSearch(this.searchQuery);
+    }
+  };
+
+  handleMatchCaseChange = async (enabled: boolean) => {
+    this.matchCase = enabled;
+    await this.#refreshSearchAfterOptionChange();
+  };
+
+  handleMatchWholeWordChange = async (enabled: boolean) => {
+    this.matchWholeWord = enabled;
+    await this.#refreshSearchAfterOptionChange();
   };
 
   #loadRecentFocus = async () => {

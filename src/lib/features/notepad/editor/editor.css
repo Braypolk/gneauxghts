@@ -385,7 +385,7 @@
   color: var(--gn-task-checkbox-check);
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-current-search-highlight {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-searchMatch {
   border-radius: 0.28rem;
   background: color-mix(in oklab, oklch(0.86 0.16 84) 68%, transparent);
   box-shadow:
@@ -394,7 +394,7 @@
   padding-inline: 1px;
 }
 
-.dark .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-current-search-highlight {
+.dark .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-searchMatch {
   background: color-mix(in oklab, oklch(0.78 0.18 76) 62%, transparent);
   box-shadow:
     inset 0 0 0 1px color-mix(in oklab, oklch(0.93 0.14 91) 28%, transparent),

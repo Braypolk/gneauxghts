@@ -22,7 +22,6 @@ import {
   EditorState,
   RangeSetBuilder,
   type Extension,
-  StateEffect,
   StateField,
   Transaction
 } from '@codemirror/state';
@@ -33,10 +32,17 @@ import {
   WidgetType,
   keymap,
   placeholder,
-  type DecorationSet
+  type DecorationSet,
+  type ViewUpdate
 } from '@codemirror/view';
 import { indentOnInput } from '@codemirror/language';
 import { insertNewlineContinueMarkup, markdownKeymap } from '@codemirror/lang-markdown';
+import {
+  getSearchQuery,
+  SearchQuery,
+  search,
+  setSearchQuery
+} from '@codemirror/search';
 import { tick } from 'svelte';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
@@ -115,11 +121,17 @@ export interface EditorViewCallbacks {
   onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
 }
 
+export interface SearchHighlightOptions {
+  query: string;
+  matchCase: boolean;
+  matchWholeWord: boolean;
+}
+
 export interface SharedEditorResources {
   imagesConfig: ImagesConfig;
   registerViewCallbacks: (view: EditorView, callbacks: EditorViewCallbacks) => void;
   unregisterViewCallbacks: (view: EditorView) => void;
-  setCurrentSearchHighlightQuery: (query: string | null) => void;
+  setCurrentSearchHighlightQuery: (query: SearchHighlightOptions | string | null) => void;
   resolveViewCallbacks?: (view: EditorView) => EditorViewCallbacks | null;
   runtime: FileEditorRuntime;
   destroy: () => void;
@@ -138,79 +150,84 @@ interface RuntimeReplaceOptions {
 }
 
 const syncAnnotation = Annotation.define<boolean>();
-const setSearchQueryEffect = StateEffect.define<string>();
-const searchQueryField = StateField.define<string>({
-  create() {
-    return '';
-  },
-  update(value, transaction) {
-    for (const effect of transaction.effects) {
-      if (effect.is(setSearchQueryEffect)) {
-        return effect.value;
-      }
-    }
-    return value;
-  }
-});
+const emptySearchHighlightOptions: SearchHighlightOptions = {
+  query: '',
+  matchCase: false,
+  matchWholeWord: false
+};
 
 function clampPos(doc: EditorState['doc'], pos: number | null | undefined) {
   return Math.max(0, Math.min(pos ?? 0, doc.length));
 }
 
-function normalizeSearchQuery(query: string | null | undefined) {
-  return query?.trim().toLowerCase() ?? '';
-}
-
-function buildSearchHighlightDecorations(state: EditorState, query: string) {
-  if (query === '') {
-    return Decoration.none;
+function normalizeSearchQuery(query: SearchHighlightOptions | string | null | undefined): SearchHighlightOptions {
+  if (typeof query === 'string' || query == null) {
+    return {
+      ...emptySearchHighlightOptions,
+      query: query?.trim() ?? ''
+    };
   }
 
-  const decorations = [];
-  const text = state.doc.toString().toLowerCase();
-  let searchFrom = 0;
-
-  while (searchFrom < text.length) {
-    const matchStart = text.indexOf(query, searchFrom);
-    if (matchStart === -1) {
-      break;
-    }
-
-    decorations.push(
-      Decoration.mark({ class: 'gn-current-search-highlight' }).range(
-        matchStart,
-        matchStart + query.length
-      )
-    );
-    searchFrom = matchStart + query.length;
-  }
-
-  return Decoration.set(decorations, true);
+  return {
+    query: query.query.trim(),
+    matchCase: query.matchCase,
+    matchWholeWord: query.matchWholeWord
+  };
 }
 
-function createSearchHighlightExtension() {
+function searchQueryFromOptions(options: SearchHighlightOptions) {
+  return new SearchQuery({
+    search: options.query,
+    caseSensitive: options.matchCase,
+    wholeWord: options.matchWholeWord,
+    literal: true
+  });
+}
+
+const searchMatchMark = Decoration.mark({ class: 'cm-searchMatch' });
+const selectedSearchMatchMark = Decoration.mark({ class: 'cm-searchMatch cm-searchMatch-selected' });
+
+function createExternalSearchHighlightExtension() {
   return ViewPlugin.fromClass(
     class {
-      decorations;
+      decorations: DecorationSet;
 
       constructor(readonly view: EditorView) {
-        this.decorations = buildSearchHighlightDecorations(
-          view.state,
-          view.state.field(searchQueryField)
-        );
+        this.decorations = this.buildDecorations(view);
       }
 
-      update(update: import('@codemirror/view').ViewUpdate) {
-        if (update.docChanged || update.startState.field(searchQueryField) !== update.state.field(searchQueryField)) {
-          this.decorations = buildSearchHighlightDecorations(
-            update.state,
-            update.state.field(searchQueryField)
-          );
+      update(update: ViewUpdate) {
+        if (
+          update.docChanged ||
+          update.selectionSet ||
+          update.viewportChanged ||
+          !getSearchQuery(update.state).eq(getSearchQuery(update.startState))
+        ) {
+          this.decorations = this.buildDecorations(update.view);
         }
+      }
+
+      buildDecorations(view: EditorView) {
+        const query = getSearchQuery(view.state);
+        if (!query.valid) {
+          return Decoration.none;
+        }
+
+        const builder = new RangeSetBuilder<Decoration>();
+        for (const { from: viewportFrom, to: viewportTo } of view.visibleRanges) {
+          const cursor = query.getCursor(view.state, viewportFrom, viewportTo);
+          for (let result = cursor.next(); !result.done; result = cursor.next()) {
+            const { from, to } = result.value;
+            const selected = view.state.selection.ranges.some((range) => range.from === from && range.to === to);
+            builder.add(from, to, selected ? selectedSearchMatchMark : searchMatchMark);
+          }
+        }
+
+        return builder.finish();
       }
     },
     {
-      decorations: (value) => value.decorations
+      decorations: (plugin) => plugin.decorations
     }
   );
 }
@@ -1398,10 +1415,10 @@ function createPaneExtensions(
 ) {
   const imagesConfig = sharedResources?.imagesConfig ?? unavailableImagesConfig;
   return [
-    searchQueryField,
+    search(),
+    createExternalSearchHighlightExtension(),
     createLayoutTheme(),
     createOverlayScrollMargins(editorRoot),
-    createSearchHighlightExtension(),
     placeholder('Start typing here.'),
     createPassiveTableExtension(),
     ...createWikilinkExtensions(sharedResources),
@@ -1491,22 +1508,37 @@ export function createSharedEditorResources({
 
 export function setEditorCurrentSearchHighlightQuery(
   controller: EditorController | null,
-  query: string | null
+  query: SearchHighlightOptions | string | null
 ) {
   if (!controller) {
     return false;
   }
 
   const nextQuery = normalizeSearchQuery(query);
-  if (controller.view.state.field(searchQueryField) === nextQuery) {
+  const nextCodeMirrorQuery = searchQueryFromOptions(nextQuery);
+  controller.view.dispatch(
+    controller.view.state.update({
+      effects: setSearchQuery.of(nextCodeMirrorQuery)
+    })
+  );
+  return true;
+}
+
+export function focusEditorSearchRange(
+  controller: EditorController | null,
+  range: { from: number; to: number } | null | undefined
+) {
+  if (!controller || !range) {
     return false;
   }
 
-  controller.view.dispatch(
-    controller.view.state.update({
-      effects: setSearchQueryEffect.of(nextQuery)
-    })
-  );
+  const from = clampPos(controller.view.state.doc, range.from);
+  const to = clampPos(controller.view.state.doc, range.to);
+  controller.view.dispatch({
+    selection: { anchor: from, head: to },
+    scrollIntoView: true
+  });
+  controller.view.focus();
   return true;
 }
 

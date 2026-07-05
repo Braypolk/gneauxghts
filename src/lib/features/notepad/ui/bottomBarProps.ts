@@ -23,6 +23,8 @@ export interface BottomBarRememberProps {
 export interface BottomBarSearchProps {
   searchMode: 'current' | 'all';
   searchQuery: string;
+  matchCase: boolean;
+  matchWholeWord: boolean;
   searchResults: SearchItem[];
   recentNotes: SearchItem[];
   recentTasks: RecentTaskItem[];
@@ -30,6 +32,8 @@ export interface BottomBarSearchProps {
   focusRequest: number;
   onSearchInput: (value: string) => void;
   onSearchModeChange: (mode: 'current' | 'all') => void | Promise<void>;
+  onMatchCaseChange: (enabled: boolean) => void | Promise<void>;
+  onMatchWholeWordChange: (enabled: boolean) => void | Promise<void>;
   onSearchSelect: (result: SearchItem) => void;
   onRecentNoteSelect: (result: SearchItem) => void;
   onRecentTaskSelect: (task: RecentTaskItem) => void;

@@ -90,7 +90,6 @@ pub(crate) struct StoredImageAsset {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum SearchMode {
-    Current,
     All,
 }
 
