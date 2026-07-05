@@ -19,9 +19,11 @@ import {
   type PaneCommandChoice
 } from '$lib/features/notepad/paneCommandPicker';
 import {
+  addPane,
   adoptSnapshotForPane,
   applySnapshotToNote,
   createFreshDraftNote,
+  removePane as removeStoredPane,
   removeNoteIfUnreferenced,
   replaceReferencedNoteWithFreshDraft,
   setNoteStatus,
@@ -39,7 +41,7 @@ import type { NotepadCommandsDeps, PaneKind } from './notepadCommandFacades';
 export type { NotepadCommandsDeps } from './notepadCommandFacades';
 
 export function createNotepadCommands<TPaneId extends string>(deps: NotepadCommandsDeps<TPaneId>) {
-  const { state, primaryPaneId, paneIdsAll, workspace, panes, persistence, derivedViews, documentSync, documents, paneLifecycle, refresh, forgottenNoteRetentionPreference } = deps;
+  const { state, maxVisiblePanes, workspace, panes, persistence, derivedViews, documentSync, documents, paneLifecycle, refresh, forgottenNoteRetentionPreference } = deps;
 
   const getActivePaneId = workspace.getActivePaneId;
   const getPaneOrder = workspace.getPaneOrder;
@@ -67,6 +69,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const setPaneDocumentSession = panes.setPaneDocumentSession;
   const getPaneTitleInput = panes.getPaneTitleInput;
   const getPaneEditorRoot = panes.getPaneEditorRoot;
+  const createPane = panes.createPane;
+  const closePaneRuntime = panes.closePaneRuntime;
   const updateSelectedRelatedText = panes.updateSelectedRelatedText;
   const closeWikilinkAutocomplete = panes.closeWikilinkAutocomplete;
 
@@ -401,29 +405,33 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
   async function splitWorkspace() {
     const order = getPaneOrder();
-    if (order.length === 2) {
-      const [, secondary] = order;
-      activatePaneSession(secondary);
+    if (order.length >= maxVisiblePanes) {
+      const activePaneId = getActivePaneId();
+      const targetPaneId = getNextPaneId(activePaneId) ?? order.find((paneId) => paneId !== activePaneId);
+      if (!targetPaneId) {
+        return;
+      }
+      activatePaneSession(targetPaneId);
       await tick();
-      focusPaneAfterShortcut(secondary, {
+      focusPaneAfterShortcut(targetPaneId, {
         preferTitle: document.activeElement === getPaneTitleInput(getActivePaneId())
       });
       return;
     }
 
     const sourcePaneId = order[0] ?? getActivePaneId();
-    const [primary, secondary] = paneIdsAll;
-    const targetPaneId = sourcePaneId === primary ? secondary : primary;
+    const targetPaneId = createPane();
     const sharedDocument = getPaneDocument(sourcePaneId);
 
     await loadRecentNotes();
 
     const placeholderDraft = createFreshDraftNote(state);
+    addPane(state, targetPaneId, placeholderDraft.key, 'editor');
     setStoredPaneKind(state, targetPaneId, 'editor');
     setPaneDocumentSession(targetPaneId, placeholderDraft);
     beginPaneCommand(targetPaneId, sharedDocument.key, 'split');
 
-    setPaneOrder([primary, secondary]);
+    setPaneOrder([...order, targetPaneId]);
     activatePaneSession(targetPaneId);
     await tick();
     await paneLifecycle.ensurePaneEditors();
@@ -444,21 +452,20 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
     if (wasPaneCommand) {
       resetPaneCommand();
-      const remainingOrder = getPaneOrder();
-      const anchorPane = (remainingOrder[0] ?? primaryPaneId) as TPaneId;
-      setPaneDocumentSession(paneId, getPaneDocument(anchorPane));
-      setStoredPaneKind(state, paneId, 'editor');
-      if (orphanPlaceholderKey) {
-        removeNoteIfUnreferenced(state, orphanPlaceholderKey);
-        cleanupNoteRuntime(orphanPlaceholderKey);
-      }
     }
 
-    if (getPaneRuntime(paneId).controller) {
-      await paneLifecycle.ensurePaneEditors();
+    await closePaneRuntime(paneId);
+    removeStoredPane(state, paneId);
+    if (orphanPlaceholderKey) {
+      removeNoteIfUnreferenced(state, orphanPlaceholderKey);
+      cleanupNoteRuntime(orphanPlaceholderKey);
     }
 
-    activatePaneSession(((getPaneOrder()[0] ?? primaryPaneId) as TPaneId));
+    const remainingPaneId = getPaneOrder()[0];
+    if (!remainingPaneId) {
+      return;
+    }
+    activatePaneSession(remainingPaneId);
     updateSelectedRelatedText();
   }
 

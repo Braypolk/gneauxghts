@@ -1,7 +1,5 @@
 import {
   notepadRuntimeState,
-  PRIMARY_PANE_ID,
-  SECONDARY_PANE_ID,
   type NotepadPaneId
 } from '$lib/features/notepad/session/runtimeStore.svelte';
 import { notepadState } from '$lib/features/notepad/session/runtimeStore.svelte';
@@ -108,6 +106,4 @@ export class WorkspaceStore {
 }
 
 export const workspaceStore = new WorkspaceStore();
-
-export { PRIMARY_PANE_ID, SECONDARY_PANE_ID };
 export type { NotepadPaneId };

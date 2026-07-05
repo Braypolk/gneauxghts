@@ -7,7 +7,7 @@ import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 type EditorLifecycleController = ReturnType<typeof createEditorLifecycleController>;
 
 export interface PaneEditorLifecycleDeps<TPaneId extends string> {
-  paneIds: readonly TPaneId[];
+  getPaneIds: () => readonly TPaneId[];
   getPaneRuntime: (paneId: TPaneId) => PaneRuntime;
   getEditorLifecycleController: (paneId: TPaneId) => EditorLifecycleController;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
@@ -44,9 +44,6 @@ export function createPaneEditorLifecycle<TPaneId extends string>(
    * microtask.
    */
   const paneEditorQueues = new Map<TPaneId, Promise<void>>();
-  for (const paneId of deps.paneIds) {
-    paneEditorQueues.set(paneId, Promise.resolve());
-  }
 
   function enqueuePaneEditorOp(paneId: TPaneId, op: () => Promise<void>): Promise<void> {
     const previous = paneEditorQueues.get(paneId) ?? Promise.resolve();
@@ -110,7 +107,7 @@ export function createPaneEditorLifecycle<TPaneId extends string>(
    * also drives the same mount/destroy transitions.
    */
   async function ensurePaneEditors(): Promise<void> {
-    for (const paneId of deps.paneIds) {
+    for (const paneId of deps.getPaneIds()) {
       if (deps.paneShouldMountEditor(paneId)) {
         await mountPaneEditor(paneId);
       } else {

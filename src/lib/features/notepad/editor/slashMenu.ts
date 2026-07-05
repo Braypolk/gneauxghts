@@ -332,6 +332,10 @@ class SlashMenuController {
   }
 
   #shouldShow(view: EditorView) {
+    if (!view.hasFocus) {
+      return false;
+    }
+
     if (typeof this.#programmaticPos === 'number') {
       const maxPos = view.state.doc.length;
       this.#programmaticPos = Math.max(0, Math.min(this.#programmaticPos, maxPos));

@@ -86,6 +86,28 @@ export function getPaneState<TPaneId extends string>(
   return state.panesById[paneId];
 }
 
+export function addPane<TPaneId extends string>(
+  state: NotepadState<TPaneId>,
+  paneId: TPaneId,
+  noteKey: NoteKey,
+  kind: PaneState<TPaneId>['kind'] = 'editor'
+): PaneState<TPaneId> {
+  const pane = {
+    paneId,
+    kind,
+    noteKey
+  };
+  state.panesById[paneId] = pane;
+  return pane;
+}
+
+export function removePane<TPaneId extends string>(
+  state: NotepadState<TPaneId>,
+  paneId: TPaneId
+) {
+  delete state.panesById[paneId];
+}
+
 export function getPaneNote<TPaneId extends string>(
   state: NotepadState<TPaneId>,
   paneId: TPaneId

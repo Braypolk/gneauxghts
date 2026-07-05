@@ -53,6 +53,8 @@ export interface NotepadPaneCommands<TPaneId extends string> {
   setPaneDocumentSession: (paneId: TPaneId, document: NoteDraftState) => unknown;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   getPaneEditorRoot: (paneId: TPaneId) => HTMLElement | null;
+  createPane: () => TPaneId;
+  closePaneRuntime: (paneId: TPaneId) => Promise<void>;
   updateSelectedRelatedText: (paneId?: TPaneId) => void;
   closeWikilinkAutocomplete: (paneId?: TPaneId) => void;
 }
@@ -89,8 +91,7 @@ export interface NotepadRefreshCommands {
 
 export interface NotepadCommandsDeps<TPaneId extends string> {
   state: NotepadState<TPaneId>;
-  primaryPaneId: TPaneId;
-  paneIdsAll: readonly [TPaneId, TPaneId];
+  maxVisiblePanes: number;
   workspace: NotepadWorkspaceCommands<TPaneId>;
   panes: NotepadPaneCommands<TPaneId>;
   persistence: NotepadPersistenceCommands;

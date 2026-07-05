@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addPane,
   adoptSnapshotForPane,
   createFreshDraftNote,
   createNoteDraftState,
@@ -8,6 +9,7 @@ import {
   listReferencedNoteKeys,
   noteKeyFromPath,
   rekeyNote,
+  removePane,
   removeNoteIfUnreferenced,
   setPaneNoteKey,
   type NoteDraftState,
@@ -251,5 +253,18 @@ describe('noteStore invariants', () => {
     const keys = listReferencedNoteKeys(state);
     expect(keys).toHaveLength(1);
     expect(keys[0]).toBe(sharedNote.key);
+  });
+
+  it('dynamic pane removal drops pane state without deleting the note draft', () => {
+    const state = createNotepadState<string>('pane-1', ['pane-1']);
+    const draft = createFreshDraftNote(state);
+
+    addPane(state, 'pane-2', draft.key, 'editor');
+    expect(getPaneNote(state, 'pane-2')).toBe(draft);
+
+    removePane(state, 'pane-2');
+
+    expect(state.panesById['pane-2']).toBeUndefined();
+    expect(state.notesByKey[draft.key]).toBe(draft);
   });
 });
