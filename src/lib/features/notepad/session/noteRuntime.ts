@@ -71,11 +71,11 @@ export function setSharedEditorState(
 // Persistence: save timers and queues (keyed by NoteKey)
 // ---------------------------------------------------------------------------
 
-export function getNoteSaveTimer(noteKey: NoteKey): ReturnType<typeof window.setTimeout> | undefined {
+export function getNoteSaveTimer(noteKey: NoteKey): number | undefined {
   return documentRegistry.get(noteKey)?.getSaveTimer() ?? undefined;
 }
 
-export function setNoteSaveTimer(noteKey: NoteKey, timerId: ReturnType<typeof window.setTimeout>): void {
+export function setNoteSaveTimer(noteKey: NoteKey, timerId: number): void {
   documentRegistry.ensure(noteKey).setSaveTimer(timerId);
 }
 

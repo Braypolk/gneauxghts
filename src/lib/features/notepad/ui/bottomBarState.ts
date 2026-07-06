@@ -138,7 +138,7 @@ export function createBottomBarState({
   let searchResultsViewport: HTMLDivElement | null = null;
   let forgetHoldStartedAt = 0;
   let forgetHoldFrame: number | null = null;
-  let forgetHoldTimeout: ReturnType<typeof window.setTimeout> | null = null;
+  let forgetHoldTimeout: number | null = null;
   let suppressNextForgetClick = false;
 
   function patch(partial: Partial<BottomBarState>) {

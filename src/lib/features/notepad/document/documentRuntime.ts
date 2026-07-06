@@ -29,7 +29,7 @@ export class DocumentRuntime {
   private _editorGeneration = 0;
 
   /** Pending autosave timer id (window.setTimeout). */
-  private _saveTimerId: ReturnType<typeof window.setTimeout> | null = null;
+  private _saveTimerId: number | null = null;
 
   /** Currently-running serialized save queue. */
   private _saveQueue: Promise<void> | null = null;
@@ -111,11 +111,11 @@ export class DocumentRuntime {
   // Save timer
   // -------------------------------------------------------------------------
 
-  getSaveTimer(): ReturnType<typeof window.setTimeout> | null {
+  getSaveTimer(): number | null {
     return this._saveTimerId;
   }
 
-  setSaveTimer(timerId: ReturnType<typeof window.setTimeout>): void {
+  setSaveTimer(timerId: number): void {
     this._saveTimerId = timerId;
   }
 

@@ -578,6 +578,10 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
                 forgotten_at_millis INTEGER NOT NULL,
                 purge_after_days INTEGER NOT NULL,
                 purge_at_millis INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS app_state_note_activity (
+                note_id TEXT PRIMARY KEY,
+                last_viewed_at_millis INTEGER NOT NULL
             );",
         )
         .map_err(|err| err.to_string())?;
@@ -898,6 +902,40 @@ pub(crate) fn db_set_note_order(note_ids: &[String]) -> Result<(), String> {
                 .map_err(|err| err.to_string())?;
         }
         transaction.commit().map_err(|err| err.to_string())
+    })
+}
+
+pub(crate) fn db_touch_note_activity(note_id: &str, viewed_at_millis: u64) -> Result<(), String> {
+    with_state_database(|connection| {
+        connection
+            .execute(
+                "INSERT INTO app_state_note_activity (note_id, last_viewed_at_millis)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(note_id) DO UPDATE
+                 SET last_viewed_at_millis = max(app_state_note_activity.last_viewed_at_millis, excluded.last_viewed_at_millis)",
+                params![note_id, to_i64(viewed_at_millis)?],
+            )
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+pub(crate) fn db_load_note_activity() -> Result<HashMap<String, u64>, String> {
+    with_state_database(|connection| {
+        let mut statement = connection
+            .prepare("SELECT note_id, last_viewed_at_millis FROM app_state_note_activity")
+            .map_err(|err| err.to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, read_u64_column(row, 1)?))
+            })
+            .map_err(|err| err.to_string())?;
+        let mut activity = HashMap::new();
+        for row in rows {
+            let (note_id, last_viewed_at_millis) = row.map_err(|err| err.to_string())?;
+            activity.insert(note_id, last_viewed_at_millis);
+        }
+        Ok(activity)
     })
 }
 

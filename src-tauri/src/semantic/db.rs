@@ -1,6 +1,7 @@
 use super::{chunking::SemanticChunk, embed::mean_pool, SemanticIndexJob, SemanticSettings};
 use crate::time::current_time_millis;
 use blake3::hash;
+use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
     cmp::Reverse,
@@ -10,6 +11,7 @@ use std::{
 };
 
 const SETTINGS_KEY: &str = "semantic_settings";
+const ATLAS_LAYOUT_SIGNATURE_KEY: &str = "atlas_layout_signature";
 #[derive(Clone)]
 pub(crate) struct StoredChunkEmbedding {
     pub(crate) text_hash: String,
@@ -32,6 +34,25 @@ pub(crate) struct StoredNoteEmbedding {
     pub(crate) embedding: Vec<f32>,
 }
 
+pub(crate) struct StoredAtlasNoteEmbedding {
+    pub(crate) note_path: String,
+    pub(crate) note_title: String,
+    pub(crate) modified_millis: u64,
+}
+
+pub(crate) struct StoredSemanticEdge {
+    pub(crate) source_note_path: String,
+    pub(crate) target_note_path: String,
+    pub(crate) score: f32,
+}
+
+#[derive(Clone)]
+pub(crate) struct StoredAtlasPosition {
+    pub(crate) note_path: String,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+}
+
 pub(crate) struct StoredRelatedNotePreview {
     pub(crate) note_path: String,
     pub(crate) note_title: String,
@@ -39,12 +60,6 @@ pub(crate) struct StoredRelatedNotePreview {
     pub(crate) text: String,
     pub(crate) start_line: usize,
     pub(crate) end_line: usize,
-    pub(crate) score: f32,
-}
-
-pub(crate) struct StoredSemanticEdge {
-    pub(crate) source_note_path: String,
-    pub(crate) target_note_path: String,
     pub(crate) score: f32,
 }
 
@@ -135,6 +150,13 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 started_at_millis INTEGER NOT NULL,
                 updated_at_millis INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS atlas_positions (
+                note_path TEXT PRIMARY KEY,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                updated_at_millis INTEGER NOT NULL
+            );
             ",
         )
         .map_err(|err| err.to_string())?;
@@ -176,35 +198,37 @@ pub(crate) fn save_semantic_settings(
     Ok(())
 }
 
-pub(crate) fn load_semantic_edges(
+pub(crate) fn load_atlas_layout_signature(
     connection: &Connection,
-    limit: usize,
-) -> Result<Vec<StoredSemanticEdge>, String> {
-    let mut statement = connection
-        .prepare(
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT value_json FROM settings WHERE key = ?1",
+            params![ATLAS_LAYOUT_SIGNATURE_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?
+        .map(|value_json| serde_json::from_str(&value_json).map_err(|err| err.to_string()))
+        .transpose()
+}
+
+pub(crate) fn save_atlas_layout_signature(
+    connection: &Connection,
+    signature: &str,
+) -> Result<(), String> {
+    let value_json = serde_json::to_string(signature).map_err(|err| err.to_string())?;
+    connection
+        .execute(
             "
-            SELECT source_note_path, target_note_path, score
-            FROM edges
-            ORDER BY score DESC
-            LIMIT ?1
+            INSERT INTO settings (key, value_json)
+            VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
             ",
+            params![ATLAS_LAYOUT_SIGNATURE_KEY, value_json],
         )
         .map_err(|err| err.to_string())?;
-    let rows = statement
-        .query_map(params![limit.max(1)], |row| {
-            Ok(StoredSemanticEdge {
-                source_note_path: row.get(0)?,
-                target_note_path: row.get(1)?,
-                score: row.get(2)?,
-            })
-        })
-        .map_err(|err| err.to_string())?;
-
-    let mut edges = Vec::new();
-    for row in rows {
-        edges.push(row.map_err(|err| err.to_string())?);
-    }
-    Ok(edges)
+    Ok(())
 }
 
 pub(crate) fn load_stored_note_records(
@@ -710,6 +734,111 @@ pub(crate) fn load_note_embeddings(
     Ok(notes)
 }
 
+pub(crate) fn load_atlas_note_embeddings(
+    connection: &Connection,
+) -> Result<Vec<StoredAtlasNoteEmbedding>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT n.path, n.title, n.modified_millis
+            FROM note_embeddings e
+            INNER JOIN notes n ON n.path = e.note_path
+            ORDER BY n.title ASC, n.path ASC
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+    let mut notes = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        notes.push(StoredAtlasNoteEmbedding {
+            note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
+            note_title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
+            modified_millis: row.get::<_, u64>(2).map_err(|err| err.to_string())?,
+        });
+    }
+
+    Ok(notes)
+}
+
+pub(crate) fn load_semantic_edges(
+    connection: &Connection,
+    limit: usize,
+) -> Result<Vec<StoredSemanticEdge>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT source_note_path, target_note_path, score
+            FROM edges
+            ORDER BY score DESC
+            LIMIT ?1
+            ",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = statement
+        .query_map(params![limit.max(1)], |row| {
+            Ok(StoredSemanticEdge {
+                source_note_path: row.get(0)?,
+                target_note_path: row.get(1)?,
+                score: row.get(2)?,
+            })
+        })
+        .map_err(|err| err.to_string())?;
+
+    let mut edges = Vec::new();
+    for row in rows {
+        edges.push(row.map_err(|err| err.to_string())?);
+    }
+    Ok(edges)
+}
+
+pub(crate) fn load_atlas_positions(
+    connection: &Connection,
+) -> Result<Vec<StoredAtlasPosition>, String> {
+    let mut statement = connection
+        .prepare("SELECT note_path, x, y FROM atlas_positions")
+        .map_err(|err| err.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(StoredAtlasPosition {
+                note_path: row.get(0)?,
+                x: row.get(1)?,
+                y: row.get(2)?,
+            })
+        })
+        .map_err(|err| err.to_string())?;
+
+    let mut positions = Vec::new();
+    for row in rows {
+        positions.push(row.map_err(|err| err.to_string())?);
+    }
+    Ok(positions)
+}
+
+pub(crate) fn save_atlas_positions(
+    connection: &mut Connection,
+    positions: &[StoredAtlasPosition],
+) -> Result<(), String> {
+    let now = current_time_millis()?;
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+    for position in positions {
+        transaction
+            .execute(
+                "
+                INSERT INTO atlas_positions (note_path, x, y, updated_at_millis)
+                VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(note_path) DO UPDATE SET
+                    x = excluded.x,
+                    y = excluded.y,
+                    updated_at_millis = excluded.updated_at_millis
+                ",
+                params![position.note_path, position.x, position.y, now],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    transaction.commit().map_err(|err| err.to_string())
+}
+
 /// Profiling counters describing a single `rebuild_edges` pass. Returned so the
 /// indexer can fold them into the semantic debug metrics without coupling this
 /// module to the debug state.
@@ -736,6 +865,9 @@ pub(crate) fn rebuild_edges(
     // reuse the note-level ANN neighbors instead of brute force; `EdgeRebuildStats`
     // exists to make that threshold observable before it bites.
     let notes = load_note_embeddings(connection)?;
+    if notes.len() >= 750 {
+        return rebuild_edges_with_hnsw(connection, notes, neighbors_per_note, min_score);
+    }
     let dimensions = notes.first().map(|note| note.embedding.len()).unwrap_or(0);
     let mut comparisons = 0u64;
     let updated_at_millis = current_time_millis()?;
@@ -798,6 +930,100 @@ pub(crate) fn rebuild_edges(
                         neighbor.score,
                         updated_at_millis
                     ],
+                )
+                .map_err(|err| err.to_string())?;
+        }
+    }
+
+    let edge_count = transaction
+        .query_row("SELECT COUNT(*) FROM edges", [], |row| {
+            row.get::<_, usize>(0)
+        })
+        .map_err(|err| err.to_string())?;
+    transaction.commit().map_err(|err| err.to_string())?;
+    Ok(EdgeRebuildStats {
+        note_count: notes.len(),
+        edge_count,
+        dimensions,
+        comparisons,
+    })
+}
+
+fn rebuild_edges_with_hnsw(
+    connection: &mut Connection,
+    notes: Vec<StoredNoteEmbedding>,
+    neighbors_per_note: usize,
+    min_score: f32,
+) -> Result<EdgeRebuildStats, String> {
+    let dimensions = notes.first().map(|note| note.embedding.len()).unwrap_or(0);
+    if notes.is_empty() || dimensions == 0 {
+        let transaction = connection.transaction().map_err(|err| err.to_string())?;
+        transaction
+            .execute("DELETE FROM edges", [])
+            .map_err(|err| err.to_string())?;
+        transaction.commit().map_err(|err| err.to_string())?;
+        return Ok(EdgeRebuildStats::default());
+    }
+
+    let capacity = notes.len().saturating_mul(2).max(1024).next_power_of_two();
+    let graph = Hnsw::new(
+        Cosine::new(),
+        HnswConfig::new(dimensions, capacity)
+            .m(16)
+            .ef_construction(200)
+            .ef_search(neighbors_per_note.saturating_mul(4).max(64)),
+    );
+    let vectors = InMemoryVectorStore::<f32>::new(dimensions, capacity);
+    for (index, note) in notes.iter().enumerate() {
+        graph
+            .set(&vectors, index as u64, note.embedding.as_slice())
+            .map(|_| ())
+            .map_err(|err| err.to_string())?;
+    }
+
+    let updated_at_millis = current_time_millis()?;
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+    transaction
+        .execute("DELETE FROM edges", [])
+        .map_err(|err| err.to_string())?;
+
+    let mut seen_edges = HashSet::new();
+    let mut comparisons = 0u64;
+    for (source_index, source) in notes.iter().enumerate() {
+        let hits = graph
+            .search(
+                &vectors,
+                source.embedding.as_slice(),
+                neighbors_per_note.saturating_add(1).max(2),
+                None,
+            )
+            .map_err(|err| err.to_string())?;
+        for hit in hits {
+            let target_index = hit.key as usize;
+            if target_index == source_index || target_index >= notes.len() {
+                continue;
+            }
+            comparisons += 1;
+            let target = &notes[target_index];
+            let score = super::similarity::cosine_similarity(&source.embedding, &target.embedding);
+            if score < min_score {
+                continue;
+            }
+            let (source_note_path, target_note_path) = if source.note_path <= target.note_path {
+                (source.note_path.as_str(), target.note_path.as_str())
+            } else {
+                (target.note_path.as_str(), source.note_path.as_str())
+            };
+            if !seen_edges.insert((source_note_path.to_string(), target_note_path.to_string())) {
+                continue;
+            }
+            transaction
+                .execute(
+                    "
+                    INSERT INTO edges (source_note_path, target_note_path, score, updated_at_millis)
+                    VALUES (?1, ?2, ?3, ?4)
+                    ",
+                    params![source_note_path, target_note_path, score, updated_at_millis],
                 )
                 .map_err(|err| err.to_string())?;
         }

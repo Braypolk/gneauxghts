@@ -52,7 +52,7 @@ export class PaneRuntime {
     titleShell: null
   });
   private _controller: EditorController | null = null;
-  private _cursorSaveTimer: ReturnType<typeof window.setTimeout> | null = null;
+  private _cursorSaveTimer: number | null = null;
   private _openRequestGeneration = 0;
 
   constructor(paneId: NotepadPaneId) {

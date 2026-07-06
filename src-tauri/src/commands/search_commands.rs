@@ -437,8 +437,8 @@ pub(crate) async fn search_notes_hybrid(
     let current_path_raw = current_path
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
-    let should_use_semantic = settings.semantic_search_enabled
-        && (normalized_query.len() >= 6 || query_terms.len() >= 2);
+    let should_use_semantic =
+        settings.semantic_search_enabled && (normalized_query.len() >= 6 || query_terms.len() >= 2);
 
     if !should_use_semantic {
         let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;

@@ -89,8 +89,8 @@ export function createSettingsStore() {
   const store = writable<SettingsState>(createInitialState());
   const { subscribe, update } = store;
 
-  let semanticPollTimer: ReturnType<typeof window.setInterval> | null = null;
-  let vaultChangeRefreshTimer: ReturnType<typeof window.setTimeout> | null =
+  let semanticPollTimer: number | null = null;
+  let vaultChangeRefreshTimer: number | null =
     null;
   let semanticStatusRequest: Promise<void> | null = null;
   let semanticStateRequest: Promise<void> | null = null;

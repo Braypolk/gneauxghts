@@ -3,10 +3,11 @@ use crate::{
     index::AppState,
     note,
     state::{
-        is_valid_note_path, read_state_with_lookup, resolve_note_path_by_id, touch_recent_note_id,
-        validate_current_path, write_last_opened_and_recents, write_state_with_lookup,
-        NoteIdLookup, PersistedState,
+        db_touch_note_activity, is_valid_note_path, read_state_with_lookup,
+        resolve_note_path_by_id, touch_recent_note_id, validate_current_path,
+        write_last_opened_and_recents, write_state_with_lookup, NoteIdLookup, PersistedState,
     },
+    time::current_time_millis,
 };
 use std::{fs, path::Path, path::PathBuf};
 use tauri::State;
@@ -44,6 +45,12 @@ fn clear_stale_last_opened_note(state: &mut crate::state::PersistedState, note_i
 fn mark_note_opened(state: &mut crate::state::PersistedState, note_id: String) {
     state.last_opened_note_id = Some(note_id.clone());
     touch_recent_note_id(state, note_id);
+}
+
+fn touch_note_activity(note_id: &str) {
+    if let Ok(now) = current_time_millis() {
+        let _ = db_touch_note_activity(note_id, now);
+    }
 }
 
 fn open_ui_state_already_primary(state: &PersistedState, note_id: &str) -> bool {
@@ -100,7 +107,8 @@ pub(crate) fn load_note_session_from_notes_dir_with_state(
         return Ok(NoteSession::default());
     }
 
-    touch_recent_note_id(&mut persisted, last_opened_note_id);
+    touch_recent_note_id(&mut persisted, last_opened_note_id.clone());
+    touch_note_activity(&last_opened_note_id);
     // Row-scoped write of the recents/last-opened only — same rationale as
     // mark_note_opened.
     write_last_opened_and_recents(&persisted)?;
@@ -151,6 +159,9 @@ pub(crate) fn open_note_from_notes_dir_with_state(
 
     let mut persisted = persisted;
     mark_note_opened(&mut persisted, resolved_note_id);
+    if let Some(note_id) = session.note_id.as_deref() {
+        touch_note_activity(note_id);
+    }
     // Row-scoped write: only the last_opened_note_id and recents change here.
     // Avoid the full app_state rewrite that previously fired on every note
     // switch and contended with concurrent open/save under rapid switching.

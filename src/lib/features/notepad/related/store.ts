@@ -50,7 +50,7 @@ export function createRelatedNotesStore({
 }: RelatedStoreDeps) {
   const store = writable<RelatedNotesState>(createInitialState());
   const { subscribe, update } = store;
-  let relatedTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let relatedTimer: number | null = null;
   let activeRelatedRequest = 0;
   let lastRelatedRequestKey = '';
 

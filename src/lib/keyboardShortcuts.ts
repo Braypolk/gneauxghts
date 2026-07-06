@@ -7,6 +7,7 @@ type ShortcutGroupId = 'navigation' | 'workspace' | 'search' | 'editor';
 export type KeyboardShortcutId =
   | 'navNote'
   | 'navList'
+  | 'navAtlas'
   | 'navSettings'
   | 'splitWorkspace'
   | 'closePane'
@@ -125,6 +126,13 @@ const shortcutDefinitionsBase = [
     description: 'Open list view.',
     group: 'navigation',
     defaultBinding: 'Meta+2'
+  },
+  {
+    id: 'navAtlas',
+    label: 'Go to Atlas',
+    description: 'Open vault atlas.',
+    group: 'navigation',
+    defaultBinding: 'Meta+3'
   },
   {
     id: 'navSettings',

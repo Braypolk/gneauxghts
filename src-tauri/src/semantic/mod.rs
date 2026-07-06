@@ -1,4 +1,5 @@
 pub(crate) mod ann;
+pub(crate) mod atlas;
 pub(crate) mod chunking;
 pub(crate) mod db;
 pub(crate) mod debug;
@@ -9,10 +10,11 @@ pub(crate) mod similarity;
 
 use self::{
     ann::AnnIndexState,
+    atlas::{AtlasHardLink, AtlasNoteMetadata, VaultAtlasResponse},
     db::{
         content_hash, count_indexed_items, ensure_schema, load_chunks_by_ann_labels,
-        load_latest_job, load_note_record, load_related_note_previews, load_semantic_edges,
-        load_semantic_settings, open_database, save_semantic_settings, StoredSemanticEdge,
+        load_latest_job, load_note_record, load_related_note_previews, load_semantic_settings,
+        open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
@@ -610,14 +612,34 @@ impl SemanticState {
         }
     }
 
-    pub(crate) fn semantic_edges(&self, limit: usize) -> Result<Vec<StoredSemanticEdge>, String> {
+    pub(crate) fn vault_atlas(
+        &self,
+        metadata: std::collections::HashMap<String, AtlasNoteMetadata>,
+        hard_links: Vec<AtlasHardLink>,
+        last_viewed_by_note_id: std::collections::HashMap<String, u64>,
+    ) -> Result<VaultAtlasResponse, String> {
         match &self.inner {
-            SemanticStateInner::Active(state) => {
-                let connection = open_database(&state.db_path)?;
-                ensure_schema(&connection)?;
-                load_semantic_edges(&connection, limit)
-            }
-            SemanticStateInner::Disabled(_) => Ok(Vec::new()),
+            SemanticStateInner::Active(state) => state.vault_atlas(
+                metadata,
+                hard_links,
+                last_viewed_by_note_id,
+                self.current_index_revision(),
+            ),
+            SemanticStateInner::Disabled(state) => Ok(VaultAtlasResponse {
+                status: "unavailable".to_string(),
+                reason: Some(state.reason.clone()),
+                revision: 0,
+                generated_at_millis: current_time_millis()?,
+                stats: atlas::VaultAtlasStats {
+                    note_count: 0,
+                    cloud_count: 0,
+                    link_count: 0,
+                    isolated_count: 0,
+                },
+                nodes: Vec::new(),
+                links: Vec::new(),
+                clouds: Vec::new(),
+            }),
         }
     }
 }

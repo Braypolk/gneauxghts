@@ -130,6 +130,7 @@
   } from '$lib/features/notepad/workspace/shortcuts';
   import { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import { createPaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
+  import { consumePendingNoteTarget } from '$lib/noteNavigation';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
   import { formatNoteTitle } from '$lib/features/notepad/model/document';
   import { formatShortcutBinding, keyboardShortcutBindings } from '$lib/keyboardShortcuts';
@@ -1219,6 +1220,13 @@
             focusEditorAfterOpen: false
           });
           await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
+        }
+        const pendingNoteTarget = consumePendingNoteTarget();
+        if (pendingNoteTarget) {
+          await commands.openNotePath(pendingNoteTarget.notePath, {
+            noteId: pendingNoteTarget.noteId,
+            focusEditorAfterOpen: true
+          });
         }
         // Subscribe to vault note + semantic status changes through the
         // unified AppStore so the page no longer opens raw IPC listeners.

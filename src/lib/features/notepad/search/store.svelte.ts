@@ -64,7 +64,7 @@ export class NotepadSearchStore {
   focusRequest = $state(0);
 
   #deps: SearchStoreDeps;
-  #searchTimer: ReturnType<typeof window.setTimeout> | null = null;
+  #searchTimer: number | null = null;
   #activeSearchRequest = 0;
   #activeRecentNotesRequest = 0;
   #activeRecentTasksRequest = 0;

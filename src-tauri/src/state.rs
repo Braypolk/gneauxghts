@@ -12,14 +12,14 @@ pub(crate) use config::{
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{
-    db_insert_forgotten_note, db_remove_forgotten_note, db_set_last_opened_note_id,
-    db_set_note_collapsed, db_set_note_hidden, db_set_note_order, db_set_recent_note_ids,
-    derive_file_stem, derive_file_stem_from_title_and_markdown, is_forgotten_note_path,
-    is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
-    push_unique, read_state, read_state_with_lookup, resolve_note_id_from_path,
-    resolve_note_path_by_id, touch_recent_note_id, validate_current_path,
-    write_last_opened_and_recents, write_state, write_state_with_lookup, NoteIdLookup,
-    PersistedForgottenNote, PersistedState,
+    db_insert_forgotten_note, db_load_note_activity, db_remove_forgotten_note,
+    db_set_last_opened_note_id, db_set_note_collapsed, db_set_note_hidden, db_set_note_order,
+    db_set_recent_note_ids, db_touch_note_activity, derive_file_stem,
+    derive_file_stem_from_title_and_markdown, is_forgotten_note_path, is_valid_note_path,
+    persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup, push_unique,
+    read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
+    touch_recent_note_id, validate_current_path, write_last_opened_and_recents, write_state,
+    write_state_with_lookup, NoteIdLookup, PersistedForgottenNote, PersistedState,
 };
 
 #[cfg(test)]

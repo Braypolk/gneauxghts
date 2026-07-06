@@ -23,7 +23,7 @@ export interface PersistenceControllerParams {
   ) => NoteDraftState;
   isTitleEditing?: (note: NoteDraftState) => boolean;
   /** @deprecated retained for backward compatibility; per-note timers now live in DocumentRegistry. */
-  timers?: Map<NoteKey, ReturnType<typeof window.setTimeout>>;
+  timers?: Map<NoteKey, number>;
   /** @deprecated retained for backward compatibility; per-note queues now live in DocumentRegistry. */
   queues?: Map<NoteKey, Promise<void>>;
 }
