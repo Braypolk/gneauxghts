@@ -43,7 +43,7 @@ interface BottomBarStateDeps {
   onRecentTaskSelect: (task: RecentTaskItem) => void;
   onRecentNoteShortcut: (index: number) => void | Promise<void>;
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
-  onSearchCloseRequest: () => void;
+  closeSearch: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;
   onForget: () => void;
 }
@@ -119,7 +119,7 @@ export function createBottomBarState({
   onRecentTaskSelect,
   onRecentNoteShortcut,
   onRecentTaskShortcut,
-  onSearchCloseRequest,
+  closeSearch,
   onCommand,
   onForget
 }: BottomBarStateDeps) {
@@ -150,7 +150,7 @@ export function createBottomBarState({
 
   function closeSearchPanel() {
     resetActiveIndex();
-    onSearchCloseRequest();
+    closeSearch();
   }
 
   function handleRecentItemShortcut(event: KeyboardEvent) {

@@ -11,6 +11,11 @@
     disabled?: boolean;
     tone?: string;
   }
+
+  export interface SearchBarHandle {
+    focusSearch: (options?: { select?: boolean }) => void;
+    closeSearch: () => void;
+  }
 </script>
 
 <script lang="ts">
@@ -37,8 +42,6 @@
     value: string;
     placeholder: string;
     ariaLabel: string;
-    focusRequest?: number;
-    blurRequest?: number;
     matchCase?: boolean;
     matchWholeWord?: boolean;
     showMatchOptions?: boolean;
@@ -68,8 +71,6 @@
     value,
     placeholder,
     ariaLabel,
-    focusRequest = 0,
-    blurRequest = 0,
     matchCase = false,
     matchWholeWord = false,
     showMatchOptions = false,
@@ -97,28 +98,21 @@
 
   let inputEl = $state<HTMLInputElement | null>(null);
   let shellEl = $state<HTMLDivElement | null>(null);
-  let focused = $state(false);
-  let lastHandledFocusRequest = $state(0);
-  let lastHandledBlurRequest = $state(0);
+  let isOpen = $state(false);
 
-  const isExpanded = $derived(focused || value.trim() !== '');
+  const isExpanded = $derived(isOpen || value.trim() !== '');
   const activeScope = $derived(scopeOptions.find((option) => option.id === scopeId) ?? null);
   const activeSearchType = $derived(searchTypeOptions.find((option) => option.id === searchTypeId) ?? null);
   const activeTone = $derived(activeSearchType?.tone ?? activeScope?.tone ?? scopeId ?? 'default');
 
-  $effect(() => {
-    if (focusRequest === 0 || focusRequest === lastHandledFocusRequest) return;
-    lastHandledFocusRequest = focusRequest;
-    focusInput({ select: true });
-  });
+  function openSearch() {
+    if (isOpen) return;
+    isOpen = true;
+    void onOpen?.();
+  }
 
-  $effect(() => {
-    if (blurRequest === 0 || blurRequest === lastHandledBlurRequest) return;
-    lastHandledBlurRequest = blurRequest;
-    blurSearch();
-  });
-
-  function focusInput({ select = false }: { select?: boolean } = {}) {
+  export function focusSearch({ select = false }: { select?: boolean } = {}) {
+    openSearch();
     requestAnimationFrame(() => {
       inputEl?.focus();
       if (select) {
@@ -127,16 +121,18 @@
     });
   }
 
-  function setFocused(nextFocused: boolean) {
-    if (focused === nextFocused) return;
-    focused = nextFocused;
-    if (nextFocused) {
-      void onOpen?.();
-    }
+  export function closeSearch() {
+    if (!isOpen) return;
+    isOpen = false;
+    inputEl?.blur();
   }
 
   function handleFocusIn() {
-    setFocused(true);
+    openSearch();
+  }
+
+  function handleInput(event: Event) {
+    onValueChange((event.currentTarget as HTMLInputElement).value);
   }
 
   function handleFocusOut(event: FocusEvent) {
@@ -144,16 +140,7 @@
     if (nextTarget instanceof Node && shellEl?.contains(nextTarget)) {
       return;
     }
-    setFocused(false);
-  }
-
-  function handleInput(event: Event) {
-    onValueChange((event.currentTarget as HTMLInputElement).value);
-  }
-
-  function blurSearch() {
-    setFocused(false);
-    inputEl?.blur();
+    closeSearch();
   }
 
   function handleInputKeydown(event: KeyboardEvent) {
@@ -164,20 +151,20 @@
 
     event.preventDefault();
     event.stopPropagation();
-    blurSearch();
+    closeSearch();
   }
 
   function handleClear() {
     onValueChange('');
     onClear?.();
-    focusInput();
+    focusSearch();
   }
 
   async function selectScope(nextScopeId: string) {
     const selectionStart = inputEl?.selectionStart ?? null;
     const selectionEnd = inputEl?.selectionEnd ?? null;
     await onScopeChange?.(nextScopeId);
-    focusInput();
+    focusSearch();
     requestAnimationFrame(() => {
       if (!inputEl || selectionStart === null || selectionEnd === null) return;
       inputEl.setSelectionRange(selectionStart, selectionEnd);
@@ -186,7 +173,7 @@
 
   async function selectSearchType(nextSearchTypeId: string) {
     await onSearchTypeChange?.(nextSearchTypeId);
-    focusInput();
+    focusSearch();
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
@@ -200,7 +187,7 @@
       if (!allScope) return;
       event.preventDefault();
       void selectScope(allScope.id);
-      focusInput({ select: true });
+      focusSearch({ select: true });
       return;
     }
 
@@ -213,7 +200,7 @@
       if (defaultScope) {
         void selectScope(defaultScope.id);
       }
-      focusInput({ select: true });
+      focusSearch({ select: true });
     }
   }
 
@@ -231,7 +218,7 @@
   class={`shared-search-bar-shell pointer-events-auto relative flex max-w-2xl flex-1 min-w-0 items-center gap-2 overflow-visible rounded-full border pl-3 pr-1 shadow-sm backdrop-blur-md sm:gap-3 sm:pl-5 ${className}`}
   data-search-tone={activeTone}
   data-search-expanded={isExpanded ? 'true' : 'false'}
-  data-search-active={focused ? 'true' : 'false'}
+  data-search-active={isOpen ? 'true' : 'false'}
   onfocusin={handleFocusIn}
   onfocusout={handleFocusOut}
 >
@@ -245,7 +232,7 @@
       enterkeyhint="search"
       class="shared-search-bar-input w-full bg-transparent py-1.5 text-base text-foreground outline-none placeholder:text-muted-foreground min-[700px]:text-sm sm:py-2"
       aria-label={ariaLabel}
-      placeholder={focused ? placeholder : ''}
+      placeholder={isOpen ? placeholder : ''}
       value={value}
       oninput={handleInput}
       onkeydown={handleInputKeydown}
@@ -291,7 +278,7 @@
       </button>
     {/if}
 
-    {#if focused && showMatchOptions}
+    {#if isOpen && showMatchOptions}
       <button
         type="button"
         class="shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
@@ -323,7 +310,7 @@
       <button
         type="button"
         class="shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
-        class:shared-search-mode-button-active={focused && searchTypeId === choice.id}
+        class:shared-search-mode-button-active={isOpen && searchTypeId === choice.id}
         aria-label={choice.ariaLabel ?? choice.label}
         aria-pressed={searchTypeId === choice.id}
         title={choice.title ?? choice.label}
@@ -343,7 +330,7 @@
       <button
         type="button"
         class="shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
-        class:shared-search-mode-button-active={focused && scopeId === choice.id}
+        class:shared-search-mode-button-active={isOpen && scopeId === choice.id}
         aria-label={choice.ariaLabel ?? choice.label}
         aria-pressed={scopeId === choice.id}
         title={choice.title ?? choice.label}
@@ -359,7 +346,7 @@
     {@render children?.()}
   </div>
 
-  {#if focused}
+  {#if isOpen}
     {@render panel?.()}
   {/if}
 </div>

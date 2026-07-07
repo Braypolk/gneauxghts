@@ -614,8 +614,7 @@
     openRecentTaskByIndex,
     handleSearchInput,
     handleSearchModeChange,
-    handleSearchOpen,
-    requestSearchFocus
+    handleSearchOpen
   } = searchState;
 
   const {
@@ -1061,7 +1060,6 @@
     startNewNoteFlow: commands.startNewNoteFlow,
     toggleRelatedPanel,
     openRecentNoteByIndex,
-    requestSearchFocus,
     focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
     handlePaneCommandGlobalKeydown: commands.handlePaneCommandGlobalKeydown,
     handleWikilinkKeydown
@@ -1352,7 +1350,6 @@
           recentNotes: searchState.recentNotes,
           recentTasks: searchState.recentTasks,
           isSearching: searchState.isSearching,
-          focusRequest: searchState.focusRequest,
           onSearchInput: handleSearchInput,
           onSearchModeChange: handleSearchModeChange,
           onMatchCaseChange: searchState.handleMatchCaseChange,

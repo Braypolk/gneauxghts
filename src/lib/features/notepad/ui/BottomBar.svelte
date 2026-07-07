@@ -23,7 +23,7 @@
     BottomBarRememberProps,
     BottomBarSearchProps
   } from '$lib/features/notepad/ui/bottomBarProps';
-  import SearchBar from '$lib/ui/search/SearchBar.svelte';
+  import SearchBar, { type SearchBarHandle } from '$lib/ui/search/SearchBar.svelte';
   import type { SearchItem } from '$lib/types/semantic';
 
   const RECENT_TASKS_COLLAPSED_STORAGE_KEY = 'gneauxghts:bottom-bar:recent-tasks-collapsed';
@@ -54,7 +54,6 @@
   const recentNotes = $derived(search.recentNotes);
   const recentTasks = $derived(search.recentTasks);
   const isSearching = $derived(search.isSearching);
-  const focusRequest = $derived(search.focusRequest);
   const onSearchInput = $derived(search.onSearchInput);
   const onSearchModeChange = $derived(search.onSearchModeChange);
   const onMatchCaseChange = $derived(search.onMatchCaseChange);
@@ -89,7 +88,7 @@
     }
   ];
 
-  let searchBlurRequest = $state(0);
+  let searchBar = $state<SearchBarHandle | null>(null);
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
   let forgetButton = $state<HTMLButtonElement | null>(null);
   let forgetCancelButton = $state<HTMLButtonElement | null>(null);
@@ -134,7 +133,7 @@
     onRecentTaskSelect: (task) => onRecentTaskSelect(task),
     onRecentNoteShortcut: (index) => onRecentNoteShortcut(index),
     onRecentTaskShortcut: (index) => onRecentTaskShortcut(index),
-    onSearchCloseRequest: requestSearchClose,
+    closeSearch: () => searchBar?.closeSearch(),
     onCommand: (command) => onCommand?.(command) ?? false,
     onForget: () => onForget()
   });
@@ -188,10 +187,6 @@
   $effect(() => {
     bottomBarState.bindSearchResultsViewport(searchResultsViewport);
   });
-
-  function requestSearchClose() {
-    searchBlurRequest += 1;
-  }
 
   function handleSharedSearchOpen() {
     bottomBarState.resetActiveIndex();
@@ -695,11 +690,10 @@
     {/snippet}
 
     <SearchBar
+      bind:this={searchBar}
       value={searchQuery}
       placeholder={searchMode === 'current' ? 'Search this note' : 'Search all notes'}
       ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search all notes'}`}
-      focusRequest={focusRequest}
-      blurRequest={searchBlurRequest}
       matchCase={matchCase}
       matchWholeWord={matchWholeWord}
       showMatchOptions={true}
@@ -708,7 +702,7 @@
       canNavigatePrevious={searchMode === 'current' && canNavigateCurrentSearchResults}
       canNavigateNext={searchMode === 'current' && canNavigateCurrentSearchResults}
       blurOnEscape={false}
-      shortcut={{ enabled: false }}
+      shortcut={{ enabled: true, defaultScopeId: 'current', allScopeId: 'all' }}
       onValueChange={onSearchInput}
       onOpen={handleSharedSearchOpen}
       onScopeChange={handleSharedSearchModeChange}

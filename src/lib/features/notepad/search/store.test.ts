@@ -61,7 +61,6 @@ describe('NotepadSearchStore', () => {
     expect(store.recentNotes).toEqual([]);
     expect(store.recentTasks).toEqual([]);
     expect(store.isSearching).toBe(false);
-    expect(store.focusRequest).toBe(0);
   });
 
   it('debounces search input and only fires highlight callbacks post-debounce', async () => {

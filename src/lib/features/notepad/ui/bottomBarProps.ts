@@ -29,7 +29,6 @@ export interface BottomBarSearchProps {
   recentNotes: SearchItem[];
   recentTasks: RecentTaskItem[];
   isSearching: boolean;
-  focusRequest: number;
   onSearchInput: (value: string) => void;
   onSearchModeChange: (mode: 'current' | 'all') => void | Promise<void>;
   onMatchCaseChange: (enabled: boolean) => void | Promise<void>;

@@ -24,7 +24,6 @@ export interface NotepadSearchState {
   recentNotes: SearchItem[];
   recentTasks: RecentTaskItem[];
   isSearching: boolean;
-  focusRequest: number;
 }
 
 interface SearchStoreDeps {
@@ -61,7 +60,6 @@ export class NotepadSearchStore {
   recentNotes = $state<SearchItem[]>([]);
   recentTasks = $state<RecentTaskItem[]>([]);
   isSearching = $state(false);
-  focusRequest = $state(0);
 
   #deps: SearchStoreDeps;
   #searchTimer: number | null = null;
@@ -372,16 +370,6 @@ export class NotepadSearchStore {
 
   handleSearchOpen = () => {
     void this.#loadRecentFocus();
-  };
-
-  requestSearchFocus = (mode: SearchMode) => {
-    this.searchMode = mode;
-    this.focusRequest = this.focusRequest + 1;
-    this.#emitHighlightsChange();
-
-    if (this.searchQuery.trim() !== '') {
-      void this.runSearch(this.searchQuery);
-    }
   };
 
   dispose = () => {

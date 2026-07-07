@@ -13,7 +13,6 @@ export interface WorkspaceShortcutDeps<TPaneId extends string> {
   startNewNoteFlow: () => Promise<void>;
   toggleRelatedPanel: () => void;
   openRecentNoteByIndex: (index: number) => void | Promise<void>;
-  requestSearchFocus: (mode: 'all' | 'current') => void;
   focusPaneAfterShortcut: (paneId: TPaneId, options?: { preferTitle?: boolean }) => void;
   /** Pane content-picker keydown branch — return true if handled. */
   handlePaneCommandGlobalKeydown: (event: KeyboardEvent) => boolean;
@@ -144,15 +143,5 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
       return;
     }
 
-    if (keyboardShortcutMatchesEvent(event, 'searchAll')) {
-      event.preventDefault();
-      deps.requestSearchFocus('all');
-      return;
-    }
-
-    if (keyboardShortcutMatchesEvent(event, 'searchCurrent')) {
-      event.preventDefault();
-      deps.requestSearchFocus('current');
-    }
   };
 }
