@@ -614,7 +614,7 @@
     openRecentTaskByIndex,
     handleSearchInput,
     handleSearchModeChange,
-    handleSearchFocus,
+    handleSearchOpen,
     requestSearchFocus
   } = searchState;
 
@@ -1375,7 +1375,7 @@
             }),
           onRecentNoteShortcut: (index) => void openRecentNoteByIndex(index),
           onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
-          onSearchFocus: handleSearchFocus,
+          onSearchOpen: handleSearchOpen,
           onCommand: (command) => commands.handleBottomBarCommand(command)
         }}
       />

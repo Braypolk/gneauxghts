@@ -52,7 +52,7 @@
     shortcut?: SearchShortcutOptions;
     class?: string;
     onValueChange: (value: string) => void;
-    onFocusChange?: (focused: boolean) => void;
+    onOpen?: () => void | Promise<void>;
     onClear?: () => void;
     onScopeChange?: (scopeId: string) => void | Promise<void>;
     onSearchTypeChange?: (searchTypeId: string) => void | Promise<void>;
@@ -83,7 +83,7 @@
     shortcut = { enabled: false },
     class: className = '',
     onValueChange,
-    onFocusChange,
+    onOpen,
     onClear,
     onScopeChange,
     onSearchTypeChange,
@@ -130,7 +130,9 @@
   function setFocused(nextFocused: boolean) {
     if (focused === nextFocused) return;
     focused = nextFocused;
-    onFocusChange?.(nextFocused);
+    if (nextFocused) {
+      void onOpen?.();
+    }
   }
 
   function handleFocusIn() {

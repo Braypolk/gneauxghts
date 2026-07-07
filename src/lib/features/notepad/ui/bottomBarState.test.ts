@@ -51,7 +51,6 @@ describe('createBottomBarState', () => {
     ];
     const navigated: SearchItem[] = [];
     const state = createBottomBarState({
-      getSearchMode: () => 'current',
       getSearchQuery: () => 'found',
       getSearchResults: () => visibleResults,
       getSearchNavigationResults: () => rawResults,
@@ -61,7 +60,6 @@ describe('createBottomBarState', () => {
       getForgetHoldDurationMs: () => 0,
       isForgetHoldEnabled: () => false,
       onSearchInput: () => {},
-      onSearchModeChange: () => {},
       onSearchSelect: () => {},
       onSearchNavigate: (result) => {
         navigated.push(result);
@@ -70,7 +68,7 @@ describe('createBottomBarState', () => {
       onRecentTaskSelect: () => {},
       onRecentNoteShortcut: () => {},
       onRecentTaskShortcut: () => {},
-      onSearchFocus: () => {},
+      onSearchCloseRequest: () => {},
       onForget: () => {}
     });
 

@@ -174,7 +174,7 @@ describe('NotepadSearchStore', () => {
       ]
     });
 
-    store.handleSearchFocus();
+    store.handleSearchOpen();
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();

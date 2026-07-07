@@ -40,6 +40,6 @@ export interface BottomBarSearchProps {
   onRecentTaskSelect: (task: RecentTaskItem) => void;
   onRecentNoteShortcut: (index: number) => void | Promise<void>;
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
-  onSearchFocus: () => void;
+  onSearchOpen: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;
 }

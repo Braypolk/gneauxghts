@@ -65,7 +65,7 @@
   const onRecentTaskSelect = $derived(search.onRecentTaskSelect);
   const onRecentNoteShortcut = $derived(search.onRecentNoteShortcut);
   const onRecentTaskShortcut = $derived(search.onRecentTaskShortcut);
-  const onSearchFocus = $derived(search.onSearchFocus);
+  const onSearchOpen = $derived(search.onSearchOpen);
   const onCommand = $derived(search.onCommand);
   const searchScopeTitle = $derived(
     searchMode === 'current'
@@ -93,7 +93,6 @@
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
   let forgetButton = $state<HTMLButtonElement | null>(null);
   let forgetCancelButton = $state<HTMLButtonElement | null>(null);
-  let wasSearchFocused = false;
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
   let areRecentTasksCollapsed = $state(loadRecentTasksCollapsedPreference());
@@ -120,7 +119,6 @@
   );
 
   const bottomBarState = createBottomBarState({
-    getSearchMode: () => searchMode,
     getSearchQuery: () => searchQuery,
     getSearchResults: () => visibleSearchResults,
     getSearchNavigationResults: () => (searchMode === 'current' ? searchResults : visibleSearchResults),
@@ -130,14 +128,13 @@
     getForgetHoldDurationMs: () => forgetHoldDurationMs,
     isForgetHoldEnabled: () => isForgetHoldEnabled,
     onSearchInput: (value) => onSearchInput(value),
-    onSearchModeChange: (mode) => onSearchModeChange(mode),
     onSearchSelect: (result) => onSearchSelect(result),
     onSearchNavigate: (result) => onSearchNavigate?.(result),
     onRecentNoteSelect: (result) => onRecentNoteSelect(result),
     onRecentTaskSelect: (task) => onRecentTaskSelect(task),
     onRecentNoteShortcut: (index) => onRecentNoteShortcut(index),
     onRecentTaskShortcut: (index) => onRecentTaskShortcut(index),
-    onSearchFocus: () => onSearchFocus(),
+    onSearchCloseRequest: requestSearchClose,
     onCommand: (command) => onCommand?.(command) ?? false,
     onForget: () => onForget()
   });
@@ -183,15 +180,6 @@
   });
 
   $effect(() => {
-    const nextSearchFocused = $bottomBarState.isSearchFocused;
-    if (!nextSearchFocused && wasSearchFocused) {
-      searchBlurRequest += 1;
-    }
-    wasSearchFocused = nextSearchFocused;
-  });
-
-  $effect(() => {
-    $bottomBarState.isSearchFocused;
     $bottomBarState.activeIndex;
     visibleItems;
     void bottomBarState.syncActiveItemIntoView();
@@ -201,16 +189,13 @@
     bottomBarState.bindSearchResultsViewport(searchResultsViewport);
   });
 
-  function handleSharedSearchFocusChange(nextFocused: boolean) {
-    if (nextFocused) {
-      bottomBarState.handleSearchFocus();
-      return;
-    }
+  function requestSearchClose() {
+    searchBlurRequest += 1;
+  }
 
-    bottomBarState.handleSearchBlur({
-      relatedTarget: null,
-      currentTarget: null
-    } as unknown as FocusEvent);
+  function handleSharedSearchOpen() {
+    bottomBarState.resetActiveIndex();
+    onSearchOpen();
   }
 
   function handleSharedSearchModeChange(mode: string) {
@@ -725,7 +710,7 @@
       blurOnEscape={false}
       shortcut={{ enabled: false }}
       onValueChange={onSearchInput}
-      onFocusChange={handleSharedSearchFocusChange}
+      onOpen={handleSharedSearchOpen}
       onScopeChange={handleSharedSearchModeChange}
       onMatchCaseChange={onMatchCaseChange}
       onMatchWholeWordChange={onMatchWholeWordChange}

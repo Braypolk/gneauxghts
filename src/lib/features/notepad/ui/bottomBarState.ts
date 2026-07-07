@@ -20,17 +20,14 @@ interface TextRange {
 }
 
 export interface BottomBarState {
-  isSearchFocused: boolean;
   activeIndex: number;
   searchNavigationMode: ListNavigationMode;
-  lastHandledFocusRequest: number;
   isHoldingForget: boolean;
   forgetHoldProgress: number;
   isForgetConfirmOpen: boolean;
 }
 
 interface BottomBarStateDeps {
-  getSearchMode: () => 'current' | 'all';
   getSearchQuery: () => string;
   getSearchResults: () => SearchItem[];
   getSearchNavigationResults?: () => SearchItem[];
@@ -40,14 +37,13 @@ interface BottomBarStateDeps {
   getForgetHoldDurationMs: () => number;
   isForgetHoldEnabled: () => boolean;
   onSearchInput: (value: string) => void;
-  onSearchModeChange: (mode: 'current' | 'all') => void | Promise<void>;
   onSearchSelect: (result: SearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
   onRecentNoteSelect: (result: SearchItem) => void;
   onRecentTaskSelect: (task: RecentTaskItem) => void;
   onRecentNoteShortcut: (index: number) => void | Promise<void>;
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
-  onSearchFocus: () => void;
+  onSearchCloseRequest: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;
   onForget: () => void;
 }
@@ -56,10 +52,8 @@ const FORGET_HOLD_COMPLETION_DELAY_MS = 100;
 
 function createInitialState(): BottomBarState {
   return {
-    isSearchFocused: false,
     activeIndex: 0,
     searchNavigationMode: 'pointer',
-    lastHandledFocusRequest: 0,
     isHoldingForget: false,
     forgetHoldProgress: 0,
     isForgetConfirmOpen: false
@@ -110,7 +104,6 @@ export function buildHighlightedSegments(text: string, ranges: TextRange[]) {
 }
 
 export function createBottomBarState({
-  getSearchMode,
   getSearchQuery,
   getSearchResults,
   getSearchNavigationResults,
@@ -120,21 +113,19 @@ export function createBottomBarState({
   getForgetHoldDurationMs,
   isForgetHoldEnabled,
   onSearchInput,
-  onSearchModeChange,
   onSearchSelect,
   onSearchNavigate,
   onRecentNoteSelect,
   onRecentTaskSelect,
   onRecentNoteShortcut,
   onRecentTaskShortcut,
-  onSearchFocus,
+  onSearchCloseRequest,
   onCommand,
   onForget
 }: BottomBarStateDeps) {
   const store = writable<BottomBarState>(createInitialState());
   const { subscribe, update } = store;
 
-  let searchInput: HTMLInputElement | null = null;
   let searchResultsViewport: HTMLDivElement | null = null;
   let forgetHoldStartedAt = 0;
   let forgetHoldFrame: number | null = null;
@@ -143,10 +134,6 @@ export function createBottomBarState({
 
   function patch(partial: Partial<BottomBarState>) {
     update((state) => ({ ...state, ...partial }));
-  }
-
-  function bindSearchInput(node: HTMLInputElement | null) {
-    searchInput = node;
   }
 
   function bindSearchResultsViewport(node: HTMLDivElement | null) {
@@ -161,69 +148,9 @@ export function createBottomBarState({
     patch({ activeIndex: 0, searchNavigationMode: 'pointer' });
   }
 
-  function setSearchFocused(isSearchFocused: boolean) {
-    if (getState().isSearchFocused === isSearchFocused) {
-      return;
-    }
-
-    patch({ isSearchFocused });
-  }
-
-  function handleSearchInput(event: Event) {
-    onSearchInput((event.currentTarget as HTMLInputElement).value);
-  }
-
-  function handleSearchClear() {
-    const wasSearchFocused = getState().isSearchFocused;
-    onSearchInput('');
-    if (wasSearchFocused) {
-      searchInput?.focus();
-    }
-  }
-
-  function handleSearchFocus() {
-    setSearchFocused(true);
-    onSearchFocus();
-  }
-
-  function handleSearchBlur(event: FocusEvent) {
-    const nextTarget = event.relatedTarget;
-    if (
-      nextTarget instanceof Node &&
-      event.currentTarget instanceof HTMLElement &&
-      event.currentTarget.contains(nextTarget)
-    ) {
-      return;
-    }
-
-    setSearchFocused(false);
-    resetActiveIndex();
-  }
-
   function closeSearchPanel() {
-    setSearchFocused(false);
     resetActiveIndex();
-    searchInput?.blur();
-  }
-
-  async function handleSearchModeClick(mode: 'current' | 'all') {
-    const selectionStart = searchInput?.selectionStart ?? null;
-    const selectionEnd = searchInput?.selectionEnd ?? null;
-    await onSearchModeChange(mode);
-    await tick();
-    requestAnimationFrame(() => {
-      if (!searchInput) return;
-      searchInput.focus();
-      if (selectionStart === null || selectionEnd === null) return;
-      searchInput.setSelectionRange(selectionStart, selectionEnd);
-    });
-  }
-
-  function getSearchPlaceholder() {
-    if (!getState().isSearchFocused) return '';
-    return getSearchMode() === 'current'
-      ? 'Search this note'
-      : 'Search all notes';
+    onSearchCloseRequest();
   }
 
   function handleRecentItemShortcut(event: KeyboardEvent) {
@@ -304,10 +231,10 @@ export function createBottomBarState({
     const items = getVisibleItems();
     const state = getState();
     const isPanelVisible =
-      state.isSearchFocused &&
       (getSearchQuery().trim() !== '' || getRecentNotes().length > 0 || getRecentTasks().length > 0);
 
     if (event.key === 'Escape') {
+      event.preventDefault();
       if (getSearchQuery().trim() !== '') {
         onSearchInput('');
         return;
@@ -364,24 +291,10 @@ export function createBottomBarState({
     }
   }
 
-  function handleFocusRequest(focusRequest: number) {
-    if (focusRequest === 0 || focusRequest === getState().lastHandledFocusRequest) {
-      return;
-    }
-
-    setSearchFocused(true);
-    patch({ lastHandledFocusRequest: focusRequest });
-
-    tick().then(() => {
-      searchInput?.focus();
-      searchInput?.select();
-    });
-  }
-
   async function syncActiveItemIntoView() {
     await tick();
     const viewport = searchResultsViewport;
-    if (!viewport || !getState().isSearchFocused) {
+    if (!viewport) {
       return;
     }
 
@@ -521,27 +434,18 @@ export function createBottomBarState({
   }
 
   function dispose() {
-    setSearchFocused(false);
     closeForgetConfirm();
     resetForgetHold();
   }
 
   return {
     subscribe,
-    bindSearchInput,
     bindSearchResultsViewport,
     resetActiveIndex,
-    handleSearchInput,
-    handleSearchClear,
-    handleSearchFocus,
-    handleSearchBlur,
-    handleSearchModeClick,
-    getSearchPlaceholder,
     handleSearchKeydown,
     handleSearchItemPointerEnter,
     selectItem,
     navigateSearchResult,
-    handleFocusRequest,
     syncActiveItemIntoView,
     resetForgetHold,
     handleForgetPointerDown,

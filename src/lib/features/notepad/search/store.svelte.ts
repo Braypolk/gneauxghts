@@ -370,7 +370,7 @@ export class NotepadSearchStore {
     }
   };
 
-  handleSearchFocus = () => {
+  handleSearchOpen = () => {
     void this.#loadRecentFocus();
   };
 
