@@ -8,7 +8,7 @@
   import { isTauriRuntime } from '$lib/tauriRuntime';
 
   const navLinks = [
-    { href: '/', label: 'Note', icon: House },
+    { href: '/', label: 'Gneauxght', icon: House },
     { href: '/list', label: 'List', icon: ListTodo },
     { href: '/atlas', label: 'Atlas', icon: Network }
   ] as const;

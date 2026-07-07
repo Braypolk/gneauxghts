@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createBottomBarState, deriveBottomBarVisibleItems } from './bottomBarState';
+import {
+  createNotepadCommandBarState,
+  deriveNotepadCommandBarVisibleItems
+} from './notepadCommandBarState';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import type { SearchItem } from '$lib/types/semantic';
 
@@ -34,19 +37,19 @@ function taskItem(overrides: Partial<RecentTaskItem> = {}): RecentTaskItem {
   };
 }
 
-describe('deriveBottomBarVisibleItems', () => {
+describe('deriveNotepadCommandBarVisibleItems', () => {
   it('orders recent tasks before recent notes for empty search', () => {
-    const items = deriveBottomBarVisibleItems('', [], [searchItem()], [taskItem()]);
+    const items = deriveNotepadCommandBarVisibleItems('', [], [searchItem()], [taskItem()]);
 
     expect(items.map((item) => item.kind)).toEqual(['task', 'note']);
   });
 });
 
-describe('createBottomBarState', () => {
+describe('createNotepadCommandBarState', () => {
   function createState(
-    overrides: Partial<Parameters<typeof createBottomBarState>[0]> = {}
+    overrides: Partial<Parameters<typeof createNotepadCommandBarState>[0]> = {}
   ) {
-    return createBottomBarState({
+    return createNotepadCommandBarState({
       getSearchQuery: () => '',
       getSearchResults: () => [],
       getRecentNotes: () => [],

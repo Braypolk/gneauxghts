@@ -59,7 +59,7 @@
   will-change: margin-left, width;
 }
 
-.notepad-bottom-bar {
+.notepad-command-bar {
   bottom: var(--keyboard-inset-height, 0px);
   transition: bottom 180ms ease;
 }

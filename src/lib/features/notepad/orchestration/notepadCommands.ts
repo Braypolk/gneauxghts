@@ -516,7 +516,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     updateSelectedRelatedText();
   }
 
-  async function handleBottomBarCommand(command: string): Promise<boolean> {
+  async function handleNotepadCommandBarCommand(command: string): Promise<boolean> {
     const normalized = command.trim().toLowerCase();
     switch (normalized) {
       case '/chat':
@@ -664,7 +664,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return false;
     }
 
-    if (target instanceof HTMLElement && target.closest('[data-notepad-bottom-bar]')) {
+    if (target instanceof HTMLElement && target.closest('[data-notepad-command-bar]')) {
       return false;
     }
 
@@ -720,7 +720,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     splitWorkspace,
     closePane,
     setPaneKind,
-    handleBottomBarCommand,
+    handleNotepadCommandBarCommand,
     switchActivePane,
     resolvePaneCommandChoice,
     handlePaneCommandGlobalKeydown,

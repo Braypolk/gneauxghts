@@ -47,7 +47,7 @@ interface SearchStoreDeps {
  *
  * Each `$state` field is reactive on its own, so consumers in Svelte 5
  * components can read just the slices they care about (e.g. `store.searchQuery`)
- * and avoid the writable-store fan-out that previously caused BottomBar to
+ * and avoid the writable-store fan-out that previously caused NotepadCommandBar to
  * re-evaluate every reactive field on each keystroke. Methods mutate the
  * fields directly; there is no Svelte 4 `subscribe` bridge.
  */

@@ -2,25 +2,25 @@ import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import type { SearchItem } from '$lib/types/semantic';
 
 /**
- * Forget/unforget bundle: the chrome on the left of the bottom bar.
+ * Forget/unforget bundle: the chrome on the left of the command bar.
  */
-export interface BottomBarForgetProps {
+export interface NotepadCommandBarForgetProps {
   canUnforget: boolean;
   onForget: () => void;
   onUnforget: () => void;
 }
 
 /**
- * Remember bundle: the action menu on the right of the bottom bar.
+ * Remember bundle: the action menu on the right of the command bar.
  */
-export interface BottomBarRememberProps {
+export interface NotepadCommandBarRememberProps {
   onRemember: () => void;
 }
 
 /**
  * Search/results bundle: the central search input and result list.
  */
-export interface BottomBarSearchProps {
+export interface NotepadCommandBarSearchProps {
   searchMode: 'current' | 'all';
   searchQuery: string;
   matchCase: boolean;

@@ -9,7 +9,7 @@ import {
 import type { SearchItem } from '$lib/types/semantic';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 
-export type BottomBarVisibleItem =
+export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }
   | { kind: 'note'; item: SearchItem }
   | { kind: 'task'; item: RecentTaskItem };
@@ -19,7 +19,7 @@ interface TextRange {
   end: number;
 }
 
-export interface BottomBarState {
+export interface NotepadCommandBarState {
   activeIndex: number;
   searchNavigationMode: ListNavigationMode;
   isHoldingForget: boolean;
@@ -27,13 +27,13 @@ export interface BottomBarState {
   isForgetConfirmOpen: boolean;
 }
 
-interface BottomBarStateDeps {
+interface NotepadCommandBarStateDeps {
   getSearchQuery: () => string;
   getSearchResults: () => SearchItem[];
   getSearchNavigationResults?: () => SearchItem[];
   getRecentNotes: () => SearchItem[];
   getRecentTasks: () => RecentTaskItem[];
-  getVisibleItems: () => BottomBarVisibleItem[];
+  getVisibleItems: () => NotepadCommandBarVisibleItem[];
   getForgetHoldDurationMs: () => number;
   isForgetHoldEnabled: () => boolean;
   onSearchInput: (value: string) => void;
@@ -50,7 +50,7 @@ interface BottomBarStateDeps {
 
 const FORGET_HOLD_COMPLETION_DELAY_MS = 100;
 
-function createInitialState(): BottomBarState {
+function createInitialState(): NotepadCommandBarState {
   return {
     activeIndex: 0,
     searchNavigationMode: 'pointer',
@@ -60,12 +60,12 @@ function createInitialState(): BottomBarState {
   };
 }
 
-export function deriveBottomBarVisibleItems(
+export function deriveNotepadCommandBarVisibleItems(
   searchQuery: string,
   searchResults: SearchItem[],
   recentNotes: SearchItem[],
   recentTasks: RecentTaskItem[]
-): BottomBarVisibleItem[] {
+): NotepadCommandBarVisibleItem[] {
   if (searchQuery.trim() === '') {
     return [
       ...recentTasks.map((item) => ({ kind: 'task' as const, item })),
@@ -103,7 +103,7 @@ export function buildHighlightedSegments(text: string, ranges: TextRange[]) {
   return segments.length > 0 ? segments : [{ text, highlighted: false }];
 }
 
-export function createBottomBarState({
+export function createNotepadCommandBarState({
   getSearchQuery,
   getSearchResults,
   getSearchNavigationResults,
@@ -122,8 +122,8 @@ export function createBottomBarState({
   closeSearch,
   onCommand,
   onForget
-}: BottomBarStateDeps) {
-  const store = writable<BottomBarState>(createInitialState());
+}: NotepadCommandBarStateDeps) {
+  const store = writable<NotepadCommandBarState>(createInitialState());
   const { subscribe, update } = store;
 
   let searchResultsViewport: HTMLDivElement | null = null;
@@ -132,7 +132,7 @@ export function createBottomBarState({
   let forgetHoldTimeout: number | null = null;
   let suppressNextForgetClick = false;
 
-  function patch(partial: Partial<BottomBarState>) {
+  function patch(partial: Partial<NotepadCommandBarState>) {
     update((state) => ({ ...state, ...partial }));
   }
 
@@ -188,7 +188,7 @@ export function createBottomBarState({
     return false;
   }
 
-  function selectItem(item: BottomBarVisibleItem) {
+  function selectItem(item: NotepadCommandBarVisibleItem) {
     closeSearchPanel();
 
     if (item.kind === 'task') {

@@ -39,7 +39,7 @@
     SearchItem
   } from '$lib/types/semantic';
   import type { RecentTaskItem } from '$lib/features/notepad/model/types';
-  import BottomBar from '$lib/features/notepad/ui/BottomBar.svelte';
+  import NotepadCommandBar from '$lib/features/notepad/ui/NotepadCommandBar.svelte';
   import NotepadPane from '$lib/features/notepad/NotepadPane.svelte';
   import type {
     PaneViewModel,
@@ -1331,8 +1331,8 @@
       {/each}
     </div>
 
-    <div class="notepad-bottom-bar absolute left-0 right-0 z-30">
-      <BottomBar
+    <div class="notepad-command-bar absolute left-0 right-0 z-30">
+      <NotepadCommandBar
         forget={{
           canUnforget,
           onForget: () => void commands.clearNotepad(),
@@ -1373,7 +1373,7 @@
           onRecentNoteShortcut: (index) => void openRecentNoteByIndex(index),
           onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
           onSearchOpen: handleSearchOpen,
-          onCommand: (command) => commands.handleBottomBarCommand(command)
+          onCommand: (command) => commands.handleNotepadCommandBarCommand(command)
         }}
       />
     </div>
