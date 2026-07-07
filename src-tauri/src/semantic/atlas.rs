@@ -28,7 +28,7 @@ const STALE_DRIFT_DISTANCE: f32 = 420.0;
 const CLOUD_GAP: f32 = 115.0;
 const DEFAULT_LAYOUT_PULL: f32 = 1.4;
 const MIN_LINK_DISTANCE: f32 = 76.0;
-const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 4;
+const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 5;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AtlasNoteMetadata {
@@ -821,6 +821,7 @@ fn separate_parent_clouds(
         .collect::<Vec<_>>();
     let original_centers = centers.clone();
     let mut affinities = HashMap::<(usize, usize), f32>::new();
+    let mut link_counts = HashMap::<(usize, usize), usize>::new();
     for link in links {
         let (Some(&source_cloud), Some(&target_cloud)) = (
             cloud_by_node.get(&link.source_id),
@@ -837,9 +838,10 @@ fn separate_parent_clouds(
             (target_cloud, source_cloud)
         };
         *affinities.entry(key).or_default() += link.strength;
+        *link_counts.entry(key).or_default() += 1;
     }
 
-    for _ in 0..56 {
+    for _ in 0..84 {
         let mut deltas = vec![[0.0_f32, 0.0_f32]; centers.len()];
         for left in 0..centers.len() {
             for right in (left + 1)..centers.len() {
@@ -847,7 +849,8 @@ fn separate_parent_clouds(
                 let dy = centers[left][1] - centers[right][1];
                 let dist = (dx * dx + dy * dy).sqrt().max(1.0);
                 let affinity = affinities.get(&(left, right)).copied().unwrap_or(0.0);
-                let linked_closeness = affinity.min(6.0) * 16.0;
+                let link_count = link_counts.get(&(left, right)).copied().unwrap_or(0);
+                let linked_closeness = affinity.min(14.0) * 22.0 + link_count.min(8) as f32 * 8.0;
                 let desired = radii[left] + radii[right] + CLOUD_GAP - linked_closeness;
                 if dist < desired {
                     let force = ((desired - dist) / desired).min(1.0) * 8.5;
@@ -858,10 +861,12 @@ fn separate_parent_clouds(
                     deltas[right][0] -= fx;
                     deltas[right][1] -= fy;
                 } else if affinity > 0.0 {
-                    let desired_link_distance = (desired + 120.0).min(560.0);
+                    let desired_link_distance = (radii[left] + radii[right] + 110.0
+                        - linked_closeness * 0.42)
+                        .clamp(210.0, 520.0);
                     if dist > desired_link_distance {
-                        let force =
-                            ((dist - desired_link_distance) / dist) * affinity.min(4.0) * 0.35;
+                        let force = ((dist - desired_link_distance) / dist)
+                            * (affinity.min(10.0) * 0.95 + link_count.min(8) as f32 * 0.22);
                         let fx = dx / dist * force;
                         let fy = dy / dist * force;
                         deltas[left][0] -= fx;
@@ -882,7 +887,7 @@ fn separate_parent_clouds(
         let dx = center[0] - original[0];
         let dy = center[1] - original[1];
         let dist = (dx * dx + dy * dy).sqrt();
-        let max_shift = 210.0;
+        let max_shift = 420.0;
         if dist > max_shift {
             center[0] = original[0] + dx / dist * max_shift;
             center[1] = original[1] + dy / dist * max_shift;
@@ -925,6 +930,7 @@ fn separate_parent_cloud_hulls(
         })
         .collect::<HashMap<_, _>>();
     let mut affinities = HashMap::<(usize, usize), f32>::new();
+    let mut link_counts = HashMap::<(usize, usize), usize>::new();
     for link in links {
         let (Some(&source_cloud), Some(&target_cloud)) = (
             cloud_by_node.get(&link.source_id),
@@ -941,6 +947,7 @@ fn separate_parent_cloud_hulls(
             (target_cloud, source_cloud)
         };
         *affinities.entry(key).or_default() += link.strength;
+        *link_counts.entry(key).or_default() += 1;
     }
 
     let original_centers = parents
@@ -953,7 +960,7 @@ fn separate_parent_cloud_hulls(
         .map(|cloud| cloud_hull_radius(cloud).max(72.0))
         .collect::<Vec<_>>();
 
-    for _ in 0..72 {
+    for _ in 0..96 {
         let mut deltas = vec![[0.0_f32, 0.0_f32]; centers.len()];
         for left in 0..centers.len() {
             for right in (left + 1)..centers.len() {
@@ -961,23 +968,39 @@ fn separate_parent_cloud_hulls(
                 let dy = centers[left][1] - centers[right][1];
                 let dist = (dx * dx + dy * dy).sqrt().max(1.0);
                 let affinity = affinities.get(&(left, right)).copied().unwrap_or(0.0);
-                let intentional_overlap = (affinity.min(8.0) / 8.0) * 0.22;
-                let desired = (radii[left] + radii[right] + 26.0) * (1.0 - intentional_overlap);
-                if dist >= desired {
-                    continue;
+                let link_count = link_counts.get(&(left, right)).copied().unwrap_or(0);
+                let intentional_overlap = (affinity.min(12.0) / 12.0) * 0.18;
+                let desired = (radii[left] + radii[right] + 34.0) * (1.0 - intentional_overlap);
+                if affinity > 0.0 {
+                    let linked_target = (desired + 170.0
+                        - affinity.min(12.0) * 18.0
+                        - link_count.min(8) as f32 * 12.0)
+                        .max(desired + 28.0);
+                    if dist > linked_target {
+                        let force = ((dist - linked_target) / dist)
+                            * (affinity.min(10.0) * 0.7 + link_count.min(8) as f32 * 0.16);
+                        let fx = dx / dist * force;
+                        let fy = dy / dist * force;
+                        deltas[left][0] -= fx;
+                        deltas[left][1] -= fy;
+                        deltas[right][0] += fx;
+                        deltas[right][1] += fy;
+                    }
                 }
-                let force = ((desired - dist) / desired).min(1.0) * 10.0;
-                let fx = dx / dist * force;
-                let fy = dy / dist * force;
-                deltas[left][0] += fx;
-                deltas[left][1] += fy;
-                deltas[right][0] -= fx;
-                deltas[right][1] -= fy;
+                if dist < desired {
+                    let force = ((desired - dist) / desired).min(1.0) * 10.0;
+                    let fx = dx / dist * force;
+                    let fy = dy / dist * force;
+                    deltas[left][0] += fx;
+                    deltas[left][1] += fy;
+                    deltas[right][0] -= fx;
+                    deltas[right][1] -= fy;
+                }
             }
         }
         for (center, delta) in centers.iter_mut().zip(deltas) {
-            center[0] += delta[0].clamp(-14.0, 14.0);
-            center[1] += delta[1].clamp(-14.0, 14.0);
+            center[0] += delta[0].clamp(-18.0, 18.0);
+            center[1] += delta[1].clamp(-18.0, 18.0);
         }
     }
 
@@ -990,7 +1013,7 @@ fn separate_parent_cloud_hulls(
         let mut dx = centers[cloud_index][0] - original_centers[cloud_index][0];
         let mut dy = centers[cloud_index][1] - original_centers[cloud_index][1];
         let dist = (dx * dx + dy * dy).sqrt();
-        let max_shift = 260.0;
+        let max_shift = 460.0;
         if dist > max_shift {
             dx = dx / dist * max_shift;
             dy = dy / dist * max_shift;

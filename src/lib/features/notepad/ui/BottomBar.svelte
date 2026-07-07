@@ -1,19 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import {
-    Search,
     Eraser,
     Undo2,
     Brain,
-    StickyNote,
-    BookOpen,
     Circle,
-    X,
-    ChevronUp,
     ChevronDown,
-    ChevronRight,
-    CaseSensitive,
-    WholeWord
+    ChevronRight
   } from '@lucide/svelte';
   import {
     forgetButtonDurationPreference,
@@ -30,6 +23,7 @@
     BottomBarRememberProps,
     BottomBarSearchProps
   } from '$lib/features/notepad/ui/bottomBarProps';
+  import SearchBar from '$lib/ui/search/SearchBar.svelte';
   import type { SearchItem } from '$lib/types/semantic';
 
   const RECENT_TASKS_COLLAPSED_STORAGE_KEY = 'gneauxghts:bottom-bar:recent-tasks-collapsed';
@@ -78,11 +72,28 @@
       ? 'Searching only the current note'
       : 'Searching across all notes'
   );
+  const searchScopeOptions = [
+    {
+      id: 'current',
+      label: 'This note',
+      ariaLabel: 'Search this note only',
+      title: 'Search this note only'
+    },
+    {
+      id: 'all',
+      label: 'All notes',
+      shortLabel: 'All notes',
+      ariaLabel: 'Search all notes',
+      title: 'Search all notes',
+      tone: 'all'
+    }
+  ];
 
-  let searchInput = $state<HTMLInputElement | null>(null);
+  let searchBlurRequest = $state(0);
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
   let forgetButton = $state<HTMLButtonElement | null>(null);
   let forgetCancelButton = $state<HTMLButtonElement | null>(null);
+  let wasSearchFocused = false;
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
   let areRecentTasksCollapsed = $state(loadRecentTasksCollapsedPreference());
@@ -130,7 +141,6 @@
     onCommand: (command) => onCommand?.(command) ?? false,
     onForget: () => onForget()
   });
-  const isSearchExpanded = $derived($bottomBarState.isSearchFocused || searchQuery.trim() !== '');
 
   // Track only the materially distinguishing fingerprint of the visible
   // items so transient writable-store flips (e.g. isSearching toggling on a
@@ -173,8 +183,11 @@
   });
 
   $effect(() => {
-    focusRequest;
-    bottomBarState.handleFocusRequest(focusRequest);
+    const nextSearchFocused = $bottomBarState.isSearchFocused;
+    if (!nextSearchFocused && wasSearchFocused) {
+      searchBlurRequest += 1;
+    }
+    wasSearchFocused = nextSearchFocused;
   });
 
   $effect(() => {
@@ -185,9 +198,25 @@
   });
 
   $effect(() => {
-    bottomBarState.bindSearchInput(searchInput);
     bottomBarState.bindSearchResultsViewport(searchResultsViewport);
   });
+
+  function handleSharedSearchFocusChange(nextFocused: boolean) {
+    if (nextFocused) {
+      bottomBarState.handleSearchFocus();
+      return;
+    }
+
+    bottomBarState.handleSearchBlur({
+      relatedTarget: null,
+      currentTarget: null
+    } as unknown as FocusEvent);
+  }
+
+  function handleSharedSearchModeChange(mode: string) {
+    if (mode !== 'current' && mode !== 'all') return;
+    return onSearchModeChange(mode);
+  }
 
   onDestroy(() => {
     bottomBarState.dispose();
@@ -513,291 +542,197 @@
       </div>
     {/if}
 
-    <div
-      class="search-bar search-bar-shell relative flex max-w-2xl flex-1 min-w-0 items-center gap-2 overflow-visible rounded-full border pl-3 pr-1 sm:gap-3 sm:pl-5"
-      data-search-mode={searchMode}
-      data-search-active={$bottomBarState.isSearchFocused ? 'true' : 'false'}
-      data-search-expanded={isSearchExpanded ? 'true' : 'false'}
-      onfocusin={bottomBarState.handleSearchFocus}
-      onfocusout={bottomBarState.handleSearchBlur}
-    >
-      <Search class="w-4 h-4 shrink-0 text-muted-foreground" />
-      <div class="flex-1 min-w-0">
-        <input
-          bind:this={searchInput}
-          type="text"
-          autocomplete="off"
-          inputmode="search"
-          enterkeyhint="search"
-          class="search-bar-input w-full bg-transparent py-1.5 text-base text-foreground outline-none placeholder:text-muted-foreground min-[700px]:text-sm sm:py-2"
-          aria-label={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search all notes'}`}
-          placeholder={bottomBarState.getSearchPlaceholder()}
-          value={searchQuery}
-          oninput={bottomBarState.handleSearchInput}
-          onkeydown={bottomBarState.handleSearchKeydown}
-        />
-      </div>
-
+    {#snippet searchPanel()}
       <div
-        class="search-mode-toggle flex shrink-0 items-center gap-0.5"
-        aria-label={searchScopeTitle}
-        title={searchScopeTitle}
+        class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]"
+        data-search-navigation-mode={$bottomBarState.searchNavigationMode}
       >
-        {#if searchQuery.length > 0}
-          <button
-            type="button"
-            class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-            aria-label="Clear search"
-            title="Clear search"
-            onmousedown={(event) => event.preventDefault()}
-            onclick={bottomBarState.handleSearchClear}
+        {#if isSearching && searchQuery.trim() !== ''}
+          <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
+        {:else if !hasVisibleSearchContent}
+          <div class="px-4 py-3 text-sm text-muted-foreground">
+            {#if searchQuery.trim() === ''}
+              Start typing to search {searchMode === 'current' ? 'this note' : 'all notes'}.
+            {:else}
+              No matches in {searchMode === 'current' ? 'this note' : 'all notes'}. Try {searchMode === 'current' ? 'All notes' : 'This note'}.
+            {/if}
+          </div>
+        {:else if searchQuery.trim() === ''}
+          <div
+            bind:this={searchResultsViewport}
+            class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
           >
-            <X class="h-4 w-4" />
-          </button>
-        {/if}
-        {#if searchMode === 'current' && searchQuery.trim() !== ''}
-          <button
-            type="button"
-            class="search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
-            aria-label="Previous match"
-            title="Previous match"
-            disabled={!canNavigateCurrentSearchResults}
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => bottomBarState.navigateSearchResult(-1)}
-          >
-            <ChevronUp class="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            class="search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
-            aria-label="Next match"
-            title="Next match"
-            disabled={!canNavigateCurrentSearchResults}
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => bottomBarState.navigateSearchResult(1)}
-          >
-            <ChevronDown class="h-4 w-4" />
-          </button>
-        {/if}
-        {#if $bottomBarState.isSearchFocused}
-          <button
-            type="button"
-            class="search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
-            class:search-option-button-active={matchCase}
-            aria-label={matchCase ? 'Disable match case' : 'Enable match case'}
-            aria-pressed={matchCase}
-            title="Match case"
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => void onMatchCaseChange(!matchCase)}
-          >
-            <CaseSensitive class="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            class="search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
-            class:search-option-button-active={matchWholeWord}
-            aria-label={matchWholeWord ? 'Disable match whole word' : 'Enable match whole word'}
-            aria-pressed={matchWholeWord}
-            title="Match whole word"
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => void onMatchWholeWordChange(!matchWholeWord)}
-          >
-            <WholeWord class="h-4 w-4" />
-          </button>
-        {/if}
-        <button
-          type="button"
-          class="search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
-          class:search-mode-button-active={$bottomBarState.isSearchFocused && searchMode === 'current'}
-          onmousedown={(event) => event.preventDefault()}
-          onclick={() => bottomBarState.handleSearchModeClick('current')}
-          aria-label="Search this note only"
-          title="Search this note only"
-        >
-          <StickyNote class="h-4 w-4" />
-          <span class="search-mode-label hidden min-[900px]:inline-block">This note</span>
-        </button>
-        <button
-          type="button"
-          class="search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
-          class:search-mode-button-active={$bottomBarState.isSearchFocused && searchMode === 'all'}
-          onmousedown={(event) => event.preventDefault()}
-          onclick={() => bottomBarState.handleSearchModeClick('all')}
-          aria-label="Search all notes"
-          title="Search all notes"
-        >
-          <BookOpen class="h-4 w-4" />
-          <span class="search-mode-label hidden min-[900px]:inline-block">All notes</span>
-        </button>
-      </div>
-
-      {#if $bottomBarState.isSearchFocused}
-        <div
-          class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]"
-          data-search-navigation-mode={$bottomBarState.searchNavigationMode}
-        >
-          {#if isSearching && searchQuery.trim() !== ''}
-            <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
-          {:else if !hasVisibleSearchContent}
-            <div class="px-4 py-3 text-sm text-muted-foreground">
-              {#if searchQuery.trim() === ''}
-                Start typing to search {searchMode === 'current' ? 'this note' : 'all notes'}.
-              {:else}
-                No matches in {searchMode === 'current' ? 'this note' : 'all notes'}. Try {searchMode === 'current' ? 'All notes' : 'This note'}.
-              {/if}
-            </div>
-          {:else if searchQuery.trim() === ''}
-            <div
-              bind:this={searchResultsViewport}
-              class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
-            >
-              {#if recentTasks.length > 0}
-                <section
-                  class={`min-w-0 flex-1 lg:order-2 ${
-                    recentNotes.length > 0
-                      ? 'border-b border-border/70 pb-2 lg:border-b-0 lg:border-l lg:border-border/70 lg:pb-0 lg:pl-3'
-                      : ''
-                  }`}
+            {#if recentTasks.length > 0}
+              <section
+                class={`min-w-0 flex-1 lg:order-2 ${
+                  recentNotes.length > 0
+                    ? 'border-b border-border/70 pb-2 lg:border-b-0 lg:border-l lg:border-border/70 lg:pb-0 lg:pl-3'
+                    : ''
+                }`}
+              >
+                <div
+                  class="flex w-full items-center justify-between gap-3 px-4 pb-2 pt-3 text-left text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground"
                 >
-                  <div
-                    class="flex w-full items-center justify-between gap-3 px-4 pb-2 pt-3 text-left text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground"
+                  <span>Recent Tasks</span>
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded-full transition-colors hover:text-foreground sm:hidden"
+                    aria-label={areRecentTasksCollapsed ? 'Show recent tasks' : 'Hide recent tasks'}
+                    aria-expanded={!areRecentTasksCollapsed}
+                    onmousedown={(event) => event.preventDefault()}
+                    onclick={toggleRecentTasksCollapsed}
                   >
-                    <span>Recent Tasks</span>
-                    <button
-                      type="button"
-                      class="inline-flex items-center rounded-full transition-colors hover:text-foreground sm:hidden"
-                      aria-label={areRecentTasksCollapsed ? 'Show recent tasks' : 'Hide recent tasks'}
-                      aria-expanded={!areRecentTasksCollapsed}
-                      onmousedown={(event) => event.preventDefault()}
-                      onclick={toggleRecentTasksCollapsed}
-                    >
-                      {#if areRecentTasksCollapsed}
-                        <ChevronRight class="h-3.5 w-3.5" />
-                      {:else}
-                        <ChevronDown class="h-3.5 w-3.5" />
-                      {/if}
-                    </button>
-                  </div>
-                  {#if !areRecentTasksVisuallyCollapsed}
-                    <div class={getRecentTasksViewportClass()}>
-                      {#each recentTasks as item, index (`task-${item.taskKey}-${index}`)}
-                        <button
-                          type="button"
-                          data-search-result-active={index === $bottomBarState.activeIndex ? 'true' : 'false'}
-                          class={getRecentTaskItemClass()}
-                          class:bg-accent={index === $bottomBarState.activeIndex}
-                          aria-label={`Open recent task: ${item.text}`}
-                          title={`${item.text} - ${item.noteTitle}`}
-                          onmousedown={(event) => event.preventDefault()}
-                          onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(index)}
-                          onclick={() => bottomBarState.selectItem({ kind: 'task', item })}
-                        >
-                          <Circle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span class="min-w-0 flex-1 truncate text-sm font-medium text-popover-foreground">
-                            {item.text}
-                          </span>
-                          <span class="max-w-32 shrink-0 truncate text-xs font-medium text-muted-foreground">
-                            {item.noteTitle}
-                          </span>
-                        </button>
-                      {/each}
-                    </div>
-                  {/if}
-                </section>
-              {/if}
-
-              {#if recentNotes.length > 0}
-                <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
-                  <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                    Recent Notes
-                  </div>
-                  <div class={getRecentNotesViewportClass()}>
-                    {#each recentNotes as item, index (`note-${item.notePath ?? 'current'}-${item.fileName}-${index}`)}
-                      {@const globalIndex = visibleRecentTasks.length + index}
+                    {#if areRecentTasksCollapsed}
+                      <ChevronRight class="h-3.5 w-3.5" />
+                    {:else}
+                      <ChevronDown class="h-3.5 w-3.5" />
+                    {/if}
+                  </button>
+                </div>
+                {#if !areRecentTasksVisuallyCollapsed}
+                  <div class={getRecentTasksViewportClass()}>
+                    {#each recentTasks as item, index (`task-${item.taskKey}-${index}`)}
                       <button
                         type="button"
-                        data-search-result-active={globalIndex === $bottomBarState.activeIndex ? 'true' : 'false'}
-                        class={getRecentNoteItemClass()}
-                        class:bg-accent={globalIndex === $bottomBarState.activeIndex}
-                        aria-label={`Open recent note: ${item.fileName}`}
-                        title={item.fileName}
+                        data-search-result-active={index === $bottomBarState.activeIndex ? 'true' : 'false'}
+                        class={getRecentTaskItemClass()}
+                        class:bg-accent={index === $bottomBarState.activeIndex}
+                        aria-label={`Open recent task: ${item.text}`}
+                        title={`${item.text} - ${item.noteTitle}`}
                         onmousedown={(event) => event.preventDefault()}
-                        onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(globalIndex)}
-                        onclick={() => bottomBarState.selectItem({ kind: 'note', item })}
+                        onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(index)}
+                        onclick={() => bottomBarState.selectItem({ kind: 'task', item })}
                       >
-                        <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
+                        <Circle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span class="min-w-0 flex-1 truncate text-sm font-medium text-popover-foreground">
+                          {item.text}
+                        </span>
+                        <span class="max-w-32 shrink-0 truncate text-xs font-medium text-muted-foreground">
+                          {item.noteTitle}
+                        </span>
                       </button>
                     {/each}
                   </div>
-                </section>
-              {/if}
-            </div>
-          {:else}
-            <div bind:this={searchResultsViewport} class="max-h-80 overflow-y-auto">
-              {#each visibleSearchResults as item, index (`${item.notePath ?? 'current'}-${item.sectionLabel}-${item.matchText}-${index}`)}
-                <button
-                  type="button"
-                  data-search-result-active={index === $bottomBarState.activeIndex ? 'true' : 'false'}
-                  class={getSearchResultItemClass(searchMode)}
-                  class:bg-accent={index === $bottomBarState.activeIndex}
-                  aria-label={`Open search result: ${searchMode === 'all' ? item.fileName : item.sectionLabel}`}
-                  title={searchMode === 'all' ? item.fileName : item.sectionLabel}
-                  onmousedown={(event) => event.preventDefault()}
-                  onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(index)}
-                  onclick={() => bottomBarState.selectItem({ kind: 'search', item })}
-                >
-                  {#if searchMode === 'current'}
-                    <p class="min-w-0 truncate text-sm leading-5 text-muted-foreground">
-                      {#each getCurrentSearchPreviewSegments(item) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
-                        {#if segment.highlighted}
-                          <mark class="rounded-[0.3rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
-                        {:else}
-                          <span>{segment.text}</span>
-                        {/if}
-                      {/each}
-                    </p>
-                    <span class="min-w-0 max-w-36 truncate text-right text-xs font-semibold text-popover-foreground">
-                      {getCurrentSearchLocationLabel(item)}
-                    </span>
-                  {:else}
-                    <div class={getSearchResultHeaderClass()}>
-                      <div class="min-w-0">
-                        <span class={getSearchResultTitleClass()}>
-                          {item.fileName}
-                        </span>
-                        {#if item.reasonLabels && item.reasonLabels.length > 0}
-                          <div class="mt-1 flex flex-wrap gap-1.5">
-                            {#each item.reasonLabels as label}
-                              <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                                {label}
-                              </span>
-                            {/each}
-                          </div>
-                        {/if}
-                      </div>
-                      {#if item.sectionLabel !== 'Title'}
-                        <span class="shrink-0 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                          {item.sectionLabel}
-                        </span>
+                {/if}
+              </section>
+            {/if}
+
+            {#if recentNotes.length > 0}
+              <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
+                <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Recent Notes
+                </div>
+                <div class={getRecentNotesViewportClass()}>
+                  {#each recentNotes as item, index (`note-${item.notePath ?? 'current'}-${item.fileName}-${index}`)}
+                    {@const globalIndex = visibleRecentTasks.length + index}
+                    <button
+                      type="button"
+                      data-search-result-active={globalIndex === $bottomBarState.activeIndex ? 'true' : 'false'}
+                      class={getRecentNoteItemClass()}
+                      class:bg-accent={globalIndex === $bottomBarState.activeIndex}
+                      aria-label={`Open recent note: ${item.fileName}`}
+                      title={item.fileName}
+                      onmousedown={(event) => event.preventDefault()}
+                      onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(globalIndex)}
+                      onclick={() => bottomBarState.selectItem({ kind: 'note', item })}
+                    >
+                      <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
+                    </button>
+                  {/each}
+                </div>
+              </section>
+            {/if}
+          </div>
+        {:else}
+          <div bind:this={searchResultsViewport} class="max-h-80 overflow-y-auto">
+            {#each visibleSearchResults as item, index (`${item.notePath ?? 'current'}-${item.sectionLabel}-${item.matchText}-${index}`)}
+              <button
+                type="button"
+                data-search-result-active={index === $bottomBarState.activeIndex ? 'true' : 'false'}
+                class={getSearchResultItemClass(searchMode)}
+                class:bg-accent={index === $bottomBarState.activeIndex}
+                aria-label={`Open search result: ${searchMode === 'all' ? item.fileName : item.sectionLabel}`}
+                title={searchMode === 'all' ? item.fileName : item.sectionLabel}
+                onmousedown={(event) => event.preventDefault()}
+                onpointerenter={() => bottomBarState.handleSearchItemPointerEnter(index)}
+                onclick={() => bottomBarState.selectItem({ kind: 'search', item })}
+              >
+                {#if searchMode === 'current'}
+                  <p class="min-w-0 truncate text-sm leading-5 text-muted-foreground">
+                    {#each getCurrentSearchPreviewSegments(item) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
+                      {#if segment.highlighted}
+                        <mark class="rounded-[0.3rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
+                      {:else}
+                        <span>{segment.text}</span>
+                      {/if}
+                    {/each}
+                  </p>
+                  <span class="min-w-0 max-w-36 truncate text-right text-xs font-semibold text-popover-foreground">
+                    {getCurrentSearchLocationLabel(item)}
+                  </span>
+                {:else}
+                  <div class={getSearchResultHeaderClass()}>
+                    <div class="min-w-0">
+                      <span class={getSearchResultTitleClass()}>
+                        {item.fileName}
+                      </span>
+                      {#if item.reasonLabels && item.reasonLabels.length > 0}
+                        <div class="mt-1 flex flex-wrap gap-1.5">
+                          {#each item.reasonLabels as label}
+                            <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                              {label}
+                            </span>
+                          {/each}
+                        </div>
                       {/if}
                     </div>
-                    <p class={getExcerptClass()}>
-                      {#each buildHighlightedSegments(item.excerpt, item.highlightRanges) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
-                        {#if segment.highlighted}
-                          <mark class="rounded-[0.35rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
-                        {:else}
-                          <span>{segment.text}</span>
-                        {/if}
-                      {/each}
-                    </p>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
-    </div>
+                    {#if item.sectionLabel !== 'Title'}
+                      <span class="shrink-0 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                        {item.sectionLabel}
+                      </span>
+                    {/if}
+                  </div>
+                  <p class={getExcerptClass()}>
+                    {#each buildHighlightedSegments(item.excerpt, item.highlightRanges) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
+                      {#if segment.highlighted}
+                        <mark class="rounded-[0.35rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
+                      {:else}
+                        <span>{segment.text}</span>
+                      {/if}
+                    {/each}
+                  </p>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/snippet}
+
+    <SearchBar
+      value={searchQuery}
+      placeholder={searchMode === 'current' ? 'Search this note' : 'Search all notes'}
+      ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search all notes'}`}
+      focusRequest={focusRequest}
+      blurRequest={searchBlurRequest}
+      matchCase={matchCase}
+      matchWholeWord={matchWholeWord}
+      showMatchOptions={true}
+      scopeId={searchMode}
+      scopeOptions={searchScopeOptions}
+      canNavigatePrevious={searchMode === 'current' && canNavigateCurrentSearchResults}
+      canNavigateNext={searchMode === 'current' && canNavigateCurrentSearchResults}
+      blurOnEscape={false}
+      shortcut={{ enabled: false }}
+      onValueChange={onSearchInput}
+      onFocusChange={handleSharedSearchFocusChange}
+      onScopeChange={handleSharedSearchModeChange}
+      onMatchCaseChange={onMatchCaseChange}
+      onMatchWholeWordChange={onMatchWholeWordChange}
+      onNavigate={(delta) => bottomBarState.navigateSearchResult(delta)}
+      onInputKeydown={bottomBarState.handleSearchKeydown}
+      panel={searchPanel}
+    />
 
     <div
       class="inline-flex shrink-0 items-center rounded-full border border-border bg-background p-1 text-muted-foreground shadow-sm"
@@ -817,80 +752,6 @@
 </div>
 
 <style>
-  .search-mode-button {
-    box-shadow: inset 0 0 0 1px transparent;
-  }
-
-  .search-option-button {
-    box-shadow: inset 0 0 0 1px transparent;
-  }
-
-  .search-option-button-active {
-    background: var(--search-scope-control-active-bg);
-    color: var(--search-scope-active-fg);
-    box-shadow: inset 0 0 0 1px var(--search-scope-control-active-ring);
-  }
-
-  .search-mode-label {
-    max-width: 0;
-    opacity: 0;
-    overflow: hidden;
-    transform: translateX(-0.25rem);
-    transition:
-      max-width 180ms ease,
-      opacity 120ms ease,
-      transform 160ms ease;
-    white-space: nowrap;
-  }
-
-  .search-mode-button-active {
-    background: var(--search-scope-control-active-bg);
-    color: var(--search-scope-active-fg);
-    box-shadow: inset 0 0 0 1px var(--search-scope-control-active-ring);
-  }
-
-  .search-mode-button-active:hover {
-    background: var(--search-scope-control-active-hover-bg);
-    color: var(--search-scope-active-fg);
-  }
-
-  .search-bar-shell {
-    --search-scope-bg: color-mix(in oklab, var(--background) 58%, transparent);
-    --search-scope-border: color-mix(in oklab, var(--border) 34%, transparent);
-    --search-scope-control-active-bg: color-mix(in oklab, var(--foreground) 18%, var(--background));
-    --search-scope-control-active-hover-bg: color-mix(in oklab, var(--foreground) 22%, var(--background));
-    --search-scope-control-active-ring: color-mix(in oklab, var(--foreground) 16%, transparent);
-    --search-scope-active-fg: var(--foreground);
-    --search-scope-results-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 3%, var(--popover));
-    --search-scope-results-border: var(--border);
-    background: var(--search-scope-bg);
-    border-color: var(--search-scope-border);
-    transition:
-      flex-basis 220ms ease,
-      max-width 220ms ease,
-      background-color 160ms ease,
-      border-color 160ms ease;
-  }
-
-  @media (min-width: 700px) {
-    .search-bar-shell {
-      flex: 0 1 24rem;
-      max-width: 28rem;
-    }
-
-    .search-bar-shell[data-search-expanded='true'] {
-      flex: 1 1 42rem;
-      max-width: 42rem;
-    }
-  }
-
-  .search-bar-shell[data-search-expanded='true'] .search-mode-label {
-    max-width: 5rem;
-    opacity: 1;
-    transform: translateX(0);
-    transition-delay: 90ms, 110ms, 90ms;
-  }
-
   .search-results-panel {
     background: var(--search-scope-results-bg);
     border-color: var(--search-scope-results-border);
@@ -905,48 +766,5 @@
 
   .search-results-panel[data-search-navigation-mode='pointer'] .search-result-item:hover {
     background: var(--accent);
-  }
-
-  .search-bar-shell[data-search-expanded='true'] {
-    --search-scope-bg: var(--background);
-    --search-scope-border: color-mix(in oklab, var(--border) 70%, transparent);
-  }
-
-  .search-bar-shell[data-search-mode='all'][data-search-expanded='true'] {
-    --search-scope-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 8%, var(--background));
-    --search-scope-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 30%, var(--border));
-    --search-scope-control-active-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 21%, var(--background));
-    --search-scope-control-active-hover-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 28%, var(--background));
-    --search-scope-control-active-ring: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 38%, transparent);
-    --search-scope-active-fg: color-mix(in oklab, oklch(0.45 0.0935 231.27) 82%, var(--foreground));
-    --search-scope-results-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 5%, var(--popover));
-    --search-scope-results-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 26%, var(--border));
-  }
-
-  :global(.dark) .search-bar-shell[data-search-expanded='true'] {
-    --search-scope-bg: color-mix(in oklab, var(--background) 92%, var(--card));
-    --search-scope-border: color-mix(in oklab, var(--border) 70%, transparent);
-  }
-
-  :global(.dark) .search-bar-shell[data-search-mode='all'][data-search-expanded='true'] {
-    --search-scope-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 14%, var(--background));
-    --search-scope-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 36%, var(--border));
-    --search-scope-control-active-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 28%, var(--background));
-    --search-scope-control-active-hover-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 36%, var(--background));
-    --search-scope-control-active-ring: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 46%, transparent);
-    --search-scope-active-fg: color-mix(in oklab, oklch(0.82 0.075 231.27) 88%, var(--foreground));
-    --search-scope-results-bg: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 8%, var(--popover));
-    --search-scope-results-border: color-mix(in oklab, oklch(0.5969 0.0935 231.27) 32%, var(--border));
-  }
-
-  .search-bar-input {
-    text-shadow: none;
-    -webkit-text-stroke: 0 transparent;
-    border: 1px solid transparent;
-    display: block;
-    transform: translateZ(0);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    box-sizing: border-box;
   }
 </style>

@@ -7,20 +7,24 @@
     Focus,
     Link as LinkIcon,
     LoaderCircle,
-    Search,
     X
   } from '@lucide/svelte';
   import { onDestroy, onMount, tick } from 'svelte';
   import { AtlasStore, getNodePosition, linkEndpoints } from '$lib/features/atlas/atlasStore.svelte';
   import { storePendingNoteTarget } from '$lib/noteNavigation';
+  import SearchBar from '$lib/ui/search/SearchBar.svelte';
+  import SearchDock from '$lib/ui/search/SearchDock.svelte';
   import type { AtlasCloud, AtlasNode } from '$lib/types/atlas';
 
   const atlas = new AtlasStore();
+  const NOTE_LABEL_MAX_LENGTH = 24;
 
   let containerEl = $state<HTMLDivElement | null>(null);
   let deck: any = null;
   let deckCore: any = null;
   let deckLayers: any = null;
+  let isDeckVisible = $state(false);
+  let isHoveringNote = $state(false);
   let viewState = $state<{ target: [number, number, number]; zoom: number }>({
     target: [0, 0, 0],
     zoom: 0
@@ -74,6 +78,12 @@
   function getCloudCentroid(cloud: AtlasCloud): [number, number] {
     const [dx, dy] = getCloudDriftOffset(cloud);
     return [cloud.centroid[0] + dx, cloud.centroid[1] + dy];
+  }
+
+  function truncateAtlasLabel(label: string) {
+    const normalized = label.trim();
+    if (normalized.length <= NOTE_LABEL_MAX_LENGTH) return normalized;
+    return `${normalized.slice(0, NOTE_LABEL_MAX_LENGTH - 3).trimEnd()}...`;
   }
 
   function buildLayers() {
@@ -211,15 +221,18 @@
         data: labelNodes,
         getPosition: (node: AtlasNode) => {
           const [x, y] = getNodePosition(node, atlas.driftStaleNotes);
-          return [x + node.radius + 5, y - node.radius - 2];
+          return [x, y - node.radius ];
         },
         updateTriggers: { getPosition: [atlas.driftStaleNotes] },
-        getText: (node: AtlasNode) => node.title || node.fileName,
+        getText: (node: AtlasNode) =>
+          node.id === atlas.hoveredNodeId || node.id === atlas.selectedNodeId
+            ? node.title || node.fileName
+            : truncateAtlasLabel(node.title || node.fileName),
         getSize: tier === 'close' ? 12 : 10,
         sizeUnits: 'pixels',
         getColor: [foreground[0], foreground[1], foreground[2], tier === 'close' ? 220 : 155],
-        getTextAnchor: 'start',
-        getAlignmentBaseline: 'center',
+        getTextAnchor: 'middle',
+        getAlignmentBaseline: 'bottom',
         background: tier === 'close',
         getBackgroundColor: colors.labelBackground,
         backgroundPadding: [3, 2],
@@ -236,9 +249,9 @@
     });
   }
 
-  function fitView() {
+  function fittedViewState(): { target: [number, number, number]; zoom: number } | null {
     const nodes = atlas.visibleNodes;
-    if (nodes.length === 0) return;
+    if (nodes.length === 0) return null;
     const positions = nodes.map((node) => getNodePosition(node, atlas.driftStaleNotes));
     const minX = Math.min(...positions.map(([x]) => x));
     const maxX = Math.max(...positions.map(([x]) => x));
@@ -249,23 +262,40 @@
     const viewportWidth = containerEl?.clientWidth ?? 900;
     const viewportHeight = containerEl?.clientHeight ?? 600;
     const scale = Math.min(viewportWidth / (width + 220), viewportHeight / (height + 220));
-    viewState = {
-      target: [(minX + maxX) / 2, (minY + maxY) / 2, 0],
+    return {
+      target: [(minX + maxX) / 2, (minY + maxY) / 2, 0] as [number, number, number],
       zoom: Math.max(-4, Math.min(0.05, Math.log2(scale)))
     };
+  }
+
+  function fitView() {
+    const nextViewState = fittedViewState();
+    if (!nextViewState) return;
+    viewState = nextViewState;
     atlas.setZoom(Math.pow(2, viewState.zoom));
     renderDeck();
+  }
+
+  function nextAnimationFrame() {
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
   }
 
   async function openSelectedNode() {
     const node = atlas.selectedNode;
     if (!node) return;
+    await openNode(node);
+  }
+
+  async function openNode(node: AtlasNode) {
     storePendingNoteTarget({ noteId: node.noteId, notePath: node.notePath });
     await goto('/');
   }
 
   function handleNodeHover(node: AtlasNode | null) {
     if (atlas.hoveredNodeId === (node?.id ?? null)) return;
+    isHoveringNote = node !== null;
     atlas.hoverNode(node);
     renderDeck();
   }
@@ -315,6 +345,7 @@
   onMount(() => {
     let mounted = true;
     (async () => {
+      isDeckVisible = false;
       await atlas.initialize();
       if (!mounted || !containerEl) return;
       const [{ Deck, OrthographicView }, layers] = await Promise.all([
@@ -326,11 +357,21 @@
       const OrthographicViewCtor = OrthographicView as any;
       deckCore = { Deck: DeckCtor, OrthographicView: OrthographicViewCtor };
       deckLayers = layers;
+      await tick();
+      const initialViewState = fittedViewState();
+      if (initialViewState) {
+        viewState = initialViewState;
+        atlas.setZoom(Math.pow(2, viewState.zoom));
+      }
       deck = new DeckCtor({
         parent: containerEl,
         views: [new OrthographicViewCtor({ controller: true })],
         controller: true,
         viewState,
+        getCursor: ({ isDragging }: { isDragging?: boolean }) => {
+          if (isDragging) return 'grabbing';
+          return isHoveringNote ? 'pointer' : 'grab';
+        },
         onViewStateChange: ({ viewState: nextViewState }: { viewState: any }) => {
           viewState = {
             target: [
@@ -351,8 +392,11 @@
         }
       });
       renderDeck();
-      await tick();
-      fitView();
+      await nextAnimationFrame();
+      await nextAnimationFrame();
+      if (mounted) {
+        isDeckVisible = true;
+      }
     })();
 
     return () => {
@@ -369,6 +413,8 @@
 
   $effect(() => {
     atlas.searchQuery;
+    atlas.matchCase;
+    atlas.matchWholeWord;
     atlas.driftStaleNotes;
     atlas.showLinks;
     atlas.selectedNodeId;
@@ -382,50 +428,61 @@
 
 <div class="relative h-full w-full overflow-hidden bg-background text-foreground">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div bind:this={containerEl} ondblclick={() => void openSelectedNode()} class="absolute inset-0"></div>
+  <div
+    bind:this={containerEl}
+    ondblclick={() => void openSelectedNode()}
+    class={`absolute inset-0 transition-opacity duration-100 ${isDeckVisible ? 'opacity-100' : 'opacity-0'} ${isHoveringNote ? 'cursor-pointer' : 'cursor-grab'}`}
+  ></div>
 
-  <div class="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-3 sm:top-4">
-    <div
-      class="pointer-events-auto flex max-w-[calc(100vw-1.5rem)] items-center gap-1 rounded-full border border-border/80 bg-card/80 p-1 shadow-sm backdrop-blur-md"
+  <SearchDock>
+    <SearchBar
+      value={atlas.searchQuery}
+      placeholder="Find notes"
+      ariaLabel="Search atlas notes"
+      matchCase={atlas.matchCase}
+      matchWholeWord={atlas.matchWholeWord}
+      showMatchOptions={true}
+      shortcut={{ enabled: true }}
+      onValueChange={(value) => {
+        atlas.searchQuery = value;
+      }}
+      onMatchCaseChange={(enabled) => {
+        atlas.matchCase = enabled;
+      }}
+      onMatchWholeWordChange={(enabled) => {
+        atlas.matchWholeWord = enabled;
+      }}
     >
-      <div class="flex min-w-0 items-center gap-2 rounded-full bg-background/60 px-3 py-2">
-        <Search class="h-4 w-4 shrink-0 text-muted-foreground" />
-        <input
-          class="w-34 bg-transparent text-sm outline-none placeholder:text-muted-foreground sm:w-56"
-          placeholder="Find notes"
-          bind:value={atlas.searchQuery}
-        />
-      </div>
-      <button
-        type="button"
-        class={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
-          atlas.driftStaleNotes ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-        }`}
-        title="Drift stale notes"
-        onclick={handleToggleDrift}
-      >
-        <ArrowDownLeftFromCircle class="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        class={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
-          atlas.showLinks ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-        }`}
-        title="Toggle links"
-        onclick={() => atlas.toggleLinks()}
-      >
-        <LinkIcon class="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        class="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title="Fit view"
-        onclick={fitView}
-      >
-        <Focus class="h-4 w-4" />
-      </button>
-    </div>
-  </div>
+        <button
+          type="button"
+          class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+            atlas.driftStaleNotes ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+          }`}
+          title="Drift stale notes"
+          onclick={handleToggleDrift}
+        >
+          <ArrowDownLeftFromCircle class="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+            atlas.showLinks ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+          }`}
+          title="Toggle links"
+          onclick={() => atlas.toggleLinks()}
+        >
+          <LinkIcon class="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Fit view"
+          onclick={fitView}
+        >
+          <Focus class="h-4 w-4" />
+        </button>
+    </SearchBar>
+  </SearchDock>
 
   {#if atlas.error || atlas.response?.status === 'unavailable' || atlas.response?.status === 'empty'}
     <div class="absolute inset-0 z-20 flex items-center justify-center px-4">
@@ -456,59 +513,122 @@
     </div>
   {/if}
 
-  <div class="pointer-events-none absolute bottom-4 left-4 z-10 hidden sm:block">
-    <div class="rounded-2xl border border-border/80 bg-card/80 px-4 py-3 text-xs text-muted-foreground shadow-sm backdrop-blur-md">
-      <p class="font-medium text-foreground">
-        {atlas.response?.stats.noteCount ?? 0} notes · {atlas.response?.stats.cloudCount ?? 0} clouds
-      </p>
-      <p class="mt-1">
-        {atlas.zoomTier} focus · {atlas.response?.stats.linkCount ?? 0} links
-        {atlas.isStale ? ' · refresh pending' : ''}
-      </p>
-    </div>
-  </div>
-
   {#if atlas.selectedNode}
-    <aside class="absolute bottom-4 right-4 z-20 w-[min(22rem,calc(100vw-2rem))] rounded-[1.5rem] border border-border/80 bg-card/90 p-4 shadow-lg backdrop-blur-md">
+    <aside class="absolute bottom-24 right-4 z-20 flex max-h-[min(34rem,calc(100vh-9rem))] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/90 p-4 shadow-lg backdrop-blur-md">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
-          <p class="truncate text-sm font-semibold">{atlas.selectedNode.title}</p>
-          <p class="mt-1 truncate text-xs text-muted-foreground">{atlas.selectedNode.fileName}</p>
+          <p class="min-w-0 truncate text-base font-semibold leading-6">{atlas.selectedNode.title}</p>
+          <div class="mt-1.5 flex items-center gap-2">
+            <span class="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-[0.7rem] text-muted-foreground">
+              Stale {Math.round(atlas.selectedNode.staleScore * 100)}%
+            </span>
+          </div>
         </div>
-        <button
-          type="button"
-          class="rounded-full p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-          title="Clear selection"
-          onclick={() => atlas.clearSelection()}
-        >
-          <X class="h-4 w-4" />
-        </button>
+        <div class="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            class="rounded-full p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            title="Open note"
+            onclick={() => void openSelectedNode()}
+          >
+            <ExternalLink class="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            class="rounded-full p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            title="Clear selection"
+            onclick={() => atlas.clearSelection()}
+          >
+            <X class="h-4 w-4" />
+          </button>
+        </div>
       </div>
-      <div class="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-        <div class="rounded-xl bg-muted/50 px-2 py-2">
-          <p class="font-medium text-foreground">{Math.round(atlas.selectedNode.centrality * 100)}%</p>
-          <p class="mt-0.5 text-muted-foreground">central</p>
+      <div class="mt-3 flex min-h-0 flex-1 flex-col border-t border-border/70 pt-3">
+        <div class="flex shrink-0 items-center justify-between gap-3">
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Linked notes</p>
+          <p class="text-xs text-muted-foreground">
+            {atlas.selectedNodeLinkedNotes.wikilinks.length + atlas.selectedNodeLinkedNotes.semantic.length}
+          </p>
         </div>
-        <div class="rounded-xl bg-muted/50 px-2 py-2">
-          <p class="font-medium text-foreground">{Math.round(atlas.selectedNode.staleScore * 100)}%</p>
-          <p class="mt-0.5 text-muted-foreground">stale</p>
-        </div>
-        <div class="rounded-xl bg-muted/50 px-2 py-2">
-          <p class="font-medium text-foreground">{atlas.selectedNode.isolated ? 'No' : 'Yes'}</p>
-          <p class="mt-0.5 text-muted-foreground">cloud</p>
+        <div class="mt-2 min-h-0 flex-1 overflow-y-auto pr-1">
+          {#if atlas.selectedNodeLinkedNotes.wikilinks.length === 0 && atlas.selectedNodeLinkedNotes.semantic.length === 0}
+            <p class="rounded-xl bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              No high-confidence linked notes.
+            </p>
+          {:else}
+            {#if atlas.selectedNodeLinkedNotes.wikilinks.length > 0}
+              <div class="mb-3">
+                <p class="mb-1.5 px-1 text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground">
+                  Wikilinks
+                </p>
+                <div class="space-y-0.5">
+                  {#each atlas.selectedNodeLinkedNotes.wikilinks as item (item.link.id)}
+                    <div class="group flex items-center gap-1 rounded-lg hover:bg-accent">
+                      <button
+                        type="button"
+                        class="min-w-0 flex-1 px-2.5 py-2 text-left text-xs"
+                        onclick={() => {
+                          atlas.selectNode(item.node);
+                          renderDeck();
+                        }}
+                      >
+                        <span class="block truncate font-medium text-foreground">{item.node.title}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="mr-1 shrink-0 rounded-full p-1.5 text-muted-foreground opacity-70 hover:bg-background/80 hover:text-foreground hover:opacity-100"
+                        title="Open note"
+                        onclick={() => void openNode(item.node)}
+                      >
+                        <ExternalLink class="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+            {#if atlas.selectedNodeLinkedNotes.semantic.length > 0}
+              <div>
+                <p class="mb-1.5 px-1 text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground">
+                  Semantic
+                </p>
+                <div class="space-y-0.5">
+                  {#each atlas.selectedNodeLinkedNotes.semantic as item (item.link.id)}
+                    <div class="group flex items-center gap-1 rounded-lg hover:bg-accent">
+                      <button
+                        type="button"
+                        class="min-w-0 flex-1 px-2.5 py-2 text-left text-xs"
+                        onclick={() => {
+                          atlas.selectNode(item.node);
+                          renderDeck();
+                        }}
+                      >
+                        <span class="flex min-w-0 items-center justify-between gap-2">
+                          <span class="truncate font-medium text-foreground">{item.node.title}</span>
+                          <span class="shrink-0 rounded-full bg-muted/60 px-1.5 py-0.5 text-[0.65rem] text-muted-foreground">
+                            {Math.round(item.link.strength * 100)}%
+                          </span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        class="mr-1 shrink-0 rounded-full p-1.5 text-muted-foreground opacity-70 hover:bg-background/80 hover:text-foreground hover:opacity-100"
+                        title="Open note"
+                        onclick={() => void openNode(item.node)}
+                      >
+                        <ExternalLink class="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          {/if}
         </div>
       </div>
-      <button
-        type="button"
-        class="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background"
-        onclick={() => void openSelectedNode()}
-      >
-        <ExternalLink class="h-4 w-4" />
-        Open note
-      </button>
     </aside>
   {:else if atlas.selectedCloud}
-    <aside class="absolute bottom-4 right-4 z-20 w-[min(22rem,calc(100vw-2rem))] rounded-[1.5rem] border border-border/80 bg-card/90 p-4 shadow-lg backdrop-blur-md">
+    <aside class="absolute bottom-24 right-4 z-20 w-[min(22rem,calc(100vw-2rem))] rounded-[1.5rem] border border-border/80 bg-card/90 p-4 shadow-lg backdrop-blur-md">
       <div class="flex items-start justify-between gap-3">
         <div>
           <p class="text-sm font-semibold">{atlas.selectedCloud.label ?? 'Semantic cloud'}</p>
@@ -545,7 +665,7 @@
   {/if}
 
   {#if atlas.response?.status === 'building'}
-    <div class="absolute bottom-4 right-4 z-20 inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/90 px-4 py-2 text-sm text-muted-foreground shadow-sm backdrop-blur-md">
+    <div class="absolute bottom-24 right-4 z-20 inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/90 px-4 py-2 text-sm text-muted-foreground shadow-sm backdrop-blur-md">
       <EyeOff class="h-4 w-4" />
       Semantic index is warming
     </div>

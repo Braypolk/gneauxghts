@@ -17,8 +17,12 @@
   import {
     createTaskListStore,
     type TaskFilter,
+    type TaskGroup,
     type TaskItem
   } from '$lib/features/tasks/taskListStore';
+  import SearchBar from '$lib/ui/search/SearchBar.svelte';
+  import SearchDock from '$lib/ui/search/SearchDock.svelte';
+  import { textMatchesSearch } from '$lib/ui/search/searchMatch';
 
   const filterOptions = [
     { id: 'all', label: 'All tasks' },
@@ -27,48 +31,90 @@
   ] as const satisfies ReadonlyArray<{ id: TaskFilter; label: string }>;
 
   const taskList = createTaskListStore();
+  let searchQuery = $state('');
+  let matchCase = $state(false);
+  let matchWholeWord = $state(false);
+
+  const normalizedSearchQuery = $derived(searchQuery.trim());
+  const searchOptions = $derived({ matchCase, matchWholeWord });
+  const visibleTaskGroups = $derived.by(() => {
+    if (normalizedSearchQuery === '') return $taskList.groups;
+
+    return $taskList.groups
+      .map((group): TaskGroup | null => {
+        const noteMatches = [group.noteTitle, group.fileName].some((value) =>
+          textMatchesSearch(value, normalizedSearchQuery, searchOptions)
+        );
+        const displayTasks = group.displayTasks.filter((task) => taskMatchesSearch(task, normalizedSearchQuery));
+
+        if (!noteMatches && displayTasks.length === 0) return null;
+
+        return {
+          ...group,
+          displayTasks: noteMatches ? group.displayTasks : displayTasks,
+          displayCount: noteMatches ? group.displayCount : displayTasks.length
+        };
+      })
+      .filter((group): group is TaskGroup => group !== null);
+  });
 
   const taskCountLabel = $derived.by(() => {
-    const count = $taskList.groups.reduce((sum, group) => sum + group.displayCount, 0);
+    const count = visibleTaskGroups.reduce((sum, group) => sum + group.displayCount, 0);
     const noun = count === 1 ? 'task' : 'tasks';
 
+    if (normalizedSearchQuery !== '') return `${count} matching ${noun}`;
     if ($taskList.filter === 'open') return `${count} open ${noun}`;
     if ($taskList.filter === 'completed') return `${count} completed ${noun}`;
     return `${count} total ${noun}`;
   });
 
+  function taskMatchesSearch(task: TaskItem, query: string) {
+    return [task.text, task.noteTitle, task.fileName, task.sectionLabel ?? ''].some((value) =>
+      textMatchesSearch(value, query, searchOptions)
+    );
+  }
+
   function taskIndentStyle(depth: number) {
     return `margin-left: ${Math.min(depth, 6) * 1.1}rem;`;
   }
 
-  let dragSrcIndex = $state<number | null>(null);
-  let dragOverIndex = $state<number | null>(null);
+  let dragSrcNoteId = $state<string | null>(null);
+  let dragOverNoteId = $state<string | null>(null);
 
-  function handleDragStart(index: number) {
-    dragSrcIndex = index;
+  function getGroupIndex(noteId: string) {
+    return $taskList.groups.findIndex((group) => group.noteId === noteId);
   }
 
-  function handleDragOver(event: DragEvent, index: number) {
+  function handleDragStart(noteId: string) {
+    dragSrcNoteId = noteId;
+  }
+
+  function handleDragOver(event: DragEvent, noteId: string) {
     event.preventDefault();
-    if (dragSrcIndex === null || dragSrcIndex === index) {
-      dragOverIndex = null;
+    if (dragSrcNoteId === null || dragSrcNoteId === noteId) {
+      dragOverNoteId = null;
       return;
     }
-    dragOverIndex = index;
+    dragOverNoteId = noteId;
   }
 
-  function handleDrop(event: DragEvent, index: number) {
+  function handleDrop(event: DragEvent, noteId: string) {
     event.preventDefault();
-    if (dragSrcIndex !== null && dragSrcIndex !== index) {
-      void taskList.reorderNote(dragSrcIndex, index);
+    if (dragSrcNoteId !== null && dragSrcNoteId !== noteId) {
+      const sourceIndex = getGroupIndex(dragSrcNoteId);
+      const targetIndex = getGroupIndex(noteId);
+
+      if (sourceIndex !== -1 && targetIndex !== -1) {
+        void taskList.reorderNote(sourceIndex, targetIndex);
+      }
     }
-    dragSrcIndex = null;
-    dragOverIndex = null;
+    dragSrcNoteId = null;
+    dragOverNoteId = null;
   }
 
   function handleDragEnd() {
-    dragSrcIndex = null;
-    dragOverIndex = null;
+    dragSrcNoteId = null;
+    dragOverNoteId = null;
   }
 
   onMount(() => {
@@ -83,9 +129,9 @@
 <svelte:window onfocus={taskList.handleWindowFocus} />
 <svelte:document onvisibilitychange={taskList.handleVisibilityChange} />
 
-<div class="h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
-  <main class="flex-1 min-h-0 overflow-hidden py-0 sm:py-4">
-    <section class="mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden border-y border-border bg-card shadow-sm sm:rounded-[2rem] sm:border">
+<div class="relative h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
+  <main class="relative mx-auto flex w-full flex-1 flex-col justify-center overflow-hidden pb-0 sm:pb-4">
+    <section class="relative mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden border-y border-border bg-card shadow-sm sm:rounded-4xl sm:border">
       <div class="border-b border-border px-4 py-4 sm:px-8 sm:py-6">
         <div class="flex flex-col gap-5">
           <div class="space-y-2">
@@ -137,7 +183,7 @@
         </div>
       </div>
 
-      <div class="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-6">
+      <div class="flex-1 min-h-0 overflow-y-auto px-4 pb-24 pt-4 sm:px-6 sm:pb-28">
         {#if $taskList.isLoading}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-sm font-medium text-muted-foreground">
             Building the task list
@@ -146,21 +192,27 @@
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-destructive/25 bg-destructive/10 px-6 text-sm font-medium text-destructive">
             {$taskList.errorMessage}
           </div>
-        {:else if $taskList.groups.length === 0}
+        {:else if visibleTaskGroups.length === 0}
           <div class="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-center">
-            <p class="text-lg font-medium text-foreground">No matching tasks yet</p>
+            <p class="text-lg font-medium text-foreground">
+              {normalizedSearchQuery === '' ? 'No matching tasks yet' : 'No tasks found'}
+            </p>
             <p class="mt-2 max-w-md text-sm text-muted-foreground">
-              Add markdown checkboxes like <code class="rounded border border-border/70 bg-card px-1.5 py-0.5 text-xs text-foreground">- [ ]</code>
-              or <code class="rounded border border-border/70 bg-card px-1.5 py-0.5 text-xs text-foreground">* [x]</code> inside any note.
+              {#if normalizedSearchQuery === ''}
+                Add markdown checkboxes like <code class="rounded border border-border/70 bg-card px-1.5 py-0.5 text-xs text-foreground">- [ ]</code>
+                or <code class="rounded border border-border/70 bg-card px-1.5 py-0.5 text-xs text-foreground">* [x]</code> inside any note.
+              {:else}
+                Try a different task, note, file, or section name.
+              {/if}
             </p>
           </div>
         {:else}
           <div class="space-y-4">
-            {#each $taskList.groups as group, index}
+            {#each visibleTaskGroups as group, index}
               <section
                 class={`overflow-hidden rounded-[1.35rem] border ${
                   group.noteHidden ? 'border-border bg-muted' : 'border-border bg-card'
-                } ${dragSrcIndex === index ? 'opacity-50' : ''} ${dragOverIndex === index && dragSrcIndex !== index ? 'ring-2 ring-primary/50' : ''}`}
+                } ${dragSrcNoteId === group.noteId ? 'opacity-50' : ''} ${dragOverNoteId === group.noteId && dragSrcNoteId !== group.noteId ? 'ring-2 ring-primary/50' : ''}`}
                 role="group"
                 draggable={!$taskList.mutatingNoteIds[group.noteId]}
                 ondragstart={(e) => {
@@ -171,10 +223,10 @@
                   }
                   e.dataTransfer?.setData('text/plain', group.noteId);
                   e.dataTransfer!.effectAllowed = 'move';
-                  handleDragStart(index);
+                  handleDragStart(group.noteId);
                 }}
-                ondragover={(e) => handleDragOver(e, index)}
-                ondrop={(e) => handleDrop(e, index)}
+                ondragover={(e) => handleDragOver(e, group.noteId)}
+                ondrop={(e) => handleDrop(e, group.noteId)}
                 ondragend={handleDragEnd}
               >
                 <div class={`flex items-center gap-3 px-4 py-3 ${group.noteHidden ? 'bg-muted' : 'bg-card'}`}>
@@ -336,6 +388,49 @@
           </div>
         {/if}
       </div>
+
+      <div
+        class="list-search-backdrop pointer-events-none absolute inset-x-0 bottom-0 z-20 min-h-12 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
+      ></div>
+
+      <SearchDock insetVariable="--list-search-bottom-inset">
+        <SearchBar
+          value={searchQuery}
+          placeholder="Find tasks"
+          ariaLabel="Search tasks"
+          matchCase={matchCase}
+          matchWholeWord={matchWholeWord}
+          showMatchOptions={true}
+          shortcut={{ enabled: true }}
+          onValueChange={(value) => {
+            searchQuery = value;
+          }}
+          onMatchCaseChange={(enabled) => {
+            matchCase = enabled;
+          }}
+          onMatchWholeWordChange={(enabled) => {
+            matchWholeWord = enabled;
+          }}
+        />
+      </SearchDock>
     </section>
   </main>
 </div>
+
+<style>
+  .list-search-backdrop {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%);
+    mask-size: 100% 100%;
+    -webkit-mask-size: 100% 100%;
+  }
+
+  @media (min-width: 640px) {
+    .list-search-backdrop {
+      padding-top: 1rem;
+      padding-bottom: 1rem;
+    }
+  }
+</style>

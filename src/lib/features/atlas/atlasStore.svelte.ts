@@ -1,8 +1,22 @@
 import { invoke } from '@tauri-apps/api/core';
 import { appStore } from '$lib/app/appStore.svelte';
+import { textMatchesSearch } from '$lib/ui/search/searchMatch';
 import type { AtlasCloud, AtlasLink, AtlasNode, VaultAtlasResponse } from '$lib/types/atlas';
 
 export type AtlasZoomTier = 'far' | 'mid' | 'near' | 'close';
+export type AtlasLinkedNote = {
+  node: AtlasNode;
+  link: AtlasLink;
+};
+
+const LINK_CONFIDENCE_FLOORS: Record<AtlasZoomTier, number> = {
+  far: 0.92,
+  mid: 0.86,
+  near: 0.8,
+  close: 0.76
+};
+const FOCUSED_LINK_CONFIDENCE_FLOOR = 0.7;
+const SELECTED_CLOUD_LINK_CONFIDENCE_FLOOR = 0.74;
 
 export class AtlasStore {
   response = $state<VaultAtlasResponse | null>(null);
@@ -13,6 +27,8 @@ export class AtlasStore {
   selectedCloudId = $state<string | null>(null);
   hoveredNodeId = $state<string | null>(null);
   searchQuery = $state('');
+  matchCase = $state(false);
+  matchWholeWord = $state(false);
   driftStaleNotes = $state(false);
   showLinks = $state(true);
   zoom = $state(1);
@@ -31,14 +47,43 @@ export class AtlasStore {
     this.response?.clouds.find((cloud) => cloud.id === this.selectedCloudId) ?? null
   );
 
+  selectedNodeLinkedNotes = $derived.by(() => {
+    const selectedNodeId = this.selectedNodeId;
+    const response = this.response;
+    if (!selectedNodeId || !response) {
+      return { wikilinks: [] as AtlasLinkedNote[], semantic: [] as AtlasLinkedNote[] };
+    }
+    const nodesById = new Map(response.nodes.map((node) => [node.id, node]));
+    const linked = response.links
+      .filter((link) => link.sourceId === selectedNodeId || link.targetId === selectedNodeId)
+      .filter((link) => isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR))
+      .map((link) => {
+        const otherId = link.sourceId === selectedNodeId ? link.targetId : link.sourceId;
+        const node = nodesById.get(otherId);
+        return node ? { node, link } : null;
+      })
+      .filter((item): item is AtlasLinkedNote => item !== null)
+      .sort((left, right) => {
+        const kindBoost = (right.link.kind === 'wikilink' ? 1 : 0) - (left.link.kind === 'wikilink' ? 1 : 0);
+        return kindBoost || right.link.strength - left.link.strength || left.node.title.localeCompare(right.node.title);
+      });
+    return {
+      wikilinks: linked.filter((item) => item.link.kind === 'wikilink'),
+      semantic: linked.filter((item) => item.link.kind === 'semantic')
+    };
+  });
+
   zoomTier = $derived.by((): AtlasZoomTier => getZoomTier(this.zoom));
 
   visibleNodes = $derived.by(() => {
     const nodes = this.response?.nodes ?? [];
-    const query = this.searchQuery.trim().toLowerCase();
+    const query = this.searchQuery.trim();
     if (!query) return nodes;
     return nodes.filter((node) =>
-      `${node.title} ${node.fileName} ${node.notePath}`.toLowerCase().includes(query)
+      textMatchesSearch(`${node.title} ${node.fileName} ${node.notePath}`, query, {
+        matchCase: this.matchCase,
+        matchWholeWord: this.matchWholeWord
+      })
     );
   });
 
@@ -60,25 +105,25 @@ export class AtlasStore {
       const touchesSelection = selectedNodeId
         ? link.sourceId === selectedNodeId || link.targetId === selectedNodeId
         : false;
-      if (selectedNodeId) return touchesSelection;
+      if (selectedNodeId) return touchesSelection && isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR);
       const touchesHover = hoveredNodeId
         ? link.sourceId === hoveredNodeId || link.targetId === hoveredNodeId
         : false;
-      if (touchesHover) return link.kind === 'wikilink' || link.strength >= 0.46;
-      if (touchesSelection) return link.kind === 'wikilink' || link.strength >= 0.46;
-      if (tier === 'far') return link.kind === 'wikilink' && link.strength >= 0.8;
-      if (tier === 'mid') return link.kind === 'wikilink' || link.strength >= 0.78;
-      if (tier === 'near') return link.kind === 'wikilink' || link.strength >= 0.66;
+      if (touchesHover) return isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR);
+      if (touchesSelection) return isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR);
+      if (tier === 'far') return isHighConfidenceLink(link, LINK_CONFIDENCE_FLOORS.far);
+      if (tier === 'mid') return isHighConfidenceLink(link, LINK_CONFIDENCE_FLOORS.mid);
+      if (tier === 'near') return isHighConfidenceLink(link, LINK_CONFIDENCE_FLOORS.near);
       if (selectedCloudId) {
         const sourceCloudId = nodesById.get(link.sourceId)?.cloudId ?? null;
         const targetCloudId = nodesById.get(link.targetId)?.cloudId ?? null;
         const insideSelectedCloud = sourceCloudId === selectedCloudId && targetCloudId === selectedCloudId;
-        return link.kind === 'wikilink' || (insideSelectedCloud && link.strength >= 0.52);
+        return insideSelectedCloud && isHighConfidenceLink(link, SELECTED_CLOUD_LINK_CONFIDENCE_FLOOR);
       }
-      return link.kind === 'wikilink' || link.strength >= 0.58;
+      return isHighConfidenceLink(link, LINK_CONFIDENCE_FLOORS.close);
     });
-    if (selectedNodeId || hoveredNodeId) return candidates;
-    return strongestLinksPerNode(candidates, tier === 'close' ? 5 : tier === 'near' ? 3 : 2);
+    if (selectedNodeId || hoveredNodeId) return strongestLinksPerNode(candidates, 4);
+    return strongestLinksPerNode(candidates, tier === 'close' ? 2 : tier === 'near' ? 2 : 1);
   });
 
   visibleClouds = $derived.by(() => {
@@ -211,6 +256,10 @@ export function getZoomTier(zoom: number): AtlasZoomTier {
   if (zoom < 0.85) return 'mid';
   if (zoom < 1.6) return 'near';
   return 'close';
+}
+
+export function isHighConfidenceLink(link: AtlasLink, minimumStrength: number): boolean {
+  return link.kind === 'wikilink' || link.strength >= minimumStrength;
 }
 
 export function strongestLinksPerNode(links: AtlasLink[], maxPerNode: number): AtlasLink[] {

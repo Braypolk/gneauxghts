@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { getNodePosition, getZoomTier, linkEndpoints, strongestLinksPerNode } from './atlasStore.svelte';
+import {
+  getNodePosition,
+  getZoomTier,
+  isHighConfidenceLink,
+  linkEndpoints,
+  strongestLinksPerNode
+} from './atlasStore.svelte';
 import type { AtlasLink, AtlasNode } from '$lib/types/atlas';
 
 function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10): AtlasNode {
@@ -80,5 +86,26 @@ describe('atlas view helpers', () => {
     ];
 
     expect(strongestLinksPerNode(links, 2).map((link) => link.id)).toEqual(['a:e', 'a:b']);
+  });
+
+  it('keeps weak semantic links out of high-confidence link displays', () => {
+    expect(
+      isHighConfidenceLink(
+        { id: 'a:b', sourceId: 'a', targetId: 'b', kind: 'semantic', score: 0.7, strength: 0.69 },
+        0.7
+      )
+    ).toBe(false);
+    expect(
+      isHighConfidenceLink(
+        { id: 'a:c', sourceId: 'a', targetId: 'c', kind: 'semantic', score: 0.82, strength: 0.82 },
+        0.7
+      )
+    ).toBe(true);
+    expect(
+      isHighConfidenceLink(
+        { id: 'a:d', sourceId: 'a', targetId: 'd', kind: 'wikilink', score: 1, strength: 0.82 },
+        0.95
+      )
+    ).toBe(true);
   });
 });
