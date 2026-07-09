@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   getNodePosition,
   getZoomTier,
+  isAtlasSearchHit,
   isHighConfidenceLink,
   linkEndpoints,
   strongestLinksPerNode
 } from './atlasStore.svelte';
-import type { AtlasLink, AtlasNode } from '$lib/types/atlas';
+import type { AtlasLink, AtlasNode, AtlasSearchMatch } from '$lib/types/atlas';
 
 function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10): AtlasNode {
   return {
@@ -22,20 +23,51 @@ function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10
     radius: 5,
     cloudId: null,
     parentCloudId: null,
+    childCloudId: null,
+    clusterId: null,
+    subclusterId: null,
     centrality: 0,
+    degree: 0,
+    importance: 0,
     modifiedAtMillis: 1,
     lastViewedAtMillis: null,
+    createdAtMillis: 1,
+    updatedAtMillis: 1,
     staleScore: 0,
+    preview: '',
+    tags: [],
     isolated: true
   };
 }
 
 describe('atlas view helpers', () => {
+  function searchMatch(overrides: Partial<AtlasSearchMatch>): AtlasSearchMatch {
+    return {
+      noteId: 'note',
+      notePath: '/vault/note.md',
+      score: 0,
+      semanticScore: 0,
+      lexicalScore: 0,
+      structuralScore: 0,
+      recencyScore: 0,
+      reasonLabels: [],
+      ...overrides
+    };
+  }
+
   it('maps zoom values to semantic focus tiers', () => {
     expect(getZoomTier(0.25)).toBe('far');
     expect(getZoomTier(0.6)).toBe('mid');
     expect(getZoomTier(1.1)).toBe('near');
     expect(getZoomTier(2)).toBe('close');
+  });
+
+  it('does not treat weak recency-only atlas matches as colored search hits', () => {
+    expect(isAtlasSearchHit(null)).toBe(false);
+    expect(isAtlasSearchHit(searchMatch({ score: 0.1, recencyScore: 1 }))).toBe(false);
+    expect(isAtlasSearchHit(searchMatch({ score: 0.34 }))).toBe(true);
+    expect(isAtlasSearchHit(searchMatch({ semanticScore: 0.52 }))).toBe(true);
+    expect(isAtlasSearchHit(searchMatch({ lexicalScore: 0.7 }))).toBe(true);
   });
 
   it('switches between stable and stale-drift positions without mutating nodes', () => {

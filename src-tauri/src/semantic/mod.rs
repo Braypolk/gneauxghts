@@ -10,7 +10,7 @@ pub(crate) mod similarity;
 
 use self::{
     ann::AnnIndexState,
-    atlas::{AtlasHardLink, AtlasNoteMetadata, VaultAtlasResponse},
+    atlas::{AtlasHardLink, AtlasNoteMetadata, AtlasSearchResponse, VaultAtlasResponse},
     db::{
         content_hash, count_indexed_items, ensure_schema, load_chunks_by_ann_labels,
         load_latest_job, load_note_record, load_related_note_previews, load_semantic_settings,
@@ -639,6 +639,26 @@ impl SemanticState {
                 nodes: Vec::new(),
                 links: Vec::new(),
                 clouds: Vec::new(),
+            }),
+        }
+    }
+
+    pub(crate) fn search_vault_atlas(
+        &self,
+        query: String,
+        metadata: std::collections::HashMap<String, AtlasNoteMetadata>,
+        last_viewed_by_note_id: std::collections::HashMap<String, u64>,
+    ) -> Result<AtlasSearchResponse, String> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => {
+                state.search_vault_atlas(query, metadata, last_viewed_by_note_id)
+            }
+            SemanticStateInner::Disabled(state) => Ok(AtlasSearchResponse {
+                status: "unavailable".to_string(),
+                reason: Some(state.reason.clone()),
+                query,
+                generated_at_millis: current_time_millis()?,
+                matches: Vec::new(),
             }),
         }
     }

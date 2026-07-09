@@ -1,7 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { appStore } from '$lib/app/appStore.svelte';
-import { textMatchesSearch } from '$lib/ui/search/searchMatch';
-import type { AtlasCloud, AtlasLink, AtlasNode, VaultAtlasResponse } from '$lib/types/atlas';
+import type {
+  AtlasCloud,
+  AtlasLink,
+  AtlasNode,
+  AtlasSearchMatch,
+  AtlasSearchResponse,
+  VaultAtlasResponse
+} from '$lib/types/atlas';
 
 export type AtlasZoomTier = 'far' | 'mid' | 'near' | 'close';
 export type AtlasLinkedNote = {
@@ -17,14 +23,22 @@ const LINK_CONFIDENCE_FLOORS: Record<AtlasZoomTier, number> = {
 };
 const FOCUSED_LINK_CONFIDENCE_FLOOR = 0.7;
 const SELECTED_CLOUD_LINK_CONFIDENCE_FLOOR = 0.74;
+const ATLAS_SEARCH_HIT_MIN_SCORE = 0.32;
+const ATLAS_SEARCH_HIT_MIN_SEMANTIC = 0.5;
+const ATLAS_SEARCH_HIT_MIN_LEXICAL = 0.65;
+const ATLAS_SEARCH_HIT_MIN_STRUCTURAL = 0.38;
 
 export class AtlasStore {
   response = $state<VaultAtlasResponse | null>(null);
   isLoading = $state(false);
   isStale = $state(false);
   error = $state<string | null>(null);
+  searchError = $state<string | null>(null);
+  searchResponse = $state<AtlasSearchResponse | null>(null);
+  isSearching = $state(false);
   selectedNodeId = $state<string | null>(null);
   selectedCloudId = $state<string | null>(null);
+  hoveredCloudId = $state<string | null>(null);
   hoveredNodeId = $state<string | null>(null);
   searchQuery = $state('');
   matchCase = $state(false);
@@ -34,10 +48,12 @@ export class AtlasStore {
   zoom = $state(1);
 
   #refreshTimer: number | null = null;
+  #searchTimer: number | null = null;
   #disposeCallbacks: (() => void)[] = [];
   #lastIndexingInProgress = false;
   #lastIndexedAtMillis: number | null = null;
   #refreshRequestedDuringLoad = false;
+  #searchSequence = 0;
 
   selectedNode = $derived.by(() =>
     this.response?.nodes.find((node) => node.id === this.selectedNodeId) ?? null
@@ -45,6 +61,10 @@ export class AtlasStore {
 
   selectedCloud = $derived.by(() =>
     this.response?.clouds.find((cloud) => cloud.id === this.selectedCloudId) ?? null
+  );
+
+  hoveredCloud = $derived.by(() =>
+    this.response?.clouds.find((cloud) => cloud.id === this.hoveredCloudId) ?? null
   );
 
   selectedNodeLinkedNotes = $derived.by(() => {
@@ -75,16 +95,26 @@ export class AtlasStore {
 
   zoomTier = $derived.by((): AtlasZoomTier => getZoomTier(this.zoom));
 
-  visibleNodes = $derived.by(() => {
+  searchMatchesByPath = $derived.by(() => {
+    const matches = this.searchResponse?.matches ?? [];
+    return new Map(matches.map((match) => [match.notePath, match]));
+  });
+
+  searchMatchesByNodeId = $derived.by(() => {
     const nodes = this.response?.nodes ?? [];
-    const query = this.searchQuery.trim();
-    if (!query) return nodes;
-    return nodes.filter((node) =>
-      textMatchesSearch(`${node.title} ${node.fileName} ${node.notePath}`, query, {
-        matchCase: this.matchCase,
-        matchWholeWord: this.matchWholeWord
-      })
+    const byPath = this.searchMatchesByPath;
+    return new Map(
+      nodes
+        .map((node) => {
+          const match = byPath.get(node.notePath) ?? null;
+          return match ? ([node.id, match] as const) : null;
+        })
+        .filter((item): item is readonly [string, AtlasSearchMatch] => item !== null)
     );
+  });
+
+  visibleNodes = $derived.by(() => {
+    return this.response?.nodes ?? [];
   });
 
   visibleNodeIds = $derived.by(() => new Set(this.visibleNodes.map((node) => node.id)));
@@ -128,10 +158,27 @@ export class AtlasStore {
 
   visibleClouds = $derived.by(() => {
     const clouds = this.response?.clouds ?? [];
+    const topLevelClouds = clouds.filter((cloud) => cloud.level === 0 || cloud.parentId === null);
+    const selectedNode = this.selectedNode;
+    const focusedCloud = this.hoveredCloud ?? this.selectedCloud;
+    const focusedParentCloudId =
+      focusedCloud?.level === 0
+        ? focusedCloud.id
+        : focusedCloud?.parentId ?? selectedNode?.cloudId ?? null;
     if (this.zoomTier === 'far' || this.zoomTier === 'mid') {
-      return clouds.filter((cloud) => cloud.parentId === null);
+      if (!focusedParentCloudId) return this.filterSearchClouds(topLevelClouds);
+      return this.filterSearchClouds(
+        clouds.filter((cloud) => cloud.parentId === null || cloud.parentId === focusedParentCloudId)
+      );
     }
-    return clouds;
+    const selectedParentCloudId =
+      focusedCloud?.level === 0
+        ? focusedCloud.id
+        : focusedCloud?.parentId ?? selectedNode?.cloudId ?? null;
+    if (!selectedParentCloudId) return this.filterSearchClouds(topLevelClouds);
+    return this.filterSearchClouds(
+      clouds.filter((cloud) => cloud.parentId === null || cloud.parentId === selectedParentCloudId)
+    );
   });
 
   async initialize() {
@@ -145,6 +192,7 @@ export class AtlasStore {
         this.response = null;
         this.selectedNodeId = null;
         this.selectedCloudId = null;
+        this.hoveredCloudId = null;
         this.scheduleRefresh(80);
       }),
       appStore.subscribeSemanticStatusChanged((status) => {
@@ -161,6 +209,13 @@ export class AtlasStore {
         }
       })
     );
+    if (this.hasCurrentCachedResponse()) {
+      this.isLoading = false;
+      this.isStale = false;
+      this.error = null;
+      this.scheduleSearch(80);
+      return;
+    }
     await this.refresh();
   }
 
@@ -168,6 +223,10 @@ export class AtlasStore {
     if (this.#refreshTimer) {
       window.clearTimeout(this.#refreshTimer);
       this.#refreshTimer = null;
+    }
+    if (this.#searchTimer) {
+      window.clearTimeout(this.#searchTimer);
+      this.#searchTimer = null;
     }
     for (const dispose of this.#disposeCallbacks) {
       dispose();
@@ -186,6 +245,15 @@ export class AtlasStore {
     }, delay);
   }
 
+  hasCurrentCachedResponse(): boolean {
+    return Boolean(
+      this.response &&
+        this.response.status === 'ready' &&
+        this.response.revision === appStore.indexRevision &&
+        !appStore.semanticStatus?.indexingInProgress
+    );
+  }
+
   async refresh() {
     if (this.isLoading) {
       this.#refreshRequestedDuringLoad = true;
@@ -197,6 +265,7 @@ export class AtlasStore {
     try {
       this.response = await invoke<VaultAtlasResponse>('get_vault_atlas');
       this.isStale = false;
+      this.scheduleSearch(80);
       if (this.selectedNodeId && !this.response.nodes.some((node) => node.id === this.selectedNodeId)) {
         this.selectedNodeId = null;
       }
@@ -205,6 +274,12 @@ export class AtlasStore {
         !this.response.clouds.some((cloud) => cloud.id === this.selectedCloudId)
       ) {
         this.selectedCloudId = null;
+      }
+      if (
+        this.hoveredCloudId &&
+        !this.response.clouds.some((cloud) => cloud.id === this.hoveredCloudId)
+      ) {
+        this.hoveredCloudId = null;
       }
     } catch (error) {
       this.error = String(error);
@@ -228,6 +303,10 @@ export class AtlasStore {
     this.hoveredNodeId = node?.id ?? null;
   }
 
+  hoverCloud(cloud: AtlasCloud | null) {
+    this.hoveredCloudId = cloud?.id ?? null;
+  }
+
   selectCloud(cloud: AtlasCloud | null) {
     this.selectedCloudId = cloud?.id ?? null;
     this.selectedNodeId = null;
@@ -242,6 +321,101 @@ export class AtlasStore {
     this.zoom = Math.max(0.08, Math.min(8, zoom));
   }
 
+  setSearchQuery(query: string) {
+    this.searchQuery = query;
+    if (this.searchResponse?.query !== query.trim()) {
+      this.searchResponse = null;
+    }
+    this.scheduleSearch();
+  }
+
+  scheduleSearch(delay = 180) {
+    if (this.#searchTimer) {
+      window.clearTimeout(this.#searchTimer);
+    }
+    const query = this.searchQuery.trim();
+    if (!query) {
+      this.searchResponse = null;
+      this.searchError = null;
+      this.isSearching = false;
+      return;
+    }
+    this.#searchTimer = window.setTimeout(() => {
+      this.#searchTimer = null;
+      void this.runSearch(query);
+    }, delay);
+  }
+
+  async runSearch(query = this.searchQuery.trim()) {
+    const sequence = ++this.#searchSequence;
+    if (!query) {
+      this.searchResponse = null;
+      this.searchError = null;
+      this.isSearching = false;
+      return;
+    }
+    this.isSearching = true;
+    this.searchError = null;
+    try {
+      const response = await invoke<AtlasSearchResponse>('search_vault_atlas', { query });
+      if (sequence !== this.#searchSequence || query !== this.searchQuery.trim()) return;
+      this.searchResponse = response;
+    } catch (error) {
+      if (sequence !== this.#searchSequence) return;
+      this.searchError = String(error);
+    } finally {
+      if (sequence === this.#searchSequence) {
+        this.isSearching = false;
+      }
+    }
+  }
+
+  searchMatchForNode(node: AtlasNode): AtlasSearchMatch | null {
+    if (!this.searchQuery.trim()) return null;
+    return this.searchMatchesByNodeId.get(node.id) ?? null;
+  }
+
+  nodeHasSearchHit(node: AtlasNode): boolean {
+    if (!this.searchQuery.trim()) return true;
+    return isAtlasSearchHit(this.searchMatchForNode(node));
+  }
+
+  nodeSearchOpacity(node: AtlasNode): number {
+    if (!this.searchQuery.trim()) return 1;
+    const match = this.searchMatchForNode(node);
+    if (!match) return 0.08;
+    return Math.max(0.22, Math.min(1, 0.28 + match.score * 0.82));
+  }
+
+  nodeSearchRadiusMultiplier(node: AtlasNode): number {
+    if (!this.searchQuery.trim()) return 1;
+    const match = this.searchMatchForNode(node);
+    if (!match) return 0.7;
+    return 0.95 + Math.min(0.75, match.score * 0.85);
+  }
+
+  cloudSearchOpacity(cloud: AtlasCloud): number {
+    if (!this.searchQuery.trim()) return 1;
+    const ids = new Set(cloud.memberNodeIds);
+    const scores = [...this.searchMatchesByNodeId.entries()]
+      .filter(([nodeId, match]) => ids.has(nodeId) && isAtlasSearchHit(match))
+      .map(([, match]) => match.score);
+    if (scores.length === 0) return 0.16;
+    return Math.max(0.28, Math.min(1, 0.35 + Math.max(...scores) * 0.75));
+  }
+
+  cloudHasSearchHit(cloud: AtlasCloud): boolean {
+    if (!this.searchQuery.trim()) return true;
+    const ids = new Set(cloud.memberNodeIds);
+    return [...this.searchMatchesByNodeId.entries()].some(
+      ([nodeId, match]) => ids.has(nodeId) && isAtlasSearchHit(match)
+    );
+  }
+
+  filterSearchClouds(clouds: AtlasCloud[]): AtlasCloud[] {
+    return clouds;
+  }
+
   toggleDrift() {
     this.driftStaleNotes = !this.driftStaleNotes;
   }
@@ -250,6 +424,8 @@ export class AtlasStore {
     this.showLinks = !this.showLinks;
   }
 }
+
+export const atlasStore = new AtlasStore();
 
 export function getZoomTier(zoom: number): AtlasZoomTier {
   if (zoom < 0.4) return 'far';
@@ -260,6 +436,16 @@ export function getZoomTier(zoom: number): AtlasZoomTier {
 
 export function isHighConfidenceLink(link: AtlasLink, minimumStrength: number): boolean {
   return link.kind === 'wikilink' || link.strength >= minimumStrength;
+}
+
+export function isAtlasSearchHit(match: AtlasSearchMatch | null): boolean {
+  if (!match) return false;
+  return (
+    match.score >= ATLAS_SEARCH_HIT_MIN_SCORE ||
+    match.semanticScore >= ATLAS_SEARCH_HIT_MIN_SEMANTIC ||
+    match.lexicalScore >= ATLAS_SEARCH_HIT_MIN_LEXICAL ||
+    match.structuralScore >= ATLAS_SEARCH_HIT_MIN_STRUCTURAL
+  );
 }
 
 export function strongestLinksPerNode(links: AtlasLink[], maxPerNode: number): AtlasLink[] {

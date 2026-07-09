@@ -8,27 +8,40 @@
   import { isTauriRuntime } from '$lib/tauriRuntime';
 
   const navLinks = [
+    { href: '/atlas', label: 'Atlas', icon: Network },
     { href: '/', label: 'Gneauxght', icon: House },
     { href: '/list', label: 'List', icon: ListTodo },
-    { href: '/atlas', label: 'Atlas', icon: Network }
   ] as const;
   const settingsHref = '/settings';
 
+  function normalizePathname(pathname: string): string {
+    const withoutIndex = pathname === '/index.html'
+      ? '/'
+      : pathname.replace(/\/index\.html$/, '');
+    if (withoutIndex.endsWith('/') && withoutIndex !== '/') {
+      return withoutIndex.slice(0, -1);
+    }
+    return withoutIndex || '/';
+  }
+
+  let currentPathname = $derived(normalizePathname(page.url.pathname));
+
   function isActive(href: string, pathname: string): boolean {
-    if (href === '/') return pathname === '/';
-    return pathname.startsWith(href);
+    const normalizedHref = normalizePathname(href);
+    if (normalizedHref === '/') return pathname === '/';
+    return pathname === normalizedHref || pathname.startsWith(`${normalizedHref}/`);
   }
 
   const linkClass = (href: string) =>
     `relative inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors sm:h-auto sm:w-auto sm:min-w-[105px] sm:gap-2 sm:px-3 sm:py-2 ${
-      isActive(href, page.url.pathname)
+      isActive(href, currentPathname)
         ? 'border-foreground/15 bg-card text-foreground shadow-sm'
         : 'border-transparent text-muted-foreground hover:border-border/80 hover:text-foreground'
     }`;
 
   const settingsButtonClass = () =>
     `rounded-full border border-border/80 p-2 shadow-sm transition-colors ${
-      isActive(settingsHref, page.url.pathname)
+      isActive(settingsHref, currentPathname)
         ? 'bg-accent text-accent-foreground'
         : 'bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground'
     }`;
@@ -51,10 +64,8 @@
   }
 
   async function navigateToHref(href: string) {
-    const normalizedCurrentPath = page.url.pathname.endsWith('/') && page.url.pathname !== '/'
-      ? page.url.pathname.slice(0, -1)
-      : page.url.pathname;
-    const normalizedHref = href.endsWith('/') && href !== '/' ? href.slice(0, -1) : href;
+    const normalizedCurrentPath = currentPathname;
+    const normalizedHref = normalizePathname(href);
     if (normalizedCurrentPath === normalizedHref && window.location.pathname === href) {
       return;
     }
@@ -85,18 +96,18 @@
     }
 
     const shortcutEntries = [
-      ['navNote', navLinks[0]],
-      ['navList', navLinks[1]],
-      ['navAtlas', navLinks[2]]
+      ['navNote', '/'],
+      ['navList', '/list'],
+      ['navAtlas', '/atlas']
     ] as const;
 
-    for (const [shortcutId, targetLink] of shortcutEntries) {
-      if (!targetLink || !keyboardShortcutMatchesEvent(event, shortcutId)) {
+    for (const [shortcutId, href] of shortcutEntries) {
+      if (!keyboardShortcutMatchesEvent(event, shortcutId)) {
         continue;
       }
 
       event.preventDefault();
-      void navigateToHref(targetLink.href);
+      void navigateToHref(href);
       return;
     }
   }

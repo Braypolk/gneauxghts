@@ -1,11 +1,12 @@
 use super::{prepare_notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE};
 use crate::{
     index::{normalize_search_text, AppState, IndexedNote},
-    semantic::atlas::{AtlasHardLink, AtlasNoteMetadata, VaultAtlasResponse},
+    semantic::atlas::{AtlasHardLink, AtlasNoteMetadata, AtlasSearchResponse, VaultAtlasResponse},
     state::db_load_note_activity,
 };
 use std::{
     collections::{HashMap, HashSet},
+    fs,
     path::{Path, PathBuf},
 };
 use tauri::State;
@@ -40,11 +41,44 @@ pub(crate) async fn get_vault_atlas(
     .map_err(|err| err.to_string())?
 }
 
+#[tauri::command]
+pub(crate) async fn search_vault_atlas(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<AtlasSearchResponse, String> {
+    let notes_dir = prepare_notes_dir(false)?;
+    state.ensure_interactive_index(
+        &notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "search_vault_atlas",
+    )?;
+
+    let metadata = {
+        let index = state
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        build_metadata(&index.entries)
+    };
+    let last_viewed_by_note_id = db_load_note_activity()?;
+    let semantic = state.semantic.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        semantic.search_vault_atlas(query, metadata, last_viewed_by_note_id)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
 fn build_metadata(entries: &HashMap<PathBuf, IndexedNote>) -> HashMap<String, AtlasNoteMetadata> {
     entries
         .iter()
         .map(|(path, note)| {
             let note_path = path.to_string_lossy().into_owned();
+            let mut tags = extract_indexed_tags(note);
+            tags.extend(extract_frontmatter_tags(path));
+            tags.sort();
+            tags.dedup();
             (
                 note_path.clone(),
                 AtlasNoteMetadata {
@@ -52,10 +86,110 @@ fn build_metadata(entries: &HashMap<PathBuf, IndexedNote>) -> HashMap<String, At
                     note_path,
                     file_name: note.file_name.clone(),
                     title: note.title.clone(),
+                    preview: extract_preview(note),
+                    tags,
                 },
             )
         })
         .collect()
+}
+
+fn extract_preview(note: &IndexedNote) -> String {
+    note.paragraphs
+        .iter()
+        .map(|paragraph| paragraph.text.trim())
+        .find(|text| !text.is_empty() && *text != note.title)
+        .unwrap_or("")
+        .chars()
+        .take(260)
+        .collect()
+}
+
+fn extract_indexed_tags(note: &IndexedNote) -> Vec<String> {
+    let mut tags = Vec::new();
+    collect_hashtags(&note.title, &mut tags);
+    for paragraph in &note.paragraphs {
+        collect_hashtags(&paragraph.text, &mut tags);
+    }
+    for task in &note.tasks {
+        collect_hashtags(&task.text, &mut tags);
+    }
+    tags
+}
+
+fn collect_hashtags(text: &str, tags: &mut Vec<String>) {
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'#' {
+            index += 1;
+            continue;
+        }
+        if index > 0 && is_tag_char(bytes[index - 1] as char) {
+            index += 1;
+            continue;
+        }
+        let start = index + 1;
+        let mut end = start;
+        while end < bytes.len() && is_tag_char(bytes[end] as char) {
+            end += 1;
+        }
+        if end > start {
+            tags.push(text[start..end].to_lowercase());
+        }
+        index = end.max(index + 1);
+    }
+}
+
+fn is_tag_char(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '-' || character == '_'
+}
+
+fn extract_frontmatter_tags(path: &Path) -> Vec<String> {
+    let Ok(markdown) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Some(rest) = markdown.strip_prefix("---") else {
+        return Vec::new();
+    };
+    let Some(end) = rest.find("\n---") else {
+        return Vec::new();
+    };
+    let frontmatter = &rest[..end];
+    let mut tags = Vec::new();
+    let mut in_tag_list = false;
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if let Some(raw) = trimmed.strip_prefix("tags:") {
+            in_tag_list = raw.trim().is_empty();
+            collect_frontmatter_tag_values(raw, &mut tags);
+            continue;
+        }
+        if in_tag_list {
+            if let Some(raw) = trimmed.strip_prefix('-') {
+                collect_frontmatter_tag_values(raw, &mut tags);
+                continue;
+            }
+            if !trimmed.is_empty() {
+                in_tag_list = false;
+            }
+        }
+    }
+    tags
+}
+
+fn collect_frontmatter_tag_values(raw: &str, tags: &mut Vec<String>) {
+    let raw = raw.trim().trim_matches(['[', ']']);
+    for value in raw.split(',') {
+        let tag = value
+            .trim()
+            .trim_matches(['"', '\''])
+            .trim_start_matches('#')
+            .trim();
+        if !tag.is_empty() && tag.chars().all(is_tag_char) {
+            tags.push(tag.to_lowercase());
+        }
+    }
 }
 
 fn build_hard_links(

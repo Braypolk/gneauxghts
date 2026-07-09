@@ -10,14 +10,21 @@
     X
   } from '@lucide/svelte';
   import { onDestroy, onMount, tick } from 'svelte';
-  import { AtlasStore, getNodePosition, linkEndpoints } from '$lib/features/atlas/atlasStore.svelte';
+  import { atlasStore, getNodePosition, linkEndpoints } from '$lib/features/atlas/atlasStore.svelte';
   import { storePendingNoteTarget } from '$lib/noteNavigation';
   import SearchBar from '$lib/ui/search/SearchBar.svelte';
   import SearchDock from '$lib/ui/search/SearchDock.svelte';
   import type { AtlasCloud, AtlasNode } from '$lib/types/atlas';
 
-  const atlas = new AtlasStore();
+  const atlas = atlasStore;
   const NOTE_LABEL_MAX_LENGTH = 24;
+  const CLOUD_LABEL_MAX_LENGTH = 22;
+  const SEARCH_DIM_NODE_COLOR: [number, number, number] = [112, 121, 136];
+  const SEARCH_DIM_CLOUD_COLOR: [number, number, number] = [88, 98, 113];
+  const DARK_CLOUD_NEUTRAL: [number, number, number] = [132, 146, 160];
+  const LIGHT_CLOUD_NEUTRAL: [number, number, number] = [96, 108, 122];
+  const DARK_NODE_NEUTRAL: [number, number, number] = [176, 187, 198];
+  const LIGHT_NODE_NEUTRAL: [number, number, number] = [76, 86, 98];
 
   let containerEl = $state<HTMLDivElement | null>(null);
   let deck: any = null;
@@ -31,6 +38,7 @@
   });
 
   const nodeById = $derived(new Map((atlas.response?.nodes ?? []).map((node) => [node.id, node])));
+  const cloudById = $derived(new Map((atlas.response?.clouds ?? []).map((cloud) => [cloud.id, cloud])));
 
   function atlasThemeColors() {
     const isDark =
@@ -42,6 +50,8 @@
           border: [96, 96, 96, 120],
           cloudFill: [255, 255, 255, 22],
           labelBackground: [22, 22, 22, 220],
+          cloudLabel: [221, 228, 235, 218],
+          cloudLabelMuted: [176, 187, 198, 164],
           noteStroke: [0, 0, 0, 190]
         }
       : {
@@ -50,8 +60,37 @@
           border: [118, 118, 118, 95],
           cloudFill: [0, 0, 0, 12],
           labelBackground: [255, 255, 255, 220],
+          cloudLabel: [34, 40, 48, 218],
+          cloudLabelMuted: [82, 94, 108, 164],
           noteStroke: [255, 255, 255, 180]
         };
+  }
+
+  function atlasIsDark() {
+    return typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  }
+
+  function mixColor(
+    source: [number, number, number],
+    target: [number, number, number],
+    amount: number
+  ): [number, number, number] {
+    const clamp = Math.max(0, Math.min(1, amount));
+    return [
+      Math.round(source[0] + (target[0] - source[0]) * clamp),
+      Math.round(source[1] + (target[1] - source[1]) * clamp),
+      Math.round(source[2] + (target[2] - source[2]) * clamp)
+    ];
+  }
+
+  function refinedNodeColor(node: AtlasNode): [number, number, number] {
+    const color = nodeColor(node);
+    return mixColor(color, atlasIsDark() ? DARK_NODE_NEUTRAL : LIGHT_NODE_NEUTRAL, 0.18);
+  }
+
+  function refinedCloudColor(cloud: AtlasCloud): [number, number, number] {
+    const color = cloudColor(cloud);
+    return mixColor(color, atlasIsDark() ? DARK_CLOUD_NEUTRAL : LIGHT_CLOUD_NEUTRAL, 0.48);
   }
 
   function getCloudDriftOffset(cloud: AtlasCloud): [number, number] {
@@ -70,14 +109,132 @@
   }
 
   function getCloudHull(cloud: AtlasCloud): [number, number][] {
-    const [dx, dy] = getCloudDriftOffset(cloud);
-    if (dx === 0 && dy === 0) return cloud.hull;
-    return cloud.hull.map(([x, y]) => [x + dx, y + dy]);
+    return buildVisibleCloudHull(cloud);
   }
 
   function getCloudCentroid(cloud: AtlasCloud): [number, number] {
     const [dx, dy] = getCloudDriftOffset(cloud);
     return [cloud.centroid[0] + dx, cloud.centroid[1] + dy];
+  }
+
+  function getVisibleCloudNodes(cloud: AtlasCloud): AtlasNode[] {
+    return cloud.memberNodeIds
+      .map((id) => nodeById.get(id))
+      .filter((node): node is AtlasNode => Boolean(node))
+      .filter((node) => !atlas.searchQuery.trim() || atlas.nodeSearchOpacity(node) > 0.1);
+  }
+
+  function getCloudLabelPosition(cloud: AtlasCloud): [number, number] {
+    const nodes = getVisibleCloudNodes(cloud);
+    if (nodes.length === 0) {
+      const hull = getCloudHull(cloud);
+      const minX = Math.min(...hull.map(([x]) => x));
+      const maxX = Math.max(...hull.map(([x]) => x));
+      const minY = Math.min(...hull.map(([, y]) => y));
+      return [(minX + maxX) / 2, minY + labelInsetWorldUnits(cloud)];
+    }
+    const positions = nodes.map((node) => getNodePosition(node, atlas.driftStaleNotes));
+    const minX = Math.min(...positions.map(([x]) => x));
+    const maxX = Math.max(...positions.map(([x]) => x));
+    const minY = Math.min(...positions.map(([, y]) => y));
+    const maxRadius = Math.max(...nodes.map((node) => node.radius));
+    return [(minX + maxX) / 2, minY - labelClearanceWorldUnits(cloud, maxRadius)];
+  }
+
+  function labelClearanceWorldUnits(cloud: AtlasCloud, maxNodeRadius: number) {
+    const labelSize = getCloudLabelSize(cloud);
+    return (maxNodeRadius + labelSize + 10) / Math.max(0.7, atlas.zoom);
+  }
+
+  function labelInsetWorldUnits(cloud: AtlasCloud) {
+    return (getCloudLabelSize(cloud) + 8) / Math.max(0.7, atlas.zoom);
+  }
+
+  function nodeColor(node: AtlasNode): [number, number, number] {
+    if (atlas.searchQuery.trim() && !atlas.nodeHasSearchHit(node)) return SEARCH_DIM_NODE_COLOR;
+    const cloud = node.childCloudId ? cloudById.get(node.childCloudId) : node.cloudId ? cloudById.get(node.cloudId) : null;
+    const color = cloud?.color ?? (node.cloudId ? cloudById.get(node.cloudId)?.color : null);
+    return color ? [color[0], color[1], color[2]] : [190, 198, 210];
+  }
+
+  function cloudColor(cloud: AtlasCloud): [number, number, number] {
+    if (atlas.searchQuery.trim() && !atlas.cloudHasSearchHit(cloud)) return SEARCH_DIM_CLOUD_COLOR;
+    return [cloud.color[0], cloud.color[1], cloud.color[2]];
+  }
+
+  function buildVisibleCloudHull(cloud: AtlasCloud): [number, number][] {
+    const nodes = getVisibleCloudNodes(cloud);
+    if (nodes.length === 0) return cloud.hull;
+    const positions = nodes.map((node) => getNodePosition(node, atlas.driftStaleNotes));
+    const maxNodeRadius = Math.max(...nodes.map((node) => node.radius));
+    const reservedLabelSpace = maxNodeRadius + getCloudLabelSize(cloud) + 18;
+    const padding = Math.max(cloud.level === 0 ? 42 : 26, reservedLabelSpace) / Math.max(0.7, atlas.zoom);
+    if (positions.length < 3) {
+      return circleHull(getCloudCentroid(cloud), padding + 28, cloud.id);
+    }
+    const centroid = positions.reduce(
+      (acc, point) => [acc[0] + point[0] / positions.length, acc[1] + point[1] / positions.length] as [number, number],
+      [0, 0] as [number, number]
+    );
+    const radial = Array.from({ length: cloud.level === 0 ? 42 : 28 }, (_, index) => {
+      const angle = (index / (cloud.level === 0 ? 42 : 28)) * Math.PI * 2;
+      const extent = positions.reduce((max, [x, y]) => {
+        const projection = (x - centroid[0]) * Math.cos(angle) + (y - centroid[1]) * Math.sin(angle);
+        return Math.max(max, projection);
+      }, 24);
+      const wobble = 1 + Math.sin(angle * 2 + stableNumericHash(cloud.id) * 0.0001) * 0.018;
+      const radius = Math.max(48, extent + padding) * wobble;
+      return [centroid[0] + Math.cos(angle) * radius, centroid[1] + Math.sin(angle) * radius] as [number, number];
+    });
+    return chaikin(radial, 2);
+  }
+
+  function circleHull(center: [number, number], radius: number, seed: string): [number, number][] {
+    const offset = stableNumericHash(seed) % 31;
+    return Array.from({ length: 24 }, (_, index) => {
+      const angle = ((index + offset / 31) / 24) * Math.PI * 2;
+      return [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius] as [number, number];
+    });
+  }
+
+  function chaikin(points: [number, number][], iterations: number): [number, number][] {
+    let current = points;
+    for (let pass = 0; pass < iterations; pass += 1) {
+      const next: [number, number][] = [];
+      for (let index = 0; index < current.length; index += 1) {
+        const a = current[index];
+        const b = current[(index + 1) % current.length];
+        next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+        next.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+      }
+      current = next;
+    }
+    return current;
+  }
+
+  function stableNumericHash(value: string) {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  function formatTimestamp(value: number | null) {
+    if (!value) return 'Never';
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    }).format(new Date(value));
+  }
+
+  function cloudLabel(id: string | null) {
+    if (!id) return 'None';
+    return cloudById.get(id)?.label ?? id;
   }
 
   function truncateAtlasLabel(label: string) {
@@ -86,15 +243,31 @@
     return `${normalized.slice(0, NOTE_LABEL_MAX_LENGTH - 3).trimEnd()}...`;
   }
 
+  function truncateCloudLabel(label: string) {
+    const normalized = label.trim();
+    if (normalized.length <= CLOUD_LABEL_MAX_LENGTH) return normalized;
+    return `${normalized.slice(0, CLOUD_LABEL_MAX_LENGTH - 3).trimEnd()}...`;
+  }
+
+  function getCloudLabelSize(cloud: AtlasCloud) {
+    const label = cloud.label ?? 'Semantic cloud';
+    const baseSize = cloud.parentId ? 11 : 14;
+    return label.length > 16 ? baseSize - 1 : baseSize;
+  }
+
+  function getNoteLabelOffsetWorldUnits(node: AtlasNode) {
+    return (node.radius / 2) / Math.max(0.7, atlas.zoom);
+  }
+
   function buildLayers() {
     if (!deckLayers || !deckCore || !atlas.response) return [];
     const { ScatterplotLayer, LineLayer, PathLayer, SolidPolygonLayer, TextLayer } = deckLayers;
     const colors = atlasThemeColors();
     const foreground = colors.foreground;
     const muted = colors.muted;
-    const border = colors.border;
     const selectedNodeId = atlas.selectedNodeId;
     const selectedCloudId = atlas.selectedCloudId;
+    const hoveredCloudId = atlas.hoveredCloudId;
     const hoveredNodeId = atlas.hoveredNodeId;
     const tier = atlas.zoomTier;
     const showAllTitles = tier === 'close';
@@ -114,7 +287,12 @@
       .filter((link) => link.path.length === 2);
 
     const labelNodes = nodes.filter(
-      (node) => showAllTitles || (showRepresentativeTitles && titleNodeIds.has(node.id))
+      (node) =>
+        showAllTitles ||
+        (showRepresentativeTitles && titleNodeIds.has(node.id)) ||
+        node.id === selectedNodeId ||
+        node.id === hoveredNodeId ||
+        (atlas.searchQuery.trim() && (atlas.searchMatchForNode(node)?.score ?? 0) > 0.42)
     );
 
     return [
@@ -122,27 +300,42 @@
         id: 'atlas-cloud-fills',
         data: clouds,
         getPolygon: getCloudHull,
-        updateTriggers: { getPolygon: [atlas.driftStaleNotes] },
-        getFillColor: (cloud: AtlasCloud) =>
-          cloud.id === selectedCloudId
-            ? [foreground[0], foreground[1], foreground[2], 38]
-            : colors.cloudFill,
+        updateTriggers: {
+          getPolygon: [atlas.driftStaleNotes, atlas.searchResponse, atlas.zoom],
+          getFillColor: [atlas.searchResponse, selectedCloudId, hoveredCloudId]
+        },
+        getFillColor: (cloud: AtlasCloud) => {
+          const isActive = cloud.id === selectedCloudId || cloud.id === hoveredCloudId;
+          const alpha = Math.round((isActive ? 68 : 34) * atlas.cloudSearchOpacity(cloud));
+          const [r, g, b] = refinedCloudColor(cloud);
+          return [r, g, b, Math.max(5, Math.min(76, alpha))];
+        },
         pickable: true,
         stroked: false,
         onClick: ({ object }: { object?: AtlasCloud }) => {
           if (!object) return;
           atlas.selectCloud(object);
           renderDeck();
+        },
+        onHover: ({ object }: { object?: AtlasCloud }) => {
+          handleCloudHover(object ?? null);
         }
       }),
       new PathLayer({
         id: 'atlas-cloud-outlines',
         data: clouds,
         getPath: getCloudHull,
-        updateTriggers: { getPath: [atlas.driftStaleNotes] },
-        getColor: (cloud: AtlasCloud) =>
-          cloud.id === selectedCloudId ? [foreground[0], foreground[1], foreground[2], 130] : border,
-        getWidth: (cloud: AtlasCloud) => (cloud.parentId ? 1 : 1.5),
+        updateTriggers: {
+          getPath: [atlas.driftStaleNotes, atlas.searchResponse, atlas.zoom],
+          getColor: [atlas.searchResponse, selectedCloudId, hoveredCloudId]
+        },
+        getColor: (cloud: AtlasCloud) => {
+          const isActive = cloud.id === selectedCloudId || cloud.id === hoveredCloudId;
+          const alpha = isActive ? 126 : Math.round(58 * atlas.cloudSearchOpacity(cloud));
+          const [r, g, b] = refinedCloudColor(cloud);
+          return [r, g, b, alpha];
+        },
+        getWidth: (cloud: AtlasCloud) => (cloud.parentId ? 0.75 : 1),
         widthUnits: 'pixels',
         parameters: { depthTest: false }
       }),
@@ -185,15 +378,22 @@
         id: 'atlas-notes',
         data: nodes,
         getPosition: (node: AtlasNode) => getNodePosition(node, atlas.driftStaleNotes),
-        updateTriggers: { getPosition: [atlas.driftStaleNotes] },
-        getRadius: (node: AtlasNode) => (node.id === selectedNodeId ? node.radius + 4 : node.radius),
+        updateTriggers: {
+          getPosition: [atlas.driftStaleNotes],
+          getRadius: [atlas.searchResponse, selectedNodeId],
+          getFillColor: [atlas.searchResponse, selectedNodeId],
+          getLineWidth: [selectedNodeId]
+        },
+        getRadius: (node: AtlasNode) =>
+          (node.id === selectedNodeId ? node.radius + 4 : node.radius) * atlas.nodeSearchRadiusMultiplier(node),
         radiusUnits: 'pixels',
-        getFillColor: (node: AtlasNode) =>
-          node.id === selectedNodeId
-            ? [foreground[0], foreground[1], foreground[2], 255]
-            : node.isolated
-              ? [muted[0], muted[1], muted[2], 145]
-              : [foreground[0], foreground[1], foreground[2], Math.round(110 + node.centrality * 105)],
+        getFillColor: (node: AtlasNode) => {
+          const [r, g, b] = node.id === selectedNodeId ? [255, 255, 255] : refinedNodeColor(node);
+          const alpha = node.id === selectedNodeId
+            ? 255
+            : Math.round((node.isolated ? 135 : 118 + node.centrality * 106) * atlas.nodeSearchOpacity(node));
+          return [r, g, b, Math.max(18, Math.min(255, alpha))];
+        },
         getLineColor: colors.noteStroke,
         lineWidthUnits: 'pixels',
         getLineWidth: (node: AtlasNode) => (node.id === selectedNodeId ? 2 : 0),
@@ -206,12 +406,23 @@
       new TextLayer({
         id: 'atlas-cloud-labels',
         data: clouds,
-        getPosition: getCloudCentroid,
-        updateTriggers: { getPosition: [atlas.driftStaleNotes] },
-        getText: (cloud: AtlasCloud) => `${cloud.label} ${cloud.noteCount}`,
-        getSize: (cloud: AtlasCloud) => (cloud.parentId ? 11 : 13),
+        getPosition: getCloudLabelPosition,
+        updateTriggers: {
+          getPosition: [atlas.driftStaleNotes, atlas.searchResponse, atlas.zoom],
+          getColor: [atlas.searchResponse, selectedCloudId, hoveredCloudId]
+        },
+        getText: (cloud: AtlasCloud) => truncateCloudLabel(cloud.label ?? 'Semantic cloud'),
+        getSize: getCloudLabelSize,
         sizeUnits: 'pixels',
-        getColor: [foreground[0], foreground[1], foreground[2], 190],
+        getColor: (cloud: AtlasCloud) => {
+          const labelColor = cloud.id === selectedCloudId || cloud.id === hoveredCloudId ? colors.cloudLabel : colors.cloudLabelMuted;
+          return [
+            labelColor[0],
+            labelColor[1],
+            labelColor[2],
+            Math.round(labelColor[3] * atlas.cloudSearchOpacity(cloud))
+          ];
+        },
         getTextAnchor: 'middle',
         getAlignmentBaseline: 'center',
         parameters: { depthTest: false }
@@ -221,9 +432,12 @@
         data: labelNodes,
         getPosition: (node: AtlasNode) => {
           const [x, y] = getNodePosition(node, atlas.driftStaleNotes);
-          return [x, y - node.radius ];
+          return [x, y - getNoteLabelOffsetWorldUnits(node)];
         },
-        updateTriggers: { getPosition: [atlas.driftStaleNotes] },
+        updateTriggers: {
+          getPosition: [atlas.driftStaleNotes, atlas.zoom],
+          getText: [selectedNodeId, hoveredNodeId]
+        },
         getText: (node: AtlasNode) =>
           node.id === atlas.hoveredNodeId || node.id === atlas.selectedNodeId
             ? node.title || node.fileName
@@ -297,6 +511,12 @@
     if (atlas.hoveredNodeId === (node?.id ?? null)) return;
     isHoveringNote = node !== null;
     atlas.hoverNode(node);
+    renderDeck();
+  }
+
+  function handleCloudHover(cloud: AtlasCloud | null) {
+    if (atlas.hoveredCloudId === (cloud?.id ?? null)) return;
+    atlas.hoverCloud(cloud);
     renderDeck();
   }
 
@@ -413,12 +633,17 @@
 
   $effect(() => {
     atlas.searchQuery;
+    atlas.searchResponse;
+    atlas.searchError;
+    atlas.isSearching;
     atlas.matchCase;
     atlas.matchWholeWord;
     atlas.driftStaleNotes;
     atlas.showLinks;
     atlas.selectedNodeId;
+    atlas.hoveredNodeId;
     atlas.selectedCloudId;
+    atlas.hoveredCloudId;
     atlas.response;
     renderDeck();
   });
@@ -426,7 +651,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="relative h-full w-full overflow-hidden bg-background text-foreground">
+<div class="atlas-surface relative h-full w-full overflow-hidden text-white">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     bind:this={containerEl}
@@ -441,10 +666,10 @@
       ariaLabel="Search atlas notes"
       matchCase={atlas.matchCase}
       matchWholeWord={atlas.matchWholeWord}
-      showMatchOptions={true}
+      showMatchOptions={false}
       shortcut={{ enabled: true }}
       onValueChange={(value) => {
-        atlas.searchQuery = value;
+        atlas.setSearchQuery(value);
       }}
       onMatchCaseChange={(enabled) => {
         atlas.matchCase = enabled;
@@ -508,19 +733,20 @@
     <div class="absolute inset-0 z-20 flex items-center justify-center">
       <div class="inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/90 px-4 py-2 text-sm text-muted-foreground shadow-sm backdrop-blur-md">
         <LoaderCircle class="h-4 w-4 animate-spin" />
-        Building atlas
+        Loading atlas
       </div>
     </div>
   {/if}
 
   {#if atlas.selectedNode}
-    <aside class="absolute bottom-24 right-4 z-20 flex max-h-[min(34rem,calc(100vh-9rem))] w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/90 p-4 shadow-lg backdrop-blur-md">
+    <aside class="absolute right-5 top-14 z-20 flex max-h-[calc(100vh-5.5rem)] w-[min(23rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#08101a]/90 p-4 shadow-2xl backdrop-blur-md">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
-          <p class="min-w-0 truncate text-base font-semibold leading-6">{atlas.selectedNode.title}</p>
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/55">Note</p>
+          <p class="mt-5 min-w-0 text-xl font-semibold leading-7 text-white">{atlas.selectedNode.title}</p>
           <div class="mt-1.5 flex items-center gap-2">
-            <span class="shrink-0 rounded-full bg-muted/50 px-2 py-0.5 text-[0.7rem] text-muted-foreground">
-              Stale {Math.round(atlas.selectedNode.staleScore * 100)}%
+            <span class="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[0.7rem] text-white/60">
+              Importance {Math.round(atlas.selectedNode.importance * 100)}%
             </span>
           </div>
         </div>
@@ -543,10 +769,48 @@
           </button>
         </div>
       </div>
-      <div class="mt-3 flex min-h-0 flex-1 flex-col border-t border-border/70 pt-3">
+      {#if atlas.selectedNode.preview}
+        <div class="mt-5 border-t border-white/10 pt-4">
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/45">Preview</p>
+          <p class="mt-2 max-h-24 overflow-hidden text-sm leading-6 text-white/68">{atlas.selectedNode.preview}</p>
+        </div>
+      {/if}
+      <div class="mt-4 grid gap-2 border-t border-white/10 pt-4 text-xs">
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-white/45">Last accessed</span>
+          <span class="truncate text-white/70">{formatTimestamp(atlas.selectedNode.lastViewedAtMillis)}</span>
+        </div>
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-white/45">Created</span>
+          <span class="truncate text-white/70">{formatTimestamp(atlas.selectedNode.createdAtMillis)}</span>
+        </div>
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-white/45">Updated</span>
+          <span class="truncate text-white/70">{formatTimestamp(atlas.selectedNode.updatedAtMillis)}</span>
+        </div>
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-white/45">Cluster</span>
+          <span class="truncate text-white/70">{cloudLabel(atlas.selectedNode.clusterId)}</span>
+        </div>
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-white/45">Sub-cluster</span>
+          <span class="truncate text-white/70">{cloudLabel(atlas.selectedNode.subclusterId)}</span>
+        </div>
+      </div>
+      {#if atlas.selectedNode.tags.length > 0}
+        <div class="mt-4">
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/45">Tags</p>
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {#each atlas.selectedNode.tags as tag}
+              <span class="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[0.68rem] text-white/68">{tag}</span>
+            {/each}
+          </div>
+        </div>
+      {/if}
+      <div class="mt-4 flex min-h-0 flex-1 flex-col border-t border-white/10 pt-3">
         <div class="flex shrink-0 items-center justify-between gap-3">
-          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Linked notes</p>
-          <p class="text-xs text-muted-foreground">
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/45">Related notes</p>
+          <p class="text-xs text-white/45">
             {atlas.selectedNodeLinkedNotes.wikilinks.length + atlas.selectedNodeLinkedNotes.semantic.length}
           </p>
         </div>
@@ -671,3 +935,13 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .atlas-surface {
+    background: var(--background);
+  }
+
+  .atlas-surface::before {
+    content: none;
+  }
+</style>

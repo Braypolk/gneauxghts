@@ -1,23 +1,30 @@
 use super::{
     db::{
         load_atlas_layout_signature, load_atlas_note_embeddings, load_atlas_positions,
-        load_semantic_edges, open_database, save_atlas_layout_signature, save_atlas_positions,
-        StoredAtlasNoteEmbedding, StoredAtlasPosition,
+        open_database, save_atlas_layout_signature, save_atlas_positions, StoredAtlasNoteEmbedding,
+        StoredAtlasPosition,
     },
+    embed::EmbeddingInputKind,
     ActiveSemanticState,
 };
+use crate::index::normalize_search_text;
 use crate::time::current_time_millis;
+use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore};
+use leiden_rs::{GraphDataBuilder, Leiden, LeidenConfig, QualityType};
+use ndarray::Array2;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
+    panic::{catch_unwind, AssertUnwindSafe},
     path::Path,
 };
+use umap_rs::{GraphParams, OptimizationParams, Umap, UmapConfig};
 
 const CLOUD_MIN_NOTES: usize = 3;
 const CHILD_CLOUD_MIN_NOTES: usize = 9;
-const CLOUD_TARGET_MAX_NOTES: usize = 22;
-const SEMANTIC_EDGE_LIMIT: usize = 12_000;
-const SEMANTIC_MIN_SCORE: f32 = 0.24;
+const KNN_GRAPH_K: usize = 24;
+const KNN_MIN_SCORE: f32 = 0.30;
+const SEMANTIC_MIN_SCORE: f32 = KNN_MIN_SCORE;
 const COMPONENT_MIN_STRENGTH: f32 = 0.30;
 const WIKILINK_STRENGTH: f32 = 0.82;
 const FOLDER_BOOST: f32 = 0.035;
@@ -25,10 +32,18 @@ const RECENT_ACTIVITY_BOOST: f32 = 0.025;
 const NOTE_RADIUS_MIN: f32 = 4.0;
 const NOTE_RADIUS_MAX: f32 = 9.0;
 const STALE_DRIFT_DISTANCE: f32 = 420.0;
-const CLOUD_GAP: f32 = 115.0;
+const TOP_LEVEL_CLOUD_GAP: f32 = 96.0;
+const CHILD_CLOUD_GAP: f32 = 10.0;
 const DEFAULT_LAYOUT_PULL: f32 = 1.4;
-const MIN_LINK_DISTANCE: f32 = 76.0;
-const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 5;
+const LAYOUT_LINKS_PER_NODE: usize = 8;
+const LAYOUT_MAX_DEGREE: usize = 14;
+const CHILD_TARGET_MAX_NOTES: usize = 20;
+const UMAP_ITERATIONS: usize = 220;
+const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 9;
+const ATLAS_SEARCH_SEMANTIC_WEIGHT: f32 = 0.55;
+const ATLAS_SEARCH_LEXICAL_WEIGHT: f32 = 0.25;
+const ATLAS_SEARCH_STRUCTURAL_WEIGHT: f32 = 0.10;
+const ATLAS_SEARCH_RECENCY_WEIGHT: f32 = 0.10;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AtlasNoteMetadata {
@@ -36,6 +51,8 @@ pub(crate) struct AtlasNoteMetadata {
     pub(crate) note_path: String,
     pub(crate) file_name: String,
     pub(crate) title: String,
+    pub(crate) preview: String,
+    pub(crate) tags: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -68,6 +85,29 @@ pub(crate) struct VaultAtlasResponse {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct AtlasSearchResponse {
+    pub(crate) status: String,
+    pub(crate) reason: Option<String>,
+    pub(crate) query: String,
+    pub(crate) generated_at_millis: u64,
+    pub(crate) matches: Vec<AtlasSearchMatch>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AtlasSearchMatch {
+    pub(crate) note_id: Option<String>,
+    pub(crate) note_path: String,
+    pub(crate) score: f32,
+    pub(crate) semantic_score: f32,
+    pub(crate) lexical_score: f32,
+    pub(crate) structural_score: f32,
+    pub(crate) recency_score: f32,
+    pub(crate) reason_labels: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AtlasNode {
     pub(crate) id: String,
     pub(crate) note_id: Option<String>,
@@ -81,10 +121,19 @@ pub(crate) struct AtlasNode {
     pub(crate) radius: f32,
     pub(crate) cloud_id: Option<String>,
     pub(crate) parent_cloud_id: Option<String>,
+    pub(crate) child_cloud_id: Option<String>,
+    pub(crate) cluster_id: Option<String>,
+    pub(crate) subcluster_id: Option<String>,
     pub(crate) centrality: f32,
+    pub(crate) degree: usize,
+    pub(crate) importance: f32,
     pub(crate) modified_at_millis: u64,
     pub(crate) last_viewed_at_millis: Option<u64>,
+    pub(crate) created_at_millis: u64,
+    pub(crate) updated_at_millis: u64,
     pub(crate) stale_score: f32,
+    pub(crate) preview: String,
+    pub(crate) tags: Vec<String>,
     pub(crate) isolated: bool,
 }
 
@@ -104,13 +153,20 @@ pub(crate) struct AtlasLink {
 pub(crate) struct AtlasCloud {
     pub(crate) id: String,
     pub(crate) parent_id: Option<String>,
+    pub(crate) level: usize,
     pub(crate) label: Option<String>,
     pub(crate) label_confidence: f32,
     pub(crate) note_count: usize,
     pub(crate) density: f32,
+    pub(crate) color: [u8; 4],
     pub(crate) centroid: [f32; 2],
+    pub(crate) label_anchor: [f32; 2],
+    pub(crate) radius: f32,
     pub(crate) hull: Vec<[f32; 2]>,
     pub(crate) member_node_ids: Vec<String>,
+    pub(crate) core_node_ids: Vec<String>,
+    pub(crate) outlier_node_ids: Vec<String>,
+    pub(crate) child_cloud_ids: Vec<String>,
     pub(crate) representative_node_ids: Vec<String>,
 }
 
@@ -121,14 +177,22 @@ struct WorkingNode {
     note_path: String,
     title: String,
     file_name: String,
+    preview: String,
+    tags: Vec<String>,
     modified_at_millis: u64,
+    created_at_millis: u64,
+    updated_at_millis: u64,
     last_viewed_at_millis: Option<u64>,
     stale_score: f32,
     centrality: f32,
+    degree: usize,
+    importance: f32,
+    embedding: Vec<f32>,
     x: f32,
     y: f32,
     cloud_id: Option<String>,
     parent_cloud_id: Option<String>,
+    child_cloud_id: Option<String>,
     isolated: bool,
 }
 
@@ -139,6 +203,34 @@ struct WorkingLink {
     kind: String,
     score: f32,
     strength: f32,
+}
+
+#[derive(Clone, Debug)]
+struct KnnNeighbor {
+    index: usize,
+    similarity: f32,
+    distance: f32,
+}
+
+#[derive(Clone, Debug)]
+struct LayoutEdge {
+    source_id: String,
+    target_id: String,
+    weight: f32,
+}
+
+#[derive(Clone, Debug)]
+struct CloudSpec {
+    id: String,
+    parent_id: Option<String>,
+    level: usize,
+    member_node_ids: Vec<String>,
+    core_node_ids: Vec<String>,
+    outlier_node_ids: Vec<String>,
+    child_cloud_ids: Vec<String>,
+    centroid: [f32; 2],
+    radius: f32,
+    centrality: f32,
 }
 
 impl ActiveSemanticState {
@@ -161,7 +253,7 @@ impl ActiveSemanticState {
         }
 
         let layout_pull = DEFAULT_LAYOUT_PULL;
-        let layout_signature = atlas_layout_signature(&indexed_notes, revision, layout_pull);
+        let layout_signature = atlas_layout_signature(&indexed_notes, layout_pull);
         let positions = load_atlas_positions(&connection)?
             .into_iter()
             .map(|position| (position.note_path, (position.x, position.y)))
@@ -170,8 +262,7 @@ impl ActiveSemanticState {
             .iter()
             .all(|note| positions.contains_key(&note.note_path));
         let cached_layout_signature = load_atlas_layout_signature(&connection)?;
-        let should_relayout = cached_layout_signature.as_deref() != Some(layout_signature.as_str())
-            || !has_all_cached_positions;
+        let should_relayout = cached_layout_signature.as_deref() != Some(layout_signature.as_str());
         let max_modified = indexed_notes
             .iter()
             .map(|note| note.modified_millis)
@@ -187,14 +278,14 @@ impl ActiveSemanticState {
                 let last_viewed = note_id
                     .as_ref()
                     .and_then(|id| last_viewed_by_note_id.get(id).copied());
-                let (x, y) = if should_relayout {
-                    seeded_position(&note.note_path, index)
-                } else {
-                    positions
-                        .get(&note.note_path)
-                        .copied()
-                        .unwrap_or_else(|| seeded_position(&note.note_path, index))
-                };
+                let (x, y) = positions
+                    .get(&note.note_path)
+                    .copied()
+                    .unwrap_or_else(|| seeded_position(&note.note_path, index));
+                let created_at_millis =
+                    parse_rfc3339_millis(&note.created_at).unwrap_or(note.modified_millis);
+                let updated_at_millis =
+                    parse_rfc3339_millis(&note.updated_at).unwrap_or(note.modified_millis);
                 WorkingNode {
                     id: note.note_path.clone(),
                     note_id,
@@ -206,39 +297,57 @@ impl ActiveSemanticState {
                     file_name: meta
                         .map(|item| item.file_name.clone())
                         .unwrap_or_else(|| file_name_for_path(&note.note_path)),
+                    preview: meta.map(|item| item.preview.clone()).unwrap_or_default(),
+                    tags: meta.map(|item| item.tags.clone()).unwrap_or_default(),
                     modified_at_millis: note.modified_millis,
+                    created_at_millis,
+                    updated_at_millis,
                     last_viewed_at_millis: last_viewed,
                     stale_score: stale_score(
                         last_viewed.unwrap_or(note.modified_millis),
                         max_modified,
                     ),
                     centrality: 0.0,
+                    degree: 0,
+                    importance: 0.0,
+                    embedding: normalized_embedding(note.embedding),
                     x,
                     y,
                     cloud_id: None,
                     parent_cloud_id: None,
+                    child_cloud_id: None,
                     isolated: true,
                 }
             })
             .collect::<Vec<_>>();
 
-        let node_ids = nodes
-            .iter()
-            .map(|node| node.id.clone())
-            .collect::<HashSet<_>>();
-        let mut links = collect_links(&mut connection, &node_ids, hard_links)?;
+        let knn_rows = build_hnsw_knn_rows(&nodes);
+        if !has_all_cached_positions {
+            place_uncached_nodes_from_neighbors(&mut nodes, &positions, &knn_rows);
+        }
+        let mut links = collect_links(&nodes, &knn_rows, hard_links);
         boost_links(&mut links, &nodes);
         apply_centrality(&mut nodes, &links);
+        let layout_edges = build_layout_graph(&nodes, &links);
+        let mut cloud_specs = assign_clouds(&mut nodes, &layout_edges);
         if should_relayout {
-            layout_nodes(&mut nodes, &links, layout_pull);
+            let umap_applied = apply_umap_layout(&mut nodes, &knn_rows);
+            if umap_applied {
+                separate_umap_clouds(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
+            } else {
+                place_cloud_first_layout(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
+            }
+            refresh_cloud_geometry(&mut cloud_specs, &nodes);
         }
-
-        let components = connected_components(&nodes, &links);
-        let mut clouds = assign_clouds(&mut nodes, &links, components);
+        finalize_cloud_cores(&nodes, &layout_edges, &mut cloud_specs);
+        let mut clouds = cloud_specs
+            .iter()
+            .map(|spec| build_cloud(spec, &nodes, &links))
+            .collect::<Vec<_>>();
         clouds.sort_by(|left, right| {
-            right
-                .note_count
-                .cmp(&left.note_count)
+            left.level
+                .cmp(&right.level)
+                .then_with(|| right.note_count.cmp(&left.note_count))
                 .then_with(|| left.id.cmp(&right.id))
         });
 
@@ -273,12 +382,21 @@ impl ActiveSemanticState {
                     drift_y: drift.1,
                     radius: NOTE_RADIUS_MIN
                         + (NOTE_RADIUS_MAX - NOTE_RADIUS_MIN) * node.centrality.clamp(0.0, 1.0),
-                    cloud_id: node.cloud_id,
+                    cloud_id: node.cloud_id.clone(),
                     parent_cloud_id: node.parent_cloud_id,
+                    child_cloud_id: node.child_cloud_id.clone(),
+                    cluster_id: node.cloud_id,
+                    subcluster_id: node.child_cloud_id,
                     centrality: node.centrality,
+                    degree: node.degree,
+                    importance: node.importance,
                     modified_at_millis: node.modified_at_millis,
                     last_viewed_at_millis: node.last_viewed_at_millis,
+                    created_at_millis: node.created_at_millis,
+                    updated_at_millis: node.updated_at_millis,
                     stale_score: node.stale_score,
+                    preview: node.preview,
+                    tags: node.tags,
                     isolated: node.isolated,
                 }
             })
@@ -312,6 +430,132 @@ impl ActiveSemanticState {
             clouds,
         })
     }
+
+    pub(super) fn search_vault_atlas(
+        &self,
+        query: String,
+        metadata: HashMap<String, AtlasNoteMetadata>,
+        last_viewed_by_note_id: HashMap<String, u64>,
+    ) -> Result<AtlasSearchResponse, String> {
+        let trimmed_query = query.trim().to_string();
+        if trimmed_query.is_empty() {
+            return Ok(AtlasSearchResponse {
+                status: "ready".to_string(),
+                reason: None,
+                query,
+                generated_at_millis: current_time_millis()?,
+                matches: Vec::new(),
+            });
+        }
+
+        let connection = open_database(&self.db_path)?;
+        super::ensure_schema(&connection)?;
+        let indexed_notes = load_atlas_note_embeddings(&connection)?;
+        if indexed_notes.is_empty() {
+            return Ok(AtlasSearchResponse {
+                status: "empty".to_string(),
+                reason: Some("No indexed notes are available yet.".to_string()),
+                query,
+                generated_at_millis: current_time_millis()?,
+                matches: Vec::new(),
+            });
+        }
+
+        let query_embedding = self
+            .provider
+            .embed_texts(&[trimmed_query.clone()], EmbeddingInputKind::Query)
+            .ok()
+            .and_then(|mut embeddings| embeddings.pop());
+        let now = current_time_millis()?;
+        let normalized_query = normalize_search_text(&trimmed_query);
+        let terms = normalized_query
+            .split_whitespace()
+            .filter(|term| !term.is_empty())
+            .map(|term| term.to_string())
+            .collect::<Vec<_>>();
+
+        let mut matches = indexed_notes
+            .into_iter()
+            .map(|note| {
+                let meta = metadata.get(&note.note_path);
+                let title = meta
+                    .map(|item| item.title.as_str())
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or(note.note_title.as_str());
+                let fallback_file_name = file_name_for_path(&note.note_path);
+                let file_name = meta
+                    .map(|item| item.file_name.as_str())
+                    .unwrap_or(fallback_file_name.as_str());
+                let preview = meta.map(|item| item.preview.as_str()).unwrap_or("");
+                let tags = meta.map_or(&[] as &[String], |item| item.tags.as_slice());
+                let semantic_score = query_embedding
+                    .as_ref()
+                    .map(|embedding| cosine_similarity(embedding, &note.embedding).max(0.0))
+                    .unwrap_or(0.0);
+                let lexical_score = lexical_note_score(
+                    &terms,
+                    &[title, file_name, note.note_path.as_str(), preview],
+                    tags,
+                );
+                let structural_score = title_tag_path_score(
+                    &normalized_query,
+                    &terms,
+                    title,
+                    file_name,
+                    &note.note_path,
+                    tags,
+                );
+                let note_id = meta.and_then(|item| item.note_id.clone());
+                let last_viewed = note_id
+                    .as_ref()
+                    .and_then(|id| last_viewed_by_note_id.get(id).copied());
+                let recency_score = recency_score(
+                    now,
+                    last_viewed.unwrap_or(note.modified_millis),
+                    note.modified_millis,
+                );
+                let score = ATLAS_SEARCH_SEMANTIC_WEIGHT * semantic_score
+                    + ATLAS_SEARCH_LEXICAL_WEIGHT * lexical_score
+                    + ATLAS_SEARCH_STRUCTURAL_WEIGHT * structural_score
+                    + ATLAS_SEARCH_RECENCY_WEIGHT * recency_score;
+                AtlasSearchMatch {
+                    note_id,
+                    note_path: note.note_path,
+                    score: score.clamp(0.0, 1.0),
+                    semantic_score,
+                    lexical_score,
+                    structural_score,
+                    recency_score,
+                    reason_labels: reason_labels(
+                        semantic_score,
+                        lexical_score,
+                        structural_score,
+                        recency_score,
+                    ),
+                }
+            })
+            .filter(|item| {
+                item.score > 0.02 || item.lexical_score > 0.0 || item.structural_score > 0.0
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.note_path.cmp(&right.note_path))
+        });
+
+        Ok(AtlasSearchResponse {
+            status: "ready".to_string(),
+            reason: query_embedding.is_none().then(|| {
+                "Semantic query embedding unavailable; used lexical and recency scoring."
+                    .to_string()
+            }),
+            query,
+            generated_at_millis: now,
+            matches,
+        })
+    }
 }
 
 fn empty_atlas(status: &str, reason: &str, revision: u64) -> Result<VaultAtlasResponse, String> {
@@ -332,44 +576,58 @@ fn empty_atlas(status: &str, reason: &str, revision: u64) -> Result<VaultAtlasRe
     })
 }
 
-fn atlas_layout_signature(
-    notes: &[StoredAtlasNoteEmbedding],
-    revision: u64,
-    layout_pull: f32,
-) -> String {
+fn atlas_layout_signature(notes: &[StoredAtlasNoteEmbedding], layout_pull: f32) -> String {
     let mut parts = notes
         .iter()
-        .map(|note| format!("{}:{}", note.note_path, note.modified_millis))
+        .map(|note| format!("{}:{}", note.note_path, note.content_hash))
         .collect::<Vec<_>>();
     parts.sort();
     format!(
-        "v{ATLAS_LAYOUT_ALGORITHM_VERSION}|{revision}|pull:{layout_pull:.2}|{}",
+        "v{ATLAS_LAYOUT_ALGORITHM_VERSION}|hnsw-k:{KNN_GRAPH_K}|min:{KNN_MIN_SCORE:.2}|pull:{layout_pull:.2}|{}",
         parts.join("|")
     )
 }
 
 fn collect_links(
-    connection: &mut rusqlite::Connection,
-    node_ids: &HashSet<String>,
+    nodes: &[WorkingNode],
+    knn_rows: &[Vec<KnnNeighbor>],
     hard_links: Vec<AtlasHardLink>,
-) -> Result<Vec<WorkingLink>, String> {
+) -> Vec<WorkingLink> {
+    let node_ids = nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<HashSet<_>>();
     let mut merged: HashMap<(String, String, String), WorkingLink> = HashMap::new();
-    for edge in load_semantic_edges(connection, SEMANTIC_EDGE_LIMIT)? {
-        if edge.score < SEMANTIC_MIN_SCORE
-            || !node_ids.contains(&edge.source_note_path)
-            || !node_ids.contains(&edge.target_note_path)
-        {
+    for (source_index, neighbors) in knn_rows.iter().enumerate() {
+        let Some(source) = nodes.get(source_index) else {
             continue;
-        }
-        let (source_id, target_id) = ordered_pair(edge.source_note_path, edge.target_note_path);
-        let link = WorkingLink {
-            source_id: source_id.clone(),
-            target_id: target_id.clone(),
-            kind: "semantic".to_string(),
-            score: edge.score,
-            strength: normalize_edge_strength(edge.score),
         };
-        merged.insert((source_id, target_id, "semantic".to_string()), link);
+        for neighbor in neighbors {
+            let Some(target) = nodes.get(neighbor.index) else {
+                continue;
+            };
+            if source.id == target.id || neighbor.similarity < SEMANTIC_MIN_SCORE {
+                continue;
+            }
+            let (source_id, target_id) = ordered_pair(source.id.clone(), target.id.clone());
+            let key = (source_id.clone(), target_id.clone(), "semantic".to_string());
+            let strength = normalize_edge_strength(neighbor.similarity);
+            merged
+                .entry(key)
+                .and_modify(|existing| {
+                    if neighbor.similarity > existing.score {
+                        existing.score = neighbor.similarity;
+                        existing.strength = strength;
+                    }
+                })
+                .or_insert(WorkingLink {
+                    source_id,
+                    target_id,
+                    kind: "semantic".to_string(),
+                    score: neighbor.similarity,
+                    strength,
+                });
+        }
     }
 
     for hard_link in hard_links {
@@ -391,7 +649,161 @@ fn collect_links(
         merged.insert((source_id, target_id, "wikilink".to_string()), link);
     }
 
-    Ok(merged.into_values().collect())
+    merged.into_values().collect()
+}
+
+fn build_hnsw_knn_rows(nodes: &[WorkingNode]) -> Vec<Vec<KnnNeighbor>> {
+    let k = KNN_GRAPH_K.min(nodes.len().saturating_sub(1));
+    if nodes.len() < 2 || k == 0 {
+        return vec![Vec::new(); nodes.len()];
+    }
+    let Some(dimensions) = nodes
+        .iter()
+        .map(|node| node.embedding.len())
+        .find(|dimensions| *dimensions > 0)
+    else {
+        return exact_knn_rows(nodes, k);
+    };
+    if nodes.iter().any(|node| {
+        node.embedding.len() != dimensions || node.embedding.iter().any(|value| !value.is_finite())
+    }) {
+        return exact_knn_rows(nodes, k);
+    }
+
+    let capacity = nodes.len().saturating_mul(2).max(1024).next_power_of_two();
+    let graph = Hnsw::new(
+        Cosine::new(),
+        HnswConfig::new(dimensions, capacity)
+            .m(16)
+            .ef_construction(200)
+            .ef_search(k.saturating_mul(4).max(64))
+            .seed(ATLAS_LAYOUT_ALGORITHM_VERSION as u64),
+    );
+    let vectors = InMemoryVectorStore::<f32>::new(dimensions, capacity);
+    for (index, node) in nodes.iter().enumerate() {
+        if graph
+            .set(&vectors, index as u64, node.embedding.as_slice())
+            .is_err()
+        {
+            return exact_knn_rows(nodes, k);
+        }
+    }
+
+    let mut rows = Vec::with_capacity(nodes.len());
+    for (source_index, source) in nodes.iter().enumerate() {
+        let Ok(hits) = graph.search(&vectors, source.embedding.as_slice(), k + 1, None) else {
+            return exact_knn_rows(nodes, k);
+        };
+        let mut neighbors = Vec::<KnnNeighbor>::new();
+        for hit in hits {
+            let target_index = hit.key as usize;
+            if target_index == source_index || target_index >= nodes.len() {
+                continue;
+            }
+            let similarity = cosine_similarity(&source.embedding, &nodes[target_index].embedding);
+            push_unique_neighbor(&mut neighbors, target_index, similarity);
+        }
+        neighbors.sort_by(|left, right| {
+            right
+                .similarity
+                .total_cmp(&left.similarity)
+                .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
+        });
+        neighbors.truncate(k);
+        rows.push(neighbors);
+    }
+    rows
+}
+
+fn exact_knn_rows(nodes: &[WorkingNode], k: usize) -> Vec<Vec<KnnNeighbor>> {
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(source_index, source)| {
+            let mut neighbors = nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(target_index, target)| {
+                    if source_index == target_index {
+                        return None;
+                    }
+                    let similarity = cosine_similarity(&source.embedding, &target.embedding);
+                    Some(KnnNeighbor {
+                        index: target_index,
+                        similarity,
+                        distance: cosine_distance_for_umap(similarity),
+                    })
+                })
+                .collect::<Vec<_>>();
+            neighbors.sort_by(|left, right| {
+                right
+                    .similarity
+                    .total_cmp(&left.similarity)
+                    .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
+            });
+            neighbors.truncate(k);
+            neighbors
+        })
+        .collect()
+}
+
+fn push_unique_neighbor(neighbors: &mut Vec<KnnNeighbor>, target_index: usize, similarity: f32) {
+    if neighbors
+        .iter()
+        .any(|neighbor| neighbor.index == target_index)
+    {
+        return;
+    }
+    neighbors.push(KnnNeighbor {
+        index: target_index,
+        similarity,
+        distance: cosine_distance_for_umap(similarity),
+    });
+}
+
+fn cosine_distance_for_umap(similarity: f32) -> f32 {
+    (1.0 - similarity.clamp(-1.0, 1.0)).max(0.000_1)
+}
+
+fn place_uncached_nodes_from_neighbors(
+    nodes: &mut [WorkingNode],
+    cached_positions: &HashMap<String, (f32, f32)>,
+    knn_rows: &[Vec<KnnNeighbor>],
+) {
+    let cached_by_index = nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| {
+            cached_positions
+                .get(&node.note_path)
+                .copied()
+                .map(|pos| (index, pos))
+        })
+        .collect::<HashMap<_, _>>();
+    for index in 0..nodes.len() {
+        if cached_positions.contains_key(&nodes[index].note_path) {
+            continue;
+        }
+        let mut weighted_x = 0.0_f32;
+        let mut weighted_y = 0.0_f32;
+        let mut total_weight = 0.0_f32;
+        for neighbor in knn_rows.get(index).into_iter().flatten() {
+            let Some((x, y)) = cached_by_index.get(&neighbor.index).copied() else {
+                continue;
+            };
+            let weight = neighbor.similarity.max(0.05);
+            weighted_x += x * weight;
+            weighted_y += y * weight;
+            total_weight += weight;
+        }
+        if total_weight <= f32::EPSILON {
+            continue;
+        }
+        let angle = stable_angle(&nodes[index].id);
+        let jitter = 18.0 + (stable_hash(&nodes[index].id) % 700) as f32 / 100.0;
+        nodes[index].x = weighted_x / total_weight + angle.cos() * jitter;
+        nodes[index].y = weighted_y / total_weight + angle.sin() * jitter;
+    }
 }
 
 fn boost_links(links: &mut [WorkingLink], nodes: &[WorkingNode]) {
@@ -418,83 +830,170 @@ fn boost_links(links: &mut [WorkingLink], nodes: &[WorkingNode]) {
 
 fn apply_centrality(nodes: &mut [WorkingNode], links: &[WorkingLink]) {
     let mut totals = HashMap::<String, f32>::new();
+    let mut degrees = HashMap::<String, usize>::new();
     for link in links {
         *totals.entry(link.source_id.clone()).or_default() += link.strength;
         *totals.entry(link.target_id.clone()).or_default() += link.strength;
+        *degrees.entry(link.source_id.clone()).or_default() += 1;
+        *degrees.entry(link.target_id.clone()).or_default() += 1;
     }
     let max_total = totals.values().copied().fold(0.0_f32, f32::max).max(1.0);
     for node in nodes {
         node.centrality = totals.get(&node.id).copied().unwrap_or(0.0) / max_total;
+        node.degree = degrees.get(&node.id).copied().unwrap_or(0);
+        node.importance = (node.centrality * 0.72
+            + (node.degree as f32 / KNN_GRAPH_K as f32) * 0.28)
+            .clamp(0.0, 1.0);
     }
 }
 
-fn layout_nodes(nodes: &mut [WorkingNode], links: &[WorkingLink], layout_pull: f32) {
+fn build_layout_graph(nodes: &[WorkingNode], links: &[WorkingLink]) -> Vec<LayoutEdge> {
+    let node_ids = nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<HashSet<_>>();
+    let mut by_node = HashMap::<String, Vec<&WorkingLink>>::new();
+    for link in links {
+        if !node_ids.contains(&link.source_id) || !node_ids.contains(&link.target_id) {
+            continue;
+        }
+        by_node
+            .entry(link.source_id.clone())
+            .or_default()
+            .push(link);
+        by_node
+            .entry(link.target_id.clone())
+            .or_default()
+            .push(link);
+    }
+
+    let mut ranks = HashMap::<(String, String), (usize, usize)>::new();
+    for (node_id, incident_links) in &mut by_node {
+        incident_links.sort_by(|left, right| {
+            right
+                .strength
+                .total_cmp(&left.strength)
+                .then_with(|| left.source_id.cmp(&right.source_id))
+                .then_with(|| left.target_id.cmp(&right.target_id))
+        });
+        for (rank, link) in incident_links.iter().enumerate() {
+            let key = (link.source_id.clone(), link.target_id.clone());
+            let entry = ranks.entry(key).or_insert((usize::MAX, usize::MAX));
+            if link.source_id == *node_id {
+                entry.0 = rank;
+            } else {
+                entry.1 = rank;
+            }
+        }
+    }
+
+    let mut candidates = links
+        .iter()
+        .filter(|link| {
+            if !node_ids.contains(&link.source_id) || !node_ids.contains(&link.target_id) {
+                return false;
+            }
+            if link.kind == "wikilink" || link.strength >= 0.78 {
+                return true;
+            }
+            ranks
+                .get(&(link.source_id.clone(), link.target_id.clone()))
+                .is_some_and(|(source_rank, target_rank)| {
+                    *source_rank < LAYOUT_LINKS_PER_NODE && *target_rank < LAYOUT_LINKS_PER_NODE
+                })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        let left_kind = if left.kind == "wikilink" { 1 } else { 0 };
+        let right_kind = if right.kind == "wikilink" { 1 } else { 0 };
+        right_kind
+            .cmp(&left_kind)
+            .then_with(|| right.strength.total_cmp(&left.strength))
+            .then_with(|| left.source_id.cmp(&right.source_id))
+            .then_with(|| left.target_id.cmp(&right.target_id))
+    });
+
+    let mut selected = HashMap::<(String, String), f32>::new();
+    let mut degrees = HashMap::<String, usize>::new();
+    for link in candidates {
+        let source_degree = degrees.get(&link.source_id).copied().unwrap_or(0);
+        let target_degree = degrees.get(&link.target_id).copied().unwrap_or(0);
+        if source_degree >= LAYOUT_MAX_DEGREE || target_degree >= LAYOUT_MAX_DEGREE {
+            continue;
+        }
+        let weight = layout_link_weight(link);
+        selected.insert((link.source_id.clone(), link.target_id.clone()), weight);
+        degrees.insert(link.source_id.clone(), source_degree + 1);
+        degrees.insert(link.target_id.clone(), target_degree + 1);
+    }
+
     let index_by_id = nodes
         .iter()
         .enumerate()
         .map(|(index, node)| (node.id.clone(), index))
         .collect::<HashMap<_, _>>();
-    for _ in 0..72 {
-        let mut deltas = vec![(0.0_f32, 0.0_f32); nodes.len()];
-        for left_index in 0..nodes.len() {
-            for right_index in (left_index + 1)..nodes.len() {
-                let dx = nodes[left_index].x - nodes[right_index].x;
-                let dy = nodes[left_index].y - nodes[right_index].y;
-                let dist_sq = (dx * dx + dy * dy).max(16.0);
-                let dist = dist_sq.sqrt();
-                let force = 1500.0 / dist_sq;
-                let fx = dx / dist * force;
-                let fy = dy / dist * force;
-                deltas[left_index].0 += fx;
-                deltas[left_index].1 += fy;
-                deltas[right_index].0 -= fx;
-                deltas[right_index].1 -= fy;
-            }
+    let mut dsu = DisjointSet::new(nodes.len());
+    let mut backbone = links
+        .iter()
+        .filter(|link| link.strength >= COMPONENT_MIN_STRENGTH || link.kind == "wikilink")
+        .collect::<Vec<_>>();
+    backbone.sort_by(|left, right| {
+        right
+            .strength
+            .total_cmp(&left.strength)
+            .then_with(|| left.source_id.cmp(&right.source_id))
+            .then_with(|| left.target_id.cmp(&right.target_id))
+    });
+    for link in backbone {
+        let (Some(&source), Some(&target)) = (
+            index_by_id.get(&link.source_id),
+            index_by_id.get(&link.target_id),
+        ) else {
+            continue;
+        };
+        if dsu.union(source, target) {
+            let key = (link.source_id.clone(), link.target_id.clone());
+            selected
+                .entry(key)
+                .or_insert_with(|| layout_link_weight(link));
         }
-        for link in links {
-            let (Some(&source_index), Some(&target_index)) = (
-                index_by_id.get(&link.source_id),
-                index_by_id.get(&link.target_id),
-            ) else {
-                continue;
-            };
-            let dx = nodes[target_index].x - nodes[source_index].x;
-            let dy = nodes[target_index].y - nodes[source_index].y;
-            let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-            let desired = (92.0 + (1.0 - link.strength) * 185.0) / layout_pull;
-            let desired = desired.max(MIN_LINK_DISTANCE);
-            let force = (dist - desired) * 0.0054 * link.strength * layout_pull;
-            let fx = dx / dist * force;
-            let fy = dy / dist * force;
-            deltas[source_index].0 += fx;
-            deltas[source_index].1 += fy;
-            deltas[target_index].0 -= fx;
-            deltas[target_index].1 -= fy;
-        }
-        for (node, (dx, dy)) in nodes.iter_mut().zip(deltas) {
-            node.x += dx.clamp(-12.0, 12.0);
-            node.y += dy.clamp(-12.0, 12.0);
-        }
+    }
+
+    selected
+        .into_iter()
+        .map(|((source_id, target_id), weight)| LayoutEdge {
+            source_id,
+            target_id,
+            weight,
+        })
+        .collect()
+}
+
+fn layout_link_weight(link: &WorkingLink) -> f32 {
+    if link.kind == "wikilink" {
+        (link.strength + 0.22).clamp(0.0, 1.0)
+    } else {
+        link.strength.clamp(0.0, 1.0)
     }
 }
 
-fn connected_components(nodes: &[WorkingNode], links: &[WorkingLink]) -> Vec<Vec<String>> {
+fn connected_components(nodes: &[WorkingNode], edges: &[LayoutEdge]) -> Vec<Vec<String>> {
     let mut adjacency = HashMap::<String, Vec<String>>::new();
     for node in nodes {
         adjacency.entry(node.id.clone()).or_default();
     }
-    for link in links {
-        if link.strength < COMPONENT_MIN_STRENGTH {
+    for edge in edges {
+        if edge.weight < COMPONENT_MIN_STRENGTH {
             continue;
         }
         adjacency
-            .entry(link.source_id.clone())
+            .entry(edge.source_id.clone())
             .or_default()
-            .push(link.target_id.clone());
+            .push(edge.target_id.clone());
         adjacency
-            .entry(link.target_id.clone())
+            .entry(edge.target_id.clone())
             .or_default()
-            .push(link.source_id.clone());
+            .push(edge.source_id.clone());
     }
 
     let mut seen = HashSet::new();
@@ -515,183 +1014,1177 @@ fn connected_components(nodes: &[WorkingNode], links: &[WorkingLink]) -> Vec<Vec
                 }
             }
         }
+        component.sort();
         components.push(component);
     }
     components
 }
 
-fn assign_clouds(
-    nodes: &mut [WorkingNode],
-    links: &[WorkingLink],
-    components: Vec<Vec<String>>,
-) -> Vec<AtlasCloud> {
-    let mut node_index = nodes
-        .iter()
-        .enumerate()
-        .map(|(index, node)| (node.id.clone(), index))
-        .collect::<HashMap<_, _>>();
-    let mut cloud_specs = Vec::<(String, Option<String>, Vec<String>)>::new();
-    let mut cloud_ordinal = 0usize;
-    for component in components {
+fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSpec> {
+    let node_count = nodes.len();
+    let target_top_clouds = target_top_cloud_count(node_count);
+    let target_top_size = if target_top_clouds == 0 {
+        node_count.max(1)
+    } else {
+        node_count.div_ceil(target_top_clouds).max(CLOUD_MIN_NOTES)
+    };
+    let mut top_groups = Vec::<Vec<String>>::new();
+    for component in connected_components(nodes, edges) {
         if component.len() < CLOUD_MIN_NOTES {
             continue;
         }
-        for community in split_component_into_parent_clouds(&component, nodes, links) {
-            if community.len() < CLOUD_MIN_NOTES {
-                continue;
-            }
-            cloud_ordinal += 1;
-            let cloud_id = format!("cloud-{cloud_ordinal}");
-            for id in &community {
-                if let Some(index) = node_index.get(id).copied() {
-                    nodes[index].cloud_id = Some(cloud_id.clone());
-                    nodes[index].isolated = false;
-                }
-            }
-            cloud_specs.push((cloud_id.clone(), None, community.clone()));
-
-            if community.len() >= CHILD_CLOUD_MIN_NOTES {
-                let mut sorted = community.clone();
-                sorted.sort_by(|left, right| {
-                    let left_node = &nodes[node_index[left]];
-                    let right_node = &nodes[node_index[right]];
-                    left_node
-                        .y
-                        .atan2(left_node.x)
-                        .total_cmp(&right_node.y.atan2(right_node.x))
-                });
-                let child_size = (sorted.len() / 2).max(CLOUD_MIN_NOTES);
-                for (child_index, child_nodes) in sorted.chunks(child_size).enumerate() {
-                    if child_nodes.len() < CLOUD_MIN_NOTES {
-                        continue;
-                    }
-                    let child_id = format!("{cloud_id}-child-{}", child_index + 1);
-                    for id in child_nodes {
-                        if let Some(index) = node_index.get(id).copied() {
-                            nodes[index].parent_cloud_id = Some(cloud_id.clone());
-                        }
-                    }
-                    cloud_specs.push((child_id, Some(cloud_id.clone()), child_nodes.to_vec()));
-                }
-            }
-        }
+        let groups = partition_group(&component, nodes, edges, target_top_size, target_top_clouds);
+        top_groups.extend(groups);
     }
-    node_index.clear();
-    compact_parent_clouds(nodes, &cloud_specs);
-    separate_parent_clouds(nodes, links, &cloud_specs);
-    let preview_clouds = cloud_specs
-        .iter()
-        .map(|(id, parent_id, member_ids)| {
-            build_cloud(id, parent_id.clone(), nodes, links, member_ids)
-        })
-        .collect::<Vec<_>>();
-    separate_parent_cloud_hulls(nodes, links, &preview_clouds);
-    cloud_specs
-        .into_iter()
-        .map(|(id, parent_id, member_ids)| build_cloud(&id, parent_id, nodes, links, &member_ids))
-        .collect()
-}
+    top_groups = merge_to_target_groups(top_groups, nodes, edges, target_top_clouds);
+    top_groups.sort_by(|left, right| {
+        group_centrality(right, nodes)
+            .total_cmp(&group_centrality(left, nodes))
+            .then_with(|| right.len().cmp(&left.len()))
+            .then_with(|| left[0].cmp(&right[0]))
+    });
 
-fn compact_parent_clouds(
-    nodes: &mut [WorkingNode],
-    cloud_specs: &[(String, Option<String>, Vec<String>)],
-) {
-    let node_by_id = nodes
+    let node_index = nodes
         .iter()
         .enumerate()
         .map(|(index, node)| (node.id.clone(), index))
         .collect::<HashMap<_, _>>();
-    for (_, parent_id, members) in cloud_specs {
-        if parent_id.is_some() || members.len() < CLOUD_MIN_NOTES {
+    let mut specs = Vec::<CloudSpec>::new();
+    for (cloud_index, group) in top_groups.into_iter().enumerate() {
+        let cloud_id = format!("cloud-{}", cloud_index + 1);
+        for member_id in &group {
+            if let Some(index) = node_index.get(member_id).copied() {
+                nodes[index].cloud_id = Some(cloud_id.clone());
+                nodes[index].parent_cloud_id = None;
+                nodes[index].child_cloud_id = None;
+                nodes[index].isolated = false;
+            }
+        }
+
+        let child_groups = detect_child_communities(&group, nodes, edges);
+        let mut child_cloud_ids = Vec::new();
+        let mut child_specs = Vec::new();
+        for (child_index, child_group) in child_groups.into_iter().enumerate() {
+            let child_id = format!("{cloud_id}-child-{}", child_index + 1);
+            for member_id in &child_group {
+                if let Some(index) = node_index.get(member_id).copied() {
+                    nodes[index].parent_cloud_id = Some(cloud_id.clone());
+                    nodes[index].child_cloud_id = Some(child_id.clone());
+                }
+            }
+            child_cloud_ids.push(child_id.clone());
+            child_specs.push(CloudSpec {
+                id: child_id,
+                parent_id: Some(cloud_id.clone()),
+                level: 1,
+                radius: child_cloud_radius(child_group.len()),
+                centrality: group_centrality(&child_group, nodes),
+                centroid: centroid_for_ids(&child_group, nodes),
+                member_node_ids: child_group,
+                core_node_ids: Vec::new(),
+                outlier_node_ids: Vec::new(),
+                child_cloud_ids: Vec::new(),
+            });
+        }
+
+        let child_area_radius = child_specs
+            .iter()
+            .map(|spec| spec.radius * spec.radius)
+            .sum::<f32>()
+            .sqrt()
+            * 1.2;
+        specs.push(CloudSpec {
+            id: cloud_id,
+            parent_id: None,
+            level: 0,
+            radius: top_cloud_radius(group.len()).max(child_area_radius + 58.0),
+            centrality: group_centrality(&group, nodes),
+            centroid: centroid_for_ids(&group, nodes),
+            member_node_ids: group,
+            core_node_ids: Vec::new(),
+            outlier_node_ids: Vec::new(),
+            child_cloud_ids,
+        });
+        specs.extend(child_specs);
+    }
+    specs
+}
+
+fn target_top_cloud_count(note_count: usize) -> usize {
+    if note_count < CLOUD_MIN_NOTES {
+        return 0;
+    }
+    if note_count <= 24 {
+        return 1;
+    }
+    let target = ((note_count as f32).sqrt() * 0.75).round() as usize;
+    target
+        .clamp(4, 28)
+        .min((note_count / CLOUD_MIN_NOTES).max(1))
+}
+
+fn partition_group(
+    group: &[String],
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+    target_size: usize,
+    max_groups: usize,
+) -> Vec<Vec<String>> {
+    if group.len() <= target_size.max(CLOUD_MIN_NOTES) || max_groups <= 1 {
+        return vec![group.to_vec()];
+    }
+    let desired_groups = group
+        .len()
+        .div_ceil(target_size.max(CLOUD_MIN_NOTES))
+        .clamp(2, max_groups.max(2));
+    let resolution = (desired_groups as f64 / group.len().max(1) as f64)
+        .mul_add(8.0, 0.65)
+        .clamp(0.75, 2.4);
+    let mut groups =
+        leiden_partition_group(group, edges, resolution, stable_hash(&group.join("\0")));
+    if groups.len() <= 1 {
+        groups = seeded_partition_group(group, nodes, edges, target_size, max_groups);
+    }
+    groups = merge_small_groups(groups, nodes, edges);
+    groups = merge_to_target_groups(groups, nodes, edges, max_groups);
+    groups.sort_by(|left, right| {
+        right
+            .len()
+            .cmp(&left.len())
+            .then_with(|| left.first().cmp(&right.first()))
+    });
+    groups
+}
+
+fn leiden_partition_group(
+    group: &[String],
+    edges: &[LayoutEdge],
+    resolution: f64,
+    seed: u64,
+) -> Vec<Vec<String>> {
+    let index_by_id = group
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (id.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let mut builder = GraphDataBuilder::new(group.len());
+    let mut edge_count = 0usize;
+    for edge in edges {
+        let (Some(&source), Some(&target)) = (
+            index_by_id.get(edge.source_id.as_str()),
+            index_by_id.get(edge.target_id.as_str()),
+        ) else {
+            continue;
+        };
+        if source == target || edge.weight <= 0.0 {
             continue;
         }
-        let member_refs = members
+        if builder
+            .add_edge(source, target, f64::from(edge.weight))
+            .is_ok()
+        {
+            edge_count += 1;
+        }
+    }
+    if edge_count == 0 {
+        return Vec::new();
+    }
+    let Ok(graph) = builder.build() else {
+        return Vec::new();
+    };
+    let config = LeidenConfig::builder()
+        .quality(QualityType::RBConfiguration)
+        .resolution(resolution)
+        .max_iterations(48)
+        .min_iterations(2)
+        .seed(seed)
+        .build();
+    let Ok(result) = Leiden::new(config).run(&graph) else {
+        return Vec::new();
+    };
+    let mut by_community = HashMap::<usize, Vec<String>>::new();
+    for (index, id) in group.iter().enumerate() {
+        by_community
+            .entry(result.partition.community_of(index))
+            .or_default()
+            .push(id.clone());
+    }
+    let mut groups = by_community.into_values().collect::<Vec<_>>();
+    for group in &mut groups {
+        group.sort();
+    }
+    groups.sort_by(|left, right| left[0].cmp(&right[0]));
+    groups
+}
+
+fn seeded_partition_group(
+    group: &[String],
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+    target_size: usize,
+    max_groups: usize,
+) -> Vec<Vec<String>> {
+    let group_count = group
+        .len()
+        .div_ceil(target_size.max(CLOUD_MIN_NOTES))
+        .clamp(2, max_groups.max(2));
+    let seeds = choose_seed_ids(group, nodes, group_count);
+    if seeds.len() < 2 {
+        return vec![group.to_vec()];
+    }
+    let node_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let adjacency = adjacency_for_group(group, edges);
+    let seed_by_label = seeds
+        .iter()
+        .filter_map(|seed| {
+            node_by_id
+                .get(seed.as_str())
+                .map(|node| (seed.clone(), *node))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut groups = HashMap::<String, Vec<String>>::new();
+    for id in group {
+        let Some(node) = node_by_id.get(id.as_str()) else {
+            continue;
+        };
+        let label = seeds
             .iter()
-            .filter_map(|id| node_by_id.get(id).map(|index| &nodes[*index]))
-            .collect::<Vec<_>>();
-        let center = centroid(&member_refs);
-        let max_radius = (95.0 + (members.len() as f32).sqrt() * 24.0).clamp(145.0, 225.0);
-        for member_id in members {
-            let Some(index) = node_by_id.get(member_id).copied() else {
-                continue;
+            .max_by(|left, right| {
+                let left_score = seed_assignment_score(node, left, &seed_by_label, &adjacency);
+                let right_score = seed_assignment_score(node, right, &seed_by_label, &adjacency);
+                left_score
+                    .total_cmp(&right_score)
+                    .then_with(|| right.cmp(left))
+            })
+            .cloned()
+            .unwrap_or_else(|| id.clone());
+        groups.entry(label).or_default().push(id.clone());
+    }
+    let mut groups = groups.into_values().collect::<Vec<_>>();
+    for group in &mut groups {
+        group.sort();
+    }
+    groups
+}
+
+fn choose_seed_ids(group: &[String], nodes: &[WorkingNode], count: usize) -> Vec<String> {
+    let node_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let mut candidates = group.to_vec();
+    candidates.sort_by(|left, right| {
+        let left_node = node_by_id.get(left.as_str());
+        let right_node = node_by_id.get(right.as_str());
+        right_node
+            .map(|node| node.centrality)
+            .unwrap_or(0.0)
+            .total_cmp(&left_node.map(|node| node.centrality).unwrap_or(0.0))
+            .then_with(|| left.cmp(right))
+    });
+    let mut seeds = Vec::<String>::new();
+    if let Some(first) = candidates.first() {
+        seeds.push(first.clone());
+    }
+    while seeds.len() < count && seeds.len() < candidates.len() {
+        let Some(best) = candidates
+            .iter()
+            .filter(|candidate| !seeds.contains(candidate))
+            .max_by(|left, right| {
+                let left_score = seed_spread_score(left, &seeds, &node_by_id);
+                let right_score = seed_spread_score(right, &seeds, &node_by_id);
+                left_score
+                    .total_cmp(&right_score)
+                    .then_with(|| right.cmp(left))
+            })
+        else {
+            break;
+        };
+        seeds.push(best.clone());
+    }
+    seeds
+}
+
+fn seed_spread_score(
+    candidate: &str,
+    seeds: &[String],
+    node_by_id: &HashMap<&str, &WorkingNode>,
+) -> f32 {
+    let Some(candidate_node) = node_by_id.get(candidate) else {
+        return 0.0;
+    };
+    let min_distance = seeds
+        .iter()
+        .filter_map(|seed| node_by_id.get(seed.as_str()))
+        .map(|seed_node| 1.0 - cosine_similarity(&candidate_node.embedding, &seed_node.embedding))
+        .fold(1.0_f32, f32::min);
+    min_distance + candidate_node.centrality * 0.35
+}
+
+fn seed_assignment_score(
+    node: &WorkingNode,
+    seed_id: &str,
+    seed_by_label: &HashMap<String, &WorkingNode>,
+    adjacency: &HashMap<String, Vec<(String, f32)>>,
+) -> f32 {
+    let semantic = seed_by_label
+        .get(seed_id)
+        .map(|seed| cosine_similarity(&node.embedding, &seed.embedding))
+        .unwrap_or(0.0);
+    let direct = adjacency
+        .get(&node.id)
+        .into_iter()
+        .flatten()
+        .find_map(|(neighbor, weight)| (neighbor == seed_id).then_some(*weight))
+        .unwrap_or(0.0);
+    semantic * 0.55 + direct * 0.45
+}
+
+fn adjacency_for_group(
+    group: &[String],
+    edges: &[LayoutEdge],
+) -> HashMap<String, Vec<(String, f32)>> {
+    let group_set = group.iter().cloned().collect::<HashSet<_>>();
+    let mut adjacency = HashMap::<String, Vec<(String, f32)>>::new();
+    for id in group {
+        adjacency.entry(id.clone()).or_default();
+    }
+    for edge in edges {
+        if !group_set.contains(&edge.source_id) || !group_set.contains(&edge.target_id) {
+            continue;
+        }
+        adjacency
+            .entry(edge.source_id.clone())
+            .or_default()
+            .push((edge.target_id.clone(), edge.weight));
+        adjacency
+            .entry(edge.target_id.clone())
+            .or_default()
+            .push((edge.source_id.clone(), edge.weight));
+    }
+    adjacency
+}
+
+fn merge_small_groups(
+    mut groups: Vec<Vec<String>>,
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+) -> Vec<Vec<String>> {
+    loop {
+        let Some((small_index, _)) = groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| group.len() < CLOUD_MIN_NOTES)
+            .min_by(|left, right| left.1.len().cmp(&right.1.len()))
+        else {
+            break;
+        };
+        let small_group = groups.remove(small_index);
+        if groups.is_empty() {
+            return if small_group.len() >= CLOUD_MIN_NOTES {
+                vec![small_group]
+            } else {
+                Vec::new()
             };
-            let dx = nodes[index].x - center[0];
-            let dy = nodes[index].y - center[1];
-            let dist = (dx * dx + dy * dy).sqrt();
-            if dist <= max_radius || dist <= 1.0 {
-                continue;
+        }
+        let target_index = strongest_group_index(&small_group, &groups, nodes, edges);
+        groups[target_index].extend(small_group);
+        groups[target_index].sort();
+    }
+    groups.retain(|group| group.len() >= CLOUD_MIN_NOTES);
+    groups
+}
+
+fn merge_to_target_groups(
+    mut groups: Vec<Vec<String>>,
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+    target: usize,
+) -> Vec<Vec<String>> {
+    if target == 0 {
+        return Vec::new();
+    }
+    while groups.len() > target {
+        let mut best_pair = None;
+        let mut best_score = f32::MIN;
+        for left in 0..groups.len() {
+            for right in (left + 1)..groups.len() {
+                let score = group_affinity(&groups[left], &groups[right], nodes, edges);
+                if score > best_score {
+                    best_score = score;
+                    best_pair = Some((left, right));
+                }
             }
-            let target_x = center[0] + dx / dist * max_radius;
-            let target_y = center[1] + dy / dist * max_radius;
-            nodes[index].x = nodes[index].x * 0.35 + target_x * 0.65;
-            nodes[index].y = nodes[index].y * 0.35 + target_y * 0.65;
+        }
+        let Some((left, right)) = best_pair else {
+            break;
+        };
+        let mut merged = groups.remove(right);
+        groups[left].append(&mut merged);
+        groups[left].sort();
+    }
+    groups
+}
+
+fn strongest_group_index(
+    source: &[String],
+    groups: &[Vec<String>],
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+) -> usize {
+    groups
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| {
+            let left_score = group_affinity(source, left, nodes, edges);
+            let right_score = group_affinity(source, right, nodes, edges);
+            left_score
+                .total_cmp(&right_score)
+                .then_with(|| right.len().cmp(&left.len()))
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(0)
+}
+
+fn group_affinity(
+    left: &[String],
+    right: &[String],
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+) -> f32 {
+    let left_set = left.iter().cloned().collect::<HashSet<_>>();
+    let right_set = right.iter().cloned().collect::<HashSet<_>>();
+    let edge_affinity = edges
+        .iter()
+        .filter(|edge| {
+            (left_set.contains(&edge.source_id) && right_set.contains(&edge.target_id))
+                || (left_set.contains(&edge.target_id) && right_set.contains(&edge.source_id))
+        })
+        .map(|edge| edge.weight)
+        .sum::<f32>();
+    if edge_affinity > 0.0 {
+        return edge_affinity;
+    }
+    group_embedding_similarity(left, right, nodes) * 0.12
+}
+
+fn group_embedding_similarity(left: &[String], right: &[String], nodes: &[WorkingNode]) -> f32 {
+    let node_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let left_centroid = embedding_centroid(left, &node_by_id);
+    let right_centroid = embedding_centroid(right, &node_by_id);
+    cosine_similarity(&left_centroid, &right_centroid).max(0.0)
+}
+
+fn embedding_centroid(ids: &[String], node_by_id: &HashMap<&str, &WorkingNode>) -> Vec<f32> {
+    let Some(dimensions) = ids
+        .iter()
+        .filter_map(|id| node_by_id.get(id.as_str()))
+        .map(|node| node.embedding.len())
+        .find(|len| *len > 0)
+    else {
+        return Vec::new();
+    };
+    let mut centroid = vec![0.0_f32; dimensions];
+    let mut count = 0usize;
+    for id in ids {
+        let Some(node) = node_by_id.get(id.as_str()) else {
+            continue;
+        };
+        if node.embedding.len() != dimensions {
+            continue;
+        }
+        for (sum, value) in centroid.iter_mut().zip(&node.embedding) {
+            *sum += *value;
+        }
+        count += 1;
+    }
+    if count > 0 {
+        for value in &mut centroid {
+            *value /= count as f32;
+        }
+    }
+    centroid
+}
+
+fn detect_child_communities(
+    parent_group: &[String],
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+) -> Vec<Vec<String>> {
+    if parent_group.len() < CHILD_CLOUD_MIN_NOTES * 2 {
+        return Vec::new();
+    }
+    let target_size = CHILD_TARGET_MAX_NOTES
+        .min(parent_group.len())
+        .max(CHILD_CLOUD_MIN_NOTES);
+    let max_groups = parent_group.len().div_ceil(CHILD_CLOUD_MIN_NOTES).max(2);
+    let mut groups = partition_group(parent_group, nodes, edges, target_size, max_groups);
+    if groups.len() < 2 || partition_separation(&groups, edges) < 0.18 {
+        return Vec::new();
+    }
+
+    for index in 0..groups.len() {
+        let mut retained = Vec::new();
+        let mut loose = Vec::new();
+        let group = groups[index].clone();
+        for id in group {
+            let attachment = node_internal_affinity(&id, &groups[index], edges);
+            if groups[index].len().saturating_sub(loose.len()) > CLOUD_MIN_NOTES
+                && attachment < 0.34
+            {
+                loose.push(id);
+            } else {
+                retained.push(id);
+            }
+        }
+        groups[index] = retained;
+        for loose_id in loose {
+            let target = strongest_group_index(&[loose_id.clone()], &groups, nodes, edges);
+            if node_internal_affinity(&loose_id, &groups[target], edges) >= 0.5 {
+                groups[target].push(loose_id);
+                groups[target].sort();
+            }
+        }
+    }
+    groups.retain(|group| group.len() >= CLOUD_MIN_NOTES);
+    if groups.len() < 2 {
+        Vec::new()
+    } else {
+        groups
+    }
+}
+
+fn partition_separation(groups: &[Vec<String>], edges: &[LayoutEdge]) -> f32 {
+    let mut group_by_node = HashMap::<String, usize>::new();
+    for (index, group) in groups.iter().enumerate() {
+        for id in group {
+            group_by_node.insert(id.clone(), index);
+        }
+    }
+    let mut internal = 0.0_f32;
+    let mut external = 0.0_f32;
+    for edge in edges {
+        let (Some(source), Some(target)) = (
+            group_by_node.get(&edge.source_id),
+            group_by_node.get(&edge.target_id),
+        ) else {
+            continue;
+        };
+        if source == target {
+            internal += edge.weight;
+        } else {
+            external += edge.weight;
+        }
+    }
+    if internal + external <= f32::EPSILON {
+        return 0.0;
+    }
+    internal / (internal + external)
+}
+
+fn node_internal_affinity(node_id: &str, group: &[String], edges: &[LayoutEdge]) -> f32 {
+    let group_set = group.iter().cloned().collect::<HashSet<_>>();
+    edges
+        .iter()
+        .filter(|edge| {
+            (edge.source_id == node_id && group_set.contains(&edge.target_id))
+                || (edge.target_id == node_id && group_set.contains(&edge.source_id))
+        })
+        .map(|edge| edge.weight)
+        .sum()
+}
+
+fn group_centrality(group: &[String], nodes: &[WorkingNode]) -> f32 {
+    let node_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let total = group
+        .iter()
+        .filter_map(|id| node_by_id.get(id.as_str()))
+        .map(|node| node.centrality)
+        .sum::<f32>();
+    total / group.len().max(1) as f32
+}
+
+fn centroid_for_ids(ids: &[String], nodes: &[WorkingNode]) -> [f32; 2] {
+    let node_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let refs = ids
+        .iter()
+        .filter_map(|id| node_by_id.get(id.as_str()).copied())
+        .collect::<Vec<_>>();
+    centroid(&refs)
+}
+
+fn top_cloud_radius(note_count: usize) -> f32 {
+    (95.0 + (note_count as f32).sqrt() * 18.0).clamp(125.0, 420.0)
+}
+
+fn child_cloud_radius(note_count: usize) -> f32 {
+    (38.0 + (note_count as f32).sqrt() * 13.0).clamp(58.0, 180.0)
+}
+
+fn apply_umap_layout(nodes: &mut [WorkingNode], knn_rows: &[Vec<KnnNeighbor>]) -> bool {
+    let n = nodes.len();
+    let Some(dimensions) = nodes
+        .iter()
+        .map(|node| node.embedding.len())
+        .find(|dimensions| *dimensions > 0)
+    else {
+        return false;
+    };
+    if n < 4
+        || nodes.iter().any(|node| {
+            node.embedding.len() != dimensions
+                || node.embedding.iter().any(|value| !value.is_finite())
+        })
+    {
+        return false;
+    }
+    let neighbor_count = KNN_GRAPH_K
+        .min(n.saturating_sub(1))
+        .clamp(2, n.saturating_sub(1));
+    if neighbor_count >= n {
+        return false;
+    }
+
+    let mut data = Array2::<f32>::zeros((n, dimensions));
+    for (row, node) in nodes.iter().enumerate() {
+        for (column, value) in node.embedding.iter().enumerate() {
+            data[(row, column)] = *value;
+        }
+    }
+
+    let completed_rows = complete_knn_rows_for_umap(nodes, knn_rows, neighbor_count);
+    if completed_rows.iter().any(|row| row.len() != neighbor_count) {
+        return false;
+    }
+    let mut knn_indices = Array2::<u32>::zeros((n, neighbor_count));
+    let mut knn_dists = Array2::<f32>::zeros((n, neighbor_count));
+    for (row_index, row) in completed_rows.iter().enumerate() {
+        for (neighbor_index, neighbor) in row.iter().enumerate() {
+            knn_indices[(row_index, neighbor_index)] = neighbor.index as u32;
+            knn_dists[(row_index, neighbor_index)] = neighbor.distance;
+        }
+    }
+
+    let mut init = Array2::<f32>::zeros((n, 2));
+    for (index, node) in nodes.iter().enumerate() {
+        init[(index, 0)] = node.x / 360.0;
+        init[(index, 1)] = node.y / 360.0;
+    }
+
+    let mut config = UmapConfig::default();
+    config.n_components = 2;
+    config.graph = GraphParams {
+        n_neighbors: neighbor_count,
+        ..Default::default()
+    };
+    config.optimization = OptimizationParams {
+        n_epochs: Some(UMAP_ITERATIONS),
+        learning_rate: 0.9,
+        negative_sample_rate: 5,
+        repulsion_strength: 1.15,
+    };
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let umap = Umap::new(config);
+        let fitted = umap.fit(
+            data.view(),
+            knn_indices.view(),
+            knn_dists.view(),
+            init.view(),
+        );
+        fitted.embedding().to_owned()
+    }));
+    let Ok(embedding) = result else {
+        return false;
+    };
+    if embedding.nrows() != n
+        || embedding.ncols() != 2
+        || embedding.iter().any(|value| !value.is_finite())
+    {
+        return false;
+    }
+    apply_normalized_embedding(nodes, &embedding);
+    true
+}
+
+fn complete_knn_rows_for_umap(
+    nodes: &[WorkingNode],
+    knn_rows: &[Vec<KnnNeighbor>],
+    neighbor_count: usize,
+) -> Vec<Vec<KnnNeighbor>> {
+    let exact_rows = exact_knn_rows(nodes, neighbor_count);
+    knn_rows
+        .iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            let mut merged = Vec::<KnnNeighbor>::new();
+            for neighbor in row {
+                if neighbor.index != row_index {
+                    push_unique_neighbor(&mut merged, neighbor.index, neighbor.similarity);
+                }
+                if merged.len() == neighbor_count {
+                    break;
+                }
+            }
+            for neighbor in exact_rows.get(row_index).into_iter().flatten() {
+                push_unique_neighbor(&mut merged, neighbor.index, neighbor.similarity);
+                if merged.len() == neighbor_count {
+                    break;
+                }
+            }
+            merged.sort_by(|left, right| {
+                right
+                    .similarity
+                    .total_cmp(&left.similarity)
+                    .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
+            });
+            merged.truncate(neighbor_count);
+            merged
+        })
+        .collect()
+}
+
+fn apply_normalized_embedding(nodes: &mut [WorkingNode], embedding: &Array2<f32>) {
+    let min_x = embedding
+        .column(0)
+        .iter()
+        .copied()
+        .fold(f32::INFINITY, f32::min);
+    let max_x = embedding
+        .column(0)
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = embedding
+        .column(1)
+        .iter()
+        .copied()
+        .fold(f32::INFINITY, f32::min);
+    let max_y = embedding
+        .column(1)
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let width = (max_x - min_x).abs().max(0.000_1);
+    let height = (max_y - min_y).abs().max(0.000_1);
+    let target_span = (nodes.len() as f32).sqrt().clamp(4.0, 36.0) * 170.0;
+    let scale = target_span / width.max(height);
+    let center_x = (min_x + max_x) / 2.0;
+    let center_y = (min_y + max_y) / 2.0;
+    for (index, node) in nodes.iter_mut().enumerate() {
+        node.x = (embedding[(index, 0)] - center_x) * scale;
+        node.y = (embedding[(index, 1)] - center_y) * scale;
+    }
+}
+
+fn refresh_cloud_geometry(specs: &mut [CloudSpec], nodes: &[WorkingNode]) {
+    for spec in specs {
+        let centroid = centroid_for_ids(&spec.member_node_ids, nodes);
+        spec.centroid = centroid;
+        let member_radius = spec
+            .member_node_ids
+            .iter()
+            .filter_map(|id| nodes.iter().find(|node| node.id == *id))
+            .map(|node| distance([node.x, node.y], centroid))
+            .fold(0.0_f32, f32::max);
+        let base = if spec.level == 0 {
+            top_cloud_radius(spec.member_node_ids.len())
+        } else {
+            child_cloud_radius(spec.member_node_ids.len())
+        };
+        spec.radius = base.max(member_radius + if spec.level == 0 { 86.0 } else { 44.0 });
+    }
+}
+
+fn separate_umap_clouds(
+    nodes: &mut [WorkingNode],
+    edges: &[LayoutEdge],
+    specs: &mut [CloudSpec],
+    layout_pull: f32,
+) {
+    refresh_cloud_geometry(specs, nodes);
+    compact_cloud_members(nodes, specs, 0);
+    refresh_cloud_geometry(specs, nodes);
+
+    let previous_top_centers = specs
+        .iter()
+        .filter(|spec| spec.level == 0)
+        .map(|spec| (spec.id.clone(), spec.centroid))
+        .collect::<HashMap<_, _>>();
+    place_top_level_clouds(specs, edges, layout_pull);
+    translate_cloud_members(nodes, specs, previous_top_centers, 0);
+    refresh_cloud_geometry(specs, nodes);
+
+    compact_cloud_members(nodes, specs, 1);
+    refresh_cloud_geometry(specs, nodes);
+    separate_child_umap_clouds(nodes, edges, specs);
+    refresh_cloud_geometry(specs, nodes);
+}
+
+fn compact_cloud_members(nodes: &mut [WorkingNode], specs: &[CloudSpec], level: usize) {
+    let node_index = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id.clone(), index))
+        .collect::<HashMap<_, _>>();
+    for spec in specs.iter().filter(|spec| spec.level == level) {
+        let center = spec.centroid;
+        let target_radius = if spec.level == 0 {
+            top_cloud_radius(spec.member_node_ids.len()) * 0.58
+        } else {
+            child_cloud_radius(spec.member_node_ids.len()) * 0.54
+        }
+        .max(34.0);
+        let member_indices = spec
+            .member_node_ids
+            .iter()
+            .filter_map(|id| node_index.get(id).copied())
+            .collect::<Vec<_>>();
+        let max_distance = member_indices
+            .iter()
+            .map(|index| distance([nodes[*index].x, nodes[*index].y], center))
+            .fold(0.0_f32, f32::max);
+        if max_distance <= target_radius || max_distance <= 1.0 {
+            continue;
+        }
+        let scale = target_radius / max_distance;
+        for index in member_indices {
+            nodes[index].x = center[0] + (nodes[index].x - center[0]) * scale;
+            nodes[index].y = center[1] + (nodes[index].y - center[1]) * scale;
         }
     }
 }
 
-fn split_component_into_parent_clouds(
-    component: &[String],
-    nodes: &[WorkingNode],
-    links: &[WorkingLink],
-) -> Vec<Vec<String>> {
-    if component.len() <= CLOUD_TARGET_MAX_NOTES {
-        return vec![component.to_vec()];
-    }
-
-    let member_set = component.iter().cloned().collect::<HashSet<_>>();
-    let mut labels = component
+fn translate_cloud_members(
+    nodes: &mut [WorkingNode],
+    specs: &[CloudSpec],
+    previous_centers: HashMap<String, [f32; 2]>,
+    level: usize,
+) {
+    let node_index = nodes
         .iter()
-        .map(|id| (id.clone(), id.clone()))
+        .enumerate()
+        .map(|(index, node)| (node.id.clone(), index))
         .collect::<HashMap<_, _>>();
-    let mut adjacency = HashMap::<String, Vec<(String, f32)>>::new();
-    for id in component {
-        adjacency.entry(id.clone()).or_default();
-    }
-    for link in links {
-        if !member_set.contains(&link.source_id) || !member_set.contains(&link.target_id) {
+    for spec in specs.iter().filter(|spec| spec.level == level) {
+        let Some(previous) = previous_centers.get(&spec.id).copied() else {
             continue;
-        }
-        let weight = if link.kind == "wikilink" {
-            link.strength + 0.35
-        } else {
-            link.strength
         };
-        if weight < 0.42 {
+        let delta = [
+            spec.centroid[0] - previous[0],
+            spec.centroid[1] - previous[1],
+        ];
+        for member_id in &spec.member_node_ids {
+            if let Some(index) = node_index.get(member_id).copied() {
+                nodes[index].x += delta[0];
+                nodes[index].y += delta[1];
+            }
+        }
+    }
+}
+
+fn separate_child_umap_clouds(
+    nodes: &mut [WorkingNode],
+    edges: &[LayoutEdge],
+    specs: &mut [CloudSpec],
+) {
+    let top_ids = specs
+        .iter()
+        .filter(|spec| spec.level == 0)
+        .map(|spec| spec.id.clone())
+        .collect::<Vec<_>>();
+    let spec_index = specs
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| (spec.id.clone(), index))
+        .collect::<HashMap<_, _>>();
+    for top_id in top_ids {
+        let Some(&top_index) = spec_index.get(&top_id) else {
+            continue;
+        };
+        let child_indices = specs[top_index]
+            .child_cloud_ids
+            .iter()
+            .filter_map(|id| spec_index.get(id).copied())
+            .collect::<Vec<_>>();
+        if child_indices.len() < 2 {
             continue;
         }
-        adjacency
-            .entry(link.source_id.clone())
-            .or_default()
-            .push((link.target_id.clone(), weight));
-        adjacency
-            .entry(link.target_id.clone())
-            .or_default()
-            .push((link.source_id.clone(), weight));
+        let previous_child_centers = child_indices
+            .iter()
+            .map(|index| (specs[*index].id.clone(), specs[*index].centroid))
+            .collect::<HashMap<_, _>>();
+        place_child_centers(top_index, &child_indices, specs, edges);
+        translate_cloud_members(nodes, specs, previous_child_centers, 1);
+    }
+}
+
+fn place_cloud_first_layout(
+    nodes: &mut [WorkingNode],
+    edges: &[LayoutEdge],
+    specs: &mut [CloudSpec],
+    layout_pull: f32,
+) {
+    place_top_level_clouds(specs, edges, layout_pull);
+    place_child_clouds_and_notes(nodes, edges, specs);
+}
+
+fn place_top_level_clouds(specs: &mut [CloudSpec], edges: &[LayoutEdge], layout_pull: f32) {
+    let top_indices = specs
+        .iter()
+        .enumerate()
+        .filter(|(_, spec)| spec.level == 0)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if top_indices.is_empty() {
+        return;
+    }
+    let mut order = top_indices.clone();
+    order.sort_by(|left, right| {
+        specs[*right]
+            .centrality
+            .total_cmp(&specs[*left].centrality)
+            .then_with(|| {
+                specs[*right]
+                    .member_node_ids
+                    .len()
+                    .cmp(&specs[*left].member_node_ids.len())
+            })
+            .then_with(|| specs[*left].id.cmp(&specs[*right].id))
+    });
+
+    let mut placed = Vec::<usize>::new();
+    for &index in &order {
+        if placed.is_empty() {
+            specs[index].centroid = [0.0, 0.0];
+            placed.push(index);
+            continue;
+        }
+        let related_anchor = related_cloud_anchor(index, &placed, specs, edges);
+        let anchor = related_anchor.unwrap_or([0.0, 0.0]);
+        let placement_gap = if related_anchor.is_some() {
+            TOP_LEVEL_CLOUD_GAP
+        } else {
+            TOP_LEVEL_CLOUD_GAP + specs[index].radius * 0.35 + 120.0
+        };
+        specs[index].centroid =
+            find_non_overlapping_center(&specs[index], &placed, specs, anchor, placement_gap);
+        placed.push(index);
     }
 
-    let mut ordered = component.to_vec();
-    ordered.sort();
-    for _ in 0..18 {
-        let mut changed = false;
-        for id in &ordered {
-            let mut scores = HashMap::<String, f32>::new();
-            if let Some(current) = labels.get(id) {
-                *scores.entry(current.clone()).or_default() += 0.16;
+    relax_cloud_centers(
+        &top_indices,
+        specs,
+        edges,
+        TOP_LEVEL_CLOUD_GAP,
+        layout_pull,
+        150,
+    );
+    enforce_cloud_non_overlap(&top_indices, specs, TOP_LEVEL_CLOUD_GAP, 1_200);
+    let anchor = order[0];
+    let offset = specs[anchor].centroid;
+    for &index in &top_indices {
+        specs[index].centroid[0] -= offset[0];
+        specs[index].centroid[1] -= offset[1];
+    }
+}
+
+fn related_cloud_anchor(
+    index: usize,
+    placed: &[usize],
+    specs: &[CloudSpec],
+    edges: &[LayoutEdge],
+) -> Option<[f32; 2]> {
+    let mut total_weight = 0.0_f32;
+    let mut anchor = [0.0_f32, 0.0_f32];
+    for &placed_index in placed {
+        let affinity = cloud_affinity(&specs[index], &specs[placed_index], edges);
+        if affinity <= 0.0 {
+            continue;
+        }
+        total_weight += affinity;
+        anchor[0] += specs[placed_index].centroid[0] * affinity;
+        anchor[1] += specs[placed_index].centroid[1] * affinity;
+    }
+    if total_weight <= f32::EPSILON {
+        None
+    } else {
+        Some([anchor[0] / total_weight, anchor[1] / total_weight])
+    }
+}
+
+fn find_non_overlapping_center(
+    spec: &CloudSpec,
+    placed: &[usize],
+    specs: &[CloudSpec],
+    anchor: [f32; 2],
+    gap: f32,
+) -> [f32; 2] {
+    let phase = stable_angle(&spec.id);
+    let mut best = None;
+    let mut best_score = f32::MAX;
+    for step in 0..320 {
+        let ring = (step / 24) as f32;
+        let angle = phase + step as f32 * 2.399_963_1;
+        let distance = spec.radius + gap + 70.0 + ring * (spec.radius * 0.22 + 58.0);
+        let candidate = [
+            anchor[0] + angle.cos() * distance,
+            anchor[1] + angle.sin() * distance,
+        ];
+        if !cloud_center_overlaps(candidate, spec.radius, placed, specs, gap) {
+            let score = squared_distance(candidate, anchor)
+                + squared_distance(candidate, [0.0, 0.0]) * 0.08;
+            if score < best_score {
+                best = Some(candidate);
+                best_score = score;
             }
-            for (neighbor, weight) in adjacency.get(id).into_iter().flatten() {
-                if let Some(label) = labels.get(neighbor) {
-                    *scores.entry(label.clone()).or_default() += weight;
+        }
+    }
+    best.unwrap_or_else(|| {
+        let fallback_distance =
+            placed.iter().map(|index| specs[*index].radius).sum::<f32>() + spec.radius + gap;
+        [
+            anchor[0] + phase.cos() * fallback_distance,
+            anchor[1] + phase.sin() * fallback_distance,
+        ]
+    })
+}
+
+fn find_non_overlapping_child_center(
+    spec: &CloudSpec,
+    placed: &[usize],
+    specs: &[CloudSpec],
+    anchor: [f32; 2],
+    parent_center: [f32; 2],
+    gap: f32,
+) -> [f32; 2] {
+    let phase = stable_angle(&spec.id);
+    let mut best = None;
+    let mut best_score = f32::MAX;
+    for step in 0..420 {
+        let ring = (step / 36) as f32;
+        let angle = phase + step as f32 * 2.399_963_1;
+        let distance = spec.radius + gap + 8.0 + ring * 22.0;
+        let candidate = [
+            anchor[0] + angle.cos() * distance,
+            anchor[1] + angle.sin() * distance,
+        ];
+        if !cloud_center_overlaps(candidate, spec.radius, placed, specs, gap) {
+            let score = squared_distance(candidate, anchor)
+                + squared_distance(candidate, parent_center) * 0.22;
+            if score < best_score {
+                best = Some(candidate);
+                best_score = score;
+            }
+        }
+    }
+    best.unwrap_or_else(|| {
+        let fallback_distance =
+            placed.iter().map(|index| specs[*index].radius).sum::<f32>() + spec.radius + gap;
+        [
+            parent_center[0] + phase.cos() * fallback_distance,
+            parent_center[1] + phase.sin() * fallback_distance,
+        ]
+    })
+}
+
+fn cloud_center_overlaps(
+    center: [f32; 2],
+    radius: f32,
+    placed: &[usize],
+    specs: &[CloudSpec],
+    gap: f32,
+) -> bool {
+    placed.iter().any(|index| {
+        let other = &specs[*index];
+        distance(center, other.centroid) < radius + other.radius + gap
+    })
+}
+
+fn relax_cloud_centers(
+    indices: &[usize],
+    specs: &mut [CloudSpec],
+    edges: &[LayoutEdge],
+    gap: f32,
+    layout_pull: f32,
+    iterations: usize,
+) {
+    for _ in 0..iterations {
+        let mut deltas = HashMap::<usize, [f32; 2]>::new();
+        for &left in indices {
+            for &right in indices {
+                if left >= right {
+                    continue;
+                }
+                let dx = specs[left].centroid[0] - specs[right].centroid[0];
+                let dy = specs[left].centroid[1] - specs[right].centroid[1];
+                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                let desired = specs[left].radius + specs[right].radius + gap;
+                if dist < desired {
+                    let force = ((desired - dist) / desired).min(1.0) * 16.0;
+                    add_delta(&mut deltas, left, [dx / dist * force, dy / dist * force]);
+                    add_delta(&mut deltas, right, [-dx / dist * force, -dy / dist * force]);
+                }
+                let affinity = cloud_affinity(&specs[left], &specs[right], edges);
+                if affinity > 0.0 && dist > desired + 80.0 {
+                    let target = desired + (260.0 - affinity.min(8.0) * 18.0).max(64.0);
+                    if dist > target {
+                        let force =
+                            ((dist - target) / dist) * affinity.min(8.0) * 0.24 * layout_pull;
+                        add_delta(&mut deltas, left, [-dx / dist * force, -dy / dist * force]);
+                        add_delta(&mut deltas, right, [dx / dist * force, dy / dist * force]);
+                    }
                 }
             }
-            let Some((best_label, _)) = scores.into_iter().max_by(|left, right| {
-                left.1
-                    .total_cmp(&right.1)
-                    .then_with(|| right.0.cmp(&left.0))
-            }) else {
-                continue;
-            };
-            if labels.get(id) != Some(&best_label) {
-                labels.insert(id.clone(), best_label);
+        }
+        for &index in indices {
+            let center = specs[index].centroid;
+            add_delta(&mut deltas, index, [-center[0] * 0.002, -center[1] * 0.002]);
+        }
+        for (&index, delta) in &deltas {
+            specs[index].centroid[0] += delta[0].clamp(-24.0, 24.0);
+            specs[index].centroid[1] += delta[1].clamp(-24.0, 24.0);
+        }
+    }
+}
+
+fn enforce_cloud_non_overlap(
+    indices: &[usize],
+    specs: &mut [CloudSpec],
+    gap: f32,
+    iterations: usize,
+) {
+    for _ in 0..iterations {
+        let mut changed = false;
+        for &left in indices {
+            for &right in indices {
+                if left >= right {
+                    continue;
+                }
+                let dx = specs[left].centroid[0] - specs[right].centroid[0];
+                let dy = specs[left].centroid[1] - specs[right].centroid[1];
+                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                let desired = specs[left].radius + specs[right].radius + gap;
+                if dist >= desired {
+                    continue;
+                }
+                let push = (desired - dist) / 2.0 + 0.5;
+                specs[left].centroid[0] += dx / dist * push;
+                specs[left].centroid[1] += dy / dist * push;
+                specs[right].centroid[0] -= dx / dist * push;
+                specs[right].centroid[1] -= dy / dist * push;
                 changed = true;
             }
         }
@@ -699,362 +2192,323 @@ fn split_component_into_parent_clouds(
             break;
         }
     }
-
-    let mut communities = HashMap::<String, Vec<String>>::new();
-    for id in component {
-        let label = labels.get(id).cloned().unwrap_or_else(|| id.clone());
-        communities.entry(label).or_default().push(id.clone());
-    }
-    let mut groups = communities
-        .into_values()
-        .flat_map(|group| split_oversized_cloud(group, nodes))
-        .collect::<Vec<_>>();
-    let mut small = Vec::new();
-    groups.retain(|group| {
-        if group.len() < CLOUD_MIN_NOTES {
-            small.extend(group.iter().cloned());
-            false
-        } else {
-            true
-        }
-    });
-    if small.len() >= CLOUD_MIN_NOTES {
-        groups.push(small);
-    }
-    if groups.is_empty() {
-        return split_oversized_cloud(component.to_vec(), nodes);
-    }
-    groups.sort_by(|left, right| {
-        right
-            .len()
-            .cmp(&left.len())
-            .then_with(|| left[0].cmp(&right[0]))
-    });
-    groups
 }
 
-fn split_oversized_cloud(group: Vec<String>, nodes: &[WorkingNode]) -> Vec<Vec<String>> {
-    if group.len() <= CLOUD_TARGET_MAX_NOTES {
-        return vec![group];
+fn place_child_clouds_and_notes(
+    nodes: &mut [WorkingNode],
+    edges: &[LayoutEdge],
+    specs: &mut [CloudSpec],
+) {
+    let top_ids = specs
+        .iter()
+        .filter(|spec| spec.level == 0)
+        .map(|spec| spec.id.clone())
+        .collect::<Vec<_>>();
+    let spec_index = specs
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| (spec.id.clone(), index))
+        .collect::<HashMap<_, _>>();
+    for top_id in top_ids {
+        let Some(&top_index) = spec_index.get(&top_id) else {
+            continue;
+        };
+        let child_indices = specs[top_index]
+            .child_cloud_ids
+            .iter()
+            .filter_map(|id| spec_index.get(id).copied())
+            .collect::<Vec<_>>();
+        if child_indices.is_empty() {
+            layout_notes_in_disc(
+                nodes,
+                &specs[top_index].member_node_ids,
+                specs[top_index].centroid,
+                specs[top_index].radius * 0.72,
+                edges,
+            );
+            continue;
+        }
+
+        place_child_centers(top_index, &child_indices, specs, edges);
+        for &child_index in &child_indices {
+            layout_notes_in_disc(
+                nodes,
+                &specs[child_index].member_node_ids,
+                specs[child_index].centroid,
+                specs[child_index].radius * 0.62,
+                edges,
+            );
+        }
+
+        let child_members = child_indices
+            .iter()
+            .flat_map(|index| specs[*index].member_node_ids.iter().cloned())
+            .collect::<HashSet<_>>();
+        let loose_members = specs[top_index]
+            .member_node_ids
+            .iter()
+            .filter(|id| !child_members.contains(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !loose_members.is_empty() {
+            layout_notes_in_disc(
+                nodes,
+                &loose_members,
+                specs[top_index].centroid,
+                specs[top_index].radius * 0.78,
+                edges,
+            );
+        }
     }
+}
+
+fn place_child_centers(
+    parent_index: usize,
+    child_indices: &[usize],
+    specs: &mut [CloudSpec],
+    edges: &[LayoutEdge],
+) {
+    let parent_center = specs[parent_index].centroid;
+    let parent_radius = specs[parent_index].radius;
+    let mut order = child_indices.to_vec();
+    order.sort_by(|left, right| {
+        specs[*right]
+            .centrality
+            .total_cmp(&specs[*left].centrality)
+            .then_with(|| {
+                specs[*right]
+                    .member_node_ids
+                    .len()
+                    .cmp(&specs[*left].member_node_ids.len())
+            })
+            .then_with(|| specs[*left].id.cmp(&specs[*right].id))
+    });
+    let mut placed = Vec::<usize>::new();
+    for &index in &order {
+        if placed.is_empty() {
+            specs[index].centroid = parent_center;
+            placed.push(index);
+            continue;
+        }
+        let anchor = related_cloud_anchor(index, &placed, specs, edges).unwrap_or(parent_center);
+        let mut center = find_non_overlapping_child_center(
+            &specs[index],
+            &placed,
+            specs,
+            anchor,
+            parent_center,
+            CHILD_CLOUD_GAP,
+        );
+        let max_dist =
+            (parent_radius - specs[index].radius - CHILD_CLOUD_GAP).max(specs[index].radius);
+        let from_parent = [center[0] - parent_center[0], center[1] - parent_center[1]];
+        let dist = (from_parent[0] * from_parent[0] + from_parent[1] * from_parent[1]).sqrt();
+        if dist > max_dist && dist > 1.0 {
+            center = [
+                parent_center[0] + from_parent[0] / dist * max_dist,
+                parent_center[1] + from_parent[1] / dist * max_dist,
+            ];
+        }
+        specs[index].centroid = center;
+        placed.push(index);
+    }
+    relax_cloud_centers(child_indices, specs, edges, CHILD_CLOUD_GAP, 0.72, 90);
+    compact_child_centers(parent_index, child_indices, specs);
+    enforce_cloud_non_overlap(child_indices, specs, CHILD_CLOUD_GAP, 90);
+}
+
+fn compact_child_centers(parent_index: usize, child_indices: &[usize], specs: &mut [CloudSpec]) {
+    let parent_center = specs[parent_index].centroid;
+    let parent_radius = specs[parent_index].radius;
+    let max_extent = child_indices
+        .iter()
+        .map(|index| distance(specs[*index].centroid, parent_center) + specs[*index].radius)
+        .fold(0.0_f32, f32::max);
+    let target_extent = parent_radius * 0.68;
+    if max_extent <= target_extent || max_extent <= 1.0 {
+        return;
+    }
+    let scale = (target_extent / max_extent).clamp(0.72, 1.0);
+    for &index in child_indices {
+        specs[index].centroid = [
+            parent_center[0] + (specs[index].centroid[0] - parent_center[0]) * scale,
+            parent_center[1] + (specs[index].centroid[1] - parent_center[1]) * scale,
+        ];
+    }
+}
+
+fn layout_notes_in_disc(
+    nodes: &mut [WorkingNode],
+    member_ids: &[String],
+    center: [f32; 2],
+    radius: f32,
+    edges: &[LayoutEdge],
+) {
+    let node_index = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.id.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let mut members = member_ids
+        .iter()
+        .filter_map(|id| node_index.get(id).copied())
+        .collect::<Vec<_>>();
+    members.sort_by(|left, right| nodes[*left].id.cmp(&nodes[*right].id));
+    if members.is_empty() {
+        return;
+    }
+    let inner_radius = radius.max(36.0);
+    let count = members.len().max(1) as f32;
+    for (ordinal, &index) in members.iter().enumerate() {
+        let phase = stable_angle(&nodes[index].id);
+        let angle = phase + ordinal as f32 * 2.399_963_1;
+        let normalized = ((ordinal + 1) as f32 / (count + 1.0)).sqrt();
+        let jitter = 0.72 + ((stable_hash(&nodes[index].id) >> 16) % 1000) as f32 / 1000.0 * 0.22;
+        let distance = inner_radius * normalized * jitter;
+        nodes[index].x = center[0] + angle.cos() * distance;
+        nodes[index].y = center[1] + angle.sin() * distance;
+    }
+
+    let member_set = member_ids.iter().cloned().collect::<HashSet<_>>();
+    let local_edges = edges
+        .iter()
+        .filter(|edge| member_set.contains(&edge.source_id) && member_set.contains(&edge.target_id))
+        .collect::<Vec<_>>();
+    for _ in 0..54 {
+        let mut deltas = HashMap::<usize, [f32; 2]>::new();
+        for left_offset in 0..members.len() {
+            for right_offset in (left_offset + 1)..members.len() {
+                let left = members[left_offset];
+                let right = members[right_offset];
+                let dx = nodes[left].x - nodes[right].x;
+                let dy = nodes[left].y - nodes[right].y;
+                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                let desired = nodes[left].centrality.max(nodes[right].centrality) * 3.0 + 18.0;
+                if dist < desired {
+                    let force = (desired - dist) * 0.18;
+                    add_delta(&mut deltas, left, [dx / dist * force, dy / dist * force]);
+                    add_delta(&mut deltas, right, [-dx / dist * force, -dy / dist * force]);
+                }
+            }
+        }
+        for edge in &local_edges {
+            let (Some(&source), Some(&target)) = (
+                node_index.get(&edge.source_id),
+                node_index.get(&edge.target_id),
+            ) else {
+                continue;
+            };
+            let dx = nodes[target].x - nodes[source].x;
+            let dy = nodes[target].y - nodes[source].y;
+            let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+            let desired = 34.0 + (1.0 - edge.weight) * 58.0;
+            let force = (dist - desired) * 0.018 * edge.weight;
+            add_delta(&mut deltas, source, [dx / dist * force, dy / dist * force]);
+            add_delta(
+                &mut deltas,
+                target,
+                [-dx / dist * force, -dy / dist * force],
+            );
+        }
+        for &index in &members {
+            let dx = nodes[index].x - center[0];
+            let dy = nodes[index].y - center[1];
+            let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+            if dist > inner_radius {
+                let force = (dist - inner_radius) * 0.22;
+                add_delta(&mut deltas, index, [-dx / dist * force, -dy / dist * force]);
+            }
+        }
+        for (&index, delta) in &deltas {
+            nodes[index].x += delta[0].clamp(-8.0, 8.0);
+            nodes[index].y += delta[1].clamp(-8.0, 8.0);
+        }
+    }
+}
+
+fn finalize_cloud_cores(nodes: &[WorkingNode], edges: &[LayoutEdge], specs: &mut [CloudSpec]) {
     let node_by_id = nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
-    let refs = group
-        .iter()
-        .filter_map(|id| node_by_id.get(id.as_str()).copied())
-        .collect::<Vec<_>>();
-    let center = centroid(&refs);
-    let mut sorted = group;
-    sorted.sort_by(|left, right| {
-        let left_node = node_by_id.get(left.as_str());
-        let right_node = node_by_id.get(right.as_str());
-        let left_angle = left_node
-            .map(|node| (node.y - center[1]).atan2(node.x - center[0]))
-            .unwrap_or(0.0);
-        let right_angle = right_node
-            .map(|node| (node.y - center[1]).atan2(node.x - center[0]))
-            .unwrap_or(0.0);
-        left_angle
-            .total_cmp(&right_angle)
-            .then_with(|| left.cmp(right))
-    });
-    sorted
-        .chunks(CLOUD_TARGET_MAX_NOTES)
-        .map(|chunk| chunk.to_vec())
-        .collect()
-}
-
-fn separate_parent_clouds(
-    nodes: &mut [WorkingNode],
-    links: &[WorkingLink],
-    cloud_specs: &[(String, Option<String>, Vec<String>)],
-) {
-    let parent_specs = cloud_specs
-        .iter()
-        .filter(|(_, parent_id, _)| parent_id.is_none())
-        .collect::<Vec<_>>();
-    if parent_specs.len() < 2 {
-        return;
-    }
-
-    let node_by_id = nodes
-        .iter()
-        .enumerate()
-        .map(|(index, node)| (node.id.clone(), index))
-        .collect::<HashMap<_, _>>();
-    let cloud_by_node = parent_specs
-        .iter()
-        .enumerate()
-        .flat_map(|(cloud_index, (_, _, members))| {
-            members
-                .iter()
-                .map(move |member_id| (member_id.clone(), cloud_index))
-        })
-        .collect::<HashMap<_, _>>();
-    let mut centers = parent_specs
-        .iter()
-        .map(|(_, _, members)| {
-            let member_refs = members
-                .iter()
-                .filter_map(|id| node_by_id.get(id).map(|index| &nodes[*index]))
-                .collect::<Vec<_>>();
-            centroid(&member_refs)
-        })
-        .collect::<Vec<_>>();
-    let radii = parent_specs
-        .iter()
-        .zip(centers.iter())
-        .map(|((_, _, members), center)| {
-            members
-                .iter()
-                .filter_map(|id| node_by_id.get(id).map(|index| &nodes[*index]))
-                .map(|node| {
-                    let dx = node.x - center[0];
-                    let dy = node.y - center[1];
-                    (dx * dx + dy * dy).sqrt()
-                })
-                .fold(95.0_f32, f32::max)
-                + 70.0
-        })
-        .collect::<Vec<_>>();
-    let original_centers = centers.clone();
-    let mut affinities = HashMap::<(usize, usize), f32>::new();
-    let mut link_counts = HashMap::<(usize, usize), usize>::new();
-    for link in links {
-        let (Some(&source_cloud), Some(&target_cloud)) = (
-            cloud_by_node.get(&link.source_id),
-            cloud_by_node.get(&link.target_id),
-        ) else {
-            continue;
-        };
-        if source_cloud == target_cloud {
+    for spec in specs {
+        let members = spec
+            .member_node_ids
+            .iter()
+            .filter_map(|id| node_by_id.get(id.as_str()).copied())
+            .collect::<Vec<_>>();
+        if members.is_empty() {
             continue;
         }
-        let key = if source_cloud < target_cloud {
-            (source_cloud, target_cloud)
-        } else {
-            (target_cloud, source_cloud)
-        };
-        *affinities.entry(key).or_default() += link.strength;
-        *link_counts.entry(key).or_default() += 1;
-    }
-
-    for _ in 0..84 {
-        let mut deltas = vec![[0.0_f32, 0.0_f32]; centers.len()];
-        for left in 0..centers.len() {
-            for right in (left + 1)..centers.len() {
-                let dx = centers[left][0] - centers[right][0];
-                let dy = centers[left][1] - centers[right][1];
-                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-                let affinity = affinities.get(&(left, right)).copied().unwrap_or(0.0);
-                let link_count = link_counts.get(&(left, right)).copied().unwrap_or(0);
-                let linked_closeness = affinity.min(14.0) * 22.0 + link_count.min(8) as f32 * 8.0;
-                let desired = radii[left] + radii[right] + CLOUD_GAP - linked_closeness;
-                if dist < desired {
-                    let force = ((desired - dist) / desired).min(1.0) * 8.5;
-                    let fx = dx / dist * force;
-                    let fy = dy / dist * force;
-                    deltas[left][0] += fx;
-                    deltas[left][1] += fy;
-                    deltas[right][0] -= fx;
-                    deltas[right][1] -= fy;
-                } else if affinity > 0.0 {
-                    let desired_link_distance = (radii[left] + radii[right] + 110.0
-                        - linked_closeness * 0.42)
-                        .clamp(210.0, 520.0);
-                    if dist > desired_link_distance {
-                        let force = ((dist - desired_link_distance) / dist)
-                            * (affinity.min(10.0) * 0.95 + link_count.min(8) as f32 * 0.22);
-                        let fx = dx / dist * force;
-                        let fy = dy / dist * force;
-                        deltas[left][0] -= fx;
-                        deltas[left][1] -= fy;
-                        deltas[right][0] += fx;
-                        deltas[right][1] += fy;
-                    }
-                }
+        let mut distances = members
+            .iter()
+            .map(|node| {
+                let dx = node.x - spec.centroid[0];
+                let dy = node.y - spec.centroid[1];
+                (node.id.clone(), (dx * dx + dy * dy).sqrt())
+            })
+            .collect::<Vec<_>>();
+        distances.sort_by(|left, right| {
+            left.1
+                .total_cmp(&right.1)
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        let threshold = robust_distance_threshold(&distances);
+        let mut core = Vec::new();
+        let mut outliers = Vec::new();
+        for (id, dist) in distances {
+            let affinity = node_internal_affinity(&id, &spec.member_node_ids, edges);
+            if spec.member_node_ids.len().saturating_sub(outliers.len()) > CLOUD_MIN_NOTES
+                && dist > threshold
+                && affinity < 0.55
+            {
+                outliers.push(id);
+            } else {
+                core.push(id);
             }
         }
-        for (center, delta) in centers.iter_mut().zip(deltas) {
-            center[0] += delta[0].clamp(-12.0, 12.0);
-            center[1] += delta[1].clamp(-12.0, 12.0);
+        if core.len() < CLOUD_MIN_NOTES {
+            core = spec.member_node_ids.clone();
+            outliers.clear();
         }
-    }
-
-    for (center, original) in centers.iter_mut().zip(original_centers.iter()) {
-        let dx = center[0] - original[0];
-        let dy = center[1] - original[1];
-        let dist = (dx * dx + dy * dy).sqrt();
-        let max_shift = 420.0;
-        if dist > max_shift {
-            center[0] = original[0] + dx / dist * max_shift;
-            center[1] = original[1] + dy / dist * max_shift;
-        }
-    }
-
-    for (cloud_index, (_, _, members)) in parent_specs.iter().enumerate() {
-        let dx = centers[cloud_index][0] - original_centers[cloud_index][0];
-        let dy = centers[cloud_index][1] - original_centers[cloud_index][1];
-        for member_id in members {
-            if let Some(index) = node_by_id.get(member_id).copied() {
-                nodes[index].x += dx;
-                nodes[index].y += dy;
-            }
-        }
+        spec.core_node_ids = core;
+        spec.outlier_node_ids = outliers;
     }
 }
 
-fn separate_parent_cloud_hulls(
-    nodes: &mut [WorkingNode],
-    links: &[WorkingLink],
-    clouds: &[AtlasCloud],
-) {
-    let parents = clouds
-        .iter()
-        .filter(|cloud| cloud.parent_id.is_none())
-        .collect::<Vec<_>>();
-    if parents.len() < 2 {
-        return;
+fn robust_distance_threshold(distances: &[(String, f32)]) -> f32 {
+    if distances.len() < 5 {
+        return f32::MAX;
     }
-
-    let cloud_by_node = parents
-        .iter()
-        .enumerate()
-        .flat_map(|(cloud_index, cloud)| {
-            cloud
-                .member_node_ids
-                .iter()
-                .map(move |member_id| (member_id.clone(), cloud_index))
-        })
-        .collect::<HashMap<_, _>>();
-    let mut affinities = HashMap::<(usize, usize), f32>::new();
-    let mut link_counts = HashMap::<(usize, usize), usize>::new();
-    for link in links {
-        let (Some(&source_cloud), Some(&target_cloud)) = (
-            cloud_by_node.get(&link.source_id),
-            cloud_by_node.get(&link.target_id),
-        ) else {
-            continue;
-        };
-        if source_cloud == target_cloud {
-            continue;
-        }
-        let key = if source_cloud < target_cloud {
-            (source_cloud, target_cloud)
-        } else {
-            (target_cloud, source_cloud)
-        };
-        *affinities.entry(key).or_default() += link.strength;
-        *link_counts.entry(key).or_default() += 1;
-    }
-
-    let original_centers = parents
-        .iter()
-        .map(|cloud| cloud.centroid)
-        .collect::<Vec<_>>();
-    let mut centers = original_centers.clone();
-    let radii = parents
-        .iter()
-        .map(|cloud| cloud_hull_radius(cloud).max(72.0))
-        .collect::<Vec<_>>();
-
-    for _ in 0..96 {
-        let mut deltas = vec![[0.0_f32, 0.0_f32]; centers.len()];
-        for left in 0..centers.len() {
-            for right in (left + 1)..centers.len() {
-                let dx = centers[left][0] - centers[right][0];
-                let dy = centers[left][1] - centers[right][1];
-                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-                let affinity = affinities.get(&(left, right)).copied().unwrap_or(0.0);
-                let link_count = link_counts.get(&(left, right)).copied().unwrap_or(0);
-                let intentional_overlap = (affinity.min(12.0) / 12.0) * 0.18;
-                let desired = (radii[left] + radii[right] + 34.0) * (1.0 - intentional_overlap);
-                if affinity > 0.0 {
-                    let linked_target = (desired + 170.0
-                        - affinity.min(12.0) * 18.0
-                        - link_count.min(8) as f32 * 12.0)
-                        .max(desired + 28.0);
-                    if dist > linked_target {
-                        let force = ((dist - linked_target) / dist)
-                            * (affinity.min(10.0) * 0.7 + link_count.min(8) as f32 * 0.16);
-                        let fx = dx / dist * force;
-                        let fy = dy / dist * force;
-                        deltas[left][0] -= fx;
-                        deltas[left][1] -= fy;
-                        deltas[right][0] += fx;
-                        deltas[right][1] += fy;
-                    }
-                }
-                if dist < desired {
-                    let force = ((desired - dist) / desired).min(1.0) * 10.0;
-                    let fx = dx / dist * force;
-                    let fy = dy / dist * force;
-                    deltas[left][0] += fx;
-                    deltas[left][1] += fy;
-                    deltas[right][0] -= fx;
-                    deltas[right][1] -= fy;
-                }
-            }
-        }
-        for (center, delta) in centers.iter_mut().zip(deltas) {
-            center[0] += delta[0].clamp(-18.0, 18.0);
-            center[1] += delta[1].clamp(-18.0, 18.0);
-        }
-    }
-
-    let node_by_id = nodes
-        .iter()
-        .enumerate()
-        .map(|(index, node)| (node.id.clone(), index))
-        .collect::<HashMap<_, _>>();
-    for (cloud_index, cloud) in parents.iter().enumerate() {
-        let mut dx = centers[cloud_index][0] - original_centers[cloud_index][0];
-        let mut dy = centers[cloud_index][1] - original_centers[cloud_index][1];
-        let dist = (dx * dx + dy * dy).sqrt();
-        let max_shift = 460.0;
-        if dist > max_shift {
-            dx = dx / dist * max_shift;
-            dy = dy / dist * max_shift;
-        }
-        for member_id in &cloud.member_node_ids {
-            if let Some(index) = node_by_id.get(member_id).copied() {
-                nodes[index].x += dx;
-                nodes[index].y += dy;
-            }
-        }
-    }
+    let q1 = distances[distances.len() / 4].1;
+    let q3 = distances[(distances.len() * 3) / 4].1;
+    let iqr = (q3 - q1).max(24.0);
+    q3 + iqr * 1.35
 }
 
-fn cloud_hull_radius(cloud: &AtlasCloud) -> f32 {
-    cloud
-        .hull
-        .iter()
-        .map(|point| {
-            let dx = point[0] - cloud.centroid[0];
-            let dy = point[1] - cloud.centroid[1];
-            (dx * dx + dy * dy).sqrt()
-        })
-        .fold(0.0_f32, f32::max)
-}
-
-fn build_cloud(
-    id: &str,
-    parent_id: Option<String>,
-    nodes: &[WorkingNode],
-    links: &[WorkingLink],
-    member_ids: &[String],
-) -> AtlasCloud {
-    let member_set = member_ids.iter().cloned().collect::<HashSet<_>>();
+fn build_cloud(spec: &CloudSpec, nodes: &[WorkingNode], links: &[WorkingLink]) -> AtlasCloud {
+    let member_set = spec.member_node_ids.iter().cloned().collect::<HashSet<_>>();
+    let core_set = if spec.core_node_ids.is_empty() {
+        member_set.clone()
+    } else {
+        spec.core_node_ids.iter().cloned().collect::<HashSet<_>>()
+    };
     let members = nodes
         .iter()
         .filter(|node| member_set.contains(&node.id))
         .collect::<Vec<_>>();
+    let core_members = nodes
+        .iter()
+        .filter(|node| core_set.contains(&node.id))
+        .collect::<Vec<_>>();
     let note_count = members.len();
-    let centroid = centroid(&members);
     let density = cloud_density(links, &member_set, note_count);
-    let (label, confidence) = label_for_cloud(&members, density);
+    let label_members = if core_members.is_empty() {
+        members.clone()
+    } else {
+        core_members.clone()
+    };
+    let (label, confidence) = label_for_cloud(&label_members, density);
     let representative_node_ids = {
         let mut ranked = members.iter().copied().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
@@ -1071,16 +2525,163 @@ fn build_cloud(
     };
 
     AtlasCloud {
-        id: id.to_string(),
-        parent_id,
+        id: spec.id.clone(),
+        parent_id: spec.parent_id.clone(),
+        level: spec.level,
         label,
         label_confidence: confidence,
         note_count,
         density,
-        centroid,
-        hull: blob_hull(id, &members, centroid),
-        member_node_ids: member_ids.to_vec(),
+        color: cloud_color(&spec.id, spec.level),
+        centroid: spec.centroid,
+        label_anchor: cloud_label_anchor(spec, &members),
+        radius: spec.radius,
+        hull: blob_hull(&spec.id, &label_members, spec.centroid, spec.radius),
+        member_node_ids: spec.member_node_ids.clone(),
+        core_node_ids: spec.core_node_ids.clone(),
+        outlier_node_ids: spec.outlier_node_ids.clone(),
+        child_cloud_ids: spec.child_cloud_ids.clone(),
         representative_node_ids,
+    }
+}
+
+fn cloud_color(id: &str, level: usize) -> [u8; 4] {
+    const PALETTE: [[u8; 3]; 8] = [
+        [255, 198, 58],
+        [72, 202, 86],
+        [43, 169, 255],
+        [176, 103, 255],
+        [0, 205, 225],
+        [255, 92, 105],
+        [255, 145, 49],
+        [140, 220, 255],
+    ];
+    let color = PALETTE[(stable_hash(id) as usize) % PALETTE.len()];
+    let alpha = if level == 0 { 118 } else { 72 };
+    [color[0], color[1], color[2], alpha]
+}
+
+fn cloud_label_anchor(spec: &CloudSpec, members: &[&WorkingNode]) -> [f32; 2] {
+    if members.is_empty() {
+        return spec.centroid;
+    }
+    let angle = stable_angle(&spec.id);
+    let offset = if spec.level == 0 {
+        spec.radius * 0.42
+    } else {
+        spec.radius * 0.34
+    };
+    [
+        spec.centroid[0] + angle.cos() * offset,
+        spec.centroid[1] + angle.sin() * offset,
+    ]
+}
+
+fn cloud_affinity(left: &CloudSpec, right: &CloudSpec, edges: &[LayoutEdge]) -> f32 {
+    let left_members = left.member_node_ids.iter().cloned().collect::<HashSet<_>>();
+    let right_members = right
+        .member_node_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    edges
+        .iter()
+        .filter(|edge| {
+            (left_members.contains(&edge.source_id) && right_members.contains(&edge.target_id))
+                || (left_members.contains(&edge.target_id)
+                    && right_members.contains(&edge.source_id))
+        })
+        .map(|edge| edge.weight)
+        .sum()
+}
+
+fn add_delta(deltas: &mut HashMap<usize, [f32; 2]>, index: usize, delta: [f32; 2]) {
+    let entry = deltas.entry(index).or_insert([0.0, 0.0]);
+    entry[0] += delta[0];
+    entry[1] += delta[1];
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
+    if left.is_empty() || right.is_empty() || left.len() != right.len() {
+        return 0.0;
+    }
+    let mut dot = 0.0_f32;
+    let mut left_norm = 0.0_f32;
+    let mut right_norm = 0.0_f32;
+    for (left_value, right_value) in left.iter().zip(right) {
+        dot += left_value * right_value;
+        left_norm += left_value * left_value;
+        right_norm += right_value * right_value;
+    }
+    if left_norm <= f32::EPSILON || right_norm <= f32::EPSILON {
+        return 0.0;
+    }
+    (dot / (left_norm.sqrt() * right_norm.sqrt())).clamp(-1.0, 1.0)
+}
+
+fn normalized_embedding(mut embedding: Vec<f32>) -> Vec<f32> {
+    let norm = embedding
+        .iter()
+        .map(|value| value * value)
+        .sum::<f32>()
+        .sqrt();
+    if norm <= f32::EPSILON {
+        return embedding;
+    }
+    for value in &mut embedding {
+        *value /= norm;
+    }
+    embedding
+}
+
+fn stable_angle(value: &str) -> f32 {
+    (stable_hash(value) % 10_000) as f32 / 10_000.0 * std::f32::consts::TAU
+}
+
+fn distance(left: [f32; 2], right: [f32; 2]) -> f32 {
+    squared_distance(left, right).sqrt()
+}
+
+fn squared_distance(left: [f32; 2], right: [f32; 2]) -> f32 {
+    let dx = left[0] - right[0];
+    let dy = left[1] - right[1];
+    dx * dx + dy * dy
+}
+
+struct DisjointSet {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+}
+
+impl DisjointSet {
+    fn new(size: usize) -> Self {
+        Self {
+            parent: (0..size).collect(),
+            rank: vec![0; size],
+        }
+    }
+
+    fn find(&mut self, value: usize) -> usize {
+        if self.parent[value] != value {
+            self.parent[value] = self.find(self.parent[value]);
+        }
+        self.parent[value]
+    }
+
+    fn union(&mut self, left: usize, right: usize) -> bool {
+        let mut left_root = self.find(left);
+        let mut right_root = self.find(right);
+        if left_root == right_root {
+            return false;
+        }
+        if self.rank[left_root] < self.rank[right_root] {
+            std::mem::swap(&mut left_root, &mut right_root);
+        }
+        self.parent[right_root] = left_root;
+        if self.rank[left_root] == self.rank[right_root] {
+            self.rank[left_root] += 1;
+        }
+        true
     }
 }
 
@@ -1094,7 +2695,12 @@ fn centroid(nodes: &[&WorkingNode]) -> [f32; 2] {
     [x / nodes.len() as f32, y / nodes.len() as f32]
 }
 
-fn blob_hull(seed: &str, nodes: &[&WorkingNode], centroid: [f32; 2]) -> Vec<[f32; 2]> {
+fn blob_hull(
+    seed: &str,
+    nodes: &[&WorkingNode],
+    centroid: [f32; 2],
+    max_radius: f32,
+) -> Vec<[f32; 2]> {
     const POINTS: usize = 48;
     let base_radius = nodes
         .iter()
@@ -1123,7 +2729,8 @@ fn blob_hull(seed: &str, nodes: &[&WorkingNode], centroid: [f32; 2]) -> Vec<[f32
                 + 0.1 * (angle * 2.0 + seed_phase).sin()
                 + 0.07 * (angle * 3.0 + seed_phase * 0.7).cos()
                 + 0.04 * (angle * 5.0 + seed_phase * 1.3).sin();
-            let radius = (directional_extent + padding) * wobble.clamp(0.86, 1.18);
+            let radius = ((directional_extent + padding) * wobble.clamp(0.86, 1.18))
+                .min(max_radius.max(80.0));
             [
                 centroid[0] + angle.cos() * radius,
                 centroid[1] + angle.sin() * radius,
@@ -1145,30 +2752,37 @@ fn cloud_density(links: &[WorkingLink], member_ids: &HashSet<String>, note_count
 }
 
 fn label_for_cloud(nodes: &[&WorkingNode], density: f32) -> (Option<String>, f32) {
-    let mut counts = HashMap::<String, usize>::new();
+    let mut counts = HashMap::<String, f32>::new();
     for node in nodes {
-        for word in node
-            .title
-            .split(|character: char| !character.is_alphanumeric())
-            .map(|word| word.trim().to_lowercase())
-            .filter(|word| word.len() >= 4 && !is_stop_word(word))
-        {
-            *counts.entry(word).or_default() += 1;
+        count_label_terms(&node.title, 1.0, &mut counts);
+        count_label_terms(&node.preview, 0.35, &mut counts);
+        for tag in &node.tags {
+            count_label_terms(tag, 1.35, &mut counts);
         }
     }
-    let Some((word, count)) = counts
-        .into_iter()
-        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))
-    else {
+    let Some((word, count)) = counts.into_iter().max_by(|left, right| {
+        left.1
+            .total_cmp(&right.1)
+            .then_with(|| right.0.cmp(&left.0))
+    }) else {
         return fallback_cloud_label(nodes, density);
     };
-    let confidence =
-        ((count as f32 / nodes.len().max(1) as f32) * 0.7 + density * 0.3).clamp(0.0, 1.0);
+    let confidence = ((count / nodes.len().max(1) as f32) * 0.7 + density * 0.3).clamp(0.0, 1.0);
     if confidence < 0.38 {
         let fallback = fallback_label_from_word(&word, nodes, density, confidence);
         return (Some(fallback), confidence);
     }
     (Some(title_case(&word)), confidence)
+}
+
+fn count_label_terms(text: &str, weight: f32, counts: &mut HashMap<String, f32>) {
+    for word in text
+        .split(|character: char| !character.is_alphanumeric())
+        .map(|word| word.trim().to_lowercase())
+        .filter(|word| word.len() >= 4 && !is_stop_word(word))
+    {
+        *counts.entry(word).or_default() += weight;
+    }
 }
 
 fn fallback_cloud_label(nodes: &[&WorkingNode], density: f32) -> (Option<String>, f32) {
@@ -1206,6 +2820,49 @@ fn fallback_label_from_word(
         .unwrap_or_else(|| "Cluster".to_string())
 }
 
+fn parse_rfc3339_millis(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if value.len() < 20 {
+        return None;
+    }
+    let year = value.get(0..4)?.parse::<i64>().ok()?;
+    let month = value.get(5..7)?.parse::<i64>().ok()?;
+    let day = value.get(8..10)?.parse::<i64>().ok()?;
+    let hour = value.get(11..13)?.parse::<i64>().ok()?;
+    let minute = value.get(14..16)?.parse::<i64>().ok()?;
+    let second = value.get(17..19)?.parse::<i64>().ok()?;
+    if value.as_bytes().get(4) != Some(&b'-')
+        || value.as_bytes().get(7) != Some(&b'-')
+        || value.as_bytes().get(10) != Some(&b'T')
+        || value.as_bytes().get(13) != Some(&b':')
+        || value.as_bytes().get(16) != Some(&b':')
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+    let days = days_from_civil(year, month, day);
+    let seconds = days
+        .checked_mul(86_400)?
+        .checked_add(hour.checked_mul(3_600)?)?
+        .checked_add(minute.checked_mul(60)?)?
+        .checked_add(second)?;
+    u64::try_from(seconds).ok()?.checked_mul(1_000)
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * month + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 fn stale_score(last_activity: u64, max_modified: u64) -> f32 {
     if max_modified == 0 || last_activity >= max_modified {
         return 0.0;
@@ -1222,6 +2879,101 @@ fn drift_position(x: f32, y: f32, stale_score: f32) -> (f32, f32) {
 
 fn normalize_edge_strength(score: f32) -> f32 {
     ((score - SEMANTIC_MIN_SCORE) / (0.82 - SEMANTIC_MIN_SCORE)).clamp(0.15, 0.9)
+}
+
+fn lexical_note_score(terms: &[String], text_parts: &[&str], tags: &[String]) -> f32 {
+    if terms.is_empty() {
+        return 0.0;
+    }
+    let haystack = normalize_search_text(&format!("{} {}", text_parts.join(" "), tags.join(" ")));
+    let matched = terms
+        .iter()
+        .filter(|term| {
+            haystack
+                .split_whitespace()
+                .any(|word| word == term.as_str())
+                || haystack.contains(term.as_str())
+        })
+        .count();
+    let coverage = matched as f32 / terms.len().max(1) as f32;
+    let phrase_bonus = if haystack.contains(&terms.join(" ")) {
+        0.18
+    } else {
+        0.0
+    };
+    (coverage + phrase_bonus).clamp(0.0, 1.0)
+}
+
+fn title_tag_path_score(
+    normalized_query: &str,
+    terms: &[String],
+    title: &str,
+    file_name: &str,
+    note_path: &str,
+    tags: &[String],
+) -> f32 {
+    if normalized_query.is_empty() {
+        return 0.0;
+    }
+    let title = normalize_search_text(title);
+    let file_name = normalize_search_text(file_name);
+    let note_path = normalize_search_text(note_path);
+    let tags = normalize_search_text(&tags.join(" "));
+    let exact = [
+        (title.contains(normalized_query), 0.48_f32),
+        (tags.contains(normalized_query), 0.28_f32),
+        (file_name.contains(normalized_query), 0.18_f32),
+        (note_path.contains(normalized_query), 0.12_f32),
+    ]
+    .into_iter()
+    .filter_map(|(matched, weight)| matched.then_some(weight))
+    .sum::<f32>();
+    let term_hits = terms
+        .iter()
+        .map(|term| {
+            if title.contains(term) {
+                0.12
+            } else if tags.contains(term) {
+                0.1
+            } else if file_name.contains(term) || note_path.contains(term) {
+                0.05
+            } else {
+                0.0
+            }
+        })
+        .sum::<f32>();
+    (exact + term_hits).clamp(0.0, 1.0)
+}
+
+fn recency_score(now: u64, last_activity: u64, modified: u64) -> f32 {
+    let activity = last_activity.max(modified);
+    if activity >= now {
+        return 1.0;
+    }
+    let ninety_days = 1000.0 * 60.0 * 60.0 * 24.0 * 90.0;
+    (1.0 - (now - activity) as f32 / ninety_days).clamp(0.0, 1.0)
+}
+
+fn reason_labels(
+    semantic_score: f32,
+    lexical_score: f32,
+    structural_score: f32,
+    recency_score: f32,
+) -> Vec<String> {
+    let mut labels = Vec::new();
+    if semantic_score >= 0.55 {
+        labels.push("Semantic match".to_string());
+    }
+    if lexical_score >= 0.45 {
+        labels.push("Text match".to_string());
+    }
+    if structural_score >= 0.28 {
+        labels.push("Title/tag/path match".to_string());
+    }
+    if recency_score >= 0.72 {
+        labels.push("Recent or accessed".to_string());
+    }
+    labels
 }
 
 fn seeded_position(value: &str, index: usize) -> (f32, f32) {
@@ -1303,15 +3055,75 @@ mod tests {
             note_path: format!("/vault/{id}.md"),
             title: title.to_string(),
             file_name: format!("{id}.md"),
+            preview: String::new(),
+            tags: Vec::new(),
             modified_at_millis: 100,
+            created_at_millis: 100,
+            updated_at_millis: 100,
             last_viewed_at_millis: None,
             stale_score: 0.0,
             centrality: 0.5,
+            degree: 0,
+            importance: 0.0,
+            embedding: vec![x, y, 1.0],
             x,
             y,
             cloud_id: None,
             parent_cloud_id: None,
+            child_cloud_id: None,
             isolated: true,
+        }
+    }
+
+    fn test_edge(source: &str, target: &str, weight: f32) -> LayoutEdge {
+        LayoutEdge {
+            source_id: source.to_string(),
+            target_id: target.to_string(),
+            weight,
+        }
+    }
+
+    fn test_working_link(source: &str, target: &str, strength: f32) -> WorkingLink {
+        WorkingLink {
+            source_id: source.to_string(),
+            target_id: target.to_string(),
+            kind: "semantic".to_string(),
+            score: strength,
+            strength,
+        }
+    }
+
+    fn test_cloud_spec(id: &str, radius: f32, centrality: f32, members: &[&str]) -> CloudSpec {
+        CloudSpec {
+            id: id.to_string(),
+            parent_id: None,
+            level: 0,
+            member_node_ids: members.iter().map(|member| member.to_string()).collect(),
+            core_node_ids: Vec::new(),
+            outlier_node_ids: Vec::new(),
+            child_cloud_ids: Vec::new(),
+            centroid: [0.0, 0.0],
+            radius,
+            centrality,
+        }
+    }
+
+    fn assert_specs_do_not_overlap(specs: &[CloudSpec], level: usize, gap: f32) {
+        let specs = specs
+            .iter()
+            .filter(|spec| spec.level == level)
+            .collect::<Vec<_>>();
+        for left in 0..specs.len() {
+            for right in (left + 1)..specs.len() {
+                let dist = distance(specs[left].centroid, specs[right].centroid);
+                let required = specs[left].radius + specs[right].radius + gap - 0.5;
+                assert!(
+                    dist >= required,
+                    "{} and {} overlap: dist={dist}, required={required}",
+                    specs[left].id,
+                    specs[right].id
+                );
+            }
         }
     }
 
@@ -1359,19 +3171,15 @@ mod tests {
             test_node("c", "C", 100.0, 0.0),
         ];
         let links = [
-            WorkingLink {
+            LayoutEdge {
                 source_id: "a".to_string(),
                 target_id: "b".to_string(),
-                kind: "semantic".to_string(),
-                score: 0.5,
-                strength: COMPONENT_MIN_STRENGTH,
+                weight: COMPONENT_MIN_STRENGTH,
             },
-            WorkingLink {
+            LayoutEdge {
                 source_id: "b".to_string(),
                 target_id: "c".to_string(),
-                kind: "semantic".to_string(),
-                score: 0.2,
-                strength: COMPONENT_MIN_STRENGTH - 0.01,
+                weight: COMPONENT_MIN_STRENGTH - 0.01,
             },
         ];
 
@@ -1381,5 +3189,241 @@ mod tests {
         assert_eq!(components.len(), 2);
         assert_eq!(components[0], vec!["c".to_string()]);
         assert_eq!(components[1].len(), 2);
+    }
+
+    #[test]
+    fn thousand_note_layout_bounds_top_clouds_and_prevents_overlap() {
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for cluster in 0..25 {
+            for ordinal in 0..40 {
+                let id = format!("c{cluster:02}-{ordinal:02}");
+                let mut node =
+                    test_node(&id, &format!("Cluster {cluster} Note {ordinal}"), 0.0, 0.0);
+                node.embedding = vec![cluster as f32, ordinal as f32 / 40.0, 1.0];
+                node.centrality = if ordinal == 0 { 1.0 } else { 0.45 };
+                nodes.push(node);
+                if ordinal > 0 {
+                    edges.push(test_edge(
+                        &format!("c{cluster:02}-{:02}", ordinal - 1),
+                        &id,
+                        0.82,
+                    ));
+                }
+                if ordinal > 1 {
+                    edges.push(test_edge(
+                        &format!("c{cluster:02}-{:02}", ordinal - 2),
+                        &id,
+                        0.72,
+                    ));
+                }
+            }
+        }
+
+        let mut specs = assign_clouds(&mut nodes, &edges);
+        place_cloud_first_layout(&mut nodes, &edges, &mut specs, DEFAULT_LAYOUT_PULL);
+        finalize_cloud_cores(&nodes, &edges, &mut specs);
+
+        let top_level_count = specs.iter().filter(|spec| spec.level == 0).count();
+        assert!(top_level_count <= target_top_cloud_count(nodes.len()));
+        assert_specs_do_not_overlap(&specs, 0, TOP_LEVEL_CLOUD_GAP);
+    }
+
+    #[test]
+    fn umap_cloud_separation_repacks_interleaved_clusters() {
+        let mut nodes = Vec::new();
+        let mut specs = Vec::new();
+        let mut edges = Vec::new();
+        for cluster in 0..5 {
+            let cloud_id = format!("cloud-{}", cluster + 1);
+            let mut member_ids = Vec::new();
+            for ordinal in 0..12 {
+                let id = format!("c{cluster}-{ordinal}");
+                let angle = (ordinal as f32 / 12.0) * std::f32::consts::TAU;
+                let mut node = test_node(
+                    &id,
+                    &format!("Cluster {cluster}"),
+                    angle.cos() * (80.0 + cluster as f32 * 3.0),
+                    angle.sin() * (80.0 + cluster as f32 * 3.0),
+                );
+                node.cloud_id = Some(cloud_id.clone());
+                node.isolated = false;
+                member_ids.push(id.clone());
+                nodes.push(node);
+                if ordinal > 0 {
+                    edges.push(test_edge(&format!("c{cluster}-{}", ordinal - 1), &id, 0.86));
+                }
+            }
+            specs.push(CloudSpec {
+                id: cloud_id,
+                parent_id: None,
+                level: 0,
+                member_node_ids: member_ids,
+                core_node_ids: Vec::new(),
+                outlier_node_ids: Vec::new(),
+                child_cloud_ids: Vec::new(),
+                centroid: [0.0, 0.0],
+                radius: 160.0,
+                centrality: 1.0 - cluster as f32 * 0.1,
+            });
+        }
+
+        separate_umap_clouds(&mut nodes, &edges, &mut specs, DEFAULT_LAYOUT_PULL);
+
+        assert_specs_do_not_overlap(&specs, 0, TOP_LEVEL_CLOUD_GAP);
+    }
+
+    #[test]
+    fn strongly_linked_clouds_are_closer_but_do_not_overlap() {
+        let mut specs = vec![
+            test_cloud_spec("a", 120.0, 1.0, &["a1", "a2", "a3"]),
+            test_cloud_spec("b", 120.0, 0.8, &["b1", "b2", "b3"]),
+            test_cloud_spec("c", 120.0, 0.2, &["c1", "c2", "c3"]),
+        ];
+        let edges = [test_edge("a1", "b1", 0.95)];
+
+        place_top_level_clouds(&mut specs, &edges, DEFAULT_LAYOUT_PULL);
+
+        assert_specs_do_not_overlap(&specs, 0, TOP_LEVEL_CLOUD_GAP);
+        let linked_distance = distance(specs[0].centroid, specs[1].centroid);
+        let unlinked_distance = distance(specs[0].centroid, specs[2].centroid);
+        assert!(linked_distance < unlinked_distance);
+    }
+
+    #[test]
+    fn child_clouds_inside_parent_do_not_overlap() {
+        let mut specs = vec![
+            CloudSpec {
+                id: "parent".to_string(),
+                parent_id: None,
+                level: 0,
+                member_node_ids: vec![
+                    "a1".to_string(),
+                    "a2".to_string(),
+                    "a3".to_string(),
+                    "b1".to_string(),
+                    "b2".to_string(),
+                    "b3".to_string(),
+                ],
+                core_node_ids: Vec::new(),
+                outlier_node_ids: Vec::new(),
+                child_cloud_ids: vec!["child-a".to_string(), "child-b".to_string()],
+                centroid: [0.0, 0.0],
+                radius: 310.0,
+                centrality: 1.0,
+            },
+            CloudSpec {
+                id: "child-a".to_string(),
+                parent_id: Some("parent".to_string()),
+                level: 1,
+                member_node_ids: vec!["a1".to_string(), "a2".to_string(), "a3".to_string()],
+                core_node_ids: Vec::new(),
+                outlier_node_ids: Vec::new(),
+                child_cloud_ids: Vec::new(),
+                centroid: [0.0, 0.0],
+                radius: 105.0,
+                centrality: 0.8,
+            },
+            CloudSpec {
+                id: "child-b".to_string(),
+                parent_id: Some("parent".to_string()),
+                level: 1,
+                member_node_ids: vec!["b1".to_string(), "b2".to_string(), "b3".to_string()],
+                core_node_ids: Vec::new(),
+                outlier_node_ids: Vec::new(),
+                child_cloud_ids: Vec::new(),
+                centroid: [0.0, 0.0],
+                radius: 105.0,
+                centrality: 0.7,
+            },
+        ];
+        let child_indices = [1, 2];
+
+        place_child_centers(0, &child_indices, &mut specs, &[]);
+
+        assert_specs_do_not_overlap(&specs, 1, CHILD_CLOUD_GAP);
+        for child in specs.iter().filter(|spec| spec.level == 1) {
+            assert!(distance(specs[0].centroid, child.centroid) + child.radius <= specs[0].radius);
+        }
+    }
+
+    #[test]
+    fn far_weak_outlier_does_not_expand_cloud_core() {
+        let nodes = [
+            test_node("a", "Core Alpha", 0.0, 0.0),
+            test_node("b", "Core Beta", 12.0, 0.0),
+            test_node("c", "Core Gamma", 0.0, 12.0),
+            test_node("d", "Core Delta", 14.0, 10.0),
+            test_node("outlier", "Outlier", 1000.0, 1000.0),
+        ];
+        let edges = [
+            test_edge("a", "b", 0.8),
+            test_edge("a", "c", 0.8),
+            test_edge("b", "d", 0.8),
+        ];
+        let mut specs = vec![CloudSpec {
+            id: "cloud".to_string(),
+            parent_id: None,
+            level: 0,
+            member_node_ids: nodes.iter().map(|node| node.id.clone()).collect(),
+            core_node_ids: Vec::new(),
+            outlier_node_ids: Vec::new(),
+            child_cloud_ids: Vec::new(),
+            centroid: [0.0, 0.0],
+            radius: 220.0,
+            centrality: 1.0,
+        }];
+
+        finalize_cloud_cores(&nodes, &edges, &mut specs);
+
+        assert!(specs[0].outlier_node_ids.contains(&"outlier".to_string()));
+        assert!(!specs[0].core_node_ids.contains(&"outlier".to_string()));
+    }
+
+    #[test]
+    fn layout_graph_keeps_dense_edges_under_degree_cap() {
+        let nodes = (0..60)
+            .map(|index| {
+                let mut node = test_node(&format!("n{index:02}"), "Node", 0.0, 0.0);
+                node.embedding = vec![index as f32, 1.0];
+                node
+            })
+            .collect::<Vec<_>>();
+        let mut links = Vec::new();
+        for left in 0..nodes.len() {
+            for right in (left + 1)..nodes.len() {
+                links.push(test_working_link(
+                    &nodes[left].id,
+                    &nodes[right].id,
+                    0.55 + ((left + right) % 10) as f32 * 0.02,
+                ));
+            }
+        }
+
+        let layout_edges = build_layout_graph(&nodes, &links);
+
+        let max_expected = nodes.len() * (LAYOUT_MAX_DEGREE / 2 + 1);
+        assert!(
+            layout_edges.len() <= max_expected,
+            "{} edges exceeded cap {max_expected}",
+            layout_edges.len()
+        );
+    }
+
+    #[test]
+    fn highest_centrality_cloud_starts_at_origin() {
+        let mut specs = vec![
+            test_cloud_spec("low", 90.0, 0.1, &["low-a", "low-b", "low-c"]),
+            test_cloud_spec("high", 90.0, 1.0, &["high-a", "high-b", "high-c"]),
+            test_cloud_spec("mid", 90.0, 0.5, &["mid-a", "mid-b", "mid-c"]),
+        ];
+
+        place_top_level_clouds(&mut specs, &[], DEFAULT_LAYOUT_PULL);
+
+        let high = specs.iter().find(|spec| spec.id == "high").unwrap();
+        assert!(distance(high.centroid, [0.0, 0.0]) < 1.0);
+        for spec in specs.iter().filter(|spec| spec.id != "high") {
+            assert!(distance(spec.centroid, [0.0, 0.0]) > 1.0);
+        }
     }
 }

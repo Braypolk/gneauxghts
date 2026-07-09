@@ -141,6 +141,7 @@ pub fn run() {
             commands::search_commands::get_related_notes,
             commands::search_commands::retrieve_note_context,
             commands::atlas_commands::get_vault_atlas,
+            commands::atlas_commands::search_vault_atlas,
             commands::proposal_commands::apply_note_change_proposal,
             commands::get_semantic_settings,
             commands::set_semantic_settings,

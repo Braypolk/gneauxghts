@@ -38,12 +38,10 @@ pub(crate) struct StoredAtlasNoteEmbedding {
     pub(crate) note_path: String,
     pub(crate) note_title: String,
     pub(crate) modified_millis: u64,
-}
-
-pub(crate) struct StoredSemanticEdge {
-    pub(crate) source_note_path: String,
-    pub(crate) target_note_path: String,
-    pub(crate) score: f32,
+    pub(crate) content_hash: String,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) embedding: Vec<f32>,
 }
 
 #[derive(Clone)]
@@ -740,7 +738,7 @@ pub(crate) fn load_atlas_note_embeddings(
     let mut statement = connection
         .prepare(
             "
-            SELECT n.path, n.title, n.modified_millis
+            SELECT n.path, n.title, n.modified_millis, n.content_hash, n.created_at, n.updated_at, e.embedding_blob
             FROM note_embeddings e
             INNER JOIN notes n ON n.path = e.note_path
             ORDER BY n.title ASC, n.path ASC
@@ -755,41 +753,16 @@ pub(crate) fn load_atlas_note_embeddings(
             note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
             note_title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
             modified_millis: row.get::<_, u64>(2).map_err(|err| err.to_string())?,
+            content_hash: row.get::<_, String>(3).map_err(|err| err.to_string())?,
+            created_at: row.get::<_, String>(4).map_err(|err| err.to_string())?,
+            updated_at: row.get::<_, String>(5).map_err(|err| err.to_string())?,
+            embedding: deserialize_embedding(
+                &row.get::<_, Vec<u8>>(6).map_err(|err| err.to_string())?,
+            ),
         });
     }
 
     Ok(notes)
-}
-
-pub(crate) fn load_semantic_edges(
-    connection: &Connection,
-    limit: usize,
-) -> Result<Vec<StoredSemanticEdge>, String> {
-    let mut statement = connection
-        .prepare(
-            "
-            SELECT source_note_path, target_note_path, score
-            FROM edges
-            ORDER BY score DESC
-            LIMIT ?1
-            ",
-        )
-        .map_err(|err| err.to_string())?;
-    let rows = statement
-        .query_map(params![limit.max(1)], |row| {
-            Ok(StoredSemanticEdge {
-                source_note_path: row.get(0)?,
-                target_note_path: row.get(1)?,
-                score: row.get(2)?,
-            })
-        })
-        .map_err(|err| err.to_string())?;
-
-    let mut edges = Vec::new();
-    for row in rows {
-        edges.push(row.map_err(|err| err.to_string())?);
-    }
-    Ok(edges)
 }
 
 pub(crate) fn load_atlas_positions(
