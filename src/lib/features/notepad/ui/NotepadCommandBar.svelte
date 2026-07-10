@@ -126,6 +126,7 @@
     getVisibleItems: () => visibleItems,
     getForgetHoldDurationMs: () => forgetHoldDurationMs,
     isForgetHoldEnabled: () => isForgetHoldEnabled,
+    isForgetActionAvailable: () => !canUnforget,
     onSearchInput: (value) => onSearchInput(value),
     onSearchSelect: (result) => onSearchSelect(result),
     onSearchNavigate: (result) => onSearchNavigate?.(result),
@@ -415,6 +416,12 @@
   }
 </script>
 
+<svelte:window
+  onkeydowncapture={commandBarState.handleForgetShortcutKeyDown}
+  onkeyupcapture={commandBarState.handleForgetShortcutKeyUp}
+  onblur={commandBarState.handleForgetShortcutBlur}
+/>
+
 <div
   data-notepad-command-bar
   class="relative min-w-0 overflow-visible rounded-none shadow-none sm:rounded-2xl sm:shadow-lg"
@@ -459,7 +466,7 @@
               <div class="min-w-0 flex-1">
                 <p id="forget-confirm-title" class="text-sm font-semibold">Forget this note?</p>
                 <p id="forget-confirm-description" class="mt-1 text-xs leading-5 text-muted-foreground">
-                  You can also click and hold to forget the note
+                  You can also hold Forget (or its shortcut) to skip this confirmation
                 </p>
               </div>
             </div>

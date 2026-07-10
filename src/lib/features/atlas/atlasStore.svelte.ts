@@ -254,6 +254,18 @@ export class AtlasStore {
     );
   }
 
+  /** Drop the in-memory atlas payload so the next open/refetch hits the backend. */
+  invalidateCachedResponse() {
+    this.response = null;
+    this.searchResponse = null;
+    this.isStale = true;
+    this.error = null;
+    this.searchError = null;
+    if (this.#disposeCallbacks.length > 0) {
+      this.scheduleRefresh(0);
+    }
+  }
+
   async refresh() {
     if (this.isLoading) {
       this.#refreshRequestedDuringLoad = true;

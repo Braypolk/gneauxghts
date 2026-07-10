@@ -4,8 +4,8 @@
 
   // When the workspace is split into two panes, let the editor area grow up to
   // double its normal max width so each pane can occupy roughly a full normal
-  // editor width. The clamp keeps the same side breathing room on screens that
-  // are too narrow for the full double-width expansion.
+  // editor width. On narrower screens it still uses the full available width
+  // (layout already provides side padding via `sm:px-4`).
   let isSplit = $derived(workspaceStore.paneOrder.length === 2);
 </script>
 
@@ -35,15 +35,14 @@
   }
 
   /* While split, the editor area may grow up to double its normal max width
-     (2 * 64rem = 128rem) so each pane is ~one full normal editor width. The
-     `min()` clamp falls back to the available width minus a consistent 4rem of
-     side breathing room when the screen is too narrow for the full expansion.
-     The outer shell is widened just enough to contain the expanded area. */
+     (2 * 64rem = 128rem) so each pane is ~one full normal editor width. Below
+     that cap it fills the parent like single-pane — no extra inset, since the
+     app shell already pads with `sm:px-4`. */
   .notepad-area-shell--split {
-    max-width: 132rem;
+    max-width: 128rem;
   }
 
   .notepad-area--split {
-    max-width: min(128rem, 100% - 4rem);
+    max-width: 128rem;
   }
 </style>

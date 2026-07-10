@@ -848,6 +848,9 @@ mod tests {
             2,
             0.5,
             0.4,
+            &std::collections::HashMap::new(),
+            &super::search_commands::NoteAccessLookup::empty(),
+            0,
         );
 
         assert_eq!(results.len(), 2);
@@ -860,6 +863,159 @@ mod tests {
         assert_eq!(results[1].reason_labels, vec!["semantic".to_string()]);
         assert_eq!(results[1].lexical_score, Some(0.0));
         assert_eq!(results[1].semantic_score, Some(1.0));
+    }
+
+    #[test]
+    fn merge_hybrid_candidates_boosts_frequently_opened_notes() {
+        let lexical = vec![
+            ScoredSearchResult {
+                score: 50,
+                result: NoteSearchResult {
+                    note_id: Some("rarely-opened".to_string()),
+                    note_path: Some("/notes/rare.md".to_string()),
+                    file_name: "rare".to_string(),
+                    section_label: "Paragraph 1".to_string(),
+                    excerpt: "shared topic".to_string(),
+                    highlight_ranges: Vec::new(),
+                    match_text: "shared topic".to_string(),
+                    reason_labels: Vec::new(),
+                    lexical_score: None,
+                    semantic_score: None,
+                    start_line: None,
+                    end_line: None,
+                },
+            },
+            ScoredSearchResult {
+                score: 48,
+                result: NoteSearchResult {
+                    note_id: Some("often-opened".to_string()),
+                    note_path: Some("/notes/often.md".to_string()),
+                    file_name: "often".to_string(),
+                    section_label: "Paragraph 1".to_string(),
+                    excerpt: "shared topic".to_string(),
+                    highlight_ranges: Vec::new(),
+                    match_text: "shared topic".to_string(),
+                    reason_labels: Vec::new(),
+                    lexical_score: None,
+                    semantic_score: None,
+                    start_line: None,
+                    end_line: None,
+                },
+            },
+        ];
+        let now = 1_700_000_000_000u64;
+        let mut activity = std::collections::HashMap::new();
+        activity.insert(
+            "often-opened".to_string(),
+            crate::state::NoteActivity {
+                last_viewed_at_millis: now,
+                open_count: 40,
+                last_counted_open_at_millis: now,
+            },
+        );
+        let mut note_lookup = super::search_commands::NoteAccessLookup::empty();
+        note_lookup
+            .modified_by_note_id
+            .insert("often-opened".to_string(), now);
+        note_lookup
+            .modified_by_note_id
+            .insert("rarely-opened".to_string(), now);
+
+        let results = merge_hybrid_candidates(
+            lexical,
+            Vec::new(),
+            "shared topic",
+            None,
+            2,
+            0.5,
+            0.4,
+            &activity,
+            &note_lookup,
+            now,
+        );
+
+        assert_eq!(results[0].file_name, "often");
+        assert!(results[0]
+            .reason_labels
+            .iter()
+            .any(|label| label == "frequently opened"));
+    }
+
+    #[test]
+    fn merge_hybrid_candidates_idle_decay_removes_access_boost() {
+        let lexical = vec![
+            ScoredSearchResult {
+                score: 50,
+                result: NoteSearchResult {
+                    note_id: Some("stale-popular".to_string()),
+                    note_path: Some("/notes/stale.md".to_string()),
+                    file_name: "stale".to_string(),
+                    section_label: "Paragraph 1".to_string(),
+                    excerpt: "shared topic".to_string(),
+                    highlight_ranges: Vec::new(),
+                    match_text: "shared topic".to_string(),
+                    reason_labels: Vec::new(),
+                    lexical_score: None,
+                    semantic_score: None,
+                    start_line: None,
+                    end_line: None,
+                },
+            },
+            ScoredSearchResult {
+                score: 48,
+                result: NoteSearchResult {
+                    note_id: Some("fresh".to_string()),
+                    note_path: Some("/notes/fresh.md".to_string()),
+                    file_name: "fresh".to_string(),
+                    section_label: "Paragraph 1".to_string(),
+                    excerpt: "shared topic".to_string(),
+                    highlight_ranges: Vec::new(),
+                    match_text: "shared topic".to_string(),
+                    reason_labels: Vec::new(),
+                    lexical_score: None,
+                    semantic_score: None,
+                    start_line: None,
+                    end_line: None,
+                },
+            },
+        ];
+        let now = 1_700_000_000_000u64;
+        let idle_viewed = now - (crate::state::OPEN_COUNT_DECAY_INTERVAL_MS * 40);
+        let mut activity = std::collections::HashMap::new();
+        activity.insert(
+            "stale-popular".to_string(),
+            crate::state::NoteActivity {
+                last_viewed_at_millis: idle_viewed,
+                open_count: 40,
+                last_counted_open_at_millis: idle_viewed,
+            },
+        );
+        let mut note_lookup = super::search_commands::NoteAccessLookup::empty();
+        note_lookup
+            .modified_by_note_id
+            .insert("stale-popular".to_string(), idle_viewed);
+        note_lookup
+            .modified_by_note_id
+            .insert("fresh".to_string(), now);
+
+        let results = merge_hybrid_candidates(
+            lexical,
+            Vec::new(),
+            "shared topic",
+            None,
+            2,
+            0.5,
+            0.4,
+            &activity,
+            &note_lookup,
+            now,
+        );
+
+        assert_eq!(results[0].file_name, "stale");
+        assert!(!results[0]
+            .reason_labels
+            .iter()
+            .any(|label| label == "frequently opened"));
     }
 
     #[test]

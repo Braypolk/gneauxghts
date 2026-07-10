@@ -1,18 +1,21 @@
 use super::{
     db::{
-        load_atlas_layout_signature, load_atlas_note_embeddings, load_atlas_positions,
-        open_database, save_atlas_layout_signature, save_atlas_positions, StoredAtlasNoteEmbedding,
+        load_atlas_graph_snapshot_json, load_atlas_layout_signature, load_atlas_note_embeddings,
+        load_atlas_positions, open_database, save_atlas_graph_snapshot_json,
+        save_atlas_layout_signature, save_atlas_positions, StoredAtlasNoteEmbedding,
         StoredAtlasPosition,
     },
     embed::EmbeddingInputKind,
     ActiveSemanticState,
 };
 use crate::index::normalize_search_text;
+use crate::state::{effective_open_count, NoteActivity};
 use crate::time::current_time_millis;
 use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore};
 use leiden_rs::{GraphDataBuilder, Leiden, LeidenConfig, QualityType};
 use ndarray::Array2;
-use serde::Serialize;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     panic::{catch_unwind, AssertUnwindSafe},
@@ -21,7 +24,12 @@ use std::{
 use umap_rs::{GraphParams, OptimizationParams, Umap, UmapConfig};
 
 const CLOUD_MIN_NOTES: usize = 3;
-const CHILD_CLOUD_MIN_NOTES: usize = 9;
+const CHILD_CLOUD_MIN_NOTES: usize = 5;
+const TOP_CLOUD_SOFT_MAX: usize = 36;
+const SUBCLOUD_PROMOTE_MIN: usize = 8;
+const HIGH_AFFINITY_MERGE_THRESHOLD: f32 = 0.62;
+const CHILD_PARTITION_SEPARATION_MIN: f32 = 0.22;
+const COMMUNITY_EDGE_MIN_STRENGTH: f32 = 0.48;
 const KNN_GRAPH_K: usize = 24;
 const KNN_MIN_SCORE: f32 = 0.30;
 const SEMANTIC_MIN_SCORE: f32 = KNN_MIN_SCORE;
@@ -37,13 +45,18 @@ const CHILD_CLOUD_GAP: f32 = 10.0;
 const DEFAULT_LAYOUT_PULL: f32 = 1.4;
 const LAYOUT_LINKS_PER_NODE: usize = 8;
 const LAYOUT_MAX_DEGREE: usize = 14;
-const CHILD_TARGET_MAX_NOTES: usize = 20;
-const UMAP_ITERATIONS: usize = 220;
-const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 9;
+const CHILD_TARGET_MAX_NOTES: usize = 16;
+const UMAP_ITERATIONS_MAX: usize = 220;
+const UMAP_ITERATIONS_BASE: usize = 60;
+const UMAP_ITERATIONS_SQRT_SCALE: f32 = 4.0;
+const DISC_LAYOUT_FULL_PAIR_MAX: usize = 80;
+const DISC_LAYOUT_REPULSION_NEIGHBORS: usize = 16;
+const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 11;
 const ATLAS_SEARCH_SEMANTIC_WEIGHT: f32 = 0.55;
 const ATLAS_SEARCH_LEXICAL_WEIGHT: f32 = 0.25;
 const ATLAS_SEARCH_STRUCTURAL_WEIGHT: f32 = 0.10;
-const ATLAS_SEARCH_RECENCY_WEIGHT: f32 = 0.10;
+const ATLAS_SEARCH_RECENCY_WEIGHT: f32 = 0.07;
+const ATLAS_SEARCH_FREQUENCY_WEIGHT: f32 = 0.03;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AtlasNoteMetadata {
@@ -148,7 +161,7 @@ pub(crate) struct AtlasLink {
     pub(crate) strength: f32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AtlasCloud {
     pub(crate) id: String,
@@ -168,6 +181,43 @@ pub(crate) struct AtlasCloud {
     pub(crate) outlier_node_ids: Vec<String>,
     pub(crate) child_cloud_ids: Vec<String>,
     pub(crate) representative_node_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AtlasGraphSnapshot {
+    signature: String,
+    nodes: Vec<AtlasSnapshotNode>,
+    links: Vec<AtlasSnapshotLink>,
+    clouds: Vec<AtlasCloud>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AtlasSnapshotNode {
+    note_path: String,
+    x: f32,
+    y: f32,
+    cloud_id: Option<String>,
+    parent_cloud_id: Option<String>,
+    child_cloud_id: Option<String>,
+    centrality: f32,
+    degree: usize,
+    importance: f32,
+    isolated: bool,
+    modified_at_millis: u64,
+    created_at_millis: u64,
+    updated_at_millis: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AtlasSnapshotLink {
+    source_id: String,
+    target_id: String,
+    kind: String,
+    score: f32,
+    strength: f32,
 }
 
 #[derive(Clone)]
@@ -219,6 +269,23 @@ struct LayoutEdge {
     weight: f32,
 }
 
+type EdgeAdjacency = HashMap<String, Vec<usize>>;
+
+fn build_edge_adjacency(edges: &[LayoutEdge]) -> EdgeAdjacency {
+    let mut adjacency = EdgeAdjacency::new();
+    for (index, edge) in edges.iter().enumerate() {
+        adjacency.entry(edge.source_id.clone()).or_default().push(index);
+        adjacency.entry(edge.target_id.clone()).or_default().push(index);
+    }
+    adjacency
+}
+
+struct TopGroupPartition {
+    members: Vec<String>,
+    /// Children already computed for this exact member set; None means assign_clouds must detect.
+    precomputed_children: Option<Vec<Vec<String>>>,
+}
+
 #[derive(Clone, Debug)]
 struct CloudSpec {
     id: String,
@@ -238,7 +305,7 @@ impl ActiveSemanticState {
         &self,
         metadata: HashMap<String, AtlasNoteMetadata>,
         hard_links: Vec<AtlasHardLink>,
-        last_viewed_by_note_id: HashMap<String, u64>,
+        activity_by_note_id: HashMap<String, NoteActivity>,
         revision: u64,
     ) -> Result<VaultAtlasResponse, String> {
         let mut connection = open_database(&self.db_path)?;
@@ -269,15 +336,33 @@ impl ActiveSemanticState {
             .max()
             .unwrap_or(0);
 
+        if !should_relayout && has_all_cached_positions {
+            if let Some(snapshot) = load_atlas_graph_snapshot(&connection)? {
+                if snapshot.signature == layout_signature
+                    && snapshot_covers_notes(&snapshot, &indexed_notes)
+                {
+                    return hydrate_atlas_from_snapshot(
+                        snapshot,
+                        &indexed_notes,
+                        &metadata,
+                        &activity_by_note_id,
+                        max_modified,
+                        revision,
+                    );
+                }
+            }
+        }
+
         let mut nodes = indexed_notes
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(index, note)| {
                 let meta = metadata.get(&note.note_path);
                 let note_id = meta.and_then(|item| item.note_id.clone());
                 let last_viewed = note_id
                     .as_ref()
-                    .and_then(|id| last_viewed_by_note_id.get(id).copied());
+                    .and_then(|id| activity_by_note_id.get(id))
+                    .map(|activity| activity.last_viewed_at_millis);
                 let (x, y) = positions
                     .get(&note.note_path)
                     .copied()
@@ -293,7 +378,7 @@ impl ActiveSemanticState {
                     title: meta
                         .map(|item| item.title.clone())
                         .filter(|title| !title.trim().is_empty())
-                        .unwrap_or(note.note_title),
+                        .unwrap_or_else(|| note.note_title.clone()),
                     file_name: meta
                         .map(|item| item.file_name.clone())
                         .unwrap_or_else(|| file_name_for_path(&note.note_path)),
@@ -310,7 +395,7 @@ impl ActiveSemanticState {
                     centrality: 0.0,
                     degree: 0,
                     importance: 0.0,
-                    embedding: normalized_embedding(note.embedding),
+                    embedding: normalized_embedding(note.embedding.clone()),
                     x,
                     y,
                     cloud_id: None,
@@ -341,7 +426,7 @@ impl ActiveSemanticState {
         }
         finalize_cloud_cores(&nodes, &layout_edges, &mut cloud_specs);
         let mut clouds = cloud_specs
-            .iter()
+            .par_iter()
             .map(|spec| build_cloud(spec, &nodes, &links))
             .collect::<Vec<_>>();
         clouds.sort_by(|left, right| {
@@ -367,15 +452,15 @@ impl ActiveSemanticState {
         }
 
         let response_nodes = nodes
-            .into_iter()
+            .iter()
             .map(|node| {
                 let drift = drift_position(node.x, node.y, node.stale_score);
                 AtlasNode {
-                    id: node.id,
-                    note_id: node.note_id,
-                    note_path: node.note_path,
-                    title: node.title,
-                    file_name: node.file_name,
+                    id: node.id.clone(),
+                    note_id: node.note_id.clone(),
+                    note_path: node.note_path.clone(),
+                    title: node.title.clone(),
+                    file_name: node.file_name.clone(),
                     x: node.x,
                     y: node.y,
                     drift_x: drift.0,
@@ -383,10 +468,10 @@ impl ActiveSemanticState {
                     radius: NOTE_RADIUS_MIN
                         + (NOTE_RADIUS_MAX - NOTE_RADIUS_MIN) * node.centrality.clamp(0.0, 1.0),
                     cloud_id: node.cloud_id.clone(),
-                    parent_cloud_id: node.parent_cloud_id,
+                    parent_cloud_id: node.parent_cloud_id.clone(),
                     child_cloud_id: node.child_cloud_id.clone(),
-                    cluster_id: node.cloud_id,
-                    subcluster_id: node.child_cloud_id,
+                    cluster_id: node.cloud_id.clone(),
+                    subcluster_id: node.child_cloud_id.clone(),
                     centrality: node.centrality,
                     degree: node.degree,
                     importance: node.importance,
@@ -395,24 +480,58 @@ impl ActiveSemanticState {
                     created_at_millis: node.created_at_millis,
                     updated_at_millis: node.updated_at_millis,
                     stale_score: node.stale_score,
-                    preview: node.preview,
-                    tags: node.tags,
+                    preview: node.preview.clone(),
+                    tags: node.tags.clone(),
                     isolated: node.isolated,
                 }
             })
             .collect::<Vec<_>>();
         let response_links = links
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(index, link)| AtlasLink {
                 id: format!("{}:{}:{index}", link.source_id, link.target_id),
-                source_id: link.source_id,
-                target_id: link.target_id,
-                kind: link.kind,
+                source_id: link.source_id.clone(),
+                target_id: link.target_id.clone(),
+                kind: link.kind.clone(),
                 score: link.score,
                 strength: link.strength,
             })
             .collect::<Vec<_>>();
+
+        let snapshot = AtlasGraphSnapshot {
+            signature: layout_signature,
+            nodes: nodes
+                .iter()
+                .map(|node| AtlasSnapshotNode {
+                    note_path: node.note_path.clone(),
+                    x: node.x,
+                    y: node.y,
+                    cloud_id: node.cloud_id.clone(),
+                    parent_cloud_id: node.parent_cloud_id.clone(),
+                    child_cloud_id: node.child_cloud_id.clone(),
+                    centrality: node.centrality,
+                    degree: node.degree,
+                    importance: node.importance,
+                    isolated: node.isolated,
+                    modified_at_millis: node.modified_at_millis,
+                    created_at_millis: node.created_at_millis,
+                    updated_at_millis: node.updated_at_millis,
+                })
+                .collect(),
+            links: links
+                .iter()
+                .map(|link| AtlasSnapshotLink {
+                    source_id: link.source_id.clone(),
+                    target_id: link.target_id.clone(),
+                    kind: link.kind.clone(),
+                    score: link.score,
+                    strength: link.strength,
+                })
+                .collect(),
+            clouds: clouds.clone(),
+        };
+        save_atlas_graph_snapshot(&connection, &snapshot)?;
 
         Ok(VaultAtlasResponse {
             status: "ready".to_string(),
@@ -435,7 +554,7 @@ impl ActiveSemanticState {
         &self,
         query: String,
         metadata: HashMap<String, AtlasNoteMetadata>,
-        last_viewed_by_note_id: HashMap<String, u64>,
+        activity_by_note_id: HashMap<String, NoteActivity>,
     ) -> Result<AtlasSearchResponse, String> {
         let trimmed_query = query.trim().to_string();
         if trimmed_query.is_empty() {
@@ -506,18 +625,27 @@ impl ActiveSemanticState {
                     tags,
                 );
                 let note_id = meta.and_then(|item| item.note_id.clone());
-                let last_viewed = note_id
+                let activity = note_id
                     .as_ref()
-                    .and_then(|id| last_viewed_by_note_id.get(id).copied());
+                    .and_then(|id| activity_by_note_id.get(id));
+                let last_viewed = activity.map(|item| item.last_viewed_at_millis);
+                let open_count = activity.map(|item| item.open_count).unwrap_or(0);
                 let recency_score = recency_score(
                     now,
                     last_viewed.unwrap_or(note.modified_millis),
                     note.modified_millis,
                 );
+                let frequency_score = frequency_score(effective_open_count(
+                    open_count,
+                    last_viewed.unwrap_or(0),
+                    now,
+                ));
+                let access_score = (0.7 * recency_score + 0.3 * frequency_score).clamp(0.0, 1.0);
                 let score = ATLAS_SEARCH_SEMANTIC_WEIGHT * semantic_score
                     + ATLAS_SEARCH_LEXICAL_WEIGHT * lexical_score
                     + ATLAS_SEARCH_STRUCTURAL_WEIGHT * structural_score
-                    + ATLAS_SEARCH_RECENCY_WEIGHT * recency_score;
+                    + ATLAS_SEARCH_RECENCY_WEIGHT * recency_score
+                    + ATLAS_SEARCH_FREQUENCY_WEIGHT * frequency_score;
                 AtlasSearchMatch {
                     note_id,
                     note_path: note.note_path,
@@ -525,12 +653,12 @@ impl ActiveSemanticState {
                     semantic_score,
                     lexical_score,
                     structural_score,
-                    recency_score,
+                    recency_score: access_score,
                     reason_labels: reason_labels(
                         semantic_score,
                         lexical_score,
                         structural_score,
-                        recency_score,
+                        access_score,
                     ),
                 }
             })
@@ -586,6 +714,139 @@ fn atlas_layout_signature(notes: &[StoredAtlasNoteEmbedding], layout_pull: f32) 
         "v{ATLAS_LAYOUT_ALGORITHM_VERSION}|hnsw-k:{KNN_GRAPH_K}|min:{KNN_MIN_SCORE:.2}|pull:{layout_pull:.2}|{}",
         parts.join("|")
     )
+}
+
+fn load_atlas_graph_snapshot(
+    connection: &rusqlite::Connection,
+) -> Result<Option<AtlasGraphSnapshot>, String> {
+    let Some(raw) = load_atlas_graph_snapshot_json(connection)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&raw)
+        .map(Some)
+        .map_err(|err| err.to_string())
+}
+
+fn save_atlas_graph_snapshot(
+    connection: &rusqlite::Connection,
+    snapshot: &AtlasGraphSnapshot,
+) -> Result<(), String> {
+    let raw = serde_json::to_string(snapshot).map_err(|err| err.to_string())?;
+    save_atlas_graph_snapshot_json(connection, &raw)
+}
+
+fn snapshot_covers_notes(
+    snapshot: &AtlasGraphSnapshot,
+    notes: &[StoredAtlasNoteEmbedding],
+) -> bool {
+    if snapshot.nodes.len() != notes.len() {
+        return false;
+    }
+    let snapshot_paths = snapshot
+        .nodes
+        .iter()
+        .map(|node| node.note_path.as_str())
+        .collect::<HashSet<_>>();
+    notes
+        .iter()
+        .all(|note| snapshot_paths.contains(note.note_path.as_str()))
+}
+
+fn hydrate_atlas_from_snapshot(
+    snapshot: AtlasGraphSnapshot,
+    indexed_notes: &[StoredAtlasNoteEmbedding],
+    metadata: &HashMap<String, AtlasNoteMetadata>,
+    activity_by_note_id: &HashMap<String, NoteActivity>,
+    max_modified: u64,
+    revision: u64,
+) -> Result<VaultAtlasResponse, String> {
+    let indexed_by_path = indexed_notes
+        .iter()
+        .map(|note| (note.note_path.as_str(), note))
+        .collect::<HashMap<_, _>>();
+    let response_nodes = snapshot
+        .nodes
+        .into_iter()
+        .filter_map(|node| {
+            let indexed = indexed_by_path.get(node.note_path.as_str())?;
+            let meta = metadata.get(&node.note_path);
+            let note_id = meta.and_then(|item| item.note_id.clone());
+            let last_viewed = note_id
+                .as_ref()
+                .and_then(|id| activity_by_note_id.get(id))
+                .map(|activity| activity.last_viewed_at_millis);
+            let stale = stale_score(
+                last_viewed.unwrap_or(indexed.modified_millis),
+                max_modified,
+            );
+            let drift = drift_position(node.x, node.y, stale);
+            Some(AtlasNode {
+                id: node.note_path.clone(),
+                note_id,
+                note_path: node.note_path.clone(),
+                title: meta
+                    .map(|item| item.title.clone())
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| indexed.note_title.clone()),
+                file_name: meta
+                    .map(|item| item.file_name.clone())
+                    .unwrap_or_else(|| file_name_for_path(&node.note_path)),
+                x: node.x,
+                y: node.y,
+                drift_x: drift.0,
+                drift_y: drift.1,
+                radius: NOTE_RADIUS_MIN
+                    + (NOTE_RADIUS_MAX - NOTE_RADIUS_MIN) * node.centrality.clamp(0.0, 1.0),
+                cloud_id: node.cloud_id.clone(),
+                parent_cloud_id: node.parent_cloud_id.clone(),
+                child_cloud_id: node.child_cloud_id.clone(),
+                cluster_id: node.cloud_id,
+                subcluster_id: node.child_cloud_id,
+                centrality: node.centrality,
+                degree: node.degree,
+                importance: node.importance,
+                modified_at_millis: indexed.modified_millis,
+                last_viewed_at_millis: last_viewed,
+                created_at_millis: parse_rfc3339_millis(&indexed.created_at)
+                    .unwrap_or(indexed.modified_millis),
+                updated_at_millis: parse_rfc3339_millis(&indexed.updated_at)
+                    .unwrap_or(indexed.modified_millis),
+                stale_score: stale,
+                preview: meta.map(|item| item.preview.clone()).unwrap_or_default(),
+                tags: meta.map(|item| item.tags.clone()).unwrap_or_default(),
+                isolated: node.isolated,
+            })
+        })
+        .collect::<Vec<_>>();
+    let response_links = snapshot
+        .links
+        .into_iter()
+        .enumerate()
+        .map(|(index, link)| AtlasLink {
+            id: format!("{}:{}:{index}", link.source_id, link.target_id),
+            source_id: link.source_id,
+            target_id: link.target_id,
+            kind: link.kind,
+            score: link.score,
+            strength: link.strength,
+        })
+        .collect::<Vec<_>>();
+    let clouds = snapshot.clouds;
+    Ok(VaultAtlasResponse {
+        status: "ready".to_string(),
+        reason: None,
+        revision,
+        generated_at_millis: current_time_millis()?,
+        stats: VaultAtlasStats {
+            note_count: response_nodes.len(),
+            cloud_count: clouds.len(),
+            link_count: response_links.len(),
+            isolated_count: response_nodes.iter().filter(|node| node.isolated).count(),
+        },
+        nodes: response_nodes,
+        links: response_links,
+        clouds,
+    })
 }
 
 fn collect_links(
@@ -689,35 +950,39 @@ fn build_hnsw_knn_rows(nodes: &[WorkingNode]) -> Vec<Vec<KnnNeighbor>> {
         }
     }
 
-    let mut rows = Vec::with_capacity(nodes.len());
-    for (source_index, source) in nodes.iter().enumerate() {
-        let Ok(hits) = graph.search(&vectors, source.embedding.as_slice(), k + 1, None) else {
-            return exact_knn_rows(nodes, k);
-        };
-        let mut neighbors = Vec::<KnnNeighbor>::new();
-        for hit in hits {
-            let target_index = hit.key as usize;
-            if target_index == source_index || target_index >= nodes.len() {
-                continue;
+    let rows: Option<Vec<Vec<KnnNeighbor>>> = nodes
+        .par_iter()
+        .enumerate()
+        .map(|(source_index, source)| {
+            let hits = graph
+                .search(&vectors, source.embedding.as_slice(), k + 1, None)
+                .ok()?;
+            let mut neighbors = Vec::<KnnNeighbor>::new();
+            for hit in hits {
+                let target_index = hit.key as usize;
+                if target_index == source_index || target_index >= nodes.len() {
+                    continue;
+                }
+                let similarity =
+                    cosine_similarity(&source.embedding, &nodes[target_index].embedding);
+                push_unique_neighbor(&mut neighbors, target_index, similarity);
             }
-            let similarity = cosine_similarity(&source.embedding, &nodes[target_index].embedding);
-            push_unique_neighbor(&mut neighbors, target_index, similarity);
-        }
-        neighbors.sort_by(|left, right| {
-            right
-                .similarity
-                .total_cmp(&left.similarity)
-                .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
-        });
-        neighbors.truncate(k);
-        rows.push(neighbors);
-    }
-    rows
+            neighbors.sort_by(|left, right| {
+                right
+                    .similarity
+                    .total_cmp(&left.similarity)
+                    .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
+            });
+            neighbors.truncate(k);
+            Some(neighbors)
+        })
+        .collect();
+    rows.unwrap_or_else(|| exact_knn_rows(nodes, k))
 }
 
 fn exact_knn_rows(nodes: &[WorkingNode], k: usize) -> Vec<Vec<KnnNeighbor>> {
     nodes
-        .iter()
+        .par_iter()
         .enumerate()
         .map(|(source_index, source)| {
             let mut neighbors = nodes
@@ -1021,27 +1286,22 @@ fn connected_components(nodes: &[WorkingNode], edges: &[LayoutEdge]) -> Vec<Vec<
 }
 
 fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSpec> {
-    let node_count = nodes.len();
-    let target_top_clouds = target_top_cloud_count(node_count);
-    let target_top_size = if target_top_clouds == 0 {
-        node_count.max(1)
-    } else {
-        node_count.div_ceil(target_top_clouds).max(CLOUD_MIN_NOTES)
-    };
+    let adjacency = build_edge_adjacency(edges);
     let mut top_groups = Vec::<Vec<String>>::new();
     for component in connected_components(nodes, edges) {
         if component.len() < CLOUD_MIN_NOTES {
             continue;
         }
-        let groups = partition_group(&component, nodes, edges, target_top_size, target_top_clouds);
+        let groups = partition_by_content(&component, nodes, edges, &adjacency);
         top_groups.extend(groups);
     }
-    top_groups = merge_to_target_groups(top_groups, nodes, edges, target_top_clouds);
+    top_groups = merge_high_affinity_groups(top_groups, nodes, edges, &adjacency);
+    let mut top_groups = promote_mature_subclouds(top_groups, nodes, edges, &adjacency, 1);
     top_groups.sort_by(|left, right| {
-        group_centrality(right, nodes)
-            .total_cmp(&group_centrality(left, nodes))
-            .then_with(|| right.len().cmp(&left.len()))
-            .then_with(|| left[0].cmp(&right[0]))
+        group_centrality(&right.members, nodes)
+            .total_cmp(&group_centrality(&left.members, nodes))
+            .then_with(|| right.members.len().cmp(&left.members.len()))
+            .then_with(|| left.members[0].cmp(&right.members[0]))
     });
 
     let node_index = nodes
@@ -1050,7 +1310,8 @@ fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSp
         .map(|(index, node)| (node.id.clone(), index))
         .collect::<HashMap<_, _>>();
     let mut specs = Vec::<CloudSpec>::new();
-    for (cloud_index, group) in top_groups.into_iter().enumerate() {
+    for (cloud_index, top) in top_groups.into_iter().enumerate() {
+        let group = top.members;
         let cloud_id = format!("cloud-{}", cloud_index + 1);
         for member_id in &group {
             if let Some(index) = node_index.get(member_id).copied() {
@@ -1061,7 +1322,10 @@ fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSp
             }
         }
 
-        let child_groups = detect_child_communities(&group, nodes, edges);
+        let child_groups = match top.precomputed_children {
+            Some(children) => children,
+            None => detect_child_communities(&group, nodes, edges, &adjacency),
+        };
         let mut child_cloud_ids = Vec::new();
         let mut child_specs = Vec::new();
         for (child_index, child_group) in child_groups.into_iter().enumerate() {
@@ -1110,27 +1374,89 @@ fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSp
     specs
 }
 
-fn target_top_cloud_count(note_count: usize) -> usize {
-    if note_count < CLOUD_MIN_NOTES {
-        return 0;
+fn partition_by_content(
+    group: &[String],
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
+) -> Vec<Vec<String>> {
+    if group.len() < CLOUD_MIN_NOTES * 2 {
+        return vec![group.to_vec()];
     }
-    if note_count <= 24 {
-        return 1;
+    let resolution = structure_based_resolution(group, edges, adjacency);
+    let seed = stable_hash(&group.join("\0"));
+    let mut groups = leiden_partition_group(group, edges, adjacency, resolution, seed);
+    if groups.len() <= 1 {
+        groups = leiden_partition_group(
+            group,
+            edges,
+            adjacency,
+            (resolution * 1.75).min(4.5),
+            seed ^ 0x9e37,
+        );
     }
-    let target = ((note_count as f32).sqrt() * 0.75).round() as usize;
-    target
-        .clamp(4, 28)
-        .min((note_count / CLOUD_MIN_NOTES).max(1))
+    if groups.len() <= 1 {
+        let soft_target = TOP_CLOUD_SOFT_MAX.min(group.len()).max(CLOUD_MIN_NOTES * 2);
+        let soft_max = group.len().div_ceil(CLOUD_MIN_NOTES).max(2);
+        groups = seeded_partition_group(group, nodes, edges, adjacency, soft_target, soft_max);
+    }
+    groups = merge_small_groups(groups, nodes, edges, adjacency);
+    groups = merge_high_affinity_groups(groups, nodes, edges, adjacency);
+    groups.sort_by(|left, right| {
+        right
+            .len()
+            .cmp(&left.len())
+            .then_with(|| left.first().cmp(&right.first()))
+    });
+    if groups.is_empty() {
+        vec![group.to_vec()]
+    } else {
+        groups
+    }
+}
+
+fn structure_based_resolution(
+    group: &[String],
+    edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
+) -> f64 {
+    let n = group.len().max(1) as f64;
+    let group_set = group.iter().cloned().collect::<HashSet<_>>();
+    let mut seen = HashSet::<usize>::new();
+    let mut strong_edge_count = 0usize;
+    for id in group {
+        let Some(edge_indices) = adjacency.get(id) else {
+            continue;
+        };
+        for &edge_index in edge_indices {
+            if !seen.insert(edge_index) {
+                continue;
+            }
+            let edge = &edges[edge_index];
+            if edge.weight >= COMMUNITY_EDGE_MIN_STRENGTH
+                && group_set.contains(&edge.source_id)
+                && group_set.contains(&edge.target_id)
+                && edge.source_id != edge.target_id
+            {
+                strong_edge_count += 1;
+            }
+        }
+    }
+    let density = (2.0 * strong_edge_count as f64) / (n * (n - 1.0)).max(1.0);
+    // Higher resolution → more communities. Dense weak knn graphs need a push.
+    let resolution = 1.35 + n.ln() * 0.28 - density * 0.55;
+    resolution.clamp(1.1, 4.5)
 }
 
 fn partition_group(
     group: &[String],
     nodes: &[WorkingNode],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
     target_size: usize,
     max_groups: usize,
 ) -> Vec<Vec<String>> {
-    if group.len() <= target_size.max(CLOUD_MIN_NOTES) || max_groups <= 1 {
+    if group.len() < CLOUD_MIN_NOTES * 2 || max_groups <= 1 {
         return vec![group.to_vec()];
     }
     let desired_groups = group
@@ -1138,15 +1464,27 @@ fn partition_group(
         .div_ceil(target_size.max(CLOUD_MIN_NOTES))
         .clamp(2, max_groups.max(2));
     let resolution = (desired_groups as f64 / group.len().max(1) as f64)
-        .mul_add(8.0, 0.65)
-        .clamp(0.75, 2.4);
-    let mut groups =
-        leiden_partition_group(group, edges, resolution, stable_hash(&group.join("\0")));
+        .mul_add(14.0, 1.1)
+        .clamp(1.1, 4.5);
+    let seed = stable_hash(&group.join("\0"));
+    let mut groups = leiden_partition_group(group, edges, adjacency, resolution, seed);
     if groups.len() <= 1 {
-        groups = seeded_partition_group(group, nodes, edges, target_size, max_groups);
+        groups = leiden_partition_group(
+            group,
+            edges,
+            adjacency,
+            (resolution * 1.6).min(4.5),
+            seed ^ 0x51,
+        );
     }
-    groups = merge_small_groups(groups, nodes, edges);
-    groups = merge_to_target_groups(groups, nodes, edges, max_groups);
+    if groups.len() <= 1 {
+        groups = seeded_partition_group(group, nodes, edges, adjacency, target_size, max_groups);
+    }
+    groups = merge_small_groups(groups, nodes, edges, adjacency);
+    groups = merge_high_affinity_groups(groups, nodes, edges, adjacency);
+    if max_groups > 0 && groups.len() > max_groups {
+        groups = merge_to_target_groups(groups, nodes, edges, adjacency, max_groups);
+    }
     groups.sort_by(|left, right| {
         right
             .len()
@@ -1159,6 +1497,7 @@ fn partition_group(
 fn leiden_partition_group(
     group: &[String],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
     resolution: f64,
     seed: u64,
 ) -> Vec<Vec<String>> {
@@ -1169,21 +1508,31 @@ fn leiden_partition_group(
         .collect::<HashMap<_, _>>();
     let mut builder = GraphDataBuilder::new(group.len());
     let mut edge_count = 0usize;
-    for edge in edges {
-        let (Some(&source), Some(&target)) = (
-            index_by_id.get(edge.source_id.as_str()),
-            index_by_id.get(edge.target_id.as_str()),
-        ) else {
+    let mut seen = HashSet::<usize>::new();
+    for id in group {
+        let Some(edge_indices) = adjacency.get(id) else {
             continue;
         };
-        if source == target || edge.weight <= 0.0 {
-            continue;
-        }
-        if builder
-            .add_edge(source, target, f64::from(edge.weight))
-            .is_ok()
-        {
-            edge_count += 1;
+        for &edge_index in edge_indices {
+            if !seen.insert(edge_index) {
+                continue;
+            }
+            let edge = &edges[edge_index];
+            let (Some(&source), Some(&target)) = (
+                index_by_id.get(edge.source_id.as_str()),
+                index_by_id.get(edge.target_id.as_str()),
+            ) else {
+                continue;
+            };
+            if source == target || edge.weight < COMMUNITY_EDGE_MIN_STRENGTH {
+                continue;
+            }
+            if builder
+                .add_edge(source, target, f64::from(edge.weight))
+                .is_ok()
+            {
+                edge_count += 1;
+            }
         }
     }
     if edge_count == 0 {
@@ -1221,6 +1570,7 @@ fn seeded_partition_group(
     group: &[String],
     nodes: &[WorkingNode],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
     target_size: usize,
     max_groups: usize,
 ) -> Vec<Vec<String>> {
@@ -1236,7 +1586,7 @@ fn seeded_partition_group(
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
-    let adjacency = adjacency_for_group(group, edges);
+    let local_adjacency = adjacency_for_group(group, edges, adjacency);
     let seed_by_label = seeds
         .iter()
         .filter_map(|seed| {
@@ -1253,8 +1603,10 @@ fn seeded_partition_group(
         let label = seeds
             .iter()
             .max_by(|left, right| {
-                let left_score = seed_assignment_score(node, left, &seed_by_label, &adjacency);
-                let right_score = seed_assignment_score(node, right, &seed_by_label, &adjacency);
+                let left_score =
+                    seed_assignment_score(node, left, &seed_by_label, &local_adjacency);
+                let right_score =
+                    seed_assignment_score(node, right, &seed_by_label, &local_adjacency);
                 left_score
                     .total_cmp(&right_score)
                     .then_with(|| right.cmp(left))
@@ -1346,32 +1698,38 @@ fn seed_assignment_score(
 fn adjacency_for_group(
     group: &[String],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
 ) -> HashMap<String, Vec<(String, f32)>> {
     let group_set = group.iter().cloned().collect::<HashSet<_>>();
-    let mut adjacency = HashMap::<String, Vec<(String, f32)>>::new();
+    let mut local = HashMap::<String, Vec<(String, f32)>>::new();
     for id in group {
-        adjacency.entry(id.clone()).or_default();
-    }
-    for edge in edges {
-        if !group_set.contains(&edge.source_id) || !group_set.contains(&edge.target_id) {
+        local.entry(id.clone()).or_default();
+        let Some(edge_indices) = adjacency.get(id) else {
             continue;
+        };
+        for &edge_index in edge_indices {
+            let edge = &edges[edge_index];
+            let neighbor = if edge.source_id == *id {
+                &edge.target_id
+            } else {
+                &edge.source_id
+            };
+            if group_set.contains(neighbor) {
+                local
+                    .entry(id.clone())
+                    .or_default()
+                    .push((neighbor.clone(), edge.weight));
+            }
         }
-        adjacency
-            .entry(edge.source_id.clone())
-            .or_default()
-            .push((edge.target_id.clone(), edge.weight));
-        adjacency
-            .entry(edge.target_id.clone())
-            .or_default()
-            .push((edge.source_id.clone(), edge.weight));
     }
-    adjacency
+    local
 }
 
 fn merge_small_groups(
     mut groups: Vec<Vec<String>>,
     nodes: &[WorkingNode],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
 ) -> Vec<Vec<String>> {
     loop {
         let Some((small_index, _)) = groups
@@ -1390,7 +1748,7 @@ fn merge_small_groups(
                 Vec::new()
             };
         }
-        let target_index = strongest_group_index(&small_group, &groups, nodes, edges);
+        let target_index = strongest_group_index(&small_group, &groups, nodes, edges, adjacency);
         groups[target_index].extend(small_group);
         groups[target_index].sort();
     }
@@ -1402,6 +1760,7 @@ fn merge_to_target_groups(
     mut groups: Vec<Vec<String>>,
     nodes: &[WorkingNode],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
     target: usize,
 ) -> Vec<Vec<String>> {
     if target == 0 {
@@ -1412,7 +1771,7 @@ fn merge_to_target_groups(
         let mut best_score = f32::MIN;
         for left in 0..groups.len() {
             for right in (left + 1)..groups.len() {
-                let score = group_affinity(&groups[left], &groups[right], nodes, edges);
+                let score = group_affinity(&groups[left], &groups[right], nodes, edges, adjacency);
                 if score > best_score {
                     best_score = score;
                     best_pair = Some((left, right));
@@ -1429,18 +1788,114 @@ fn merge_to_target_groups(
     groups
 }
 
+fn merge_high_affinity_groups(
+    mut groups: Vec<Vec<String>>,
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
+) -> Vec<Vec<String>> {
+    loop {
+        let mut best_pair = None;
+        let mut best_score = f32::MIN;
+        for left in 0..groups.len() {
+            for right in (left + 1)..groups.len() {
+                let score = group_affinity(&groups[left], &groups[right], nodes, edges, adjacency);
+                if score >= HIGH_AFFINITY_MERGE_THRESHOLD && score > best_score {
+                    best_score = score;
+                    best_pair = Some((left, right));
+                }
+            }
+        }
+        let Some((left, right)) = best_pair else {
+            break;
+        };
+        let mut merged = groups.remove(right);
+        groups[left].append(&mut merged);
+        groups[left].sort();
+    }
+    groups
+}
+
+fn promote_mature_subclouds(
+    groups: Vec<Vec<String>>,
+    nodes: &[WorkingNode],
+    edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
+    remaining_depth: usize,
+) -> Vec<TopGroupPartition> {
+    let mut promoted = Vec::<TopGroupPartition>::new();
+    for group in groups {
+        let child_groups = detect_child_communities(&group, nodes, edges, adjacency);
+        let mature: Vec<Vec<String>> = child_groups
+            .iter()
+            .filter(|child| child.len() >= SUBCLOUD_PROMOTE_MIN)
+            .cloned()
+            .collect();
+        let separation = if child_groups.len() >= 2 {
+            partition_separation(&child_groups, edges, adjacency)
+        } else {
+            0.0
+        };
+        let should_promote = mature.len() >= 2
+            && (group.len() >= TOP_CLOUD_SOFT_MAX
+                || separation >= CHILD_PARTITION_SEPARATION_MIN);
+
+        if !should_promote {
+            promoted.push(TopGroupPartition {
+                members: group,
+                precomputed_children: Some(child_groups),
+            });
+            continue;
+        }
+
+        let mature_ids: HashSet<String> = mature.iter().flatten().cloned().collect();
+        let leftovers: Vec<String> = group
+            .into_iter()
+            .filter(|id| !mature_ids.contains(id))
+            .collect();
+
+        let mut next_groups = mature;
+        if leftovers.len() >= CLOUD_MIN_NOTES {
+            next_groups.push(leftovers);
+        } else if !leftovers.is_empty() && !next_groups.is_empty() {
+            let target = strongest_group_index(&leftovers, &next_groups, nodes, edges, adjacency);
+            next_groups[target].extend(leftovers);
+            next_groups[target].sort();
+        }
+
+        if remaining_depth > 0 {
+            promoted.extend(promote_mature_subclouds(
+                next_groups,
+                nodes,
+                edges,
+                adjacency,
+                remaining_depth - 1,
+            ));
+        } else {
+            for members in next_groups {
+                promoted.push(TopGroupPartition {
+                    members,
+                    precomputed_children: None,
+                });
+            }
+        }
+    }
+    promoted
+}
+
 fn strongest_group_index(
     source: &[String],
     groups: &[Vec<String>],
     nodes: &[WorkingNode],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
 ) -> usize {
     groups
         .iter()
         .enumerate()
         .max_by(|(_, left), (_, right)| {
-            let left_score = group_affinity(source, left, nodes, edges);
-            let right_score = group_affinity(source, right, nodes, edges);
+            let left_score = group_affinity(source, left, nodes, edges, adjacency);
+            let right_score = group_affinity(source, right, nodes, edges, adjacency);
             left_score
                 .total_cmp(&right_score)
                 .then_with(|| right.len().cmp(&left.len()))
@@ -1454,21 +1909,56 @@ fn group_affinity(
     right: &[String],
     nodes: &[WorkingNode],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
 ) -> f32 {
     let left_set = left.iter().cloned().collect::<HashSet<_>>();
     let right_set = right.iter().cloned().collect::<HashSet<_>>();
-    let edge_affinity = edges
-        .iter()
-        .filter(|edge| {
-            (left_set.contains(&edge.source_id) && right_set.contains(&edge.target_id))
-                || (left_set.contains(&edge.target_id) && right_set.contains(&edge.source_id))
-        })
-        .map(|edge| edge.weight)
-        .sum::<f32>();
-    if edge_affinity > 0.0 {
-        return edge_affinity;
+    let mut bridge_weight = 0.0_f32;
+    let mut bridge_count = 0usize;
+    let (scan_ids, other_set) = if left.len() <= right.len() {
+        (left, &right_set)
+    } else {
+        (right, &left_set)
+    };
+    for id in scan_ids {
+        let Some(edge_indices) = adjacency.get(id) else {
+            continue;
+        };
+        for &edge_index in edge_indices {
+            let edge = &edges[edge_index];
+            let neighbor = if edge.source_id == *id {
+                &edge.target_id
+            } else {
+                &edge.source_id
+            };
+            if !other_set.contains(neighbor) {
+                continue;
+            }
+            let crosses = (left_set.contains(&edge.source_id) && right_set.contains(&edge.target_id))
+                || (left_set.contains(&edge.target_id) && right_set.contains(&edge.source_id));
+            if !crosses {
+                continue;
+            }
+            bridge_weight += edge.weight;
+            bridge_count += 1;
+        }
     }
-    group_embedding_similarity(left, right, nodes) * 0.12
+    let embedding = group_embedding_similarity(left, right, nodes);
+    if bridge_count == 0 {
+        // No structural link — only treat near-identical centroids as affinity.
+        return if embedding >= 0.92 { embedding } else { 0.0 };
+    }
+    let mean_bridge = bridge_weight / bridge_count as f32;
+    let possible = (left.len() * right.len()).max(1) as f32;
+    let density = (bridge_count as f32 / possible).sqrt();
+    // Require both strong and relatively dense bridges; sparse knn/wikilink
+    // bridges alone should not collapse distinct communities.
+    let bridge_score = mean_bridge * density;
+    if embedding >= 0.92 && mean_bridge >= 0.55 {
+        bridge_score.max(embedding * density.max(0.25))
+    } else {
+        bridge_score
+    }
 }
 
 fn group_embedding_similarity(left: &[String], right: &[String], nodes: &[WorkingNode]) -> f32 {
@@ -1516,6 +2006,7 @@ fn detect_child_communities(
     parent_group: &[String],
     nodes: &[WorkingNode],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
 ) -> Vec<Vec<String>> {
     if parent_group.len() < CHILD_CLOUD_MIN_NOTES * 2 {
         return Vec::new();
@@ -1524,8 +2015,16 @@ fn detect_child_communities(
         .min(parent_group.len())
         .max(CHILD_CLOUD_MIN_NOTES);
     let max_groups = parent_group.len().div_ceil(CHILD_CLOUD_MIN_NOTES).max(2);
-    let mut groups = partition_group(parent_group, nodes, edges, target_size, max_groups);
-    if groups.len() < 2 || partition_separation(&groups, edges) < 0.18 {
+    let mut groups = partition_group(
+        parent_group,
+        nodes,
+        edges,
+        adjacency,
+        target_size,
+        max_groups,
+    );
+    if groups.len() < 2 || partition_separation(&groups, edges, adjacency) < CHILD_PARTITION_SEPARATION_MIN
+    {
         return Vec::new();
     }
 
@@ -1534,7 +2033,7 @@ fn detect_child_communities(
         let mut loose = Vec::new();
         let group = groups[index].clone();
         for id in group {
-            let attachment = node_internal_affinity(&id, &groups[index], edges);
+            let attachment = node_internal_affinity(&id, &groups[index], edges, adjacency);
             if groups[index].len().saturating_sub(loose.len()) > CLOUD_MIN_NOTES
                 && attachment < 0.34
             {
@@ -1545,8 +2044,8 @@ fn detect_child_communities(
         }
         groups[index] = retained;
         for loose_id in loose {
-            let target = strongest_group_index(&[loose_id.clone()], &groups, nodes, edges);
-            if node_internal_affinity(&loose_id, &groups[target], edges) >= 0.5 {
+            let target = strongest_group_index(&[loose_id.clone()], &groups, nodes, edges, adjacency);
+            if node_internal_affinity(&loose_id, &groups[target], edges, adjacency) >= 0.5 {
                 groups[target].push(loose_id);
                 groups[target].sort();
             }
@@ -1560,7 +2059,11 @@ fn detect_child_communities(
     }
 }
 
-fn partition_separation(groups: &[Vec<String>], edges: &[LayoutEdge]) -> f32 {
+fn partition_separation(
+    groups: &[Vec<String>],
+    edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
+) -> f32 {
     let mut group_by_node = HashMap::<String, usize>::new();
     for (index, group) in groups.iter().enumerate() {
         for id in group {
@@ -1569,17 +2072,27 @@ fn partition_separation(groups: &[Vec<String>], edges: &[LayoutEdge]) -> f32 {
     }
     let mut internal = 0.0_f32;
     let mut external = 0.0_f32;
-    for edge in edges {
-        let (Some(source), Some(target)) = (
-            group_by_node.get(&edge.source_id),
-            group_by_node.get(&edge.target_id),
-        ) else {
+    let mut seen = HashSet::<usize>::new();
+    for id in group_by_node.keys() {
+        let Some(edge_indices) = adjacency.get(id) else {
             continue;
         };
-        if source == target {
-            internal += edge.weight;
-        } else {
-            external += edge.weight;
+        for &edge_index in edge_indices {
+            if !seen.insert(edge_index) {
+                continue;
+            }
+            let edge = &edges[edge_index];
+            let (Some(source), Some(target)) = (
+                group_by_node.get(&edge.source_id),
+                group_by_node.get(&edge.target_id),
+            ) else {
+                continue;
+            };
+            if source == target {
+                internal += edge.weight;
+            } else {
+                external += edge.weight;
+            }
         }
     }
     if internal + external <= f32::EPSILON {
@@ -1588,15 +2101,26 @@ fn partition_separation(groups: &[Vec<String>], edges: &[LayoutEdge]) -> f32 {
     internal / (internal + external)
 }
 
-fn node_internal_affinity(node_id: &str, group: &[String], edges: &[LayoutEdge]) -> f32 {
+fn node_internal_affinity(
+    node_id: &str,
+    group: &[String],
+    edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
+) -> f32 {
     let group_set = group.iter().cloned().collect::<HashSet<_>>();
-    edges
-        .iter()
-        .filter(|edge| {
-            (edge.source_id == node_id && group_set.contains(&edge.target_id))
-                || (edge.target_id == node_id && group_set.contains(&edge.source_id))
+    adjacency
+        .get(node_id)
+        .into_iter()
+        .flatten()
+        .filter_map(|&edge_index| {
+            let edge = &edges[edge_index];
+            let neighbor = if edge.source_id == node_id {
+                &edge.target_id
+            } else {
+                &edge.source_id
+            };
+            group_set.contains(neighbor).then_some(edge.weight)
         })
-        .map(|edge| edge.weight)
         .sum()
 }
 
@@ -1690,7 +2214,7 @@ fn apply_umap_layout(nodes: &mut [WorkingNode], knn_rows: &[Vec<KnnNeighbor>]) -
         ..Default::default()
     };
     config.optimization = OptimizationParams {
-        n_epochs: Some(UMAP_ITERATIONS),
+        n_epochs: Some(umap_iterations_for_note_count(n)),
         learning_rate: 0.9,
         negative_sample_rate: 5,
         repulsion_strength: 1.15,
@@ -1719,41 +2243,68 @@ fn apply_umap_layout(nodes: &mut [WorkingNode], knn_rows: &[Vec<KnnNeighbor>]) -
     true
 }
 
+fn umap_iterations_for_note_count(note_count: usize) -> usize {
+    let scaled =
+        UMAP_ITERATIONS_BASE as f32 + UMAP_ITERATIONS_SQRT_SCALE * (note_count as f32).sqrt();
+    (scaled.round() as usize).clamp(UMAP_ITERATIONS_BASE, UMAP_ITERATIONS_MAX)
+}
+
 fn complete_knn_rows_for_umap(
     nodes: &[WorkingNode],
     knn_rows: &[Vec<KnnNeighbor>],
     neighbor_count: usize,
 ) -> Vec<Vec<KnnNeighbor>> {
-    let exact_rows = exact_knn_rows(nodes, neighbor_count);
-    knn_rows
-        .iter()
-        .enumerate()
-        .map(|(row_index, row)| {
-            let mut merged = Vec::<KnnNeighbor>::new();
-            for neighbor in row {
-                if neighbor.index != row_index {
-                    push_unique_neighbor(&mut merged, neighbor.index, neighbor.similarity);
-                }
-                if merged.len() == neighbor_count {
-                    break;
-                }
-            }
-            for neighbor in exact_rows.get(row_index).into_iter().flatten() {
+    let mut completed = Vec::with_capacity(knn_rows.len());
+    let mut deficient_indices = Vec::new();
+    for (row_index, row) in knn_rows.iter().enumerate() {
+        let mut merged = Vec::<KnnNeighbor>::with_capacity(neighbor_count);
+        for neighbor in row {
+            if neighbor.index != row_index {
                 push_unique_neighbor(&mut merged, neighbor.index, neighbor.similarity);
-                if merged.len() == neighbor_count {
-                    break;
-                }
             }
-            merged.sort_by(|left, right| {
-                right
-                    .similarity
-                    .total_cmp(&left.similarity)
-                    .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
-            });
-            merged.truncate(neighbor_count);
-            merged
-        })
-        .collect()
+            if merged.len() == neighbor_count {
+                break;
+            }
+        }
+        merged.sort_by(|left, right| {
+            right
+                .similarity
+                .total_cmp(&left.similarity)
+                .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
+        });
+        merged.truncate(neighbor_count);
+        if merged.len() < neighbor_count {
+            deficient_indices.push(row_index);
+        }
+        completed.push(merged);
+    }
+
+    if deficient_indices.is_empty() {
+        return completed;
+    }
+
+    // Exact-fill only rows that HNSW left short — never an unconditional all-pairs pass.
+    let exact_rows = exact_knn_rows(nodes, neighbor_count);
+    for row_index in deficient_indices {
+        let Some(exact_row) = exact_rows.get(row_index) else {
+            continue;
+        };
+        let merged = &mut completed[row_index];
+        for neighbor in exact_row {
+            push_unique_neighbor(merged, neighbor.index, neighbor.similarity);
+            if merged.len() == neighbor_count {
+                break;
+            }
+        }
+        merged.sort_by(|left, right| {
+            right
+                .similarity
+                .total_cmp(&left.similarity)
+                .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
+        });
+        merged.truncate(neighbor_count);
+    }
+    completed
 }
 
 fn apply_normalized_embedding(nodes: &mut [WorkingNode], embedding: &Array2<f32>) {
@@ -1790,13 +2341,17 @@ fn apply_normalized_embedding(nodes: &mut [WorkingNode], embedding: &Array2<f32>
 }
 
 fn refresh_cloud_geometry(specs: &mut [CloudSpec], nodes: &[WorkingNode]) {
+    let node_by_id = nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
     for spec in specs {
         let centroid = centroid_for_ids(&spec.member_node_ids, nodes);
         spec.centroid = centroid;
         let member_radius = spec
             .member_node_ids
             .iter()
-            .filter_map(|id| nodes.iter().find(|node| node.id == *id))
+            .filter_map(|id| node_by_id.get(id.as_str()).copied())
             .map(|node| distance([node.x, node.y], centroid))
             .fold(0.0_f32, f32::max);
         let base = if spec.level == 0 {
@@ -1942,6 +2497,7 @@ fn place_cloud_first_layout(
 }
 
 fn place_top_level_clouds(specs: &mut [CloudSpec], edges: &[LayoutEdge], layout_pull: f32) {
+    let adjacency = build_edge_adjacency(edges);
     let top_indices = specs
         .iter()
         .enumerate()
@@ -1972,7 +2528,7 @@ fn place_top_level_clouds(specs: &mut [CloudSpec], edges: &[LayoutEdge], layout_
             placed.push(index);
             continue;
         }
-        let related_anchor = related_cloud_anchor(index, &placed, specs, edges);
+        let related_anchor = related_cloud_anchor(index, &placed, specs, edges, &adjacency);
         let anchor = related_anchor.unwrap_or([0.0, 0.0]);
         let placement_gap = if related_anchor.is_some() {
             TOP_LEVEL_CLOUD_GAP
@@ -1988,6 +2544,7 @@ fn place_top_level_clouds(specs: &mut [CloudSpec], edges: &[LayoutEdge], layout_
         &top_indices,
         specs,
         edges,
+        &adjacency,
         TOP_LEVEL_CLOUD_GAP,
         layout_pull,
         150,
@@ -2006,11 +2563,12 @@ fn related_cloud_anchor(
     placed: &[usize],
     specs: &[CloudSpec],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
 ) -> Option<[f32; 2]> {
     let mut total_weight = 0.0_f32;
     let mut anchor = [0.0_f32, 0.0_f32];
     for &placed_index in placed {
-        let affinity = cloud_affinity(&specs[index], &specs[placed_index], edges);
+        let affinity = cloud_affinity(&specs[index], &specs[placed_index], edges, adjacency);
         if affinity <= 0.0 {
             continue;
         }
@@ -2117,6 +2675,7 @@ fn relax_cloud_centers(
     indices: &[usize],
     specs: &mut [CloudSpec],
     edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
     gap: f32,
     layout_pull: f32,
     iterations: usize,
@@ -2137,7 +2696,7 @@ fn relax_cloud_centers(
                     add_delta(&mut deltas, left, [dx / dist * force, dy / dist * force]);
                     add_delta(&mut deltas, right, [-dx / dist * force, -dy / dist * force]);
                 }
-                let affinity = cloud_affinity(&specs[left], &specs[right], edges);
+                let affinity = cloud_affinity(&specs[left], &specs[right], edges, adjacency);
                 if affinity > 0.0 && dist > desired + 80.0 {
                     let target = desired + (260.0 - affinity.min(8.0) * 18.0).max(64.0);
                     if dist > target {
@@ -2268,6 +2827,7 @@ fn place_child_centers(
     specs: &mut [CloudSpec],
     edges: &[LayoutEdge],
 ) {
+    let adjacency = build_edge_adjacency(edges);
     let parent_center = specs[parent_index].centroid;
     let parent_radius = specs[parent_index].radius;
     let mut order = child_indices.to_vec();
@@ -2290,7 +2850,8 @@ fn place_child_centers(
             placed.push(index);
             continue;
         }
-        let anchor = related_cloud_anchor(index, &placed, specs, edges).unwrap_or(parent_center);
+        let anchor =
+            related_cloud_anchor(index, &placed, specs, edges, &adjacency).unwrap_or(parent_center);
         let mut center = find_non_overlapping_child_center(
             &specs[index],
             &placed,
@@ -2312,7 +2873,15 @@ fn place_child_centers(
         specs[index].centroid = center;
         placed.push(index);
     }
-    relax_cloud_centers(child_indices, specs, edges, CHILD_CLOUD_GAP, 0.72, 90);
+    relax_cloud_centers(
+        child_indices,
+        specs,
+        edges,
+        &adjacency,
+        CHILD_CLOUD_GAP,
+        0.72,
+        90,
+    );
     compact_child_centers(parent_index, child_indices, specs);
     enforce_cloud_non_overlap(child_indices, specs, CHILD_CLOUD_GAP, 90);
 }
@@ -2376,21 +2945,7 @@ fn layout_notes_in_disc(
         .collect::<Vec<_>>();
     for _ in 0..54 {
         let mut deltas = HashMap::<usize, [f32; 2]>::new();
-        for left_offset in 0..members.len() {
-            for right_offset in (left_offset + 1)..members.len() {
-                let left = members[left_offset];
-                let right = members[right_offset];
-                let dx = nodes[left].x - nodes[right].x;
-                let dy = nodes[left].y - nodes[right].y;
-                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-                let desired = nodes[left].centrality.max(nodes[right].centrality) * 3.0 + 18.0;
-                if dist < desired {
-                    let force = (desired - dist) * 0.18;
-                    add_delta(&mut deltas, left, [dx / dist * force, dy / dist * force]);
-                    add_delta(&mut deltas, right, [-dx / dist * force, -dy / dist * force]);
-                }
-            }
-        }
+        apply_disc_repulsion(nodes, &members, &mut deltas);
         for edge in &local_edges {
             let (Some(&source), Some(&target)) = (
                 node_index.get(&edge.source_id),
@@ -2426,7 +2981,61 @@ fn layout_notes_in_disc(
     }
 }
 
+fn apply_disc_repulsion(
+    nodes: &[WorkingNode],
+    members: &[usize],
+    deltas: &mut HashMap<usize, [f32; 2]>,
+) {
+    if members.len() <= DISC_LAYOUT_FULL_PAIR_MAX {
+        for left_offset in 0..members.len() {
+            for right_offset in (left_offset + 1)..members.len() {
+                apply_disc_pair_repulsion(nodes, members[left_offset], members[right_offset], deltas);
+            }
+        }
+        return;
+    }
+
+    // Large clouds: only repel against nearest spatial neighbors instead of all pairs.
+    for (left_offset, &left) in members.iter().enumerate() {
+        let mut nearest = members
+            .iter()
+            .enumerate()
+            .filter(|(right_offset, _)| *right_offset != left_offset)
+            .map(|(_, &right)| {
+                let dx = nodes[left].x - nodes[right].x;
+                let dy = nodes[left].y - nodes[right].y;
+                (right, dx * dx + dy * dy)
+            })
+            .collect::<Vec<_>>();
+        nearest.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        nearest.truncate(DISC_LAYOUT_REPULSION_NEIGHBORS);
+        for (right, _) in nearest {
+            if left < right {
+                apply_disc_pair_repulsion(nodes, left, right, deltas);
+            }
+        }
+    }
+}
+
+fn apply_disc_pair_repulsion(
+    nodes: &[WorkingNode],
+    left: usize,
+    right: usize,
+    deltas: &mut HashMap<usize, [f32; 2]>,
+) {
+    let dx = nodes[left].x - nodes[right].x;
+    let dy = nodes[left].y - nodes[right].y;
+    let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+    let desired = nodes[left].centrality.max(nodes[right].centrality) * 3.0 + 18.0;
+    if dist < desired {
+        let force = (desired - dist) * 0.18;
+        add_delta(deltas, left, [dx / dist * force, dy / dist * force]);
+        add_delta(deltas, right, [-dx / dist * force, -dy / dist * force]);
+    }
+}
+
 fn finalize_cloud_cores(nodes: &[WorkingNode], edges: &[LayoutEdge], specs: &mut [CloudSpec]) {
+    let adjacency = build_edge_adjacency(edges);
     let node_by_id = nodes
         .iter()
         .map(|node| (node.id.as_str(), node))
@@ -2457,7 +3066,7 @@ fn finalize_cloud_cores(nodes: &[WorkingNode], edges: &[LayoutEdge], specs: &mut
         let mut core = Vec::new();
         let mut outliers = Vec::new();
         for (id, dist) in distances {
-            let affinity = node_internal_affinity(&id, &spec.member_node_ids, edges);
+            let affinity = node_internal_affinity(&id, &spec.member_node_ids, edges, &adjacency);
             if spec.member_node_ids.len().saturating_sub(outliers.len()) > CLOUD_MIN_NOTES
                 && dist > threshold
                 && affinity < 0.55
@@ -2577,22 +3186,41 @@ fn cloud_label_anchor(spec: &CloudSpec, members: &[&WorkingNode]) -> [f32; 2] {
     ]
 }
 
-fn cloud_affinity(left: &CloudSpec, right: &CloudSpec, edges: &[LayoutEdge]) -> f32 {
+fn cloud_affinity(
+    left: &CloudSpec,
+    right: &CloudSpec,
+    edges: &[LayoutEdge],
+    adjacency: &EdgeAdjacency,
+) -> f32 {
     let left_members = left.member_node_ids.iter().cloned().collect::<HashSet<_>>();
     let right_members = right
         .member_node_ids
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    edges
-        .iter()
-        .filter(|edge| {
-            (left_members.contains(&edge.source_id) && right_members.contains(&edge.target_id))
-                || (left_members.contains(&edge.target_id)
-                    && right_members.contains(&edge.source_id))
-        })
-        .map(|edge| edge.weight)
-        .sum()
+    let (scan_ids, other_set) = if left.member_node_ids.len() <= right.member_node_ids.len() {
+        (&left.member_node_ids, &right_members)
+    } else {
+        (&right.member_node_ids, &left_members)
+    };
+    let mut total = 0.0_f32;
+    for id in scan_ids {
+        let Some(edge_indices) = adjacency.get(id) else {
+            continue;
+        };
+        for &edge_index in edge_indices {
+            let edge = &edges[edge_index];
+            let neighbor = if edge.source_id == *id {
+                &edge.target_id
+            } else {
+                &edge.source_id
+            };
+            if other_set.contains(neighbor) {
+                total += edge.weight;
+            }
+        }
+    }
+    total
 }
 
 fn add_delta(deltas: &mut HashMap<usize, [f32; 2]>, index: usize, delta: [f32; 2]) {
@@ -2945,7 +3573,7 @@ fn title_tag_path_score(
     (exact + term_hits).clamp(0.0, 1.0)
 }
 
-fn recency_score(now: u64, last_activity: u64, modified: u64) -> f32 {
+pub(crate) fn recency_score(now: u64, last_activity: u64, modified: u64) -> f32 {
     let activity = last_activity.max(modified);
     if activity >= now {
         return 1.0;
@@ -2954,11 +3582,16 @@ fn recency_score(now: u64, last_activity: u64, modified: u64) -> f32 {
     (1.0 - (now - activity) as f32 / ninety_days).clamp(0.0, 1.0)
 }
 
+/// Diminishing returns on open count: ~0.5 around 7 opens, ~1.0 around 54.
+pub(crate) fn frequency_score(open_count: u64) -> f32 {
+    ((open_count as f32).ln_1p() / 4.0).clamp(0.0, 1.0)
+}
+
 fn reason_labels(
     semantic_score: f32,
     lexical_score: f32,
     structural_score: f32,
-    recency_score: f32,
+    access_score: f32,
 ) -> Vec<String> {
     let mut labels = Vec::new();
     if semantic_score >= 0.55 {
@@ -2970,7 +3603,7 @@ fn reason_labels(
     if structural_score >= 0.28 {
         labels.push("Title/tag/path match".to_string());
     }
-    if recency_score >= 0.72 {
+    if access_score >= 0.72 {
         labels.push("Recent or accessed".to_string());
     }
     labels
@@ -3047,6 +3680,125 @@ fn title_case(word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_knn_rows_for_umap_keeps_full_rows_without_exact_fill() {
+        let nodes = vec![
+            test_node("a", "Alpha", 0.0, 0.0),
+            test_node("b", "Beta", 1.0, 0.0),
+            test_node("c", "Gamma", 0.0, 1.0),
+            test_node("d", "Delta", 1.0, 1.0),
+        ];
+        let knn_rows = vec![
+            vec![
+                KnnNeighbor {
+                    index: 1,
+                    similarity: 0.9,
+                    distance: 0.1,
+                },
+                KnnNeighbor {
+                    index: 2,
+                    similarity: 0.8,
+                    distance: 0.2,
+                },
+            ],
+            vec![
+                KnnNeighbor {
+                    index: 0,
+                    similarity: 0.9,
+                    distance: 0.1,
+                },
+                KnnNeighbor {
+                    index: 3,
+                    similarity: 0.7,
+                    distance: 0.3,
+                },
+            ],
+            vec![
+                KnnNeighbor {
+                    index: 0,
+                    similarity: 0.8,
+                    distance: 0.2,
+                },
+                KnnNeighbor {
+                    index: 3,
+                    similarity: 0.75,
+                    distance: 0.25,
+                },
+            ],
+            vec![
+                KnnNeighbor {
+                    index: 1,
+                    similarity: 0.7,
+                    distance: 0.3,
+                },
+                KnnNeighbor {
+                    index: 2,
+                    similarity: 0.75,
+                    distance: 0.25,
+                },
+            ],
+        ];
+        let completed = complete_knn_rows_for_umap(&nodes, &knn_rows, 2);
+        assert_eq!(completed.len(), 4);
+        for (index, row) in completed.iter().enumerate() {
+            assert_eq!(row.len(), 2, "row {index} should stay complete");
+            let mut got = row.iter().map(|neighbor| neighbor.index).collect::<Vec<_>>();
+            let mut expected = knn_rows[index]
+                .iter()
+                .map(|neighbor| neighbor.index)
+                .collect::<Vec<_>>();
+            got.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(got, expected, "row {index} should keep HNSW neighbors");
+        }
+    }
+
+    #[test]
+    fn umap_iterations_scale_with_note_count() {
+        assert!(umap_iterations_for_note_count(1) >= UMAP_ITERATIONS_BASE);
+        assert!(umap_iterations_for_note_count(10_000) <= UMAP_ITERATIONS_MAX);
+        assert!(umap_iterations_for_note_count(400) < UMAP_ITERATIONS_MAX);
+        assert!(umap_iterations_for_note_count(400) > umap_iterations_for_note_count(16));
+    }
+
+    #[test]
+    fn atlas_graph_snapshot_round_trip_covers_notes() {
+        let notes = vec![StoredAtlasNoteEmbedding {
+            note_path: "/vault/a.md".to_string(),
+            note_title: "A".to_string(),
+            modified_millis: 1,
+            content_hash: "h1".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            embedding: vec![1.0, 0.0],
+        }];
+        let snapshot = AtlasGraphSnapshot {
+            signature: "sig".to_string(),
+            nodes: vec![AtlasSnapshotNode {
+                note_path: "/vault/a.md".to_string(),
+                x: 1.0,
+                y: 2.0,
+                cloud_id: Some("cloud-1".to_string()),
+                parent_cloud_id: None,
+                child_cloud_id: None,
+                centrality: 0.5,
+                degree: 1,
+                importance: 0.4,
+                isolated: false,
+                modified_at_millis: 1,
+                created_at_millis: 1,
+                updated_at_millis: 1,
+            }],
+            links: Vec::new(),
+            clouds: Vec::new(),
+        };
+        assert!(snapshot_covers_notes(&snapshot, &notes));
+        let encoded = serde_json::to_string(&snapshot).expect("encode");
+        let decoded: AtlasGraphSnapshot = serde_json::from_str(&encoded).expect("decode");
+        assert_eq!(decoded.signature, "sig");
+        assert_eq!(decoded.nodes.len(), 1);
+    }
 
     fn test_node(id: &str, title: &str, x: f32, y: f32) -> WorkingNode {
         WorkingNode {
@@ -3192,15 +3944,18 @@ mod tests {
     }
 
     #[test]
-    fn thousand_note_layout_bounds_top_clouds_and_prevents_overlap() {
+    fn many_topic_clusters_become_many_top_clouds() {
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
-        for cluster in 0..25 {
-            for ordinal in 0..40 {
+        for cluster in 0..12 {
+            for ordinal in 0..20 {
                 let id = format!("c{cluster:02}-{ordinal:02}");
                 let mut node =
                     test_node(&id, &format!("Cluster {cluster} Note {ordinal}"), 0.0, 0.0);
-                node.embedding = vec![cluster as f32, ordinal as f32 / 40.0, 1.0];
+                let mut embedding = vec![0.0_f32; 12];
+                embedding[cluster] = 1.0;
+                embedding.push(ordinal as f32 / 20.0);
+                node.embedding = embedding;
                 node.centrality = if ordinal == 0 { 1.0 } else { 0.45 };
                 nodes.push(node);
                 if ordinal > 0 {
@@ -3221,12 +3976,170 @@ mod tests {
         }
 
         let mut specs = assign_clouds(&mut nodes, &edges);
-        place_cloud_first_layout(&mut nodes, &edges, &mut specs, DEFAULT_LAYOUT_PULL);
-        finalize_cloud_cores(&nodes, &edges, &mut specs);
-
         let top_level_count = specs.iter().filter(|spec| spec.level == 0).count();
-        assert!(top_level_count <= target_top_cloud_count(nodes.len()));
+        assert!(
+            top_level_count >= 10,
+            "expected content-driven top clouds near cluster count, got {top_level_count}"
+        );
+        place_cloud_first_layout(&mut nodes, &edges, &mut specs, DEFAULT_LAYOUT_PULL);
         assert_specs_do_not_overlap(&specs, 0, TOP_LEVEL_CLOUD_GAP);
+    }
+
+    #[test]
+    fn weak_bridges_do_not_collapse_distinct_topics() {
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for topic in 0..4 {
+            for ordinal in 0..12 {
+                let id = format!("t{topic}-{ordinal:02}");
+                let mut node = test_node(&id, &format!("Topic {topic} Note {ordinal}"), 0.0, 0.0);
+                // Orthogonal-ish topic axes so embedding similarity across topics stays low.
+                let mut embedding = vec![0.0_f32; 4];
+                embedding[topic] = 1.0;
+                embedding.push(ordinal as f32 / 12.0);
+                node.embedding = embedding;
+                node.centrality = if ordinal == 0 { 1.0 } else { 0.4 };
+                nodes.push(node);
+                if ordinal > 0 {
+                    edges.push(test_edge(
+                        &format!("t{topic}-{:02}", ordinal - 1),
+                        &id,
+                        0.88,
+                    ));
+                }
+                if ordinal > 1 {
+                    edges.push(test_edge(
+                        &format!("t{topic}-{:02}", ordinal - 2),
+                        &id,
+                        0.78,
+                    ));
+                }
+            }
+        }
+        // Sparse weak bridges — previously these summed past the merge threshold.
+        edges.push(test_edge("t0-00", "t1-00", 0.34));
+        edges.push(test_edge("t1-00", "t2-00", 0.34));
+        edges.push(test_edge("t2-00", "t3-00", 0.34));
+        edges.push(test_edge("t0-05", "t2-05", 0.32));
+
+        let specs = assign_clouds(&mut nodes, &edges);
+        let top_level_count = specs.iter().filter(|spec| spec.level == 0).count();
+        assert!(
+            top_level_count >= 3,
+            "weak bridges should not collapse 4 topics into {top_level_count} clouds"
+        );
+    }
+
+    #[test]
+    fn large_parent_forms_subclouds_when_topics_separate() {
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for topic in 0..2 {
+            for ordinal in 0..14 {
+                let id = format!("s{topic}-{ordinal:02}");
+                let mut node = test_node(&id, &format!("Sub {topic} Note {ordinal}"), 0.0, 0.0);
+                let mut embedding = vec![0.0_f32; 2];
+                embedding[topic] = 1.0;
+                embedding.push(ordinal as f32 / 14.0);
+                node.embedding = embedding;
+                node.centrality = 0.5;
+                nodes.push(node);
+                if ordinal > 0 {
+                    edges.push(test_edge(
+                        &format!("s{topic}-{:02}", ordinal - 1),
+                        &id,
+                        0.9,
+                    ));
+                }
+                if ordinal > 1 {
+                    edges.push(test_edge(
+                        &format!("s{topic}-{:02}", ordinal - 2),
+                        &id,
+                        0.82,
+                    ));
+                }
+            }
+        }
+        edges.push(test_edge("s0-00", "s1-00", 0.5));
+        edges.push(test_edge("s0-03", "s1-03", 0.48));
+
+        let specs = assign_clouds(&mut nodes, &edges);
+        let top = specs.iter().filter(|spec| spec.level == 0).count();
+        let children = specs.iter().filter(|spec| spec.level == 1).count();
+        assert!(
+            top >= 2 || children >= 2,
+            "expected either promoted top clouds or subclouds, got top={top} children={children}"
+        );
+    }
+
+    #[test]
+    fn mature_subclouds_promote_to_top_level_when_parent_is_large() {
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for topic in 0..3 {
+            for ordinal in 0..18 {
+                let id = format!("t{topic}-{ordinal:02}");
+                let mut node = test_node(&id, &format!("Topic {topic} Note {ordinal}"), 0.0, 0.0);
+                node.embedding = vec![topic as f32 * 10.0, ordinal as f32 / 18.0, 1.0];
+                node.centrality = if ordinal == 0 { 1.0 } else { 0.4 };
+                nodes.push(node);
+                if ordinal > 0 {
+                    edges.push(test_edge(
+                        &format!("t{topic}-{:02}", ordinal - 1),
+                        &id,
+                        0.9,
+                    ));
+                }
+                if ordinal > 1 {
+                    edges.push(test_edge(
+                        &format!("t{topic}-{:02}", ordinal - 2),
+                        &id,
+                        0.8,
+                    ));
+                }
+            }
+        }
+        // Weak bridges so the whole set is one component but topics stay separable.
+        edges.push(test_edge("t0-00", "t1-00", 0.32));
+        edges.push(test_edge("t1-00", "t2-00", 0.32));
+
+        let specs = assign_clouds(&mut nodes, &edges);
+        let top_level_count = specs.iter().filter(|spec| spec.level == 0).count();
+        assert!(
+            top_level_count >= 2,
+            "expected promotion into multiple top clouds, got {top_level_count}"
+        );
+    }
+
+    #[test]
+    fn coherent_group_without_separable_children_stays_one_top_cloud() {
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for ordinal in 0..24 {
+            let id = format!("n{ordinal:02}");
+            let mut node = test_node(&id, &format!("Note {ordinal}"), 0.0, 0.0);
+            // Near-identical embeddings — one coherent topic.
+            node.embedding = vec![1.0, 0.02 * (ordinal as f32), 0.5];
+            node.centrality = if ordinal == 0 { 1.0 } else { 0.5 };
+            nodes.push(node);
+        }
+        // Dense clique so Leiden sees one community.
+        for left in 0..nodes.len() {
+            for right in (left + 1)..nodes.len() {
+                edges.push(test_edge(
+                    &nodes[left].id,
+                    &nodes[right].id,
+                    0.9 - ((right - left) as f32) * 0.005,
+                ));
+            }
+        }
+
+        let specs = assign_clouds(&mut nodes, &edges);
+        let top_level_count = specs.iter().filter(|spec| spec.level == 0).count();
+        assert_eq!(
+            top_level_count, 1,
+            "coherent dense topic should remain one top cloud"
+        );
     }
 
     #[test]

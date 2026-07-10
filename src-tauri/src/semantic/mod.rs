@@ -12,9 +12,9 @@ use self::{
     ann::AnnIndexState,
     atlas::{AtlasHardLink, AtlasNoteMetadata, AtlasSearchResponse, VaultAtlasResponse},
     db::{
-        content_hash, count_indexed_items, ensure_schema, load_chunks_by_ann_labels,
-        load_latest_job, load_note_record, load_related_note_previews, load_semantic_settings,
-        open_database, save_semantic_settings,
+        clear_atlas_cache, content_hash, count_indexed_items, ensure_schema,
+        load_chunks_by_ann_labels, load_latest_job, load_note_record, load_related_note_previews,
+        load_semantic_settings, open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
@@ -489,6 +489,17 @@ impl SemanticState {
         self.debug_state().clear()
     }
 
+    pub(crate) fn clear_atlas_cache(&self) -> Result<(), String> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => {
+                let connection = open_database(&state.db_path)?;
+                ensure_schema(&connection)?;
+                clear_atlas_cache(&connection)
+            }
+            SemanticStateInner::Disabled(_) => Ok(()),
+        }
+    }
+
     pub(crate) fn debug_state(&self) -> Arc<SemanticDebugState> {
         match &self.inner {
             SemanticStateInner::Active(state) => Arc::clone(&state.debug),
@@ -616,13 +627,13 @@ impl SemanticState {
         &self,
         metadata: std::collections::HashMap<String, AtlasNoteMetadata>,
         hard_links: Vec<AtlasHardLink>,
-        last_viewed_by_note_id: std::collections::HashMap<String, u64>,
+        activity_by_note_id: std::collections::HashMap<String, crate::state::NoteActivity>,
     ) -> Result<VaultAtlasResponse, String> {
         match &self.inner {
             SemanticStateInner::Active(state) => state.vault_atlas(
                 metadata,
                 hard_links,
-                last_viewed_by_note_id,
+                activity_by_note_id,
                 self.current_index_revision(),
             ),
             SemanticStateInner::Disabled(state) => Ok(VaultAtlasResponse {
@@ -647,11 +658,11 @@ impl SemanticState {
         &self,
         query: String,
         metadata: std::collections::HashMap<String, AtlasNoteMetadata>,
-        last_viewed_by_note_id: std::collections::HashMap<String, u64>,
+        activity_by_note_id: std::collections::HashMap<String, crate::state::NoteActivity>,
     ) -> Result<AtlasSearchResponse, String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
-                state.search_vault_atlas(query, metadata, last_viewed_by_note_id)
+                state.search_vault_atlas(query, metadata, activity_by_note_id)
             }
             SemanticStateInner::Disabled(state) => Ok(AtlasSearchResponse {
                 status: "unavailable".to_string(),

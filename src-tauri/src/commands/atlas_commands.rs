@@ -31,14 +31,19 @@ pub(crate) async fn get_vault_atlas(
         let hard_links = build_hard_links(&index.entries, &metadata);
         (metadata, hard_links)
     };
-    let last_viewed_by_note_id = db_load_note_activity()?;
+    let activity_by_note_id = db_load_note_activity()?;
     let semantic = state.semantic.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        semantic.vault_atlas(metadata, hard_links, last_viewed_by_note_id)
+        semantic.vault_atlas(metadata, hard_links, activity_by_note_id)
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+pub(crate) fn clear_atlas_cache(state: State<'_, AppState>) -> Result<(), String> {
+    state.semantic.clear_atlas_cache()
 }
 
 #[tauri::command]
@@ -60,11 +65,11 @@ pub(crate) async fn search_vault_atlas(
             .map_err(|_| "Search index lock poisoned".to_string())?;
         build_metadata(&index.entries)
     };
-    let last_viewed_by_note_id = db_load_note_activity()?;
+    let activity_by_note_id = db_load_note_activity()?;
     let semantic = state.semantic.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        semantic.search_vault_atlas(query, metadata, last_viewed_by_note_id)
+        semantic.search_vault_atlas(query, metadata, activity_by_note_id)
     })
     .await
     .map_err(|err| err.to_string())?

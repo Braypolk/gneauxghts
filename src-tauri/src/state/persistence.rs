@@ -581,11 +581,55 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
             );
             CREATE TABLE IF NOT EXISTS app_state_note_activity (
                 note_id TEXT PRIMARY KEY,
-                last_viewed_at_millis INTEGER NOT NULL
+                last_viewed_at_millis INTEGER NOT NULL,
+                open_count INTEGER NOT NULL DEFAULT 0,
+                last_counted_open_at_millis INTEGER NOT NULL DEFAULT 0
             );",
         )
         .map_err(|err| err.to_string())?;
+    migrate_note_activity_columns(connection)?;
     Ok(())
+}
+
+fn migrate_note_activity_columns(connection: &Connection) -> Result<(), String> {
+    if !has_column(connection, "app_state_note_activity", "open_count")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state_note_activity
+                 ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    if !has_column(connection, "app_state_note_activity", "last_counted_open_at_millis")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state_note_activity
+                 ADD COLUMN last_counted_open_at_millis INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn has_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, String> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut statement = connection.prepare(&pragma).map_err(|err| err.to_string())?;
+    let mut rows = statement.query([]).map_err(|err| err.to_string())?;
+
+    while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+        let existing_name = row.get::<_, String>(1).map_err(|err| err.to_string())?;
+        if existing_name == column_name {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn read_unpruned_state(_notes_dir: &Path) -> Result<PersistedState, String> {
@@ -905,37 +949,154 @@ pub(crate) fn db_set_note_order(note_ids: &[String]) -> Result<(), String> {
     })
 }
 
-pub(crate) fn db_touch_note_activity(note_id: &str, viewed_at_millis: u64) -> Result<(), String> {
+/// Minimum gap between counted opens for the same note.
+pub(crate) const OPEN_COUNT_COOLDOWN_MS: u64 = 8 * 60 * 60 * 1000;
+/// Idle time that removes one effective open from ranking (and writeback).
+pub(crate) const OPEN_COUNT_DECAY_INTERVAL_MS: u64 = 36 * 60 * 60 * 1000;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct NoteActivity {
+    pub(crate) last_viewed_at_millis: u64,
+    pub(crate) open_count: u64,
+    pub(crate) last_counted_open_at_millis: u64,
+}
+
+/// Read-time / writeback decay: −1 per 36h idle since last view, floored at 0.
+pub(crate) fn effective_open_count(open_count: u64, last_viewed: u64, now: u64) -> u64 {
+    if last_viewed == 0 || now <= last_viewed {
+        return open_count;
+    }
+    let idle = now - last_viewed;
+    let steps = idle / OPEN_COUNT_DECAY_INTERVAL_MS;
+    open_count.saturating_sub(steps)
+}
+
+fn should_count_open(last_counted_open_at_millis: u64, now: u64) -> bool {
+    last_counted_open_at_millis == 0
+        || now.saturating_sub(last_counted_open_at_millis) >= OPEN_COUNT_COOLDOWN_MS
+}
+
+pub(crate) fn db_touch_note_activity(
+    note_id: &str,
+    viewed_at_millis: u64,
+    count_as_open: bool,
+) -> Result<(), String> {
     with_state_database(|connection| {
+        let existing = connection
+            .query_row(
+                "SELECT last_viewed_at_millis, open_count, last_counted_open_at_millis
+                 FROM app_state_note_activity
+                 WHERE note_id = ?1",
+                params![note_id],
+                |row| {
+                    Ok(NoteActivity {
+                        last_viewed_at_millis: read_u64_column(row, 0)?,
+                        open_count: read_u64_column(row, 1)?,
+                        last_counted_open_at_millis: read_u64_column(row, 2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|err| err.to_string())?;
+
+        let previous = existing.unwrap_or_default();
+        let decayed = effective_open_count(
+            previous.open_count,
+            previous.last_viewed_at_millis,
+            viewed_at_millis,
+        );
+        let last_viewed_at_millis = previous.last_viewed_at_millis.max(viewed_at_millis);
+
+        let (open_count, last_counted_open_at_millis) = if count_as_open
+            && should_count_open(previous.last_counted_open_at_millis, viewed_at_millis)
+        {
+            (decayed.saturating_add(1), viewed_at_millis)
+        } else {
+            (decayed, previous.last_counted_open_at_millis)
+        };
+
         connection
             .execute(
-                "INSERT INTO app_state_note_activity (note_id, last_viewed_at_millis)
-                 VALUES (?1, ?2)
-                 ON CONFLICT(note_id) DO UPDATE
-                 SET last_viewed_at_millis = max(app_state_note_activity.last_viewed_at_millis, excluded.last_viewed_at_millis)",
-                params![note_id, to_i64(viewed_at_millis)?],
+                "INSERT INTO app_state_note_activity (
+                    note_id,
+                    last_viewed_at_millis,
+                    open_count,
+                    last_counted_open_at_millis
+                 ) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(note_id) DO UPDATE SET
+                    last_viewed_at_millis = excluded.last_viewed_at_millis,
+                    open_count = excluded.open_count,
+                    last_counted_open_at_millis = excluded.last_counted_open_at_millis",
+                params![
+                    note_id,
+                    to_i64(last_viewed_at_millis)?,
+                    to_i64(open_count)?,
+                    to_i64(last_counted_open_at_millis)?,
+                ],
             )
             .map(|_| ())
             .map_err(|err| err.to_string())
     })
 }
 
-pub(crate) fn db_load_note_activity() -> Result<HashMap<String, u64>, String> {
+pub(crate) fn db_load_note_activity() -> Result<HashMap<String, NoteActivity>, String> {
     with_state_database(|connection| {
         let mut statement = connection
-            .prepare("SELECT note_id, last_viewed_at_millis FROM app_state_note_activity")
+            .prepare(
+                "SELECT note_id, last_viewed_at_millis, open_count, last_counted_open_at_millis
+                 FROM app_state_note_activity",
+            )
             .map_err(|err| err.to_string())?;
         let rows = statement
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, read_u64_column(row, 1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    NoteActivity {
+                        last_viewed_at_millis: read_u64_column(row, 1)?,
+                        open_count: read_u64_column(row, 2)?,
+                        last_counted_open_at_millis: read_u64_column(row, 3)?,
+                    },
+                ))
             })
             .map_err(|err| err.to_string())?;
         let mut activity = HashMap::new();
         for row in rows {
-            let (note_id, last_viewed_at_millis) = row.map_err(|err| err.to_string())?;
-            activity.insert(note_id, last_viewed_at_millis);
+            let (note_id, note_activity) = row.map_err(|err| err.to_string())?;
+            activity.insert(note_id, note_activity);
         }
         Ok(activity)
+    })
+}
+
+#[cfg(test)]
+pub(super) fn db_force_note_activity_for_tests(
+    note_id: &str,
+    last_viewed_at_millis: u64,
+    open_count: u64,
+    last_counted_open_at_millis: u64,
+) -> Result<(), String> {
+    with_state_database(|connection| {
+        connection
+            .execute(
+                "INSERT INTO app_state_note_activity (
+                    note_id,
+                    last_viewed_at_millis,
+                    open_count,
+                    last_counted_open_at_millis
+                 ) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(note_id) DO UPDATE SET
+                    last_viewed_at_millis = excluded.last_viewed_at_millis,
+                    open_count = excluded.open_count,
+                    last_counted_open_at_millis = excluded.last_counted_open_at_millis",
+                params![
+                    note_id,
+                    to_i64(last_viewed_at_millis)?,
+                    to_i64(open_count)?,
+                    to_i64(last_counted_open_at_millis)?,
+                ],
+            )
+            .map(|_| ())
+            .map_err(|err| err.to_string())
     })
 }
 

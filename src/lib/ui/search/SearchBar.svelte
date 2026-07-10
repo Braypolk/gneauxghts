@@ -155,9 +155,12 @@
   }
 
   function handleClear() {
+    const shouldKeepFocus = document.activeElement === inputEl;
     onValueChange('');
     onClear?.();
-    focusSearch();
+    if (shouldKeepFocus) {
+      focusSearch();
+    }
   }
 
   async function selectScope(nextScopeId: string) {

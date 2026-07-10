@@ -6,12 +6,17 @@ use crate::{
     search::{
         build_recent_result, search_note, NoteSearchResult, ScoredSearchResult, MAX_SEARCH_RESULTS,
     },
-    semantic::{RelatedNotesResponse, SemanticChunkMatch},
+    semantic::{
+        atlas::{frequency_score, recency_score},
+        RelatedNotesResponse, SemanticChunkMatch,
+    },
     services::{resolve_current_document, CurrentDocumentRequest},
     state::{
-        prune_recent_note_ids, read_state, resolve_note_id_from_path,
-        task_projection::list_recent_open_tasks, validate_current_path, write_state,
+        db_load_note_activity, effective_open_count, prune_recent_note_ids, read_state,
+        resolve_note_id_from_path, task_projection::list_recent_open_tasks, validate_current_path,
+        write_state, NoteActivity,
     },
+    time::current_time_millis,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -30,6 +35,7 @@ use tauri::State;
 /// double-fires from the editor.
 const SEARCH_RESULT_CACHE_TTL: Duration = Duration::from_millis(750);
 const SEARCH_RESULT_CACHE_MAX_ENTRIES: usize = 16;
+const SEARCH_ACCESS_WEIGHT: f32 = 0.08;
 
 #[derive(Clone)]
 struct CachedSearchResults {
@@ -192,6 +198,7 @@ struct HybridCandidate {
     lexical_score: f32,
     semantic_score: f32,
     structural_boost: f32,
+    access_score: f32,
     result: NoteSearchResult,
 }
 
@@ -456,7 +463,21 @@ pub(crate) async fn search_notes_hybrid(
                     metrics.search_duration_max_millis.max(elapsed);
             },
         );
-        let results = finalize_lexical_results(lexical_candidates, effective_limit);
+        let activity_by_note_id = db_load_note_activity().unwrap_or_default();
+        let note_lookup = note_access_lookup(&state);
+        let now = current_time_millis().unwrap_or(0);
+        let results = merge_hybrid_candidates(
+            lexical_candidates,
+            Vec::new(),
+            &normalized_query,
+            current_path.as_deref(),
+            effective_limit,
+            lexical_weight,
+            semantic_weight,
+            &activity_by_note_id,
+            &note_lookup,
+            now,
+        );
         search_cache_put(cache_fingerprint, results.clone());
         return Ok(results);
     }
@@ -473,6 +494,9 @@ pub(crate) async fn search_notes_hybrid(
     .await
     .map_err(|err| err.to_string())??;
 
+    let activity_by_note_id = db_load_note_activity().unwrap_or_default();
+    let note_lookup = note_access_lookup(&state);
+    let now = current_time_millis().unwrap_or(0);
     let ranked = merge_hybrid_candidates(
         lexical_candidates,
         semantic_matches,
@@ -481,6 +505,9 @@ pub(crate) async fn search_notes_hybrid(
         effective_limit,
         lexical_weight,
         semantic_weight,
+        &activity_by_note_id,
+        &note_lookup,
+        now,
     );
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     state.semantic.debug_state().record_timing(
@@ -632,6 +659,9 @@ pub(crate) async fn retrieve_note_context(
                 effective_limit,
                 settings.lexical_weight.max(0.0),
                 settings.semantic_weight.max(0.0),
+                &db_load_note_activity().unwrap_or_default(),
+                &note_access_lookup(&state),
+                current_time_millis().unwrap_or(0),
             );
             return Ok(RetrievalContextResponse {
                 status: "ready".to_string(),
@@ -820,29 +850,74 @@ fn collect_lexical_candidates(
     Ok(candidates)
 }
 
-fn finalize_lexical_results(
-    mut candidates: Vec<ScoredSearchResult>,
-    limit: usize,
-) -> Vec<NoteSearchResult> {
-    candidates.sort_by(|left, right| {
-        right
-            .score
-            .cmp(&left.score)
-            .then_with(|| left.result.file_name.cmp(&right.result.file_name))
-            .then_with(|| left.result.section_label.cmp(&right.result.section_label))
-            .then_with(|| left.result.note_path.cmp(&right.result.note_path))
-    });
-    candidates.truncate(limit.max(1));
-    candidates
-        .into_iter()
-        .map(|mut candidate| {
-            candidate.result.lexical_score = Some(candidate.score as f32);
-            candidate.result.reason_labels = vec!["keyword".to_string()];
-            candidate.result
-        })
-        .collect()
+pub(super) struct NoteAccessLookup {
+    pub(super) modified_by_note_id: HashMap<String, u64>,
+    pub(super) note_id_by_path: HashMap<String, String>,
 }
 
+impl NoteAccessLookup {
+    pub(super) fn empty() -> Self {
+        Self {
+            modified_by_note_id: HashMap::new(),
+            note_id_by_path: HashMap::new(),
+        }
+    }
+}
+
+fn note_access_lookup(state: &State<'_, AppState>) -> NoteAccessLookup {
+    let Ok(index) = state.notes_index.lock() else {
+        return NoteAccessLookup {
+            modified_by_note_id: HashMap::new(),
+            note_id_by_path: HashMap::new(),
+        };
+    };
+    let mut modified_by_note_id = HashMap::new();
+    let mut note_id_by_path = HashMap::new();
+    for (path, note) in &index.entries {
+        modified_by_note_id.insert(note.note_id.clone(), note.modified_millis);
+        note_id_by_path.insert(path.to_string_lossy().into_owned(), note.note_id.clone());
+    }
+    NoteAccessLookup {
+        modified_by_note_id,
+        note_id_by_path,
+    }
+}
+
+fn access_score_for_note(
+    note_id: Option<&str>,
+    activity_by_note_id: &HashMap<String, NoteActivity>,
+    modified_by_note_id: &HashMap<String, u64>,
+    now: u64,
+) -> f32 {
+    let Some(note_id) = note_id.filter(|id| !id.is_empty()) else {
+        return 0.0;
+    };
+    let activity = activity_by_note_id.get(note_id);
+    let last_viewed = activity
+        .map(|item| item.last_viewed_at_millis)
+        .unwrap_or(0);
+    let open_count = activity.map(|item| item.open_count).unwrap_or(0);
+    if last_viewed == 0 && open_count == 0 {
+        return 0.0;
+    }
+    let modified = modified_by_note_id.get(note_id).copied().unwrap_or(0);
+    let recency = recency_score(now, last_viewed.max(1), modified);
+    let frequency = frequency_score(effective_open_count(open_count, last_viewed, now));
+    (0.55 * recency + 0.45 * frequency).clamp(0.0, 1.0)
+}
+
+fn maybe_label_frequently_opened(result: &mut NoteSearchResult, access_score: f32) {
+    if access_score >= 0.72
+        && !result
+            .reason_labels
+            .iter()
+            .any(|label| label == "frequently opened")
+    {
+        result.reason_labels.push("frequently opened".to_string());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn merge_hybrid_candidates(
     lexical_candidates: Vec<ScoredSearchResult>,
     semantic_matches: Vec<SemanticChunkMatch>,
@@ -851,6 +926,9 @@ pub(super) fn merge_hybrid_candidates(
     limit: usize,
     lexical_weight: f32,
     semantic_weight: f32,
+    activity_by_note_id: &HashMap<String, NoteActivity>,
+    note_lookup: &NoteAccessLookup,
+    now: u64,
 ) -> Vec<NoteSearchResult> {
     let max_lexical = lexical_candidates
         .iter()
@@ -872,12 +950,20 @@ pub(super) fn merge_hybrid_candidates(
         result.reason_labels.push("keyword".to_string());
         result.lexical_score = Some(lexical_score);
         let structural_boost = structural_boost(&result, normalized_query, current_path);
+        let access_score = access_score_for_note(
+            result.note_id.as_deref(),
+            activity_by_note_id,
+            &note_lookup.modified_by_note_id,
+            now,
+        );
+        maybe_label_frequently_opened(&mut result, access_score);
         merged.insert(
             hybrid_candidate_key(&result),
             HybridCandidate {
                 lexical_score,
                 semantic_score: 0.0,
                 structural_boost,
+                access_score,
                 result,
             },
         );
@@ -903,13 +989,20 @@ pub(super) fn merge_hybrid_candidates(
             .to_string();
         let structural_boost =
             structural_boost_from_semantic(&semantic_match, normalized_query, current_path);
+        let note_id = note_lookup
+            .note_id_by_path
+            .get(&semantic_match.note_path)
+            .cloned();
+        let access_score = access_score_for_note(
+            note_id.as_deref(),
+            activity_by_note_id,
+            &note_lookup.modified_by_note_id,
+            now,
+        );
 
-        let entry = merged.entry(key).or_insert_with(|| HybridCandidate {
-            lexical_score: 0.0,
-            semantic_score: 0.0,
-            structural_boost,
-            result: NoteSearchResult {
-                note_id: None,
+        let entry = merged.entry(key).or_insert_with(|| {
+            let mut result = NoteSearchResult {
+                note_id: note_id.clone(),
                 note_path: Some(semantic_match.note_path.clone()),
                 file_name,
                 section_label: semantic_match.section_label.clone(),
@@ -921,11 +1014,24 @@ pub(super) fn merge_hybrid_candidates(
                 semantic_score: Some(semantic_score),
                 start_line: Some(semantic_match.start_line),
                 end_line: Some(semantic_match.end_line),
-            },
+            };
+            maybe_label_frequently_opened(&mut result, access_score);
+            HybridCandidate {
+                lexical_score: 0.0,
+                semantic_score: 0.0,
+                structural_boost,
+                access_score,
+                result,
+            }
         });
 
         entry.semantic_score = entry.semantic_score.max(semantic_score);
         entry.result.semantic_score = Some(entry.semantic_score);
+        if entry.result.note_id.is_none() {
+            entry.result.note_id = note_id;
+        }
+        entry.access_score = entry.access_score.max(access_score);
+        maybe_label_frequently_opened(&mut entry.result, entry.access_score);
         if !entry
             .result
             .reason_labels
@@ -941,10 +1047,12 @@ pub(super) fn merge_hybrid_candidates(
     ranked.sort_by(|left, right| {
         let left_score = lexical_weight * left.lexical_score
             + semantic_weight * left.semantic_score
-            + 0.10 * left.structural_boost;
+            + 0.10 * left.structural_boost
+            + SEARCH_ACCESS_WEIGHT * left.access_score;
         let right_score = lexical_weight * right.lexical_score
             + semantic_weight * right.semantic_score
-            + 0.10 * right.structural_boost;
+            + 0.10 * right.structural_boost
+            + SEARCH_ACCESS_WEIGHT * right.access_score;
         right_score
             .total_cmp(&left_score)
             .then_with(|| left.result.file_name.cmp(&right.result.file_name))

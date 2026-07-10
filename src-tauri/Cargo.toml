@@ -27,8 +27,9 @@ serde_json = "1"
 base64 = "0.22"
 blake3 = "1.5"
 hnswlib-rs = "0.10"
-leiden-rs = { version = "0.8.1", default-features = false }
+leiden-rs = { version = "0.8.1", default-features = false, features = ["rayon"] }
 ndarray = "0.17"
+rayon = "1.10"
 umap-rs = "0.4.5"
 tantivy = "0.25"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

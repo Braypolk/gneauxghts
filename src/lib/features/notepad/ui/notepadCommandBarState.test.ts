@@ -57,6 +57,7 @@ describe('createNotepadCommandBarState', () => {
       getVisibleItems: () => [],
       getForgetHoldDurationMs: () => 0,
       isForgetHoldEnabled: () => false,
+      isForgetActionAvailable: () => true,
       onSearchInput: () => {},
       onSearchSelect: () => {},
       onSearchNavigate: () => {},
@@ -116,5 +117,125 @@ describe('createNotepadCommandBarState', () => {
 
     expect(closeSearch).toHaveBeenCalledOnce();
     expect(onSearchSelect).toHaveBeenCalledWith(selected);
+  });
+
+  describe('forget shortcut', () => {
+    function forgetShortcutEvent(
+      type: 'keydown' | 'keyup',
+      overrides: Partial<KeyboardEvent> & { preventDefault?: () => void } = {}
+    ) {
+      const preventDefault = overrides.preventDefault ?? vi.fn();
+      return {
+        type,
+        key: 'Backspace',
+        code: 'Backspace',
+        metaKey: true,
+        shiftKey: true,
+        ctrlKey: false,
+        altKey: false,
+        repeat: false,
+        defaultPrevented: false,
+        preventDefault,
+        ...overrides
+      } as unknown as KeyboardEvent;
+    }
+
+    beforeEach(() => {
+      let nextFrameId = 1;
+      const frames = new Map<number, FrameRequestCallback>();
+
+      vi.stubGlobal('window', {
+        requestAnimationFrame: (callback: FrameRequestCallback) => {
+          const id = nextFrameId++;
+          frames.set(id, callback);
+          return id;
+        },
+        cancelAnimationFrame: (id: number) => {
+          frames.delete(id);
+        },
+        setTimeout: ((handler: TimerHandler, timeout?: number, ...args: unknown[]) =>
+          globalThis.setTimeout(handler, timeout, ...args)) as typeof setTimeout,
+        clearTimeout: ((id?: number) => globalThis.clearTimeout(id)) as typeof clearTimeout
+      });
+      vi.stubGlobal('performance', {
+        now: () => Date.now()
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    });
+
+    it('forgets immediately when hold is disabled', () => {
+      const onForget = vi.fn();
+      const state = createState({
+        isForgetHoldEnabled: () => false,
+        onForget
+      });
+
+      expect(state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown'))).toBe(true);
+      expect(onForget).toHaveBeenCalledOnce();
+    });
+
+    it('opens confirm on a short shortcut press when hold is enabled', () => {
+      const onForget = vi.fn();
+      const state = createState({
+        getForgetHoldDurationMs: () => 1000,
+        isForgetHoldEnabled: () => true,
+        onForget
+      });
+
+      expect(state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown'))).toBe(true);
+      expect(state.handleForgetShortcutKeyUp(forgetShortcutEvent('keyup'))).toBe(true);
+
+      let snapshot = { isForgetConfirmOpen: false, isHoldingForget: true };
+      state.subscribe((value) => {
+        snapshot = value;
+      })();
+
+      expect(snapshot.isHoldingForget).toBe(false);
+      expect(snapshot.isForgetConfirmOpen).toBe(true);
+      expect(onForget).not.toHaveBeenCalled();
+      state.dispose();
+    });
+
+    it('forgets after holding the shortcut for the full duration', () => {
+      vi.useFakeTimers();
+      const onForget = vi.fn();
+      const state = createState({
+        getForgetHoldDurationMs: () => 400,
+        isForgetHoldEnabled: () => true,
+        onForget
+      });
+
+      expect(state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown'))).toBe(true);
+
+      vi.advanceTimersByTime(400 + 100);
+
+      expect(onForget).toHaveBeenCalledOnce();
+      expect(state.handleForgetShortcutKeyUp(forgetShortcutEvent('keyup'))).toBe(false);
+
+      let snapshot = { isForgetConfirmOpen: true };
+      state.subscribe((value) => {
+        snapshot = value;
+      })();
+      expect(snapshot.isForgetConfirmOpen).toBe(false);
+
+      state.dispose();
+    });
+
+    it('ignores the shortcut when forget is unavailable', () => {
+      const onForget = vi.fn();
+      const state = createState({
+        isForgetActionAvailable: () => false,
+        isForgetHoldEnabled: () => true,
+        getForgetHoldDurationMs: () => 400,
+        onForget
+      });
+
+      expect(state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown'))).toBe(false);
+      expect(onForget).not.toHaveBeenCalled();
+    });
   });
 });

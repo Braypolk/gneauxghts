@@ -440,6 +440,7 @@
         runAction={settings.runAction}
         downloadEmbeddingModel={settings.downloadEmbeddingModel}
         clearDebugMetrics={settings.clearDebugMetrics}
+        clearAtlasCache={settings.clearAtlasCache}
         {formatTimestamp}
         {formatMillis}
         {averageDuration}

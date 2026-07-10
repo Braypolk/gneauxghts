@@ -1,6 +1,11 @@
 import { tick } from 'svelte';
 import { get, writable } from 'svelte/store';
-import { keyboardShortcutMatchesEvent, type KeyboardShortcutId } from '$lib/keyboardShortcuts';
+import {
+  formatShortcutBinding,
+  getKeyboardShortcutBinding,
+  keyboardShortcutMatchesEvent,
+  type KeyboardShortcutId
+} from '$lib/keyboardShortcuts';
 import {
   moveListSelection,
   pointListSelection,
@@ -36,6 +41,7 @@ interface NotepadCommandBarStateDeps {
   getVisibleItems: () => NotepadCommandBarVisibleItem[];
   getForgetHoldDurationMs: () => number;
   isForgetHoldEnabled: () => boolean;
+  isForgetActionAvailable: () => boolean;
   onSearchInput: (value: string) => void;
   onSearchSelect: (result: SearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
@@ -112,6 +118,7 @@ export function createNotepadCommandBarState({
   getVisibleItems,
   getForgetHoldDurationMs,
   isForgetHoldEnabled,
+  isForgetActionAvailable,
   onSearchInput,
   onSearchSelect,
   onSearchNavigate,
@@ -131,6 +138,7 @@ export function createNotepadCommandBarState({
   let forgetHoldFrame: number | null = null;
   let forgetHoldTimeout: number | null = null;
   let suppressNextForgetClick = false;
+  let forgetShortcutCode: string | null = null;
 
   function patch(partial: Partial<NotepadCommandBarState>) {
     update((state) => ({ ...state, ...partial }));
@@ -330,6 +338,7 @@ export function createNotepadCommandBarState({
     clearForgetHoldFrame();
     clearForgetHoldTimeout();
     forgetHoldStartedAt = 0;
+    forgetShortcutCode = null;
     patch({
       isHoldingForget: false,
       forgetHoldProgress: 0
@@ -427,10 +436,65 @@ export function createNotepadCommandBarState({
     onForget();
   }
 
+  function handleForgetShortcutKeyDown(event: KeyboardEvent) {
+    if (!isForgetActionAvailable() || event.defaultPrevented) {
+      return false;
+    }
+
+    if (!keyboardShortcutMatchesEvent(event, 'forgetCurrentNote')) {
+      return false;
+    }
+
+    event.preventDefault();
+
+    if (event.repeat) {
+      return true;
+    }
+
+    if (!isForgetHoldEnabled()) {
+      closeForgetConfirm();
+      onForget();
+      return true;
+    }
+
+    forgetShortcutCode = event.code;
+    beginForgetHold();
+    return true;
+  }
+
+  function handleForgetShortcutKeyUp(event: KeyboardEvent) {
+    if (forgetShortcutCode === null || event.code !== forgetShortcutCode) {
+      return false;
+    }
+
+    event.preventDefault();
+    const wasHolding = getState().isHoldingForget;
+    forgetShortcutCode = null;
+
+    if (!wasHolding) {
+      return true;
+    }
+
+    openForgetConfirm();
+    return true;
+  }
+
+  function handleForgetShortcutBlur() {
+    if (forgetShortcutCode === null) {
+      return;
+    }
+
+    forgetShortcutCode = null;
+    cancelForgetHold();
+  }
+
   function getForgetButtonAriaLabel() {
+    const binding = getKeyboardShortcutBinding('forgetCurrentNote');
+    const shortcutSuffix = binding ? ` (${formatShortcutBinding(binding)})` : '';
+
     return isForgetHoldEnabled()
-      ? 'Forget this note. Hold the button or press to confirm.'
-      : 'Forget this note';
+      ? `Forget this note. Hold the button or press to confirm.${shortcutSuffix}`
+      : `Forget this note.${shortcutSuffix}`;
   }
 
   function dispose() {
@@ -452,6 +516,9 @@ export function createNotepadCommandBarState({
     handleForgetKeyDown,
     handleForgetKeyUp,
     handleForgetClick,
+    handleForgetShortcutKeyDown,
+    handleForgetShortcutKeyUp,
+    handleForgetShortcutBlur,
     cancelForgetHold,
     closeForgetConfirm,
     confirmForget,

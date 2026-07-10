@@ -15,6 +15,7 @@ export type KeyboardShortcutId =
   | 'goToPreviousNote'
   | 'toggleRelatedPanel'
   | 'rememberCurrentNote'
+  | 'forgetCurrentNote'
   | 'searchCurrent'
   | 'searchAll'
   | 'recentNote1'
@@ -182,6 +183,13 @@ const shortcutDefinitionsBase = [
     description: 'Save the current note if needed, then start a fresh note.',
     group: 'workspace',
     defaultBinding: 'Meta+s'
+  },
+  {
+    id: 'forgetCurrentNote',
+    label: 'Forget Note',
+    description: 'Forget the current note. Hold to skip the confirmation dialog.',
+    group: 'workspace',
+    defaultBinding: 'Meta+Shift+Backspace'
   },
   {
     id: 'searchCurrent',

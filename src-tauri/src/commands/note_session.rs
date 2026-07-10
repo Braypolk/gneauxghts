@@ -47,9 +47,9 @@ fn mark_note_opened(state: &mut crate::state::PersistedState, note_id: String) {
     touch_recent_note_id(state, note_id);
 }
 
-fn touch_note_activity(note_id: &str) {
+fn touch_note_activity(note_id: &str, count_as_open: bool) {
     if let Ok(now) = current_time_millis() {
-        let _ = db_touch_note_activity(note_id, now);
+        let _ = db_touch_note_activity(note_id, now, count_as_open);
     }
 }
 
@@ -108,7 +108,9 @@ pub(crate) fn load_note_session_from_notes_dir_with_state(
     }
 
     touch_recent_note_id(&mut persisted, last_opened_note_id.clone());
-    touch_note_activity(&last_opened_note_id);
+    // Session restore updates last-viewed without counting as a fresh open,
+    // so access frequency reflects intentional note switches.
+    touch_note_activity(&last_opened_note_id, false);
     // Row-scoped write of the recents/last-opened only — same rationale as
     // mark_note_opened.
     write_last_opened_and_recents(&persisted)?;
@@ -160,7 +162,7 @@ pub(crate) fn open_note_from_notes_dir_with_state(
     let mut persisted = persisted;
     mark_note_opened(&mut persisted, resolved_note_id);
     if let Some(note_id) = session.note_id.as_deref() {
-        touch_note_activity(note_id);
+        touch_note_activity(note_id, true);
     }
     // Row-scoped write: only the last_opened_note_id and recents change here.
     // Avoid the full app_state rewrite that previously fired on every note

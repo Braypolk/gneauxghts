@@ -83,6 +83,11 @@
   will-change: left;
 }
 
+/* Cap at roughly four related cards; shrink only when the drawer is shorter. */
+.related-drawer-panel-frame {
+  height: min(100%, 42rem);
+}
+
 .related-drawer-handle {
   outline: none;
 }

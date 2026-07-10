@@ -12,6 +12,7 @@ use std::{
 
 const SETTINGS_KEY: &str = "semantic_settings";
 const ATLAS_LAYOUT_SIGNATURE_KEY: &str = "atlas_layout_signature";
+const ATLAS_GRAPH_SNAPSHOT_KEY: &str = "atlas_graph_snapshot";
 #[derive(Clone)]
 pub(crate) struct StoredChunkEmbedding {
     pub(crate) text_hash: String,
@@ -224,6 +225,36 @@ pub(crate) fn save_atlas_layout_signature(
             ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
             ",
             params![ATLAS_LAYOUT_SIGNATURE_KEY, value_json],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn load_atlas_graph_snapshot_json(
+    connection: &Connection,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT value_json FROM settings WHERE key = ?1",
+            params![ATLAS_GRAPH_SNAPSHOT_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())
+}
+
+pub(crate) fn save_atlas_graph_snapshot_json(
+    connection: &Connection,
+    snapshot_json: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "
+            INSERT INTO settings (key, value_json)
+            VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
+            ",
+            params![ATLAS_GRAPH_SNAPSHOT_KEY, snapshot_json],
         )
         .map_err(|err| err.to_string())?;
     Ok(())
@@ -812,6 +843,19 @@ pub(crate) fn save_atlas_positions(
     transaction.commit().map_err(|err| err.to_string())
 }
 
+pub(crate) fn clear_atlas_cache(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute("DELETE FROM atlas_positions", [])
+        .map_err(|err| err.to_string())?;
+    connection
+        .execute(
+            "DELETE FROM settings WHERE key = ?1 OR key = ?2",
+            params![ATLAS_LAYOUT_SIGNATURE_KEY, ATLAS_GRAPH_SNAPSHOT_KEY],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 /// Profiling counters describing a single `rebuild_edges` pass. Returned so the
 /// indexer can fold them into the semantic debug metrics without coupling this
 /// module to the debug state.
@@ -1344,8 +1388,9 @@ fn has_column(
 #[cfg(test)]
 mod tests {
     use super::{
-        ann_label_for, ensure_schema, for_each_chunk_embedding, open_database, rebuild_edges,
-        sum_chunk_text_bytes, upsert_note_chunks,
+        ann_label_for, clear_atlas_cache, ensure_schema, for_each_chunk_embedding, open_database,
+        rebuild_edges, save_atlas_graph_snapshot_json, save_atlas_layout_signature,
+        save_atlas_positions, sum_chunk_text_bytes, upsert_note_chunks, StoredAtlasPosition,
     };
     use crate::semantic::chunking::SemanticChunk;
     use blake3::hash;
@@ -1448,6 +1493,39 @@ mod tests {
         // The corpus text is still queryable for profiling even though the
         // streaming loader never materializes it.
         assert!(sum_chunk_text_bytes(&connection).expect("sum text bytes") > 0);
+    }
+
+    #[test]
+    fn clear_atlas_cache_removes_positions_signature_and_snapshot() {
+        let temp = TestDb::new("atlas-cache-clear");
+        let mut connection = temp.connection();
+        save_atlas_positions(
+            &mut connection,
+            &[StoredAtlasPosition {
+                note_path: "notes/one.md".to_string(),
+                x: 1.0,
+                y: 2.0,
+            }],
+        )
+        .expect("save positions");
+        save_atlas_layout_signature(&connection, "sig-v1").expect("save signature");
+        save_atlas_graph_snapshot_json(&connection, "{\"signature\":\"sig-v1\"}")
+            .expect("save snapshot");
+
+        clear_atlas_cache(&connection).expect("clear atlas cache");
+
+        let position_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM atlas_positions", [], |row| row.get(0))
+            .expect("count positions");
+        let settings_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key IN ('atlas_layout_signature', 'atlas_graph_snapshot')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count settings");
+        assert_eq!(position_count, 0);
+        assert_eq!(settings_count, 0);
     }
 
     fn seed_note(connection: &mut Connection, note_path: &str, embedding: &[f32]) {

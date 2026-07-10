@@ -22,6 +22,7 @@
     runAction,
     downloadEmbeddingModel,
     clearDebugMetrics,
+    clearAtlasCache,
     formatTimestamp,
     formatMillis,
     averageDuration
@@ -42,6 +43,7 @@
     runAction: (command: SemanticAction) => Promise<void>;
     downloadEmbeddingModel: () => Promise<void>;
     clearDebugMetrics: () => Promise<void>;
+    clearAtlasCache: () => Promise<void>;
     formatTimestamp: (value: number | null) => string;
     formatMillis: (value: number | null) => string;
     averageDuration: (total: number, count: number) => number;
@@ -217,6 +219,16 @@
             )}
         >
           {semanticStatus.indexingPaused ? 'Resume indexing' : 'Pause indexing'}
+        </button>
+
+        <button
+          class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+          type="button"
+          disabled={isRunningAction}
+          onclick={() => void clearAtlasCache()}
+          title="Clears atlas positions, layout signature, and graph snapshot so the next Atlas open runs a full cold generation."
+        >
+          Clear atlas cache
         </button>
 
         {#if isSaving || isRunningAction}

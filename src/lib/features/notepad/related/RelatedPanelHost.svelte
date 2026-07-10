@@ -86,7 +86,7 @@
             : 'pointer-events-auto translate-x-0 opacity-100'
         }`}
       >
-        <div class="my-auto max-h-full w-full">
+        <div class="related-drawer-panel-frame my-auto w-full">
           {@render panel()}
         </div>
       </div>

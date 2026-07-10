@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { get, writable } from "svelte/store";
+import { atlasStore } from "$lib/features/atlas/atlasStore.svelte";
 import type { ForgottenNoteSummary } from "$lib/types/forgottenNotes";
 import type { VaultInfo } from "$lib/types/vault";
 import type {
@@ -449,6 +450,28 @@ export function createSettingsStore() {
     }
   }
 
+  async function clearAtlasCache() {
+    patch({
+      isRunningAction: true,
+      semanticLayerError: null,
+      semanticLayerMessage: null,
+    });
+    try {
+      await invoke("clear_atlas_cache");
+      atlasStore.invalidateCachedResponse();
+      patch({
+        semanticLayerMessage:
+          "Atlas cache cleared. Re-open Atlas to run a full cold generation.",
+        semanticLayerError: null,
+      });
+    } catch (error) {
+      console.error("Failed to clear atlas cache:", error);
+      patch({ semanticLayerError: String(error), semanticLayerMessage: null });
+    } finally {
+      patch({ isRunningAction: false });
+    }
+  }
+
   async function saveVaultDirectory() {
     patch({ isSavingVault: true, vaultSaveError: null });
     try {
@@ -548,6 +571,7 @@ export function createSettingsStore() {
     runAction,
     downloadEmbeddingModel,
     clearDebugMetrics,
+    clearAtlasCache,
     saveVaultDirectory,
   };
 }

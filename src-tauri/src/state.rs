@@ -15,11 +15,13 @@ pub(crate) use persistence::{
     db_insert_forgotten_note, db_load_note_activity, db_remove_forgotten_note,
     db_set_last_opened_note_id, db_set_note_collapsed, db_set_note_hidden, db_set_note_order,
     db_set_recent_note_ids, db_touch_note_activity, derive_file_stem,
-    derive_file_stem_from_title_and_markdown, is_forgotten_note_path, is_valid_note_path,
-    persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup, push_unique,
-    read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
-    touch_recent_note_id, validate_current_path, write_last_opened_and_recents, write_state,
-    write_state_with_lookup, NoteIdLookup, PersistedForgottenNote, PersistedState,
+    derive_file_stem_from_title_and_markdown, effective_open_count, is_forgotten_note_path,
+    is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
+    push_unique, read_state, read_state_with_lookup, resolve_note_id_from_path,
+    resolve_note_path_by_id, touch_recent_note_id, validate_current_path,
+    write_last_opened_and_recents, write_state, write_state_with_lookup, NoteActivity,
+    NoteIdLookup, PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS,
+    OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 
 #[cfg(test)]
@@ -324,5 +326,89 @@ mod tests {
         assert!(state.hidden_note_ids.is_empty());
         assert!(state.note_order_note_ids.is_empty());
         assert_eq!(state.last_opened_note_id, None);
+    }
+
+    #[test]
+    fn effective_open_count_decays_after_idle_intervals() {
+        let now = 1_000_000u64;
+        assert_eq!(super::effective_open_count(5, now, now), 5);
+        assert_eq!(
+            super::effective_open_count(5, now, now + super::OPEN_COUNT_DECAY_INTERVAL_MS - 1),
+            5
+        );
+        assert_eq!(
+            super::effective_open_count(5, now, now + super::OPEN_COUNT_DECAY_INTERVAL_MS),
+            4
+        );
+        assert_eq!(
+            super::effective_open_count(5, now, now + super::OPEN_COUNT_DECAY_INTERVAL_MS * 2),
+            3
+        );
+        assert_eq!(
+            super::effective_open_count(2, now, now + super::OPEN_COUNT_DECAY_INTERVAL_MS * 5),
+            0
+        );
+    }
+
+    #[test]
+    fn db_touch_note_activity_respects_open_count_cooldown() {
+        let _guard = match TEST_ENV_GUARD.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let app_data_dir = TestDir::new("state-app-data-open-cooldown");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+
+        let note_id = "note-cooldown";
+        let t0 = 1_700_000_000_000u64;
+        super::db_touch_note_activity(note_id, t0, true).expect("first counted open");
+        let after_first = super::db_load_note_activity().expect("load");
+        let first = after_first.get(note_id).expect("activity row");
+        assert_eq!(first.open_count, 1);
+        assert_eq!(first.last_counted_open_at_millis, t0);
+
+        super::db_touch_note_activity(note_id, t0 + 60_000, true).expect("rapid reopen");
+        let after_rapid = super::db_load_note_activity().expect("load");
+        let rapid = after_rapid.get(note_id).expect("activity row");
+        assert_eq!(rapid.open_count, 1, "within cooldown must not increment");
+        assert_eq!(rapid.last_counted_open_at_millis, t0);
+        assert_eq!(rapid.last_viewed_at_millis, t0 + 60_000);
+
+        let after_cooldown = t0 + super::OPEN_COUNT_COOLDOWN_MS;
+        super::db_touch_note_activity(note_id, after_cooldown, true).expect("cooldown elapsed");
+        let after_second = super::db_load_note_activity().expect("load");
+        let second = after_second.get(note_id).expect("activity row");
+        assert_eq!(second.open_count, 2);
+        assert_eq!(second.last_counted_open_at_millis, after_cooldown);
+
+        super::db_touch_note_activity(note_id, after_cooldown + 1_000, false)
+            .expect("session restore");
+        let after_restore = super::db_load_note_activity().expect("load");
+        let restored = after_restore.get(note_id).expect("activity row");
+        assert_eq!(restored.open_count, 2, "restore must not count as open");
+        assert_eq!(restored.last_counted_open_at_millis, after_cooldown);
+    }
+
+    #[test]
+    fn db_touch_note_activity_writeback_decays_idle_open_count() {
+        let _guard = match TEST_ENV_GUARD.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let app_data_dir = TestDir::new("state-app-data-open-decay-writeback");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+
+        let note_id = "note-decay";
+        let t0 = 1_700_000_000_000u64;
+        super::db_touch_note_activity(note_id, t0, true).expect("seed open");
+        super::persistence::db_force_note_activity_for_tests(note_id, t0, 5, t0)
+            .expect("force count");
+
+        let later = t0 + super::OPEN_COUNT_DECAY_INTERVAL_MS * 2;
+        super::db_touch_note_activity(note_id, later, false).expect("view after idle");
+        let activity = super::db_load_note_activity().expect("load");
+        let row = activity.get(note_id).expect("activity row");
+        assert_eq!(row.open_count, 3, "writeback should apply two decay steps");
+        assert_eq!(row.last_viewed_at_millis, later);
     }
 }

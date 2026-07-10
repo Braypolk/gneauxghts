@@ -99,9 +99,6 @@
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
                 <div class="truncate text-sm font-semibold text-foreground">{item.noteTitle}</div>
-                <div class="mt-1 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
-                  {item.sectionLabel}
-                </div>
               </div>
               <div class="shrink-0 rounded-full bg-accent/60 px-2 py-1 text-[11px] font-medium text-accent-foreground/90">
                 {Math.round(item.score * 100)}%
