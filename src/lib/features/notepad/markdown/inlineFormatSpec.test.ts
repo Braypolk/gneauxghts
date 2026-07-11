@@ -19,23 +19,62 @@ const inlineFormattingCss = readFileSync(join(here, 'inlineFormatting.css'), 'ut
 const editorCss = readFileSync(join(here, '../editor/editor.css'), 'utf8');
 
 describe('inlineFormatSpec', () => {
-  it('defines complete entries for every wrap format', () => {
-    for (const spec of INLINE_WRAP_FORMATS) {
-      expect(spec.delimiters.length).toBeGreaterThan(0);
-      expect(spec.syntaxNode).not.toBe('');
-      expect(spec.markerNode).not.toBe('');
-      expect(spec.contentClass).not.toBe('');
-      expect(spec.defaultDelimiter.before).not.toBe('');
-      expect(spec.defaultDelimiter.after).not.toBe('');
-    }
-  });
-
-  it('has unique ids and syntax nodes', () => {
-    const ids = INLINE_WRAP_FORMATS.map((spec) => spec.id);
-    const syntaxNodes = INLINE_WRAP_FORMATS.map((spec) => spec.syntaxNode);
-
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(new Set(syntaxNodes).size).toBe(syntaxNodes.length);
+  it('keeps the canonical format catalog explicit', () => {
+    expect(
+      INLINE_WRAP_FORMATS.map((spec) => ({
+        id: spec.id,
+        defaultDelimiter: spec.defaultDelimiter,
+        syntaxNode: spec.syntaxNode,
+        concealStrategy: spec.concealStrategy,
+        requiresCustomParser:
+          'requiresCustomParser' in spec ? spec.requiresCustomParser : false
+      }))
+    ).toEqual([
+      {
+        id: 'bold',
+        defaultDelimiter: { before: '**', after: '**' },
+        syntaxNode: 'StrongEmphasis',
+        concealStrategy: 'syntaxTreeChildren',
+        requiresCustomParser: false
+      },
+      {
+        id: 'italic',
+        defaultDelimiter: { before: '*', after: '*' },
+        syntaxNode: 'Emphasis',
+        concealStrategy: 'syntaxTreeChildren',
+        requiresCustomParser: false
+      },
+      {
+        id: 'strikethrough',
+        defaultDelimiter: { before: '~~', after: '~~' },
+        syntaxNode: 'Strikethrough',
+        concealStrategy: 'syntaxTreeChildren',
+        requiresCustomParser: false
+      },
+      {
+        id: 'highlight',
+        defaultDelimiter: { before: '==', after: '==' },
+        syntaxNode: 'Highlight',
+        concealStrategy: 'syntaxTreeChildren',
+        requiresCustomParser: true
+      },
+      {
+        id: 'comment',
+        defaultDelimiter: { before: '%%', after: '%%' },
+        syntaxNode: 'InlineComment',
+        concealStrategy: 'syntaxTreeChildren',
+        requiresCustomParser: true
+      },
+      {
+        id: 'code',
+        defaultDelimiter: { before: '`', after: '`' },
+        syntaxNode: 'InlineCode',
+        concealStrategy: 'codeBlockDecorator',
+        requiresCustomParser: false
+      }
+    ]);
+    expect(getWrapFormatIds()).toEqual(INLINE_WRAP_FORMATS.map((spec) => spec.id));
+    expect(getWrapFormatSpec('bold')).toBe(INLINE_WRAP_FORMATS[0]);
   });
 
   it('builds derived maps that round-trip from the catalog', () => {
@@ -48,41 +87,11 @@ describe('inlineFormatSpec', () => {
     }
   });
 
-  it('exposes typed helpers for lookup and iteration', () => {
-    expect(getWrapFormatSpec('bold').syntaxNode).toBe('StrongEmphasis');
-    expect(getWrapFormatIds()).toEqual([
-      'bold',
-      'italic',
-      'strikethrough',
-      'highlight',
-      'comment',
-      'code'
-    ]);
-  });
-
-  it('documents comment as requiring a custom parser', () => {
-    expect(getWrapFormatSpec('comment').requiresCustomParser).toBe(true);
-    expect(getWrapFormatSpec('comment').syntaxNode).toBe('InlineComment');
-  });
-
-  it('documents highlight as requiring a custom parser', () => {
-    expect(getWrapFormatSpec('highlight').requiresCustomParser).toBe(true);
-  });
-
-  it('documents inline code as handled by the code block decorator', () => {
-    expect(getWrapFormatSpec('code').concealStrategy).toBe('codeBlockDecorator');
-  });
-
-  it('references every emphasis content class in inlineFormatting.css', () => {
+  it('wires every format content class to the appropriate stylesheet', () => {
     for (const spec of INLINE_WRAP_FORMATS) {
-      if (spec.concealStrategy === 'codeBlockDecorator') {
-        continue;
-      }
-      expect(inlineFormattingCss).toContain(spec.contentClass);
+      const stylesheet =
+        spec.concealStrategy === 'codeBlockDecorator' ? editorCss : inlineFormattingCss;
+      expect(stylesheet).toContain(spec.contentClass);
     }
-  });
-
-  it('references inline code content class in editor.css', () => {
-    expect(editorCss).toContain(getWrapFormatSpec('code').contentClass);
   });
 });

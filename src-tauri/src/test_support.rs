@@ -2,11 +2,20 @@ use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(crate) static TEST_ENV_GUARD: Mutex<()> = Mutex::new(());
+static TEST_ENV_GUARD: Mutex<()> = Mutex::new(());
+
+/// Serialize tests that mutate process-wide path configuration. Recovering a
+/// poisoned lock keeps one assertion failure from cascading into unrelated
+/// failures in every later test that needs the same shared environment.
+pub(crate) fn lock_test_env() -> MutexGuard<'static, ()> {
+    TEST_ENV_GUARD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 pub(crate) struct TestDir {
     path: PathBuf,

@@ -856,6 +856,7 @@ pub(super) struct NoteAccessLookup {
 }
 
 impl NoteAccessLookup {
+    #[cfg(test)]
     pub(super) fn empty() -> Self {
         Self {
             modified_by_note_id: HashMap::new(),

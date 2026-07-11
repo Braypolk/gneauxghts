@@ -367,7 +367,7 @@ fn vault_config_path() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{TestDir, TEST_ENV_GUARD};
+    use crate::test_support::{lock_test_env, TestDir};
 
     #[test]
     fn vault_paths_derive_from_vault_root() {
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn ensure_vault_scaffold_creates_dirs_and_manifest() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let vault = TestDir::new("config-scaffold");
         let root = vault.path();
 
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn ensure_vault_scaffold_is_idempotent_and_stable_id() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let vault = TestDir::new("config-scaffold-idempotent");
         let root = vault.path();
 
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn notes_root_override_takes_precedence() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data = TestDir::new("config-override-appdata");
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("set app data");
         let vault = TestDir::new("config-override-vault");

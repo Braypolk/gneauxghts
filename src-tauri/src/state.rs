@@ -31,14 +31,11 @@ mod tests {
         initialize_app_data_dir, persist_note, read_state, resolve_note_id_from_path, write_state,
         PersistedForgottenNote, PersistedState,
     };
-    use crate::test_support::{TestDir, TEST_ENV_GUARD};
+    use crate::test_support::{lock_test_env, TestDir};
     use std::fs;
 
     #[test]
     fn derive_file_stem_sanitizes_invalid_characters_and_truncates() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
-        let app_data_dir = TestDir::new("state-app-data-derive");
-        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let markdown =
             "#   Launch: /Alpha? *Plan* for <Agents> with a very long trailing title that should be trimmed nicely\n";
         let stem = derive_file_stem(markdown);
@@ -53,19 +50,12 @@ mod tests {
 
     #[test]
     fn derive_file_stem_prefers_explicit_title() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
-        let app_data_dir = TestDir::new("state-app-data-derive-title");
-        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
-
         let stem = derive_file_stem_from_title_and_markdown("  Title From Input  ", "Body text");
         assert_eq!(stem, "Title From Input");
     }
 
     #[test]
     fn persist_note_renames_existing_file_when_title_changes() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
-        let app_data_dir = TestDir::new("state-app-data-persist");
-        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-persist-note");
         let notes_dir = temp.path();
         let original_path = notes_dir.join("First Note.md");
@@ -90,9 +80,6 @@ mod tests {
 
     #[test]
     fn persist_note_keeps_existing_nested_folder_when_title_changes() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
-        let app_data_dir = TestDir::new("state-app-data-persist-nested");
-        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-persist-note-nested");
         let notes_dir = temp.path();
         let nested_dir = notes_dir.join("Projects");
@@ -117,9 +104,6 @@ mod tests {
 
     #[test]
     fn resolve_note_path_by_id_finds_nested_notes() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
-        let app_data_dir = TestDir::new("state-app-data-resolve-nested");
-        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-resolve-note-nested");
         let notes_dir = temp.path();
         let nested_dir = notes_dir.join("Projects");
@@ -140,7 +124,7 @@ mod tests {
 
     #[test]
     fn read_state_prunes_invalid_paths_and_dedupes_entries() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("state-app-data-prune");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-pruning");
@@ -235,10 +219,7 @@ mod tests {
     #[test]
     fn read_state_with_cold_index_lookup_retains_unknown_ids() {
         use std::path::PathBuf;
-        let _guard = match TEST_ENV_GUARD.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("state-app-data-cold-retain");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-cold-retain");
@@ -289,10 +270,7 @@ mod tests {
     #[test]
     fn read_state_with_warm_index_lookup_drops_unknown_ids() {
         use std::path::PathBuf;
-        let _guard = match TEST_ENV_GUARD.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("state-app-data-warm-drop");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("state-warm-drop");
@@ -352,12 +330,11 @@ mod tests {
 
     #[test]
     fn db_touch_note_activity_respects_open_count_cooldown() {
-        let _guard = match TEST_ENV_GUARD.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("state-app-data-open-cooldown");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        super::set_notes_root_override(Some(app_data_dir.path().to_path_buf()))
+            .expect("override notes root");
 
         let note_id = "note-cooldown";
         let t0 = 1_700_000_000_000u64;
@@ -391,12 +368,11 @@ mod tests {
 
     #[test]
     fn db_touch_note_activity_writeback_decays_idle_open_count() {
-        let _guard = match TEST_ENV_GUARD.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("state-app-data-open-decay-writeback");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        super::set_notes_root_override(Some(app_data_dir.path().to_path_buf()))
+            .expect("override notes root");
 
         let note_id = "note-decay";
         let t0 = 1_700_000_000_000u64;

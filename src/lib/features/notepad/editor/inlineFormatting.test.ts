@@ -61,46 +61,21 @@ describe('applyInlineFormat toggle', () => {
     expect(doc).toBe('hello');
   });
 
-  it('unwraps italic when only the inner text is selected', () => {
-    const { handled, doc } = runFormat('*hello*', 1, 6, 'italic');
-    expect(handled).toBe(true);
-    expect(doc).toBe('hello');
-  });
+  it('unwraps every supported format when its inner text is selected', () => {
+    const cases: [string, number, number, InlineFormatId, string][] = [
+      ['*hello*', 1, 6, 'italic', 'hello'],
+      ['~~gone~~', 2, 6, 'strikethrough', 'gone'],
+      ['==bright==', 2, 8, 'highlight', 'bright'],
+      ['%%hidden note%%', 2, 13, 'comment', 'hidden note'],
+      ['`code`', 1, 5, 'code', 'code'],
+      ['[label](https://example.com)', 1, 6, 'link', 'label'],
+      ['[[Note Title]]', 2, 12, 'wikilink', 'Note Title']
+    ];
 
-  it('unwraps strikethrough when only the inner text is selected', () => {
-    const { handled, doc } = runFormat('~~gone~~', 2, 6, 'strikethrough');
-    expect(handled).toBe(true);
-    expect(doc).toBe('gone');
-  });
-
-  it('unwraps highlight when only the inner text is selected', () => {
-    const { handled, doc } = runFormat('==bright==', 2, 8, 'highlight');
-    expect(handled).toBe(true);
-    expect(doc).toBe('bright');
-  });
-
-  it('unwraps Obsidian comments when only the inner text is selected', () => {
-    const { handled, doc } = runFormat('%%hidden note%%', 2, 13, 'comment');
-    expect(handled).toBe(true);
-    expect(doc).toBe('hidden note');
-  });
-
-  it('unwraps inline code when only the inner text is selected', () => {
-    const { handled, doc } = runFormat('`code`', 1, 5, 'code');
-    expect(handled).toBe(true);
-    expect(doc).toBe('code');
-  });
-
-  it('unwraps markdown links when only the label is selected', () => {
-    const { handled, doc } = runFormat('[label](https://example.com)', 1, 6, 'link');
-    expect(handled).toBe(true);
-    expect(doc).toBe('label');
-  });
-
-  it('unwraps wikilinks when only the title is selected', () => {
-    const { handled, doc } = runFormat('[[Note Title]]', 2, 12, 'wikilink');
-    expect(handled).toBe(true);
-    expect(doc).toBe('Note Title');
+    for (const [source, from, to, format, expected] of cases) {
+      const result = runFormat(source, from, to, format);
+      expect(result, format).toMatchObject({ handled: true, doc: expected });
+    }
   });
 
   it('does not unwrap bold when toggling italic inside bold text', () => {

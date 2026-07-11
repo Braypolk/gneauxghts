@@ -250,7 +250,7 @@ mod tests {
     use crate::{
         semantic::db::content_hash,
         state::initialize_app_data_dir,
-        test_support::{TestDir, TEST_ENV_GUARD},
+        test_support::{lock_test_env, TestDir},
     };
     use std::fs;
 
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn applies_update_when_hash_matches() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data = TestDir::new("proposal-app-data-update");
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-update");
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn rejects_stale_update_without_writing() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data = TestDir::new("proposal-app-data-stale-update");
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-stale-update");
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn rejects_stale_delete_without_deleting() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data = TestDir::new("proposal-app-data-stale-delete");
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-stale-delete");
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn applies_create_note() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data = TestDir::new("proposal-app-data-create");
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-create");
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn validates_all_changes_before_writing() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data = TestDir::new("proposal-app-data-atomic");
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-atomic");

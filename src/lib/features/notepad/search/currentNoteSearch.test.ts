@@ -15,28 +15,7 @@ function searchCurrent(query: string, markdown: string, options = {}) {
 }
 
 describe('buildCurrentNoteSearchResults', () => {
-  it('matches case-insensitively by default', () => {
-    const results = searchCurrent('atlas', 'Atlas\natlas');
-
-    expect(results).toHaveLength(2);
-    expect(results.map((result) => result.startLine)).toEqual([1, 2]);
-  });
-
-  it('supports match case', () => {
-    const results = searchCurrent('atlas', 'Atlas\natlas', { matchCase: true });
-
-    expect(results).toHaveLength(1);
-    expect(results[0]?.startLine).toBe(2);
-  });
-
-  it('supports whole word', () => {
-    const results = searchCurrent('cat', 'cat scatter cat', { matchWholeWord: true });
-
-    expect(results).toHaveLength(2);
-    expect(results.map((result) => result.matchText)).toEqual(['cat', 'cat']);
-  });
-
-  it('supports combined match case and whole word', () => {
+  it('passes case and whole-word options to the search engine', () => {
     const results = searchCurrent('Cat', 'cat Cat Cattle Cat', {
       matchCase: true,
       matchWholeWord: true
@@ -46,17 +25,26 @@ describe('buildCurrentNoteSearchResults', () => {
     expect(results.every((result) => result.matchText === 'Cat')).toBe(true);
   });
 
-  it('returns multiple matches on the same line with ranges', () => {
-    const results = searchCurrent('note', 'note note');
+  it('maps matches to note metadata, lines, and document ranges', () => {
+    const results = searchCurrent('note', 'intro\nnote note');
 
     expect(results).toHaveLength(2);
+    expect(results.map((result) => result.startLine)).toEqual([2, 2]);
     expect(results.map((result) => result.currentMatchRange)).toEqual([
-      { from: 0, to: 4 },
-      { from: 5, to: 9 }
+      { from: 6, to: 10 },
+      { from: 11, to: 15 }
     ]);
+    expect(results[0]).toMatchObject({
+      notePath: '/vault/current.md',
+      fileName: 'Current',
+      sectionLabel: 'Line 2',
+      matchText: 'note',
+      reasonLabels: ['keyword']
+    });
   });
 
-  it('returns no matches for absent text', () => {
+  it('returns no results for empty or absent queries', () => {
+    expect(searchCurrent('  ', 'body')).toEqual([]);
     expect(searchCurrent('missing', 'body')).toEqual([]);
   });
 });

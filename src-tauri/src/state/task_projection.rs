@@ -798,7 +798,7 @@ mod tests {
     use super::*;
     use crate::index::build_indexed_note;
     use crate::state::initialize_app_data_dir;
-    use crate::test_support::{TestDir, TEST_ENV_GUARD};
+    use crate::test_support::{lock_test_env, TestDir};
     use std::path::PathBuf;
 
     fn setup_app_data(label: &str) -> TestDir {
@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn reconcile_assigns_stable_task_ids_across_reorder() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let _app_data = setup_app_data("task-projection-reorder");
 
         let path = PathBuf::from("/notes/Project.md");
@@ -856,7 +856,7 @@ mod tests {
 
     #[test]
     fn reconcile_updates_completion_timestamp_only_when_completion_flips() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let _app_data = setup_app_data("task-projection-completion");
 
         let path = PathBuf::from("/notes/Ship.md");
@@ -878,7 +878,7 @@ mod tests {
 
     #[test]
     fn reconcile_soft_deletes_removed_tasks() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let _app_data = setup_app_data("task-projection-delete");
 
         let path = PathBuf::from("/notes/Cleanup.md");
@@ -896,7 +896,7 @@ mod tests {
 
     #[test]
     fn list_recent_open_tasks_skips_completed() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let _app_data = setup_app_data("task-projection-recent");
 
         let path = PathBuf::from("/notes/RecentList.md");

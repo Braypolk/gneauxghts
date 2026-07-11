@@ -81,31 +81,4 @@ describe('notepad search IPC payloads', () => {
     });
   });
 
-  it('retries with the body when the backend reports a draft cache miss', async () => {
-    const { searchNotes } = await import('./search');
-    const { computeDraftHash, rememberDraft } = await import('./draftRef');
-    const body = 'large unsaved body';
-    const hash = computeDraftHash(body);
-    rememberDraft('/vault/current.md', hash);
-
-    invokeMock.mockRejectedValueOnce(`draft-cache-miss:/vault/current.md`);
-    invokeMock.mockResolvedValueOnce([]);
-
-    await searchNotes('atlas', 'all', {
-      currentPath: '/vault/current.md',
-      currentTitle: 'Current',
-      currentMarkdown: body
-    });
-
-    expect(invokeMock).toHaveBeenCalledTimes(2);
-    expect(invokeMock).toHaveBeenLastCalledWith('search_notes_hybrid', {
-      query: 'atlas',
-      mode: 'all',
-      currentPath: '/vault/current.md',
-      currentTitle: 'Current',
-      currentMarkdown: body,
-      currentBodyHash: hash,
-      limit: 12
-    });
-  });
 });

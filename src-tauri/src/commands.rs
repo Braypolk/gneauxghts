@@ -595,14 +595,14 @@ mod tests {
         search::{NoteSearchResult, ScoredSearchResult},
         state::initialize_app_data_dir,
         state::{read_state, write_state, PersistedState},
-        test_support::{TestDir, TEST_ENV_GUARD},
+        test_support::{lock_test_env, TestDir},
     };
     use serde_json::json;
     use std::{fs, path::PathBuf};
 
     #[test]
     fn load_note_session_from_notes_dir_clears_stale_last_opened_path() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("commands-app-data-load");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-load-session");
@@ -633,7 +633,7 @@ mod tests {
 
     #[test]
     fn open_note_from_notes_dir_updates_last_opened_and_recents() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("commands-app-data-open");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-open-note");
@@ -661,7 +661,7 @@ mod tests {
 
     #[test]
     fn open_note_row_scoped_write_preserves_unrelated_state_fields() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("commands-app-data-open-rowscope");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-open-note-rowscope");
@@ -717,7 +717,7 @@ mod tests {
 
     #[test]
     fn read_note_session_from_path_does_not_update_last_opened_or_recents() {
-        let _guard = TEST_ENV_GUARD.lock().expect("lock test env");
+        let _guard = lock_test_env();
         let app_data_dir = TestDir::new("commands-app-data-read");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
         let temp = TestDir::new("commands-read-note");

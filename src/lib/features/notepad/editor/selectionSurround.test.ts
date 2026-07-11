@@ -42,34 +42,19 @@ describe('surroundRange', () => {
     expect(to).toBe(6);
   });
 
-  it('wraps selected text with underscores', () => {
-    const { handled, doc } = runSurround('hello', 0, 5, '_');
-    expect(handled).toBe(true);
-    expect(doc).toBe('_hello_');
-  });
+  it('uses the expected delimiters for the remaining surround triggers', () => {
+    const cases = [
+      ['hello', '_', '_hello_'],
+      ['hello', '(', '(hello)'],
+      ['code', '`', '`code`'],
+      ['gone', '~', '~~gone~~'],
+      ['bright', '=', '==bright==']
+    ] as const;
 
-  it('wraps selected text with parentheses', () => {
-    const { handled, doc } = runSurround('hello', 0, 5, '(');
-    expect(handled).toBe(true);
-    expect(doc).toBe('(hello)');
-  });
-
-  it('wraps selected text with backticks', () => {
-    const { handled, doc } = runSurround('code', 0, 4, '`');
-    expect(handled).toBe(true);
-    expect(doc).toBe('`code`');
-  });
-
-  it('wraps selected text with double tilde for strikethrough', () => {
-    const { handled, doc } = runSurround('gone', 0, 4, '~');
-    expect(handled).toBe(true);
-    expect(doc).toBe('~~gone~~');
-  });
-
-  it('wraps selected text with double equals for highlight', () => {
-    const { handled, doc } = runSurround('bright', 0, 6, '=');
-    expect(handled).toBe(true);
-    expect(doc).toBe('==bright==');
+    for (const [source, trigger, expected] of cases) {
+      const result = runSurround(source, 0, source.length, trigger);
+      expect(result, trigger).toMatchObject({ handled: true, doc: expected });
+    }
   });
 
   it('wraps selected text as a markdown link and places the cursor in the url', () => {
