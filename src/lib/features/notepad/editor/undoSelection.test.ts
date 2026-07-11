@@ -43,6 +43,30 @@ function paneEdit(
     .state;
 }
 
+function paneEditAfterCursorMove(
+  doc: string,
+  rootStateIn: EditorState,
+  change: { from: number; to?: number; insert: string }
+) {
+  const paneState = EditorState.create({
+    doc,
+    selection: { anchor: change.from }
+  });
+  const paneTr = paneState.update({
+    changes: change,
+    selection: { anchor: change.from + change.insert.length }
+  });
+
+  // Mirrors dispatchFromPane: synchronize the pane's pre-edit caret without
+  // adding history, then forward the document-changing transaction.
+  let root = rootStateIn.update({
+    selection: paneTr.startState.selection,
+    annotations: Transaction.addToHistory.of(false)
+  }).state;
+  root = root.update(buildRootForwardSpec(paneTr)).state;
+  return root;
+}
+
 function applyCommand(
   command: (cfg: { state: EditorState; dispatch: (t: Transaction) => void }) => boolean,
   state: EditorState
@@ -75,6 +99,23 @@ describe('buildRootForwardSpec', () => {
 });
 
 describe('root history selection forwarding (undo/redo)', () => {
+  it.each([
+    ['header', '# Heading', 4],
+    ['unordered list', '- List item', 4],
+    ['ordered list', '1. List item', 5]
+  ])('undo keeps the caret in a %s after a cursor-only move', (_label, line, lineOffset) => {
+    const doc = `intro\n${line}\noutro`;
+    const editPos = 'intro\n'.length + lineOffset;
+    let state = rootState(doc);
+    state = paneEditAfterCursorMove(doc, state, { from: editPos, insert: 'X' });
+
+    const afterUndo = applyCommand(undo, state);
+    expect(afterUndo.ran).toBe(true);
+    expect(afterUndo.state.doc.toString()).toBe(doc);
+    expect(afterUndo.state.selection.main.head).toBe(editPos);
+    expect(afterUndo.state.selection.main.head).toBeGreaterThan(0);
+  });
+
   it('undo restores the pre-edit selection rather than discarding it', () => {
     let state = rootState('alpha\nbeta\ngamma');
     const editPos = state.doc.length; // deep in the document

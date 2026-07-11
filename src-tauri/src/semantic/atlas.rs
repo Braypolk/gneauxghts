@@ -51,7 +51,7 @@ const UMAP_ITERATIONS_BASE: usize = 60;
 const UMAP_ITERATIONS_SQRT_SCALE: f32 = 4.0;
 const DISC_LAYOUT_FULL_PAIR_MAX: usize = 80;
 const DISC_LAYOUT_REPULSION_NEIGHBORS: usize = 16;
-const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 11;
+const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 14;
 const ATLAS_SEARCH_SEMANTIC_WEIGHT: f32 = 0.55;
 const ATLAS_SEARCH_LEXICAL_WEIGHT: f32 = 0.25;
 const ATLAS_SEARCH_STRUCTURAL_WEIGHT: f32 = 0.10;
@@ -3388,7 +3388,7 @@ fn label_for_cloud(nodes: &[&WorkingNode], density: f32) -> (Option<String>, f32
             count_label_terms(tag, 1.35, &mut counts);
         }
     }
-    let Some((word, count)) = counts.into_iter().max_by(|left, right| {
+    let Some((word, count)) = counts.iter().max_by(|left, right| {
         left.1
             .total_cmp(&right.1)
             .then_with(|| right.0.cmp(&left.0))
@@ -3396,56 +3396,51 @@ fn label_for_cloud(nodes: &[&WorkingNode], density: f32) -> (Option<String>, f32
         return fallback_cloud_label(nodes, density);
     };
     let confidence = ((count / nodes.len().max(1) as f32) * 0.7 + density * 0.3).clamp(0.0, 1.0);
-    if confidence < 0.38 {
-        let fallback = fallback_label_from_word(&word, nodes, density, confidence);
-        return (Some(fallback), confidence);
-    }
-    (Some(title_case(&word)), confidence)
+
+    (Some(title_case(word)), confidence)
 }
 
 fn count_label_terms(text: &str, weight: f32, counts: &mut HashMap<String, f32>) {
-    for word in text
-        .split(|character: char| !character.is_alphanumeric())
-        .map(|word| word.trim().to_lowercase())
-        .filter(|word| word.len() >= 4 && !is_stop_word(word))
-    {
+    // Count a term at most once per source so a word repeated throughout one note
+    // cannot outweigh a topic shared by several notes in the cloud.
+    for word in label_terms(text).into_iter().collect::<HashSet<_>>() {
         *counts.entry(word).or_default() += weight;
     }
 }
 
-fn fallback_cloud_label(nodes: &[&WorkingNode], density: f32) -> (Option<String>, f32) {
-    let fallback = nodes
-        .iter()
-        .max_by(|left, right| {
-            left.centrality
-                .total_cmp(&right.centrality)
-                .then_with(|| right.title.cmp(&left.title))
+fn label_terms(text: &str) -> Vec<String> {
+    text.split(|character: char| !character.is_alphanumeric())
+        .map(|word| word.trim().to_lowercase())
+        .filter(|word| {
+            word.len() >= 3
+                && word.chars().any(char::is_alphabetic)
+                && !is_stop_word(word)
         })
-        .and_then(|node| {
-            node.title
-                .split(|character: char| !character.is_alphanumeric())
-                .map(|word| word.trim().to_lowercase())
-                .find(|word| word.len() >= 3 && !is_stop_word(word))
-        })
-        .unwrap_or_else(|| "Cluster".to_string());
-    (
-        Some(title_case(&fallback)),
-        (0.18 + density * 0.2).clamp(0.12, 0.36),
-    )
+        .collect()
 }
 
-fn fallback_label_from_word(
-    word: &str,
-    nodes: &[&WorkingNode],
-    density: f32,
-    _confidence: f32,
-) -> String {
-    if word.len() >= 3 {
-        return title_case(word);
-    }
-    fallback_cloud_label(nodes, density)
-        .0
-        .unwrap_or_else(|| "Cluster".to_string())
+fn fallback_cloud_label(nodes: &[&WorkingNode], density: f32) -> (Option<String>, f32) {
+    let mut ranked_nodes = nodes.to_vec();
+    ranked_nodes.sort_by(|left, right| {
+        right
+            .centrality
+            .total_cmp(&left.centrality)
+            .then_with(|| left.title.cmp(&right.title))
+    });
+    let fallback = ranked_nodes
+        .into_iter()
+        .find_map(|node| {
+            label_terms(&node.title)
+                .into_iter()
+                .next()
+                .map(|word| title_case(&word))
+        })
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| "Cluster".to_string());
+    (
+        Some(fallback),
+        (0.18 + density * 0.2).clamp(0.12, 0.36),
+    )
 }
 
 fn parse_rfc3339_millis(value: &str) -> Option<u64> {
@@ -3649,23 +3644,136 @@ fn parent_folder(note_path: &str) -> String {
 }
 
 fn is_stop_word(word: &str) -> bool {
+    is_phrase_filler_word(word)
+        || matches!(
+        word,
+        "basic"
+            | "day"
+            | "details"
+            | "draft"
+            | "drafts"
+            | "here"
+            | "idea"
+            | "ideas"
+            | "item"
+            | "items"
+            | "list"
+            | "lists"
+            | "note"
+            | "notes"
+            | "plan"
+            | "project"
+            | "meeting"
+            | "misc"
+            | "overview"
+            | "research"
+            | "report"
+            | "reports"
+            | "setup"
+            | "summary"
+            | "thing"
+            | "things"
+            | "today"
+            | "untitled"
+            | "update"
+            | "updates"
+            | "year"
+    )
+}
+
+fn is_phrase_filler_word(word: &str) -> bool {
     matches!(
         word,
         "about"
             | "after"
+            | "again"
+            | "against"
+            | "all"
             | "also"
+            | "and"
+            | "any"
+            | "are"
+            | "because"
+            | "been"
+            | "before"
+            | "being"
+            | "between"
+            | "both"
+            | "but"
+            | "can"
+            | "could"
+            | "did"
+            | "does"
+            | "doing"
+            | "don"
+            | "each"
+            | "few"
+            | "for"
             | "from"
+            | "further"
+            | "had"
+            | "has"
             | "have"
+            | "having"
+            | "how"
             | "into"
-            | "note"
-            | "notes"
-            | "plan"
+            | "its"
+            | "itself"
+            | "just"
+            | "more"
+            | "most"
+            | "nor"
+            | "not"
+            | "now"
+            | "off"
+            | "once"
+            | "only"
+            | "other"
+            | "our"
+            | "ours"
+            | "out"
+            | "over"
+            | "own"
+            | "same"
+            | "she"
+            | "should"
+            | "some"
+            | "such"
+            | "than"
             | "that"
+            | "the"
+            | "their"
+            | "theirs"
+            | "them"
+            | "themselves"
+            | "then"
+            | "there"
+            | "these"
+            | "they"
             | "this"
+            | "those"
+            | "through"
+            | "too"
+            | "under"
+            | "until"
+            | "very"
+            | "was"
+            | "were"
+            | "what"
+            | "when"
+            | "where"
+            | "which"
+            | "while"
+            | "who"
+            | "why"
+            | "will"
             | "with"
+            | "would"
+            | "you"
             | "your"
-            | "project"
-            | "meeting"
+            | "yours"
+            | "yourself"
+            | "yourselves"
     )
 }
 
@@ -3880,22 +3988,51 @@ mod tests {
     }
 
     #[test]
-    fn label_for_cloud_falls_back_for_low_confidence_labels() {
+    fn label_for_cloud_uses_one_word_for_low_confidence_labels() {
         let nodes = [
-            test_node("a", "Alpha", 0.0, 0.0),
-            test_node("b", "Beta", 1.0, 0.0),
-            test_node("c", "Gamma", 0.0, 1.0),
+            test_node("a", "Bell Trip Summary", 0.0, 0.0),
+            test_node("b", "Hotel Booking Details", 1.0, 0.0),
+            test_node("c", "Warsaw Day Photos", 0.0, 1.0),
         ];
         let refs = nodes.iter().collect::<Vec<_>>();
 
         let (label, confidence) = label_for_cloud(&refs, 0.1);
 
-        assert!(label.is_some());
+        assert!(label.as_deref().is_some_and(|value| !value.contains(' ')));
         assert!(confidence < 0.38);
     }
 
     #[test]
-    fn label_for_cloud_uses_repeated_title_terms() {
+    fn label_for_cloud_never_uses_connector_words_as_the_topic() {
+        let nodes = [
+            test_node("a", "And Bug Reports", 0.0, 0.0),
+            test_node("b", "The Bug Triage", 1.0, 0.0),
+            test_node("c", "Bug Fix Notes", 0.0, 1.0),
+        ];
+        let refs = nodes.iter().collect::<Vec<_>>();
+
+        let (label, _) = label_for_cloud(&refs, 0.8);
+        let label = label.expect("label");
+
+        assert_eq!(label, "Bug");
+    }
+
+    #[test]
+    fn label_for_cloud_uses_cluster_when_every_title_is_filler() {
+        let nodes = [
+            test_node("a", "And", 0.0, 0.0),
+            test_node("b", "The", 1.0, 0.0),
+            test_node("c", "You But", 0.0, 1.0),
+        ];
+        let refs = nodes.iter().collect::<Vec<_>>();
+
+        let (label, _) = label_for_cloud(&refs, 0.2);
+
+        assert_eq!(label.as_deref(), Some("Cluster"));
+    }
+
+    #[test]
+    fn label_for_cloud_uses_a_repeated_useful_word() {
         let nodes = [
             test_node("a", "Garden Plan", 0.0, 0.0),
             test_node("b", "Garden Ideas", 1.0, 0.0),
@@ -3907,6 +4044,20 @@ mod tests {
 
         assert_eq!(label.as_deref(), Some("Garden"));
         assert!(confidence > 0.8);
+    }
+
+    #[test]
+    fn label_for_cloud_ignores_generic_and_numeric_title_terms() {
+        let nodes = [
+            test_node("a", "2026 Basic Android Setup", 0.0, 0.0),
+            test_node("b", "Android Release Checklist", 1.0, 0.0),
+            test_node("c", "Android Build Notes", 0.0, 1.0),
+        ];
+        let refs = nodes.iter().collect::<Vec<_>>();
+
+        let (label, _) = label_for_cloud(&refs, 0.8);
+
+        assert_eq!(label.as_deref(), Some("Android"));
     }
 
     #[test]

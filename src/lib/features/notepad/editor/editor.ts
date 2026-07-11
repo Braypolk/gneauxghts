@@ -374,6 +374,15 @@ class FileEditorRuntime {
     }
 
     for (const transaction of docChangedTransactions) {
+      // History records the selection from the root transaction's start state.
+      // A pane may have moved its caret without changing the document, so make
+      // the root match the pane's pre-edit selection before adding the change.
+      this.rootView.update([
+        this.rootView.state.update({
+          selection: transaction.startState.selection,
+          annotations: Transaction.addToHistory.of(false)
+        })
+      ]);
       this.rootView.update([this.rootView.state.update(buildRootForwardSpec(transaction))]);
     }
 
@@ -515,11 +524,9 @@ class FileEditorRuntime {
 
 // Build the spec used to forward a pane's edit into the root view, which owns
 // the canonical undo history. CodeMirror stores each history event's selection
-// from the transaction's *start* state, so the root selection must follow the
-// editing pane's caret: otherwise it stays at the document top and undo/redo
-// restores position 0 (the viewport jumps to the top). Carrying
-// `transaction.newSelection` keeps the root caret in lockstep with the pane, so
-// each history entry records where the edit happened and undo/redo restores it.
+// from the transaction's *start* state. dispatchFromPane first synchronizes
+// that pre-edit selection, and this spec carries the resulting selection so the
+// root remains in lockstep with the pane for the next history event.
 // Extracted as a pure helper so the selection-forwarding contract is testable
 // without mounting an EditorView.
 export function buildRootForwardSpec(transaction: Transaction) {
