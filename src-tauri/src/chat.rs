@@ -123,7 +123,9 @@ impl VaultAccess {
 pub(crate) struct ChatSettings {
     pub(crate) provider: String,
     pub(crate) model: String,
+    pub(crate) default_mode: ChatMode,
     pub(crate) default_access: VaultAccess,
+    pub(crate) atlas_visibility: String,
 }
 
 impl Default for ChatSettings {
@@ -131,7 +133,9 @@ impl Default for ChatSettings {
         Self {
             provider: "openai".to_string(),
             model: DEFAULT_MODEL.to_string(),
+            default_mode: ChatMode::Auto,
             default_access: VaultAccess::Limited,
+            atlas_visibility: "hidden".to_string(),
         }
     }
 }
@@ -271,7 +275,9 @@ impl ChatService {
                    id INTEGER PRIMARY KEY CHECK (id = 1),
                    provider TEXT NOT NULL,
                    model TEXT NOT NULL,
-                   default_access TEXT NOT NULL
+                   default_access TEXT NOT NULL,
+                   default_mode TEXT NOT NULL DEFAULT 'auto',
+                   atlas_visibility TEXT NOT NULL DEFAULT 'hidden'
                  );
                  CREATE TABLE IF NOT EXISTS chat_conversations (
                    id TEXT PRIMARY KEY,
@@ -332,6 +338,9 @@ impl ChatService {
                  );",
             )
             .map_err(|error| error.to_string())?;
+        // Vaults created by an earlier chat schema gain the settings columns in place.
+        let _ = connection.execute("ALTER TABLE chat_settings ADD COLUMN default_mode TEXT NOT NULL DEFAULT 'auto'", []);
+        let _ = connection.execute("ALTER TABLE chat_settings ADD COLUMN atlas_visibility TEXT NOT NULL DEFAULT 'hidden'", []);
         let defaults = ChatSettings::default();
         connection
             .execute(
@@ -346,13 +355,15 @@ impl ChatService {
     pub(crate) fn get_settings(&self) -> Result<ChatSettings, String> {
         self.connection()?
             .query_row(
-                "SELECT provider, model, default_access FROM chat_settings WHERE id = 1",
+                "SELECT provider, model, default_access, default_mode, atlas_visibility FROM chat_settings WHERE id = 1",
                 [],
                 |row| {
                     Ok(ChatSettings {
                         provider: row.get(0)?,
                         model: row.get(1)?,
                         default_access: VaultAccess::parse(&row.get::<_, String>(2)?),
+                        default_mode: ChatMode::parse(&row.get::<_, String>(3)?),
+                        atlas_visibility: row.get(4)?,
                     })
                 },
             )
@@ -369,8 +380,8 @@ impl ChatService {
         }
         self.connection()?
             .execute(
-                "UPDATE chat_settings SET provider = ?1, model = ?2, default_access = ?3 WHERE id = 1",
-                params![settings.provider, model, settings.default_access.as_str()],
+                "UPDATE chat_settings SET provider = ?1, model = ?2, default_access = ?3, default_mode = ?4, atlas_visibility = ?5 WHERE id = 1",
+                params![settings.provider, model, settings.default_access.as_str(), settings.default_mode.as_str(), settings.atlas_visibility],
             )
             .map_err(|error| error.to_string())?;
         self.get_settings()
@@ -389,7 +400,7 @@ impl ChatService {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "New conversation".to_string());
-        let mode = mode.unwrap_or(ChatMode::Auto);
+        let mode = mode.unwrap_or(settings.default_mode);
         let access = access.unwrap_or(settings.default_access);
         self.connection()?
             .execute(

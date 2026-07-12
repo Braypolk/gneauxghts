@@ -15,7 +15,10 @@ import type {
   VaultAccess
 } from './types';
 
-interface RawChatSettings { provider: string; model: string; defaultAccess: VaultAccess }
+interface RawChatSettings {
+  provider: string; model: string; defaultMode?: ChatMode; defaultAccess: VaultAccess;
+  atlasVisibility?: ChatSettings['atlasVisibility'];
+}
 interface RawSummary {
   id: string; title: string; mode: ChatMode; access: VaultAccess; status: string;
   createdAtMillis: number; updatedAtMillis: number; messageCount: number; detached: boolean;
@@ -43,9 +46,9 @@ function normalizeSettings(raw: RawChatSettings): ChatSettings {
   return {
     provider: raw.provider,
     model: raw.model,
-    defaultMode: 'auto',
+    defaultMode: raw.defaultMode ?? 'auto',
     defaultVaultAccess: raw.defaultAccess,
-    atlasVisibility: 'hidden'
+    atlasVisibility: raw.atlasVisibility ?? 'hidden'
   };
 }
 
@@ -170,7 +173,13 @@ export class TauriChatApi implements ChatApi {
   async getSettings() { return normalizeSettings(await invoke<RawChatSettings>(CHAT_COMMANDS.getSettings)); }
   async setSettings(settings: ChatSettings) {
     const raw = await invoke<RawChatSettings>(CHAT_COMMANDS.setSettings, {
-      settings: { provider: settings.provider, model: settings.model, defaultAccess: settings.defaultVaultAccess }
+      settings: {
+        provider: settings.provider,
+        model: settings.model,
+        defaultMode: settings.defaultMode,
+        defaultAccess: settings.defaultVaultAccess,
+        atlasVisibility: settings.atlasVisibility
+      }
     });
     return normalizeSettings(raw);
   }
