@@ -1,5 +1,6 @@
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import type { SearchItem } from '$lib/types/semantic';
+import type { SearchMode } from '$lib/features/notepad/search/search';
 
 /**
  * Forget/unforget bundle: the chrome on the left of the command bar.
@@ -21,7 +22,7 @@ export interface NotepadCommandBarRememberProps {
  * Search/results bundle: the central search input and result list.
  */
 export interface NotepadCommandBarSearchProps {
-  searchMode: 'current' | 'all';
+  searchMode: SearchMode;
   searchQuery: string;
   matchCase: boolean;
   matchWholeWord: boolean;
@@ -30,7 +31,7 @@ export interface NotepadCommandBarSearchProps {
   recentTasks: RecentTaskItem[];
   isSearching: boolean;
   onSearchInput: (value: string) => void;
-  onSearchModeChange: (mode: 'current' | 'all') => void | Promise<void>;
+  onSearchModeChange: (mode: SearchMode) => void | Promise<void>;
   onMatchCaseChange: (enabled: boolean) => void | Promise<void>;
   onMatchWholeWordChange: (enabled: boolean) => void | Promise<void>;
   onSearchSelect: (result: SearchItem) => void;
