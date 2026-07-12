@@ -8,6 +8,7 @@ import type {
   AtlasSearchResponse,
   VaultAtlasResponse
 } from '$lib/types/atlas';
+import type { AtlasChatVisibility } from '$lib/features/chat/types';
 
 export type AtlasZoomTier = 'far' | 'mid' | 'near' | 'close';
 export type AtlasLinkedNote = {
@@ -45,6 +46,7 @@ export class AtlasStore {
   matchWholeWord = $state(false);
   driftStaleNotes = $state(false);
   showLinks = $state(true);
+  chatVisibility = $state<AtlasChatVisibility>('hidden');
   zoom = $state(1);
 
   #refreshTimer: number | null = null;
@@ -275,7 +277,9 @@ export class AtlasStore {
     this.isLoading = true;
     this.error = null;
     try {
-      this.response = await invoke<VaultAtlasResponse>('get_vault_atlas');
+      this.response = await invoke<VaultAtlasResponse>('get_vault_atlas', {
+        chatVisibility: this.chatVisibility
+      });
       this.isStale = false;
       this.scheduleSearch(80);
       if (this.selectedNodeId && !this.response.nodes.some((node) => node.id === this.selectedNodeId)) {
@@ -369,7 +373,10 @@ export class AtlasStore {
     this.isSearching = true;
     this.searchError = null;
     try {
-      const response = await invoke<AtlasSearchResponse>('search_vault_atlas', { query });
+      const response = await invoke<AtlasSearchResponse>('search_vault_atlas', {
+        query,
+        chatVisibility: this.chatVisibility
+      });
       if (sequence !== this.#searchSequence || query !== this.searchQuery.trim()) return;
       this.searchResponse = response;
     } catch (error) {
@@ -380,6 +387,13 @@ export class AtlasStore {
         this.isSearching = false;
       }
     }
+  }
+
+  setChatVisibility(visibility: AtlasChatVisibility) {
+    if (visibility === this.chatVisibility) return;
+    this.chatVisibility = visibility;
+    this.selectedNodeId = null;
+    this.invalidateCachedResponse();
   }
 
   searchMatchForNode(node: AtlasNode): AtlasSearchMatch | null {

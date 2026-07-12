@@ -678,6 +678,18 @@
         atlas.matchWholeWord = enabled;
       }}
     >
+        <label class="sr-only" for="atlas-chat-visibility">Chat visibility</label>
+        <select
+          id="atlas-chat-visibility"
+          class="h-8 rounded-full border border-border bg-background px-2 text-xs text-foreground"
+          value={atlas.chatVisibility}
+          title="Chat visibility in Atlas"
+          onchange={(event) => atlas.setChatVisibility(event.currentTarget.value as 'hidden' | 'remembered' | 'all')}
+        >
+          <option value="hidden">Notes only</option>
+          <option value="remembered">Remembered chats</option>
+          <option value="all">All chats</option>
+        </select>
         <button
           type="button"
           class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
