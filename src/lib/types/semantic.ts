@@ -131,6 +131,8 @@ export interface SemanticDebugSnapshot {
 }
 
 export interface SearchItem {
+  /** Omitted only by local/current-note results; persisted results always include it. */
+  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
   noteId: string | null;
   notePath: string | null;
   fileName: string;

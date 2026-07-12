@@ -1,4 +1,4 @@
-use crate::index::{IndexedNote, IndexedParagraph};
+use crate::{index::{IndexedNote, IndexedParagraph}, note::DocumentKind};
 use serde::Serialize;
 use std::path::Path;
 
@@ -18,6 +18,7 @@ pub(crate) struct NoteSearchResult {
     #[serde(default)]
     pub(crate) note_id: Option<String>,
     pub(crate) note_path: Option<String>,
+    pub(crate) document_kind: DocumentKind,
     pub(crate) file_name: String,
     pub(crate) section_label: String,
     pub(crate) excerpt: String,
@@ -93,6 +94,7 @@ pub(crate) fn build_recent_result(
     NoteSearchResult {
         note_id: Some(note.note_id.clone()),
         note_path: note_path.map(|path| path.to_string_lossy().into_owned()),
+        document_kind: note.document_kind,
         file_name: note.file_name.clone(),
         section_label,
         excerpt,
@@ -173,6 +175,7 @@ fn score_search_candidate(
             note_path: candidate
                 .note_path
                 .map(|path| path.to_string_lossy().into_owned()),
+            document_kind: candidate.note.document_kind,
             file_name: candidate.note.file_name.clone(),
             section_label: candidate.paragraph.section_label.clone(),
             excerpt,

@@ -182,7 +182,29 @@ fn normalize_note_reference(value: &str) -> String {
     normalize_search_text(without_extension)
 }
 
-fn note_matches_reference(reference: &str, note: &IndexedNote) -> bool {
+fn normalize_path_reference(value: &str) -> String {
+    value
+        .trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_end_matches(".md")
+        .trim_end_matches(".MD")
+        .trim_matches('/')
+        .to_lowercase()
+}
+
+pub(super) fn note_matches_reference(
+    reference: &str,
+    note_path: &Path,
+    note: &IndexedNote,
+    notes_dir: &Path,
+) -> bool {
+    if reference.contains('/') || reference.contains('\\') {
+        let relative_path = note_path.strip_prefix(notes_dir).unwrap_or(note_path);
+        return normalize_path_reference(reference)
+            == normalize_path_reference(&relative_path.to_string_lossy());
+    }
+
     let normalized_reference = normalize_note_reference(reference);
     !normalized_reference.is_empty()
         && (normalized_reference == note.title_lower
@@ -201,7 +223,7 @@ fn resolve_wikilink_note_path(
     };
 
     if let (Some(current_path), Some(current_override)) = (current_path, current_override) {
-        if note_matches_reference(note_reference, current_override) {
+        if note_matches_reference(note_reference, current_path, current_override, notes_dir) {
             return Ok(Some(current_path.to_path_buf()));
         }
     }
@@ -219,7 +241,7 @@ fn resolve_wikilink_note_path(
     Ok(index
         .entries
         .iter()
-        .find(|(_, note)| note_matches_reference(note_reference, note))
+        .find(|(path, note)| note_matches_reference(note_reference, path, note, notes_dir))
         .map(|(path, _)| path.clone()))
 }
 
@@ -237,7 +259,9 @@ fn resolve_wikilink_note_for_sections(
     };
 
     if let Some(current_override) = current_override {
-        if note_matches_reference(note_reference, current_override) {
+        if current_path.is_some_and(|path| {
+            note_matches_reference(note_reference, path, current_override, notes_dir)
+        }) {
             return Ok(Some(current_override.clone()));
         }
     }
@@ -487,11 +511,40 @@ pub(super) fn resolve_note_link_target(
         note_path: note_path.to_string_lossy().into_owned(),
         section_label: "Title".to_string(),
         match_text: note.title.clone(),
+        block_id: None,
+        line_number: None,
     };
 
     let Some(section_reference) = section_reference else {
         return fallback;
     };
+
+    let requested_block_id = section_reference.trim().strip_prefix('^').filter(|id| {
+        !id.is_empty()
+            && id
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "_-".contains(character))
+    });
+    if let Some(block_id) = requested_block_id {
+        let marker = format!("^{block_id}");
+        if let Some(paragraph) = note.paragraphs.iter().find(|paragraph| {
+            paragraph
+                .text
+                .split_whitespace()
+                .last()
+                .is_some_and(|token| token == marker)
+        }) {
+            return ResolvedNoteLink {
+                note_id: note.note_id.clone(),
+                note_path: note_path.to_string_lossy().into_owned(),
+                section_label: paragraph.section_label.clone(),
+                match_text: paragraph.text.clone(),
+                block_id: Some(block_id.to_string()),
+                line_number: paragraph.lines.last().map(|line| line.line_number),
+            };
+        }
+        return fallback;
+    }
 
     let normalized_reference = normalize_section_reference(section_reference);
     if normalized_reference.is_empty() || normalized_reference == "title" {
@@ -532,5 +585,7 @@ pub(super) fn resolve_note_link_target(
         note_path: note_path.to_string_lossy().into_owned(),
         section_label: paragraph.section_label.clone(),
         match_text: paragraph.text.clone(),
+        block_id: None,
+        line_number: None,
     })
 }

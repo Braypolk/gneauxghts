@@ -172,12 +172,16 @@ fn run_worker(
                     note.modified_millis
                 };
                 let note_id = note.note_id.clone();
-                let _ = crate::state::task_projection::reconcile_note_tasks(
-                    &path,
-                    Some(&note),
-                    &note_id,
-                    timestamp,
-                );
+                if note.document_kind == crate::note::DocumentKind::Note {
+                    let _ = crate::state::task_projection::reconcile_note_tasks(
+                        &path,
+                        Some(&note),
+                        &note_id,
+                        timestamp,
+                    );
+                } else {
+                    let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
+                }
             }
             BackgroundJob::Remove { path } => {
                 if let Err(error) = lexical.remove_note(&path) {

@@ -5,6 +5,7 @@ use crate::{
     semantic::SemanticState,
     state::{derive_file_stem, derive_file_stem_from_title_and_markdown},
 };
+use crate::note::DocumentKind;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -132,6 +133,11 @@ enum ProjectionPayload {
 fn apply_projection_payload(payload: ProjectionPayload) {
     match payload {
         ProjectionPayload::Upsert { path, note } => {
+            if note.document_kind.is_chat_projection() {
+                let timestamp = crate::time::current_time_millis().unwrap_or(0);
+                let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
+                return;
+            }
             let timestamp = if note.modified_millis == 0 {
                 crate::time::current_time_millis().unwrap_or(0)
             } else {
@@ -264,12 +270,16 @@ impl AppState {
         } else {
             modified_millis
         };
-        let _ = crate::state::task_projection::reconcile_note_tasks(
-            &path,
-            Some(&note_clone_for_projection),
-            &note_id,
-            timestamp,
-        );
+        if note_clone_for_projection.document_kind == DocumentKind::Note {
+            let _ = crate::state::task_projection::reconcile_note_tasks(
+                &path,
+                Some(&note_clone_for_projection),
+                &note_id,
+                timestamp,
+            );
+        } else {
+            let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
+        }
         self.clear_dirty_path(&path)?;
         Ok(())
     }
@@ -299,12 +309,16 @@ impl AppState {
         } else {
             note_for_projection.modified_millis
         };
-        let _ = crate::state::task_projection::reconcile_note_tasks(
-            &path,
-            Some(&note_for_projection),
-            &note_for_projection.note_id,
-            timestamp,
-        );
+        if note_for_projection.document_kind == DocumentKind::Note {
+            let _ = crate::state::task_projection::reconcile_note_tasks(
+                &path,
+                Some(&note_for_projection),
+                &note_for_projection.note_id,
+                timestamp,
+            );
+        } else {
+            let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
+        }
         self.clear_dirty_path(&path)?;
         self.background_index_queue
             .enqueue_upsert(path, note_for_background);
@@ -698,6 +712,7 @@ pub(crate) struct IndexedNote {
     signature: FileSignature,
     pub(crate) note_id: String,
     pub(crate) modified_millis: u64,
+    pub(crate) document_kind: DocumentKind,
     pub(crate) title: String,
     pub(crate) title_lower: String,
     pub(crate) file_name: String,
@@ -1105,11 +1120,12 @@ fn build_indexed_note_with_signature(
         signature,
         note_id,
         modified_millis,
+        document_kind: note::document_kind(markdown),
         title: title.clone(),
         title_lower: title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&title, &body),
-        tasks: build_tasks(markdown),
+        tasks: if note::document_kind(markdown) == DocumentKind::Note { build_tasks(markdown) } else { Vec::new() },
         file_name,
     }
 }
@@ -1144,11 +1160,12 @@ fn build_current_override_with_signature(
         signature,
         note_id,
         modified_millis,
+        document_kind: note::document_kind(markdown),
         title: effective_title.clone(),
         title_lower: effective_title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&effective_title, markdown),
-        tasks: build_tasks(markdown),
+        tasks: if note::document_kind(markdown) == DocumentKind::Note { build_tasks(markdown) } else { Vec::new() },
         file_name,
     }
 }
