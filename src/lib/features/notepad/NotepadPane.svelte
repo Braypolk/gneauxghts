@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Columns2, X } from '@lucide/svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
+  import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
   import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import type {
@@ -130,13 +131,16 @@
         </div>
       </div>
     {:else}
-      <div class="flex min-h-0 flex-1 items-center justify-center px-6 pt-28 pb-16">
-        <div class="max-w-md rounded-[1.6rem] border border-border/70 bg-background/60 px-6 py-5 text-left shadow-sm">
-          <div class="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">LLM Chat</div>
-          <p class="mt-3 text-sm leading-7 text-muted-foreground">
-            {viewModel.chatDescription}
-          </p>
-        </div>
+      <div class="flex min-h-0 flex-1 px-3 pt-20 pb-3 sm:px-4 sm:pt-24 sm:pb-4">
+        {#if viewModel.chatController}
+          <ChatPanel
+            controller={viewModel.chatController}
+            conversationId={viewModel.chatConversationId}
+            variant="pane"
+            selectionActions={viewModel.chatSelectionActions}
+            onConversationChange={viewModel.onChatConversationChange}
+          />
+        {/if}
       </div>
     {/if}
   </div>

@@ -24,6 +24,7 @@
     variant?: 'pane' | 'focused' | 'inline';
     showConversationPicker?: boolean;
     selectionActions?: ChatSelectionActions;
+    onConversationChange?: (conversationId: string | null) => void;
     onOpenCitation?: (citation: Extract<ChatCitation, { kind: 'note' }>) => void | Promise<void>;
     placeholder?: string;
   }
@@ -35,6 +36,7 @@
     variant = 'pane',
     showConversationPicker = true,
     selectionActions = {},
+    onConversationChange,
     onOpenCitation,
     placeholder = 'What are you thinking about?'
   }: Props = $props();
@@ -65,6 +67,7 @@
     snapshot = controller.getSnapshot();
     const unsubscribe = controller.subscribe((next) => {
       snapshot = next;
+      onConversationChange?.(next.conversation?.id ?? null);
       const lastMessageId = next.conversation?.messages.at(-1)?.id ?? null;
       if (lastMessageId !== previousLastMessageId || next.isSending) {
         previousLastMessageId = lastMessageId;

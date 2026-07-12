@@ -1,6 +1,13 @@
 <script lang="ts">
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick, untrack } from 'svelte';
+  import {
+    chatApi,
+    createChatController,
+    type ChatController,
+    type ChatSelection,
+    type ChatSelectionActions
+  } from '$lib/features/chat';
   import { forgottenNoteRetentionPreference } from '$lib/appSettings';
   import {
     focusEditorSearchRange,
@@ -103,6 +110,8 @@
     rekeyNote,
     replaceReferencedNoteWithFreshDraft,
     setActivePane as setStoreActivePane,
+    setPaneChatConversationId,
+    setPaneKind as setStoredPaneKind,
     setPaneNoteKey as setStoredPaneNoteKey,
     type NoteDraftState,
     type NoteKey
@@ -158,6 +167,7 @@
   });
   const paneControllers = {} as Record<PaneId, ReturnType<typeof createPaneControllersFn<PaneId>>>;
   const editorCapabilities = new Map<PaneId, ReturnType<typeof createEditorCapabilityAdapter>>();
+  const chatControllers = new Map<PaneId, ChatController>();
   let activeSlashMenuPaneId = $state<PaneId | null>(null);
   let activeSelectionMenuPaneId = $state<PaneId | null>(null);
   let activeWikilinkPaneId = $state<PaneId | null>(null);
@@ -229,6 +239,77 @@
 
   function getPaneRuntime(paneId: PaneId) {
     return ensurePaneRuntime(paneId);
+  }
+
+  function getChatController(paneId: PaneId) {
+    let controller = chatControllers.get(paneId);
+    if (!controller) {
+      controller = createChatController();
+      chatControllers.set(paneId, controller);
+    }
+    return controller;
+  }
+
+  function formatChatInsertion(selection: ChatSelection) {
+    const quote = selection.text
+      .trim()
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n');
+    const backlink = selection.linkTarget ? `[[${selection.linkTarget}|Open in chat]]` : '';
+    return `${quote}${backlink ? `\n> — ${backlink}` : ''}\n\n`;
+  }
+
+  function chatSelectionActions(): ChatSelectionActions {
+    return {
+      onInsertIntoNote: async (selection) => {
+        const destinationPaneId = getEditorPaneIds()[0];
+        if (!destinationPaneId) {
+          throw new Error('Open a note beside the conversation before inserting.');
+        }
+        const document = getPaneDocumentSession(destinationPaneId);
+        const result = featureHost.insertMarkdown({
+          noteKey: document.key,
+          expectedDocumentRevision: document.operationRevision,
+          markdown: formatChatInsertion(selection),
+          target: 'selection',
+          focus: true,
+          scrollIntoView: true
+        });
+        if (result.status === 'target-changed') {
+          throw new Error('The destination note changed. Choose the note and try again.');
+        }
+        if (result.status === 'editor-unavailable') {
+          throw new Error('The destination note is not ready for insertion.');
+        }
+      }
+    };
+  }
+
+  async function conversationIdForProjection(notePath: string | null) {
+    if (!notePath) return null;
+    const normalized = notePath.replaceAll('\\', '/');
+    const conversations = await chatApi.listConversations(true);
+    for (const summary of conversations) {
+      const conversation = await chatApi.getConversation(summary.id);
+      const projection = conversation.projectionPath?.replaceAll('\\', '/');
+      if (!projection) continue;
+      const directory = projection.replace(/\/Conversation\.md$/i, '');
+      if (normalized === projection || normalized.endsWith(`/${projection}`) || normalized.includes(`/${directory}/`)) {
+        return conversation.id;
+      }
+    }
+    return null;
+  }
+
+  async function openChatProjection(paneId: PaneId, notePath: string | null) {
+    const conversationId = await conversationIdForProjection(notePath);
+    if (!conversationId) return false;
+    setStoredPaneKind(notepadState, paneId, 'chat');
+    setPaneChatConversationId(notepadState, paneId, conversationId);
+    workspaceStore.setActivePaneId(paneId);
+    await getChatController(paneId).initialize(conversationId);
+    return true;
   }
 
   function ensurePaneControllers(paneId: PaneId) {
@@ -748,6 +829,10 @@
 
   async function openWikilink(paneId: PaneId, rawTarget: string) {
     workspaceStore.setActivePaneId(paneId);
+    if (rawTarget.replaceAll('\\', '/').startsWith('Chats/')) {
+      const path = rawTarget.split('#', 1)[0];
+      if (await openChatProjection(paneId, path.endsWith('.md') ? path : `${path}.md`)) return;
+    }
     await getPaneControllers(paneId).wikilinkController.openWikilink(rawTarget);
   }
 
@@ -813,6 +898,8 @@
     runtime.dispose();
     delete paneControllers[paneId];
     editorCapabilities.delete(paneId);
+    chatControllers.get(paneId)?.dispose();
+    chatControllers.delete(paneId);
     delete paneRuntimes[paneId];
   }
 
@@ -986,6 +1073,12 @@
   }
 
   async function handleSearchResultSelect(result: SearchItem) {
+    if (result.documentKind && result.documentKind !== 'note') {
+      if (await openChatProjection(getNavigationPaneId(), result.notePath)) {
+        clearSearch();
+        return;
+      }
+    }
     workspaceStore.resetPaneCommand();
     if (searchState.searchMode === 'current' && result.currentMatchRange) {
       searchState.clearSearch();
@@ -1086,10 +1179,14 @@
       showCloseButton: paneOrder.length > 1,
       titleClass: paneTitleInputClass,
       titlePlaceholder: paneKind === 'editor' ? 'Title' : 'Chat title',
-      titleValue: paneDocument.title,
-      titleReadonly: false,
-      chatDescription:
-        'This placeholder reserves the pane contract for a future chat implementation while keeping the workspace architecture aligned around split panes and a shared note session.',
+      titleValue: paneKind === 'editor' ? paneDocument.title : 'Thought partner',
+      titleReadonly: paneKind === 'chat',
+      chatController: paneKind === 'chat' ? getChatController(paneId) : null,
+      chatConversationId: getPaneState(notepadState, paneId).chatConversationId,
+      chatSelectionActions: chatSelectionActions(),
+      onChatConversationChange: (conversationId) => {
+        setPaneChatConversationId(notepadState, paneId, conversationId);
+      },
       paneCommandHighlightedIndex,
       paneCommandMode,
       paneCommandCurrentNoteLabel,
@@ -1256,6 +1353,8 @@
       for (const paneId of getVisiblePaneIds()) {
         getPaneControllers(paneId).editorLifecycleController.dispose();
       }
+      for (const controller of chatControllers.values()) controller.dispose();
+      chatControllers.clear();
       syncCurrentFileSearchHighlights('', 'all');
       searchState.dispose();
       relatedState.dispose();
