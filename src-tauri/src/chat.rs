@@ -969,6 +969,10 @@ impl ChatService {
     }
 
     pub(crate) fn projection_conflict(&self, conversation_id: &str) -> Result<bool, String> {
+        Ok(self.changed_projection_path(conversation_id)?.is_some())
+    }
+
+    fn changed_projection_path(&self, conversation_id: &str) -> Result<Option<PathBuf>, String> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare("SELECT path, content_hash FROM chat_projection_files WHERE conversation_id = ?1")
@@ -977,14 +981,15 @@ impl ChatService {
         while let Some(row) = rows.next().map_err(|error| error.to_string())? {
             let path = PathBuf::from(row.get::<_, String>(0).map_err(|error| error.to_string())?);
             let expected: String = row.get(1).map_err(|error| error.to_string())?;
-            if path.exists() {
-                let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-                if content_hash(&content) != expected {
-                    return Ok(true);
-                }
+            if !path.exists() {
+                return Ok(Some(path));
+            }
+            let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            if content_hash(&content) != expected {
+                return Ok(Some(path));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     pub(crate) fn resolve_projection_conflict(&self, conversation_id: &str, action: &str) -> Result<Option<String>, String> {
@@ -993,18 +998,16 @@ impl ChatService {
         }
         let mut converted_path = None;
         if action == "convert" {
-            let connection = self.connection()?;
-            let path: String = connection
-                .query_row(
-                    "SELECT path FROM chat_projection_files WHERE conversation_id = ?1 ORDER BY path LIMIT 1",
-                    [conversation_id],
-                    |row| row.get(0),
-                )
-                .map_err(|error| error.to_string())?;
-            let source = PathBuf::from(path);
+            let source = self.changed_projection_path(conversation_id)?
+                .ok_or_else(|| "No externally changed projection was found".to_string())?;
+            if !source.exists() {
+                return Err("The changed projection was deleted; restore the transcript instead".to_string());
+            }
             let content = fs::read_to_string(&source).map_err(|error| error.to_string())?;
-            let target = unique_converted_note_path(&self.inner.notes_root, &content);
-            fs::write(&target, content).map_err(|error| error.to_string())?;
+            let editable_body = crate::note::strip_frontmatter(&content);
+            let (ordinary_note, _) = crate::note::prepare_note_markdown(&editable_body, None, None)?;
+            let target = unique_converted_note_path(&self.inner.notes_root, &editable_body);
+            fs::write(&target, ordinary_note).map_err(|error| error.to_string())?;
             converted_path = Some(target.to_string_lossy().into_owned());
         } else if action != "restore" {
             return Err("Projection conflict action must be convert or restore".to_string());
@@ -1551,5 +1554,24 @@ mod tests {
             connection.execute("INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis) VALUES (?1, ?2, ?3, 'user', 'complete', 'x', 1, 1)", params![format!("m{ordinal}"), conversation.summary.id, ordinal]).unwrap();
         }
         assert_eq!(choose_part(&connection, &conversation.summary.id).unwrap(), 2);
+    }
+
+    #[test]
+    fn conflict_conversion_preserves_edit_as_an_ordinary_note_then_restores_projection() {
+        let (_root, service) = service("chat-conflict-convert");
+        let conversation = service.create_conversation(Some("Edited chat".into()), None, None).unwrap();
+        let projection: String = service.connection().unwrap().query_row(
+            "SELECT path FROM chat_projection_files WHERE conversation_id = ?1 AND path LIKE '%Conversation.md'",
+            [&conversation.summary.id],
+            |row| row.get(0),
+        ).unwrap();
+        let original = fs::read_to_string(&projection).unwrap();
+        fs::write(&projection, format!("{original}\nUser-added thought\n")).unwrap();
+
+        let converted = service.resolve_projection_conflict(&conversation.summary.id, "convert").unwrap().unwrap();
+        let converted_markdown = fs::read_to_string(converted).unwrap();
+        assert_eq!(crate::note::document_kind(&converted_markdown), crate::note::DocumentKind::Note);
+        assert!(converted_markdown.contains("User-added thought"));
+        assert!(!fs::read_to_string(projection).unwrap().contains("User-added thought"));
     }
 }
