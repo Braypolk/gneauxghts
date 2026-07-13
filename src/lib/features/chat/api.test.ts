@@ -69,4 +69,16 @@ describe('TauriChatApi', () => {
       message: expect.objectContaining({ content: 'Done', status: 'completed' })
     }));
   });
+
+  it('stores and removes provider keys without requesting the key back', async () => {
+    invokeMock.mockResolvedValueOnce({ configured: true }).mockResolvedValueOnce({ configured: false });
+    const { TauriChatApi } = await import('./api');
+    const api = new TauriChatApi();
+
+    await expect(api.setApiKey('openai', 'sk-test')).resolves.toMatchObject({ configured: true });
+    await expect(api.setApiKey('openai', '')).resolves.toMatchObject({ configured: false });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'chat_set_api_key', { apiKey: 'sk-test' });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_set_api_key', { apiKey: '' });
+  });
 });
