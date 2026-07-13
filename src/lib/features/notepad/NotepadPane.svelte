@@ -37,51 +37,62 @@
   onfocusin={() => actions.onActivate(viewModel.paneId)}
 >
   <div class={viewModel.frameClass}>
-    <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20">
-      <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
-      <div class="relative z-10 flex items-center justify-between gap-3 px-4 pt-4 pb-3">
-        <div class="h-9 w-9 shrink-0" aria-hidden="true"></div>
-        <div class="pointer-events-none absolute inset-x-16 top-4 flex justify-center">
-          <div bind:this={pane.refs.titleShell} class="pointer-events-auto w-full max-w-[24rem] min-w-0">
-            <input
-              bind:this={pane.refs.titleInput}
-              type="text"
-              class={viewModel.titleClass}
-              placeholder={viewModel.titlePlaceholder}
-              value={displayedTitle}
-              readonly={viewModel.titleReadonly}
-              onfocus={() => {
-                if (viewModel.titleReadonly) {
-                  return;
-                }
-                titleDraft = viewModel.titleValue;
-                actions.onTitleFocus(viewModel.paneId);
-              }}
-              oninput={(event) => {
-                titleDraft = (event.currentTarget as HTMLInputElement).value;
-                actions.onTitleInput(viewModel.paneId);
-              }}
-              onblur={() => {
-                const rawTitle = titleDraft ?? viewModel.titleValue;
-                titleDraft = null;
-                actions.onTitleBlur(viewModel.paneId, rawTitle);
-              }}
-              onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
-            />
+    {#if viewModel.paneKind === 'editor'}
+      <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20">
+        <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
+        <div class="relative z-10 flex items-center justify-between gap-3 px-4 pt-4 pb-3">
+          <div class="h-9 w-9 shrink-0" aria-hidden="true"></div>
+          <div class="pointer-events-none absolute inset-x-16 top-4 flex justify-center">
+            <div bind:this={pane.refs.titleShell} class="pointer-events-auto w-full max-w-[24rem] min-w-0">
+              <input
+                bind:this={pane.refs.titleInput}
+                type="text"
+                class={viewModel.titleClass}
+                placeholder={viewModel.titlePlaceholder}
+                value={displayedTitle}
+                readonly={viewModel.titleReadonly}
+                onfocus={() => {
+                  titleDraft = viewModel.titleValue;
+                  actions.onTitleFocus(viewModel.paneId);
+                }}
+                oninput={(event) => {
+                  titleDraft = (event.currentTarget as HTMLInputElement).value;
+                  actions.onTitleInput(viewModel.paneId);
+                }}
+                onblur={() => {
+                  const rawTitle = titleDraft ?? viewModel.titleValue;
+                  titleDraft = null;
+                  actions.onTitleBlur(viewModel.paneId, rawTitle);
+                }}
+                onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
+              />
+            </div>
           </div>
+          {#if viewModel.showCloseButton}
+            <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onClose(viewModel.paneId)} aria-label="Close this pane" title="Close pane">
+              <X class="h-4 w-4" />
+            </button>
+          {:else}
+            <button type="button" class="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:inline-flex" onclick={() => void actions.onSplit()} aria-label="Add a pane beside this note" title="Add pane">
+              <Columns2 class="h-4 w-4" />
+            </button>
+            <div class="h-9 w-9 shrink-0 sm:hidden" aria-hidden="true"></div>
+          {/if}
         </div>
+      </div>
+    {:else}
+      <div class="absolute right-4 top-4 z-30">
         {#if viewModel.showCloseButton}
-          <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onClose(viewModel.paneId)} aria-label="Close this pane" title="Close pane">
+          <button type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onClose(viewModel.paneId)} aria-label="Close this pane" title="Close pane">
             <X class="h-4 w-4" />
           </button>
         {:else}
-          <button type="button" class="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:inline-flex" onclick={() => void actions.onSplit()} aria-label="Add a pane beside this note" title="Add pane">
+          <button type="button" class="hidden h-9 w-9 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:inline-flex" onclick={() => void actions.onSplit()} aria-label="Add a pane beside this chat" title="Add pane">
             <Columns2 class="h-4 w-4" />
           </button>
-          <div class="h-9 w-9 shrink-0 sm:hidden" aria-hidden="true"></div>
         {/if}
       </div>
-    </div>
+    {/if}
 
     {#if viewModel.paneKind === 'editor'}
       <div class="flex h-full flex-1 min-h-0 flex-col">
@@ -131,7 +142,7 @@
         </div>
       </div>
     {:else}
-      <div class="flex min-h-0 flex-1 px-3 pt-20 pb-3 sm:px-4 sm:pt-24 sm:pb-4">
+      <div class="flex min-h-0 flex-1 pb-20 sm:pb-24">
         {#if viewModel.chatController}
           <ChatPanel
             controller={viewModel.chatController}

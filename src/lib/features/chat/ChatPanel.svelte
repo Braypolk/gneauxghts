@@ -7,6 +7,7 @@
     Copy,
     ExternalLink,
     FileInput,
+    History,
     Link,
     LoaderCircle,
     Plus,
@@ -229,23 +230,26 @@
   }
 </script>
 
-<section class={`chat-panel chat-panel--${variant} flex h-full min-h-0 flex-col overflow-hidden rounded-[1.4rem] border border-border/80 bg-card/65`} aria-label="Thought partner chat">
-  <header class="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2.5">
-    <div class="mr-auto flex min-w-0 items-center gap-2">
-      <Brain class="h-4 w-4 shrink-0 text-foreground/80" />
+<section class={`chat-panel chat-panel--${variant} flex h-full min-h-0 w-full flex-col overflow-hidden`} aria-label="Thought partner chat">
+  <header class="flex min-h-16 shrink-0 items-center gap-2 border-b border-border/60 px-4 py-3 pr-16 sm:px-5 sm:pr-16">
+    <div class="mr-auto flex min-w-0 items-center gap-1">
+      <div class="mr-1 inline-flex h-8 w-8 items-center justify-center rounded-full bg-accent/70 text-foreground" title="Thought partner">
+        <Brain class="h-4 w-4" />
+      </div>
       {#if showConversationPicker && snapshot.conversations.length > 0}
-        <select
-          class="max-w-48 truncate rounded-lg border-0 bg-transparent px-1 py-1 text-sm font-semibold text-foreground outline-none"
-          value={conversation?.id ?? ''}
-          aria-label="Conversation"
-          onchange={(event) => void controller.openConversation(event.currentTarget.value)}
-        >
-          {#each snapshot.conversations as item (item.id)}
-            <option value={item.id}>{item.title}</option>
-          {/each}
-        </select>
-      {:else}
-        <span class="truncate text-sm font-semibold text-foreground">{conversation?.title ?? 'Thought partner'}</span>
+        <div class="chat-history-control" title={conversation?.title ?? 'Conversations'}>
+          <History class="h-4 w-4" />
+          <select
+            class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            value={conversation?.id ?? ''}
+            aria-label="Open conversation"
+            onchange={(event) => void controller.openConversation(event.currentTarget.value)}
+          >
+            {#each snapshot.conversations as item (item.id)}
+              <option value={item.id}>{item.title}</option>
+            {/each}
+          </select>
+        </div>
       {/if}
       <button type="button" class="chat-icon-button" onclick={() => void controller.createConversation()} aria-label="New conversation" title="New conversation">
         <Plus class="h-4 w-4" />
@@ -269,7 +273,7 @@
   </header>
 
   {#if conversation?.vaultAccess === 'limited' && contextNote}
-    <div class="flex items-center gap-2 border-b border-border/60 bg-background/35 px-3 py-2 text-xs text-muted-foreground">
+    <div class="flex items-center gap-2 border-b border-border/50 px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
       <span class="min-w-0 flex-1 truncate">
         {#if contextNote.noteId}
           {contextGrant ? 'Limited chats can use' : 'Allow Limited access to'} <span class="font-medium text-foreground">[[{contextNote.noteTitle}]]</span>
@@ -294,7 +298,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     bind:this={messagesElement}
-    class="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4"
+    class="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6"
     role="log"
     aria-live="polite"
     onpointerup={captureSelection}
@@ -306,9 +310,9 @@
       </div>
     {:else if isEmpty}
       <div class="mx-auto flex h-full max-w-sm flex-col items-center justify-center px-5 text-center">
-        <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-accent text-accent-foreground"><Brain class="h-5 w-5" /></div>
-        <h2 class="text-base font-semibold text-foreground">Think something through</h2>
-        <p class="mt-2 text-sm leading-6 text-muted-foreground">Ask directly, explore an unfinished idea, challenge an assumption, or shape a thought into something useful.</p>
+        <Brain class="mb-4 h-5 w-5 text-muted-foreground" />
+        <h2 class="text-sm font-semibold text-foreground">Start with what you’re working through</h2>
+        <p class="mt-2 text-sm leading-6 text-muted-foreground">Discuss the note beside this, ask a direct question, or work an unfinished thought into shape.</p>
       </div>
     {:else if conversation}
       <div class="mx-auto flex w-full max-w-3xl flex-col gap-4">
@@ -368,7 +372,7 @@
     {/if}
   </div>
 
-  <footer class="border-t border-border/70 p-3">
+  <footer class="shrink-0 border-t border-border/50 bg-card/35 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
     {#if snapshot.error || actionError}
       <div class="mb-2 flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
         <AlertCircle class="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -376,7 +380,7 @@
         <button type="button" class="font-semibold" onclick={() => { actionError = null; controller.clearError(); }}>Dismiss</button>
       </div>
     {/if}
-    <div class="mx-auto max-w-3xl rounded-[1.1rem] border border-input bg-background/90 p-2 shadow-sm focus-within:border-foreground/30 focus-within:ring-2 focus-within:ring-ring/10">
+    <div class="mx-auto max-w-3xl rounded-[1.1rem] border border-input bg-background/75 p-2 shadow-sm focus-within:border-foreground/30 focus-within:ring-2 focus-within:ring-ring/10">
       <textarea
         bind:this={composerElement}
         bind:value={draft}
@@ -407,9 +411,11 @@
 <style>
   .chat-icon-button { display: inline-flex; height: 1.75rem; width: 1.75rem; align-items: center; justify-content: center; border-radius: 9999px; color: var(--muted-foreground); }
   .chat-icon-button:hover { background: var(--accent); color: var(--accent-foreground); }
+  .chat-history-control { position: relative; display: inline-flex; height: 1.75rem; width: 1.75rem; align-items: center; justify-content: center; border-radius: 9999px; color: var(--muted-foreground); }
+  .chat-history-control:hover, .chat-history-control:focus-within { background: var(--accent); color: var(--accent-foreground); }
   .chat-control { max-width: 8rem; border: 1px solid var(--border); border-radius: 9999px; background: color-mix(in oklab, var(--background) 70%, transparent); padding: 0.3rem 0.55rem; font-size: 0.7rem; color: var(--muted-foreground); outline: none; }
-  .chat-message { max-width: min(92%, 42rem); border-radius: 1.15rem; background: color-mix(in oklab, var(--background) 68%, transparent); padding: 0.85rem 1rem; }
-  .chat-message--user { align-self: flex-end; background: var(--accent); }
+  .chat-message { max-width: min(94%, 44rem); padding: 0.35rem 0; }
+  .chat-message--user { align-self: flex-end; border-radius: 1rem; background: color-mix(in oklab, var(--accent) 72%, transparent); padding: 0.75rem 1rem; }
   .chat-message-content :global(p) { margin: 0 0 0.65rem; }
   .chat-message-content :global(p:last-child) { margin-bottom: 0; }
   .chat-message-content :global(ul), .chat-message-content :global(ol) { margin: 0.45rem 0; padding-left: 1.35rem; }
@@ -422,5 +428,5 @@
   .chat-selection-action:hover { background: var(--accent); color: var(--accent-foreground); }
   .chat-send-button { display: inline-flex; height: 2rem; width: 2rem; align-items: center; justify-content: center; border-radius: 9999px; background: var(--foreground); color: var(--background); }
   .chat-send-button:disabled { cursor: default; opacity: 0.4; }
-  .chat-panel--inline { border-radius: 1rem; }
+  .chat-panel--inline { border-radius: 1rem; border: 1px solid var(--border); background: var(--card); }
 </style>
