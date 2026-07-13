@@ -4,6 +4,8 @@
   import {
     chatApi,
     createChatController,
+    formatDiscussionDraft,
+    type ChatDraftSeed,
     type ChatController,
     type ChatSelection,
     type ChatSelectionActions
@@ -168,6 +170,9 @@
   const paneControllers = {} as Record<PaneId, ReturnType<typeof createPaneControllersFn<PaneId>>>;
   const editorCapabilities = new Map<PaneId, ReturnType<typeof createEditorCapabilityAdapter>>();
   const chatControllers = new Map<PaneId, ChatController>();
+  let chatDraftSeeds = $state<Partial<Record<PaneId, ChatDraftSeed>>>({});
+  let discussionSeedCounter = 0;
+  let discussionInProgress = false;
   let activeSlashMenuPaneId = $state<PaneId | null>(null);
   let activeSelectionMenuPaneId = $state<PaneId | null>(null);
   let activeWikilinkPaneId = $state<PaneId | null>(null);
@@ -310,6 +315,76 @@
     workspaceStore.setActivePaneId(paneId);
     await getChatController(paneId).initialize(conversationId);
     return true;
+  }
+
+  async function discussSelection(sourcePaneId: PaneId, selectedText: string) {
+    const text = selectedText.trim();
+    if (!text || discussionInProgress) return;
+    discussionInProgress = true;
+
+    try {
+      const order = [...workspaceStore.paneOrder];
+      let chatPaneId = order.find((paneId) => getPaneKind(paneId) === 'chat') ?? null;
+      let openedNewChatSurface = false;
+      let createdSplitPane = false;
+
+      if (!chatPaneId && order.length < MAX_VISIBLE_PANES) {
+        const previousPaneIds = new Set(order);
+        await commands.splitWorkspace();
+        chatPaneId = workspaceStore.paneOrder.find((paneId) => !previousPaneIds.has(paneId)) ?? null;
+        openedNewChatSurface = Boolean(chatPaneId);
+        createdSplitPane = Boolean(chatPaneId);
+      }
+
+      if (!chatPaneId) {
+        chatPaneId = order.find((paneId) => paneId !== sourcePaneId) ?? null;
+        openedNewChatSurface = Boolean(chatPaneId && getPaneKind(chatPaneId) !== 'chat');
+      }
+
+      if (!chatPaneId) return;
+
+      const controller = getChatController(chatPaneId);
+      let conversation = controller.getSnapshot().conversation;
+
+      if (openedNewChatSurface) {
+        await controller.initialize();
+        const label = text.replace(/\s+/g, ' ').slice(0, 48);
+        conversation = await controller.createConversation({
+          title: label ? `About: ${label}` : 'Selection discussion'
+        });
+      } else {
+        const conversationId = getPaneState(notepadState, chatPaneId).chatConversationId;
+        if (!conversation || (conversationId && conversation.id !== conversationId)) {
+          await controller.initialize(conversationId);
+          conversation = controller.getSnapshot().conversation;
+        }
+        if (!conversation) {
+          conversation = await controller.createConversation({ title: 'Selection discussion' });
+        }
+      }
+
+      if (conversation) {
+        setPaneChatConversationId(notepadState, chatPaneId, conversation.id);
+      }
+
+      const sourceDocument = getPaneDocumentSession(sourcePaneId);
+      discussionSeedCounter += 1;
+      chatDraftSeeds[chatPaneId] = {
+        id: `${Date.now()}-${discussionSeedCounter}`,
+        text: formatDiscussionDraft(text, sourceDocument.title)
+      };
+
+      if (createdSplitPane) {
+        await commands.resolvePaneCommandChoice(chatPaneId, 'thoughtPartner');
+      } else if (getPaneKind(chatPaneId) !== 'chat') {
+        await commands.setPaneKind(chatPaneId, 'chat');
+      } else {
+        workspaceStore.setActivePaneId(chatPaneId);
+      }
+      await tick();
+    } finally {
+      discussionInProgress = false;
+    }
   }
 
   function ensurePaneControllers(paneId: PaneId) {
@@ -900,6 +975,7 @@
     editorCapabilities.delete(paneId);
     chatControllers.get(paneId)?.dispose();
     chatControllers.delete(paneId);
+    delete chatDraftSeeds[paneId];
     delete paneRuntimes[paneId];
   }
 
@@ -1183,6 +1259,7 @@
       titleReadonly: paneKind === 'chat',
       chatController: paneKind === 'chat' ? getChatController(paneId) : null,
       chatConversationId: getPaneState(notepadState, paneId).chatConversationId,
+      chatDraftSeed: chatDraftSeeds[paneId] ?? null,
       chatSelectionActions: chatSelectionActions(),
       onChatConversationChange: (conversationId) => {
         setPaneChatConversationId(notepadState, paneId, conversationId);
@@ -1529,9 +1606,15 @@
   {/if}
 
   {#if activeSelectionMenuPaneId}
+    {@const selectionPaneId = activeSelectionMenuPaneId}
     <SelectionMenu
       menu={getPaneRuntime(activeSelectionMenuPaneId).ui.selectionMenu}
       boundsElement={getPaneRuntime(activeSelectionMenuPaneId).refs.paneCard}
+      onThoughtPartner={({ text }) => {
+        void discussSelection(selectionPaneId, text).catch((error) => {
+          console.error('Failed to discuss selection:', error);
+        });
+      }}
     />
   {/if}
 

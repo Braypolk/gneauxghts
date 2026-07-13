@@ -1,6 +1,7 @@
 import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
 import type { PaneCommandChoice, PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 import type { ChatController, ChatSelectionActions } from '$lib/features/chat';
+import type { ChatDraftSeed } from '$lib/features/chat';
 
 type PaneKind = 'editor' | 'chat';
 
@@ -24,6 +25,7 @@ export interface PaneViewModel {
   titleReadonly: boolean;
   chatController: ChatController | null;
   chatConversationId: string | null;
+  chatDraftSeed: ChatDraftSeed | null;
   chatSelectionActions: ChatSelectionActions;
   onChatConversationChange: (conversationId: string | null) => void;
   paneCommandHighlightedIndex: number;

@@ -15,6 +15,7 @@
     Square
   } from '@lucide/svelte';
   import type { ChatController, ChatControllerState } from './controller';
+  import { mergeDiscussionDraft, type ChatDraftSeed } from './discussionContext';
   import type { ChatCitation, ChatExcerpt, ChatMode, ChatSelection, ChatSelectionActions, VaultAccess } from './types';
 
   interface Props {
@@ -27,6 +28,7 @@
     onConversationChange?: (conversationId: string | null) => void;
     onOpenCitation?: (citation: Extract<ChatCitation, { kind: 'note' }>) => void | Promise<void>;
     placeholder?: string;
+    draftSeed?: ChatDraftSeed | null;
   }
 
   let {
@@ -38,7 +40,8 @@
     selectionActions = {},
     onConversationChange,
     onOpenCitation,
-    placeholder = 'What are you thinking about?'
+    placeholder = 'What are you thinking about?',
+    draftSeed = null
   }: Props = $props();
 
   const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -57,11 +60,24 @@
   let selectedExcerpt = $state<ChatExcerpt | null>(null);
   let actionError = $state<string | null>(null);
   let messagesElement = $state<HTMLElement | null>(null);
+  let composerElement = $state<HTMLTextAreaElement | null>(null);
   let previousLastMessageId = $state<string | null>(null);
+  let appliedDraftSeedId = $state<string | null>(null);
 
   const conversation = $derived(snapshot.conversation);
   const canSend = $derived(Boolean(draft.trim()) && !snapshot.isSending && conversation?.status === 'active');
   const isEmpty = $derived(!conversation || conversation.messages.length === 0);
+
+  $effect(() => {
+    const seed = draftSeed;
+    if (!seed || seed.id === appliedDraftSeedId) return;
+    appliedDraftSeedId = seed.id;
+    draft = mergeDiscussionDraft(draft, seed.text);
+    requestAnimationFrame(() => {
+      composerElement?.focus();
+      composerElement?.setSelectionRange(draft.length, draft.length);
+    });
+  });
 
   onMount(() => {
     snapshot = controller.getSnapshot();
@@ -315,6 +331,7 @@
     {/if}
     <div class="mx-auto max-w-3xl rounded-[1.1rem] border border-input bg-background/90 p-2 shadow-sm focus-within:border-foreground/30 focus-within:ring-2 focus-within:ring-ring/10">
       <textarea
+        bind:this={composerElement}
         bind:value={draft}
         rows={variant === 'inline' ? 2 : 3}
         class="block max-h-40 min-h-12 w-full resize-none bg-transparent px-2 py-1 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"

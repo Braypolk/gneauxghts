@@ -136,6 +136,7 @@
           <ChatPanel
             controller={viewModel.chatController}
             conversationId={viewModel.chatConversationId}
+            draftSeed={viewModel.chatDraftSeed}
             variant="pane"
             selectionActions={viewModel.chatSelectionActions}
             onConversationChange={viewModel.onChatConversationChange}
