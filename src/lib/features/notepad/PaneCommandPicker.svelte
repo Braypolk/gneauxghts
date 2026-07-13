@@ -4,6 +4,7 @@
     getPaneCommandOptionId,
     getPaneCommandShortcutLabel,
     isHiddenPaneCommandIndex,
+    PANE_COMMAND_OPTIONS,
     PANE_COMMAND_SPLIT_INDEX,
     PANE_COMMAND_START_INDEX,
     type PaneCommandChoice,
@@ -167,7 +168,7 @@
           {getPaneCommandShortcutLabel(PANE_COMMAND_SPLIT_INDEX.current, mode)}
         </span>
         <span>
-          <span class="font-medium">Open Current Note</span>
+          <span class="font-medium">{PANE_COMMAND_OPTIONS.current.label}</span>
           <span class="mt-0.5 block text-xs text-muted-foreground/82">{currentNoteLabel}</span>
         </span>
       </button>
@@ -191,7 +192,7 @@
       </span>
       <span>
         <span class="font-medium">
-          Open Previous Note
+          {PANE_COMMAND_OPTIONS.previous.label}
           {#if previousNoteShortcutLabel}
             <span class="font-normal text-muted-foreground/70">({previousNoteShortcutLabel})</span>
           {/if}
@@ -218,9 +219,9 @@
         {getPaneCommandShortcutLabel(thoughtPartnerIndex, mode)}
       </span>
       <span>
-        <span class="font-medium">Open Thought partner</span>
+        <span class="font-medium">{PANE_COMMAND_OPTIONS.thoughtPartner.label}</span>
         <span class="mt-0.5 block text-xs text-muted-foreground/82">
-          Open AI chat alongside this thought
+          {PANE_COMMAND_OPTIONS.thoughtPartner.description}
         </span>
       </span>
     </button>

@@ -47,7 +47,8 @@ export interface PaneViewModel {
 export interface PaneWorkspaceActions {
   onActivate: (paneId: NotepadPaneId) => void;
   onClose: (paneId: NotepadPaneId) => void | Promise<void>;
-  onSplit: () => void | Promise<void>;
+  onSplit: (choice?: PaneCommandChoice) => void | Promise<void>;
+  onOpenPaneChoice: (choice: PaneCommandChoice) => void | Promise<void>;
   onTitleFocus: (paneId: NotepadPaneId) => void;
   onTitleInput: (paneId: NotepadPaneId) => void;
   onTitleBlur: (paneId: NotepadPaneId, rawTitle: string) => void;

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Columns2, X } from '@lucide/svelte';
+  import { X } from '@lucide/svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
+  import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
   import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import type {
@@ -74,9 +75,7 @@
             <X class="h-4 w-4" />
           </button>
         {:else}
-          <button type="button" class="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:inline-flex" onclick={() => void actions.onSplit()} aria-label="Add a pane beside this note" title="Add pane">
-            <Columns2 class="h-4 w-4" />
-          </button>
+          <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
           <div class="h-9 w-9 shrink-0 sm:hidden" aria-hidden="true"></div>
         {/if}
       </div>

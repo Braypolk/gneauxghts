@@ -73,6 +73,7 @@
   import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
   import { createNotepadSearchStore } from '$lib/features/notepad/search/store.svelte';
   import { attachPaneSelectionTracking } from '$lib/features/notepad/editor/paneSelectionTracking';
+  import type { PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
   import {
     createPaneControllers as createPaneControllersFn,
     type PaneControllerSetupDeps
@@ -1039,12 +1040,39 @@
     documents.saveCursorPositionForDocument();
   }
 
-  async function splitWorkspaceIfAllowed() {
+  async function splitWorkspaceIfAllowed(choice: PaneCommandChoice | undefined = undefined) {
     if (window.innerWidth < 640) {
       return;
     }
 
     await commands.splitWorkspace();
+
+    if (choice) {
+      const targetPaneId = workspaceStore.paneCommand.paneId;
+      // If there is no recent note, preserve the picker so it can explain the
+      // unavailable option instead of silently resolving to a blank pane.
+      if (targetPaneId && (choice !== 'previous' || paneCommandPreviousItem !== null)) {
+        await commands.resolvePaneCommandChoice(targetPaneId, choice);
+      }
+    }
+  }
+
+  async function openPaneChoiceInCurrent(choice: PaneCommandChoice) {
+    if (choice === 'thoughtPartner') {
+      await commands.setPaneKind(activePaneId, 'chat');
+      return;
+    }
+
+    if (choice === 'previous') {
+      await loadRecentNotes();
+      const previousItem = findPaneCommandPreviousItem(
+        searchState.recentNotes,
+        getPaneDocumentSession(activePaneId)
+      );
+      if (previousItem) {
+        await openRecentNoteItem(previousItem);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1054,7 +1082,7 @@
     getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
     getPaneTitleInput,
-    splitWorkspace: splitWorkspaceIfAllowed,
+    splitWorkspace: () => splitWorkspaceIfAllowed(),
     closePane: commands.closePane,
     switchActivePane: commands.switchActivePane,
     startNewNoteFlow: commands.startNewNoteFlow,
@@ -1107,6 +1135,7 @@
     onActivate: commands.activatePane,
     onClose: commands.closePane,
     onSplit: splitWorkspaceIfAllowed,
+    onOpenPaneChoice: openPaneChoiceInCurrent,
     onTitleFocus: handleTitleFocus,
     onTitleInput: handleTitleInput,
     onTitleBlur: handleTitleBlur,
