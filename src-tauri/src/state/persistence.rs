@@ -290,6 +290,15 @@ pub(crate) fn persist_note(
     current_path: Option<&Path>,
 ) -> Result<Option<String>, String> {
     let normalized_markdown = note::normalize_wikilink_markdown(markdown);
+    note::reject_chat_projection_write(&normalized_markdown)?;
+    let existing_markdown = current_path
+        .filter(|path| path.exists())
+        .map(fs::read_to_string)
+        .transpose()
+        .map_err(|err| err.to_string())?;
+    if let Some(existing_markdown) = existing_markdown.as_deref() {
+        note::reject_chat_projection_write(existing_markdown)?;
+    }
 
     if title.trim().is_empty() && normalized_markdown.trim().is_empty() {
         let target_path =
@@ -310,11 +319,6 @@ pub(crate) fn persist_note(
         return Ok(Some(target_path.to_string_lossy().into_owned()));
     }
 
-    let existing_markdown = current_path
-        .filter(|path| path.exists())
-        .map(fs::read_to_string)
-        .transpose()
-        .map_err(|err| err.to_string())?;
     let prepared_markdown = note::prepare_note_markdown(
         &normalized_markdown,
         existing_markdown.as_deref(),

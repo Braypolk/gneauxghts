@@ -375,6 +375,10 @@ fn process_full_scan(
 
     for path in collect_markdown_files_recursively(notes_dir)? {
         let raw_path = path.to_string_lossy().into_owned();
+        let markdown = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        if !crate::note::semantic_recall_eligible(&markdown) {
+            continue;
+        }
         seen_paths.insert(raw_path.clone());
         let modified_millis = read_modified_millis(&path)?;
         let should_consider = force
@@ -386,7 +390,6 @@ fn process_full_scan(
             continue;
         }
 
-        let markdown = fs::read_to_string(&path).map_err(|err| err.to_string())?;
         let next_content_hash = content_hash(&markdown);
         if !force
             && stored
@@ -523,6 +526,16 @@ fn process_note_batch(
     }
 
     for (note_path, update) in note_updates {
+        if !crate::note::semantic_recall_eligible(&update.markdown) {
+            let path_str = note_path.to_string_lossy().into_owned();
+            let previous_labels = load_note_chunk_labels(connection, &path_str)?;
+            delete_note(connection, &path_str)?;
+            if !ann.apply_note_delete(&previous_labels)? {
+                needs_ann_rebuild = true;
+            }
+            scanned_count += 1;
+            continue;
+        }
         let previous_labels = load_note_chunk_labels(connection, &note_path.to_string_lossy())?;
         let indexed_note = index_note_content(
             connection,

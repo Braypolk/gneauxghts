@@ -30,6 +30,7 @@ type GeneralSection =
   | "shortcuts"
   | "forgetting"
   | "vault"
+  | "ai"
   | "search";
 type ForgottenAction = "restore_forgotten_notes" | "delete_forgotten_notes";
 type SemanticAction =

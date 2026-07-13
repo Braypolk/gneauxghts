@@ -11,10 +11,21 @@ use std::{
 };
 use tauri::State;
 
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum AtlasChatVisibility {
+    #[default]
+    Hidden,
+    Remembered,
+    All,
+}
+
 #[tauri::command]
 pub(crate) async fn get_vault_atlas(
     state: State<'_, AppState>,
+    chat_visibility: Option<AtlasChatVisibility>,
 ) -> Result<VaultAtlasResponse, String> {
+    let chat_visibility = chat_visibility.unwrap_or_default();
     let notes_dir = prepare_notes_dir(false)?;
     state.ensure_interactive_index(
         &notes_dir,
@@ -27,7 +38,7 @@ pub(crate) async fn get_vault_atlas(
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        let metadata = build_metadata(&index.entries);
+        let metadata = build_metadata(&index.entries, &chat_visibility);
         let hard_links = build_hard_links(&index.entries, &metadata);
         (metadata, hard_links)
     };
@@ -50,7 +61,9 @@ pub(crate) fn clear_atlas_cache(state: State<'_, AppState>) -> Result<(), String
 pub(crate) async fn search_vault_atlas(
     state: State<'_, AppState>,
     query: String,
+    chat_visibility: Option<AtlasChatVisibility>,
 ) -> Result<AtlasSearchResponse, String> {
+    let chat_visibility = chat_visibility.unwrap_or_default();
     let notes_dir = prepare_notes_dir(false)?;
     state.ensure_interactive_index(
         &notes_dir,
@@ -63,7 +76,7 @@ pub(crate) async fn search_vault_atlas(
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        build_metadata(&index.entries)
+        build_metadata(&index.entries, &chat_visibility)
     };
     let activity_by_note_id = db_load_note_activity()?;
     let semantic = state.semantic.clone();
@@ -75,9 +88,19 @@ pub(crate) async fn search_vault_atlas(
     .map_err(|err| err.to_string())?
 }
 
-fn build_metadata(entries: &HashMap<PathBuf, IndexedNote>) -> HashMap<String, AtlasNoteMetadata> {
+fn build_metadata(
+    entries: &HashMap<PathBuf, IndexedNote>,
+    visibility: &AtlasChatVisibility,
+) -> HashMap<String, AtlasNoteMetadata> {
     entries
         .iter()
+        .filter(|(_, note)| match visibility {
+            AtlasChatVisibility::Hidden => note.document_kind == crate::note::DocumentKind::Note,
+            AtlasChatVisibility::Remembered => {
+                note.document_kind != crate::note::DocumentKind::ChatTranscript
+            }
+            AtlasChatVisibility::All => true,
+        })
         .map(|(path, note)| {
             let note_path = path.to_string_lossy().into_owned();
             let mut tags = extract_indexed_tags(note);

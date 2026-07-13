@@ -103,6 +103,27 @@ mod tests {
     }
 
     #[test]
+    fn persist_note_rejects_chat_projection_paths_without_mutating_them() {
+        let temp = TestDir::new("state-persist-chat-projection");
+        let notes_dir = temp.path();
+        let projection_path = notes_dir.join("Part 001.md");
+        let projection = "---\ngneauxghts:\n  id: transcript-1\n  kind: chatTranscript\n  chat_id: chat-1\n  part: 1\n  projection_hash: abc\n---\n\nTranscript";
+        fs::write(&projection_path, projection).expect("write projection");
+
+        let error = persist_note(
+            notes_dir,
+            "Renamed transcript",
+            "Changed",
+            Some(projection_path.as_path()),
+        )
+        .expect_err("projection write rejected");
+
+        assert!(error.contains("read-only"));
+        assert!(projection_path.exists());
+        assert_eq!(fs::read_to_string(projection_path).expect("read"), projection);
+    }
+
+    #[test]
     fn resolve_note_path_by_id_finds_nested_notes() {
         let temp = TestDir::new("state-resolve-note-nested");
         let notes_dir = temp.path();

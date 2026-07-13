@@ -56,6 +56,7 @@ describe('createNotepadFeatureHost', () => {
     };
     let saved = false;
     let replaced = '';
+    let inserted = '';
     const host = createNotepadFeatureHost({
       getActiveDocument: () => document,
       getActiveEditor: () => ({
@@ -67,6 +68,10 @@ describe('createNotepadFeatureHost', () => {
         readSelection: () => ({ anchor: 0, head: 5, selectedText: 'Hello' }),
         readCurrentBlock: () => null,
         replaceDocument: () => true,
+        insertMarkdown: (markdown) => {
+          inserted = markdown;
+          return { from: 0, to: 5, cursor: markdown.length };
+        },
         addReadOnlyOverlay: () => ({ dispose: () => {} })
       }),
       focusActiveEditor: () => {},
@@ -85,11 +90,72 @@ describe('createNotepadFeatureHost', () => {
       head: 5,
       selectedText: 'Hello'
     });
+    expect(
+      host.insertMarkdown({
+        noteKey: 'draft:1',
+        expectedDocumentRevision: 0,
+        markdown: 'Replacement',
+        target: 'selection'
+      })
+    ).toEqual({ status: 'inserted', from: 0, to: 5, cursor: 11 });
+    expect(inserted).toBe('Replacement');
 
     await host.saveActiveDocument();
     await host.replaceActiveDocumentMarkdown('Next');
 
     expect(saved).toBe(true);
     expect(replaced).toBe('Next');
+  });
+
+  it('rejects insertion after the target document or its revision changes', () => {
+    const document: NoteDraftState = {
+      key: 'path:/vault/Current.md',
+      title: 'Current',
+      bodyMarkdown: 'Body',
+      currentNoteId: 'current',
+      currentNotePath: '/vault/Current.md',
+      lastSavedTitle: 'Current',
+      lastSavedMarkdown: 'Body',
+      lastSavedNoteId: 'current',
+      lastSavedPath: '/vault/Current.md',
+      status: 'idle',
+      operationRevision: 4,
+      saveInvalidation: 0
+    };
+    let insertionCount = 0;
+    const host = createNotepadFeatureHost({
+      getActiveDocument: () => document,
+      getActiveEditor: () => ({
+        readSnapshot: () => null,
+        readSelection: () => null,
+        readCurrentBlock: () => null,
+        replaceDocument: () => true,
+        insertMarkdown: () => {
+          insertionCount += 1;
+          return { from: 0, to: 0, cursor: 1 };
+        },
+        addReadOnlyOverlay: () => ({ dispose: () => {} })
+      }),
+      focusActiveEditor: () => {},
+      saveActiveDocument: async () => {},
+      refreshActiveDocument: async () => {},
+      replaceActiveDocumentMarkdown: async () => {}
+    });
+
+    expect(
+      host.insertMarkdown({
+        noteKey: 'path:/vault/Other.md',
+        expectedDocumentRevision: 4,
+        markdown: 'x'
+      })
+    ).toMatchObject({ status: 'target-changed', currentNoteKey: document.key });
+    expect(
+      host.insertMarkdown({
+        noteKey: document.key,
+        expectedDocumentRevision: 3,
+        markdown: 'x'
+      })
+    ).toMatchObject({ status: 'target-changed', currentDocumentRevision: 4 });
+    expect(insertionCount).toBe(0);
   });
 });

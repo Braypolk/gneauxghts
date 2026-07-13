@@ -18,6 +18,8 @@ export interface PaneState<TPaneId extends string = string> {
   paneId: TPaneId;
   kind: 'editor' | 'chat';
   noteKey: NoteKey;
+  /** Chat identity is intentionally independent from the note draft/autosave lifecycle. */
+  chatConversationId: string | null;
 }
 
 export interface NotepadState<TPaneId extends string = string> {
@@ -63,7 +65,8 @@ export function createNotepadState<TPaneId extends string>(
       {
         paneId,
         kind: 'editor',
-        noteKey: initialNote.key
+        noteKey: initialNote.key,
+        chatConversationId: null
       }
     ])
   ) as Record<TPaneId, PaneState<TPaneId>>;
@@ -95,7 +98,8 @@ export function addPane<TPaneId extends string>(
   const pane = {
     paneId,
     kind,
-    noteKey
+    noteKey,
+    chatConversationId: null
   };
   state.panesById[paneId] = pane;
   return pane;
@@ -132,6 +136,17 @@ export function setPaneKind<TPaneId extends string>(
   kind: PaneState<TPaneId>['kind']
 ) {
   state.panesById[paneId].kind = kind;
+  if (kind === 'editor') {
+    state.panesById[paneId].chatConversationId = null;
+  }
+}
+
+export function setPaneChatConversationId<TPaneId extends string>(
+  state: NotepadState<TPaneId>,
+  paneId: TPaneId,
+  conversationId: string | null
+) {
+  state.panesById[paneId].chatConversationId = conversationId;
 }
 
 export function setPaneNoteKey<TPaneId extends string>(

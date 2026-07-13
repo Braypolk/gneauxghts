@@ -626,10 +626,15 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
     if (choice === 'thoughtPartner') {
       setStoredPaneKind(state, paneId, 'chat');
-      const chatDraft = createFreshDraftNote(state);
-      setPaneDocumentSession(paneId, chatDraft);
-      removeNoteIfUnreferenced(state, placeholderKey);
-      cleanupNoteRuntime(placeholderKey);
+      // Keep the source note associated with the pane as an explicit insertion
+      // target. Conversation identity lives on PaneState, never in NoteDraftState.
+      if (sourceKey && getNoteByKey(sourceKey)) {
+        setPaneDocumentSession(paneId, getNoteByKey(sourceKey)!);
+      }
+      if (placeholderKey !== sourceKey) {
+        removeNoteIfUnreferenced(state, placeholderKey);
+        cleanupNoteRuntime(placeholderKey);
+      }
       await finalizePaneCommandSelection(paneId);
       return;
     }

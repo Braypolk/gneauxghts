@@ -334,9 +334,13 @@ fn flush_dirty_batch(
         if present_consumed[index] {
             continue;
         }
-        state
-            .semantic
-            .queue_note_update(path, markdown.clone(), *modified_millis)?;
+        if !crate::note::semantic_recall_eligible(markdown) {
+            state.semantic.queue_delete_note(path)?;
+        } else {
+            state
+                .semantic
+                .queue_note_update(path, markdown.clone(), *modified_millis)?;
+        }
         state.mark_notes_index_dirty(path, "watcher")?;
         if let Some(app_data) = app_handle.try_state::<AppData>() {
             app_data.events.vault_note_changed(path, false);

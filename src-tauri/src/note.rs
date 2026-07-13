@@ -1,6 +1,6 @@
 use crate::time::current_time_millis;
 use blake3::Hasher;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
@@ -12,6 +12,37 @@ static NOTE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 const FRONTMATTER_DELIMITER: &str = "---";
 const NOTE_ID_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum DocumentKind {
+    #[default]
+    Note,
+    ChatIndex,
+    ChatTranscript,
+}
+
+impl DocumentKind {
+    pub(crate) fn is_chat_projection(self) -> bool {
+        matches!(self, Self::ChatIndex | Self::ChatTranscript)
+    }
+
+    pub(crate) fn as_frontmatter_value(self) -> &'static str {
+        match self {
+            Self::Note => "note",
+            Self::ChatIndex => "chatIndex",
+            Self::ChatTranscript => "chatTranscript",
+        }
+    }
+
+    pub(crate) fn from_frontmatter_value(value: &str) -> Self {
+        match value.trim() {
+            "chatIndex" | "chat_index" => Self::ChatIndex,
+            "chatTranscript" | "chat_transcript" => Self::ChatTranscript,
+            _ => Self::Note,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManagedNoteMetadata {
@@ -19,6 +50,10 @@ pub(crate) struct ManagedNoteMetadata {
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
     pub(crate) trashed_at: Option<String>,
+    pub(crate) kind: DocumentKind,
+    pub(crate) chat_id: Option<String>,
+    pub(crate) part: Option<u32>,
+    pub(crate) projection_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -51,6 +86,36 @@ pub(crate) fn parse_note(markdown: &str) -> ParsedNote {
 
 pub(crate) fn strip_frontmatter(markdown: &str) -> String {
     parse_note(markdown).body
+}
+
+/// Classifies a Markdown document from managed frontmatter. Documents written
+/// before classification was introduced intentionally default to ordinary
+/// notes.
+pub(crate) fn document_kind(markdown: &str) -> DocumentKind {
+    parse_note(markdown)
+        .frontmatter
+        .managed
+        .map(|metadata| metadata.kind)
+        .unwrap_or_default()
+}
+
+/// Ordinary notes are always eligible for semantic recall. Chat transcripts are
+/// never eligible; their lightweight index projection becomes eligible only
+/// after it contains an explicitly remembered excerpt anchor.
+pub(crate) fn semantic_recall_eligible(markdown: &str) -> bool {
+    match document_kind(markdown) {
+        DocumentKind::Note => true,
+        DocumentKind::ChatIndex => markdown.contains("^excerpt_"),
+        DocumentKind::ChatTranscript => false,
+    }
+}
+
+pub(crate) fn reject_chat_projection_write(markdown: &str) -> Result<(), String> {
+    if document_kind(markdown).is_chat_projection() {
+        Err("Chat projections are read-only and cannot be changed as notes.".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn normalize_wikilink_markdown(markdown: &str) -> String {
@@ -208,6 +273,19 @@ pub(crate) fn prepare_note_markdown(
                 .as_ref()
                 .and_then(|metadata| metadata.trashed_at.clone())
         }),
+        kind: existing_metadata
+            .as_ref()
+            .map(|metadata| metadata.kind)
+            .unwrap_or_default(),
+        chat_id: existing_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.chat_id.clone()),
+        part: existing_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.part),
+        projection_hash: existing_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.projection_hash.clone()),
     };
 
     let raw_other = parsed.frontmatter.raw_other.clone().or_else(|| {
@@ -310,6 +388,20 @@ fn parse_managed_metadata(lines: &[&str]) -> ManagedNoteMetadata {
             if !value.is_empty() && value != "null" {
                 metadata.trashed_at = Some(value);
             }
+        } else if let Some(value) = trimmed.strip_prefix("kind:") {
+            metadata.kind = DocumentKind::from_frontmatter_value(&normalize_yaml_scalar(value));
+        } else if let Some(value) = trimmed.strip_prefix("chat_id:") {
+            let value = normalize_yaml_scalar(value);
+            if !value.is_empty() && value != "null" {
+                metadata.chat_id = Some(value);
+            }
+        } else if let Some(value) = trimmed.strip_prefix("part:") {
+            metadata.part = normalize_yaml_scalar(value).parse::<u32>().ok();
+        } else if let Some(value) = trimmed.strip_prefix("projection_hash:") {
+            let value = normalize_yaml_scalar(value);
+            if !value.is_empty() && value != "null" {
+                metadata.projection_hash = Some(value);
+            }
         }
     }
 
@@ -329,10 +421,24 @@ fn compose_frontmatter(raw_other: Option<&str>, metadata: &ManagedNoteMetadata) 
         .trashed_at
         .clone()
         .unwrap_or_else(|| "null".to_string());
-    sections.push(format!(
-        "gneauxghts:\n  id: {}\n  created_at: {}\n  updated_at: {}\n  trashed_at: {}",
-        metadata.id, metadata.created_at, metadata.updated_at, trashed_at
-    ));
+    let mut managed = format!(
+        "gneauxghts:\n  id: {}\n  created_at: {}\n  updated_at: {}\n  trashed_at: {}\n  kind: {}",
+        metadata.id,
+        metadata.created_at,
+        metadata.updated_at,
+        trashed_at,
+        metadata.kind.as_frontmatter_value()
+    );
+    if let Some(chat_id) = metadata.chat_id.as_deref() {
+        managed.push_str(&format!("\n  chat_id: {chat_id}"));
+    }
+    if let Some(part) = metadata.part {
+        managed.push_str(&format!("\n  part: {part}"));
+    }
+    if let Some(projection_hash) = metadata.projection_hash.as_deref() {
+        managed.push_str(&format!("\n  projection_hash: {projection_hash}"));
+    }
+    sections.push(managed);
     sections.join("\n")
 }
 
@@ -421,8 +527,8 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_file_name_title_and_body, normalize_wikilink_markdown, parse_note,
-        prepare_note_markdown,
+        document_kind, extract_file_name_title_and_body, normalize_wikilink_markdown, parse_note,
+        prepare_note_markdown, reject_chat_projection_write, DocumentKind,
     };
 
     #[test]
@@ -439,6 +545,37 @@ mod tests {
         let metadata = parsed.frontmatter.managed.expect("managed metadata");
         assert_eq!(metadata.id, "01TEST");
         assert_eq!(metadata.trashed_at, None);
+        assert_eq!(metadata.kind, DocumentKind::Note);
+    }
+
+    #[test]
+    fn parse_note_reads_chat_projection_metadata() {
+        let markdown = "---\ngneauxghts:\n  id: chat-file\n  kind: chatTranscript\n  chat_id: chat-1\n  part: 2\n  projection_hash: abc123\n---\n\nTranscript";
+        let metadata = parse_note(markdown)
+            .frontmatter
+            .managed
+            .expect("managed metadata");
+
+        assert_eq!(metadata.kind, DocumentKind::ChatTranscript);
+        assert_eq!(metadata.chat_id.as_deref(), Some("chat-1"));
+        assert_eq!(metadata.part, Some(2));
+        assert_eq!(metadata.projection_hash.as_deref(), Some("abc123"));
+        assert_eq!(document_kind(markdown), DocumentKind::ChatTranscript);
+        assert!(reject_chat_projection_write(markdown).is_err());
+    }
+
+    #[test]
+    fn prepare_note_markdown_round_trips_document_classification() {
+        let existing = "---\ngneauxghts:\n  id: chat-file\n  created_at: 2026-01-01T00:00:00Z\n  updated_at: 2026-01-01T00:00:00Z\n  trashed_at: null\n  kind: chatIndex\n  chat_id: chat-1\n  part: 1\n  projection_hash: abc123\n---\n\nOld";
+        let (prepared, metadata) =
+            prepare_note_markdown("New", Some(existing), Some(None)).expect("prepare markdown");
+
+        assert_eq!(metadata.kind, DocumentKind::ChatIndex);
+        assert_eq!(metadata.chat_id.as_deref(), Some("chat-1"));
+        assert!(prepared.contains("kind: chatIndex"));
+        assert!(prepared.contains("chat_id: chat-1"));
+        assert!(prepared.contains("part: 1"));
+        assert!(prepared.contains("projection_hash: abc123"));
     }
 
     #[test]

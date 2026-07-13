@@ -366,6 +366,9 @@ pub(super) fn collect_recent_note_results(
             }
 
             let (path, note) = index.get_note_by_note_id(note_id)?;
+            if note.document_kind != crate::note::DocumentKind::Note {
+                return None;
+            }
             Some(build_recent_result(Some(path.as_path()), note))
         })
         .take(limit)
@@ -378,6 +381,7 @@ pub(crate) async fn search_notes_hybrid(
     state: State<'_, AppState>,
     query: String,
     mode: SearchMode,
+    scope: Option<super::SearchScope>,
     current_path: Option<String>,
     current_title: String,
     current_markdown: Option<String>,
@@ -402,6 +406,7 @@ pub(crate) async fn search_notes_hybrid(
         return Ok(Vec::new());
     }
     let effective_limit = limit;
+    let scope = scope.unwrap_or_default();
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
@@ -417,6 +422,7 @@ pub(crate) async fn search_notes_hybrid(
     let cache_fingerprint = build_search_fingerprint(
         &normalized_query,
         &mode,
+        &scope,
         current_path.as_deref(),
         draft.hash.as_deref(),
         effective_limit,
@@ -466,7 +472,7 @@ pub(crate) async fn search_notes_hybrid(
         let activity_by_note_id = db_load_note_activity().unwrap_or_default();
         let note_lookup = note_access_lookup(&state);
         let now = current_time_millis().unwrap_or(0);
-        let results = merge_hybrid_candidates(
+        let results = filter_search_scope(merge_hybrid_candidates(
             lexical_candidates,
             Vec::new(),
             &normalized_query,
@@ -477,7 +483,7 @@ pub(crate) async fn search_notes_hybrid(
             &activity_by_note_id,
             &note_lookup,
             now,
-        );
+        ), &scope, effective_limit);
         search_cache_put(cache_fingerprint, results.clone());
         return Ok(results);
     }
@@ -497,7 +503,7 @@ pub(crate) async fn search_notes_hybrid(
     let activity_by_note_id = db_load_note_activity().unwrap_or_default();
     let note_lookup = note_access_lookup(&state);
     let now = current_time_millis().unwrap_or(0);
-    let ranked = merge_hybrid_candidates(
+    let ranked = filter_search_scope(merge_hybrid_candidates(
         lexical_candidates,
         semantic_matches,
         &normalized_query,
@@ -508,7 +514,7 @@ pub(crate) async fn search_notes_hybrid(
         &activity_by_note_id,
         &note_lookup,
         now,
-    );
+    ), &scope, effective_limit);
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     state.semantic.debug_state().record_timing(
         "search",
@@ -763,6 +769,7 @@ pub(super) fn build_draft_ref(
 fn build_search_fingerprint(
     normalized_query: &str,
     mode: &SearchMode,
+    scope: &super::SearchScope,
     current_path: Option<&Path>,
     body_hash: Option<&str>,
     limit: usize,
@@ -770,9 +777,10 @@ fn build_search_fingerprint(
     semantic_weight: Option<f32>,
 ) -> String {
     format!(
-        "{}|{:?}|{}|{}|{}|{:?}|{:?}",
+        "{}|{:?}|{:?}|{}|{}|{}|{:?}|{:?}",
         normalized_query,
         mode,
+        scope,
         current_path
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default(),
@@ -781,6 +789,22 @@ fn build_search_fingerprint(
         lexical_weight,
         semantic_weight,
     )
+}
+
+fn filter_search_scope(
+    results: Vec<NoteSearchResult>,
+    scope: &super::SearchScope,
+    limit: usize,
+) -> Vec<NoteSearchResult> {
+    results
+        .into_iter()
+        .filter(|result| match scope {
+            super::SearchScope::Notes => result.document_kind == crate::note::DocumentKind::Note,
+            super::SearchScope::Chats => result.document_kind != crate::note::DocumentKind::Note,
+            super::SearchScope::Everything => true,
+        })
+        .take(limit)
+        .collect()
 }
 
 fn build_related_fingerprint(
@@ -1005,6 +1029,7 @@ pub(super) fn merge_hybrid_candidates(
             let mut result = NoteSearchResult {
                 note_id: note_id.clone(),
                 note_path: Some(semantic_match.note_path.clone()),
+                document_kind: crate::note::DocumentKind::Note,
                 file_name,
                 section_label: semantic_match.section_label.clone(),
                 excerpt: semantic_match.excerpt.clone(),

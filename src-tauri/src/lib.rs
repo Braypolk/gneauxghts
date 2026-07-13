@@ -1,4 +1,5 @@
 mod app;
+mod chat;
 mod commands;
 mod index;
 mod lexical;
@@ -15,6 +16,7 @@ mod time;
 mod vault_watcher;
 
 use app::AppData;
+use chat::ChatService;
 use index::AppState;
 use semantic::SemanticState;
 use state::{initialize_app_data_dir, initialize_documents_dir, notes_root};
@@ -44,12 +46,13 @@ pub fn run() {
                 let bundled_runtime_path = bundled_llama_server_path(app.handle());
                 SemanticState::new_with_runtime(
                     app_data_dir,
-                    vault_data_dir,
-                    notes_dir,
+                    vault_data_dir.clone(),
+                    notes_dir.clone(),
                     bundled_runtime_path,
                 )?
             };
             app.manage(AppState::new(semantic)?);
+            app.manage(ChatService::new(notes_dir, vault_data_dir)?);
             // One managed `AppData` carrying the typed event bus and
             // `NoteCatalog` facade.
             app.manage(AppData::new(app.handle().clone()));
@@ -143,6 +146,26 @@ pub fn run() {
             commands::atlas_commands::get_vault_atlas,
             commands::atlas_commands::search_vault_atlas,
             commands::atlas_commands::clear_atlas_cache,
+            commands::chat_commands::chat_get_settings,
+            commands::chat_commands::chat_set_settings,
+            commands::chat_commands::chat_get_key_status,
+            commands::chat_commands::chat_set_api_key,
+            commands::chat_commands::chat_create_conversation,
+            commands::chat_commands::chat_list_conversations,
+            commands::chat_commands::chat_get_conversation,
+            commands::chat_commands::chat_rename_conversation,
+            commands::chat_commands::chat_archive_conversation,
+            commands::chat_commands::chat_update_conversation_policy,
+            commands::chat_commands::chat_send_message,
+            commands::chat_commands::chat_cancel_request,
+            commands::chat_commands::chat_retry_message,
+            commands::chat_commands::chat_create_excerpt,
+            commands::chat_commands::chat_remember_excerpt,
+            commands::chat_commands::chat_unremember_excerpt,
+            commands::chat_commands::chat_list_grants,
+            commands::chat_commands::chat_grant_note,
+            commands::chat_commands::chat_revoke_note,
+            commands::chat_commands::chat_resolve_projection_conflict,
             commands::proposal_commands::apply_note_change_proposal,
             commands::get_semantic_settings,
             commands::set_semantic_settings,

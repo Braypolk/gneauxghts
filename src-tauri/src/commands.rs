@@ -1,5 +1,6 @@
 pub(crate) mod asset_commands;
 pub(crate) mod atlas_commands;
+pub(crate) mod chat_commands;
 pub(crate) mod forgotten_note_commands;
 mod index_bridge;
 pub(crate) mod note_persistence;
@@ -70,6 +71,10 @@ pub(crate) struct ResolvedNoteLink {
     note_path: String,
     section_label: String,
     match_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    block_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line_number: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,6 +97,15 @@ pub(crate) struct StoredImageAsset {
 #[serde(rename_all = "camelCase")]
 pub(crate) enum SearchMode {
     All,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum SearchScope {
+    #[default]
+    Notes,
+    Chats,
+    Everything,
 }
 
 /// Phase 5: lightweight draft pointer used internally for search/related/
@@ -583,7 +597,8 @@ mod tests {
     };
     use super::search_commands::{collect_recent_note_results, merge_hybrid_candidates};
     use super::wikilink_commands::{
-        parse_wikilink_target, resolve_note_link_target, ParsedWikilinkTarget,
+        note_matches_reference, parse_wikilink_target, resolve_note_link_target,
+        ParsedWikilinkTarget,
     };
     use super::{
         load_note_session_from_notes_dir, open_note_from_notes_dir, read_note_session_from_path,
@@ -797,6 +812,7 @@ mod tests {
             ScoredSearchResult {
                 score: 100,
                 result: NoteSearchResult {
+                    document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("note-a".to_string()),
                     note_path: Some("/notes/a.md".to_string()),
                     file_name: "a".to_string(),
@@ -814,6 +830,7 @@ mod tests {
             ScoredSearchResult {
                 score: 40,
                 result: NoteSearchResult {
+                    document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("note-b".to_string()),
                     note_path: Some("/notes/b.md".to_string()),
                     file_name: "b".to_string(),
@@ -871,6 +888,7 @@ mod tests {
             ScoredSearchResult {
                 score: 50,
                 result: NoteSearchResult {
+                    document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("rarely-opened".to_string()),
                     note_path: Some("/notes/rare.md".to_string()),
                     file_name: "rare".to_string(),
@@ -888,6 +906,7 @@ mod tests {
             ScoredSearchResult {
                 score: 48,
                 result: NoteSearchResult {
+                    document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("often-opened".to_string()),
                     note_path: Some("/notes/often.md".to_string()),
                     file_name: "often".to_string(),
@@ -947,6 +966,7 @@ mod tests {
             ScoredSearchResult {
                 score: 50,
                 result: NoteSearchResult {
+                    document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("stale-popular".to_string()),
                     note_path: Some("/notes/stale.md".to_string()),
                     file_name: "stale".to_string(),
@@ -964,6 +984,7 @@ mod tests {
             ScoredSearchResult {
                 score: 48,
                 result: NoteSearchResult {
+                    document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("fresh".to_string()),
                     note_path: Some("/notes/fresh.md".to_string()),
                     file_name: "fresh".to_string(),
@@ -1061,6 +1082,48 @@ mod tests {
     }
 
     #[test]
+    fn resolve_note_link_target_supports_stable_block_ids() {
+        let note_path = PathBuf::from("/tmp/Chats/2026-07-12-planning/Part 001.md");
+        let note = build_indexed_note(
+            &note_path,
+            "# Planning\n\nA durable response. ^msg_01ABC\n\nAnother response.",
+            10,
+        );
+
+        let target = resolve_note_link_target(&note_path, &note, Some("^msg_01ABC"));
+
+        assert_eq!(target.block_id.as_deref(), Some("msg_01ABC"));
+        assert_eq!(target.line_number, Some(3));
+        assert_eq!(target.match_text, "A durable response. ^msg_01ABC");
+    }
+
+    #[test]
+    fn path_qualified_note_references_match_relative_vault_paths() {
+        let notes_dir = PathBuf::from("/vault");
+        let note_path = notes_dir.join("Chats/2026-07-12-planning/Part 001.md");
+        let note = build_indexed_note(&note_path, "Transcript", 10);
+
+        assert!(note_matches_reference(
+            "Chats/2026-07-12-planning/Part 001",
+            &note_path,
+            &note,
+            &notes_dir,
+        ));
+        assert!(note_matches_reference(
+            "Chats\\2026-07-12-planning\\Part 001.md",
+            &note_path,
+            &note,
+            &notes_dir,
+        ));
+        assert!(!note_matches_reference(
+            "Other/Part 001",
+            &note_path,
+            &note,
+            &notes_dir,
+        ));
+    }
+
+    #[test]
     fn sanitize_asset_file_stem_normalizes_invalid_characters() {
         assert_eq!(
             sanitize_asset_file_stem(r#" ../Pasted:image*2024?.png "#),
@@ -1139,6 +1202,8 @@ mod tests {
             note_path: "/notes/title.md".to_string(),
             section_label: "Paragraph 2".to_string(),
             match_text: "Ship beta".to_string(),
+            block_id: None,
+            line_number: None,
         };
         let task = TaskListItem {
             note_id: "note-1".to_string(),

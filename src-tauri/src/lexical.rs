@@ -1,6 +1,7 @@
 use crate::{
     index::{FileSignature, IndexedNote},
     search::{build_search_preview, NoteSearchResult, ScoredSearchResult, TextRange},
+    note::DocumentKind,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -26,6 +27,7 @@ struct LexicalFields {
     section_label: Field,
     body: Field,
     paragraph_index: Field,
+    document_kind: Field,
 }
 
 struct LexicalIndexInner {
@@ -51,6 +53,7 @@ impl LexicalIndex {
             section_label: schema_builder.add_text_field("section_label", TEXT | STORED),
             body: schema_builder.add_text_field("body", TEXT | STORED),
             paragraph_index: schema_builder.add_u64_field("paragraph_index", STORED),
+            document_kind: schema_builder.add_text_field("document_kind", STRING | STORED),
         };
         let schema = schema_builder.build();
         let index = Index::create_in_ram(schema);
@@ -243,6 +246,9 @@ impl LexicalIndex {
                 result: NoteSearchResult {
                     note_id: Some(string_value(&document, self.fields.note_id)?),
                     note_path: Some(note_path),
+                    document_kind: DocumentKind::from_frontmatter_value(
+                        &string_value(&document, self.fields.document_kind)?,
+                    ),
                     file_name: string_value(&document, self.fields.file_name)?,
                     section_label,
                     excerpt,
@@ -279,6 +285,7 @@ fn replace_note_locked(
                 fields.section_label => paragraph.section_label.clone(),
                 fields.body => paragraph.text.clone(),
                 fields.paragraph_index => paragraph.paragraph_index.unwrap_or(0) as u64,
+                fields.document_kind => note.document_kind.as_frontmatter_value(),
             ))
             .map_err(|err| err.to_string())?;
     }

@@ -69,7 +69,11 @@
   const searchScopeTitle = $derived(
     searchMode === 'current'
       ? 'Searching only the current note'
-      : 'Searching across all notes'
+      : searchMode === 'chats'
+        ? 'Searching chat transcripts'
+        : searchMode === 'everything'
+          ? 'Searching notes and chats'
+          : 'Searching across all notes'
   );
   const searchScopeOptions = [
     {
@@ -85,6 +89,18 @@
       ariaLabel: 'Search all notes',
       title: 'Search all notes',
       tone: 'all'
+    },
+    {
+      id: 'chats',
+      label: 'Chats',
+      ariaLabel: 'Search chat transcripts',
+      title: 'Search chat transcripts'
+    },
+    {
+      id: 'everything',
+      label: 'Everything',
+      ariaLabel: 'Search notes and chats',
+      title: 'Search notes and chats'
     }
   ];
 
@@ -195,7 +211,7 @@
   }
 
   function handleSharedSearchModeChange(mode: string) {
-    if (mode !== 'current' && mode !== 'all') return;
+    if (mode !== 'current' && mode !== 'all' && mode !== 'chats' && mode !== 'everything') return;
     return onSearchModeChange(mode);
   }
 
@@ -250,7 +266,7 @@
     }
   }
 
-  function getSearchResultItemClass(mode: 'current' | 'all') {
+  function getSearchResultItemClass(mode: 'current' | 'all' | 'chats' | 'everything') {
     return mode === 'current'
       ? 'search-result-item grid min-h-10 w-full grid-cols-[minmax(0,1fr)_max-content] items-center gap-3 rounded-[0.9rem] px-3 py-2 text-left transition-colors'
       : 'search-result-item flex w-full flex-col gap-2 rounded-[1.1rem] px-4 py-3 text-left transition-colors';
@@ -638,8 +654,8 @@
                 data-search-result-active={index === $commandBarState.activeIndex ? 'true' : 'false'}
                 class={getSearchResultItemClass(searchMode)}
                 class:bg-accent={index === $commandBarState.activeIndex}
-                aria-label={`Open search result: ${searchMode === 'all' ? item.fileName : item.sectionLabel}`}
-                title={searchMode === 'all' ? item.fileName : item.sectionLabel}
+                aria-label={`Open search result: ${searchMode !== 'current' ? item.fileName : item.sectionLabel}`}
+                title={searchMode !== 'current' ? item.fileName : item.sectionLabel}
                 onmousedown={(event) => event.preventDefault()}
                 onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
                 onclick={() => commandBarState.selectItem({ kind: 'search', item })}
@@ -699,8 +715,8 @@
     <SearchBar
       bind:this={searchBar}
       value={searchQuery}
-      placeholder={searchMode === 'current' ? 'Search this note' : 'Search all notes'}
-      ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search all notes'}`}
+      placeholder={searchMode === 'current' ? 'Search this note' : searchMode === 'chats' ? 'Search chats' : searchMode === 'everything' ? 'Search everything' : 'Search all notes'}
+      ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search the selected scope'}`}
       matchCase={matchCase}
       matchWholeWord={matchWholeWord}
       showMatchOptions={true}

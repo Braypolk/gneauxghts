@@ -5,6 +5,7 @@
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
   import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
+  import ChatSettingsPanel from '$lib/features/settings/ChatSettingsPanel.svelte';
   import {
     averageDuration,
     formatMillis,
@@ -40,6 +41,7 @@
       description: 'Forget button timing and trash retention'
     },
     { id: 'vault', label: 'Vault', description: 'Where your notes are stored' },
+    { id: 'ai', label: 'AI & Chat', description: 'Provider, API key, and chat defaults' },
     { id: 'search', label: 'Semantic search', description: 'Local index and embeddings' }
   ];
 
@@ -208,6 +210,8 @@
               </div>
             {:else if $settings.activeGeneralSection === 'shortcuts'}
               <KeyboardShortcutsPanel />
+            {:else if $settings.activeGeneralSection === 'ai'}
+              <ChatSettingsPanel />
             {:else if $settings.activeGeneralSection === 'forgetting'}
               <div class="space-y-5">
                 <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">

@@ -32,7 +32,8 @@ ndarray = "0.17"
 rayon = "1.10"
 umap-rs = "0.4.5"
 tantivy = "0.25"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
+futures-util = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 notify = "6.1"
 

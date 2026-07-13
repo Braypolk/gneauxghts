@@ -6,6 +6,7 @@
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
   import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
   import { isTauriRuntime } from '$lib/tauriRuntime';
+  import { createNavigationCoordinator } from '$lib/ui/navigationCoordinator';
 
   const navLinks = [
     { href: '/atlas', label: 'Atlas', icon: Network },
@@ -64,20 +65,18 @@
   }
 
   async function navigateToHref(href: string) {
-    const normalizedCurrentPath = currentPathname;
-    const normalizedHref = normalizePathname(href);
-    if (normalizedCurrentPath === normalizedHref && window.location.pathname === href) {
-      return;
-    }
+    await navigationCoordinator.request(href);
+  }
 
-    try {
-      await awaitPendingNoteSave();
-    } catch (error) {
+  const navigationCoordinator = createNavigationCoordinator({
+    getCurrentPathname: () => currentPathname,
+    normalizePathname,
+    flushPendingWork: awaitPendingNoteSave,
+    navigate: goto,
+    onFlushError: (error) => {
       console.error('Failed to flush pending note save before navigation:', error);
     }
-
-    await goto(href);
-  }
+  });
 
   async function handleNavClick(event: MouseEvent, href: string) {
     if (shouldBypassAppNavigation(event)) {

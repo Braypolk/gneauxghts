@@ -6,6 +6,7 @@
   import NavBar from '$lib/ui/NavBar.svelte';
   import { appStore } from '$lib/app/appStore.svelte';
   import { logDevError } from '$lib/logDevError';
+  import { page } from '$app/state';
 
   let { children } = $props();
 
@@ -23,6 +24,8 @@
 <div use:mobileViewport class="app-shell flex h-full min-h-full flex-col overflow-hidden bg-background text-foreground">
   <NavBar />
   <div class="flex-1 min-h-0 overflow-hidden px-0 sm:px-4">
-    {@render children()}
+    {#key page.url.pathname}
+      {@render children()}
+    {/key}
   </div>
 </div>

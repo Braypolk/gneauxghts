@@ -7,7 +7,8 @@ import type {
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import { callWithDraft, computeDraftHash } from '$lib/features/notepad/search/draftRef';
 
-export type SearchMode = 'current' | 'all';
+export type SearchMode = 'current' | 'all' | 'chats' | 'everything';
+export type SearchScope = 'notes' | 'chats' | 'everything';
 const RECENT_ITEMS_LIMIT = 20;
 
 export interface SearchContext {
@@ -27,7 +28,8 @@ export function isSemanticOnlyResult(result: SearchItem) {
 export async function searchNotes(
   query: string,
   mode: SearchMode,
-  context: SearchContext
+  context: SearchContext,
+  scope: SearchScope = mode === 'chats' ? 'chats' : mode === 'everything' ? 'everything' : 'notes'
 ) {
   const hash = computeDraftHash(context.currentMarkdown);
   return callWithDraft(
@@ -37,7 +39,8 @@ export async function searchNotes(
     (currentMarkdown, currentBodyHash) =>
       invoke<SearchItem[]>('search_notes_hybrid', {
         query,
-        mode,
+        mode: 'all',
+        scope,
         currentPath: context.currentPath,
         currentTitle: context.currentTitle,
         currentMarkdown,

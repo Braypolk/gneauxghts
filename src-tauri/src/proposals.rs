@@ -132,6 +132,8 @@ fn prepare_note_changes(
                 new_markdown,
             } => {
                 let note_path = validate_existing_note_path(notes_dir, path)?;
+                reject_chat_projection_path(&note_path)?;
+                note::reject_chat_projection_write(new_markdown)?;
                 reject_duplicate_touch(&mut touched_paths, &note_path)?;
                 validate_content_hash(&note_path, base_content_hash)?;
                 let target_path =
@@ -153,6 +155,7 @@ fn prepare_note_changes(
                 suggested_title,
                 markdown,
             } => {
+                note::reject_chat_projection_write(markdown)?;
                 let title = suggested_title.trim().to_string();
                 if title.is_empty() && markdown.trim().is_empty() {
                     return Err("Cannot create an empty untitled note.".to_string());
@@ -175,6 +178,7 @@ fn prepare_note_changes(
                 base_content_hash,
             } => {
                 let note_path = validate_existing_note_path(notes_dir, path)?;
+                reject_chat_projection_path(&note_path)?;
                 reject_duplicate_touch(&mut touched_paths, &note_path)?;
                 validate_content_hash(&note_path, base_content_hash)?;
                 prepared.push(PreparedChange::Delete { path: note_path });
@@ -206,6 +210,11 @@ fn validate_content_hash(path: &Path, expected_hash: &str) -> Result<(), String>
         ));
     }
     Ok(())
+}
+
+fn reject_chat_projection_path(path: &Path) -> Result<(), String> {
+    let markdown = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    note::reject_chat_projection_write(&markdown)
 }
 
 fn reject_duplicate_touch(seen: &mut HashSet<PathBuf>, path: &Path) -> Result<(), String> {
@@ -382,5 +391,38 @@ mod tests {
 
         assert!(error.contains("changed"));
         assert!(fs::read_to_string(path).expect("read").contains("Old"));
+    }
+
+    #[test]
+    fn rejects_updates_and_deletes_of_chat_projections() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("proposal-app-data-chat-projection");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
+        let dir = setup("proposal-chat-projection");
+        let body = "---\ngneauxghts:\n  id: transcript-1\n  kind: chatTranscript\n  chat_id: chat-1\n  part: 1\n  projection_hash: abc\n---\n\nTranscript";
+        let (path, hash) = write_note(&dir, "Part 001.md", body);
+
+        let update_error = apply_note_changes(
+            dir.path(),
+            &[NoteChange::UpdateNote {
+                path: path.clone(),
+                base_content_hash: hash.clone(),
+                new_title: "Part 001".to_string(),
+                new_markdown: "Changed".to_string(),
+            }],
+        )
+        .expect_err("chat update rejected");
+        assert!(update_error.contains("read-only"));
+
+        let delete_error = apply_note_changes(
+            dir.path(),
+            &[NoteChange::DeleteNote {
+                path: path.clone(),
+                base_content_hash: hash,
+            }],
+        )
+        .expect_err("chat delete rejected");
+        assert!(delete_error.contains("read-only"));
+        assert_eq!(fs::read_to_string(path).expect("read"), body);
     }
 }
