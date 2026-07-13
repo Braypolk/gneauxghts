@@ -94,6 +94,12 @@ export interface ChatNoteGrant {
   grantedAtMillis: number;
 }
 
+export interface ChatContextNote {
+  noteId: string | null;
+  notePath: string | null;
+  noteTitle: string;
+}
+
 export type ProjectionConflictResolution = 'convertToNote' | 'restoreTranscript';
 
 export interface ChatSendReceipt {

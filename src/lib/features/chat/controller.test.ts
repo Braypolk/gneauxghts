@@ -65,9 +65,9 @@ function fakeApi() {
     createExcerpt: vi.fn(),
     rememberExcerpt: vi.fn(),
     unrememberExcerpt: vi.fn(),
-    listGrants: vi.fn(),
-    grantNote: vi.fn(),
-    revokeNote: vi.fn(),
+    listGrants: vi.fn(async () => []),
+    grantNote: vi.fn(async (noteId) => ({ noteId, notePath: 'Ideas.md', noteTitle: 'Ideas', grantedAtMillis: 2 })),
+    revokeNote: vi.fn(async () => undefined),
     resolveProjectionConflict: vi.fn(),
     on: vi.fn(async (event: keyof ChatEventMap, handler: (payload: never) => void) => {
       handlers.set(event, handler);
@@ -147,5 +147,20 @@ describe('createChatController', () => {
     await controller.initialize();
     controller.dispose();
     expect(fake.handlers.size).toBe(0);
+  });
+
+  it('persists and revokes limited note grants through controller state', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await controller.grantNote('note-1');
+    expect(controller.getSnapshot().grants).toEqual([
+      expect.objectContaining({ noteId: 'note-1', noteTitle: 'Ideas' })
+    ]);
+
+    await controller.revokeNote('note-1');
+    expect(controller.getSnapshot().grants).toEqual([]);
+    expect(fake.api.revokeNote).toHaveBeenCalledWith('note-1');
   });
 });

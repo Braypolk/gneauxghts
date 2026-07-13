@@ -1242,6 +1242,14 @@
     const paneDocument = getPaneDocumentSession(paneId);
     const paneIndex = paneOrder.indexOf(paneId);
     const stackClass = activePaneId === paneId ? 'z-10' : 'z-0';
+    const nearestEditorPaneId = paneKind === 'chat'
+      ? paneOrder
+          .filter((candidate) => getPaneKind(candidate) === 'editor')
+          .sort((left, right) => Math.abs(paneOrder.indexOf(left) - paneIndex) - Math.abs(paneOrder.indexOf(right) - paneIndex))[0]
+      : null;
+    const chatContextDocument = nearestEditorPaneId
+      ? getPaneDocumentSession(nearestEditorPaneId)
+      : paneDocument;
 
     return {
       paneId,
@@ -1260,6 +1268,15 @@
       chatController: paneKind === 'chat' ? getChatController(paneId) : null,
       chatConversationId: getPaneState(notepadState, paneId).chatConversationId,
       chatDraftSeed: chatDraftSeeds[paneId] ?? null,
+      chatContextNote: paneKind === 'chat' && (chatContextDocument.currentNotePath || chatContextDocument.title.trim())
+        ? {
+            noteId: chatContextDocument.currentNoteId,
+            notePath: chatContextDocument.currentNotePath,
+            noteTitle: chatContextDocument.title.trim()
+              || chatContextDocument.currentNotePath?.split('/').at(-1)?.replace(/\.md$/i, '')
+              || 'Untitled note'
+          }
+        : null,
       chatSelectionActions: chatSelectionActions(),
       onChatConversationChange: (conversationId) => {
         setPaneChatConversationId(notepadState, paneId, conversationId);

@@ -7,6 +7,7 @@ import type {
   ChatExcerpt,
   ChatMessage,
   ChatMode,
+  ChatNoteGrant,
   ChatSettings,
   VaultAccess
 } from './types';
@@ -14,6 +15,7 @@ import type {
 export interface ChatControllerState {
   settings: ChatSettings | null;
   conversations: ChatConversationSummary[];
+  grants: ChatNoteGrant[];
   conversation: ChatConversation | null;
   isInitializing: boolean;
   isLoadingConversation: boolean;
@@ -24,6 +26,7 @@ export interface ChatControllerState {
 const initialState: ChatControllerState = {
   settings: null,
   conversations: [],
+  grants: [],
   conversation: null,
   isInitializing: false,
   isLoadingConversation: false,
@@ -42,6 +45,8 @@ export interface ChatController extends Readable<ChatControllerState> {
   cancel(): Promise<void>;
   retry(messageId: string): Promise<void>;
   setPreferences(mode: ChatMode, vaultAccess: VaultAccess): Promise<void>;
+  grantNote(noteId: string): Promise<void>;
+  revokeNote(noteId: string): Promise<void>;
   createExcerpt(messageId: string, text: string): Promise<ChatExcerpt>;
   rememberExcerpt(excerptId: string): Promise<ChatExcerpt>;
   remember(messageId: string, text: string): Promise<ChatExcerpt>;
@@ -229,12 +234,13 @@ export function createChatController(api: ChatApi = chatApi): ChatController {
     patch({ isInitializing: true, error: null });
     try {
       await ensureListeners();
-      const [settings, conversations] = await Promise.all([
+      const [settings, conversations, grants] = await Promise.all([
         api.getSettings(),
-        api.listConversations(false)
+        api.listConversations(false),
+        api.listGrants()
       ]);
       if (disposed || sequence !== initializeSequence) return;
-      patch({ settings, conversations });
+      patch({ settings, conversations, grants });
       const targetId = conversationId ?? conversations[0]?.id ?? null;
       if (targetId) await openConversation(targetId);
     } catch (error) {
@@ -307,6 +313,31 @@ export function createChatController(api: ChatApi = chatApi): ChatController {
     }
   }
 
+  async function grantNote(noteId: string) {
+    try {
+      const grant = await api.grantNote(noteId);
+      patch({
+        grants: [...get(store).grants.filter((item) => item.noteId !== noteId), grant],
+        error: null
+      });
+    } catch (error) {
+      const message = errorText(error, 'Unable to allow access to this note.');
+      patch({ error: message });
+      throw new Error(message);
+    }
+  }
+
+  async function revokeNote(noteId: string) {
+    try {
+      await api.revokeNote(noteId);
+      patch({ grants: get(store).grants.filter((item) => item.noteId !== noteId), error: null });
+    } catch (error) {
+      const message = errorText(error, 'Unable to remove access to this note.');
+      patch({ error: message });
+      throw new Error(message);
+    }
+  }
+
   return {
     subscribe: store.subscribe,
     getSnapshot: () => get(store),
@@ -323,6 +354,8 @@ export function createChatController(api: ChatApi = chatApi): ChatController {
     cancel,
     retry,
     setPreferences,
+    grantNote,
+    revokeNote,
     createExcerpt: (messageId, text) => api.createExcerpt(messageId, text),
     rememberExcerpt: (excerptId) => api.rememberExcerpt(excerptId),
     async remember(messageId, text) {

@@ -850,9 +850,72 @@ impl ChatService {
         if start_offset >= end_offset || end_offset > content.len() || !content.is_char_boundary(start_offset) || !content.is_char_boundary(end_offset) {
             return Err("Select a valid non-empty passage".to_string());
         }
+        let quote = content[start_offset..end_offset].to_string();
+        self.insert_excerpt(conversation_id, message_id, start_offset, end_offset, &quote)
+    }
+
+    pub(crate) fn create_excerpt_from_selection(
+        &self,
+        conversation_id: &str,
+        message_id: &str,
+        selected_text: &str,
+        suggested_range: Option<(usize, usize)>,
+    ) -> Result<ChatExcerpt, String> {
+        let quote = selected_text.trim();
+        if quote.is_empty() {
+            return Err("Select a valid non-empty passage".to_string());
+        }
+        let connection = self.connection()?;
+        let content: String = connection
+            .query_row(
+                "SELECT content FROM chat_messages WHERE id = ?1 AND conversation_id = ?2",
+                params![message_id, conversation_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+
+        let exact_range = suggested_range
+            .filter(|(start, end)| {
+                *start < *end
+                    && *end <= content.len()
+                    && content.is_char_boundary(*start)
+                    && content.is_char_boundary(*end)
+                    && &content[*start..*end] == quote
+            })
+            .or_else(|| {
+                content
+                    .find(quote)
+                    .map(|start| (start, start + quote.len()))
+            });
+
+        let (start_offset, end_offset) = if let Some(range) = exact_range {
+            range
+        } else {
+            let content_tokens = excerpt_match_tokens(&content);
+            let quote_tokens = excerpt_match_tokens(quote);
+            if quote_tokens.is_empty()
+                || !tokens_are_ordered_subsequence(&quote_tokens, &content_tokens)
+            {
+                return Err("The selected passage does not belong to this message".to_string());
+            }
+            // Rendered Markdown does not always have a one-to-one byte range in
+            // the source. The immutable quote and message ID remain authoritative.
+            (0, 0)
+        };
+        self.insert_excerpt(conversation_id, message_id, start_offset, end_offset, quote)
+    }
+
+    fn insert_excerpt(
+        &self,
+        conversation_id: &str,
+        message_id: &str,
+        start_offset: usize,
+        end_offset: usize,
+        quote: &str,
+    ) -> Result<ChatExcerpt, String> {
+        let connection = self.connection()?;
         let id = generate_id("excerpt");
         let anchor = format!("excerpt_{id}");
-        let quote = content[start_offset..end_offset].to_string();
         connection
             .execute(
                 "INSERT INTO chat_excerpts
@@ -1443,6 +1506,27 @@ fn compact_text(value: &str, max: usize) -> String {
     compact.chars().take(max).collect()
 }
 
+fn excerpt_match_tokens(value: &str) -> Vec<String> {
+    value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn tokens_are_ordered_subsequence(needles: &[String], haystack: &[String]) -> bool {
+    let mut next = 0;
+    for token in haystack {
+        if needles.get(next) == Some(token) {
+            next += 1;
+            if next == needles.len() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn stream_payload(request_id: &str, conversation_id: &str, message_id: &str) -> ChatStreamEvent {
     ChatStreamEvent {
         request_id: request_id.to_string(),
@@ -1543,6 +1627,31 @@ mod tests {
         let excerpt = service.create_excerpt(&conversation.summary.id, "m1", 0, 5).unwrap();
         assert!(!excerpt.remembered);
         assert!(service.set_excerpt_remembered(&excerpt.id, true).unwrap().remembered);
+    }
+
+    #[test]
+    fn excerpt_accepts_text_selected_from_rendered_markdown() {
+        let (_root, service) = service("chat-rendered-excerpt");
+        let conversation = service.create_conversation(None, None, None).unwrap();
+        let connection = service.connection().unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis) VALUES ('m1', ?1, 1, 'assistant', 'complete', 'This is **bold** and [linked text](https://example.com).', 1, 1)",
+                [&conversation.summary.id],
+            )
+            .unwrap();
+
+        let excerpt = service
+            .create_excerpt_from_selection(
+                &conversation.summary.id,
+                "m1",
+                "bold and linked text",
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(excerpt.quote, "bold and linked text");
+        assert_eq!((excerpt.start_offset, excerpt.end_offset), (0, 0));
     }
 
     #[test]

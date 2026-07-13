@@ -81,4 +81,38 @@ describe('TauriChatApi', () => {
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'chat_set_api_key', { apiKey: 'sk-test' });
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_set_api_key', { apiKey: '' });
   });
+
+  it('creates excerpts from rendered Markdown selections', async () => {
+    const rawConversation = {
+      id: 'chat-1', title: 'Markdown', mode: 'auto', access: 'limited', status: 'active',
+      createdAtMillis: 1, updatedAtMillis: 1, messageCount: 1, detached: false,
+      messages: [{
+        id: 'assistant-1', conversationId: 'chat-1', ordinal: 1, role: 'assistant', status: 'complete',
+        content: 'This is **bold** and [linked text](https://example.com).', part: 1,
+        createdAtMillis: 1, sources: []
+      }], excerpts: []
+    };
+    invokeMock
+      .mockResolvedValueOnce(rawConversation)
+      .mockResolvedValueOnce(rawConversation)
+      .mockResolvedValueOnce({
+        id: 'excerpt-1', conversationId: 'chat-1', messageId: 'assistant-1',
+        startOffset: 0, endOffset: 0, quote: 'bold and linked text',
+        anchor: 'excerpt_excerpt-1', remembered: false
+      });
+    const { TauriChatApi } = await import('./api');
+    const api = new TauriChatApi();
+
+    await api.getConversation('chat-1');
+    const excerpt = await api.createExcerpt('assistant-1', 'bold and linked text');
+
+    expect(invokeMock).toHaveBeenNthCalledWith(3, 'chat_create_excerpt', {
+      conversationId: 'chat-1',
+      messageId: 'assistant-1',
+      startOffset: null,
+      endOffset: null,
+      selectedText: 'bold and linked text'
+    });
+    expect(excerpt.text).toBe('bold and linked text');
+  });
 });

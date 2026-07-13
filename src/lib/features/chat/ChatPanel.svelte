@@ -16,7 +16,7 @@
   } from '@lucide/svelte';
   import type { ChatController, ChatControllerState } from './controller';
   import { mergeDiscussionDraft, type ChatDraftSeed } from './discussionContext';
-  import type { ChatCitation, ChatExcerpt, ChatMode, ChatSelection, ChatSelectionActions, VaultAccess } from './types';
+  import type { ChatCitation, ChatContextNote, ChatExcerpt, ChatMode, ChatSelection, ChatSelectionActions, VaultAccess } from './types';
 
   interface Props {
     controller: ChatController;
@@ -29,6 +29,7 @@
     onOpenCitation?: (citation: Extract<ChatCitation, { kind: 'note' }>) => void | Promise<void>;
     placeholder?: string;
     draftSeed?: ChatDraftSeed | null;
+    contextNote?: ChatContextNote | null;
   }
 
   let {
@@ -41,13 +42,15 @@
     onConversationChange,
     onOpenCitation,
     placeholder = 'What are you thinking about?',
-    draftSeed = null
+    draftSeed = null,
+    contextNote = null
   }: Props = $props();
 
   const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
   let snapshot = $state<ChatControllerState>({
     settings: null,
     conversations: [],
+    grants: [],
     conversation: null,
     isInitializing: false,
     isLoadingConversation: false,
@@ -63,10 +66,16 @@
   let composerElement = $state<HTMLTextAreaElement | null>(null);
   let previousLastMessageId = $state<string | null>(null);
   let appliedDraftSeedId = $state<string | null>(null);
+  let contextAccessBusy = $state(false);
 
   const conversation = $derived(snapshot.conversation);
   const canSend = $derived(Boolean(draft.trim()) && !snapshot.isSending && conversation?.status === 'active');
   const isEmpty = $derived(!conversation || conversation.messages.length === 0);
+  const contextGrant = $derived(
+    contextNote?.noteId
+      ? snapshot.grants.find((grant) => grant.noteId === contextNote.noteId) ?? null
+      : null
+  );
 
   $effect(() => {
     const seed = draftSeed;
@@ -203,6 +212,21 @@
   async function updateAccess(vaultAccess: VaultAccess) {
     if (conversation) await controller.setPreferences(conversation.mode, vaultAccess);
   }
+
+  async function toggleContextAccess() {
+    const noteId = contextNote?.noteId;
+    if (!noteId || contextAccessBusy) return;
+    contextAccessBusy = true;
+    actionError = null;
+    try {
+      if (contextGrant) await controller.revokeNote(noteId);
+      else await controller.grantNote(noteId);
+    } catch (error) {
+      actionError = error instanceof Error ? error.message : 'Unable to change note access.';
+    } finally {
+      contextAccessBusy = false;
+    }
+  }
 </script>
 
 <section class={`chat-panel chat-panel--${variant} flex h-full min-h-0 flex-col overflow-hidden rounded-[1.4rem] border border-border/80 bg-card/65`} aria-label="Thought partner chat">
@@ -243,6 +267,29 @@
       </select>
     {/if}
   </header>
+
+  {#if conversation?.vaultAccess === 'limited' && contextNote}
+    <div class="flex items-center gap-2 border-b border-border/60 bg-background/35 px-3 py-2 text-xs text-muted-foreground">
+      <span class="min-w-0 flex-1 truncate">
+        {#if contextNote.noteId}
+          {contextGrant ? 'Limited chats can use' : 'Allow Limited access to'} <span class="font-medium text-foreground">[[{contextNote.noteTitle}]]</span>
+        {:else}
+          Save <span class="font-medium text-foreground">{contextNote.noteTitle}</span> before granting chat access.
+        {/if}
+      </span>
+      {#if contextNote.noteId}
+        <button
+          type="button"
+          class="shrink-0 rounded-full border border-border px-2.5 py-1 font-medium text-foreground hover:bg-accent disabled:opacity-50"
+          disabled={contextAccessBusy}
+          title="Limited note access persists for future chats in this vault"
+          onclick={() => void toggleContextAccess()}
+        >
+          {contextAccessBusy ? 'Updating…' : contextGrant ? 'Remove access' : 'Allow this note'}
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div

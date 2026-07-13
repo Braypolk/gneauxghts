@@ -175,9 +175,21 @@ pub(crate) fn chat_create_excerpt(
     service: State<'_, ChatService>,
     conversation_id: String,
     message_id: String,
-    start_offset: usize,
-    end_offset: usize,
+    start_offset: Option<usize>,
+    end_offset: Option<usize>,
+    selected_text: Option<String>,
 ) -> Result<ChatExcerpt, String> {
+    if let Some(selected_text) = selected_text {
+        return service.create_excerpt_from_selection(
+            &conversation_id,
+            &message_id,
+            &selected_text,
+            start_offset.zip(end_offset),
+        );
+    }
+    let (start_offset, end_offset) = start_offset
+        .zip(end_offset)
+        .ok_or_else(|| "Select a valid non-empty passage".to_string())?;
     service.create_excerpt(&conversation_id, &message_id, start_offset, end_offset)
 }
 

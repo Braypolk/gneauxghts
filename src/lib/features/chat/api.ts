@@ -253,9 +253,12 @@ export class TauriChatApi implements ChatApi {
     const conversation = await invoke<RawConversation>(CHAT_COMMANDS.getConversation, { conversationId });
     const content = conversation.messages.find((message) => message.id === messageId)?.content ?? '';
     const startOffset = content.indexOf(text);
-    if (startOffset < 0) throw new Error('The selected passage no longer matches the saved message.');
     const raw = await invoke<RawExcerpt>(CHAT_COMMANDS.createExcerpt, {
-      conversationId, messageId, startOffset, endOffset: startOffset + text.length
+      conversationId,
+      messageId,
+      startOffset: startOffset >= 0 ? startOffset : null,
+      endOffset: startOffset >= 0 ? startOffset + text.length : null,
+      selectedText: text
     });
     const part = conversation.messages.find((message) => message.id === messageId)?.part ?? 1;
     const linkTarget = projectionLink(conversation, part, raw.anchor);
