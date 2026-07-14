@@ -7,6 +7,7 @@
   import { appStore } from '$lib/app/appStore.svelte';
   import { logDevError } from '$lib/logDevError';
   import { page } from '$app/state';
+  import { invoke } from '@tauri-apps/api/core';
 
   let { children } = $props();
 
@@ -18,6 +19,22 @@
     void appStore.bootstrap().catch((error) => {
       logDevError('[AppStore] bootstrap failed; feature stores will fall back to per-feature loads', error);
     });
+    let lastReport = 0;
+    const reportActivity = () => {
+      const now = Date.now();
+      if (now - lastReport < 2_000) return;
+      lastReport = now;
+      void invoke('report_user_activity').catch(() => undefined);
+    };
+    const activityEvents = ['keydown', 'pointerdown', 'pointermove', 'wheel', 'input'] as const;
+    for (const event of activityEvents) {
+      window.addEventListener(event, reportActivity, { passive: true, capture: true });
+    }
+    return () => {
+      for (const event of activityEvents) {
+        window.removeEventListener(event, reportActivity, { capture: true });
+      }
+    };
   });
 </script>
 

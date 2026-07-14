@@ -6,10 +6,12 @@ export type ChatRole = 'user' | 'assistant' | 'system';
 export type DocumentKind = 'note' | 'chatIndex' | 'chatTranscript';
 export type SearchScope = 'notes' | 'chats' | 'everything';
 export type AtlasChatVisibility = 'hidden' | 'remembered' | 'all';
+export type ChatServiceTier = 'standard' | 'flex';
 
 export interface ChatSettings {
   provider: string;
   model: string;
+  serviceTier: ChatServiceTier;
   defaultMode: ChatMode;
   defaultVaultAccess: VaultAccess;
   atlasVisibility: AtlasChatVisibility;
@@ -75,6 +77,7 @@ export interface ChatConversation extends ChatConversationSummary {
   messages: ChatMessage[];
   activeRequestId: string | null;
   projectionPath: string | null;
+  excerptMessageIds: Record<string, string>;
 }
 
 export interface ChatExcerpt {
@@ -142,6 +145,12 @@ export interface ChatFailedEvent extends ChatStreamIdentity {
   retryable: boolean;
 }
 
+export interface ChatProjectionConflictEvent {
+  conversationId: string;
+  notePath: string;
+  deleted: boolean;
+}
+
 export interface ChatSelection {
   conversationId: string;
   messageId: string;
@@ -164,4 +173,5 @@ export interface ChatEventMap {
   'chat://completed': ChatCompletedEvent;
   'chat://cancelled': ChatCancelledEvent;
   'chat://failed': ChatFailedEvent;
+  'chat://projection-conflict': ChatProjectionConflictEvent;
 }

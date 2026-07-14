@@ -1,8 +1,10 @@
 use super::{
+    activity::BackgroundWorkGate,
     chunking::SemanticChunk,
     db::{
-        ann_label_for, for_each_chunk_embedding, load_ann_index_signature,
-        load_chunk_embedding_dimensions, sum_chunk_text_bytes, AnnIndexSignature,
+        ann_label_for, for_each_chunk_embedding, load_ann_chunks_for_note,
+        load_ann_index_signature, load_ann_source_inventory, load_chunk_embedding_dimensions,
+        sum_chunk_text_bytes, AnnIndexSignature, AnnSourceInventory,
     },
     debug::SemanticDebugState,
 };
@@ -11,15 +13,18 @@ use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore, SetOutcome};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{BufReader, BufWriter, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, RwLock,
+    },
     time::{Instant, UNIX_EPOCH},
 };
 
-const ANN_SCHEMA_VERSION: u32 = 1;
+const ANN_SCHEMA_VERSION: u32 = 2;
 const ANN_DISTANCE_KIND: &str = "cosine";
 const ANN_M: usize = 16;
 const ANN_EF_CONSTRUCTION: usize = 200;
@@ -27,6 +32,9 @@ const ANN_EF_SEARCH: usize = 64;
 const ANN_MIN_CAPACITY: usize = 1024;
 const ANN_TOMBSTONE_REBUILD_MIN: usize = 64;
 const ANN_TOMBSTONE_REBUILD_MAX: usize = 256;
+pub(crate) const ANN_MAX_INCREMENTAL_DOCUMENTS: usize = 128;
+pub(crate) const ANN_MAX_INCREMENTAL_CHUNKS: usize = 2_048;
+static ANN_GENERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 type AnnGraph = Hnsw<u64, Cosine<f32>>;
 type AnnVectors = InMemoryVectorStore<f32>;
@@ -73,6 +81,10 @@ struct AnnManifest {
     max_nodes: usize,
     chunk_count: usize,
     max_indexed_at_millis: Option<u64>,
+    generation: String,
+    graph_file: String,
+    vectors_file: String,
+    source_inventory_file: String,
 }
 
 struct AnnSnapshot {
@@ -83,8 +95,7 @@ struct AnnSnapshot {
 
 pub(crate) struct AnnIndexState {
     dimensions: usize,
-    graph_path: PathBuf,
-    vectors_path: PathBuf,
+    cache_dir: PathBuf,
     manifest_path: PathBuf,
     current: RwLock<Option<Arc<AnnSnapshot>>>,
     status: Mutex<AnnStatusState>,
@@ -98,13 +109,12 @@ impl AnnIndexState {
         debug: Arc<SemanticDebugState>,
     ) -> Result<Self, String> {
         fs::create_dir_all(&cache_dir).map_err(|err| err.to_string())?;
-        // Vault-local, rebuildable HNSW snapshot sidecars under
-        // `<vault>/.gneauxghts/cache`. The graph file is the user-visible
-        // `hnsw.snapshot`; the raw vectors and manifest sit alongside it.
+        // Vault-local, rebuildable HNSW generations under
+        // `<vault>/.gneauxghts/cache`. The manifest atomically selects the
+        // only complete generation readers may load.
         Ok(Self {
             dimensions,
-            graph_path: cache_dir.join("hnsw.snapshot"),
-            vectors_path: cache_dir.join("hnsw.vectors"),
+            cache_dir: cache_dir.clone(),
             manifest_path: cache_dir.join("hnsw.manifest.json"),
             current: RwLock::new(None),
             status: Mutex::new(AnnStatusState::default()),
@@ -114,7 +124,7 @@ impl AnnIndexState {
 
     pub(crate) fn initialize(&self, connection: &Connection) -> Result<(), String> {
         let signature = load_ann_index_signature(connection)?;
-        match self.try_load_snapshot(&signature) {
+        match self.try_load_snapshot(connection, &signature) {
             Ok(true) => Ok(()),
             Ok(false) => {
                 self.mark_rebuild_pending("ann_manifest_mismatch");
@@ -283,16 +293,35 @@ impl AnnIndexState {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub(crate) fn rebuild_from_connection(&self, connection: &Connection) -> Result<(), String> {
+        self.rebuild_from_connection_with_gate(connection, None, false, None)
+    }
+
+    pub(crate) fn rebuild_from_connection_with_gate(
+        &self,
+        connection: &Connection,
+        gate: Option<&BackgroundWorkGate>,
+        automatic: bool,
+        progress: Option<&dyn Fn(usize, usize)>,
+    ) -> Result<(), String> {
         let started_at = Instant::now();
         let signature = load_ann_index_signature(connection)?;
         let dimensions = load_chunk_embedding_dimensions(connection)?
             .filter(|dimensions| *dimensions > 0)
             .unwrap_or_else(|| self.dimensions.max(1));
         let manifest = self.manifest_for_signature(&signature, dimensions);
-        let (graph, vectors) = build_snapshot_streaming(connection, &manifest)?;
+        let (graph, vectors) = build_snapshot_streaming(
+            connection,
+            &manifest,
+            gate,
+            automatic,
+            progress,
+            signature.chunk_count,
+        )?;
 
-        self.persist_parts(&graph, &vectors, &manifest)?;
+        let sources = load_ann_source_inventory(connection)?;
+        let manifest = self.persist_parts(&graph, &vectors, &manifest, &sources)?;
         let dumped_at =
             file_timestamp_millis(&self.manifest_path).or_else(|_| current_time_millis())?;
         let snapshot = Arc::new(AnnSnapshot {
@@ -348,7 +377,9 @@ impl AnnIndexState {
         let mut manifest = snapshot.manifest.clone();
         manifest.chunk_count = signature.chunk_count;
         manifest.max_indexed_at_millis = signature.max_indexed_at_millis;
-        self.persist_parts(&snapshot.graph, &snapshot.vectors, &manifest)?;
+        let sources = load_ann_source_inventory(connection)?;
+        let _published_manifest =
+            self.persist_parts(&snapshot.graph, &snapshot.vectors, &manifest, &sources)?;
         let dumped_at =
             file_timestamp_millis(&self.manifest_path).or_else(|_| current_time_millis())?;
         self.set_status(true, false, false, signature.chunk_count, Some(dumped_at));
@@ -377,67 +408,130 @@ impl AnnIndexState {
             max_nodes: desired_capacity(signature.chunk_count),
             chunk_count: signature.chunk_count,
             max_indexed_at_millis: signature.max_indexed_at_millis,
+            generation: String::new(),
+            graph_file: String::new(),
+            vectors_file: String::new(),
+            source_inventory_file: String::new(),
         }
     }
 
-    fn try_load_snapshot(&self, signature: &AnnIndexSignature) -> Result<bool, String> {
-        if !self.manifest_path.is_file()
-            || !self.graph_path.is_file()
-            || !self.vectors_path.is_file()
-        {
+    fn try_load_snapshot(
+        &self,
+        connection: &Connection,
+        signature: &AnnIndexSignature,
+    ) -> Result<bool, String> {
+        if !self.manifest_path.is_file() {
             return Ok(false);
         }
-
-        let manifest_file = File::open(&self.manifest_path).map_err(|err| err.to_string())?;
-        let manifest = serde_json::from_reader::<_, AnnManifest>(BufReader::new(manifest_file))
-            .map_err(|err| err.to_string())?;
-        if manifest.schema_version != ANN_SCHEMA_VERSION
-            || manifest.distance_kind != ANN_DISTANCE_KIND
-            || manifest.dimensions != self.dimensions
-            || manifest.m != ANN_M
-            || manifest.ef_construction != ANN_EF_CONSTRUCTION
-            || manifest.ef_search != ANN_EF_SEARCH
-            || manifest.chunk_count != signature.chunk_count
-            || manifest.max_indexed_at_millis != signature.max_indexed_at_millis
-        {
+        let bytes = fs::read(&self.manifest_path).map_err(|err| err.to_string())?;
+        let mut manifest =
+            serde_json::from_slice::<AnnManifest>(&bytes).map_err(|err| err.to_string())?;
+        if !self.manifest_compatible(&manifest) {
             return Ok(false);
         }
+        let graph_path = self.generation_path(&manifest.graph_file)?;
+        let vectors_path = self.generation_path(&manifest.vectors_file)?;
+        let inventory_path = self.generation_path(&manifest.source_inventory_file)?;
+        let stored_sources = serde_json::from_reader::<_, Vec<AnnSourceInventory>>(BufReader::new(
+            File::open(inventory_path).map_err(|err| err.to_string())?,
+        ))
+        .map_err(|err| err.to_string())?;
+        let current_sources = load_ann_source_inventory(connection)?;
+        let (graph, vectors) =
+            load_graph_and_vectors(&graph_path, &vectors_path, manifest.ef_search)?;
 
-        let graph_file = File::open(&self.graph_path).map_err(|err| err.to_string())?;
-        let mut graph_reader = BufReader::new(graph_file);
-        let graph =
-            Hnsw::load_from(Cosine::new(), &mut graph_reader).map_err(|err| err.to_string())?;
-        graph.set_ef_search(manifest.ef_search);
-
-        let vectors_file = File::open(&self.vectors_path).map_err(|err| err.to_string())?;
-        let mut vectors_reader = BufReader::new(vectors_file);
-        let (vectors, vector_count) = InMemoryVectorStore::<f32>::load_from(&mut vectors_reader)
-            .map_err(|err| err.to_string())?;
-        if vector_count != graph.len() {
-            return Err(format!(
-                "ANN graph/vector count mismatch: graph={} vectors={vector_count}",
-                graph.len()
-            ));
+        let exact_signature = manifest.chunk_count == signature.chunk_count
+            && manifest.max_indexed_at_millis == signature.max_indexed_at_millis
+            && stored_sources == current_sources;
+        if exact_signature {
+            self.install_loaded_snapshot(graph, vectors, manifest, false, signature.chunk_count)?;
+            return Ok(true);
         }
 
+        let delta = source_delta(&stored_sources, &current_sources);
+        if delta.document_count <= ANN_MAX_INCREMENTAL_DOCUMENTS
+            && delta.chunk_count <= ANN_MAX_INCREMENTAL_CHUNKS
+            && signature.chunk_count <= manifest.max_nodes
+        {
+            reconcile_snapshot_delta(connection, &graph, &vectors, &delta)?;
+            if !should_rebuild_for_tombstones(&graph) {
+                manifest.chunk_count = signature.chunk_count;
+                manifest.max_indexed_at_millis = signature.max_indexed_at_millis;
+                let published =
+                    self.persist_parts(&graph, &vectors, &manifest, &current_sources)?;
+                self.install_loaded_snapshot(
+                    graph,
+                    vectors,
+                    published,
+                    false,
+                    signature.chunk_count,
+                )?;
+                self.debug.record_with_metrics(
+                    "ann",
+                    "incremental_recovery_completed",
+                    Some(format!(
+                        "documents={} chunks={}",
+                        delta.document_count, delta.chunk_count
+                    )),
+                    None,
+                    |_| {},
+                );
+                return Ok(true);
+            }
+        }
+
+        // The structurally valid generation remains queryable. Candidate
+        // labels are hydrated from current SQLite rows, so stale/deleted
+        // entries cannot surface while the idle rebuild is pending.
+        let live_len = graph.live_len();
+        self.install_loaded_snapshot(graph, vectors, manifest, true, live_len)?;
+        Ok(true)
+    }
+
+    fn manifest_compatible(&self, manifest: &AnnManifest) -> bool {
+        manifest.schema_version == ANN_SCHEMA_VERSION
+            && manifest.distance_kind == ANN_DISTANCE_KIND
+            && manifest.dimensions == self.dimensions
+            && manifest.m == ANN_M
+            && manifest.ef_construction == ANN_EF_CONSTRUCTION
+            && manifest.ef_search == ANN_EF_SEARCH
+            && manifest.max_nodes >= manifest.chunk_count
+    }
+
+    fn generation_path(&self, file_name: &str) -> Result<PathBuf, String> {
+        let path = Path::new(file_name);
+        if file_name.is_empty() || path.components().count() != 1 {
+            return Err("Invalid ANN generation file name".to_string());
+        }
+        Ok(self.cache_dir.join(path))
+    }
+
+    fn install_loaded_snapshot(
+        &self,
+        graph: AnnGraph,
+        vectors: AnnVectors,
+        manifest: AnnManifest,
+        stale: bool,
+        indexed_chunks: usize,
+    ) -> Result<(), String> {
         let dumped_at = file_timestamp_millis(&self.manifest_path).ok();
-        {
-            let mut current = self
-                .current
-                .write()
-                .map_err(|_| "ANN snapshot lock poisoned".to_string())?;
-            *current = Some(Arc::new(AnnSnapshot {
-                graph,
-                vectors,
-                manifest,
-            }));
-        }
-        self.set_status(true, false, false, signature.chunk_count, dumped_at);
+        let live_len = graph.live_len();
+        let mut current = self
+            .current
+            .write()
+            .map_err(|_| "ANN snapshot lock poisoned".to_string())?;
+        *current = Some(Arc::new(AnnSnapshot {
+            graph,
+            vectors,
+            manifest,
+        }));
+        drop(current);
+        self.set_status(true, stale, stale, indexed_chunks.min(live_len), dumped_at);
         self.debug
             .record_with_metrics("ann", "load_completed", None, None, |metrics| {
                 metrics.ann_load_success_count += 1;
             });
-        Ok(true)
+        Ok(())
     }
 
     fn mark_rebuild_pending(&self, reason: &str) {
@@ -452,6 +546,10 @@ impl AnnIndexState {
             None,
             |metrics| metrics.ann_rebuild_pending_count += 1,
         );
+    }
+
+    pub(crate) fn request_rebuild(&self, reason: &str) {
+        self.mark_rebuild_pending(reason);
     }
 
     fn set_status(
@@ -476,20 +574,178 @@ impl AnnIndexState {
         graph: &AnnGraph,
         vectors: &AnnVectors,
         manifest: &AnnManifest,
-    ) -> Result<(), String> {
-        write_atomic(&self.graph_path, |writer| {
+        sources: &[AnnSourceInventory],
+    ) -> Result<AnnManifest, String> {
+        let generation = format!(
+            "{}-{}",
+            current_time_millis()?,
+            ANN_GENERATION_COUNTER.fetch_add(1, Ordering::AcqRel)
+        );
+        let graph_file = format!("hnsw.{generation}.snapshot");
+        let vectors_file = format!("hnsw.{generation}.vectors");
+        let source_inventory_file = format!("hnsw.{generation}.sources.json");
+        let graph_path = self.cache_dir.join(&graph_file);
+        let vectors_path = self.cache_dir.join(&vectors_file);
+        let sources_path = self.cache_dir.join(&source_inventory_file);
+
+        write_atomic(&graph_path, |writer| {
             graph.save_to(writer).map_err(|err| err.to_string())
         })?;
-        write_atomic(&self.vectors_path, |writer| {
+        write_atomic(&vectors_path, |writer| {
             vectors
                 .save_to(writer, graph.len())
                 .map_err(|err| err.to_string())
         })?;
-        write_atomic(&self.manifest_path, |writer| {
-            serde_json::to_writer_pretty(writer, manifest).map_err(|err| err.to_string())
+        write_atomic(&sources_path, |writer| {
+            serde_json::to_writer_pretty(writer, sources).map_err(|err| err.to_string())
         })?;
-        Ok(())
+        let mut published = manifest.clone();
+        published.schema_version = ANN_SCHEMA_VERSION;
+        published.generation = generation;
+        published.graph_file = graph_file;
+        published.vectors_file = vectors_file;
+        published.source_inventory_file = source_inventory_file;
+        write_atomic(&self.manifest_path, |writer| {
+            serde_json::to_writer_pretty(writer, &published).map_err(|err| err.to_string())
+        })?;
+        self.remove_unreferenced_generations(&published);
+        Ok(published)
     }
+
+    fn remove_unreferenced_generations(&self, manifest: &AnnManifest) {
+        let keep = [
+            manifest.graph_file.as_str(),
+            manifest.vectors_file.as_str(),
+            manifest.source_inventory_file.as_str(),
+            "hnsw.manifest.json",
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
+        let Ok(entries) = fs::read_dir(&self.cache_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if name.starts_with("hnsw.") && !keep.contains(name) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+struct SourceDelta {
+    changes: Vec<(Option<AnnSourceInventory>, Option<AnnSourceInventory>)>,
+    document_count: usize,
+    chunk_count: usize,
+}
+
+fn source_delta(stored: &[AnnSourceInventory], current: &[AnnSourceInventory]) -> SourceDelta {
+    let stored_by_path = stored
+        .iter()
+        .cloned()
+        .map(|source| (source.path.clone(), source))
+        .collect::<HashMap<_, _>>();
+    let current_by_path = current
+        .iter()
+        .cloned()
+        .map(|source| (source.path.clone(), source))
+        .collect::<HashMap<_, _>>();
+    let mut paths = stored_by_path
+        .keys()
+        .chain(current_by_path.keys())
+        .cloned()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    paths.sort();
+    let mut changes = Vec::new();
+    let mut chunk_count = 0usize;
+    for path in paths {
+        let before = stored_by_path.get(&path).cloned();
+        let after = current_by_path.get(&path).cloned();
+        if before == after {
+            continue;
+        }
+        chunk_count = chunk_count.saturating_add(
+            before
+                .as_ref()
+                .map(|source| source.chunk_count)
+                .unwrap_or(0)
+                .max(after.as_ref().map(|source| source.chunk_count).unwrap_or(0)),
+        );
+        changes.push((before, after));
+    }
+    SourceDelta {
+        document_count: changes.len(),
+        chunk_count,
+        changes,
+    }
+}
+
+fn reconcile_snapshot_delta(
+    connection: &Connection,
+    graph: &AnnGraph,
+    vectors: &AnnVectors,
+    delta: &SourceDelta,
+) -> Result<(), String> {
+    for (before, after) in &delta.changes {
+        let old_count = before
+            .as_ref()
+            .map(|source| source.chunk_count)
+            .unwrap_or(0);
+        let new_count = after.as_ref().map(|source| source.chunk_count).unwrap_or(0);
+        let path = after
+            .as_ref()
+            .map(|source| source.path.as_str())
+            .or_else(|| before.as_ref().map(|source| source.path.as_str()))
+            .unwrap_or_default();
+        if after.is_none() {
+            for ordinal in 0..old_count {
+                graph
+                    .delete(&ann_label_for(path, ordinal))
+                    .map_err(|err| err.to_string())?;
+            }
+            continue;
+        }
+        for ordinal in new_count..old_count {
+            graph
+                .delete(&ann_label_for(path, ordinal))
+                .map_err(|err| err.to_string())?;
+        }
+        for chunk in load_ann_chunks_for_note(connection, path)? {
+            graph
+                .set(
+                    vectors,
+                    ann_label_for(path, chunk.ordinal),
+                    chunk.embedding.as_slice(),
+                )
+                .map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn load_graph_and_vectors(
+    graph_path: &Path,
+    vectors_path: &Path,
+    ef_search: usize,
+) -> Result<(AnnGraph, AnnVectors), String> {
+    let graph_file = File::open(graph_path).map_err(|err| err.to_string())?;
+    let mut graph_reader = BufReader::new(graph_file);
+    let graph = Hnsw::load_from(Cosine::new(), &mut graph_reader).map_err(|err| err.to_string())?;
+    graph.set_ef_search(ef_search);
+    let vectors_file = File::open(vectors_path).map_err(|err| err.to_string())?;
+    let mut vectors_reader = BufReader::new(vectors_file);
+    let (vectors, vector_count) = InMemoryVectorStore::<f32>::load_from(&mut vectors_reader)
+        .map_err(|err| err.to_string())?;
+    if vector_count != graph.len() {
+        return Err(format!(
+            "ANN graph/vector count mismatch: graph={} vectors={vector_count}",
+            graph.len()
+        ));
+    }
+    Ok((graph, vectors))
 }
 
 /// Build the HNSW graph and vector store by streaming chunk embeddings straight
@@ -499,6 +755,10 @@ impl AnnIndexState {
 fn build_snapshot_streaming(
     connection: &Connection,
     manifest: &AnnManifest,
+    gate: Option<&BackgroundWorkGate>,
+    automatic: bool,
+    progress: Option<&dyn Fn(usize, usize)>,
+    total: usize,
 ) -> Result<(AnnGraph, AnnVectors), String> {
     let graph = Hnsw::new(
         Cosine::new(),
@@ -509,8 +769,24 @@ fn build_snapshot_streaming(
     );
     let vectors = InMemoryVectorStore::<f32>::new(manifest.dimensions, manifest.max_nodes);
     let mut seen_labels = HashSet::new();
+    let mut processed = 0usize;
 
     for_each_chunk_embedding(connection, |row| {
+        if processed % 64 == 0 {
+            if let Some(gate) = gate {
+                if automatic {
+                    gate.wait_for_automatic_idle();
+                } else {
+                    gate.checkpoint_manual_pause();
+                }
+            }
+        }
+        processed = processed.saturating_add(1);
+        if processed % 64 == 0 {
+            if let Some(progress) = progress {
+                progress(processed, total);
+            }
+        }
         if row.embedding.len() != manifest.dimensions {
             return Err(format!(
                 "ANN embedding dimension mismatch for {}:{} expected={} actual={}",
@@ -528,6 +804,10 @@ fn build_snapshot_streaming(
             .map(|_| ())
             .map_err(|err| err.to_string())
     })?;
+
+    if let Some(progress) = progress {
+        progress(processed, total);
+    }
 
     Ok((graph, vectors))
 }
@@ -557,7 +837,15 @@ where
     let mut writer = BufWriter::new(file);
     write(&mut writer)?;
     writer.flush().map_err(|err| err.to_string())?;
-    fs::rename(&tmp_path, path).map_err(|err| err.to_string())
+    writer.get_ref().sync_all().map_err(|err| err.to_string())?;
+    drop(writer);
+    fs::rename(&tmp_path, path).map_err(|err| err.to_string())?;
+    if let Some(parent) = path.parent() {
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
 }
 
 fn file_timestamp_millis(path: &Path) -> Result<u64, String> {
@@ -642,10 +930,65 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_persists_to_hnsw_snapshot_in_cache_dir() {
-        // The rebuildable ANN snapshot must land at `<cache>/hnsw.snapshot`
-        // (with sibling vectors + manifest) so it lives under the vault's
-        // `.gneauxghts/cache` rather than the old `semantic.ann.*` names.
+    fn initialize_recovers_small_sqlite_delta_without_full_rebuild() {
+        let temp = TestDir::new("ann-delta-recovery");
+        let cache_dir = temp.path().join("cache");
+        let db_path = temp.path().join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        seed_chunks(&mut connection, "notes/first.md", 3, 3).expect("seed first");
+        let initial = AnnIndexState::new(cache_dir.clone(), 3, Arc::new(SemanticDebugState::new()))
+            .expect("create initial ann");
+        initial
+            .rebuild_from_connection(&connection)
+            .expect("publish initial");
+
+        seed_chunks(&mut connection, "notes/second.md", 4, 3).expect("seed delta");
+        let debug = Arc::new(SemanticDebugState::new());
+        let recovered = AnnIndexState::new(cache_dir, 3, debug.clone()).expect("create recovered");
+        recovered.initialize(&connection).expect("recover delta");
+        let status = recovered.status_snapshot();
+        assert!(status.loaded);
+        assert!(!status.dirty);
+        assert!(!status.rebuild_pending);
+        assert_eq!(status.indexed_chunks, 7);
+        assert_eq!(
+            debug
+                .snapshot()
+                .expect("debug snapshot")
+                .metrics
+                .ann_rebuild_count,
+            0
+        );
+    }
+
+    #[test]
+    fn incomplete_unreferenced_generation_cannot_replace_last_good_snapshot() {
+        let temp = TestDir::new("ann-interrupted-generation");
+        let cache_dir = temp.path().join("cache");
+        let db_path = temp.path().join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        seed_chunks(&mut connection, "notes/good.md", 3, 3).expect("seed chunks");
+        let initial = AnnIndexState::new(cache_dir.clone(), 3, Arc::new(SemanticDebugState::new()))
+            .expect("create initial");
+        initial
+            .rebuild_from_connection(&connection)
+            .expect("publish good generation");
+        fs::write(cache_dir.join("hnsw.interrupted.snapshot"), b"partial")
+            .expect("write partial generation");
+
+        let recovered = AnnIndexState::new(cache_dir, 3, Arc::new(SemanticDebugState::new()))
+            .expect("create recovered");
+        recovered
+            .initialize(&connection)
+            .expect("load referenced generation");
+        assert!(recovered.status_snapshot().loaded);
+        assert_eq!(recovered.status_snapshot().indexed_chunks, 3);
+    }
+
+    #[test]
+    fn snapshot_persists_as_manifest_referenced_generation() {
         let temp = TestDir::new("ann-snapshot-path");
         let cache_dir = temp.path().join("cache");
         let db_path = temp.path().join("semantic.sqlite3");
@@ -658,12 +1001,14 @@ mod tests {
         ann.rebuild_from_connection(&connection)
             .expect("rebuild ann from db");
 
-        assert!(
-            cache_dir.join("hnsw.snapshot").is_file(),
-            "graph snapshot must be cache/hnsw.snapshot"
-        );
-        assert!(cache_dir.join("hnsw.vectors").is_file());
-        assert!(cache_dir.join("hnsw.manifest.json").is_file());
+        let manifest_path = cache_dir.join("hnsw.manifest.json");
+        let manifest: super::AnnManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("read manifest"))
+                .expect("parse v2 manifest");
+        assert_eq!(manifest.schema_version, 2);
+        assert!(cache_dir.join(manifest.graph_file).is_file());
+        assert!(cache_dir.join(manifest.vectors_file).is_file());
+        assert!(cache_dir.join(manifest.source_inventory_file).is_file());
     }
 
     #[test]
@@ -715,6 +1060,7 @@ mod tests {
                     .to_string(),
                 start_line: ordinal + 1,
                 end_line: ordinal + 1,
+                block_anchor: None,
             })
             .collect::<Vec<_>>();
         let embeddings = (0..chunk_count)
@@ -732,6 +1078,7 @@ mod tests {
             "seed-hash",
             "2026-01-01T00:00:00Z",
             "2026-01-01T00:00:00Z",
+            crate::note::DocumentKind::Note,
             &chunks,
             &embeddings,
         )

@@ -52,7 +52,12 @@ pub fn run() {
                 )?
             };
             app.manage(AppState::new(semantic)?);
-            app.manage(ChatService::new(notes_dir, vault_data_dir)?);
+            let chat_service =
+                ChatService::new_managed(notes_dir, vault_data_dir, app.handle().clone())?;
+            if let Some(state) = app.try_state::<AppState>() {
+                chat_service.reconcile_semantic_recall(&state.semantic)?;
+            }
+            app.manage(chat_service);
             // One managed `AppData` carrying the typed event bus and
             // `NoteCatalog` facade.
             app.manage(AppData::new(app.handle().clone()));
@@ -170,6 +175,7 @@ pub fn run() {
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,
+            commands::report_user_activity,
             commands::get_semantic_debug_metrics,
             commands::clear_semantic_debug_metrics,
             commands::rebuild_semantic_index,

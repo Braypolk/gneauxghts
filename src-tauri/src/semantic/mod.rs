@@ -1,3 +1,4 @@
+pub(crate) mod activity;
 pub(crate) mod ann;
 pub(crate) mod atlas;
 pub(crate) mod chunking;
@@ -9,17 +10,20 @@ pub(crate) mod related;
 pub(crate) mod similarity;
 
 use self::{
+    activity::BackgroundWorkGate,
     ann::AnnIndexState,
     atlas::{AtlasHardLink, AtlasNoteMetadata, AtlasSearchResponse, VaultAtlasResponse},
     db::{
-        clear_atlas_cache, content_hash, count_indexed_items, ensure_schema,
+        clear_atlas_cache, content_hash, count_indexed_items, edges_are_stale, ensure_schema,
         load_chunks_by_ann_labels, load_latest_job, load_note_record, load_related_note_previews,
-        load_semantic_settings, open_database, save_semantic_settings,
+        load_semantic_settings, mark_running_jobs_interrupted, open_database,
+        save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
     indexer::{
-        spawn_indexing_worker, PendingIndexState, PendingNoteMove, PendingNoteUpdate, WorkerSignal,
+        chat_recall_content_hash, spawn_indexing_worker, ChatRecallExcerpt, PendingIndexState,
+        PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument, WorkerSignal,
     },
     related::{build_excerpt, related_scope_label},
     similarity::cosine_similarity,
@@ -91,6 +95,11 @@ pub(crate) struct SemanticStatus {
     pub(crate) last_error: Option<String>,
     pub(crate) current_job_label: Option<String>,
     pub(crate) latest_job: Option<SemanticIndexJob>,
+    pub(crate) recovery_state: String,
+    pub(crate) index_usable: bool,
+    pub(crate) progress_current: usize,
+    pub(crate) progress_total: usize,
+    pub(crate) rebuild_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -104,6 +113,8 @@ pub(crate) struct SemanticChunkMatch {
     pub(crate) score: f32,
     pub(crate) start_line: usize,
     pub(crate) end_line: usize,
+    pub(crate) document_kind: crate::note::DocumentKind,
+    pub(crate) block_anchor: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -117,6 +128,8 @@ pub(crate) struct RelatedNoteMatch {
     pub(crate) score: f32,
     pub(crate) start_line: usize,
     pub(crate) end_line: usize,
+    pub(crate) document_kind: crate::note::DocumentKind,
+    pub(crate) block_anchor: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -128,7 +141,6 @@ pub(crate) struct RelatedNotesResponse {
     pub(crate) items: Vec<RelatedNoteMatch>,
 }
 
-#[derive(Default)]
 pub(super) struct RuntimeState {
     indexing_paused: bool,
     indexing_in_progress: bool,
@@ -136,6 +148,31 @@ pub(super) struct RuntimeState {
     last_indexed_at_millis: Option<u64>,
     last_error: Option<String>,
     last_scan_requested_at_millis: Option<u64>,
+    recovery_state: String,
+    progress_current: usize,
+    progress_total: usize,
+    rebuild_reason: Option<String>,
+    last_job_scanned_count: usize,
+    edges_stale: bool,
+}
+
+impl Default for RuntimeState {
+    fn default() -> Self {
+        Self {
+            indexing_paused: false,
+            indexing_in_progress: false,
+            current_job_label: None,
+            last_indexed_at_millis: None,
+            last_error: None,
+            last_scan_requested_at_millis: None,
+            recovery_state: "catchingUp".to_string(),
+            progress_current: 0,
+            progress_total: 0,
+            rebuild_reason: None,
+            last_job_scanned_count: 0,
+            edges_stale: false,
+        }
+    }
 }
 
 pub(crate) struct SemanticState {
@@ -159,6 +196,7 @@ struct ActiveSemanticState {
     wake_pending: Arc<AtomicBool>,
     index_revision: Arc<AtomicU64>,
     related_query_cache: Mutex<Vec<(String, u64, RelatedNotesResponse)>>,
+    background_gate: Arc<BackgroundWorkGate>,
 }
 
 struct DisabledSemanticState {
@@ -188,11 +226,13 @@ impl SemanticState {
         let semantic_dir = cache_dir.clone();
         let connection = open_database(&db_path)?;
         ensure_schema(&connection)?;
+        mark_running_jobs_interrupted(&connection)?;
         let stored_settings = load_semantic_settings(&connection)?;
         let initial_settings = stored_settings.clone().unwrap_or_default();
         if stored_settings.is_none() {
             save_semantic_settings(&connection, &initial_settings)?;
         }
+        let initial_edges_stale = edges_are_stale(&connection)?;
         let settings = Arc::new(Mutex::new(initial_settings));
         let debug = Arc::new(SemanticDebugState::new());
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> =
@@ -218,8 +258,13 @@ impl SemanticState {
         // thread.
         drop(connection);
 
-        let runtime = Arc::new(Mutex::new(RuntimeState::default()));
-        let pending = Arc::new(Mutex::new(PendingIndexState::default()));
+        let mut initial_runtime = RuntimeState::default();
+        initial_runtime.edges_stale = initial_edges_stale;
+        let runtime = Arc::new(Mutex::new(initial_runtime));
+        let background_gate = Arc::new(BackgroundWorkGate::new());
+        let mut initial_pending = PendingIndexState::default();
+        initial_pending.edge_refresh_requested = initial_edges_stale;
+        let pending = Arc::new(Mutex::new(initial_pending));
         let wake_pending = Arc::new(AtomicBool::new(false));
         let index_revision = Arc::new(AtomicU64::new(0));
         let (signal_tx, signal_rx) = mpsc::channel();
@@ -234,6 +279,7 @@ impl SemanticState {
             index_revision.clone(),
             &runtime,
             debug.clone(),
+            background_gate.clone(),
         )?;
 
         let state = ActiveSemanticState {
@@ -248,6 +294,7 @@ impl SemanticState {
             wake_pending: wake_pending.clone(),
             index_revision,
             related_query_cache: Mutex::new(Vec::new()),
+            background_gate,
         };
         state.warmup_model_in_background();
         // Defer the persisted ANN snapshot load AND the initial vault
@@ -316,7 +363,7 @@ impl SemanticState {
                     pending.note_updates.insert(
                         note_path.to_path_buf(),
                         PendingNoteUpdate {
-                            markdown,
+                            document: PendingSemanticDocument::NoteMarkdown(markdown),
                             modified_millis,
                         },
                     );
@@ -327,7 +374,135 @@ impl SemanticState {
         }
     }
 
+    /// Queue the complete immutable remembered set for one conversation. Chat
+    /// recall is sourced from ai.sqlite3, never reconstructed from projection
+    /// Markdown. An empty set removes the semantic document.
+    pub(crate) fn queue_chat_recall(
+        &self,
+        conversation_path: &Path,
+        title: String,
+        excerpts: Vec<ChatRecallExcerpt>,
+        modified_millis: u64,
+    ) -> Result<(), String> {
+        self.queue_chat_recall_inner(conversation_path, title, excerpts, modified_millis, true)
+    }
+
+    pub(crate) fn queue_chat_recall_for_startup(
+        &self,
+        conversation_path: &Path,
+        title: String,
+        excerpts: Vec<ChatRecallExcerpt>,
+        modified_millis: u64,
+    ) -> Result<(), String> {
+        if excerpts.is_empty() {
+            let SemanticStateInner::Active(state) = &self.inner else {
+                return Ok(());
+            };
+            let connection = open_database(&state.db_path)?;
+            ensure_schema(&connection)?;
+            if load_note_record(&connection, &conversation_path.to_string_lossy())?.is_none() {
+                return Ok(());
+            }
+            return self.queue_delete_note_inner(conversation_path, false);
+        }
+        self.queue_chat_recall_inner(conversation_path, title, excerpts, modified_millis, false)
+    }
+
+    /// Remove semantic chat documents that no longer have an authoritative
+    /// conversation in ai.sqlite3. This is deliberately deferred until the
+    /// startup ANN load and note scan have completed.
+    pub(crate) fn queue_orphaned_chat_recall_deletes_for_startup(
+        &self,
+        known_paths: &std::collections::HashSet<PathBuf>,
+    ) -> Result<(), String> {
+        let SemanticStateInner::Active(state) = &self.inner else {
+            return Ok(());
+        };
+        let connection = open_database(&state.db_path)?;
+        ensure_schema(&connection)?;
+        let mut statement = connection
+            .prepare("SELECT path FROM notes WHERE document_kind = 'chatIndex'")
+            .map_err(|err| err.to_string())?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|err| err.to_string())?;
+        let stored_paths = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.to_string())?;
+        for path in stored_paths.into_iter().map(PathBuf::from) {
+            if !known_paths.contains(&path) {
+                self.queue_delete_note_inner(&path, false)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn queue_chat_recall_inner(
+        &self,
+        conversation_path: &Path,
+        title: String,
+        excerpts: Vec<ChatRecallExcerpt>,
+        modified_millis: u64,
+        wake: bool,
+    ) -> Result<(), String> {
+        if excerpts.is_empty() {
+            return self.queue_delete_note(conversation_path);
+        }
+        match &self.inner {
+            SemanticStateInner::Active(state) => {
+                let connection = open_database(&state.db_path)?;
+                ensure_schema(&connection)?;
+                if load_note_record(&connection, &conversation_path.to_string_lossy())?.is_some_and(
+                    |stored| {
+                        stored.document_kind == crate::note::DocumentKind::ChatIndex
+                            && stored.content_hash == chat_recall_content_hash(&excerpts)
+                    },
+                ) {
+                    return Ok(());
+                }
+                state.debug.record_with_metrics(
+                    "index",
+                    "enqueue_chat_recall",
+                    Some(conversation_path.to_string_lossy().into_owned()),
+                    None,
+                    |metrics| metrics.index_job_enqueued_count += 1,
+                );
+                {
+                    let mut pending = state
+                        .pending
+                        .lock()
+                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                    pending.deleted_notes.remove(conversation_path);
+                    pending.note_updates.insert(
+                        conversation_path.to_path_buf(),
+                        PendingNoteUpdate {
+                            document: PendingSemanticDocument::ChatRecall { title, excerpts },
+                            modified_millis,
+                        },
+                    );
+                }
+                if wake {
+                    if let Ok(mut runtime) = state.runtime.lock() {
+                        runtime.indexing_in_progress = true;
+                        runtime.current_job_label = Some("Applying changes".to_string());
+                        runtime.recovery_state = "catchingUp".to_string();
+                        runtime.progress_current = 0;
+                        runtime.progress_total = 1;
+                    }
+                    state.request_wake()
+                } else {
+                    Ok(())
+                }
+            }
+            SemanticStateInner::Disabled(_) => Ok(()),
+        }
+    }
+
     pub(crate) fn queue_delete_note(&self, note_path: &Path) -> Result<(), String> {
+        self.queue_delete_note_inner(note_path, true)
+    }
+
+    fn queue_delete_note_inner(&self, note_path: &Path, wake: bool) -> Result<(), String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
                 state.debug.record_with_metrics(
@@ -342,13 +517,21 @@ impl SemanticState {
                         .pending
                         .lock()
                         .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
-                    if pending.rebuild_requested || pending.full_scan_requested {
-                        return Ok(());
-                    }
                     pending.note_updates.remove(note_path);
                     pending.deleted_notes.insert(note_path.to_path_buf());
                 }
-                state.request_wake()
+                if wake {
+                    if let Ok(mut runtime) = state.runtime.lock() {
+                        runtime.indexing_in_progress = true;
+                        runtime.current_job_label = Some("Applying changes".to_string());
+                        runtime.recovery_state = "catchingUp".to_string();
+                        runtime.progress_current = 0;
+                        runtime.progress_total = 1;
+                    }
+                    state.request_wake()
+                } else {
+                    Ok(())
+                }
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -481,6 +664,24 @@ impl SemanticState {
         Some(record.content_hash)
     }
 
+    pub(crate) fn remembered_chat_paths(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, String> {
+        let SemanticStateInner::Active(state) = &self.inner else {
+            return Ok(std::collections::HashSet::new());
+        };
+        let connection = open_database(&state.db_path)?;
+        ensure_schema(&connection)?;
+        let mut statement = connection
+            .prepare("SELECT path FROM notes WHERE document_kind = 'chatIndex' AND chunk_count > 0")
+            .map_err(|err| err.to_string())?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|err| err.to_string())?;
+        rows.collect::<Result<std::collections::HashSet<_>, _>>()
+            .map_err(|err| err.to_string())
+    }
+
     pub(crate) fn debug_snapshot(&self) -> Result<SemanticDebugSnapshot, String> {
         self.debug_state().snapshot()
     }
@@ -509,21 +710,57 @@ impl SemanticState {
 
     pub(crate) fn pause_indexing(&self) -> Result<(), String> {
         match &self.inner {
-            SemanticStateInner::Active(state) => state
-                .signal_tx
-                .send(WorkerSignal::SetPaused { paused: true })
-                .map_err(|err| err.to_string()),
+            SemanticStateInner::Active(state) => {
+                state.background_gate.set_manually_paused(true);
+                if let Ok(mut runtime) = state.runtime.lock() {
+                    runtime.indexing_paused = true;
+                    runtime.recovery_state = "paused".to_string();
+                }
+                state
+                    .signal_tx
+                    .send(WorkerSignal::SetPaused { paused: true })
+                    .map_err(|err| err.to_string())
+            }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
     }
 
     pub(crate) fn resume_indexing(&self) -> Result<(), String> {
         match &self.inner {
-            SemanticStateInner::Active(state) => state
-                .signal_tx
-                .send(WorkerSignal::SetPaused { paused: false })
-                .map_err(|err| err.to_string()),
+            SemanticStateInner::Active(state) => {
+                state.background_gate.set_manually_paused(false);
+                if let Ok(mut runtime) = state.runtime.lock() {
+                    runtime.indexing_paused = false;
+                    runtime.recovery_state = if state.ann.needs_rebuild() {
+                        "stale".to_string()
+                    } else {
+                        "ready".to_string()
+                    };
+                }
+                state
+                    .signal_tx
+                    .send(WorkerSignal::SetPaused { paused: false })
+                    .map_err(|err| err.to_string())
+            }
             SemanticStateInner::Disabled(_) => Ok(()),
+        }
+    }
+
+    pub(crate) fn report_user_activity(&self) {
+        if let SemanticStateInner::Active(state) = &self.inner {
+            state.background_gate.report_activity();
+        }
+    }
+
+    pub(crate) fn begin_foreground_activity(&self) {
+        if let SemanticStateInner::Active(state) = &self.inner {
+            state.background_gate.begin_foreground();
+        }
+    }
+
+    pub(crate) fn end_foreground_activity(&self) {
+        if let SemanticStateInner::Active(state) = &self.inner {
+            state.background_gate.end_foreground();
         }
     }
 
@@ -805,6 +1042,15 @@ impl ActiveSemanticState {
             last_error: runtime.last_error.clone().or(model.error.clone()),
             current_job_label: runtime.current_job_label.clone(),
             latest_job,
+            recovery_state: if runtime.indexing_paused {
+                "paused".to_string()
+            } else {
+                runtime.recovery_state.clone()
+            },
+            index_usable: ann_status.loaded,
+            progress_current: runtime.progress_current,
+            progress_total: runtime.progress_total,
+            rebuild_reason: runtime.rebuild_reason.clone(),
         })
     }
 
@@ -858,6 +1104,8 @@ impl ActiveSemanticState {
                     score,
                     start_line: chunk.start_line,
                     end_line: chunk.end_line,
+                    document_kind: chunk.document_kind,
+                    block_anchor: chunk.block_anchor,
                 })
             })
             .collect::<Vec<_>>();
@@ -923,6 +1171,11 @@ impl DisabledSemanticState {
             last_error: None,
             current_job_label: None,
             latest_job: None,
+            recovery_state: "ready".to_string(),
+            index_usable: false,
+            progress_current: 0,
+            progress_total: 0,
+            rebuild_reason: None,
         })
     }
 }
@@ -1036,9 +1289,6 @@ fn enqueue_initial_scan_after_warmup(
     if let Ok(mut pending_guard) = pending.lock() {
         if !pending_guard.rebuild_requested {
             pending_guard.full_scan_requested = true;
-            pending_guard.note_updates.clear();
-            pending_guard.deleted_notes.clear();
-            pending_guard.moved_notes.clear();
         }
     }
     if !wake_pending.swap(true, Ordering::AcqRel) {

@@ -99,15 +99,11 @@ pub(crate) fn document_kind(markdown: &str) -> DocumentKind {
         .unwrap_or_default()
 }
 
-/// Ordinary notes are always eligible for semantic recall. Chat transcripts are
-/// never eligible; their lightweight index projection becomes eligible only
-/// after it contains an explicitly remembered excerpt anchor.
+/// Filesystem semantic scanning is exclusively for ordinary notes. Remembered
+/// chat excerpts are indexed from ai.sqlite3 as explicit semantic documents;
+/// rendered chat Markdown is never interpreted as durable knowledge.
 pub(crate) fn semantic_recall_eligible(markdown: &str) -> bool {
-    match document_kind(markdown) {
-        DocumentKind::Note => true,
-        DocumentKind::ChatIndex => markdown.contains("^excerpt_"),
-        DocumentKind::ChatTranscript => false,
-    }
+    document_kind(markdown) == DocumentKind::Note
 }
 
 pub(crate) fn reject_chat_projection_write(markdown: &str) -> Result<(), String> {

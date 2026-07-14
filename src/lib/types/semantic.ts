@@ -54,6 +54,11 @@ export interface SemanticStatus {
   lastError: string | null;
   currentJobLabel: string | null;
   latestJob: SemanticIndexJob | null;
+  recoveryState: 'ready' | 'catchingUp' | 'waitingForIdle' | 'rebuilding' | 'stale' | 'paused';
+  indexUsable: boolean;
+  progressCurrent: number;
+  progressTotal: number;
+  rebuildReason: string | null;
 }
 
 export interface SemanticDebugMetrics {
@@ -145,10 +150,12 @@ export interface SearchItem {
   semanticScore: number | null;
   startLine: number | null;
   endLine: number | null;
+  blockAnchor?: string | null;
   currentMatchRange?: { from: number; to: number };
 }
 
 export interface RelatedNoteItem {
+  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
   noteId: string | null;
   notePath: string;
   noteTitle: string;
@@ -158,6 +165,7 @@ export interface RelatedNoteItem {
   score: number;
   startLine: number;
   endLine: number;
+  blockAnchor?: string | null;
 }
 
 export interface RelatedNotesResponse {
@@ -170,6 +178,7 @@ export interface RelatedNotesResponse {
 export type RetrievalContextScope = 'note' | 'selection' | 'query';
 
 export interface RetrievalContextItem {
+  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
   noteId: string | null;
   notePath: string | null;
   noteTitle: string;
@@ -183,6 +192,7 @@ export interface RetrievalContextItem {
   semanticScore: number | null;
   startLine: number | null;
   endLine: number | null;
+  blockAnchor?: string | null;
 }
 
 export interface RetrievalContextResponse {

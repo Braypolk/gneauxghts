@@ -265,6 +265,7 @@ pub(crate) enum RetrievalContextScope {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RetrievalContextItem {
+    document_kind: crate::note::DocumentKind,
     note_id: Option<String>,
     note_path: Option<String>,
     note_title: String,
@@ -278,6 +279,7 @@ pub(crate) struct RetrievalContextItem {
     semantic_score: Option<f32>,
     start_line: Option<usize>,
     end_line: Option<usize>,
+    block_anchor: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -390,6 +392,7 @@ pub(crate) async fn search_notes_hybrid(
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
 ) -> Result<Vec<NoteSearchResult>, String> {
+    let _foreground_guard = state.foreground_guard();
     let started_at = Instant::now();
     let notes_dir = prepare_notes_dir(false)?;
 
@@ -472,18 +475,22 @@ pub(crate) async fn search_notes_hybrid(
         let activity_by_note_id = db_load_note_activity().unwrap_or_default();
         let note_lookup = note_access_lookup(&state);
         let now = current_time_millis().unwrap_or(0);
-        let results = filter_search_scope(merge_hybrid_candidates(
-            lexical_candidates,
-            Vec::new(),
-            &normalized_query,
-            current_path.as_deref(),
+        let results = filter_search_scope(
+            merge_hybrid_candidates(
+                lexical_candidates,
+                Vec::new(),
+                &normalized_query,
+                current_path.as_deref(),
+                effective_limit,
+                lexical_weight,
+                semantic_weight,
+                &activity_by_note_id,
+                &note_lookup,
+                now,
+            ),
+            &scope,
             effective_limit,
-            lexical_weight,
-            semantic_weight,
-            &activity_by_note_id,
-            &note_lookup,
-            now,
-        ), &scope, effective_limit);
+        );
         search_cache_put(cache_fingerprint, results.clone());
         return Ok(results);
     }
@@ -503,18 +510,22 @@ pub(crate) async fn search_notes_hybrid(
     let activity_by_note_id = db_load_note_activity().unwrap_or_default();
     let note_lookup = note_access_lookup(&state);
     let now = current_time_millis().unwrap_or(0);
-    let ranked = filter_search_scope(merge_hybrid_candidates(
-        lexical_candidates,
-        semantic_matches,
-        &normalized_query,
-        current_path.as_deref(),
+    let ranked = filter_search_scope(
+        merge_hybrid_candidates(
+            lexical_candidates,
+            semantic_matches,
+            &normalized_query,
+            current_path.as_deref(),
+            effective_limit,
+            lexical_weight,
+            semantic_weight,
+            &activity_by_note_id,
+            &note_lookup,
+            now,
+        ),
+        &scope,
         effective_limit,
-        lexical_weight,
-        semantic_weight,
-        &activity_by_note_id,
-        &note_lookup,
-        now,
-    ), &scope, effective_limit);
+    );
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     state.semantic.debug_state().record_timing(
         "search",
@@ -543,6 +554,7 @@ pub(crate) async fn get_related_notes(
     selected_text: Option<String>,
     limit: usize,
 ) -> Result<RelatedNotesResponse, String> {
+    let _foreground_guard = state.foreground_guard();
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
@@ -598,6 +610,7 @@ pub(crate) async fn retrieve_note_context(
     selected_text: Option<String>,
     limit: usize,
 ) -> Result<RetrievalContextResponse, String> {
+    let _foreground_guard = state.foreground_guard();
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
@@ -700,6 +713,7 @@ pub(crate) async fn retrieve_note_context(
                     .items
                     .into_iter()
                     .map(|item| RetrievalContextItem {
+                        document_kind: item.document_kind,
                         note_id: None,
                         note_path: Some(item.note_path),
                         note_title: item.note_title,
@@ -713,6 +727,7 @@ pub(crate) async fn retrieve_note_context(
                         semantic_score: Some(item.score),
                         start_line: Some(item.start_line),
                         end_line: Some(item.end_line),
+                        block_anchor: item.block_anchor,
                     })
                     .collect(),
             })
@@ -731,6 +746,7 @@ fn context_item_from_search(result: NoteSearchResult) -> RetrievalContextItem {
         "lexical"
     };
     RetrievalContextItem {
+        document_kind: result.document_kind,
         note_id: result.note_id,
         note_path: result.note_path,
         note_title: result.file_name,
@@ -747,6 +763,7 @@ fn context_item_from_search(result: NoteSearchResult) -> RetrievalContextItem {
         semantic_score: result.semantic_score,
         start_line: result.start_line,
         end_line: result.end_line,
+        block_anchor: result.block_anchor,
     }
 }
 
@@ -918,9 +935,7 @@ fn access_score_for_note(
         return 0.0;
     };
     let activity = activity_by_note_id.get(note_id);
-    let last_viewed = activity
-        .map(|item| item.last_viewed_at_millis)
-        .unwrap_or(0);
+    let last_viewed = activity.map(|item| item.last_viewed_at_millis).unwrap_or(0);
     let open_count = activity.map(|item| item.open_count).unwrap_or(0);
     if last_viewed == 0 && open_count == 0 {
         return 0.0;
@@ -1029,7 +1044,7 @@ pub(super) fn merge_hybrid_candidates(
             let mut result = NoteSearchResult {
                 note_id: note_id.clone(),
                 note_path: Some(semantic_match.note_path.clone()),
-                document_kind: crate::note::DocumentKind::Note,
+                document_kind: semantic_match.document_kind,
                 file_name,
                 section_label: semantic_match.section_label.clone(),
                 excerpt: semantic_match.excerpt.clone(),
@@ -1040,6 +1055,7 @@ pub(super) fn merge_hybrid_candidates(
                 semantic_score: Some(semantic_score),
                 start_line: Some(semantic_match.start_line),
                 end_line: Some(semantic_match.end_line),
+                block_anchor: semantic_match.block_anchor.clone(),
             };
             maybe_label_frequently_opened(&mut result, access_score);
             HybridCandidate {

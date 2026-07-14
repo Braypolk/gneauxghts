@@ -120,7 +120,10 @@ mod tests {
 
         assert!(error.contains("read-only"));
         assert!(projection_path.exists());
-        assert_eq!(fs::read_to_string(projection_path).expect("read"), projection);
+        assert_eq!(
+            fs::read_to_string(projection_path).expect("read"),
+            projection
+        );
     }
 
     #[test]

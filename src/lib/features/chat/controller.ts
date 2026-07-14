@@ -171,6 +171,9 @@ export function createChatController(api: ChatApi = chatApi): ChatController {
         messages: upsertTerminalMessage(conversation.messages, event.message)
       }));
       patch({ isSending: false, error: event.error });
+    }),
+    'chat://projection-conflict': (event) => ifCurrent(event, () => {
+      void openConversation(event.conversationId);
     })
   };
 

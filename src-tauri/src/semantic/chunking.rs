@@ -14,6 +14,7 @@ pub(crate) struct SemanticChunk {
     pub(crate) text_hash: String,
     pub(crate) start_line: usize,
     pub(crate) end_line: usize,
+    pub(crate) block_anchor: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +52,7 @@ pub(crate) fn chunk_markdown(markdown: &str, fallback_title: &str) -> ChunkedNot
             text_hash: hash_string(&title),
             start_line: title_line,
             end_line: title_line,
+            block_anchor: None,
         });
     }
 
@@ -214,6 +216,7 @@ fn push_long_text_chunks(
                 text,
                 start_line: paragraph.start_line,
                 end_line: paragraph.end_line,
+                block_anchor: None,
             });
         }
 
@@ -248,6 +251,7 @@ fn push_chunk(chunks: &mut Vec<SemanticChunk>, section_label: &str, paragraphs: 
             .last()
             .map(|paragraph| paragraph.end_line)
             .unwrap_or(1),
+        block_anchor: None,
     });
 }
 

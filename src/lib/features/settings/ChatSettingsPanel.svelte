@@ -177,6 +177,13 @@
             <input class="h-10 rounded-xl border border-border bg-background px-3 text-sm" bind:value={settings.model} spellcheck="false" />
           </label>
           <label class="grid gap-1.5 text-xs font-medium">
+            Processing
+            <select class="h-10 rounded-xl border border-border bg-background px-3 text-sm" bind:value={settings.serviceTier}>
+              <option value="standard">Standard</option>
+              <option value="flex">Flex — lower cost, slower</option>
+            </select>
+          </label>
+          <label class="grid gap-1.5 text-xs font-medium">
             Default chat mode
             <select class="h-10 rounded-xl border border-border bg-background px-3 text-sm" bind:value={settings.defaultMode}>
               {#each ['auto', 'explore', 'challenge', 'research', 'make'] as mode}
@@ -201,6 +208,12 @@
             </select>
           </label>
         </div>
+
+        {#if settings.serviceTier === 'flex'}
+          <p class="mt-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+            Flex uses lower-cost capacity and may respond more slowly or be temporarily unavailable. Gneauxghts will not silently retry at Standard pricing.
+          </p>
+        {/if}
 
         <div class="mt-5 flex justify-end">
           <button

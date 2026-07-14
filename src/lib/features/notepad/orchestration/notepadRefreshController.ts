@@ -7,6 +7,7 @@ import type {
 export interface VaultNoteChangeEvent {
   notePath: string;
   deleted: boolean;
+  documentKind?: "note" | "chatIndex" | "chatTranscript";
   source?: string | null;
 }
 
@@ -50,6 +51,7 @@ export function createNotepadRefreshController(
   }
 
   async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
+    if (payload.documentKind && payload.documentKind !== "note") return;
     const documentSession = params.getDocumentSession();
     if (documentSession.currentNotePath === payload.notePath) {
       if (payload.source === "taskMutation") {

@@ -1,8 +1,9 @@
 use super::{chunking::SemanticChunk, embed::mean_pool, SemanticIndexJob, SemanticSettings};
-use crate::time::current_time_millis;
+use crate::{note::DocumentKind, time::current_time_millis};
 use blake3::hash;
 use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet},
@@ -13,6 +14,7 @@ use std::{
 const SETTINGS_KEY: &str = "semantic_settings";
 const ATLAS_LAYOUT_SIGNATURE_KEY: &str = "atlas_layout_signature";
 const ATLAS_GRAPH_SNAPSHOT_KEY: &str = "atlas_graph_snapshot";
+const EDGE_CORPUS_SIGNATURE_KEY: &str = "edge_corpus_signature";
 #[derive(Clone)]
 pub(crate) struct StoredChunkEmbedding {
     pub(crate) text_hash: String,
@@ -28,6 +30,8 @@ pub(crate) struct StoredChunkRow {
     pub(crate) start_line: usize,
     pub(crate) end_line: usize,
     pub(crate) embedding: Vec<f32>,
+    pub(crate) document_kind: DocumentKind,
+    pub(crate) block_anchor: Option<String>,
 }
 
 pub(crate) struct StoredNoteEmbedding {
@@ -35,6 +39,7 @@ pub(crate) struct StoredNoteEmbedding {
     pub(crate) embedding: Vec<f32>,
 }
 
+#[derive(Clone)]
 pub(crate) struct StoredAtlasNoteEmbedding {
     pub(crate) note_path: String,
     pub(crate) note_title: String,
@@ -60,6 +65,8 @@ pub(crate) struct StoredRelatedNotePreview {
     pub(crate) start_line: usize,
     pub(crate) end_line: usize,
     pub(crate) score: f32,
+    pub(crate) document_kind: DocumentKind,
+    pub(crate) block_anchor: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,10 +75,25 @@ pub(crate) struct AnnIndexSignature {
     pub(crate) max_indexed_at_millis: Option<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AnnSourceInventory {
+    pub(crate) path: String,
+    pub(crate) content_hash: String,
+    pub(crate) document_kind: String,
+    pub(crate) chunk_count: usize,
+}
+
+pub(crate) struct StoredAnnChunk {
+    pub(crate) ordinal: usize,
+    pub(crate) embedding: Vec<f32>,
+}
+
 #[derive(Clone)]
 pub(crate) struct StoredNoteRecord {
     pub(crate) modified_millis: u64,
     pub(crate) content_hash: String,
+    pub(crate) document_kind: DocumentKind,
 }
 
 pub(crate) fn open_database(path: &Path) -> Result<Connection, String> {
@@ -101,7 +123,8 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 chunk_count INTEGER NOT NULL,
                 indexed_at_millis INTEGER NOT NULL,
                 created_at TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT ''
+                updated_at TEXT NOT NULL DEFAULT '',
+                document_kind TEXT NOT NULL DEFAULT 'note'
             );
 
             CREATE TABLE IF NOT EXISTS chunks (
@@ -117,6 +140,7 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
                 embedding_blob BLOB NOT NULL,
                 embedding_dim INTEGER NOT NULL,
                 indexed_at_millis INTEGER NOT NULL,
+                block_anchor TEXT,
                 UNIQUE(note_path, ordinal)
             );
 
@@ -161,7 +185,8 @@ pub(crate) fn ensure_schema(connection: &Connection) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
 
     migrate_chunk_ann_labels(connection)?;
-    migrate_note_columns(connection)
+    migrate_note_columns(connection)?;
+    migrate_semantic_document_columns(connection)
 }
 
 pub(crate) fn load_semantic_settings(
@@ -264,7 +289,7 @@ pub(crate) fn load_stored_note_records(
     connection: &Connection,
 ) -> Result<HashMap<String, StoredNoteRecord>, String> {
     let mut statement = connection
-        .prepare("SELECT path, modified_millis, content_hash FROM notes")
+        .prepare("SELECT path, modified_millis, content_hash, document_kind FROM notes")
         .map_err(|err| err.to_string())?;
     let mut rows = statement.query([]).map_err(|err| err.to_string())?;
     let mut notes = HashMap::new();
@@ -275,6 +300,9 @@ pub(crate) fn load_stored_note_records(
             StoredNoteRecord {
                 modified_millis: row.get::<_, u64>(1).map_err(|err| err.to_string())?,
                 content_hash: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+                document_kind: DocumentKind::from_frontmatter_value(
+                    &row.get::<_, String>(3).map_err(|err| err.to_string())?,
+                ),
             },
         );
     }
@@ -289,7 +317,7 @@ pub(crate) fn load_note_record(
     connection
         .query_row(
             "
-            SELECT modified_millis, content_hash
+            SELECT modified_millis, content_hash, document_kind
             FROM notes
             WHERE path = ?1
             ",
@@ -298,6 +326,7 @@ pub(crate) fn load_note_record(
                 Ok(StoredNoteRecord {
                     modified_millis: row.get(0)?,
                     content_hash: row.get(1)?,
+                    document_kind: DocumentKind::from_frontmatter_value(&row.get::<_, String>(2)?),
                 })
             },
         )
@@ -348,6 +377,7 @@ pub(crate) fn upsert_note_chunks(
     content_hash: &str,
     created_at: &str,
     updated_at: &str,
+    document_kind: DocumentKind,
     chunks: &[SemanticChunk],
     embeddings: &[Vec<f32>],
 ) -> Result<(), String> {
@@ -376,9 +406,10 @@ pub(crate) fn upsert_note_chunks(
                     end_line,
                     embedding_blob,
                     embedding_dim,
-                    indexed_at_millis
+                    indexed_at_millis,
+                    block_anchor
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 ",
                 params![
                     note_path,
@@ -392,6 +423,7 @@ pub(crate) fn upsert_note_chunks(
                     serialize_embedding(embedding),
                     embedding.len(),
                     indexed_at_millis,
+                    chunk.block_anchor,
                 ],
             )
             .map_err(|err| err.to_string())?;
@@ -408,9 +440,10 @@ pub(crate) fn upsert_note_chunks(
                 chunk_count,
                 indexed_at_millis,
                 created_at,
-                updated_at
+                updated_at,
+                document_kind
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             ON CONFLICT(path) DO UPDATE SET
                 title = excluded.title,
                 modified_millis = excluded.modified_millis,
@@ -418,7 +451,8 @@ pub(crate) fn upsert_note_chunks(
                 chunk_count = excluded.chunk_count,
                 indexed_at_millis = excluded.indexed_at_millis,
                 created_at = excluded.created_at,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                document_kind = excluded.document_kind
             ",
             params![
                 note_path,
@@ -429,6 +463,7 @@ pub(crate) fn upsert_note_chunks(
                 indexed_at_millis,
                 created_at,
                 updated_at,
+                document_kind.as_frontmatter_value(),
             ],
         )
         .map_err(|err| err.to_string())?;
@@ -656,7 +691,8 @@ pub(crate) fn load_chunks_by_ann_labels(
         .join(", ");
     let sql = format!(
         "
-        SELECT c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line, c.embedding_blob
+        SELECT c.note_path, n.title, c.section_label, c.text, c.start_line, c.end_line,
+               c.embedding_blob, n.document_kind, c.block_anchor
         FROM chunks c
         INNER JOIN notes n ON n.path = c.note_path
         WHERE c.ann_label IN ({placeholders})
@@ -678,6 +714,12 @@ pub(crate) fn load_chunks_by_ann_labels(
             embedding: deserialize_embedding(
                 &row.get::<_, Vec<u8>>(6).map_err(|err| err.to_string())?,
             ),
+            document_kind: DocumentKind::from_frontmatter_value(
+                &row.get::<_, String>(7).map_err(|err| err.to_string())?,
+            ),
+            block_anchor: row
+                .get::<_, Option<String>>(8)
+                .map_err(|err| err.to_string())?,
         });
     }
 
@@ -701,6 +743,77 @@ pub(crate) fn load_note_chunk_labels(
     }
 
     Ok(labels)
+}
+
+pub(crate) fn load_ann_source_inventory(
+    connection: &Connection,
+) -> Result<Vec<AnnSourceInventory>, String> {
+    let mut statement = connection
+        .prepare("SELECT path, content_hash, document_kind, chunk_count FROM notes ORDER BY path")
+        .map_err(|err| err.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AnnSourceInventory {
+                path: row.get(0)?,
+                content_hash: row.get(1)?,
+                document_kind: row.get(2)?,
+                chunk_count: row.get(3)?,
+            })
+        })
+        .map_err(|err| err.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())
+}
+
+pub(crate) fn semantic_corpus_signature(connection: &Connection) -> Result<String, String> {
+    let inventory = load_ann_source_inventory(connection)?;
+    let serialized = serde_json::to_string(&inventory).map_err(|err| err.to_string())?;
+    Ok(content_hash(&serialized))
+}
+
+pub(crate) fn edges_are_stale(connection: &Connection) -> Result<bool, String> {
+    let current = semantic_corpus_signature(connection)?;
+    let stored = connection
+        .query_row(
+            "SELECT value_json FROM settings WHERE key = ?1",
+            [EDGE_CORPUS_SIGNATURE_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|err| err.to_string())?;
+    Ok(stored.as_deref() != Some(current.as_str()))
+}
+
+fn save_edge_corpus_signature(connection: &Connection) -> Result<(), String> {
+    let signature = semantic_corpus_signature(connection)?;
+    connection
+        .execute(
+            "INSERT INTO settings (key, value_json) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json",
+            params![EDGE_CORPUS_SIGNATURE_KEY, signature],
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn load_ann_chunks_for_note(
+    connection: &Connection,
+    note_path: &str,
+) -> Result<Vec<StoredAnnChunk>, String> {
+    let mut statement = connection
+        .prepare("SELECT ordinal, embedding_blob FROM chunks WHERE note_path = ?1 ORDER BY ordinal")
+        .map_err(|err| err.to_string())?;
+    let rows = statement
+        .query_map([note_path], |row| {
+            let blob: Vec<u8> = row.get(1)?;
+            Ok(StoredAnnChunk {
+                ordinal: row.get(0)?,
+                embedding: deserialize_embedding(&blob),
+            })
+        })
+        .map_err(|err| err.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())
 }
 
 /// Total byte length of all chunk text. Computed in SQLite (O(1) host memory)
@@ -869,11 +982,24 @@ pub(crate) struct EdgeRebuildStats {
     pub(crate) comparisons: u64,
 }
 
+#[cfg(test)]
 pub(crate) fn rebuild_edges(
     connection: &mut Connection,
     neighbors_per_note: usize,
     min_score: f32,
 ) -> Result<EdgeRebuildStats, String> {
+    rebuild_edges_with_checkpoint(connection, neighbors_per_note, min_score, |_, _| {})
+}
+
+pub(crate) fn rebuild_edges_with_checkpoint<F>(
+    connection: &mut Connection,
+    neighbors_per_note: usize,
+    min_score: f32,
+    mut checkpoint: F,
+) -> Result<EdgeRebuildStats, String>
+where
+    F: FnMut(usize, usize),
+{
     // NOTE: This recomputes all pairwise note similarities, so wall-clock cost is
     // O(N^2 * D). Peak host memory is bounded: note embeddings are O(N * D) and
     // each source keeps only its top-K neighbors (O(K)) via the bounded heap
@@ -883,18 +1009,22 @@ pub(crate) fn rebuild_edges(
     // exists to make that threshold observable before it bites.
     let notes = load_note_embeddings(connection)?;
     if notes.len() >= 750 {
-        return rebuild_edges_with_hnsw(connection, notes, neighbors_per_note, min_score);
+        return rebuild_edges_with_hnsw(
+            connection,
+            notes,
+            neighbors_per_note,
+            min_score,
+            &mut checkpoint,
+        );
     }
     let dimensions = notes.first().map(|note| note.embedding.len()).unwrap_or(0);
     let mut comparisons = 0u64;
-    let updated_at_millis = current_time_millis()?;
-    let transaction = connection.transaction().map_err(|err| err.to_string())?;
-    transaction
-        .execute("DELETE FROM edges", [])
-        .map_err(|err| err.to_string())?;
-
     let mut heap: BinaryHeap<Reverse<ScoredNeighbor>> = BinaryHeap::new();
-    for source in &notes {
+    let mut next_edges = HashMap::<(String, String), f32>::new();
+    for (source_index, source) in notes.iter().enumerate() {
+        if source_index % 64 == 0 {
+            checkpoint(source_index, notes.len());
+        }
         heap.clear();
         for target in &notes {
             if target.note_path == source.note_path {
@@ -932,32 +1062,30 @@ pub(crate) fn rebuild_edges(
             } else {
                 (neighbor.note_path.as_str(), source.note_path.as_str())
             };
-            transaction
-                .execute(
-                    "
-                    INSERT INTO edges (source_note_path, target_note_path, score, updated_at_millis)
-                    VALUES (?1, ?2, ?3, ?4)
-                    ON CONFLICT(source_note_path, target_note_path) DO UPDATE SET
-                        score = max(edges.score, excluded.score),
-                        updated_at_millis = excluded.updated_at_millis
-                    ",
-                    params![
-                        source_note_path,
-                        target_note_path,
-                        neighbor.score,
-                        updated_at_millis
-                    ],
-                )
-                .map_err(|err| err.to_string())?;
+            next_edges
+                .entry((source_note_path.to_string(), target_note_path.to_string()))
+                .and_modify(|score| *score = score.max(neighbor.score))
+                .or_insert(neighbor.score);
         }
     }
-
-    let edge_count = transaction
-        .query_row("SELECT COUNT(*) FROM edges", [], |row| {
-            row.get::<_, usize>(0)
-        })
+    checkpoint(notes.len(), notes.len());
+    let updated_at_millis = current_time_millis()?;
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+    transaction
+        .execute("DELETE FROM edges", [])
         .map_err(|err| err.to_string())?;
+    for ((source, target), score) in &next_edges {
+        transaction
+            .execute(
+                "INSERT INTO edges (source_note_path, target_note_path, score, updated_at_millis)
+             VALUES (?1, ?2, ?3, ?4)",
+                params![source, target, score, updated_at_millis],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    let edge_count = next_edges.len();
     transaction.commit().map_err(|err| err.to_string())?;
+    save_edge_corpus_signature(connection)?;
     Ok(EdgeRebuildStats {
         note_count: notes.len(),
         edge_count,
@@ -971,6 +1099,7 @@ fn rebuild_edges_with_hnsw(
     notes: Vec<StoredNoteEmbedding>,
     neighbors_per_note: usize,
     min_score: f32,
+    checkpoint: &mut impl FnMut(usize, usize),
 ) -> Result<EdgeRebuildStats, String> {
     let dimensions = notes.first().map(|note| note.embedding.len()).unwrap_or(0);
     if notes.is_empty() || dimensions == 0 {
@@ -979,6 +1108,7 @@ fn rebuild_edges_with_hnsw(
             .execute("DELETE FROM edges", [])
             .map_err(|err| err.to_string())?;
         transaction.commit().map_err(|err| err.to_string())?;
+        save_edge_corpus_signature(connection)?;
         return Ok(EdgeRebuildStats::default());
     }
 
@@ -992,21 +1122,21 @@ fn rebuild_edges_with_hnsw(
     );
     let vectors = InMemoryVectorStore::<f32>::new(dimensions, capacity);
     for (index, note) in notes.iter().enumerate() {
+        if index % 64 == 0 {
+            checkpoint(index, notes.len());
+        }
         graph
             .set(&vectors, index as u64, note.embedding.as_slice())
             .map(|_| ())
             .map_err(|err| err.to_string())?;
     }
 
-    let updated_at_millis = current_time_millis()?;
-    let transaction = connection.transaction().map_err(|err| err.to_string())?;
-    transaction
-        .execute("DELETE FROM edges", [])
-        .map_err(|err| err.to_string())?;
-
-    let mut seen_edges = HashSet::new();
+    let mut next_edges = HashMap::<(String, String), f32>::new();
     let mut comparisons = 0u64;
     for (source_index, source) in notes.iter().enumerate() {
+        if source_index % 64 == 0 {
+            checkpoint(source_index, notes.len());
+        }
         let hits = graph
             .search(
                 &vectors,
@@ -1031,27 +1161,30 @@ fn rebuild_edges_with_hnsw(
             } else {
                 (target.note_path.as_str(), source.note_path.as_str())
             };
-            if !seen_edges.insert((source_note_path.to_string(), target_note_path.to_string())) {
-                continue;
-            }
-            transaction
-                .execute(
-                    "
-                    INSERT INTO edges (source_note_path, target_note_path, score, updated_at_millis)
-                    VALUES (?1, ?2, ?3, ?4)
-                    ",
-                    params![source_note_path, target_note_path, score, updated_at_millis],
-                )
-                .map_err(|err| err.to_string())?;
+            next_edges
+                .entry((source_note_path.to_string(), target_note_path.to_string()))
+                .and_modify(|existing| *existing = existing.max(score))
+                .or_insert(score);
         }
     }
-
-    let edge_count = transaction
-        .query_row("SELECT COUNT(*) FROM edges", [], |row| {
-            row.get::<_, usize>(0)
-        })
+    checkpoint(notes.len(), notes.len());
+    let updated_at_millis = current_time_millis()?;
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+    transaction
+        .execute("DELETE FROM edges", [])
         .map_err(|err| err.to_string())?;
+    for ((source, target), score) in &next_edges {
+        transaction
+            .execute(
+                "INSERT INTO edges (source_note_path, target_note_path, score, updated_at_millis)
+             VALUES (?1, ?2, ?3, ?4)",
+                params![source, target, score, updated_at_millis],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    let edge_count = next_edges.len();
     transaction.commit().map_err(|err| err.to_string())?;
+    save_edge_corpus_signature(connection)?;
     Ok(EdgeRebuildStats {
         note_count: notes.len(),
         edge_count,
@@ -1206,6 +1339,20 @@ pub(crate) fn load_latest_job(connection: &Connection) -> Result<Option<Semantic
         .map_err(|err| err.to_string())
 }
 
+pub(crate) fn mark_running_jobs_interrupted(connection: &Connection) -> Result<usize, String> {
+    let now = current_time_millis()?;
+    connection
+        .execute(
+            "UPDATE index_jobs
+             SET status = 'interrupted',
+                 error_text = COALESCE(error_text, 'Interrupted before completion'),
+                 updated_at_millis = ?1
+             WHERE status = 'running'",
+            [now],
+        )
+        .map_err(|err| err.to_string())
+}
+
 pub(crate) fn load_related_note_previews(
     connection: &Connection,
     note_path: &str,
@@ -1245,6 +1392,14 @@ pub(crate) fn load_related_note_previews(
                     ORDER BY CASE WHEN c.section_label = 'Title' THEN 1 ELSE 0 END, c.ordinal
                     LIMIT 1
                 ), 1),
+                n.document_kind,
+                (
+                    SELECT c.block_anchor
+                    FROM chunks c
+                    WHERE c.note_path = n.path
+                    ORDER BY CASE WHEN c.section_label = 'Title' THEN 1 ELSE 0 END, c.ordinal
+                    LIMIT 1
+                ),
                 e.score
             FROM edges e
             INNER JOIN notes n
@@ -1271,7 +1426,13 @@ pub(crate) fn load_related_note_previews(
             text: row.get::<_, String>(3).map_err(|err| err.to_string())?,
             start_line: row.get::<_, usize>(4).map_err(|err| err.to_string())?,
             end_line: row.get::<_, usize>(5).map_err(|err| err.to_string())?,
-            score: row.get::<_, f32>(6).map_err(|err| err.to_string())?,
+            document_kind: DocumentKind::from_frontmatter_value(
+                &row.get::<_, String>(6).map_err(|err| err.to_string())?,
+            ),
+            block_anchor: row
+                .get::<_, Option<String>>(7)
+                .map_err(|err| err.to_string())?,
+            score: row.get::<_, f32>(8).map_err(|err| err.to_string())?,
         });
     }
 
@@ -1366,6 +1527,23 @@ fn migrate_note_columns(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn migrate_semantic_document_columns(connection: &Connection) -> Result<(), String> {
+    if !has_column(connection, "notes", "document_kind")? {
+        connection
+            .execute(
+                "ALTER TABLE notes ADD COLUMN document_kind TEXT NOT NULL DEFAULT 'note'",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    if !has_column(connection, "chunks", "block_anchor")? {
+        connection
+            .execute("ALTER TABLE chunks ADD COLUMN block_anchor TEXT", [])
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
 fn has_column(
     connection: &Connection,
     table_name: &str,
@@ -1388,10 +1566,12 @@ fn has_column(
 #[cfg(test)]
 mod tests {
     use super::{
-        ann_label_for, clear_atlas_cache, ensure_schema, for_each_chunk_embedding, open_database,
-        rebuild_edges, save_atlas_graph_snapshot_json, save_atlas_layout_signature,
-        save_atlas_positions, sum_chunk_text_bytes, upsert_note_chunks, StoredAtlasPosition,
+        ann_label_for, clear_atlas_cache, ensure_schema, for_each_chunk_embedding,
+        mark_running_jobs_interrupted, open_database, rebuild_edges,
+        save_atlas_graph_snapshot_json, save_atlas_layout_signature, save_atlas_positions,
+        sum_chunk_text_bytes, upsert_note_chunks, StoredAtlasPosition,
     };
+    use crate::note::DocumentKind;
     use crate::semantic::chunking::SemanticChunk;
     use blake3::hash;
     use rusqlite::Connection;
@@ -1475,6 +1655,28 @@ mod tests {
     }
 
     #[test]
+    fn startup_marks_abandoned_running_jobs_interrupted() {
+        let test_db = TestDb::new("interrupted-job");
+        let connection = open_database(&test_db.path).expect("open db");
+        ensure_schema(&connection).expect("schema");
+        connection.execute(
+            "INSERT INTO index_jobs (id, status, scanned_count, embedded_count, started_at_millis, updated_at_millis)
+             VALUES (1, 'running', 3, 2, 1, 1)",
+            [],
+        ).expect("insert running job");
+        assert_eq!(
+            mark_running_jobs_interrupted(&connection).expect("interrupt jobs"),
+            1
+        );
+        let status: String = connection
+            .query_row("SELECT status FROM index_jobs WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "interrupted");
+    }
+
+    #[test]
     fn streaming_chunk_loader_visits_every_chunk_without_text() {
         let temp = TestDb::new("stream-chunks");
         let mut connection = temp.connection();
@@ -1536,6 +1738,7 @@ mod tests {
             text_hash: hash(note_path.as_bytes()).to_hex().to_string(),
             start_line: 1,
             end_line: 1,
+            block_anchor: None,
         };
         upsert_note_chunks(
             connection,
@@ -1545,6 +1748,7 @@ mod tests {
             "seed-hash",
             "2026-01-01T00:00:00Z",
             "2026-01-01T00:00:00Z",
+            DocumentKind::Note,
             &[chunk],
             &[embedding.to_vec()],
         )

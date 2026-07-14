@@ -172,6 +172,7 @@
   const editorCapabilities = new Map<PaneId, ReturnType<typeof createEditorCapabilityAdapter>>();
   const chatControllers = new Map<PaneId, ChatController>();
   let chatDraftSeeds = $state<Partial<Record<PaneId, ChatDraftSeed>>>({});
+  let chatTargetAnchors = $state<Partial<Record<PaneId, string | null>>>({});
   let discussionSeedCounter = 0;
   let discussionInProgress = false;
   let activeSlashMenuPaneId = $state<PaneId | null>(null);
@@ -308,11 +309,16 @@
     return null;
   }
 
-  async function openChatProjection(paneId: PaneId, notePath: string | null) {
+  async function openChatProjection(
+    paneId: PaneId,
+    notePath: string | null,
+    targetAnchor: string | null = null
+  ) {
     const conversationId = await conversationIdForProjection(notePath);
     if (!conversationId) return false;
     setStoredPaneKind(notepadState, paneId, 'chat');
     setPaneChatConversationId(notepadState, paneId, conversationId);
+    chatTargetAnchors[paneId] = targetAnchor;
     workspaceStore.setActivePaneId(paneId);
     await getChatController(paneId).initialize(conversationId);
     return true;
@@ -977,6 +983,7 @@
     chatControllers.get(paneId)?.dispose();
     chatControllers.delete(paneId);
     delete chatDraftSeeds[paneId];
+    delete chatTargetAnchors[paneId];
     delete paneRuntimes[paneId];
   }
 
@@ -1151,7 +1158,7 @@
 
   async function handleSearchResultSelect(result: SearchItem) {
     if (result.documentKind && result.documentKind !== 'note') {
-      if (await openChatProjection(getNavigationPaneId(), result.notePath)) {
+      if (await openChatProjection(getNavigationPaneId(), result.notePath, result.blockAnchor ?? null)) {
         clearSearch();
         return;
       }
@@ -1191,6 +1198,9 @@
   }
 
   async function handleRelatedItemSelect(item: RelatedNoteItem) {
+    if (item.documentKind && item.documentKind !== 'note') {
+      if (await openChatProjection(getNavigationPaneId(), item.notePath, item.blockAnchor ?? null)) return;
+    }
     workspaceStore.resetPaneCommand();
     await openSearchResult(getOpenContext(), getNavigationContext(), {
       noteId: item.noteId,
@@ -1204,7 +1214,8 @@
       lexicalScore: null,
       semanticScore: item.score,
       startLine: item.startLine,
-      endLine: item.endLine
+      endLine: item.endLine,
+      blockAnchor: item.blockAnchor ?? null
     });
     documents.saveCursorPositionForDocument();
   }
@@ -1305,6 +1316,7 @@
               || 'Untitled note'
           }
         : null,
+      chatTargetAnchor: chatTargetAnchors[paneId] ?? null,
       chatSelectionActions: chatSelectionActions(),
       onChatConversationChange: (conversationId) => {
         setPaneChatConversationId(notepadState, paneId, conversationId);
@@ -1441,10 +1453,17 @@
         }
         const pendingNoteTarget = consumePendingNoteTarget();
         if (pendingNoteTarget) {
-          await commands.openNotePath(pendingNoteTarget.notePath, {
-            noteId: pendingNoteTarget.noteId,
-            focusEditorAfterOpen: true
-          });
+          if (
+            pendingNoteTarget.documentKind &&
+            pendingNoteTarget.documentKind !== 'note'
+          ) {
+            await openChatProjection(getNavigationPaneId(), pendingNoteTarget.notePath);
+          } else {
+            await commands.openNotePath(pendingNoteTarget.notePath, {
+              noteId: pendingNoteTarget.noteId,
+              focusEditorAfterOpen: true
+            });
+          }
         }
         // Subscribe to vault note + semantic status changes through the
         // unified AppStore so the page no longer opens raw IPC listeners.

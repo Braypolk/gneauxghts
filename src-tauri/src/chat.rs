@@ -1,7 +1,7 @@
 use blake3::Hasher;
 use futures_util::StreamExt;
 use reqwest::Client;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -13,8 +13,9 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
+    time::Duration,
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 const MAX_PART_MESSAGES: i64 = 100;
@@ -26,29 +27,60 @@ const KEYCHAIN_ACCOUNT: &str = "openai";
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy)]
-struct ProviderCapabilities { streaming: bool, web_search: bool }
+struct ProviderCapabilities {
+    streaming: bool,
+    web_search: bool,
+    flex_processing: bool,
+}
 
 trait ChatProvider {
     fn id(&self) -> &'static str;
     fn endpoint(&self) -> &'static str;
     fn capabilities(&self) -> ProviderCapabilities;
-    fn request_body(&self, model: &str, instructions: String, input: Vec<Value>, use_web_search: bool) -> Value;
+    fn request_body(
+        &self,
+        model: &str,
+        instructions: String,
+        input: Vec<Value>,
+        use_web_search: bool,
+        service_tier: &ChatServiceTier,
+    ) -> Value;
 }
 
 struct OpenAiResponsesProvider;
 
 impl ChatProvider for OpenAiResponsesProvider {
-    fn id(&self) -> &'static str { "openai" }
-    fn endpoint(&self) -> &'static str { "https://api.openai.com/v1/responses" }
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities { streaming: true, web_search: true }
+    fn id(&self) -> &'static str {
+        "openai"
     }
-    fn request_body(&self, model: &str, instructions: String, input: Vec<Value>, use_web_search: bool) -> Value {
+    fn endpoint(&self) -> &'static str {
+        "https://api.openai.com/v1/responses"
+    }
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            streaming: true,
+            web_search: true,
+            flex_processing: true,
+        }
+    }
+    fn request_body(
+        &self,
+        model: &str,
+        instructions: String,
+        input: Vec<Value>,
+        use_web_search: bool,
+        service_tier: &ChatServiceTier,
+    ) -> Value {
         let mut body = json!({
             "model": model, "instructions": instructions, "input": input,
             "stream": true, "max_output_tokens": 8192
         });
-        if use_web_search { body["tools"] = json!([{ "type": "web_search" }]); }
+        if use_web_search {
+            body["tools"] = json!([{ "type": "web_search" }]);
+        }
+        if service_tier == &ChatServiceTier::Flex {
+            body["service_tier"] = json!("flex");
+        }
         body
     }
 }
@@ -100,6 +132,29 @@ pub(crate) enum VaultAccess {
     Full,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ChatServiceTier {
+    Standard,
+    Flex,
+}
+
+impl ChatServiceTier {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Flex => "flex",
+        }
+    }
+
+    fn parse(value: &str) -> Self {
+        match value {
+            "flex" => Self::Flex,
+            _ => Self::Standard,
+        }
+    }
+}
+
 impl VaultAccess {
     fn as_str(&self) -> &'static str {
         match self {
@@ -123,6 +178,7 @@ impl VaultAccess {
 pub(crate) struct ChatSettings {
     pub(crate) provider: String,
     pub(crate) model: String,
+    pub(crate) service_tier: ChatServiceTier,
     pub(crate) default_mode: ChatMode,
     pub(crate) default_access: VaultAccess,
     pub(crate) atlas_visibility: String,
@@ -133,6 +189,7 @@ impl Default for ChatSettings {
         Self {
             provider: "openai".to_string(),
             model: DEFAULT_MODEL.to_string(),
+            service_tier: ChatServiceTier::Standard,
             default_mode: ChatMode::Auto,
             default_access: VaultAccess::Limited,
             atlas_visibility: "hidden".to_string(),
@@ -188,6 +245,7 @@ pub(crate) struct ChatConversation {
     pub(crate) summary: ChatConversationSummary,
     pub(crate) messages: Vec<ChatMessage>,
     pub(crate) excerpts: Vec<ChatExcerpt>,
+    pub(crate) projection_path: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -201,6 +259,14 @@ pub(crate) struct ChatExcerpt {
     pub(crate) quote: String,
     pub(crate) anchor: String,
     pub(crate) remembered: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ChatRecallDocument {
+    pub(crate) path: PathBuf,
+    pub(crate) title: String,
+    pub(crate) modified_millis: u64,
+    pub(crate) excerpts: Vec<crate::semantic::indexer::ChatRecallExcerpt>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -246,15 +312,75 @@ struct ChatServiceInner {
     db_path: PathBuf,
     notes_root: PathBuf,
     active_requests: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    projection_sink: Arc<dyn ChatProjectionSink>,
+}
+
+trait ChatProjectionSink: Send + Sync {
+    /// Publish a projection and return whether its bytes changed.
+    fn publish(&self, path: &Path, markdown: &str) -> Result<bool, String>;
+}
+
+struct FilesystemChatProjectionSink {
+    app_handle: Option<AppHandle>,
+}
+
+impl ChatProjectionSink for FilesystemChatProjectionSink {
+    fn publish(&self, path: &Path, markdown: &str) -> Result<bool, String> {
+        if fs::read_to_string(path).ok().as_deref() == Some(markdown) {
+            return Ok(false);
+        }
+
+        let hash = content_hash(markdown);
+        if self.app_handle.is_some() {
+            crate::vault_watcher::record_self_save_with_hash(path, hash);
+        }
+        fs::write(path, markdown).map_err(|error| error.to_string())?;
+
+        if let Some(app_handle) = self.app_handle.as_ref() {
+            if let Some(state) = app_handle.try_state::<crate::index::AppState>() {
+                let modified_millis = now_millis();
+                let note = crate::index::build_indexed_note(path, markdown, modified_millis);
+                if let Err(error) = state.upsert_managed_chat_projection(path.to_path_buf(), note) {
+                    eprintln!(
+                        "chat projection derived-index update failed for {}: {error}",
+                        path.display()
+                    );
+                    // The authoritative chat write succeeded. Leave an
+                    // explicit derived-index retry for the next interactive
+                    // catalog pass rather than failing the chat operation.
+                    let _ = state.mark_notes_index_dirty(path, "chat-projection-retry");
+                }
+            }
+        }
+        Ok(true)
+    }
 }
 
 impl ChatService {
+    #[cfg(test)]
     pub(crate) fn new(notes_root: PathBuf, vault_data_dir: PathBuf) -> Result<Self, String> {
+        Self::new_with_sink(notes_root, vault_data_dir, None)
+    }
+
+    pub(crate) fn new_managed(
+        notes_root: PathBuf,
+        vault_data_dir: PathBuf,
+        app_handle: AppHandle,
+    ) -> Result<Self, String> {
+        Self::new_with_sink(notes_root, vault_data_dir, Some(app_handle))
+    }
+
+    fn new_with_sink(
+        notes_root: PathBuf,
+        vault_data_dir: PathBuf,
+        app_handle: Option<AppHandle>,
+    ) -> Result<Self, String> {
         let service = Self {
             inner: Arc::new(ChatServiceInner {
                 db_path: vault_data_dir.join("ai.sqlite3"),
                 notes_root,
                 active_requests: Mutex::new(HashMap::new()),
+                projection_sink: Arc::new(FilesystemChatProjectionSink { app_handle }),
             }),
         };
         service.initialize()?;
@@ -275,6 +401,7 @@ impl ChatService {
                    id INTEGER PRIMARY KEY CHECK (id = 1),
                    provider TEXT NOT NULL,
                    model TEXT NOT NULL,
+                   service_tier TEXT NOT NULL DEFAULT 'standard',
                    default_access TEXT NOT NULL,
                    default_mode TEXT NOT NULL DEFAULT 'auto',
                    atlas_visibility TEXT NOT NULL DEFAULT 'hidden'
@@ -339,14 +466,28 @@ impl ChatService {
             )
             .map_err(|error| error.to_string())?;
         // Vaults created by an earlier chat schema gain the settings columns in place.
-        let _ = connection.execute("ALTER TABLE chat_settings ADD COLUMN default_mode TEXT NOT NULL DEFAULT 'auto'", []);
-        let _ = connection.execute("ALTER TABLE chat_settings ADD COLUMN atlas_visibility TEXT NOT NULL DEFAULT 'hidden'", []);
+        let _ = connection.execute(
+            "ALTER TABLE chat_settings ADD COLUMN default_mode TEXT NOT NULL DEFAULT 'auto'",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE chat_settings ADD COLUMN atlas_visibility TEXT NOT NULL DEFAULT 'hidden'",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE chat_settings ADD COLUMN service_tier TEXT NOT NULL DEFAULT 'standard'",
+            [],
+        );
         let defaults = ChatSettings::default();
         connection
             .execute(
                 "INSERT OR IGNORE INTO chat_settings (id, provider, model, default_access)
                  VALUES (1, ?1, ?2, ?3)",
-                params![defaults.provider, defaults.model, defaults.default_access.as_str()],
+                params![
+                    defaults.provider,
+                    defaults.model,
+                    defaults.default_access.as_str()
+                ],
             )
             .map_err(|error| error.to_string())?;
         Ok(())
@@ -355,15 +496,16 @@ impl ChatService {
     pub(crate) fn get_settings(&self) -> Result<ChatSettings, String> {
         self.connection()?
             .query_row(
-                "SELECT provider, model, default_access, default_mode, atlas_visibility FROM chat_settings WHERE id = 1",
+                "SELECT provider, model, service_tier, default_access, default_mode, atlas_visibility FROM chat_settings WHERE id = 1",
                 [],
                 |row| {
                     Ok(ChatSettings {
                         provider: row.get(0)?,
                         model: row.get(1)?,
-                        default_access: VaultAccess::parse(&row.get::<_, String>(2)?),
-                        default_mode: ChatMode::parse(&row.get::<_, String>(3)?),
-                        atlas_visibility: row.get(4)?,
+                        service_tier: ChatServiceTier::parse(&row.get::<_, String>(2)?),
+                        default_access: VaultAccess::parse(&row.get::<_, String>(3)?),
+                        default_mode: ChatMode::parse(&row.get::<_, String>(4)?),
+                        atlas_visibility: row.get(5)?,
                     })
                 },
             )
@@ -380,8 +522,8 @@ impl ChatService {
         }
         self.connection()?
             .execute(
-                "UPDATE chat_settings SET provider = ?1, model = ?2, default_access = ?3, default_mode = ?4, atlas_visibility = ?5 WHERE id = 1",
-                params![settings.provider, model, settings.default_access.as_str(), settings.default_mode.as_str(), settings.atlas_visibility],
+                "UPDATE chat_settings SET provider = ?1, model = ?2, service_tier = ?3, default_access = ?4, default_mode = ?5, atlas_visibility = ?6 WHERE id = 1",
+                params![settings.provider, model, settings.service_tier.as_str(), settings.default_access.as_str(), settings.default_mode.as_str(), settings.atlas_visibility],
             )
             .map_err(|error| error.to_string())?;
         self.get_settings()
@@ -450,14 +592,23 @@ impl ChatService {
             .map_err(|error| error.to_string())?;
         let messages = load_messages(&connection, id)?;
         let excerpts = load_excerpts(&connection, id)?;
+        let projection_path = conversation_directory(&self.inner.notes_root, &summary)
+            .join("Conversation.md")
+            .to_string_lossy()
+            .into_owned();
         Ok(ChatConversation {
             summary,
             messages,
             excerpts,
+            projection_path,
         })
     }
 
-    pub(crate) fn rename_conversation(&self, id: &str, title: &str) -> Result<ChatConversation, String> {
+    pub(crate) fn rename_conversation(
+        &self,
+        id: &str,
+        title: &str,
+    ) -> Result<ChatConversation, String> {
         let title = title.trim();
         if title.is_empty() {
             return Err("A conversation title is required".to_string());
@@ -512,7 +663,9 @@ impl ChatService {
         }
         let conversation = self.get_conversation(conversation_id)?;
         if conversation.summary.detached {
-            return Err("Resolve the externally edited transcript before continuing this chat".to_string());
+            return Err(
+                "Resolve the externally edited transcript before continuing this chat".to_string(),
+            );
         }
         if conversation.summary.status == "archived" {
             return Err("Restore this archived conversation before continuing".to_string());
@@ -534,7 +687,14 @@ impl ChatService {
                 "INSERT INTO chat_messages
                  (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
                  VALUES (?1, ?2, ?3, 'user', 'complete', ?4, ?5, ?6)",
-                params![user_message_id, conversation_id, next_ordinal, content, part, to_i64(now)?],
+                params![
+                    user_message_id,
+                    conversation_id,
+                    next_ordinal,
+                    content,
+                    part,
+                    to_i64(now)?
+                ],
             )
             .map_err(|error| error.to_string())?;
         connection
@@ -542,7 +702,13 @@ impl ChatService {
                 "INSERT INTO chat_messages
                  (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
                  VALUES (?1, ?2, ?3, 'assistant', 'streaming', '', ?4, ?5)",
-                params![assistant_message_id, conversation_id, next_ordinal + 1, part, to_i64(now)?],
+                params![
+                    assistant_message_id,
+                    conversation_id,
+                    next_ordinal + 1,
+                    part,
+                    to_i64(now)?
+                ],
             )
             .map_err(|error| error.to_string())?;
         connection
@@ -627,7 +793,8 @@ impl ChatService {
                 let _ = self.refresh_continuation_summary(&conversation_id);
                 let _ = self.write_projection(&conversation_id, false);
                 for source in &all_sources {
-                    let mut source_payload = stream_payload(&request_id, &conversation_id, &message_id);
+                    let mut source_payload =
+                        stream_payload(&request_id, &conversation_id, &message_id);
                     source_payload.source = Some(source.clone());
                     event("chat://source", source_payload);
                 }
@@ -658,7 +825,14 @@ impl ChatService {
                 let mut payload = stream_payload(&request_id, &conversation_id, &message_id);
                 payload.content = Some(partial);
                 payload.error = Some(error);
-                event(if status == "cancelled" { "chat://cancelled" } else { "chat://failed" }, payload);
+                event(
+                    if status == "cancelled" {
+                        "chat://cancelled"
+                    } else {
+                        "chat://failed"
+                    },
+                    payload,
+                );
             }
         }
         if let Ok(mut requests) = self.inner.active_requests.lock() {
@@ -676,11 +850,13 @@ impl ChatService {
         cancelled: &AtomicBool,
         app: &AppHandle,
     ) -> Result<(String, Vec<ChatSource>), String> {
-        let api_key = read_api_key()?.ok_or_else(|| "Add an OpenAI API key in Settings".to_string())?;
+        let api_key =
+            read_api_key()?.ok_or_else(|| "Add an OpenAI API key in Settings".to_string())?;
         let settings = self.get_settings()?;
         let provider = provider_for(&settings.provider)?;
         let conversation = self.get_conversation(conversation_id)?;
-        let continuation_summary: String = self.connection()?
+        let continuation_summary: String = self
+            .connection()?
             .query_row(
                 "SELECT continuation_summary FROM chat_conversations WHERE id = ?1",
                 [conversation_id],
@@ -690,14 +866,38 @@ impl ChatService {
         let wants_web = conversation.summary.mode == ChatMode::Research || use_web_search;
         let capabilities = provider.capabilities();
         if !capabilities.streaming {
-            return Err(format!("Provider '{}' does not support streaming", provider.id()));
+            return Err(format!(
+                "Provider '{}' does not support streaming",
+                provider.id()
+            ));
         }
         if wants_web && !capabilities.web_search {
             return Err(format!("Provider '{}' cannot search the web; Research can continue with vault and supplied sources only", provider.id()));
         }
-        let (instructions, input) = build_provider_input(&conversation, context_sources, &continuation_summary);
-        let body = provider.request_body(&settings.model, instructions, input, wants_web);
-        let response = Client::new()
+        if settings.service_tier == ChatServiceTier::Flex && !capabilities.flex_processing {
+            return Err(format!(
+                "Provider '{}' does not support Flex processing",
+                provider.id()
+            ));
+        }
+        let (instructions, input) =
+            build_provider_input(&conversation, context_sources, &continuation_summary);
+        let body = provider.request_body(
+            &settings.model,
+            instructions,
+            input,
+            wants_web,
+            &settings.service_tier,
+        );
+        let client = if settings.service_tier == ChatServiceTier::Flex {
+            Client::builder()
+                .timeout(Duration::from_secs(15 * 60))
+                .build()
+                .map_err(|error| format!("Unable to configure OpenAI client: {error}"))?
+        } else {
+            Client::new()
+        };
+        let response = client
             .post(provider.endpoint())
             .bearer_auth(api_key)
             .json(&body)
@@ -707,7 +907,11 @@ impl ChatService {
         if !response.status().is_success() {
             let status = response.status();
             let detail = response.text().await.unwrap_or_default();
-            return Err(format_openai_error(status.as_u16(), &detail));
+            return Err(format_openai_error(
+                status.as_u16(),
+                &detail,
+                &settings.service_tier,
+            ));
         }
 
         let mut buffer = String::new();
@@ -738,15 +942,21 @@ impl ChatService {
                         if let Some(delta) = value.get("delta").and_then(Value::as_str) {
                             content.push_str(delta);
                             self.update_streaming_content(message_id, &content)?;
-                            let mut payload = stream_payload(request_id, conversation_id, message_id);
+                            let mut payload =
+                                stream_payload(request_id, conversation_id, message_id);
                             payload.delta = Some(delta.to_string());
                             let _ = app.emit("chat://text-delta", payload);
                         }
                     }
                     Some("response.output_text.annotation.added") => {
                         if let Some(source) = source_from_annotation(&value) {
-                            if source.url.as_ref().is_some_and(|url| seen_urls.insert(url.clone())) {
-                                let mut payload = stream_payload(request_id, conversation_id, message_id);
+                            if source
+                                .url
+                                .as_ref()
+                                .is_some_and(|url| seen_urls.insert(url.clone()))
+                            {
+                                let mut payload =
+                                    stream_payload(request_id, conversation_id, message_id);
                                 payload.source = Some(source.clone());
                                 let _ = app.emit("chat://source", payload);
                                 sources.push(source);
@@ -786,7 +996,9 @@ impl ChatService {
         sources: &[ChatSource],
     ) -> Result<(), String> {
         let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(|value| value.to_string())?;
+        let transaction = connection
+            .transaction()
+            .map_err(|value| value.to_string())?;
         transaction
             .execute(
                 "UPDATE chat_messages SET status = ?2, content = ?3, error = ?4 WHERE id = ?1",
@@ -794,7 +1006,10 @@ impl ChatService {
             )
             .map_err(|value| value.to_string())?;
         transaction
-            .execute("DELETE FROM chat_sources WHERE message_id = ?1", [message_id])
+            .execute(
+                "DELETE FROM chat_sources WHERE message_id = ?1",
+                [message_id],
+            )
             .map_err(|value| value.to_string())?;
         for source in sources {
             transaction
@@ -847,11 +1062,21 @@ impl ChatService {
                 |row| row.get(0),
             )
             .map_err(|error| error.to_string())?;
-        if start_offset >= end_offset || end_offset > content.len() || !content.is_char_boundary(start_offset) || !content.is_char_boundary(end_offset) {
+        if start_offset >= end_offset
+            || end_offset > content.len()
+            || !content.is_char_boundary(start_offset)
+            || !content.is_char_boundary(end_offset)
+        {
             return Err("Select a valid non-empty passage".to_string());
         }
         let quote = content[start_offset..end_offset].to_string();
-        self.insert_excerpt(conversation_id, message_id, start_offset, end_offset, &quote)
+        self.insert_excerpt(
+            conversation_id,
+            message_id,
+            start_offset,
+            end_offset,
+            &quote,
+        )
     }
 
     pub(crate) fn create_excerpt_from_selection(
@@ -928,10 +1153,18 @@ impl ChatService {
         self.get_excerpt(&id)
     }
 
-    pub(crate) fn set_excerpt_remembered(&self, id: &str, remembered: bool) -> Result<ChatExcerpt, String> {
+    pub(crate) fn set_excerpt_remembered(
+        &self,
+        id: &str,
+        remembered: bool,
+    ) -> Result<ChatExcerpt, String> {
         let connection = self.connection()?;
         let conversation_id: String = connection
-            .query_row("SELECT conversation_id FROM chat_excerpts WHERE id = ?1", [id], |row| row.get(0))
+            .query_row(
+                "SELECT conversation_id FROM chat_excerpts WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
             .map_err(|error| error.to_string())?;
         connection
             .execute(
@@ -968,7 +1201,10 @@ impl ChatService {
 
     pub(crate) fn revoke_note(&self, note_id: &str) -> Result<(), String> {
         self.connection()?
-            .execute("DELETE FROM chat_limited_grants WHERE note_id = ?1", [note_id])
+            .execute(
+                "DELETE FROM chat_limited_grants WHERE note_id = ?1",
+                [note_id],
+            )
             .map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -988,7 +1224,9 @@ impl ChatService {
     pub(crate) fn list_grants(&self) -> Result<Vec<ChatGrant>, String> {
         let connection = self.connection()?;
         let mut statement = connection
-            .prepare("SELECT note_id, title, granted_at_millis FROM chat_limited_grants ORDER BY title")
+            .prepare(
+                "SELECT note_id, title, granted_at_millis FROM chat_limited_grants ORDER BY title",
+            )
             .map_err(|error| error.to_string())?;
         let rows = statement
             .query_map([], |row| {
@@ -1016,7 +1254,11 @@ impl ChatService {
             if message.status != "complete" {
                 continue;
             }
-            let line = format!("{}: {}\n", message.role, compact_text(&message.content, 600));
+            let line = format!(
+                "{}: {}\n",
+                message.role,
+                compact_text(&message.content, 600)
+            );
             if summary.len() + line.len() > 8_000 {
                 break;
             }
@@ -1038,9 +1280,13 @@ impl ChatService {
     fn changed_projection_path(&self, conversation_id: &str) -> Result<Option<PathBuf>, String> {
         let connection = self.connection()?;
         let mut statement = connection
-            .prepare("SELECT path, content_hash FROM chat_projection_files WHERE conversation_id = ?1")
+            .prepare(
+                "SELECT path, content_hash FROM chat_projection_files WHERE conversation_id = ?1",
+            )
             .map_err(|error| error.to_string())?;
-        let mut rows = statement.query([conversation_id]).map_err(|error| error.to_string())?;
+        let mut rows = statement
+            .query([conversation_id])
+            .map_err(|error| error.to_string())?;
         while let Some(row) = rows.next().map_err(|error| error.to_string())? {
             let path = PathBuf::from(row.get::<_, String>(0).map_err(|error| error.to_string())?);
             let expected: String = row.get(1).map_err(|error| error.to_string())?;
@@ -1055,20 +1301,29 @@ impl ChatService {
         Ok(None)
     }
 
-    pub(crate) fn resolve_projection_conflict(&self, conversation_id: &str, action: &str) -> Result<Option<String>, String> {
+    pub(crate) fn resolve_projection_conflict(
+        &self,
+        conversation_id: &str,
+        action: &str,
+    ) -> Result<Option<String>, String> {
         if !self.projection_conflict(conversation_id)? && action != "restore" {
             return Ok(None);
         }
         let mut converted_path = None;
         if action == "convert" {
-            let source = self.changed_projection_path(conversation_id)?
+            let source = self
+                .changed_projection_path(conversation_id)?
                 .ok_or_else(|| "No externally changed projection was found".to_string())?;
             if !source.exists() {
-                return Err("The changed projection was deleted; restore the transcript instead".to_string());
+                return Err(
+                    "The changed projection was deleted; restore the transcript instead"
+                        .to_string(),
+                );
             }
             let content = fs::read_to_string(&source).map_err(|error| error.to_string())?;
             let editable_body = crate::note::strip_frontmatter(&content);
-            let (ordinary_note, _) = crate::note::prepare_note_markdown(&editable_body, None, None)?;
+            let (ordinary_note, _) =
+                crate::note::prepare_note_markdown(&editable_body, None, None)?;
             let target = unique_converted_note_path(&self.inner.notes_root, &editable_body);
             fs::write(&target, ordinary_note).map_err(|error| error.to_string())?;
             converted_path = Some(target.to_string_lossy().into_owned());
@@ -1076,20 +1331,91 @@ impl ChatService {
             return Err("Projection conflict action must be convert or restore".to_string());
         }
         self.connection()?
-            .execute("UPDATE chat_conversations SET detached = 0 WHERE id = ?1", [conversation_id])
+            .execute(
+                "UPDATE chat_conversations SET detached = 0 WHERE id = ?1",
+                [conversation_id],
+            )
             .map_err(|error| error.to_string())?;
         self.write_projection(conversation_id, true)?;
         Ok(converted_path)
     }
 
-    pub(crate) fn mark_projection_detached_if_needed(&self, conversation_id: &str) -> Result<bool, String> {
+    pub(crate) fn mark_projection_detached_if_needed(
+        &self,
+        conversation_id: &str,
+    ) -> Result<bool, String> {
         let conflict = self.projection_conflict(conversation_id)?;
         if conflict {
             self.connection()?
-                .execute("UPDATE chat_conversations SET detached = 1 WHERE id = ?1", [conversation_id])
+                .execute(
+                    "UPDATE chat_conversations SET detached = 1 WHERE id = ?1",
+                    [conversation_id],
+                )
                 .map_err(|error| error.to_string())?;
         }
         Ok(conflict)
+    }
+
+    pub(crate) fn projection_owner_for_path(&self, path: &Path) -> Result<Option<String>, String> {
+        self.connection()?
+            .query_row(
+                "SELECT conversation_id FROM chat_projection_files WHERE path = ?1 LIMIT 1",
+                [path.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn mark_projection_detached(&self, conversation_id: &str) -> Result<(), String> {
+        self.connection()?
+            .execute(
+                "UPDATE chat_conversations SET detached = 1 WHERE id = ?1",
+                [conversation_id],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub(crate) fn recall_document(
+        &self,
+        conversation_id: &str,
+    ) -> Result<ChatRecallDocument, String> {
+        let conversation = self.get_conversation(conversation_id)?;
+        let directory = conversation_directory(&self.inner.notes_root, &conversation.summary);
+        let excerpts = conversation
+            .excerpts
+            .iter()
+            .filter(|excerpt| excerpt.remembered)
+            .map(|excerpt| crate::semantic::indexer::ChatRecallExcerpt {
+                anchor: excerpt.anchor.clone(),
+                quote: excerpt.quote.clone(),
+            })
+            .collect();
+        Ok(ChatRecallDocument {
+            path: directory.join("Conversation.md"),
+            title: conversation.summary.title,
+            modified_millis: conversation.summary.updated_at_millis,
+            excerpts,
+        })
+    }
+
+    pub(crate) fn reconcile_semantic_recall(
+        &self,
+        semantic: &crate::semantic::SemanticState,
+    ) -> Result<(), String> {
+        let mut known_paths = HashSet::new();
+        for summary in self.list_conversations()? {
+            let recall = self.recall_document(&summary.id)?;
+            known_paths.insert(recall.path.clone());
+            semantic.queue_chat_recall_for_startup(
+                &recall.path,
+                recall.title,
+                recall.excerpts,
+                recall.modified_millis,
+            )?;
+        }
+        semantic.queue_orphaned_chat_recall_deletes_for_startup(&known_paths)
     }
 
     fn write_projection(&self, conversation_id: &str, force: bool) -> Result<(), String> {
@@ -1109,7 +1435,10 @@ impl ChatService {
                 format!(
                     "> {}\n> — [[{}#^{}|source]]\n^{}",
                     excerpt.quote.replace('\n', "\n> "),
-                    part_link(&directory, message_part(&conversation.messages, &excerpt.message_id)),
+                    part_link(
+                        &directory,
+                        message_part(&conversation.messages, &excerpt.message_id)
+                    ),
                     excerpt.anchor,
                     excerpt.anchor
                 )
@@ -1130,21 +1459,51 @@ impl ChatService {
             .join("\n");
         let index_body = format!(
             "{}\n\n# {}\n\n{}\n\n## Remembered passages\n\n{}\n",
-            projection_frontmatter("chatIndex", conversation_id, None, "PENDING"),
+            projection_frontmatter(
+                "chatIndex",
+                conversation_id,
+                None,
+                "PENDING",
+                conversation.summary.created_at_millis,
+            ),
             conversation.summary.title,
             part_links,
-            if remembered.is_empty() { "_Nothing remembered yet._" } else { &remembered }
+            if remembered.is_empty() {
+                "_Nothing remembered yet._"
+            } else {
+                &remembered
+            }
         );
-        write_projected_file(&self.connection()?, conversation_id, &index_path, &index_body)?;
+        write_projected_file(
+            &self.connection()?,
+            self.inner.projection_sink.as_ref(),
+            conversation_id,
+            &index_path,
+            &index_body,
+        )?;
 
         for part in sorted_parts {
             let mut body = format!(
                 "{}\n\n# {} · Part {part:03}\n",
-                projection_frontmatter("chatTranscript", conversation_id, Some(part), "PENDING"),
+                projection_frontmatter(
+                    "chatTranscript",
+                    conversation_id,
+                    Some(part),
+                    "PENDING",
+                    conversation.summary.created_at_millis,
+                ),
                 conversation.summary.title
             );
-            for message in conversation.messages.iter().filter(|message| message.part == part) {
-                let role = if message.role == "user" { "You" } else { "Thought partner" };
+            for message in conversation
+                .messages
+                .iter()
+                .filter(|message| message.part == part)
+            {
+                let role = if message.role == "user" {
+                    "You"
+                } else {
+                    "Thought partner"
+                };
                 let suffix = match message.status.as_str() {
                     "cancelled" => " · interrupted",
                     "error" => " · failed",
@@ -1153,22 +1512,35 @@ impl ChatService {
                 };
                 body.push_str(&format!(
                     "\n## {role}{suffix}\n\n{}\n\n^msg_{}\n",
-                    message.content,
-                    message.id
+                    message.content, message.id
                 ));
-                for excerpt in conversation.excerpts.iter().filter(|excerpt| excerpt.message_id == message.id) {
+                for excerpt in conversation
+                    .excerpts
+                    .iter()
+                    .filter(|excerpt| excerpt.message_id == message.id)
+                {
                     body.push_str(&format!("\n^{}\n", excerpt.anchor));
                 }
                 if !message.sources.is_empty() {
                     body.push_str("\nSources:\n");
                     for source in &message.sources {
-                        let target = source.url.clone().or_else(|| source.note_path.clone()).unwrap_or_default();
+                        let target = source
+                            .url
+                            .clone()
+                            .or_else(|| source.note_path.clone())
+                            .unwrap_or_default();
                         body.push_str(&format!("- [{}]({})\n", source.title, target));
                     }
                 }
             }
             let path = directory.join(format!("Part {part:03}.md"));
-            write_projected_file(&self.connection()?, conversation_id, &path, &body)?;
+            write_projected_file(
+                &self.connection()?,
+                self.inner.projection_sink.as_ref(),
+                conversation_id,
+                &path,
+                &body,
+            )?;
         }
         Ok(())
     }
@@ -1188,7 +1560,10 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatConversatio
     })
 }
 
-fn load_messages(connection: &Connection, conversation_id: &str) -> Result<Vec<ChatMessage>, String> {
+fn load_messages(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Vec<ChatMessage>, String> {
     let mut statement = connection
         .prepare(
             "SELECT id, conversation_id, ordinal, role, status, content, error, part, created_at_millis
@@ -1244,7 +1619,10 @@ fn load_sources(connection: &Connection, message_id: &str) -> Result<Vec<ChatSou
         .map_err(|error| error.to_string())
 }
 
-fn load_excerpts(connection: &Connection, conversation_id: &str) -> Result<Vec<ChatExcerpt>, String> {
+fn load_excerpts(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Vec<ChatExcerpt>, String> {
     let mut statement = connection
         .prepare(
             "SELECT id, conversation_id, message_id, start_offset, end_offset, quote, anchor, remembered
@@ -1319,8 +1697,14 @@ fn build_provider_input(
             )}]
         }));
     }
-    let start = conversation.messages.len().saturating_sub(MAX_RECENT_MESSAGES);
-    for message in conversation.messages[start..].iter().filter(|message| message.status == "complete") {
+    let start = conversation
+        .messages
+        .len()
+        .saturating_sub(MAX_RECENT_MESSAGES);
+    for message in conversation.messages[start..]
+        .iter()
+        .filter(|message| message.status == "complete")
+    {
         input.push(json!({
             "role": message.role,
             "content": [{
@@ -1340,7 +1724,13 @@ fn build_provider_input(
                     .map(|path| format!("[[{}]]", path.trim_end_matches(".md")))
                     .or_else(|| source.url.clone())
                     .unwrap_or_else(|| source.title.clone());
-                format!("[Source {}: {}] {}\n{}", index + 1, source.title, citation, source.excerpt)
+                format!(
+                    "[Source {}: {}] {}\n{}",
+                    index + 1,
+                    source.title,
+                    citation,
+                    source.excerpt
+                )
             })
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -1354,7 +1744,10 @@ fn build_provider_input(
 }
 
 fn trim_input_chars(input: &mut Vec<Value>, limit: usize) {
-    let mut total = input.iter().map(|value| value.to_string().len()).sum::<usize>();
+    let mut total = input
+        .iter()
+        .map(|value| value.to_string().len())
+        .sum::<usize>();
     while input.len() > 2 && total > limit {
         let removed = input.remove(0);
         total = total.saturating_sub(removed.to_string().len());
@@ -1380,25 +1773,41 @@ fn source_from_annotation(value: &Value) -> Option<ChatSource> {
     })
 }
 
-fn format_openai_error(status: u16, detail: &str) -> String {
+fn format_openai_error(status: u16, detail: &str, service_tier: &ChatServiceTier) -> String {
     let message = serde_json::from_str::<Value>(detail)
         .ok()
-        .and_then(|value| value.pointer("/error/message").and_then(Value::as_str).map(str::to_string))
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| compact_text(detail, 500));
     match status {
         401 => "The OpenAI API key was rejected".to_string(),
+        429 if service_tier == &ChatServiceTier::Flex => format!(
+            "OpenAI Flex capacity is temporarily unavailable: {message}. Try again later or switch processing to Standard in Settings."
+        ),
         429 => format!("OpenAI rate limit reached: {message}"),
         _ => format!("OpenAI request failed ({status}): {message}"),
     }
 }
 
-fn projection_frontmatter(kind: &str, chat_id: &str, part: Option<i64>, projection_hash: &str) -> String {
-    let part = part.map(|value| value.to_string()).unwrap_or_else(|| "null".to_string());
+fn projection_frontmatter(
+    kind: &str,
+    chat_id: &str,
+    part: Option<i64>,
+    projection_hash: &str,
+    created_at_millis: u64,
+) -> String {
+    let part = part
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "null".to_string());
     format!(
         "---\ngneauxghts:\n  id: {}\n  created_at: {}\n  updated_at: {}\n  trashed_at: null\n  kind: {}\n  chat_id: {}\n  part: {}\n  projection_hash: {}\n---",
         generate_stable_projection_id(chat_id, part.as_bytes()),
-        now_millis(),
-        now_millis(),
+        created_at_millis,
+        created_at_millis,
         kind,
         chat_id,
         part,
@@ -1406,10 +1815,16 @@ fn projection_frontmatter(kind: &str, chat_id: &str, part: Option<i64>, projecti
     )
 }
 
-fn write_projected_file(connection: &Connection, conversation_id: &str, path: &Path, body: &str) -> Result<(), String> {
+fn write_projected_file(
+    connection: &Connection,
+    sink: &dyn ChatProjectionSink,
+    conversation_id: &str,
+    path: &Path,
+    body: &str,
+) -> Result<(), String> {
     let body_without_pending = body.replace("projection_hash: PENDING", "projection_hash: managed");
-    fs::write(path, &body_without_pending).map_err(|error| error.to_string())?;
     let hash = content_hash(&body_without_pending);
+    sink.publish(path, &body_without_pending)?;
     connection
         .execute(
             "INSERT INTO chat_projection_files (conversation_id, path, content_hash)
@@ -1450,13 +1865,26 @@ fn part_link(_directory: &Path, part: i64) -> String {
 }
 
 fn message_part(messages: &[ChatMessage], id: &str) -> i64 {
-    messages.iter().find(|message| message.id == id).map(|message| message.part).unwrap_or(1)
+    messages
+        .iter()
+        .find(|message| message.id == id)
+        .map(|message| message.part)
+        .unwrap_or(1)
 }
 
 fn unique_converted_note_path(notes_root: &Path, content: &str) -> PathBuf {
-    let stem = content.lines().find_map(|line| line.strip_prefix("# ")).map(slugify).filter(|value| !value.is_empty()).unwrap_or_else(|| "Converted chat".to_string());
+    let stem = content
+        .lines()
+        .find_map(|line| line.strip_prefix("# "))
+        .map(slugify)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Converted chat".to_string());
     for suffix in 0.. {
-        let name = if suffix == 0 { format!("{stem}.md") } else { format!("{stem} {suffix}.md") };
+        let name = if suffix == 0 {
+            format!("{stem}.md")
+        } else {
+            format!("{stem} {suffix}.md")
+        };
         let path = notes_root.join(name);
         if !path.exists() {
             return path;
@@ -1559,7 +1987,14 @@ fn read_api_key() -> Result<Option<String>, String> {
         }
     }
     let output = Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"])
+        .args([
+            "find-generic-password",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            KEYCHAIN_ACCOUNT,
+            "-w",
+        ])
         .output()
         .map_err(|error| error.to_string())?;
     if !output.status.success() {
@@ -1571,7 +2006,9 @@ fn read_api_key() -> Result<Option<String>, String> {
 
 #[cfg(not(target_os = "macos"))]
 fn read_api_key() -> Result<Option<String>, String> {
-    Ok(std::env::var("OPENAI_API_KEY").ok().filter(|value| !value.trim().is_empty()))
+    Ok(std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty()))
 }
 
 #[cfg(target_os = "macos")]
@@ -1579,20 +2016,42 @@ pub(crate) fn set_api_key(value: &str) -> Result<(), String> {
     let value = value.trim();
     if value.is_empty() {
         let _ = Command::new("/usr/bin/security")
-            .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT])
+            .args([
+                "delete-generic-password",
+                "-s",
+                KEYCHAIN_SERVICE,
+                "-a",
+                KEYCHAIN_ACCOUNT,
+            ])
             .status();
         return Ok(());
     }
     let status = Command::new("/usr/bin/security")
-        .args(["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w", value])
+        .args([
+            "add-generic-password",
+            "-U",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            KEYCHAIN_ACCOUNT,
+            "-w",
+            value,
+        ])
         .status()
         .map_err(|error| error.to_string())?;
-    if status.success() { Ok(()) } else { Err("Unable to store the API key in macOS Keychain".to_string()) }
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Unable to store the API key in macOS Keychain".to_string())
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn set_api_key(_value: &str) -> Result<(), String> {
-    Err("Persistent API-key storage is not implemented on this platform; set OPENAI_API_KEY".to_string())
+    Err(
+        "Persistent API-key storage is not implemented on this platform; set OPENAI_API_KEY"
+            .to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -1609,13 +2068,103 @@ mod tests {
     }
 
     #[test]
+    fn openai_request_includes_flex_tier_only_when_selected() {
+        let provider = OpenAiResponsesProvider;
+        let standard = provider.request_body(
+            "test-model",
+            "instructions".to_string(),
+            Vec::new(),
+            false,
+            &ChatServiceTier::Standard,
+        );
+        assert!(standard.get("service_tier").is_none());
+
+        let flex = provider.request_body(
+            "test-model",
+            "instructions".to_string(),
+            Vec::new(),
+            false,
+            &ChatServiceTier::Flex,
+        );
+        assert_eq!(
+            flex.get("service_tier").and_then(Value::as_str),
+            Some("flex")
+        );
+    }
+
+    #[test]
+    fn flex_processing_setting_persists_per_vault() {
+        let (_root, service) = service("chat-flex-setting");
+        let mut settings = service.get_settings().expect("load defaults");
+        assert_eq!(settings.service_tier, ChatServiceTier::Standard);
+        settings.service_tier = ChatServiceTier::Flex;
+        let saved = service.set_settings(settings).expect("save flex setting");
+        assert_eq!(saved.service_tier, ChatServiceTier::Flex);
+        assert_eq!(
+            service
+                .get_settings()
+                .expect("reload flex setting")
+                .service_tier,
+            ChatServiceTier::Flex
+        );
+    }
+
+    #[test]
     fn conversations_persist_and_project_as_read_only_parts() {
         let (_root, service) = service("chat-persist");
-        let conversation = service.create_conversation(Some("Planning".into()), None, None).unwrap();
+        let conversation = service
+            .create_conversation(Some("Planning".into()), None, None)
+            .unwrap();
         let loaded = service.get_conversation(&conversation.summary.id).unwrap();
         assert_eq!(loaded.summary.title, "Planning");
-        let paths = service.connection().unwrap().prepare("SELECT path FROM chat_projection_files").unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+        let paths = service
+            .connection()
+            .unwrap()
+            .prepare("SELECT path FROM chat_projection_files")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert!(paths.iter().any(|path| path.ends_with("Conversation.md")));
+    }
+
+    #[test]
+    fn adding_a_message_to_an_existing_part_does_not_rewrite_conversation_index() {
+        let (_root, service) = service("chat-projection-index-stable");
+        let conversation = service
+            .create_conversation(Some("Stable".into()), None, None)
+            .unwrap();
+        let connection = service.connection().unwrap();
+        connection.execute(
+            "INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+             VALUES ('m1', ?1, 1, 'user', 'complete', 'first', 1, 1)",
+            [&conversation.summary.id],
+        ).unwrap();
+        drop(connection);
+        service
+            .write_projection(&conversation.summary.id, false)
+            .unwrap();
+        let index_path = PathBuf::from(
+            service
+                .get_conversation(&conversation.summary.id)
+                .unwrap()
+                .projection_path,
+        );
+        let first_modified = fs::metadata(&index_path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        service.connection().unwrap().execute(
+            "INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+             VALUES ('m2', ?1, 2, 'assistant', 'complete', 'second', 1, 2)",
+            [&conversation.summary.id],
+        ).unwrap();
+        service
+            .write_projection(&conversation.summary.id, false)
+            .unwrap();
+        assert_eq!(
+            fs::metadata(index_path).unwrap().modified().unwrap(),
+            first_modified
+        );
     }
 
     #[test]
@@ -1624,9 +2173,16 @@ mod tests {
         let conversation = service.create_conversation(None, None, None).unwrap();
         let connection = service.connection().unwrap();
         connection.execute("INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis) VALUES ('m1', ?1, 1, 'assistant', 'complete', 'hello world', 1, 1)", [&conversation.summary.id]).unwrap();
-        let excerpt = service.create_excerpt(&conversation.summary.id, "m1", 0, 5).unwrap();
+        let excerpt = service
+            .create_excerpt(&conversation.summary.id, "m1", 0, 5)
+            .unwrap();
         assert!(!excerpt.remembered);
-        assert!(service.set_excerpt_remembered(&excerpt.id, true).unwrap().remembered);
+        assert!(
+            service
+                .set_excerpt_remembered(&excerpt.id, true)
+                .unwrap()
+                .remembered
+        );
     }
 
     #[test]
@@ -1662,13 +2218,18 @@ mod tests {
         for ordinal in 1..=MAX_PART_MESSAGES {
             connection.execute("INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis) VALUES (?1, ?2, ?3, 'user', 'complete', 'x', 1, 1)", params![format!("m{ordinal}"), conversation.summary.id, ordinal]).unwrap();
         }
-        assert_eq!(choose_part(&connection, &conversation.summary.id).unwrap(), 2);
+        assert_eq!(
+            choose_part(&connection, &conversation.summary.id).unwrap(),
+            2
+        );
     }
 
     #[test]
     fn conflict_conversion_preserves_edit_as_an_ordinary_note_then_restores_projection() {
         let (_root, service) = service("chat-conflict-convert");
-        let conversation = service.create_conversation(Some("Edited chat".into()), None, None).unwrap();
+        let conversation = service
+            .create_conversation(Some("Edited chat".into()), None, None)
+            .unwrap();
         let projection: String = service.connection().unwrap().query_row(
             "SELECT path FROM chat_projection_files WHERE conversation_id = ?1 AND path LIKE '%Conversation.md'",
             [&conversation.summary.id],
@@ -1677,10 +2238,18 @@ mod tests {
         let original = fs::read_to_string(&projection).unwrap();
         fs::write(&projection, format!("{original}\nUser-added thought\n")).unwrap();
 
-        let converted = service.resolve_projection_conflict(&conversation.summary.id, "convert").unwrap().unwrap();
+        let converted = service
+            .resolve_projection_conflict(&conversation.summary.id, "convert")
+            .unwrap()
+            .unwrap();
         let converted_markdown = fs::read_to_string(converted).unwrap();
-        assert_eq!(crate::note::document_kind(&converted_markdown), crate::note::DocumentKind::Note);
+        assert_eq!(
+            crate::note::document_kind(&converted_markdown),
+            crate::note::DocumentKind::Note
+        );
         assert!(converted_markdown.contains("User-added thought"));
-        assert!(!fs::read_to_string(projection).unwrap().contains("User-added thought"));
+        assert!(!fs::read_to_string(projection)
+            .unwrap()
+            .contains("User-added thought"));
     }
 }

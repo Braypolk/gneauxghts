@@ -147,6 +147,7 @@
             conversationId={viewModel.chatConversationId}
             draftSeed={viewModel.chatDraftSeed}
             contextNote={viewModel.chatContextNote}
+            targetAnchor={viewModel.chatTargetAnchor}
             variant="pane"
             selectionActions={viewModel.chatSelectionActions}
             onConversationChange={viewModel.onChatConversationChange}

@@ -1,7 +1,7 @@
 use crate::{
     index::{FileSignature, IndexedNote},
-    search::{build_search_preview, NoteSearchResult, ScoredSearchResult, TextRange},
     note::DocumentKind,
+    search::{build_search_preview, NoteSearchResult, ScoredSearchResult, TextRange},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -246,9 +246,10 @@ impl LexicalIndex {
                 result: NoteSearchResult {
                     note_id: Some(string_value(&document, self.fields.note_id)?),
                     note_path: Some(note_path),
-                    document_kind: DocumentKind::from_frontmatter_value(
-                        &string_value(&document, self.fields.document_kind)?,
-                    ),
+                    document_kind: DocumentKind::from_frontmatter_value(&string_value(
+                        &document,
+                        self.fields.document_kind,
+                    )?),
                     file_name: string_value(&document, self.fields.file_name)?,
                     section_label,
                     excerpt,
@@ -259,6 +260,7 @@ impl LexicalIndex {
                     semantic_score: None,
                     start_line: None,
                     end_line: None,
+                    block_anchor: None,
                 },
             });
         }

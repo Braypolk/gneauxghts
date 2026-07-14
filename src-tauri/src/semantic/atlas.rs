@@ -9,6 +9,7 @@ use super::{
     ActiveSemanticState,
 };
 use crate::index::normalize_search_text;
+use crate::note::DocumentKind;
 use crate::state::{effective_open_count, NoteActivity};
 use crate::time::current_time_millis;
 use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore};
@@ -66,12 +67,67 @@ pub(crate) struct AtlasNoteMetadata {
     pub(crate) title: String,
     pub(crate) preview: String,
     pub(crate) tags: Vec<String>,
+    pub(crate) document_kind: DocumentKind,
+    pub(crate) modified_millis: u64,
 }
+
+const NAVIGATION_ONLY_CONTENT_HASH_PREFIX: &str = "navigation-only:";
 
 #[derive(Clone, Debug)]
 pub(crate) struct AtlasHardLink {
     pub(crate) source_note_path: String,
     pub(crate) target_note_path: String,
+}
+
+/// Apply the caller's visibility policy to durable semantic rows, then add a
+/// lightweight conversation node for chat indexes that are visible only by
+/// navigation/wikilink structure. The placeholder vector is deterministic and
+/// derived from the path—not transcript content—and is never persisted to the
+/// semantic database.
+fn visible_atlas_notes(
+    mut indexed: Vec<StoredAtlasNoteEmbedding>,
+    metadata: &HashMap<String, AtlasNoteMetadata>,
+    dimensions: usize,
+) -> Vec<StoredAtlasNoteEmbedding> {
+    indexed.retain(|note| metadata.contains_key(&note.note_path));
+    let mut indexed_paths = indexed
+        .iter()
+        .map(|note| note.note_path.clone())
+        .collect::<HashSet<_>>();
+    let dimensions = indexed
+        .first()
+        .map(|note| note.embedding.len())
+        .filter(|value| *value > 0)
+        .unwrap_or(dimensions.max(1));
+
+    for meta in metadata.values() {
+        if meta.document_kind != DocumentKind::ChatIndex
+            || !indexed_paths.insert(meta.note_path.clone())
+        {
+            continue;
+        }
+        indexed.push(StoredAtlasNoteEmbedding {
+            note_path: meta.note_path.clone(),
+            note_title: meta.title.clone(),
+            modified_millis: meta.modified_millis,
+            content_hash: format!("{NAVIGATION_ONLY_CONTENT_HASH_PREFIX}{}", meta.note_path),
+            created_at: String::new(),
+            updated_at: String::new(),
+            embedding: navigation_only_embedding(&meta.note_path, dimensions),
+        });
+    }
+    indexed.sort_by(|left, right| left.note_path.cmp(&right.note_path));
+    indexed
+}
+
+fn navigation_only_embedding(path: &str, dimensions: usize) -> Vec<f32> {
+    let mut embedding = vec![0.0; dimensions.max(1)];
+    let digest = blake3::hash(path.as_bytes());
+    for (offset, byte) in digest.as_bytes().iter().take(4).enumerate() {
+        let index = ((*byte as usize) + offset * 67) % embedding.len();
+        embedding[index] += 1.0 / (offset as f32 + 1.0);
+    }
+    embedding
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -127,6 +183,7 @@ pub(crate) struct AtlasNode {
     pub(crate) note_path: String,
     pub(crate) title: String,
     pub(crate) file_name: String,
+    pub(crate) document_kind: DocumentKind,
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) drift_x: f32,
@@ -274,8 +331,14 @@ type EdgeAdjacency = HashMap<String, Vec<usize>>;
 fn build_edge_adjacency(edges: &[LayoutEdge]) -> EdgeAdjacency {
     let mut adjacency = EdgeAdjacency::new();
     for (index, edge) in edges.iter().enumerate() {
-        adjacency.entry(edge.source_id.clone()).or_default().push(index);
-        adjacency.entry(edge.target_id.clone()).or_default().push(index);
+        adjacency
+            .entry(edge.source_id.clone())
+            .or_default()
+            .push(index);
+        adjacency
+            .entry(edge.target_id.clone())
+            .or_default()
+            .push(index);
     }
     adjacency
 }
@@ -310,7 +373,11 @@ impl ActiveSemanticState {
     ) -> Result<VaultAtlasResponse, String> {
         let mut connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
-        let indexed_notes = load_atlas_note_embeddings(&connection)?;
+        let indexed_notes = visible_atlas_notes(
+            load_atlas_note_embeddings(&connection)?,
+            &metadata,
+            self.provider.model_info().dimensions,
+        );
         if indexed_notes.is_empty() {
             return Ok(empty_atlas(
                 "empty",
@@ -461,6 +528,10 @@ impl ActiveSemanticState {
                     note_path: node.note_path.clone(),
                     title: node.title.clone(),
                     file_name: node.file_name.clone(),
+                    document_kind: metadata
+                        .get(&node.note_path)
+                        .map(|meta| meta.document_kind)
+                        .unwrap_or_default(),
                     x: node.x,
                     y: node.y,
                     drift_x: drift.0,
@@ -569,7 +640,11 @@ impl ActiveSemanticState {
 
         let connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
-        let indexed_notes = load_atlas_note_embeddings(&connection)?;
+        let indexed_notes = visible_atlas_notes(
+            load_atlas_note_embeddings(&connection)?,
+            &metadata,
+            self.provider.model_info().dimensions,
+        );
         if indexed_notes.is_empty() {
             return Ok(AtlasSearchResponse {
                 status: "empty".to_string(),
@@ -607,10 +682,17 @@ impl ActiveSemanticState {
                     .unwrap_or(fallback_file_name.as_str());
                 let preview = meta.map(|item| item.preview.as_str()).unwrap_or("");
                 let tags = meta.map_or(&[] as &[String], |item| item.tags.as_slice());
-                let semantic_score = query_embedding
-                    .as_ref()
-                    .map(|embedding| cosine_similarity(embedding, &note.embedding).max(0.0))
-                    .unwrap_or(0.0);
+                let semantic_score = if note
+                    .content_hash
+                    .starts_with(NAVIGATION_ONLY_CONTENT_HASH_PREFIX)
+                {
+                    0.0
+                } else {
+                    query_embedding
+                        .as_ref()
+                        .map(|embedding| cosine_similarity(embedding, &note.embedding).max(0.0))
+                        .unwrap_or(0.0)
+                };
                 let lexical_score = lexical_note_score(
                     &terms,
                     &[title, file_name, note.note_path.as_str(), preview],
@@ -625,9 +707,7 @@ impl ActiveSemanticState {
                     tags,
                 );
                 let note_id = meta.and_then(|item| item.note_id.clone());
-                let activity = note_id
-                    .as_ref()
-                    .and_then(|id| activity_by_note_id.get(id));
+                let activity = note_id.as_ref().and_then(|id| activity_by_note_id.get(id));
                 let last_viewed = activity.map(|item| item.last_viewed_at_millis);
                 let open_count = activity.map(|item| item.open_count).unwrap_or(0);
                 let recency_score = recency_score(
@@ -775,10 +855,7 @@ fn hydrate_atlas_from_snapshot(
                 .as_ref()
                 .and_then(|id| activity_by_note_id.get(id))
                 .map(|activity| activity.last_viewed_at_millis);
-            let stale = stale_score(
-                last_viewed.unwrap_or(indexed.modified_millis),
-                max_modified,
-            );
+            let stale = stale_score(last_viewed.unwrap_or(indexed.modified_millis), max_modified);
             let drift = drift_position(node.x, node.y, stale);
             Some(AtlasNode {
                 id: node.note_path.clone(),
@@ -791,6 +868,7 @@ fn hydrate_atlas_from_snapshot(
                 file_name: meta
                     .map(|item| item.file_name.clone())
                     .unwrap_or_else(|| file_name_for_path(&node.note_path)),
+                document_kind: meta.map(|item| item.document_kind).unwrap_or_default(),
                 x: node.x,
                 y: node.y,
                 drift_x: drift.0,
@@ -1837,8 +1915,7 @@ fn promote_mature_subclouds(
             0.0
         };
         let should_promote = mature.len() >= 2
-            && (group.len() >= TOP_CLOUD_SOFT_MAX
-                || separation >= CHILD_PARTITION_SEPARATION_MIN);
+            && (group.len() >= TOP_CLOUD_SOFT_MAX || separation >= CHILD_PARTITION_SEPARATION_MIN);
 
         if !should_promote {
             promoted.push(TopGroupPartition {
@@ -1934,7 +2011,8 @@ fn group_affinity(
             if !other_set.contains(neighbor) {
                 continue;
             }
-            let crosses = (left_set.contains(&edge.source_id) && right_set.contains(&edge.target_id))
+            let crosses = (left_set.contains(&edge.source_id)
+                && right_set.contains(&edge.target_id))
                 || (left_set.contains(&edge.target_id) && right_set.contains(&edge.source_id));
             if !crosses {
                 continue;
@@ -2023,7 +2101,8 @@ fn detect_child_communities(
         target_size,
         max_groups,
     );
-    if groups.len() < 2 || partition_separation(&groups, edges, adjacency) < CHILD_PARTITION_SEPARATION_MIN
+    if groups.len() < 2
+        || partition_separation(&groups, edges, adjacency) < CHILD_PARTITION_SEPARATION_MIN
     {
         return Vec::new();
     }
@@ -2044,7 +2123,8 @@ fn detect_child_communities(
         }
         groups[index] = retained;
         for loose_id in loose {
-            let target = strongest_group_index(&[loose_id.clone()], &groups, nodes, edges, adjacency);
+            let target =
+                strongest_group_index(&[loose_id.clone()], &groups, nodes, edges, adjacency);
             if node_internal_affinity(&loose_id, &groups[target], edges, adjacency) >= 0.5 {
                 groups[target].push(loose_id);
                 groups[target].sort();
@@ -2989,7 +3069,12 @@ fn apply_disc_repulsion(
     if members.len() <= DISC_LAYOUT_FULL_PAIR_MAX {
         for left_offset in 0..members.len() {
             for right_offset in (left_offset + 1)..members.len() {
-                apply_disc_pair_repulsion(nodes, members[left_offset], members[right_offset], deltas);
+                apply_disc_pair_repulsion(
+                    nodes,
+                    members[left_offset],
+                    members[right_offset],
+                    deltas,
+                );
             }
         }
         return;
@@ -3412,9 +3497,7 @@ fn label_terms(text: &str) -> Vec<String> {
     text.split(|character: char| !character.is_alphanumeric())
         .map(|word| word.trim().to_lowercase())
         .filter(|word| {
-            word.len() >= 3
-                && word.chars().any(char::is_alphabetic)
-                && !is_stop_word(word)
+            word.len() >= 3 && word.chars().any(char::is_alphabetic) && !is_stop_word(word)
         })
         .collect()
 }
@@ -3437,10 +3520,7 @@ fn fallback_cloud_label(nodes: &[&WorkingNode], density: f32) -> (Option<String>
         })
         .filter(|label| !label.is_empty())
         .unwrap_or_else(|| "Cluster".to_string());
-    (
-        Some(fallback),
-        (0.18 + density * 0.2).clamp(0.12, 0.36),
-    )
+    (Some(fallback), (0.18 + density * 0.2).clamp(0.12, 0.36))
 }
 
 fn parse_rfc3339_millis(value: &str) -> Option<u64> {
@@ -3646,39 +3726,39 @@ fn parent_folder(note_path: &str) -> String {
 fn is_stop_word(word: &str) -> bool {
     is_phrase_filler_word(word)
         || matches!(
-        word,
-        "basic"
-            | "day"
-            | "details"
-            | "draft"
-            | "drafts"
-            | "here"
-            | "idea"
-            | "ideas"
-            | "item"
-            | "items"
-            | "list"
-            | "lists"
-            | "note"
-            | "notes"
-            | "plan"
-            | "project"
-            | "meeting"
-            | "misc"
-            | "overview"
-            | "research"
-            | "report"
-            | "reports"
-            | "setup"
-            | "summary"
-            | "thing"
-            | "things"
-            | "today"
-            | "untitled"
-            | "update"
-            | "updates"
-            | "year"
-    )
+            word,
+            "basic"
+                | "day"
+                | "details"
+                | "draft"
+                | "drafts"
+                | "here"
+                | "idea"
+                | "ideas"
+                | "item"
+                | "items"
+                | "list"
+                | "lists"
+                | "note"
+                | "notes"
+                | "plan"
+                | "project"
+                | "meeting"
+                | "misc"
+                | "overview"
+                | "research"
+                | "report"
+                | "reports"
+                | "setup"
+                | "summary"
+                | "thing"
+                | "things"
+                | "today"
+                | "untitled"
+                | "update"
+                | "updates"
+                | "year"
+        )
 }
 
 fn is_phrase_filler_word(word: &str) -> bool {
@@ -3851,7 +3931,10 @@ mod tests {
         assert_eq!(completed.len(), 4);
         for (index, row) in completed.iter().enumerate() {
             assert_eq!(row.len(), 2, "row {index} should stay complete");
-            let mut got = row.iter().map(|neighbor| neighbor.index).collect::<Vec<_>>();
+            let mut got = row
+                .iter()
+                .map(|neighbor| neighbor.index)
+                .collect::<Vec<_>>();
             let mut expected = knn_rows[index]
                 .iter()
                 .map(|neighbor| neighbor.index)
@@ -3868,6 +3951,74 @@ mod tests {
         assert!(umap_iterations_for_note_count(10_000) <= UMAP_ITERATIONS_MAX);
         assert!(umap_iterations_for_note_count(400) < UMAP_ITERATIONS_MAX);
         assert!(umap_iterations_for_note_count(400) > umap_iterations_for_note_count(16));
+    }
+
+    #[test]
+    fn atlas_visibility_filters_hidden_chat_rows_and_adds_navigation_only_chats() {
+        let stored = vec![
+            StoredAtlasNoteEmbedding {
+                note_path: "/vault/note.md".to_string(),
+                note_title: "Note".to_string(),
+                modified_millis: 1,
+                content_hash: "note-hash".to_string(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                embedding: vec![1.0, 0.0, 0.0],
+            },
+            StoredAtlasNoteEmbedding {
+                note_path: "/vault/Chats/remembered/Conversation.md".to_string(),
+                note_title: "Remembered".to_string(),
+                modified_millis: 1,
+                content_hash: "recall-hash".to_string(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                embedding: vec![0.0, 1.0, 0.0],
+            },
+        ];
+        let note_meta = AtlasNoteMetadata {
+            note_id: Some("note".to_string()),
+            note_path: "/vault/note.md".to_string(),
+            file_name: "note.md".to_string(),
+            title: "Note".to_string(),
+            preview: String::new(),
+            tags: Vec::new(),
+            document_kind: DocumentKind::Note,
+            modified_millis: 1,
+        };
+        let hidden = visible_atlas_notes(
+            stored.clone(),
+            &HashMap::from([(note_meta.note_path.clone(), note_meta.clone())]),
+            3,
+        );
+        assert_eq!(hidden.len(), 1);
+        assert_eq!(hidden[0].note_path, "/vault/note.md");
+
+        let chat_meta = AtlasNoteMetadata {
+            note_id: Some("chat".to_string()),
+            note_path: "/vault/Chats/new/Conversation.md".to_string(),
+            file_name: "Conversation.md".to_string(),
+            title: "New chat".to_string(),
+            preview: String::new(),
+            tags: Vec::new(),
+            document_kind: DocumentKind::ChatIndex,
+            modified_millis: 2,
+        };
+        let all = visible_atlas_notes(
+            stored,
+            &HashMap::from([
+                (note_meta.note_path.clone(), note_meta),
+                (chat_meta.note_path.clone(), chat_meta),
+            ]),
+            3,
+        );
+        assert_eq!(all.len(), 2);
+        let chat = all
+            .iter()
+            .find(|note| note.note_title == "New chat")
+            .expect("navigation-only chat");
+        assert!(chat
+            .content_hash
+            .starts_with(NAVIGATION_ONLY_CONTENT_HASH_PREFIX));
     }
 
     #[test]
@@ -4196,11 +4347,7 @@ mod tests {
                 node.centrality = 0.5;
                 nodes.push(node);
                 if ordinal > 0 {
-                    edges.push(test_edge(
-                        &format!("s{topic}-{:02}", ordinal - 1),
-                        &id,
-                        0.9,
-                    ));
+                    edges.push(test_edge(&format!("s{topic}-{:02}", ordinal - 1), &id, 0.9));
                 }
                 if ordinal > 1 {
                     edges.push(test_edge(
@@ -4235,18 +4382,10 @@ mod tests {
                 node.centrality = if ordinal == 0 { 1.0 } else { 0.4 };
                 nodes.push(node);
                 if ordinal > 0 {
-                    edges.push(test_edge(
-                        &format!("t{topic}-{:02}", ordinal - 1),
-                        &id,
-                        0.9,
-                    ));
+                    edges.push(test_edge(&format!("t{topic}-{:02}", ordinal - 1), &id, 0.9));
                 }
                 if ordinal > 1 {
-                    edges.push(test_edge(
-                        &format!("t{topic}-{:02}", ordinal - 2),
-                        &id,
-                        0.8,
-                    ));
+                    edges.push(test_edge(&format!("t{topic}-{:02}", ordinal - 2), &id, 0.8));
                 }
             }
         }

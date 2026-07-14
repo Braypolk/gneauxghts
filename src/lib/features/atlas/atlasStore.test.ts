@@ -16,6 +16,7 @@ function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10
     notePath: `/vault/${id}.md`,
     title: id,
     fileName: `${id}.md`,
+    documentKind: 'note',
     x,
     y,
     driftX,

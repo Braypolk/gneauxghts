@@ -8,7 +8,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, collections::HashSet, fs};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +118,7 @@ pub(crate) fn chat_send_message(
     state: State<'_, AppState>,
     request: SendMessageRequest,
 ) -> Result<ChatRequestAccepted, String> {
+    let _foreground_guard = state.foreground_guard();
     let conversation = service.get_conversation(&request.conversation_id)?;
     let sources = build_context_sources(&service, &state, &conversation, &request.content)?;
     service.begin_request(
@@ -145,12 +146,15 @@ pub(crate) fn chat_retry_message(
     conversation_id: String,
     message_id: String,
 ) -> Result<ChatRequestAccepted, String> {
+    let _foreground_guard = state.foreground_guard();
     let conversation = service.get_conversation(&conversation_id)?;
     let assistant = conversation
         .messages
         .iter()
         .find(|message| message.id == message_id && message.role == "assistant")
-        .ok_or_else(|| "Only failed or interrupted assistant messages can be retried".to_string())?;
+        .ok_or_else(|| {
+            "Only failed or interrupted assistant messages can be retried".to_string()
+        })?;
     if assistant.status != "error" && assistant.status != "cancelled" {
         return Err("Only failed or interrupted assistant messages can be retried".to_string());
     }
@@ -195,18 +199,63 @@ pub(crate) fn chat_create_excerpt(
 
 #[tauri::command]
 pub(crate) fn chat_remember_excerpt(
+    app: AppHandle,
     service: State<'_, ChatService>,
+    state: State<'_, AppState>,
     excerpt_id: String,
 ) -> Result<ChatExcerpt, String> {
-    service.set_excerpt_remembered(&excerpt_id, true)
+    let _foreground_guard = state.foreground_guard();
+    let excerpt = service.set_excerpt_remembered(&excerpt_id, true)?;
+    sync_chat_recall(&service, &state, &excerpt.conversation_id)?;
+    crate::commands::emit_semantic_status_changed(&app, &state);
+    emit_chat_recall_changed(&app, &service, &excerpt.conversation_id)?;
+    Ok(excerpt)
 }
 
 #[tauri::command]
 pub(crate) fn chat_unremember_excerpt(
+    app: AppHandle,
     service: State<'_, ChatService>,
+    state: State<'_, AppState>,
     excerpt_id: String,
 ) -> Result<ChatExcerpt, String> {
-    service.set_excerpt_remembered(&excerpt_id, false)
+    let _foreground_guard = state.foreground_guard();
+    let excerpt = service.set_excerpt_remembered(&excerpt_id, false)?;
+    sync_chat_recall(&service, &state, &excerpt.conversation_id)?;
+    crate::commands::emit_semantic_status_changed(&app, &state);
+    emit_chat_recall_changed(&app, &service, &excerpt.conversation_id)?;
+    Ok(excerpt)
+}
+
+fn sync_chat_recall(
+    service: &ChatService,
+    state: &AppState,
+    conversation_id: &str,
+) -> Result<(), String> {
+    let recall = service.recall_document(conversation_id)?;
+    state.semantic.queue_chat_recall(
+        &recall.path,
+        recall.title,
+        recall.excerpts,
+        recall.modified_millis,
+    )
+}
+
+fn emit_chat_recall_changed(
+    app: &AppHandle,
+    service: &ChatService,
+    conversation_id: &str,
+) -> Result<(), String> {
+    if let Some(app_data) = app.try_state::<crate::app::AppData>() {
+        app_data.events.vault_document_changed(
+            &service.recall_document(conversation_id)?.path,
+            false,
+            DocumentKind::ChatIndex,
+            "chatRecall",
+            Some(conversation_id.to_string()),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -240,11 +289,23 @@ pub(crate) fn chat_revoke_note(
 
 #[tauri::command]
 pub(crate) fn chat_resolve_projection_conflict(
+    app: AppHandle,
     service: State<'_, ChatService>,
     conversation_id: String,
     action: String,
 ) -> Result<Option<String>, String> {
-    service.resolve_projection_conflict(&conversation_id, &action)
+    let converted = service.resolve_projection_conflict(&conversation_id, &action)?;
+    if let Some(app_data) = app.try_state::<crate::app::AppData>() {
+        let projection = service.recall_document(&conversation_id)?.path;
+        app_data.events.vault_document_changed(
+            &projection,
+            false,
+            DocumentKind::ChatIndex,
+            "chatProjectionConflictResolved",
+            Some(conversation_id),
+        );
+    }
+    Ok(converted)
 }
 
 fn build_context_sources(
@@ -274,7 +335,10 @@ fn build_context_sources(
         .entries
         .iter()
         .filter_map(|(path, indexed)| {
-            if allowed.as_ref().is_some_and(|ids| !ids.contains(&indexed.note_id)) {
+            if allowed
+                .as_ref()
+                .is_some_and(|ids| !ids.contains(&indexed.note_id))
+            {
                 return None;
             }
             let markdown = fs::read_to_string(path).ok()?;
@@ -294,17 +358,26 @@ fn build_context_sources(
             let score = if query_terms.is_empty() {
                 1
             } else {
-                query_terms.iter().filter(|term| haystack.contains(term.as_str())).count()
+                query_terms
+                    .iter()
+                    .filter(|term| haystack.contains(term.as_str()))
+                    .count()
             };
             if score == 0 && allowed.is_none() {
                 return None;
             }
-            Some((score, path.clone(), indexed.note_id.clone(), indexed.title.clone(), markdown))
+            Some((
+                score,
+                path.clone(),
+                indexed.note_id.clone(),
+                indexed.title.clone(),
+                markdown,
+            ))
         })
         .collect::<Vec<_>>();
     candidates.sort_by_key(|(score, ..)| Reverse(*score));
     candidates.truncate(8);
-    Ok(candidates
+    let mut sources = candidates
         .into_iter()
         .map(|(_, path, note_id, title, markdown)| ChatSource {
             kind: "note".to_string(),
@@ -315,11 +388,46 @@ fn build_context_sources(
                 .to_str()
                 .map(str::to_string),
             title,
-            excerpt: note::strip_frontmatter(&markdown).chars().take(4_000).collect(),
+            excerpt: note::strip_frontmatter(&markdown)
+                .chars()
+                .take(4_000)
+                .collect(),
             url: None,
             anchor: None,
         })
-        .collect())
+        .collect::<Vec<_>>();
+    drop(index);
+
+    if conversation.summary.access == VaultAccess::Full {
+        let current_projection = service
+            .recall_document(&conversation.summary.id)
+            .ok()
+            .map(|recall| recall.path.to_string_lossy().into_owned());
+        for recalled in
+            state
+                .semantic
+                .semantic_matches_for_text(query, current_projection.as_deref(), 8)?
+        {
+            if recalled.document_kind != DocumentKind::ChatIndex {
+                continue;
+            }
+            let path = std::path::PathBuf::from(&recalled.note_path);
+            sources.push(ChatSource {
+                kind: "note".to_string(),
+                note_id: None,
+                note_path: path
+                    .strip_prefix(&service_notes_root(service))
+                    .unwrap_or(&path)
+                    .to_str()
+                    .map(str::to_string),
+                title: recalled.note_title,
+                excerpt: recalled.match_text,
+                url: None,
+                anchor: recalled.block_anchor,
+            });
+        }
+    }
+    Ok(sources)
 }
 
 fn service_notes_root(_service: &ChatService) -> std::path::PathBuf {

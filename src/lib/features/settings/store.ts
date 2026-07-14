@@ -524,7 +524,8 @@ export function createSettingsStore() {
 
   async function initialize() {
     await Promise.all([loadSemanticState(), loadForgottenNotes()]);
-    vaultNoteChangeUnlisten = await listen("vault-note-changed", () => {
+    vaultNoteChangeUnlisten = await listen<{ documentKind?: string }>("vault-note-changed", ({ payload }) => {
+      if (payload.documentKind && payload.documentKind !== "note") return;
       scheduleVaultChangeRefresh();
     });
     // Backend pushes `semantic-status-changed` after mutations (settings

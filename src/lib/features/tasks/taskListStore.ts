@@ -401,6 +401,7 @@ export function createTaskListStore() {
         }
       });
       disposeVaultNoteChanged = appStore.subscribeVaultNoteChanged((event) => {
+        if (event.documentKind && event.documentKind !== 'note') return;
         if (event.source === 'taskMutation') return;
         void load({ background: true });
       });

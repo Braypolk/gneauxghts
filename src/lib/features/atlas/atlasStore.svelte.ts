@@ -188,7 +188,13 @@ export class AtlasStore {
     this.#lastIndexingInProgress = appStore.semanticStatus?.indexingInProgress ?? false;
     this.#lastIndexedAtMillis = appStore.semanticStatus?.lastIndexedAtMillis ?? null;
     this.#disposeCallbacks.push(
-      appStore.subscribeVaultNoteChanged(() => this.scheduleRefresh()),
+      appStore.subscribeVaultNoteChanged((event) => {
+        if (!event.documentKind || event.documentKind === 'note') {
+          this.scheduleRefresh();
+          return;
+        }
+        if (this.chatVisibility !== 'hidden') this.scheduleRefresh();
+      }),
       appStore.subscribeNoteSaved(() => this.scheduleRefresh()),
       appStore.subscribeVaultChanged(() => {
         this.response = null;

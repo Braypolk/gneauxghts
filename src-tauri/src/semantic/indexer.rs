@@ -1,10 +1,12 @@
 use super::{
-    ann::AnnIndexState,
+    activity::BackgroundWorkGate,
+    ann::{AnnIndexState, ANN_MAX_INCREMENTAL_CHUNKS, ANN_MAX_INCREMENTAL_DOCUMENTS},
     chunking::chunk_markdown,
     db::{
         content_hash, delete_note, ensure_schema, insert_job, load_existing_chunk_embeddings,
-        load_note_chunk_labels, load_stored_note_records, move_note, open_database, rebuild_edges,
-        update_job, upsert_note_chunks, EdgeRebuildStats,
+        load_note_chunk_labels, load_note_record, load_stored_note_records, move_note,
+        open_database, rebuild_edges_with_checkpoint, update_job, upsert_note_chunks,
+        EdgeRebuildStats,
     },
     debug::SemanticDebugState,
     embed::{EmbeddingInputKind, EmbeddingProvider},
@@ -28,9 +30,33 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ChatRecallExcerpt {
+    pub(crate) anchor: String,
+    pub(crate) quote: String,
+}
+
+pub(crate) fn chat_recall_content_hash(excerpts: &[ChatRecallExcerpt]) -> String {
+    let identity = excerpts
+        .iter()
+        .map(|excerpt| format!("{}\0{}", excerpt.anchor, excerpt.quote))
+        .collect::<Vec<_>>()
+        .join("\0");
+    content_hash(&identity)
+}
+
+#[derive(Clone)]
+pub(crate) enum PendingSemanticDocument {
+    NoteMarkdown(String),
+    ChatRecall {
+        title: String,
+        excerpts: Vec<ChatRecallExcerpt>,
+    },
+}
+
 #[derive(Clone)]
 pub(crate) struct PendingNoteUpdate {
-    pub(crate) markdown: String,
+    pub(crate) document: PendingSemanticDocument,
     pub(crate) modified_millis: u64,
 }
 
@@ -49,6 +75,9 @@ pub(crate) struct PendingIndexState {
     pub(crate) full_scan_requested: bool,
     pub(crate) force_full_scan: bool,
     pub(crate) rebuild_requested: bool,
+    pub(crate) automatic_rebuild_requested: bool,
+    pub(crate) edge_refresh_requested: bool,
+    pub(crate) snapshot_publish_requested: bool,
     pub(crate) note_updates: HashMap<PathBuf, PendingNoteUpdate>,
     pub(crate) deleted_notes: HashSet<PathBuf>,
     /// Keyed by the OLD path; value carries the new path + content. Processed
@@ -60,6 +89,9 @@ impl PendingIndexState {
     fn is_empty(&self) -> bool {
         !self.full_scan_requested
             && !self.rebuild_requested
+            && !self.automatic_rebuild_requested
+            && !self.edge_refresh_requested
+            && !self.snapshot_publish_requested
             && self.note_updates.is_empty()
             && self.deleted_notes.is_empty()
             && self.moved_notes.is_empty()
@@ -83,6 +115,7 @@ pub(crate) fn spawn_indexing_worker(
     index_revision: Arc<AtomicU64>,
     runtime: &Arc<Mutex<RuntimeState>>,
     debug: Arc<SemanticDebugState>,
+    background_gate: Arc<BackgroundWorkGate>,
 ) -> Result<(), String> {
     let runtime = Arc::clone(runtime);
     thread::Builder::new()
@@ -99,6 +132,7 @@ pub(crate) fn spawn_indexing_worker(
                 index_revision,
                 runtime,
                 debug,
+                background_gate,
             );
         })
         .map(|_| ())
@@ -117,6 +151,7 @@ fn run_worker(
     index_revision: Arc<AtomicU64>,
     runtime: Arc<Mutex<RuntimeState>>,
     debug: Arc<SemanticDebugState>,
+    background_gate: Arc<BackgroundWorkGate>,
 ) {
     let mut paused = false;
 
@@ -140,6 +175,7 @@ fn run_worker(
                         &index_revision,
                         &runtime,
                         &debug,
+                        &background_gate,
                     );
                 }
             }
@@ -158,6 +194,7 @@ fn run_worker(
                     &index_revision,
                     &runtime,
                     &debug,
+                    &background_gate,
                 );
             }
             Err(_) => return,
@@ -175,6 +212,7 @@ fn process_pending_jobs(
     index_revision: &Arc<AtomicU64>,
     runtime: &Arc<Mutex<RuntimeState>>,
     debug: &Arc<SemanticDebugState>,
+    background_gate: &Arc<BackgroundWorkGate>,
 ) {
     loop {
         let batch = {
@@ -187,6 +225,22 @@ fn process_pending_jobs(
             }
             std::mem::take(&mut *pending)
         };
+        let deferred_explicit_updates = if batch.rebuild_requested || batch.full_scan_requested {
+            Some((
+                batch.note_updates.clone(),
+                batch.deleted_notes.clone(),
+                batch.moved_notes.clone(),
+            ))
+        } else {
+            None
+        };
+        let has_document_mutations = !batch.note_updates.is_empty()
+            || !batch.deleted_notes.is_empty()
+            || !batch.moved_notes.is_empty();
+        let mut handled_documents = false;
+        let mut handled_automatic_rebuild = false;
+        let mut handled_edges = false;
+        let mut handled_snapshot = false;
 
         let did_succeed = if batch.rebuild_requested {
             let job_notes_dir = notes_dir.to_path_buf();
@@ -198,7 +252,15 @@ fn process_pending_jobs(
                 debug,
                 "Rebuilding semantic index",
                 move |connection| {
-                    process_rebuild(connection, &job_notes_dir, &job_provider, ann, &job_debug)
+                    process_rebuild(
+                        connection,
+                        &job_notes_dir,
+                        &job_provider,
+                        ann,
+                        &job_debug,
+                        background_gate,
+                        runtime,
+                    )
                 },
             )
         } else if batch.full_scan_requested {
@@ -222,7 +284,10 @@ fn process_pending_jobs(
                     )
                 },
             )
-        } else {
+        } else if has_document_mutations {
+            handled_documents = true;
+            let mutation_count =
+                batch.note_updates.len() + batch.deleted_notes.len() + batch.moved_notes.len();
             let job_provider = provider.clone();
             let job_debug = debug.clone();
             run_job(
@@ -231,6 +296,10 @@ fn process_pending_jobs(
                 debug,
                 "Indexing notes",
                 move |connection| {
+                    update_runtime(runtime, |state| {
+                        state.progress_current = 0;
+                        state.progress_total = mutation_count;
+                    });
                     process_note_batch(
                         connection,
                         &job_provider,
@@ -242,10 +311,177 @@ fn process_pending_jobs(
                     )
                 },
             )
+        } else if batch.automatic_rebuild_requested {
+            handled_automatic_rebuild = true;
+            update_runtime(runtime, |state| {
+                state.recovery_state = "waitingForIdle".to_string();
+                state.rebuild_reason = Some("ANN snapshot requires fallback rebuild".to_string());
+                state.indexing_in_progress = true;
+                state.current_job_label = Some("Waiting for idle".to_string());
+            });
+            background_gate.wait_for_automatic_idle();
+            update_runtime(runtime, |state| {
+                state.recovery_state = "rebuilding".to_string();
+            });
+            run_job(
+                db_path,
+                runtime,
+                debug,
+                "Rebuilding ANN snapshot",
+                |connection| {
+                    let progress = |current, total| {
+                        update_runtime(runtime, |state| {
+                            state.progress_current = current;
+                            state.progress_total = total;
+                        });
+                    };
+                    ann.rebuild_from_connection_with_gate(
+                        connection,
+                        Some(background_gate.as_ref()),
+                        true,
+                        Some(&progress),
+                    )?;
+                    Ok(JobOutcome::default())
+                },
+            )
+        } else if batch.edge_refresh_requested {
+            handled_edges = true;
+            update_runtime(runtime, |state| {
+                state.recovery_state = "waitingForIdle".to_string();
+                state.rebuild_reason = Some("Related-note edges are stale".to_string());
+                state.indexing_in_progress = true;
+                state.current_job_label = Some("Waiting for idle".to_string());
+            });
+            background_gate.wait_for_automatic_idle();
+            update_runtime(runtime, |state| {
+                state.recovery_state = "rebuilding".to_string();
+            });
+            run_job(
+                db_path,
+                runtime,
+                debug,
+                "Refreshing related notes",
+                |connection| {
+                    let started_at = Instant::now();
+                    let stats = rebuild_edges_with_checkpoint(
+                        connection,
+                        EDGE_NEIGHBORS_PER_NOTE,
+                        EDGE_MIN_SCORE,
+                        |current, total| {
+                            update_runtime(runtime, |state| {
+                                state.progress_current = current;
+                                state.progress_total = total;
+                            });
+                            background_gate.wait_for_automatic_idle();
+                        },
+                    )?;
+                    record_edge_rebuild(debug, &stats, started_at.elapsed().as_millis() as u64);
+                    Ok(JobOutcome::default())
+                },
+            )
+        } else if batch.snapshot_publish_requested {
+            handled_snapshot = true;
+            // Coalesce edit bursts before serializing the graph generation.
+            thread::sleep(std::time::Duration::from_secs(2));
+            let newer_mutation_waiting = pending
+                .lock()
+                .map(|next| {
+                    next.full_scan_requested
+                        || next.rebuild_requested
+                        || !next.note_updates.is_empty()
+                        || !next.deleted_notes.is_empty()
+                        || !next.moved_notes.is_empty()
+                })
+                .unwrap_or(false);
+            if newer_mutation_waiting {
+                if let Ok(mut next) = pending.lock() {
+                    next.snapshot_publish_requested = true;
+                }
+                true
+            } else {
+                run_job(
+                    db_path,
+                    runtime,
+                    debug,
+                    "Saving semantic snapshot",
+                    |connection| {
+                        ann.persist_current(connection)?;
+                        Ok(JobOutcome::default())
+                    },
+                )
+            }
+        } else {
+            true
         };
 
         if did_succeed {
             index_revision.fetch_add(1, Ordering::AcqRel);
+            let last_job_scanned_count = runtime
+                .lock()
+                .map(|state| state.last_job_scanned_count)
+                .unwrap_or_default();
+            // A filesystem scan/rebuild cannot reconstruct ChatRecall
+            // documents. Replay any coalesced explicit mutations after the
+            // bulk operation instead of dropping them with the batch.
+            if let Some((updates, deletes, moves)) = deferred_explicit_updates {
+                if !updates.is_empty() || !deletes.is_empty() || !moves.is_empty() {
+                    if let Ok(mut next) = pending.lock() {
+                        next.note_updates.extend(updates);
+                        next.deleted_notes.extend(deletes);
+                        next.moved_notes.extend(moves);
+                    }
+                }
+            }
+            if let Ok(mut next) = pending.lock() {
+                if handled_documents && last_job_scanned_count > 0 {
+                    next.edge_refresh_requested = true;
+                    update_runtime(runtime, |state| state.edges_stale = true);
+                    if ann.needs_rebuild() {
+                        next.automatic_rebuild_requested = true;
+                    } else {
+                        next.snapshot_publish_requested = true;
+                    }
+                }
+                if batch.full_scan_requested {
+                    if ann.needs_rebuild() {
+                        next.automatic_rebuild_requested = true;
+                    } else if last_job_scanned_count > 0 {
+                        next.snapshot_publish_requested = true;
+                    }
+                    if last_job_scanned_count > 0 {
+                        next.edge_refresh_requested = true;
+                        update_runtime(runtime, |state| state.edges_stale = true);
+                    }
+                }
+                if batch.rebuild_requested {
+                    next.edge_refresh_requested = true;
+                    update_runtime(runtime, |state| state.edges_stale = true);
+                }
+                if !handled_automatic_rebuild && batch.automatic_rebuild_requested {
+                    next.automatic_rebuild_requested = true;
+                }
+                if !handled_edges && batch.edge_refresh_requested {
+                    next.edge_refresh_requested = true;
+                }
+                if !handled_snapshot
+                    && batch.snapshot_publish_requested
+                    && !handled_automatic_rebuild
+                {
+                    next.snapshot_publish_requested = true;
+                }
+            }
+            update_runtime(runtime, |state| {
+                if handled_edges {
+                    state.edges_stale = false;
+                }
+                if !state.indexing_paused {
+                    state.recovery_state = if ann.needs_rebuild() {
+                        "stale".to_string()
+                    } else {
+                        "ready".to_string()
+                    };
+                }
+            });
         }
     }
 }
@@ -265,6 +501,11 @@ where
         state.indexing_in_progress = true;
         state.current_job_label = Some(label.to_string());
         state.last_error = None;
+        state.progress_current = 0;
+        state.progress_total = 0;
+        if label == "Scanning notes" || label == "Indexing notes" {
+            state.recovery_state = "catchingUp".to_string();
+        }
     });
     debug.record_with_metrics(
         "index",
@@ -282,6 +523,9 @@ where
         let job_id = insert_job(&connection, "running", 0, 0, None)?;
         match job(&mut connection) {
             Ok(outcome) => {
+                update_runtime(runtime, |state| {
+                    state.last_job_scanned_count = outcome.scanned_count;
+                });
                 update_job(
                     &connection,
                     job_id,
@@ -369,9 +613,7 @@ fn process_full_scan(
 ) -> Result<JobOutcome, String> {
     let stored = load_stored_note_records(connection)?;
     let mut seen_paths = HashSet::new();
-    let mut scanned_count = 0usize;
-    let mut embedded_count = 0usize;
-    let mut deleted_count = 0usize;
+    let mut updates = HashMap::new();
 
     for path in collect_markdown_files_recursively(notes_dir)? {
         let raw_path = path.to_string_lossy().into_owned();
@@ -399,35 +641,37 @@ fn process_full_scan(
             continue;
         }
 
-        scanned_count += 1;
-        embedded_count +=
-            index_note_content(connection, provider, &path, &markdown, modified_millis)?
-                .embedded_count;
+        updates.insert(
+            path,
+            PendingNoteUpdate {
+                document: PendingSemanticDocument::NoteMarkdown(markdown),
+                modified_millis,
+            },
+        );
     }
 
-    for stale_path in stored
-        .keys()
-        .filter(|stored_path| !seen_paths.contains(*stored_path))
-    {
-        delete_note(connection, stale_path)?;
-        deleted_count += 1;
-    }
-
-    let edge_started_at = Instant::now();
-    let edge_stats = rebuild_edges(connection, EDGE_NEIGHBORS_PER_NOTE, EDGE_MIN_SCORE)?;
-    record_edge_rebuild(
+    let deleted_notes = stored
+        .iter()
+        // Chat recall is authoritative in ai.sqlite3 and is reconciled by
+        // ChatService. A filesystem scan must never delete an already-correct
+        // explicit recall row merely because projection Markdown is excluded.
+        .filter(|(stored_path, record)| {
+            record.document_kind == crate::note::DocumentKind::Note
+                && !seen_paths.contains(*stored_path)
+        })
+        .map(|(stored_path, _)| PathBuf::from(stored_path))
+        .collect::<HashSet<_>>();
+    let outcome = process_note_batch(
+        connection,
+        provider,
+        ann,
+        updates,
+        deleted_notes,
+        HashMap::new(),
         debug,
-        &edge_stats,
-        edge_started_at.elapsed().as_millis() as u64,
-    );
-    if scanned_count > 0 || deleted_count > 0 || force || ann.needs_rebuild() {
-        ann.rebuild_from_connection(connection)?;
-    }
+    )?;
     debug.sample_rss("index", "full_scan_completed");
-    Ok(JobOutcome {
-        scanned_count: scanned_count + deleted_count,
-        embedded_count,
-    })
+    Ok(outcome)
 }
 
 fn record_edge_rebuild(
@@ -463,6 +707,8 @@ fn process_rebuild(
     provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
     ann: &Arc<AnnIndexState>,
     debug: &Arc<SemanticDebugState>,
+    background_gate: &Arc<BackgroundWorkGate>,
+    runtime: &Arc<Mutex<RuntimeState>>,
 ) -> Result<JobOutcome, String> {
     connection
         .execute_batch(
@@ -474,7 +720,20 @@ fn process_rebuild(
             ",
         )
         .map_err(|err| err.to_string())?;
-    process_full_scan(connection, notes_dir, provider, ann, true, debug)
+    let outcome = process_full_scan(connection, notes_dir, provider, ann, true, debug)?;
+    let progress = |current, total| {
+        update_runtime(runtime, |state| {
+            state.progress_current = current;
+            state.progress_total = total;
+        });
+    };
+    ann.rebuild_from_connection_with_gate(
+        connection,
+        Some(background_gate.as_ref()),
+        false,
+        Some(&progress),
+    )?;
+    Ok(outcome)
 }
 
 fn process_note_batch(
@@ -489,6 +748,12 @@ fn process_note_batch(
     let mut scanned_count = 0usize;
     let mut embedded_count = 0usize;
     let mut needs_ann_rebuild = ann.needs_rebuild();
+    let mutation_count = note_updates.len() + deleted_notes.len() + moved_notes.len();
+    let mut defer_ann_updates = mutation_count > ANN_MAX_INCREMENTAL_DOCUMENTS;
+    let mut changed_chunk_count = 0usize;
+    if defer_ann_updates {
+        needs_ann_rebuild = true;
+    }
 
     // Process moves first: re-key existing rows from old path to new path,
     // reusing stored embeddings (no embedding-server calls). A successful move
@@ -518,57 +783,78 @@ fn process_note_batch(
     for note_path in deleted_notes {
         let path_str = note_path.to_string_lossy().into_owned();
         let previous_labels = load_note_chunk_labels(connection, &path_str)?;
+        if previous_labels.is_empty() && load_note_record(connection, &path_str)?.is_none() {
+            continue;
+        }
         delete_note(connection, &path_str)?;
-        if !ann.apply_note_delete(&previous_labels)? {
+        changed_chunk_count = changed_chunk_count.saturating_add(previous_labels.len());
+        if changed_chunk_count > ANN_MAX_INCREMENTAL_CHUNKS {
+            defer_ann_updates = true;
+            needs_ann_rebuild = true;
+        }
+        if !defer_ann_updates && !ann.apply_note_delete(&previous_labels)? {
             needs_ann_rebuild = true;
         }
         scanned_count += 1;
     }
 
     for (note_path, update) in note_updates {
-        if !crate::note::semantic_recall_eligible(&update.markdown) {
-            let path_str = note_path.to_string_lossy().into_owned();
-            let previous_labels = load_note_chunk_labels(connection, &path_str)?;
-            delete_note(connection, &path_str)?;
-            if !ann.apply_note_delete(&previous_labels)? {
-                needs_ann_rebuild = true;
-            }
-            scanned_count += 1;
-            continue;
-        }
         let previous_labels = load_note_chunk_labels(connection, &note_path.to_string_lossy())?;
-        let indexed_note = index_note_content(
-            connection,
-            provider,
-            &note_path,
-            &update.markdown,
-            update.modified_millis,
-        )?;
+        let indexed_note = match update.document {
+            PendingSemanticDocument::NoteMarkdown(markdown) => {
+                if !crate::note::semantic_recall_eligible(&markdown) {
+                    let path_str = note_path.to_string_lossy().into_owned();
+                    delete_note(connection, &path_str)?;
+                    changed_chunk_count = changed_chunk_count.saturating_add(previous_labels.len());
+                    if changed_chunk_count > ANN_MAX_INCREMENTAL_CHUNKS {
+                        defer_ann_updates = true;
+                        needs_ann_rebuild = true;
+                    }
+                    if !defer_ann_updates && !ann.apply_note_delete(&previous_labels)? {
+                        needs_ann_rebuild = true;
+                    }
+                    scanned_count += 1;
+                    continue;
+                }
+                index_note_content(
+                    connection,
+                    provider,
+                    &note_path,
+                    &markdown,
+                    update.modified_millis,
+                )?
+            }
+            PendingSemanticDocument::ChatRecall { title, excerpts } => index_chat_recall_content(
+                connection,
+                provider,
+                &note_path,
+                &title,
+                &excerpts,
+                update.modified_millis,
+            )?,
+        };
         embedded_count += indexed_note.embedded_count;
-        if !ann.apply_note_upsert(
-            &note_path,
-            &previous_labels,
-            &indexed_note.chunks,
-            &indexed_note.embeddings,
-        )? {
+        changed_chunk_count = changed_chunk_count
+            .saturating_add(previous_labels.len().max(indexed_note.chunks.len()));
+        if changed_chunk_count > ANN_MAX_INCREMENTAL_CHUNKS {
+            defer_ann_updates = true;
+            needs_ann_rebuild = true;
+        }
+        if !defer_ann_updates
+            && !ann.apply_note_upsert(
+                &note_path,
+                &previous_labels,
+                &indexed_note.chunks,
+                &indexed_note.embeddings,
+            )?
+        {
             needs_ann_rebuild = true;
         }
         scanned_count += 1;
     }
 
-    if scanned_count > 0 {
-        let edge_started_at = Instant::now();
-        let edge_stats = rebuild_edges(connection, EDGE_NEIGHBORS_PER_NOTE, EDGE_MIN_SCORE)?;
-        record_edge_rebuild(
-            debug,
-            &edge_stats,
-            edge_started_at.elapsed().as_millis() as u64,
-        );
-    }
-    if needs_ann_rebuild {
-        ann.rebuild_from_connection(connection)?;
-    } else if scanned_count > 0 {
-        ann.persist_current(connection)?;
+    if scanned_count > 0 && needs_ann_rebuild {
+        ann.request_rebuild("incremental_update_requires_compaction");
     }
     if scanned_count > 0 {
         debug.sample_rss("index", "note_batch_completed");
@@ -577,6 +863,66 @@ fn process_note_batch(
     Ok(JobOutcome {
         scanned_count,
         embedded_count,
+    })
+}
+
+fn index_chat_recall_content(
+    connection: &mut rusqlite::Connection,
+    provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
+    conversation_path: &Path,
+    title: &str,
+    excerpts: &[ChatRecallExcerpt],
+    modified_millis: u64,
+) -> Result<IndexedNoteContent, String> {
+    let path = conversation_path.to_string_lossy().into_owned();
+    let chunks = excerpts
+        .iter()
+        .enumerate()
+        .map(|(ordinal, excerpt)| super::chunking::SemanticChunk {
+            ordinal,
+            section_label: "Remembered passage".to_string(),
+            text: excerpt.quote.clone(),
+            text_hash: content_hash(&excerpt.quote),
+            start_line: 1,
+            end_line: 1,
+            block_anchor: Some(excerpt.anchor.clone()),
+        })
+        .collect::<Vec<_>>();
+    let stored_chunks = load_existing_chunk_embeddings(connection, &path)?;
+    let mut embeddings = vec![Vec::new(); chunks.len()];
+    let mut texts_to_embed = Vec::new();
+    let mut embed_indexes = Vec::new();
+    for (index, chunk) in chunks.iter().enumerate() {
+        if let Some(existing) = stored_chunks.get(&chunk.ordinal) {
+            if existing.text_hash == chunk.text_hash && !existing.embedding.is_empty() {
+                embeddings[index] = existing.embedding.clone();
+                continue;
+            }
+        }
+        texts_to_embed.push(chunk.text.clone());
+        embed_indexes.push(index);
+    }
+    let fresh = provider.embed_texts(&texts_to_embed, EmbeddingInputKind::Document)?;
+    for (embedding, index) in fresh.into_iter().zip(embed_indexes) {
+        embeddings[index] = embedding;
+    }
+    let timestamp = crate::note::timestamp_millis_to_rfc3339(modified_millis);
+    upsert_note_chunks(
+        connection,
+        &path,
+        title,
+        modified_millis,
+        &chat_recall_content_hash(excerpts),
+        &timestamp,
+        &timestamp,
+        crate::note::DocumentKind::ChatIndex,
+        &chunks,
+        &embeddings,
+    )?;
+    Ok(IndexedNoteContent {
+        embedded_count: texts_to_embed.len(),
+        chunks,
+        embeddings,
     })
 }
 
@@ -644,6 +990,7 @@ fn index_note_content(
         &chunked_note.content_hash,
         &created_at,
         &updated_at,
+        crate::note::DocumentKind::Note,
         &chunked_note.chunks,
         &embeddings,
     )?;
@@ -676,6 +1023,7 @@ where
     }
 }
 
+#[derive(Default)]
 struct JobOutcome {
     scanned_count: usize,
     embedded_count: usize,
@@ -689,14 +1037,19 @@ struct IndexedNoteContent {
 
 #[cfg(test)]
 mod tests {
-    use super::process_full_scan;
+    use super::{
+        process_full_scan, process_note_batch, ChatRecallExcerpt, PendingNoteUpdate,
+        PendingSemanticDocument,
+    };
     use crate::semantic::{
         ann::AnnIndexState,
-        db::{ensure_schema, load_ann_index_signature, open_database},
+        chunking::SemanticChunk,
+        db::{ensure_schema, load_ann_index_signature, open_database, upsert_note_chunks},
         debug::SemanticDebugState,
         embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo},
     };
     use std::{
+        collections::{HashMap, HashSet},
         fs,
         path::{Path, PathBuf},
         sync::Arc,
@@ -704,7 +1057,7 @@ mod tests {
     };
 
     #[test]
-    fn full_scan_rebuilds_ann_when_notes_are_deleted_outside_the_app() {
+    fn full_scan_applies_external_deletes_incrementally() {
         let temp = TestDir::new("indexer-delete");
         let semantic_dir = temp.path().join("semantic");
         let notes_dir = temp.path().join("notes");
@@ -725,6 +1078,8 @@ mod tests {
 
         process_full_scan(&mut connection, &notes_dir, &provider, &ann, true, &debug)
             .expect("initial full scan");
+        ann.rebuild_from_connection(&connection)
+            .expect("publish initial snapshot");
         assert_eq!(
             load_ann_index_signature(&connection)
                 .expect("load ann signature")
@@ -778,6 +1133,210 @@ mod tests {
 
         assert_eq!(outcome.scanned_count, 1);
         assert!(outcome.embedded_count > 0);
+
+        let before = debug.snapshot().expect("debug before no-op").metrics;
+        let no_op = process_full_scan(&mut connection, &notes_dir, &provider, &ann, false, &debug)
+            .expect("no-op scan");
+        let after = debug.snapshot().expect("debug after no-op").metrics;
+        assert_eq!(no_op.scanned_count, 0);
+        assert_eq!(no_op.embedded_count, 0);
+        assert_eq!(after.ann_rebuild_count, before.ann_rebuild_count);
+        assert_eq!(after.edge_rebuild_count, before.edge_rebuild_count);
+    }
+
+    #[test]
+    fn chat_recall_indexes_only_immutable_excerpt_chunks() {
+        let temp = TestDir::new("chat-recall");
+        let db_path = temp.path().join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(
+            AnnIndexState::new(temp.path().join("cache"), 3, debug.clone()).expect("create ann"),
+        );
+        let path = temp.path().join("Chats/example/Conversation.md");
+        let update = PendingNoteUpdate {
+            document: PendingSemanticDocument::ChatRecall {
+                title: "A conversation".to_string(),
+                excerpts: vec![
+                    ChatRecallExcerpt {
+                        anchor: "excerpt_one".to_string(),
+                        quote: "first selected quote".to_string(),
+                    },
+                    ChatRecallExcerpt {
+                        anchor: "excerpt_two".to_string(),
+                        quote: "second selected quote".to_string(),
+                    },
+                ],
+            },
+            modified_millis: 1,
+        };
+        process_note_batch(
+            &mut connection,
+            &provider,
+            &ann,
+            HashMap::from([(path.clone(), update)]),
+            HashSet::new(),
+            HashMap::new(),
+            &debug,
+        )
+        .expect("index recall");
+
+        let (kind, count): (String, usize) = connection
+            .query_row(
+                "SELECT document_kind, chunk_count FROM notes WHERE path = ?1",
+                [path.to_string_lossy().as_ref()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("recall document");
+        assert_eq!(kind, "chatIndex");
+        assert_eq!(count, 2);
+        let chunks = connection
+            .prepare("SELECT text, block_anchor FROM chunks WHERE note_path = ?1 ORDER BY ordinal")
+            .unwrap()
+            .query_map([path.to_string_lossy().as_ref()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            chunks,
+            vec![
+                (
+                    "first selected quote".to_string(),
+                    "excerpt_one".to_string()
+                ),
+                (
+                    "second selected quote".to_string(),
+                    "excerpt_two".to_string()
+                ),
+            ]
+        );
+
+        let empty_notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&empty_notes_dir).expect("create empty notes dir");
+        let no_op = process_full_scan(
+            &mut connection,
+            &empty_notes_dir,
+            &provider,
+            &ann,
+            false,
+            &debug,
+        )
+        .expect("ordinary startup scan");
+        assert_eq!(no_op.scanned_count, 0);
+        let preserved: usize = connection
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE path = ?1",
+                [path.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(preserved, 1);
+
+        process_note_batch(
+            &mut connection,
+            &provider,
+            &ann,
+            HashMap::new(),
+            HashSet::from([path.clone()]),
+            HashMap::new(),
+            &debug,
+        )
+        .expect("delete final recall");
+        let remaining: usize = connection
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE path = ?1",
+                [path.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn remembering_one_excerpt_does_not_rebuild_or_walk_a_twenty_thousand_chunk_corpus() {
+        let temp = TestDir::new("chat-recall-large-corpus");
+        let db_path = temp.path().join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        for document in 0..200 {
+            let chunks = (0..100)
+                .map(|ordinal| {
+                    let text = format!("document {document} chunk {ordinal}");
+                    SemanticChunk {
+                        ordinal,
+                        section_label: format!("Chunk {ordinal}"),
+                        text_hash: blake3::hash(text.as_bytes()).to_hex().to_string(),
+                        text,
+                        start_line: ordinal + 1,
+                        end_line: ordinal + 1,
+                        block_anchor: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let embeddings = (0..100)
+                .map(|ordinal| {
+                    let mut value = vec![0.0, 0.0, 0.0];
+                    value[ordinal % 3] = 1.0;
+                    value
+                })
+                .collect::<Vec<_>>();
+            upsert_note_chunks(
+                &mut connection,
+                &format!("/vault/note-{document}.md"),
+                &format!("Note {document}"),
+                1,
+                &format!("hash-{document}"),
+                "",
+                "",
+                crate::note::DocumentKind::Note,
+                &chunks,
+                &embeddings,
+            )
+            .expect("seed corpus");
+        }
+
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(
+            AnnIndexState::new(temp.path().join("cache"), 3, debug.clone()).expect("create ann"),
+        );
+        let recall_path = temp.path().join("Chats/example/Conversation.md");
+        let outcome = process_note_batch(
+            &mut connection,
+            &provider,
+            &ann,
+            HashMap::from([(
+                recall_path,
+                PendingNoteUpdate {
+                    document: PendingSemanticDocument::ChatRecall {
+                        title: "One memory".to_string(),
+                        excerpts: vec![ChatRecallExcerpt {
+                            anchor: "excerpt_one".to_string(),
+                            quote: "only this passage is embedded".to_string(),
+                        }],
+                    },
+                    modified_millis: 2,
+                },
+            )]),
+            HashSet::new(),
+            HashMap::new(),
+            &debug,
+        )
+        .expect("index one recall");
+
+        assert_eq!(outcome.scanned_count, 1);
+        assert_eq!(outcome.embedded_count, 1);
+        let chunk_count: usize = connection
+            .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
+            .expect("count chunks");
+        assert_eq!(chunk_count, 20_001);
+        let metrics = debug.snapshot().expect("debug snapshot").metrics;
+        assert_eq!(metrics.ann_rebuild_count, 0);
+        assert_eq!(metrics.edge_rebuild_count, 0);
     }
 
     struct MockEmbeddingProvider;

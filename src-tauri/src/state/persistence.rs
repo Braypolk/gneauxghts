@@ -605,7 +605,11 @@ fn migrate_note_activity_columns(connection: &Connection) -> Result<(), String> 
             )
             .map_err(|err| err.to_string())?;
     }
-    if !has_column(connection, "app_state_note_activity", "last_counted_open_at_millis")? {
+    if !has_column(
+        connection,
+        "app_state_note_activity",
+        "last_counted_open_at_millis",
+    )? {
         connection
             .execute(
                 "ALTER TABLE app_state_note_activity

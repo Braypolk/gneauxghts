@@ -27,6 +27,7 @@ export interface PaneViewModel {
   chatConversationId: string | null;
   chatDraftSeed: ChatDraftSeed | null;
   chatContextNote: ChatContextNote | null;
+  chatTargetAnchor: string | null;
   chatSelectionActions: ChatSelectionActions;
   onChatConversationChange: (conversationId: string | null) => void;
   paneCommandHighlightedIndex: number;

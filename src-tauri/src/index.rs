@@ -1,3 +1,4 @@
+use crate::note::DocumentKind;
 use crate::{
     lexical::LexicalIndex,
     note,
@@ -5,7 +6,6 @@ use crate::{
     semantic::SemanticState,
     state::{derive_file_stem, derive_file_stem_from_title_and_markdown},
 };
-use crate::note::DocumentKind;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -61,18 +61,21 @@ impl ForegroundActivity {
 /// the save-side index queue) will yield between per-note units of work.
 pub(crate) struct ForegroundGuard {
     activity: Arc<ForegroundActivity>,
+    semantic: Arc<SemanticState>,
 }
 
 impl ForegroundGuard {
-    fn new(activity: Arc<ForegroundActivity>) -> Self {
+    fn new(activity: Arc<ForegroundActivity>, semantic: Arc<SemanticState>) -> Self {
         activity.in_flight.fetch_add(1, Ordering::AcqRel);
-        Self { activity }
+        semantic.begin_foreground_activity();
+        Self { activity, semantic }
     }
 }
 
 impl Drop for ForegroundGuard {
     fn drop(&mut self) {
         self.activity.in_flight.fetch_sub(1, Ordering::AcqRel);
+        self.semantic.end_foreground_activity();
     }
 }
 
@@ -181,7 +184,10 @@ impl AppState {
     /// per-note units of work so the foreground call does not queue up
     /// behind the SQLite state mutex or the lexical writer.
     pub(crate) fn foreground_guard(&self) -> ForegroundGuard {
-        ForegroundGuard::new(Arc::clone(&self.foreground_activity))
+        ForegroundGuard::new(
+            Arc::clone(&self.foreground_activity),
+            Arc::clone(&self.semantic),
+        )
     }
 
     /// Snapshot accessor for the shared foreground-busy flag. Background
@@ -323,6 +329,24 @@ impl AppState {
         self.background_index_queue
             .enqueue_upsert(path, note_for_background);
         Ok(())
+    }
+
+    /// Managed chat projections participate in the catalog and lexical
+    /// search, but are deliberately isolated from task projection and the
+    /// ordinary save/watcher pipeline.
+    pub(crate) fn upsert_managed_chat_projection(
+        &self,
+        path: PathBuf,
+        note: IndexedNote,
+    ) -> Result<(), String> {
+        self.lexical.upsert_note(&path, &note)?;
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        index.upsert_note(path.clone(), note);
+        drop(index);
+        self.clear_dirty_path(&path)
     }
 
     pub(crate) fn remove_note_indexes(&self, path: &Path) -> Result<(), String> {
@@ -490,7 +514,7 @@ impl AppState {
     }
 
     fn run_full_refresh(&self, notes_dir: &Path) -> Result<bool, String> {
-        let (existing_signatures, existing_paths) = {
+        let (existing_signatures, existing_paths, managed_chat_paths) = {
             let index = self
                 .notes_index
                 .lock()
@@ -502,9 +526,19 @@ impl AppState {
                     .map(|(path, note)| (path.clone(), note.signature.clone()))
                     .collect::<HashMap<_, _>>(),
                 index.entries.keys().cloned().collect::<Vec<_>>(),
+                index
+                    .entries
+                    .iter()
+                    .filter(|(_, note)| note.document_kind.is_chat_projection())
+                    .map(|(path, _)| path.clone())
+                    .collect::<HashSet<_>>(),
             )
         };
-        let (updates, seen_paths) = collect_refresh_updates(notes_dir, &existing_signatures)?;
+        let (mut updates, seen_paths) = collect_refresh_updates(notes_dir, &existing_signatures)?;
+        // Managed chat writes update the catalog directly. If the bytes on
+        // disk later diverge, the chat conflict pipeline owns that state; a
+        // generic reconciliation pass must not index the external edit.
+        updates.retain(|(path, _)| !managed_chat_paths.contains(path));
         // Phase 5 write-through: incrementally update the lexical mirror
         // for every changed/added entry, and remove stale entries that
         // disappeared from disk.
@@ -1125,7 +1159,11 @@ fn build_indexed_note_with_signature(
         title_lower: title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&title, &body),
-        tasks: if note::document_kind(markdown) == DocumentKind::Note { build_tasks(markdown) } else { Vec::new() },
+        tasks: if note::document_kind(markdown) == DocumentKind::Note {
+            build_tasks(markdown)
+        } else {
+            Vec::new()
+        },
         file_name,
     }
 }
@@ -1165,7 +1203,11 @@ fn build_current_override_with_signature(
         title_lower: effective_title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&effective_title, markdown),
-        tasks: if note::document_kind(markdown) == DocumentKind::Note { build_tasks(markdown) } else { Vec::new() },
+        tasks: if note::document_kind(markdown) == DocumentKind::Note {
+            build_tasks(markdown)
+        } else {
+            Vec::new()
+        },
         file_name,
     }
 }

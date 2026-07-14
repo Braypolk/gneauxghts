@@ -110,7 +110,14 @@ impl ActiveSemanticState {
                     current_path.unwrap_or_default(),
                 )?)
                 .filter(|(note_path, stored)| {
-                    stored.content_hash == content_hash(current_markdown) && !note_path.is_empty()
+                    let edges_stale = self
+                        .runtime
+                        .lock()
+                        .map(|runtime| runtime.edges_stale)
+                        .unwrap_or(true);
+                    stored.content_hash == content_hash(current_markdown)
+                        && !note_path.is_empty()
+                        && !edges_stale
                 }) {
                 Some((note_path, _)) => {
                     let items =
@@ -125,6 +132,8 @@ impl ActiveSemanticState {
                                 score: preview.score,
                                 start_line: preview.start_line,
                                 end_line: preview.end_line,
+                                document_kind: preview.document_kind,
+                                block_anchor: preview.block_anchor,
                             })
                             .collect::<Vec<_>>();
 
@@ -390,6 +399,8 @@ fn collapse_related_matches(
                     score: candidate.score,
                     start_line: candidate.start_line,
                     end_line: candidate.end_line,
+                    document_kind: candidate.document_kind,
+                    block_anchor: candidate.block_anchor,
                 };
             }
             continue;
@@ -404,6 +415,8 @@ fn collapse_related_matches(
             score: candidate.score,
             start_line: candidate.start_line,
             end_line: candidate.end_line,
+            document_kind: candidate.document_kind,
+            block_anchor: candidate.block_anchor,
         });
     }
 

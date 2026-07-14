@@ -31,6 +31,7 @@
     placeholder?: string;
     draftSeed?: ChatDraftSeed | null;
     contextNote?: ChatContextNote | null;
+    targetAnchor?: string | null;
   }
 
   let {
@@ -44,7 +45,8 @@
     onOpenCitation,
     placeholder = 'What are you thinking about?',
     draftSeed = null,
-    contextNote = null
+    contextNote = null,
+    targetAnchor = null
   }: Props = $props();
 
   const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -68,6 +70,7 @@
   let previousLastMessageId = $state<string | null>(null);
   let appliedDraftSeedId = $state<string | null>(null);
   let contextAccessBusy = $state(false);
+  let appliedTargetAnchor = $state<string | null>(null);
 
   const conversation = $derived(snapshot.conversation);
   const canSend = $derived(Boolean(draft.trim()) && !snapshot.isSending && conversation?.status === 'active');
@@ -77,6 +80,22 @@
       ? snapshot.grants.find((grant) => grant.noteId === contextNote.noteId) ?? null
       : null
   );
+
+  $effect(() => {
+    const anchor = targetAnchor?.replace(/^\^/, '') ?? null;
+    const current = conversation;
+    const root = messagesElement;
+    if (!anchor || !current || !root || anchor === appliedTargetAnchor) return;
+    const messageId = anchor.startsWith('msg_')
+      ? anchor.slice(4)
+      : current.excerptMessageIds[anchor];
+    if (!messageId) return;
+    appliedTargetAnchor = anchor;
+    requestAnimationFrame(() => {
+      root.querySelector<HTMLElement>(`[data-chat-message-id="${CSS.escape(messageId)}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
 
   $effect(() => {
     const seed = draftSeed;

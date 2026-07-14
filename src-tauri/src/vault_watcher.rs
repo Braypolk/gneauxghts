@@ -1,5 +1,6 @@
 use crate::{
     app::AppData,
+    chat::ChatService,
     index::AppState,
     semantic::db::content_hash,
     state::{is_forgotten_note_path, notes_root},
@@ -46,19 +47,44 @@ const RECONCILE_ACTIVE_WINDOW: Duration = Duration::from_secs(120);
 /// index dirty, and emit a frontend event for our own write.
 const SELF_SAVE_DEDUPE_WINDOW: Duration = Duration::from_millis(2_500);
 
-static RECENT_SELF_SAVES: Mutex<Option<HashMap<PathBuf, Instant>>> = Mutex::new(None);
+#[derive(Clone, Debug)]
+struct ExpectedSelfSave {
+    recorded_at: Instant,
+    /// Managed writers register the exact bytes they intend to publish. A
+    /// later external edit to the same path must never be hidden merely
+    /// because it happened inside the de-duplication window.
+    content_hash: Option<String>,
+}
+
+static RECENT_SELF_SAVES: Mutex<Option<HashMap<PathBuf, ExpectedSelfSave>>> = Mutex::new(None);
 
 /// Mark `path` as recently written by the app itself. Subsequent watcher
 /// events that arrive within [`SELF_SAVE_DEDUPE_WINDOW`] for the same path
 /// are skipped.
 pub(crate) fn record_self_save(path: &Path) {
+    record_expected_self_save(path, None);
+}
+
+/// Register a managed write before it reaches the filesystem. Watcher events
+/// are suppressed only while the file still has this exact content hash.
+pub(crate) fn record_self_save_with_hash(path: &Path, content_hash: String) {
+    record_expected_self_save(path, Some(content_hash));
+}
+
+fn record_expected_self_save(path: &Path, content_hash: Option<String>) {
     let now = Instant::now();
     let Ok(mut guard) = RECENT_SELF_SAVES.lock() else {
         return;
     };
     let entry = guard.get_or_insert_with(HashMap::new);
     prune_self_save_map(entry, now);
-    entry.insert(path.to_path_buf(), now);
+    entry.insert(
+        path.to_path_buf(),
+        ExpectedSelfSave {
+            recorded_at: now,
+            content_hash,
+        },
+    );
 }
 
 fn consume_self_save(path: &Path) -> bool {
@@ -70,8 +96,19 @@ fn consume_self_save(path: &Path) -> bool {
         return false;
     };
     prune_self_save_map(entry, now);
-    if let Some(stamp) = entry.get(path) {
-        if now.duration_since(*stamp) <= SELF_SAVE_DEDUPE_WINDOW {
+    if let Some(expected) = entry.get(path) {
+        if now.duration_since(expected.recorded_at) <= SELF_SAVE_DEDUPE_WINDOW {
+            if let Some(expected_hash) = expected.content_hash.as_deref() {
+                let matches = fs::read_to_string(path)
+                    .ok()
+                    .is_some_and(|markdown| content_hash(&markdown) == expected_hash);
+                if !matches {
+                    // A different hash is an external change, even when it
+                    // races immediately behind our own write.
+                    entry.remove(path);
+                    return false;
+                }
+            }
             // Leave the entry in place: a single save on disk often produces
             // multiple `notify` events (Create + Modify(Data) + Modify(Any))
             // and we want to swallow all of them inside the window.
@@ -81,8 +118,8 @@ fn consume_self_save(path: &Path) -> bool {
     false
 }
 
-fn prune_self_save_map(entry: &mut HashMap<PathBuf, Instant>, now: Instant) {
-    entry.retain(|_, stamp| now.duration_since(*stamp) <= SELF_SAVE_DEDUPE_WINDOW);
+fn prune_self_save_map(entry: &mut HashMap<PathBuf, ExpectedSelfSave>, now: Instant) {
+    entry.retain(|_, expected| now.duration_since(expected.recorded_at) <= SELF_SAVE_DEDUPE_WINDOW);
 }
 
 /// Shared queue of paths touched by the watcher, drained by the debounce
@@ -278,8 +315,75 @@ fn flush_dirty_batch(
     let Some(state) = app_handle.try_state::<AppState>() else {
         return Ok(());
     };
+    state.semantic.report_user_activity();
 
     let resolved = resolve_batch(notes_dir, paths)?;
+    let mut ordinary_present = Vec::new();
+    let mut ordinary_removed = Vec::new();
+
+    // Managed projection paths are authoritative in ai.sqlite3. External
+    // edits/deletes become classified conflicts and never enter the generic
+    // note, task, or semantic pipelines.
+    for (path, markdown, modified_millis) in resolved.present {
+        let owner = app_handle
+            .try_state::<ChatService>()
+            .and_then(|chat| chat.projection_owner_for_path(&path).ok().flatten());
+        if let Some(chat_id) = owner {
+            if let Some(chat) = app_handle.try_state::<ChatService>() {
+                let _ = chat.mark_projection_detached(&chat_id);
+            }
+            if let Some(app_data) = app_handle.try_state::<AppData>() {
+                let kind = crate::note::document_kind(&markdown);
+                app_data.events.vault_document_changed(
+                    &path,
+                    false,
+                    kind,
+                    "externalChatProjection",
+                    Some(chat_id.clone()),
+                );
+                app_data
+                    .events
+                    .chat_projection_conflict(chat_id, &path, false);
+            }
+            continue;
+        }
+        ordinary_present.push((path, markdown, modified_millis));
+    }
+    for path in resolved.removed {
+        let owner = app_handle
+            .try_state::<ChatService>()
+            .and_then(|chat| chat.projection_owner_for_path(&path).ok().flatten());
+        if let Some(chat_id) = owner {
+            if let Some(chat) = app_handle.try_state::<ChatService>() {
+                let _ = chat.mark_projection_detached(&chat_id);
+            }
+            if let Some(app_data) = app_handle.try_state::<AppData>() {
+                app_data.events.vault_document_changed(
+                    &path,
+                    true,
+                    if path
+                        .file_name()
+                        .is_some_and(|name| name == "Conversation.md")
+                    {
+                        crate::note::DocumentKind::ChatIndex
+                    } else {
+                        crate::note::DocumentKind::ChatTranscript
+                    },
+                    "externalChatProjection",
+                    Some(chat_id.clone()),
+                );
+                app_data
+                    .events
+                    .chat_projection_conflict(chat_id, &path, true);
+            }
+            continue;
+        }
+        ordinary_removed.push(path);
+    }
+    let resolved = ResolvedBatch {
+        present: ordinary_present,
+        removed: ordinary_removed,
+    };
 
     // Rename detection: pair a removed path with a present path that has the
     // same content hash. Content-identical move => re-key existing embeddings
@@ -458,8 +562,9 @@ fn is_watchable_markdown_path(path: &Path, notes_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_watchable_markdown_path, next_reconcile_interval, should_process_watch_event,
-        RECONCILE_INTERVAL_MAX, RECONCILE_INTERVAL_MIN,
+        consume_self_save, is_watchable_markdown_path, next_reconcile_interval,
+        record_self_save_with_hash, should_process_watch_event, RECONCILE_INTERVAL_MAX,
+        RECONCILE_INTERVAL_MIN,
     };
     use notify::{
         event::{CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode},
@@ -527,5 +632,19 @@ mod tests {
     #[test]
     fn reconcile_interval_relaxed_without_activity() {
         assert_eq!(next_reconcile_interval(None), RECONCILE_INTERVAL_MAX);
+    }
+
+    #[test]
+    fn managed_self_save_suppression_requires_the_registered_hash() {
+        let path =
+            std::env::temp_dir().join(format!("gneauxghts-self-save-{}.md", std::process::id()));
+        let managed = "managed bytes";
+        std::fs::write(&path, managed).expect("write managed content");
+        record_self_save_with_hash(&path, crate::semantic::db::content_hash(managed));
+        assert!(consume_self_save(&path));
+        assert!(consume_self_save(&path));
+        std::fs::write(&path, "external edit").expect("write external edit");
+        assert!(!consume_self_save(&path));
+        let _ = std::fs::remove_file(path);
     }
 }

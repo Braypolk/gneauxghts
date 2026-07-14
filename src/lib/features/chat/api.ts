@@ -17,6 +17,7 @@ import type {
 
 interface RawChatSettings {
   provider: string; model: string; defaultMode?: ChatMode; defaultAccess: VaultAccess;
+  serviceTier?: ChatSettings['serviceTier'];
   atlasVisibility?: ChatSettings['atlasVisibility'];
 }
 interface RawSummary {
@@ -35,17 +36,23 @@ interface RawExcerpt {
   id: string; conversationId: string; messageId: string; startOffset: number; endOffset: number;
   quote: string; anchor: string; remembered: boolean;
 }
-interface RawConversation extends RawSummary { messages: RawMessage[]; excerpts: RawExcerpt[] }
+interface RawConversation extends RawSummary {
+  messages: RawMessage[]; excerpts: RawExcerpt[]; projectionPath?: string | null;
+}
 interface RawReceipt { requestId: string; conversationId: string; userMessageId: string; assistantMessageId: string }
 interface RawStreamEvent {
   requestId: string; conversationId: string; messageId: string; delta?: string; content?: string;
   source?: RawSource; error?: string;
+}
+interface RawProjectionConflictEvent {
+  conversationId: string; notePath: string; deleted: boolean;
 }
 
 function normalizeSettings(raw: RawChatSettings): ChatSettings {
   return {
     provider: raw.provider,
     model: raw.model,
+    serviceTier: raw.serviceTier ?? 'standard',
     defaultMode: raw.defaultMode ?? 'auto',
     defaultVaultAccess: raw.defaultAccess,
     atlasVisibility: raw.atlasVisibility ?? 'hidden'
@@ -176,6 +183,7 @@ export class TauriChatApi implements ChatApi {
       settings: {
         provider: settings.provider,
         model: settings.model,
+        serviceTier: settings.serviceTier,
         defaultMode: settings.defaultMode,
         defaultAccess: settings.defaultVaultAccess,
         atlasVisibility: settings.atlasVisibility
@@ -288,22 +296,27 @@ export class TauriChatApi implements ChatApi {
     return this.getConversation(conversationId);
   }
   on<K extends keyof ChatEventMap>(event: K, handler: (payload: ChatEventMap[K]) => void) {
-    return listen<RawStreamEvent>(event, ({ payload }) => {
+    return listen<RawStreamEvent | RawProjectionConflictEvent>(event, ({ payload }) => {
+      if (event === 'chat://projection-conflict') {
+        handler(payload as ChatEventMap[K]);
+        return;
+      }
+      const stream = payload as RawStreamEvent;
       if (event === 'chat://started') {
-        handler({ ...payload, message: this.#placeholderMessage(payload.messageId, payload.conversationId, 'assistant', '', 'streaming', Date.now()) } as ChatEventMap[K]);
+        handler({ ...stream, message: this.#placeholderMessage(stream.messageId, stream.conversationId, 'assistant', '', 'streaming', Date.now()) } as ChatEventMap[K]);
       } else if (event === 'chat://text-delta') {
-        handler({ ...payload, delta: payload.delta ?? '' } as ChatEventMap[K]);
+        handler({ ...stream, delta: stream.delta ?? '' } as ChatEventMap[K]);
       } else if (event === 'chat://source') {
-        if (payload.source) handler({ ...payload, citation: normalizeSource(payload.source) } as ChatEventMap[K]);
+        if (stream.source) handler({ ...stream, citation: normalizeSource(stream.source) } as ChatEventMap[K]);
       } else {
-        this.#activeRequests.delete(payload.requestId);
+        this.#activeRequests.delete(stream.requestId);
         const status = event === 'chat://completed' ? 'completed' : event === 'chat://cancelled' ? 'cancelled' : 'error';
-        const message = this.#placeholderMessage(payload.messageId, payload.conversationId, 'assistant', payload.content ?? '', status, Date.now());
-        message.errorMessage = payload.error ?? null;
+        const message = this.#placeholderMessage(stream.messageId, stream.conversationId, 'assistant', stream.content ?? '', status, Date.now());
+        message.errorMessage = stream.error ?? null;
         if (event === 'chat://failed') {
-          handler({ ...payload, message, error: payload.error ?? 'The response failed.', retryable: true } as ChatEventMap[K]);
+          handler({ ...stream, message, error: stream.error ?? 'The response failed.', retryable: true } as ChatEventMap[K]);
         } else {
-          handler({ ...payload, message } as ChatEventMap[K]);
+          handler({ ...stream, message } as ChatEventMap[K]);
         }
       }
     });
@@ -318,11 +331,15 @@ export class TauriChatApi implements ChatApi {
       const part = raw.messages.find((message) => message.id === excerpt.messageId)?.part ?? 1;
       this.#excerptLinks.set(excerpt.id, projectionLink(raw, part, excerpt.anchor));
     }
+    const excerptMessageIds = Object.fromEntries(
+      raw.excerpts.map((excerpt) => [excerpt.anchor, excerpt.messageId])
+    );
     return {
       ...normalizeSummary(raw),
       messages,
       activeRequestId: [...this.#activeRequests].find(([, id]) => id === raw.id)?.[0] ?? null,
-      projectionPath: null
+      projectionPath: raw.projectionPath ?? null,
+      excerptMessageIds
     };
   }
 

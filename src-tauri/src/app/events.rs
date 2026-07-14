@@ -7,6 +7,7 @@
 //! original event channel names (e.g. `vault-note-changed`) so the contract
 //! across IPC is preserved.
 
+use crate::note::DocumentKind;
 use crate::semantic::SemanticStatus;
 use crate::state::VaultInfo;
 use serde::Serialize;
@@ -18,6 +19,7 @@ pub(crate) const VAULT_NOTE_CHANGED_EVENT: &str = "vault-note-changed";
 pub(crate) const SEMANTIC_STATUS_CHANGED_EVENT: &str = "semantic-status-changed";
 pub(crate) const NOTE_SAVED_EVENT: &str = "note-saved";
 pub(crate) const VAULT_CHANGED_EVENT: &str = "vault-changed";
+pub(crate) const CHAT_PROJECTION_CONFLICT_EVENT: &str = "chat://projection-conflict";
 
 /// Stable channel identifier each `AppEvent` is emitted on. Returning the
 /// channel name from the enum keeps the wire-level contract close to the
@@ -36,8 +38,16 @@ pub(crate) enum AppEvent {
     VaultNoteChanged {
         note_path: String,
         deleted: bool,
+        document_kind: DocumentKind,
         #[serde(skip_serializing_if = "Option::is_none")]
         source: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chat_id: Option<String>,
+    },
+    ChatProjectionConflict {
+        chat_id: String,
+        note_path: String,
+        deleted: bool,
     },
     /// Semantic indexer status snapshot (count of indexed notes, queue
     /// depth, etc.). Pushed instead of polled.
@@ -58,6 +68,7 @@ impl AppEvent {
     pub(crate) fn channel(&self) -> EventChannel {
         EventChannel(match self {
             AppEvent::VaultNoteChanged { .. } => VAULT_NOTE_CHANGED_EVENT,
+            AppEvent::ChatProjectionConflict { .. } => CHAT_PROJECTION_CONFLICT_EVENT,
             AppEvent::SemanticStatusChanged(_) => SEMANTIC_STATUS_CHANGED_EVENT,
             AppEvent::NoteSaved { .. } => NOTE_SAVED_EVENT,
             AppEvent::VaultChanged(_) => VAULT_CHANGED_EVENT,
@@ -73,8 +84,21 @@ impl AppEvent {
             AppEvent::VaultNoteChanged {
                 note_path,
                 deleted,
+                document_kind,
                 source,
-            } => json!({ "notePath": note_path, "deleted": deleted, "source": source }),
+                chat_id,
+            } => json!({
+                "notePath": note_path,
+                "deleted": deleted,
+                "documentKind": document_kind,
+                "source": source,
+                "chatId": chat_id,
+            }),
+            AppEvent::ChatProjectionConflict {
+                chat_id,
+                note_path,
+                deleted,
+            } => json!({ "conversationId": chat_id, "notePath": note_path, "deleted": deleted }),
             AppEvent::SemanticStatusChanged(status) => {
                 serde_json::to_value(status).unwrap_or_else(|_| json!({}))
             }
@@ -127,7 +151,9 @@ impl EventBus {
         self.emit(AppEvent::VaultNoteChanged {
             note_path: path.to_string_lossy().into_owned(),
             deleted,
+            document_kind: DocumentKind::Note,
             source: None,
+            chat_id: None,
         });
     }
 
@@ -135,7 +161,34 @@ impl EventBus {
         self.emit(AppEvent::VaultNoteChanged {
             note_path: path.to_string_lossy().into_owned(),
             deleted,
+            document_kind: DocumentKind::Note,
             source: Some(source.to_string()),
+            chat_id: None,
+        });
+    }
+
+    pub(crate) fn vault_document_changed(
+        &self,
+        path: &Path,
+        deleted: bool,
+        document_kind: DocumentKind,
+        source: &str,
+        chat_id: Option<String>,
+    ) {
+        self.emit(AppEvent::VaultNoteChanged {
+            note_path: path.to_string_lossy().into_owned(),
+            deleted,
+            document_kind,
+            source: Some(source.to_string()),
+            chat_id,
+        });
+    }
+
+    pub(crate) fn chat_projection_conflict(&self, chat_id: String, path: &Path, deleted: bool) {
+        self.emit(AppEvent::ChatProjectionConflict {
+            chat_id,
+            note_path: path.to_string_lossy().into_owned(),
+            deleted,
         });
     }
 

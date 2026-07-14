@@ -33,12 +33,13 @@ pub(crate) async fn get_vault_atlas(
         "get_vault_atlas",
     )?;
 
+    let remembered_chat_paths = state.semantic.remembered_chat_paths()?;
     let (metadata, hard_links) = {
         let index = state
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        let metadata = build_metadata(&index.entries, &chat_visibility);
+        let metadata = build_metadata(&index.entries, &chat_visibility, &remembered_chat_paths);
         let hard_links = build_hard_links(&index.entries, &metadata);
         (metadata, hard_links)
     };
@@ -71,12 +72,13 @@ pub(crate) async fn search_vault_atlas(
         "search_vault_atlas",
     )?;
 
+    let remembered_chat_paths = state.semantic.remembered_chat_paths()?;
     let metadata = {
         let index = state
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        build_metadata(&index.entries, &chat_visibility)
+        build_metadata(&index.entries, &chat_visibility, &remembered_chat_paths)
     };
     let activity_by_note_id = db_load_note_activity()?;
     let semantic = state.semantic.clone();
@@ -91,15 +93,22 @@ pub(crate) async fn search_vault_atlas(
 fn build_metadata(
     entries: &HashMap<PathBuf, IndexedNote>,
     visibility: &AtlasChatVisibility,
+    remembered_chat_paths: &HashSet<String>,
 ) -> HashMap<String, AtlasNoteMetadata> {
     entries
         .iter()
-        .filter(|(_, note)| match visibility {
+        .filter(|(path, note)| match visibility {
             AtlasChatVisibility::Hidden => note.document_kind == crate::note::DocumentKind::Note,
-            AtlasChatVisibility::Remembered => {
+            AtlasChatVisibility::Remembered => match note.document_kind {
+                crate::note::DocumentKind::Note => true,
+                crate::note::DocumentKind::ChatIndex => {
+                    remembered_chat_paths.contains(path.to_string_lossy().as_ref())
+                }
+                crate::note::DocumentKind::ChatTranscript => false,
+            },
+            AtlasChatVisibility::All => {
                 note.document_kind != crate::note::DocumentKind::ChatTranscript
             }
-            AtlasChatVisibility::All => true,
         })
         .map(|(path, note)| {
             let note_path = path.to_string_lossy().into_owned();
@@ -116,6 +125,8 @@ fn build_metadata(
                     title: note.title.clone(),
                     preview: extract_preview(note),
                     tags,
+                    document_kind: note.document_kind,
+                    modified_millis: note.modified_millis,
                 },
             )
         })
@@ -246,7 +257,18 @@ fn build_hard_links(
     let mut seen = HashSet::new();
     let mut links = Vec::new();
     for (path, note) in entries {
-        let source_note_path = path.to_string_lossy().into_owned();
+        let source_note_path = if note.document_kind == crate::note::DocumentKind::ChatTranscript {
+            path.parent()
+                .map(|parent| parent.join("Conversation.md"))
+                .filter(|conversation| {
+                    metadata.contains_key(conversation.to_string_lossy().as_ref())
+                })
+                .unwrap_or_else(|| path.clone())
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            path.to_string_lossy().into_owned()
+        };
         for target in extract_wikilink_targets(note) {
             let Some(target_note_path) = title_to_path.get(&normalize_reference(&target)) else {
                 continue;

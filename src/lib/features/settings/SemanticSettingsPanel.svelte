@@ -168,6 +168,14 @@
         <p class="mt-2 text-sm font-medium">
           {#if semanticStatus.indexingPaused}
             Paused
+          {:else if semanticStatus.recoveryState === 'waitingForIdle'}
+            Waiting for idle
+          {:else if semanticStatus.recoveryState === 'catchingUp'}
+            Applying{semanticStatus.progressTotal > 0 ? ` ${semanticStatus.progressTotal} changes` : ' changes'}
+          {:else if semanticStatus.recoveryState === 'rebuilding'}
+            Rebuilding {semanticStatus.progressTotal > 0 ? `${semanticStatus.progressCurrent}/${semanticStatus.progressTotal}` : ''}
+          {:else if semanticStatus.recoveryState === 'stale'}
+            Updating in background
           {:else if semanticStatus.indexingInProgress}
             {semanticStatus.currentJobLabel ?? 'Indexing'}
           {:else}
@@ -175,6 +183,9 @@
           {/if}
         </p>
         <p class="mt-1 text-xs text-muted-foreground">Model available: {semanticStatus.modelAvailable ? 'yes' : 'no'}</p>
+        {#if semanticStatus.rebuildReason}
+          <p class="mt-1 text-xs text-muted-foreground">{semanticStatus.rebuildReason}</p>
+        {/if}
       </div>
     </div>
 

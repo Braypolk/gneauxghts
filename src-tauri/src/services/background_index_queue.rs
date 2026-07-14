@@ -180,7 +180,8 @@ fn run_worker(
                         timestamp,
                     );
                 } else {
-                    let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
+                    let _ =
+                        crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
                 }
             }
             BackgroundJob::Remove { path } => {

@@ -26,7 +26,9 @@ type Listener<T> = (payload: T) => void;
 type VaultNoteChangedPayload = {
   notePath: string;
   deleted: boolean;
+  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
   source?: string | null;
+  chatId?: string | null;
 };
 
 type NoteSavedPayload = {

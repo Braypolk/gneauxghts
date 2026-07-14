@@ -6,6 +6,7 @@ import type { ChatConversation, ChatEventMap, ChatMessage, ChatSettings } from '
 const settings: ChatSettings = {
   provider: 'openai',
   model: 'test-model',
+  serviceTier: 'standard',
   defaultMode: 'auto',
   defaultVaultAccess: 'limited',
   atlasVisibility: 'hidden'
@@ -42,6 +43,7 @@ function conversation(overrides: Partial<ChatConversation> = {}): ChatConversati
     messages: [],
     activeRequestId: null,
     projectionPath: null,
+    excerptMessageIds: {},
     ...overrides
   };
 }
@@ -93,7 +95,7 @@ describe('createChatController', () => {
     expect(fake.api.getConversation).toHaveBeenCalledWith('conversation-1');
     expect(controller.getSnapshot().settings).toEqual(settings);
     expect(controller.getSnapshot().conversation?.id).toBe('conversation-1');
-    expect(fake.handlers.size).toBe(6);
+    expect(fake.handlers.size).toBe(7);
   });
 
   it('reconciles streaming deltas, citations, and completion', async () => {

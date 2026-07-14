@@ -456,6 +456,11 @@ pub(crate) fn get_semantic_status(state: State<'_, AppState>) -> Result<Semantic
 }
 
 #[tauri::command]
+pub(crate) fn report_user_activity(state: State<'_, AppState>) {
+    state.semantic.report_user_activity();
+}
+
+#[tauri::command]
 pub(crate) fn rebuild_semantic_index(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -814,6 +819,7 @@ mod tests {
                 result: NoteSearchResult {
                     document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("note-a".to_string()),
+                    block_anchor: None,
                     note_path: Some("/notes/a.md".to_string()),
                     file_name: "a".to_string(),
                     section_label: "Paragraph 1".to_string(),
@@ -832,6 +838,7 @@ mod tests {
                 result: NoteSearchResult {
                     document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("note-b".to_string()),
+                    block_anchor: None,
                     note_path: Some("/notes/b.md".to_string()),
                     file_name: "b".to_string(),
                     section_label: "Paragraph 1".to_string(),
@@ -855,6 +862,8 @@ mod tests {
             score: 0.9,
             start_line: 7,
             end_line: 8,
+            document_kind: crate::note::DocumentKind::Note,
+            block_anchor: None,
         }];
 
         let results = merge_hybrid_candidates(
@@ -883,6 +892,43 @@ mod tests {
     }
 
     #[test]
+    fn semantic_only_chat_match_keeps_kind_and_anchor() {
+        let semantic = vec![crate::semantic::SemanticChunkMatch {
+            note_path: "/notes/Chats/example/Conversation.md".to_string(),
+            note_title: "A useful discussion".to_string(),
+            section_label: "Remembered passage".to_string(),
+            excerpt: "the exact remembered passage".to_string(),
+            match_text: "the exact remembered passage".to_string(),
+            score: 0.9,
+            start_line: 1,
+            end_line: 1,
+            document_kind: crate::note::DocumentKind::ChatIndex,
+            block_anchor: Some("excerpt_stable".to_string()),
+        }];
+
+        let results = merge_hybrid_candidates(
+            Vec::new(),
+            semantic,
+            "remembered passage",
+            None,
+            5,
+            0.5,
+            0.5,
+            &std::collections::HashMap::new(),
+            &super::search_commands::NoteAccessLookup::empty(),
+            0,
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            results[0].document_kind,
+            crate::note::DocumentKind::ChatIndex
+        );
+        assert_eq!(results[0].block_anchor.as_deref(), Some("excerpt_stable"));
+        assert_eq!(results[0].reason_labels, vec!["semantic".to_string()]);
+    }
+
+    #[test]
     fn merge_hybrid_candidates_boosts_frequently_opened_notes() {
         let lexical = vec![
             ScoredSearchResult {
@@ -890,6 +936,7 @@ mod tests {
                 result: NoteSearchResult {
                     document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("rarely-opened".to_string()),
+                    block_anchor: None,
                     note_path: Some("/notes/rare.md".to_string()),
                     file_name: "rare".to_string(),
                     section_label: "Paragraph 1".to_string(),
@@ -908,6 +955,7 @@ mod tests {
                 result: NoteSearchResult {
                     document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("often-opened".to_string()),
+                    block_anchor: None,
                     note_path: Some("/notes/often.md".to_string()),
                     file_name: "often".to_string(),
                     section_label: "Paragraph 1".to_string(),
@@ -968,6 +1016,7 @@ mod tests {
                 result: NoteSearchResult {
                     document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("stale-popular".to_string()),
+                    block_anchor: None,
                     note_path: Some("/notes/stale.md".to_string()),
                     file_name: "stale".to_string(),
                     section_label: "Paragraph 1".to_string(),
@@ -986,6 +1035,7 @@ mod tests {
                 result: NoteSearchResult {
                     document_kind: crate::note::DocumentKind::Note,
                     note_id: Some("fresh".to_string()),
+                    block_anchor: None,
                     note_path: Some("/notes/fresh.md".to_string()),
                     file_name: "fresh".to_string(),
                     section_label: "Paragraph 1".to_string(),

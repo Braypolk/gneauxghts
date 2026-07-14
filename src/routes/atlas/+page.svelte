@@ -503,7 +503,11 @@
   }
 
   async function openNode(node: AtlasNode) {
-    storePendingNoteTarget({ noteId: node.noteId, notePath: node.notePath });
+    storePendingNoteTarget({
+      noteId: node.noteId,
+      notePath: node.notePath,
+      documentKind: node.documentKind
+    });
     await goto('/');
   }
 

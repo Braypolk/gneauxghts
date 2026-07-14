@@ -1,4 +1,7 @@
-use crate::{index::{IndexedNote, IndexedParagraph}, note::DocumentKind};
+use crate::{
+    index::{IndexedNote, IndexedParagraph},
+    note::DocumentKind,
+};
 use serde::Serialize;
 use std::path::Path;
 
@@ -34,6 +37,8 @@ pub(crate) struct NoteSearchResult {
     pub(crate) start_line: Option<usize>,
     #[serde(default)]
     pub(crate) end_line: Option<usize>,
+    #[serde(default)]
+    pub(crate) block_anchor: Option<String>,
 }
 
 pub(crate) struct ScoredSearchResult {
@@ -105,6 +110,7 @@ pub(crate) fn build_recent_result(
         semantic_score: None,
         start_line: None,
         end_line: None,
+        block_anchor: None,
     }
 }
 
@@ -186,6 +192,7 @@ fn score_search_candidate(
             semantic_score: None,
             start_line: line_number_for_offset(candidate.paragraph, search_match.match_offset),
             end_line: line_number_for_offset(candidate.paragraph, search_match.match_offset),
+            block_anchor: None,
         },
     })
 }
