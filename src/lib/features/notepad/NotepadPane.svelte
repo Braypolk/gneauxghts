@@ -29,6 +29,18 @@
   const displayedTitle = $derived(titleDraft ?? viewModel.titleValue);
 </script>
 
+{#snippet closePaneButton()}
+  <button
+    type="button"
+    class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+    onclick={() => void actions.onClose(viewModel.paneId)}
+    aria-label="Close this pane"
+    title="Close pane"
+  >
+    <X class="h-4 w-4" />
+  </button>
+{/snippet}
+
 <div
   bind:this={pane.refs.paneCard}
   class={viewModel.bodyClass}
@@ -70,9 +82,7 @@
             </div>
           </div>
           {#if viewModel.showCloseButton}
-            <button type="button" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onClose(viewModel.paneId)} aria-label="Close this pane" title="Close pane">
-              <X class="h-4 w-4" />
-            </button>
+            {@render closePaneButton()}
           {:else}
             <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
             <div class="h-9 w-9 shrink-0 sm:hidden" aria-hidden="true"></div>
@@ -82,9 +92,7 @@
     {:else}
       <div class="absolute right-4 top-4 z-30">
         {#if viewModel.showCloseButton}
-          <button type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground" onclick={() => void actions.onClose(viewModel.paneId)} aria-label="Close this pane" title="Close pane">
-            <X class="h-4 w-4" />
-          </button>
+          {@render closePaneButton()}
         {:else}
           <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
           <div class="h-9 w-9 shrink-0 sm:hidden" aria-hidden="true"></div>
@@ -96,9 +104,13 @@
       <div class="flex h-full flex-1 min-h-0 flex-col">
         <div
           bind:this={pane.refs.editorShell}
-          class="notepad-editor-shell relative h-full flex-1"
-          class:notepad-editor-shell--slash-open={viewModel.isSlashMenuOpen}
-          class:notepad-editor-shell--pane-command-open={viewModel.isPaneCommandOpen}
+          class={`notepad-editor-shell relative h-full min-h-0 flex-1 overflow-hidden overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
+            viewModel.isSlashMenuOpen ? 'overscroll-none touch-none' : ''
+          } ${
+            viewModel.isPaneCommandOpen
+              ? '[--editor-bottom-padding:calc(7rem+env(safe-area-inset-bottom,0px)+var(--keyboard-inset-height,0px))]'
+              : ''
+          }`}
         >
           {#if !viewModel.isEditorReady}
             <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
@@ -110,13 +122,13 @@
 
           <div
             bind:this={pane.refs.editorRoot}
-            class="h-full min-h-full"
+            class="relative h-full min-h-full w-full max-w-full overflow-x-clip"
             use:editorAction={viewModel.editorLifecycle}
           ></div>
 
           {#if viewModel.isPaneCommandOpen}
             <div class="pointer-events-none absolute inset-0 z-20">
-              <div class="notepad-pane-command-surface pointer-events-auto box-border cursor-default">
+              <div class="pointer-events-auto absolute top-[calc(var(--editor-top-padding)+5.25rem)] left-1/2 box-border w-[min(calc(100%-2rem),var(--editor-readable-width))] max-w-md -translate-x-1/2 cursor-default">
                 <div class="w-full flex items-center pb-6 gap-3">
                   <div class="flex-1 h-[1px] rounded-full bg-border/70"></div>
                   <span class="text-base md:text-lg text-muted-foreground/80 select-none">or</span>

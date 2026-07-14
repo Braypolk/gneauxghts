@@ -27,6 +27,12 @@
   }: RelatedPanelProps = $props();
 </script>
 
+{#snippet emptyState(message: string)}
+  <div class="rounded-[1.15rem] border border-dashed border-border/70 bg-background/45 px-4 py-5 text-sm text-muted-foreground">
+    {message}
+  </div>
+{/snippet}
+
 <aside class="related-panel flex h-full min-h-0 flex-col rounded-[1.8rem] border border-border/80 bg-card/50">
   <div class="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
     <h2 class="text-sm font-semibold tracking-[0.08em] text-foreground/88 uppercase">Related</h2>
@@ -75,17 +81,11 @@
 
   <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3">
     {#if loading}
-      <div class="rounded-[1.15rem] border border-dashed border-border/70 bg-background/45 px-4 py-5 text-sm text-muted-foreground">
-        Finding nearby notes…
-      </div>
+      {@render emptyState('Finding nearby notes…')}
     {:else if status !== 'ready'}
-      <div class="rounded-[1.15rem] border border-dashed border-border/70 bg-background/45 px-4 py-5 text-sm text-muted-foreground">
-        {reason ?? 'Related notes are unavailable right now.'}
-      </div>
+      {@render emptyState(reason ?? 'Related notes are unavailable right now.')}
     {:else if items.length === 0}
-      <div class="rounded-[1.15rem] border border-dashed border-border/70 bg-background/45 px-4 py-5 text-sm text-muted-foreground">
-        No clear matches yet.
-      </div>
+      {@render emptyState('No clear matches yet.')}
     {:else}
       <div class="flex flex-col gap-2">
         {#each items as item (`${item.notePath}-${item.sectionLabel}-${item.startLine}`)}

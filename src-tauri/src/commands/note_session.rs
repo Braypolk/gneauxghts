@@ -196,7 +196,20 @@ pub(crate) fn resolve_note_path_input_with_state(
     app_state: Option<&State<'_, AppState>>,
 ) -> Result<PathBuf, String> {
     if let Some(note_path) = validate_current_path(path, notes_dir)? {
-        return Ok(note_path);
+        if note_path.exists() {
+            return Ok(note_path);
+        }
+
+        // A watcher refresh can race an external rename: the frontend still
+        // has the old path, but the stable managed note id already points at
+        // the file's new location. Fall through to the id lookup instead of
+        // failing the refresh and leaving a stale path/title in the editor.
+        if note_id
+            .as_deref()
+            .is_none_or(|note_id| note_id.trim().is_empty())
+        {
+            return Ok(note_path);
+        }
     }
 
     if let Some(note_id) = note_id.filter(|note_id| !note_id.trim().is_empty()) {

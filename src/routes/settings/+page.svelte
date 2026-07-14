@@ -6,6 +6,8 @@
   import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
   import ChatSettingsPanel from '$lib/features/settings/ChatSettingsPanel.svelte';
+  import SettingsCard from '$lib/features/settings/SettingsCard.svelte';
+  import SettingsLabel from '$lib/features/settings/SettingsLabel.svelte';
   import {
     averageDuration,
     formatMillis,
@@ -171,7 +173,7 @@
             </header>
 
             {#if $settings.activeGeneralSection === 'appearance'}
-              <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
+              <div class="settings-section">
                 <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p class="text-sm font-medium">Theme</p>
@@ -214,7 +216,7 @@
               <ChatSettingsPanel />
             {:else if $settings.activeGeneralSection === 'forgetting'}
               <div class="space-y-5">
-                <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
+                <div class="settings-section">
                   <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                       <p class="text-sm font-medium">Forget button duration</p>
@@ -252,7 +254,7 @@
                   </div>
                 </div>
 
-                <div class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
+                <div class="settings-section">
                   <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                       <p class="text-sm font-medium">Forgotten note retention</p>
@@ -322,8 +324,8 @@
             </div>
           </div>
 
-          <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Selected folder</p>
+          <SettingsCard>
+            <SettingsLabel text="Selected folder" />
             <p class="mt-3 break-all text-sm font-medium">
               {#if selectedVaultPath}
                 {selectedVaultPath}
@@ -336,7 +338,7 @@
                 This folder is not applied yet. Save it, then restart the app.
               </p>
             {/if}
-          </div>
+          </SettingsCard>
 
           <div class="flex flex-wrap items-center gap-2">
             <button
@@ -411,21 +413,21 @@
 
           {#if $settings.vaultInfo}
             <div class="grid gap-4 md:grid-cols-3">
-              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Active vault</p>
+              <SettingsCard>
+                <SettingsLabel text="Active vault" />
                 <p class="mt-2 text-sm font-medium break-all">{$settings.activeVaultPath}</p>
-              </div>
-              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Forgotten notes</p>
+              </SettingsCard>
+              <SettingsCard>
+                <SettingsLabel text="Forgotten notes" />
                 <p class="mt-2 text-sm font-medium break-all">{$settings.vaultInfo.forgottenPath}</p>
-              </div>
-              <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-                <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Vault stats</p>
+              </SettingsCard>
+              <SettingsCard>
+                <SettingsLabel text="Vault stats" />
                 <p class="mt-2 text-sm font-medium">{$settings.vaultInfo.noteCount} notes</p>
                 <p class="mt-1 text-xs text-muted-foreground">
                   {$settings.vaultInfo.isDefault ? 'Using default path' : 'Custom path'} · {$settings.vaultInfo.requiresRestart ? 'restart required after changes' : 'live'}
                 </p>
-              </div>
+              </SettingsCard>
             </div>
           {/if}
         </div>

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { RefreshCcw } from '@lucide/svelte';
   import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
+  import SettingsRefreshButton from './SettingsRefreshButton.svelte';
 
   type ForgottenAction = 'restore_forgotten_notes' | 'delete_forgotten_notes';
 
@@ -40,15 +40,10 @@
       </p>
     </div>
 
-    <button
-      class="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-      type="button"
+    <SettingsRefreshButton
       disabled={isLoadingForgottenNotes || isUpdatingForgottenNotes}
       onclick={() => void loadForgottenNotes()}
-    >
-      <RefreshCcw class="h-4 w-4" />
-      Refresh
-    </button>
+    />
   </div>
 
   <div class="mt-6 rounded-3xl border border-border/70 bg-background/70 px-5 py-4">

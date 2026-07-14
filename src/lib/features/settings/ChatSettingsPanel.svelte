@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Eye, EyeOff, KeyRound, LoaderCircle } from '@lucide/svelte';
+  import SettingsField from './SettingsField.svelte';
   import { onMount } from 'svelte';
   import { TauriChatApi } from '$lib/features/chat/api';
   import type {
@@ -103,7 +104,7 @@
   </div>
 {:else}
   <div class="space-y-5">
-    <section class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
+    <section class="settings-section">
       <div class="flex items-start gap-3">
         <div class="rounded-xl bg-muted p-2 text-muted-foreground"><KeyRound class="h-4 w-4" /></div>
         <div>
@@ -163,50 +164,44 @@
     </section>
 
     {#if settings}
-      <section class="rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6">
+      <section class="settings-section">
         <h3 class="text-sm font-medium">Provider and defaults</h3>
         <p class="mt-1 text-xs text-muted-foreground">These settings are stored with this vault. The API key remains machine-local.</p>
 
         <div class="mt-5 grid gap-4 sm:grid-cols-2">
-          <label class="grid gap-1.5 text-xs font-medium">
-            Provider
-            <input class="h-10 rounded-xl border border-border bg-muted/40 px-3 text-sm text-muted-foreground" value="OpenAI Responses API" disabled />
-          </label>
-          <label class="grid gap-1.5 text-xs font-medium">
-            Model
-            <input class="h-10 rounded-xl border border-border bg-background px-3 text-sm" bind:value={settings.model} spellcheck="false" />
-          </label>
-          <label class="grid gap-1.5 text-xs font-medium">
-            Processing
-            <select class="h-10 rounded-xl border border-border bg-background px-3 text-sm" bind:value={settings.serviceTier}>
+          <SettingsField label="Provider">
+            <input class="settings-control bg-muted/40! text-muted-foreground" value="OpenAI Responses API" disabled />
+          </SettingsField>
+          <SettingsField label="Model">
+            <input class="settings-control" bind:value={settings.model} spellcheck="false" />
+          </SettingsField>
+          <SettingsField label="Processing">
+            <select class="settings-control" bind:value={settings.serviceTier}>
               <option value="standard">Standard</option>
               <option value="flex">Flex — lower cost, slower</option>
             </select>
-          </label>
-          <label class="grid gap-1.5 text-xs font-medium">
-            Default chat mode
-            <select class="h-10 rounded-xl border border-border bg-background px-3 text-sm" bind:value={settings.defaultMode}>
+          </SettingsField>
+          <SettingsField label="Default chat mode">
+            <select class="settings-control" bind:value={settings.defaultMode}>
               {#each ['auto', 'explore', 'challenge', 'research', 'make'] as mode}
                 <option value={mode}>{mode[0].toUpperCase() + mode.slice(1)}</option>
               {/each}
             </select>
-          </label>
-          <label class="grid gap-1.5 text-xs font-medium">
-            Default vault access
-            <select class="h-10 rounded-xl border border-border bg-background px-3 text-sm" bind:value={settings.defaultVaultAccess}>
+          </SettingsField>
+          <SettingsField label="Default vault access">
+            <select class="settings-control" bind:value={settings.defaultVaultAccess}>
               <option value="none">None</option>
               <option value="limited">Limited</option>
               <option value="full">Full</option>
             </select>
-          </label>
-          <label class="grid gap-1.5 text-xs font-medium">
-            Atlas chat visibility
-            <select class="h-10 rounded-xl border border-border bg-background px-3 text-sm" bind:value={settings.atlasVisibility}>
+          </SettingsField>
+          <SettingsField label="Atlas chat visibility">
+            <select class="settings-control" bind:value={settings.atlasVisibility}>
               <option value="hidden">Hidden</option>
               <option value="remembered">Remembered</option>
               <option value="all">All</option>
             </select>
-          </label>
+          </SettingsField>
         </div>
 
         {#if settings.serviceTier === 'flex'}

@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { RefreshCcw } from '@lucide/svelte';
   import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
+  import SettingsCard from './SettingsCard.svelte';
+  import SettingsLabel from './SettingsLabel.svelte';
+  import SettingsRefreshButton from './SettingsRefreshButton.svelte';
 
   type SemanticAction =
     | 'rebuild_semantic_index'
@@ -50,6 +52,18 @@
   } = $props();
 </script>
 
+{#snippet semanticAction(label: string, action: () => void, title: string | undefined = undefined)}
+  <button
+    class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-50"
+    type="button"
+    disabled={isRunningAction}
+    {title}
+    onclick={action}
+  >
+    {label}
+  </button>
+{/snippet}
+
 <div class={embedded ? 'px-0 py-0' : 'border-t border-border/70 px-6 py-5'}>
   <div class={`flex items-start justify-between gap-4 ${embedded ? 'justify-end' : ''}`}>
     {#if !embedded}
@@ -61,14 +75,7 @@
       </div>
     {/if}
 
-    <button
-      class="inline-flex shrink-0 items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-      type="button"
-      onclick={() => void loadSemanticState()}
-    >
-      <RefreshCcw class="h-4 w-4" />
-      Refresh
-    </button>
+    <SettingsRefreshButton onclick={() => void loadSemanticState()} />
   </div>
 
   {#if semanticSettings && semanticStatus}
@@ -128,8 +135,8 @@
     {/if}
 
     <div class="mt-6 grid gap-4 md:grid-cols-3">
-      <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-        <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Model</p>
+      <SettingsCard>
+        <SettingsLabel text="Model" />
         <p class="mt-2 text-sm font-medium">{semanticStatus.model.label}</p>
         <p class="mt-1 text-xs text-muted-foreground">
           {semanticStatus.model.dimensions} dimensions · {semanticStatus.model.status}
@@ -140,18 +147,18 @@
         <p class="mt-1 text-xs text-muted-foreground">
           Model: {semanticStatus.model.modelPath ?? semanticStatus.model.modelRepoId}
         </p>
-      </div>
+      </SettingsCard>
 
-      <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-        <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Index</p>
+      <SettingsCard>
+        <SettingsLabel text="Index" />
         <p class="mt-2 text-sm font-medium">{semanticStatus.indexedNotes} notes</p>
         <p class="mt-1 text-xs text-muted-foreground">
           {semanticStatus.indexedChunks} chunks · last run {formatTimestamp(semanticStatus.lastIndexedAtMillis)}
         </p>
-      </div>
+      </SettingsCard>
 
-      <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-        <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">ANN</p>
+      <SettingsCard>
+        <SettingsLabel text="ANN" />
         <p class="mt-2 text-sm font-medium">
           {semanticStatus.annIndexLoaded ? 'Loaded' : 'Pending rebuild'}
         </p>
@@ -161,10 +168,10 @@
         <p class="mt-1 text-xs text-muted-foreground">
           rebuild pending {semanticStatus.annRebuildPending ? 'yes' : 'no'} · dump {formatTimestamp(semanticStatus.annLastDumpedAtMillis)}
         </p>
-      </div>
+      </SettingsCard>
 
-      <div class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-        <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Status</p>
+      <SettingsCard>
+        <SettingsLabel text="Status" />
         <p class="mt-2 text-sm font-medium">
           {#if semanticStatus.indexingPaused}
             Paused
@@ -186,61 +193,23 @@
         {#if semanticStatus.rebuildReason}
           <p class="mt-1 text-xs text-muted-foreground">{semanticStatus.rebuildReason}</p>
         {/if}
-      </div>
+      </SettingsCard>
     </div>
 
     {#if semanticStatus.platformSupported}
       <div class="mt-6 flex flex-wrap items-center gap-3">
-        <button
-          class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-          type="button"
-          disabled={isRunningAction}
-          onclick={() => void downloadEmbeddingModel()}
-        >
-          Download embedding model
-        </button>
-
-        <button
-          class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-          type="button"
-          disabled={isRunningAction}
-          onclick={() => void runAction('prepare_semantic_model')}
-        >
-          Prepare local model
-        </button>
-
-        <button
-          class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-          type="button"
-          disabled={isRunningAction}
-          onclick={() => void runAction('rebuild_semantic_index')}
-        >
-          Rebuild semantic index
-        </button>
-
-        <button
-          class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-          type="button"
-          disabled={isRunningAction}
-          onclick={() =>
-            void runAction(
-              semanticStatus.indexingPaused
-                ? 'resume_semantic_indexing'
-                : 'pause_semantic_indexing'
-            )}
-        >
-          {semanticStatus.indexingPaused ? 'Resume indexing' : 'Pause indexing'}
-        </button>
-
-        <button
-          class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-          type="button"
-          disabled={isRunningAction}
-          onclick={() => void clearAtlasCache()}
-          title="Clears atlas positions, layout signature, and graph snapshot so the next Atlas open runs a full cold generation."
-        >
-          Clear atlas cache
-        </button>
+        {@render semanticAction('Download embedding model', () => void downloadEmbeddingModel())}
+        {@render semanticAction('Prepare local model', () => void runAction('prepare_semantic_model'))}
+        {@render semanticAction('Rebuild semantic index', () => void runAction('rebuild_semantic_index'))}
+        {@render semanticAction(
+          semanticStatus.indexingPaused ? 'Resume indexing' : 'Pause indexing',
+          () => void runAction(semanticStatus.indexingPaused ? 'resume_semantic_indexing' : 'pause_semantic_indexing')
+        )}
+        {@render semanticAction(
+          'Clear atlas cache',
+          () => void clearAtlasCache(),
+          'Clears atlas positions, layout signature, and graph snapshot so the next Atlas open runs a full cold generation.'
+        )}
 
         {#if isSaving || isRunningAction}
           <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Updating…</p>
@@ -249,15 +218,15 @@
     {/if}
 
     {#if semanticStatus.latestJob}
-      <div class="mt-6 rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-        <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Latest job</p>
+      <SettingsCard class="mt-6">
+        <SettingsLabel text="Latest job" />
         <p class="mt-2 text-sm font-medium">
           {semanticStatus.latestJob.status} · scanned {semanticStatus.latestJob.scannedCount} · embedded {semanticStatus.latestJob.embeddedCount}
         </p>
         <p class="mt-1 text-xs text-muted-foreground">
           Started {formatTimestamp(semanticStatus.latestJob.startedAtMillis)} · Updated {formatTimestamp(semanticStatus.latestJob.updatedAtMillis)}
         </p>
-      </div>
+      </SettingsCard>
     {/if}
 
     {#if semanticStatus.lastError || semanticStatus.latestJob?.errorText}
@@ -268,10 +237,10 @@
 
     {#if semanticDebug}
       {@const metrics = semanticDebug.metrics}
-      <div class="mt-6 rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+      <SettingsCard class="mt-6">
         <div class="flex items-start justify-between gap-4">
           <div>
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Diagnostics</p>
+            <SettingsLabel text="Diagnostics" />
             <p class="mt-2 text-sm font-medium">Live semantic telemetry</p>
             <p class="mt-1 text-xs text-muted-foreground">
               Captured {formatTimestamp(semanticDebug.capturedAtMillis)}
@@ -297,8 +266,8 @@
         </div>
 
         <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Embeddings</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="Embeddings" />
             <p class="mt-2 text-sm font-medium">{metrics.embeddingRequestCount} requests</p>
             <p class="mt-1 text-xs text-muted-foreground">
               avg {formatMillis(averageDuration(metrics.embeddingDurationTotalMillis, metrics.embeddingRequestCount))}
@@ -307,10 +276,10 @@
             <p class="mt-1 text-xs text-muted-foreground">
               texts {metrics.embeddingTextCountTotal} · chars {metrics.embeddingCharCountTotal}
             </p>
-          </div>
+          </SettingsCard>
 
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Runtime</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="Runtime" />
             <p class="mt-2 text-sm font-medium">
               spawns {metrics.runtimeSpawnCount} · restarts {metrics.runtimeRestartCount}
             </p>
@@ -320,10 +289,10 @@
             <p class="mt-1 text-xs text-muted-foreground">
               warmup {formatMillis(metrics.modelWarmupLastMillis)} · prepare {formatMillis(metrics.modelPrepareLastMillis)}
             </p>
-          </div>
+          </SettingsCard>
 
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Requests</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="Requests" />
             <p class="mt-2 text-sm font-medium">
               search {metrics.searchRequestCount} · related {metrics.relatedRequestCount}
             </p>
@@ -333,10 +302,10 @@
             <p class="mt-1 text-xs text-muted-foreground">
               related unavailable {metrics.relatedUnavailableCount}
             </p>
-          </div>
+          </SettingsCard>
 
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">ANN Queries</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="ANN Queries" />
             <p class="mt-2 text-sm font-medium">{metrics.annQueryCount} queries</p>
             <p class="mt-1 text-xs text-muted-foreground">
               candidates {metrics.annQueryCandidateTotal} · reranked {metrics.annQueryRerankTotal}
@@ -345,10 +314,10 @@
               avg {formatMillis(averageDuration(metrics.annQueryDurationTotalMillis, metrics.annQueryCount))}
               · max {formatMillis(metrics.annQueryDurationMaxMillis)}
             </p>
-          </div>
+          </SettingsCard>
 
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Index</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="Index" />
             <p class="mt-2 text-sm font-medium">
               jobs {metrics.indexJobStartedCount} · zero-work {metrics.indexZeroWorkCount}
             </p>
@@ -359,10 +328,10 @@
               avg {formatMillis(averageDuration(metrics.indexDurationTotalMillis, metrics.indexJobCompletedCount + metrics.indexJobFailedCount))}
               · max {formatMillis(metrics.indexDurationMaxMillis)}
             </p>
-          </div>
+          </SettingsCard>
 
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Related Panel</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="Related Panel" />
             <p class="mt-2 text-sm font-medium">
               note {metrics.relatedNoteRequestCount} · selection {metrics.relatedSelectionRequestCount}
             </p>
@@ -373,22 +342,22 @@
               avg {formatMillis(averageDuration(metrics.relatedDurationTotalMillis, metrics.relatedRequestCount))}
               · max {formatMillis(metrics.relatedDurationMaxMillis)}
             </p>
-          </div>
+          </SettingsCard>
         </div>
 
         <div class="mt-4 grid gap-4 md:grid-cols-2">
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Failures</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="Failures" />
             <p class="mt-2 text-sm font-medium">
               embedding {metrics.embeddingRequestFailureCount} · index {metrics.indexJobFailedCount} · ann {metrics.annLoadFailureCount + metrics.annUpdateFailureCount}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
               prepare {metrics.modelPrepareFailureCount} · warmup {metrics.modelWarmupFailureCount} · timeouts {metrics.runtimeTimeoutCount}
             </p>
-          </div>
+          </SettingsCard>
 
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">ANN Lifecycle</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="ANN Lifecycle" />
             <p class="mt-2 text-sm font-medium">
               loads {metrics.annLoadSuccessCount} · rebuilds {metrics.annRebuildCount}
             </p>
@@ -399,21 +368,21 @@
               avg {formatMillis(averageDuration(metrics.annRebuildDurationTotalMillis, metrics.annRebuildCount))}
               · max {formatMillis(metrics.annRebuildDurationMaxMillis)}
             </p>
-          </div>
+          </SettingsCard>
 
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-            <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Related Outcomes</p>
+          <SettingsCard variant="metric">
+            <SettingsLabel text="Related Outcomes" />
             <p class="mt-2 text-sm font-medium">
               results {metrics.relatedResultTotal} · insufficient {metrics.relatedInsufficientContentCount}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
               unavailable {metrics.relatedUnavailableCount} · requests {metrics.relatedRequestCount}
             </p>
-          </div>
+          </SettingsCard>
         </div>
 
-        <div class="mt-4 rounded-2xl border border-border/70 bg-card/70 px-4 py-3">
-          <p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">Recent Events</p>
+        <SettingsCard variant="metric" class="mt-4">
+          <SettingsLabel text="Recent Events" />
           <div class="mt-3 max-h-72 overflow-y-auto space-y-2">
             {#if semanticDebug.recentEvents.length === 0}
               <p class="text-sm text-muted-foreground">No events captured yet.</p>
@@ -438,8 +407,8 @@
               {/each}
             {/if}
           </div>
-        </div>
-      </div>
+        </SettingsCard>
+      </SettingsCard>
     {/if}
   {/if}
 </div>

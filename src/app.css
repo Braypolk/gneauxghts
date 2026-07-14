@@ -30,6 +30,15 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
+/* Shared settings surface used across route-level and feature components. */
+@utility settings-section {
+  @apply rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6;
+}
+
+@utility settings-control {
+  @apply h-10 rounded-xl border border-border bg-background px-3 text-sm;
+}
+
 
 :root {
   --background: oklch(0.9900 0 0);
@@ -175,30 +184,4 @@ body {
 ::-moz-selection {
   background: var(--selection-background);
   color: var(--selection-color);
-}
-
-.app-shell {
-  height: var(--app-shell-height, 100lvh);
-  min-height: var(--app-shell-height, 100lvh);
-  padding-top: env(safe-area-inset-top, 0px);
-}
-
-@keyframes forget-hold-pulse {
-  from {
-    box-shadow:
-      0 0 0 1px rgb(248 113 113 / 0.12),
-      0 8px 18px rgb(127 29 29 / 0.06);
-  }
-
-  to {
-    box-shadow:
-      0 0 0 1px rgb(248 113 113 / 0.28),
-      0 10px 24px rgb(127 29 29 / 0.14);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .animate-\[forget-hold-pulse_0\.95s_ease-in-out_infinite_alternate\] {
-    animation: none;
-  }
 }

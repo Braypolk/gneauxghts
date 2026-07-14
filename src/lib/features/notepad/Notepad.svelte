@@ -1542,11 +1542,11 @@
 
 <div bind:this={workspaceShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
   <div
-    class="notepad-related-group relative h-full min-h-0 w-full"
+    class="relative h-full min-h-0 w-full [--related-reserved-width:0px]"
     style={getRelatedGroupStyle($relatedState.panelPlacement, $relatedState.reservedWidth)}
   >
   <div
-    class="notepad-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm sm:rounded-4xl sm:border"
+    class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-[margin-left,width] duration-300 ease-out will-change-[margin-left,width] sm:rounded-4xl sm:border"
     style={getCardStyle($relatedState.panelPlacement, $relatedState.reservedWidth)}
   >
     <div class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"></div>
@@ -1572,7 +1572,7 @@
       {/each}
     </div>
 
-    <div class="notepad-command-bar absolute left-0 right-0 z-30">
+    <div class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height) transition-[bottom] duration-180 ease-in-out">
       <NotepadCommandBar
         forget={{
           canUnforget,
@@ -1617,8 +1617,81 @@
           onCommand: (command) => commands.handleNotepadCommandBarCommand(command)
         }}
       />
-    </div>
   </div>
+</div>
+
+<style>
+  .notepad-shell {
+    --editor-left-padding: 0rem;
+    --editor-handle-lane-width: 2.75rem;
+    --editor-right-padding: 1rem;
+    --editor-readable-width: 100%;
+    --editor-top-padding: 4.6rem;
+    --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
+    --related-drawer-gap: 1rem;
+    --related-drawer-peek-width: 2.75rem;
+    --related-bottom-offset: calc(6.1rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
+    --crepe-color-background: var(--card);
+    --crepe-color-on-background: var(--foreground);
+    --crepe-color-surface: color-mix(in oklab, var(--card) 92%, var(--background));
+    --crepe-color-surface-low: color-mix(in oklab, var(--muted) 74%, var(--card));
+    --crepe-color-on-surface: var(--card-foreground);
+    --crepe-color-on-surface-variant: var(--muted-foreground);
+    --crepe-color-outline: color-mix(in oklab, var(--border) 82%, var(--foreground));
+    --crepe-color-primary: var(--foreground);
+    --crepe-color-secondary: var(--accent);
+    --crepe-color-on-secondary: var(--accent-foreground);
+    --crepe-color-inverse: var(--foreground);
+    --crepe-color-on-inverse: var(--background);
+    --crepe-color-inline-code: var(--destructive);
+    --crepe-color-error: var(--destructive);
+    --crepe-color-hover: color-mix(in oklab, var(--accent) 82%, transparent);
+    --crepe-color-selected: color-mix(in oklab, var(--accent) 92%, var(--background));
+    --crepe-color-inline-area: color-mix(in oklab, var(--muted) 80%, var(--background));
+    --gn-editor-selection-background: color-mix(in oklab, var(--foreground) 42%, var(--background));
+    --gn-editor-selection-color: var(--background);
+    --gn-task-checkbox-border: color-mix(in oklab, var(--foreground) 20%, var(--card) 80%);
+    --gn-task-checkbox-bg: color-mix(in oklab, var(--card) 92%, var(--muted) 8%);
+    --gn-task-checkbox-checked-border: color-mix(in oklab, var(--foreground) 28%, var(--card) 72%);
+    --gn-task-checkbox-checked-bg: color-mix(in oklab, var(--foreground) 18%, var(--card) 82%);
+    --gn-task-checkbox-check: color-mix(in oklab, var(--foreground) 88%, white 12%);
+    --gn-code-keyword: color-mix(in oklab, var(--accent) 70%, var(--foreground) 30%);
+    --gn-code-name: var(--foreground);
+    --gn-code-property: color-mix(in oklab, var(--accent) 60%, var(--foreground) 40%);
+    --gn-code-variable: var(--foreground);
+    --gn-code-function: color-mix(in oklab, var(--accent) 80%, var(--foreground) 20%);
+    --gn-code-constant: var(--destructive);
+    --gn-code-type: color-mix(in oklab, var(--accent) 50%, var(--foreground) 50%);
+    --gn-code-operator: color-mix(in oklab, var(--foreground) 60%, var(--accent) 40%);
+    --gn-code-string: color-mix(in oklab, var(--foreground) 55%, green 45%);
+    --gn-code-comment: var(--muted-foreground);
+    --gn-code-invalid: var(--destructive);
+  }
+
+  @media (min-width: 640px) {
+    .notepad-shell {
+      --editor-handle-lane-width: 3rem;
+      --editor-right-padding: 1.4rem;
+      --editor-readable-width: 40rem;
+      --editor-top-padding: 5.3rem;
+      --editor-bottom-padding: 100%;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .notepad-shell {
+      --editor-left-padding: 0.75rem;
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .notepad-shell {
+      --editor-handle-lane-width: 3.1rem;
+      --editor-right-padding: 1.8rem;
+      --editor-readable-width: 42rem;
+    }
+  }
+</style>
 
   {#if $relatedState.panelPlacement === 'side'}
     <RelatedPanelHost

@@ -614,7 +614,7 @@ mod tests {
         note,
         search::{NoteSearchResult, ScoredSearchResult},
         state::initialize_app_data_dir,
-        state::{read_state, write_state, PersistedState},
+        state::{persist_note, read_state, resolve_note_id_from_path, write_state, PersistedState},
         test_support::{lock_test_env, TestDir},
     };
     use serde_json::json;
@@ -677,6 +677,42 @@ mod tests {
             Some(indexed_note.note_id.clone())
         );
         assert_eq!(state.recent_note_ids, vec![indexed_note.note_id]);
+    }
+
+    #[test]
+    fn open_note_follows_note_id_when_supplied_path_was_externally_renamed() {
+        let _guard = lock_test_env();
+        let app_data_dir = TestDir::new("commands-app-data-open-renamed");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        let temp = TestDir::new("commands-open-renamed-note");
+        let notes_dir = temp.path();
+        crate::state::set_notes_root_override(Some(notes_dir.to_path_buf()))
+            .expect("override notes root");
+
+        let original_path = PathBuf::from(
+            persist_note(notes_dir, "Original", "Body", None)
+                .expect("persist note")
+                .expect("saved path"),
+        );
+        let note_id = resolve_note_id_from_path(&original_path).expect("managed note id");
+        let renamed_path = notes_dir.join("Renamed.md");
+        fs::rename(&original_path, &renamed_path).expect("external rename");
+
+        let session = open_note_from_notes_dir(
+            notes_dir,
+            Some(note_id.clone()),
+            Some(original_path.to_string_lossy().into_owned()),
+        )
+        .expect("follow renamed note by id");
+
+        assert_eq!(session.note_id, Some(note_id));
+        assert_eq!(
+            session.path,
+            Some(renamed_path.to_string_lossy().into_owned())
+        );
+        assert_eq!(session.title, "Renamed");
+        assert_eq!(session.markdown, "Body");
+        assert!(!original_path.exists());
     }
 
     #[test]

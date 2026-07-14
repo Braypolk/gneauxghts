@@ -514,7 +514,7 @@
           aria-controls={$commandBarState.isForgetConfirmOpen ? 'forget-confirm-popover' : undefined}
           class={`relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2 ${
             $commandBarState.isHoldingForget
-              ? 'text-destructive animate-[forget-hold-pulse_0.95s_ease-in-out_infinite_alternate]'
+              ? 'forget-hold-animation text-destructive'
               : ''
           }`}
           style={`--forget-progress: ${$commandBarState.forgetHoldProgress};`}
@@ -754,6 +754,24 @@
 </div>
 
 <style>
+  @keyframes forget-hold-pulse {
+    from {
+      box-shadow:
+        0 0 0 1px rgb(248 113 113 / 0.12),
+        0 8px 18px rgb(127 29 29 / 0.06);
+    }
+
+    to {
+      box-shadow:
+        0 0 0 1px rgb(248 113 113 / 0.28),
+        0 10px 24px rgb(127 29 29 / 0.14);
+    }
+  }
+
+  .forget-hold-animation {
+    animation: forget-hold-pulse 0.95s ease-in-out infinite alternate;
+  }
+
   .search-results-panel {
     background: var(--search-scope-results-bg);
     border-color: var(--search-scope-results-border);
@@ -768,5 +786,11 @@
 
   .search-results-panel[data-search-navigation-mode='pointer'] .search-result-item:hover {
     background: var(--accent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .forget-hold-animation {
+      animation: none;
+    }
   }
 </style>
