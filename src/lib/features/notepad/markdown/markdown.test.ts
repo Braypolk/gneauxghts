@@ -27,6 +27,7 @@ interface DecorationSpec {
   class?: string;
   isReplace: boolean;
   hasWidget: boolean;
+  isAtomicIndent: boolean;
 }
 
 function collect(
@@ -56,7 +57,11 @@ function collect(
   });
 
   return decorations.map((range) => {
-    const spec = range.value.spec as { class?: string; widget?: unknown };
+    const spec = range.value.spec as {
+      class?: string;
+      widget?: unknown;
+      gnAtomicIndent?: boolean;
+    };
     return {
       from: range.from,
       to: range.to,
@@ -65,7 +70,8 @@ function collect(
       // absence of a class and (for atomic markers) presence of a widget, or by
       // the documented startSide of replace decorations.
       isReplace: spec.class === undefined,
-      hasWidget: spec.widget !== undefined
+      hasWidget: spec.widget !== undefined,
+      isAtomicIndent: spec.gnAtomicIndent === true
     };
   });
 }
@@ -180,6 +186,13 @@ describe('list decorator', () => {
   it('marks the active list marker when editing', () => {
     const specs = collect('- item', decorateList, () => true);
     expect(specs.some((s) => s.class === 'cm-gn-list-mark-ul cm-gn-active')).toBe(true);
+  });
+
+  it('conceals nested-list indentation as an atomic range', () => {
+    const specs = collect('- parent\n  - child', decorateList);
+    const indent = specs.find((spec) => spec.isAtomicIndent);
+
+    expect(indent).toMatchObject({ from: 9, to: 11, isReplace: true });
   });
 });
 

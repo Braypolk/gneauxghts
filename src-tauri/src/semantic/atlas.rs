@@ -1,11 +1,17 @@
 use super::{
-    db::{
-        load_atlas_graph_snapshot_json, load_atlas_layout_signature, load_atlas_note_embeddings,
-        load_atlas_positions, open_database, save_atlas_graph_snapshot_json,
-        save_atlas_layout_signature, save_atlas_positions, StoredAtlasNoteEmbedding,
-        StoredAtlasPosition,
+    atlas_labels::{
+        cloud_membership_fingerprint, generate_labels, medoid_placeholder, AtlasLabelNote,
+        LABEL_ALGORITHM_VERSION,
     },
-    embed::EmbeddingInputKind,
+    db::{
+        load_atlas_note_embeddings, load_atlas_note_metadata, load_atlas_positions,
+        load_edge_generation, open_database, save_atlas_positions, StoredAtlasNoteEmbedding,
+        StoredAtlasNoteMetadata, StoredAtlasPosition,
+    },
+    debug::SemanticDebugState,
+    embed::{EmbeddingInputKind, EmbeddingProvider},
+    indexer::PendingIndexState,
+    note_ann::NoteAnnIndexState,
     ActiveSemanticState,
 };
 use crate::index::normalize_search_text;
@@ -19,8 +25,12 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    fs::{self, File},
+    io::{BufWriter, Write},
     panic::{catch_unwind, AssertUnwindSafe},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 use umap_rs::{GraphParams, OptimizationParams, Umap, UmapConfig};
 
@@ -37,7 +47,6 @@ const SEMANTIC_MIN_SCORE: f32 = KNN_MIN_SCORE;
 const COMPONENT_MIN_STRENGTH: f32 = 0.30;
 const WIKILINK_STRENGTH: f32 = 0.82;
 const FOLDER_BOOST: f32 = 0.035;
-const RECENT_ACTIVITY_BOOST: f32 = 0.025;
 const NOTE_RADIUS_MIN: f32 = 4.0;
 const NOTE_RADIUS_MAX: f32 = 9.0;
 const STALE_DRIFT_DISTANCE: f32 = 420.0;
@@ -53,6 +62,9 @@ const UMAP_ITERATIONS_SQRT_SCALE: f32 = 4.0;
 const DISC_LAYOUT_FULL_PAIR_MAX: usize = 80;
 const DISC_LAYOUT_REPULSION_NEIGHBORS: usize = 16;
 const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 14;
+const ATLAS_CLOUD_ALGORITHM_VERSION: u32 = 1;
+const ATLAS_GENERATION_FORMAT_VERSION: u32 = 1;
+const ATLAS_SUPERSEDED: &str = "atlas generation superseded";
 const ATLAS_SEARCH_SEMANTIC_WEIGHT: f32 = 0.55;
 const ATLAS_SEARCH_LEXICAL_WEIGHT: f32 = 0.25;
 const ATLAS_SEARCH_STRUCTURAL_WEIGHT: f32 = 0.10;
@@ -71,7 +83,37 @@ pub(crate) struct AtlasNoteMetadata {
     pub(crate) modified_millis: u64,
 }
 
-const NAVIGATION_ONLY_CONTENT_HASH_PREFIX: &str = "navigation-only:";
+#[derive(Clone, Copy, Debug, Default, Deserialize, Hash, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum AtlasChatVisibilityKey {
+    #[default]
+    Hidden,
+    Remembered,
+    All,
+}
+
+impl AtlasChatVisibilityKey {
+    pub(crate) fn signature_value(self) -> &'static str {
+        match self {
+            Self::Hidden => "hidden",
+            Self::Remembered => "remembered",
+            Self::All => "all",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+pub(crate) struct AtlasGenerationKey {
+    pub(crate) chat_visibility: AtlasChatVisibilityKey,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AtlasLabelRequest {
+    pub(crate) structural_generation: String,
+    pub(crate) membership_fingerprint: String,
+}
+
+const NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX: &str = "navigation-only:";
 
 #[derive(Clone, Debug)]
 pub(crate) struct AtlasHardLink {
@@ -110,7 +152,11 @@ fn visible_atlas_notes(
             note_path: meta.note_path.clone(),
             note_title: meta.title.clone(),
             modified_millis: meta.modified_millis,
-            content_hash: format!("{NAVIGATION_ONLY_CONTENT_HASH_PREFIX}{}", meta.note_path),
+            semantic_input_hash: format!(
+                "{NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX}{}",
+                meta.note_path
+            ),
+            structure_hash: format!("navigation-only:{}", meta.note_path),
             created_at: String::new(),
             updated_at: String::new(),
             embedding: navigation_only_embedding(&meta.note_path, dimensions),
@@ -130,7 +176,7 @@ fn navigation_only_embedding(path: &str, dimensions: usize) -> Vec<f32> {
     embedding
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VaultAtlasStats {
     pub(crate) note_count: usize,
@@ -139,20 +185,25 @@ pub(crate) struct VaultAtlasStats {
     pub(crate) isolated_count: usize,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VaultAtlasResponse {
     pub(crate) status: String,
     pub(crate) reason: Option<String>,
     pub(crate) revision: u64,
     pub(crate) generated_at_millis: u64,
+    pub(crate) structural_generation: String,
+    pub(crate) label_generation: Option<String>,
+    pub(crate) published_at_millis: u64,
+    pub(crate) stale: bool,
+    pub(crate) publish_in_progress: bool,
     pub(crate) stats: VaultAtlasStats,
     pub(crate) nodes: Vec<AtlasNode>,
     pub(crate) links: Vec<AtlasLink>,
     pub(crate) clouds: Vec<AtlasCloud>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AtlasSearchResponse {
     pub(crate) status: String,
@@ -162,7 +213,7 @@ pub(crate) struct AtlasSearchResponse {
     pub(crate) matches: Vec<AtlasSearchMatch>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AtlasSearchMatch {
     pub(crate) note_id: Option<String>,
@@ -175,7 +226,7 @@ pub(crate) struct AtlasSearchMatch {
     pub(crate) reason_labels: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AtlasNode {
     pub(crate) id: String,
@@ -207,7 +258,7 @@ pub(crate) struct AtlasNode {
     pub(crate) isolated: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AtlasLink {
     pub(crate) id: String,
@@ -238,43 +289,6 @@ pub(crate) struct AtlasCloud {
     pub(crate) outlier_node_ids: Vec<String>,
     pub(crate) child_cloud_ids: Vec<String>,
     pub(crate) representative_node_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AtlasGraphSnapshot {
-    signature: String,
-    nodes: Vec<AtlasSnapshotNode>,
-    links: Vec<AtlasSnapshotLink>,
-    clouds: Vec<AtlasCloud>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AtlasSnapshotNode {
-    note_path: String,
-    x: f32,
-    y: f32,
-    cloud_id: Option<String>,
-    parent_cloud_id: Option<String>,
-    child_cloud_id: Option<String>,
-    centrality: f32,
-    degree: usize,
-    importance: f32,
-    isolated: bool,
-    modified_at_millis: u64,
-    created_at_millis: u64,
-    updated_at_millis: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AtlasSnapshotLink {
-    source_id: String,
-    target_id: String,
-    kind: String,
-    score: f32,
-    strength: f32,
 }
 
 #[derive(Clone)]
@@ -363,31 +377,401 @@ struct CloudSpec {
     centrality: f32,
 }
 
-impl ActiveSemanticState {
-    pub(super) fn vault_atlas(
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AtlasDependencies {
+    source_key: String,
+    input_hash: String,
+    note_ann_generation: String,
+    edge_generation: String,
+    edge_algorithm_version: String,
+    cloud_algorithm_version: u32,
+    layout_algorithm_version: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AtlasReadyPointer {
+    format_version: u32,
+    structural_generation: String,
+    target_epoch: u64,
+    published_at_millis: u64,
+    artifact_file: String,
+    dependencies: AtlasDependencies,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct AtlasGenerationArtifact {
+    response: VaultAtlasResponse,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AtlasLabelReadyPointer {
+    format_version: u32,
+    structural_generation: String,
+    membership_fingerprint: String,
+    algorithm_version: String,
+    model_fingerprint: String,
+    label_generation: String,
+    artifact_file: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AtlasLabelGenerationArtifact {
+    structural_generation: String,
+    membership_fingerprint: String,
+    algorithm_version: String,
+    model_fingerprint: String,
+    label_generation: String,
+    labels: HashMap<String, AtlasPublishedLabel>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AtlasPublishedLabel {
+    label: String,
+    confidence: f32,
+}
+
+pub(crate) struct AtlasWorkerContext {
+    pub(crate) db_path: PathBuf,
+    pub(crate) cache_dir: PathBuf,
+    pub(crate) dimensions: usize,
+    pub(crate) provider: Arc<dyn EmbeddingProvider + Send + Sync>,
+    pub(crate) debug: Arc<SemanticDebugState>,
+    pub(crate) note_ann: Arc<NoteAnnIndexState>,
+    pub(crate) pending: Arc<Mutex<PendingIndexState>>,
+}
+
+fn atlas_root(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("atlas")
+}
+
+fn ready_pointer_path(cache_dir: &Path, key: AtlasGenerationKey) -> PathBuf {
+    atlas_root(cache_dir).join(format!(
+        "ready-{}.json",
+        key.chat_visibility.signature_value()
+    ))
+}
+
+fn label_ready_pointer_path(cache_dir: &Path, key: AtlasGenerationKey) -> PathBuf {
+    atlas_root(cache_dir).join(format!(
+        "label-ready-{}.json",
+        key.chat_visibility.signature_value()
+    ))
+}
+
+fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Atlas publication path has no parent".to_string())?;
+    fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    let temporary = parent.join(format!(
+        ".{}.{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        current_time_millis()?
+    ));
+    let file = File::create(&temporary).map_err(|err| err.to_string())?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(&mut writer, value).map_err(|err| err.to_string())?;
+    writer.flush().map_err(|err| err.to_string())?;
+    writer.get_ref().sync_all().map_err(|err| err.to_string())?;
+    drop(writer);
+    fs::rename(&temporary, path).map_err(|err| err.to_string())?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|err| err.to_string())
+}
+
+fn gc_unreferenced_generations(cache_dir: &Path) -> Result<(), String> {
+    let root = atlas_root(cache_dir);
+    let mut referenced = HashSet::new();
+    for visibility in [
+        AtlasChatVisibilityKey::Hidden,
+        AtlasChatVisibilityKey::Remembered,
+        AtlasChatVisibilityKey::All,
+    ] {
+        if let Ok(pointer) = read_json::<AtlasReadyPointer>(&ready_pointer_path(
+            cache_dir,
+            AtlasGenerationKey {
+                chat_visibility: visibility,
+            },
+        )) {
+            referenced.insert(pointer.artifact_file);
+        }
+        if let Ok(pointer) = read_json::<AtlasLabelReadyPointer>(&label_ready_pointer_path(
+            cache_dir,
+            AtlasGenerationKey {
+                chat_visibility: visibility,
+            },
+        )) {
+            referenced.insert(pointer.artifact_file);
+        }
+    }
+    let Ok(entries) = fs::read_dir(&root) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if (name.starts_with("generation-") || name.starts_with("label-generation-"))
+            && name.ends_with(".json")
+            && !referenced.contains(&name)
+        {
+            fs::remove_file(entry.path()).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
+    let bytes = fs::read(path).map_err(|err| err.to_string())?;
+    serde_json::from_slice(&bytes).map_err(|err| err.to_string())
+}
+
+fn pointer_is_compatible(
+    pointer: &AtlasReadyPointer,
+    dependencies: &AtlasDependencies,
+    revision: u64,
+) -> bool {
+    pointer.format_version == ATLAS_GENERATION_FORMAT_VERSION
+        && pointer.dependencies == *dependencies
+        && pointer.target_epoch >= revision
+}
+
+fn label_pointer_is_compatible(
+    pointer: &AtlasLabelReadyPointer,
+    structural_generation: &str,
+    membership_fingerprint: &str,
+    model_fingerprint: &str,
+) -> bool {
+    pointer.format_version == ATLAS_GENERATION_FORMAT_VERSION
+        && pointer.structural_generation == structural_generation
+        && pointer.membership_fingerprint == membership_fingerprint
+        && pointer.algorithm_version == LABEL_ALGORITHM_VERSION
+        && pointer.model_fingerprint == model_fingerprint
+}
+
+fn request_is_superseded(
+    pending: &PendingIndexState,
+    generation_key: AtlasGenerationKey,
+    target_epoch: u64,
+) -> bool {
+    pending
+        .atlas_requests
+        .get(&generation_key)
+        .is_some_and(|epoch| *epoch > target_epoch)
+}
+
+fn persisted_atlas_inputs(
+    connection: &rusqlite::Connection,
+    key: AtlasGenerationKey,
+) -> Result<
+    (
+        HashMap<String, AtlasNoteMetadata>,
+        Vec<AtlasHardLink>,
+        AtlasDependencies,
+    ),
+    String,
+> {
+    let rows = load_atlas_note_metadata(connection)?;
+    let visible = rows
+        .iter()
+        .filter(|row| atlas_row_visible(row, key.chat_visibility))
+        .collect::<Vec<_>>();
+    let metadata = visible
+        .iter()
+        .map(|row| {
+            let file_name = file_name_for_path(&row.note_path);
+            (
+                row.note_path.clone(),
+                AtlasNoteMetadata {
+                    note_id: (!row.note_id.is_empty()).then(|| row.note_id.clone()),
+                    note_path: row.note_path.clone(),
+                    file_name,
+                    title: row.title.clone(),
+                    preview: row.preview.clone(),
+                    tags: row.tags.clone(),
+                    document_kind: row.document_kind,
+                    modified_millis: row.modified_millis,
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let hard_links = persisted_hard_links(&rows, &metadata);
+    let embeddings = load_atlas_note_embeddings(connection)?;
+    let mut source_hasher = blake3::Hasher::new();
+    source_hasher.update(key.chat_visibility.signature_value().as_bytes());
+    let mut input_hasher = blake3::Hasher::new();
+    for row in &visible {
+        source_hasher.update(row.note_path.as_bytes());
+        input_hasher.update(row.note_path.as_bytes());
+        input_hasher.update(row.presentation_hash.as_bytes());
+        input_hasher.update(row.note_id.as_bytes());
+        input_hasher.update(row.document_kind.as_frontmatter_value().as_bytes());
+        input_hasher.update(&row.modified_millis.to_le_bytes());
+        for tag in &row.tags {
+            input_hasher.update(tag.as_bytes());
+        }
+        for target in &row.wikilink_targets {
+            input_hasher.update(target.as_bytes());
+        }
+    }
+    for note in embeddings
+        .iter()
+        .filter(|note| metadata.contains_key(&note.note_path))
+    {
+        input_hasher.update(note.note_path.as_bytes());
+        input_hasher.update(note.semantic_input_hash.as_bytes());
+        input_hasher.update(note.structure_hash.as_bytes());
+    }
+    let edge = load_edge_generation(connection)?;
+    let dependencies = AtlasDependencies {
+        source_key: source_hasher.finalize().to_hex().to_string(),
+        input_hash: input_hasher.finalize().to_hex().to_string(),
+        note_ann_generation: edge
+            .as_ref()
+            .map(|value| value.note_ann_generation.clone())
+            .unwrap_or_default(),
+        edge_generation: edge
+            .as_ref()
+            .map(|value| value.generation_id.clone())
+            .unwrap_or_default(),
+        edge_algorithm_version: edge
+            .as_ref()
+            .map(|value| value.algorithm_version.clone())
+            .unwrap_or_default(),
+        cloud_algorithm_version: ATLAS_CLOUD_ALGORITHM_VERSION,
+        layout_algorithm_version: ATLAS_LAYOUT_ALGORITHM_VERSION,
+    };
+    Ok((metadata, hard_links, dependencies))
+}
+
+fn atlas_row_visible(row: &StoredAtlasNoteMetadata, visibility: AtlasChatVisibilityKey) -> bool {
+    match visibility {
+        AtlasChatVisibilityKey::Hidden => row.document_kind == DocumentKind::Note,
+        AtlasChatVisibilityKey::Remembered => {
+            row.document_kind == DocumentKind::Note
+                || (row.document_kind == DocumentKind::ChatIndex && row.chunk_count > 0)
+        }
+        AtlasChatVisibilityKey::All => row.document_kind != DocumentKind::ChatTranscript,
+    }
+}
+
+fn persisted_hard_links(
+    rows: &[StoredAtlasNoteMetadata],
+    metadata: &HashMap<String, AtlasNoteMetadata>,
+) -> Vec<AtlasHardLink> {
+    let mut references = HashMap::new();
+    for note in metadata.values() {
+        for value in [&note.title, &note.file_name] {
+            references.insert(normalize_reference(value), note.note_path.clone());
+        }
+        references.insert(
+            normalize_reference(
+                Path::new(&note.file_name)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .as_ref(),
+            ),
+            note.note_path.clone(),
+        );
+    }
+    let mut seen = HashSet::new();
+    let mut links = Vec::new();
+    for row in rows {
+        let source = if row.document_kind == DocumentKind::ChatTranscript {
+            Path::new(&row.note_path)
+                .parent()
+                .map(|parent| parent.join("Conversation.md"))
+                .filter(|path| metadata.contains_key(path.to_string_lossy().as_ref()))
+                .map(|path| path.to_string_lossy().into_owned())
+        } else {
+            metadata
+                .contains_key(&row.note_path)
+                .then(|| row.note_path.clone())
+        };
+        let Some(source) = source else {
+            continue;
+        };
+        for target in &row.wikilink_targets {
+            let Some(target) = references.get(&normalize_reference(target)) else {
+                continue;
+            };
+            if source == *target {
+                continue;
+            }
+            let pair = if source < *target {
+                format!("{source}\0{target}")
+            } else {
+                format!("{target}\0{source}")
+            };
+            if seen.insert(pair) {
+                links.push(AtlasHardLink {
+                    source_note_path: source.clone(),
+                    target_note_path: target.clone(),
+                });
+            }
+        }
+    }
+    links
+}
+
+fn normalize_reference(value: &str) -> String {
+    let trimmed = value.trim();
+    normalize_search_text(
+        trimmed
+            .strip_suffix(".md")
+            .or_else(|| trimmed.strip_suffix(".MD"))
+            .unwrap_or(trimmed),
+    )
+}
+
+impl AtlasWorkerContext {
+    pub(crate) fn build_and_publish(
         &self,
-        metadata: HashMap<String, AtlasNoteMetadata>,
-        hard_links: Vec<AtlasHardLink>,
-        activity_by_note_id: HashMap<String, NoteActivity>,
+        generation_key: AtlasGenerationKey,
         revision: u64,
     ) -> Result<VaultAtlasResponse, String> {
+        let activity_by_note_id: HashMap<String, NoteActivity> = HashMap::new();
+        let request_started = Instant::now();
+        self.debug.record_with_metrics(
+            "atlas",
+            "build_started",
+            Some(format!(
+                "chat_visibility={}",
+                generation_key.chat_visibility.signature_value()
+            )),
+            None,
+            |metrics| metrics.atlas_request_count += 1,
+        );
+        let load_started = Instant::now();
         let mut connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
+        let (metadata, hard_links, dependencies) =
+            persisted_atlas_inputs(&connection, generation_key)?;
+        if dependencies.note_ann_generation.is_empty()
+            || self.note_ann.generation_id().as_deref()
+                != Some(dependencies.note_ann_generation.as_str())
+        {
+            return Err("Atlas dependencies are not ready".to_string());
+        }
         let indexed_notes = visible_atlas_notes(
             load_atlas_note_embeddings(&connection)?,
             &metadata,
-            self.provider.model_info().dimensions,
+            self.dimensions,
         );
         if indexed_notes.is_empty() {
-            return Ok(empty_atlas(
-                "empty",
-                "No indexed notes are available yet.",
-                revision,
-            )?);
+            record_atlas_phase(&self.debug, "load", load_started);
+            let response = empty_atlas("empty", "No indexed notes are available yet.", revision)?;
+            record_atlas_total(&self.debug, request_started, false);
+            return Ok(response);
         }
 
         let layout_pull = DEFAULT_LAYOUT_PULL;
-        let layout_signature = atlas_layout_signature(&indexed_notes, layout_pull);
         let positions = load_atlas_positions(&connection)?
             .into_iter()
             .map(|position| (position.note_path, (position.x, position.y)))
@@ -395,30 +779,12 @@ impl ActiveSemanticState {
         let has_all_cached_positions = indexed_notes
             .iter()
             .all(|note| positions.contains_key(&note.note_path));
-        let cached_layout_signature = load_atlas_layout_signature(&connection)?;
-        let should_relayout = cached_layout_signature.as_deref() != Some(layout_signature.as_str());
         let max_modified = indexed_notes
             .iter()
             .map(|note| note.modified_millis)
             .max()
             .unwrap_or(0);
-
-        if !should_relayout && has_all_cached_positions {
-            if let Some(snapshot) = load_atlas_graph_snapshot(&connection)? {
-                if snapshot.signature == layout_signature
-                    && snapshot_covers_notes(&snapshot, &indexed_notes)
-                {
-                    return hydrate_atlas_from_snapshot(
-                        snapshot,
-                        &indexed_notes,
-                        &metadata,
-                        &activity_by_note_id,
-                        max_modified,
-                        revision,
-                    );
-                }
-            }
-        }
+        record_atlas_phase(&self.debug, "load", load_started);
 
         let mut nodes = indexed_notes
             .iter()
@@ -473,7 +839,9 @@ impl ActiveSemanticState {
             })
             .collect::<Vec<_>>();
 
+        let graph_started = Instant::now();
         let knn_rows = build_hnsw_knn_rows(&nodes);
+        self.check_superseded(generation_key, revision)?;
         if !has_all_cached_positions {
             place_uncached_nodes_from_neighbors(&mut nodes, &positions, &knn_rows);
         }
@@ -481,16 +849,22 @@ impl ActiveSemanticState {
         boost_links(&mut links, &nodes);
         apply_centrality(&mut nodes, &links);
         let layout_edges = build_layout_graph(&nodes, &links);
+        record_atlas_phase(&self.debug, "graph", graph_started);
+        let cloud_started = Instant::now();
         let mut cloud_specs = assign_clouds(&mut nodes, &layout_edges);
-        if should_relayout {
-            let umap_applied = apply_umap_layout(&mut nodes, &knn_rows);
-            if umap_applied {
-                separate_umap_clouds(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
-            } else {
-                place_cloud_first_layout(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
-            }
-            refresh_cloud_geometry(&mut cloud_specs, &nodes);
+        self.check_superseded(generation_key, revision)?;
+        record_atlas_phase(&self.debug, "cloud", cloud_started);
+        let layout_started = Instant::now();
+        let umap_applied = apply_umap_layout(&mut nodes, &knn_rows);
+        if umap_applied {
+            separate_umap_clouds(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
+        } else {
+            place_cloud_first_layout(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
         }
+        refresh_cloud_geometry(&mut cloud_specs, &nodes);
+        self.check_superseded(generation_key, revision)?;
+        record_atlas_phase(&self.debug, "layout", layout_started);
+        let cloud_finalize_started = Instant::now();
         finalize_cloud_cores(&nodes, &layout_edges, &mut cloud_specs);
         let mut clouds = cloud_specs
             .par_iter()
@@ -502,21 +876,20 @@ impl ActiveSemanticState {
                 .then_with(|| right.note_count.cmp(&left.note_count))
                 .then_with(|| left.id.cmp(&right.id))
         });
+        record_atlas_phase(&self.debug, "cloud", cloud_finalize_started);
 
-        if should_relayout {
-            save_atlas_positions(
-                &mut connection,
-                &nodes
-                    .iter()
-                    .map(|node| StoredAtlasPosition {
-                        note_path: node.note_path.clone(),
-                        x: node.x,
-                        y: node.y,
-                    })
-                    .collect::<Vec<_>>(),
-            )?;
-            save_atlas_layout_signature(&connection, &layout_signature)?;
-        }
+        let persist_started = Instant::now();
+        save_atlas_positions(
+            &mut connection,
+            &nodes
+                .iter()
+                .map(|node| StoredAtlasPosition {
+                    note_path: node.note_path.clone(),
+                    x: node.x,
+                    y: node.y,
+                })
+                .collect::<Vec<_>>(),
+        )?;
 
         let response_nodes = nodes
             .iter()
@@ -570,45 +943,31 @@ impl ActiveSemanticState {
             })
             .collect::<Vec<_>>();
 
-        let snapshot = AtlasGraphSnapshot {
-            signature: layout_signature,
-            nodes: nodes
-                .iter()
-                .map(|node| AtlasSnapshotNode {
-                    note_path: node.note_path.clone(),
-                    x: node.x,
-                    y: node.y,
-                    cloud_id: node.cloud_id.clone(),
-                    parent_cloud_id: node.parent_cloud_id.clone(),
-                    child_cloud_id: node.child_cloud_id.clone(),
-                    centrality: node.centrality,
-                    degree: node.degree,
-                    importance: node.importance,
-                    isolated: node.isolated,
-                    modified_at_millis: node.modified_at_millis,
-                    created_at_millis: node.created_at_millis,
-                    updated_at_millis: node.updated_at_millis,
-                })
-                .collect(),
-            links: links
-                .iter()
-                .map(|link| AtlasSnapshotLink {
-                    source_id: link.source_id.clone(),
-                    target_id: link.target_id.clone(),
-                    kind: link.kind.clone(),
-                    score: link.score,
-                    strength: link.strength,
-                })
-                .collect(),
-            clouds: clouds.clone(),
-        };
-        save_atlas_graph_snapshot(&connection, &snapshot)?;
+        record_atlas_phase(&self.debug, "persist", persist_started);
 
-        Ok(VaultAtlasResponse {
+        let published_at_millis = current_time_millis()?;
+        let structural_generation = format!(
+            "{}-{}",
+            revision,
+            &blake3::hash(
+                format!(
+                    "{}\0{}\0{}",
+                    dependencies.source_key, dependencies.input_hash, published_at_millis
+                )
+                .as_bytes()
+            )
+            .to_hex()[..16]
+        );
+        let response = VaultAtlasResponse {
             status: "ready".to_string(),
             reason: None,
             revision,
-            generated_at_millis: current_time_millis()?,
+            generated_at_millis: published_at_millis,
+            structural_generation: structural_generation.clone(),
+            label_generation: None,
+            published_at_millis,
+            stale: false,
+            publish_in_progress: false,
             stats: VaultAtlasStats {
                 note_count: response_nodes.len(),
                 cloud_count: clouds.len(),
@@ -618,13 +977,326 @@ impl ActiveSemanticState {
             nodes: response_nodes,
             links: response_links,
             clouds,
-        })
+        };
+        self.check_superseded(generation_key, revision)?;
+        let (_, _, current_dependencies) = persisted_atlas_inputs(&connection, generation_key)?;
+        if current_dependencies != dependencies {
+            return Err(ATLAS_SUPERSEDED.to_string());
+        }
+        let root = atlas_root(&self.cache_dir);
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let artifact_file = format!(
+            "generation-{}-{}.json",
+            generation_key.chat_visibility.signature_value(),
+            structural_generation
+        );
+        atomic_write_json(
+            &root.join(&artifact_file),
+            &AtlasGenerationArtifact {
+                response: response.clone(),
+            },
+        )?;
+        self.check_superseded(generation_key, revision)?;
+        let pointer = AtlasReadyPointer {
+            format_version: ATLAS_GENERATION_FORMAT_VERSION,
+            structural_generation,
+            target_epoch: revision,
+            published_at_millis,
+            artifact_file: artifact_file.clone(),
+            dependencies,
+        };
+        atomic_write_json(
+            &ready_pointer_path(&self.cache_dir, generation_key),
+            &pointer,
+        )?;
+        let membership_fingerprint =
+            cloud_membership_fingerprint(&response.structural_generation, &response.clouds);
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.atlas_label_requests.insert(
+                generation_key,
+                AtlasLabelRequest {
+                    structural_generation: response.structural_generation.clone(),
+                    membership_fingerprint,
+                },
+            );
+        }
+        gc_unreferenced_generations(&self.cache_dir)?;
+        record_atlas_total(&self.debug, request_started, false);
+        Ok(response)
+    }
+
+    pub(crate) fn build_and_publish_labels(
+        &self,
+        generation_key: AtlasGenerationKey,
+        request: &AtlasLabelRequest,
+    ) -> Result<(), String> {
+        let started = Instant::now();
+        let pointer_path = ready_pointer_path(&self.cache_dir, generation_key);
+        let structural_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
+        if structural_pointer.structural_generation != request.structural_generation {
+            return Err(ATLAS_SUPERSEDED.to_string());
+        }
+        let root = atlas_root(&self.cache_dir);
+        let structural =
+            read_json::<AtlasGenerationArtifact>(&root.join(&structural_pointer.artifact_file))?;
+        let membership = cloud_membership_fingerprint(
+            &structural.response.structural_generation,
+            &structural.response.clouds,
+        );
+        if membership != request.membership_fingerprint {
+            return Err(ATLAS_SUPERSEDED.to_string());
+        }
+
+        let mut connection = open_database(&self.db_path)?;
+        super::ensure_schema(&connection)?;
+        let (metadata, _, _) = persisted_atlas_inputs(&connection, generation_key)?;
+        let note_embeddings = visible_atlas_notes(
+            load_atlas_note_embeddings(&connection)?,
+            &metadata,
+            self.dimensions,
+        )
+        .into_iter()
+        .map(|note| (note.note_path, normalized_embedding(note.embedding)))
+        .collect::<HashMap<_, _>>();
+        let (labels, metrics) = generate_labels(
+            &mut connection,
+            self.provider.as_ref(),
+            &structural.response.clouds,
+            &structural.response.nodes,
+            &note_embeddings,
+        )?;
+        let latest_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
+        if latest_pointer.structural_generation != request.structural_generation {
+            return Err(ATLAS_SUPERSEDED.to_string());
+        }
+
+        let generated_at = current_time_millis()?;
+        let model_fingerprint = self.provider.model_info().fingerprint();
+        let label_generation = format!(
+            "{}-{}",
+            generated_at,
+            &blake3::hash(
+                format!(
+                    "{}\0{}\0{}\0{}",
+                    request.structural_generation,
+                    request.membership_fingerprint,
+                    model_fingerprint,
+                    LABEL_ALGORITHM_VERSION
+                )
+                .as_bytes()
+            )
+            .to_hex()[..16]
+        );
+        let published = labels
+            .into_iter()
+            .map(|(cloud_id, (label, confidence))| {
+                (cloud_id, AtlasPublishedLabel { label, confidence })
+            })
+            .collect();
+        let artifact_file = format!(
+            "label-generation-{}-{}.json",
+            generation_key.chat_visibility.signature_value(),
+            label_generation
+        );
+        atomic_write_json(
+            &root.join(&artifact_file),
+            &AtlasLabelGenerationArtifact {
+                structural_generation: request.structural_generation.clone(),
+                membership_fingerprint: request.membership_fingerprint.clone(),
+                algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
+                model_fingerprint: model_fingerprint.clone(),
+                label_generation: label_generation.clone(),
+                labels: published,
+            },
+        )?;
+        let latest_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
+        if latest_pointer.structural_generation != request.structural_generation {
+            let _ = fs::remove_file(root.join(&artifact_file));
+            return Err(ATLAS_SUPERSEDED.to_string());
+        }
+        atomic_write_json(
+            &label_ready_pointer_path(&self.cache_dir, generation_key),
+            &AtlasLabelReadyPointer {
+                format_version: ATLAS_GENERATION_FORMAT_VERSION,
+                structural_generation: request.structural_generation.clone(),
+                membership_fingerprint: request.membership_fingerprint.clone(),
+                algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
+                model_fingerprint,
+                label_generation,
+                artifact_file,
+            },
+        )?;
+        gc_unreferenced_generations(&self.cache_dir)?;
+        self.debug.record_timing(
+            "atlas_labels",
+            "published",
+            Some(format!(
+                "clouds={} candidates={} unique={} cache_hits={} provider_texts={} batches={}",
+                metrics.cloud_count,
+                metrics.candidate_count,
+                metrics.unique_candidate_count,
+                metrics.cache_hit_count,
+                metrics.provider_text_count,
+                metrics.provider_batch_count
+            )),
+            started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            |debug_metrics| {
+                debug_metrics.atlas_label_job_count += 1;
+                debug_metrics.atlas_label_candidate_total += metrics.candidate_count as u64;
+                debug_metrics.atlas_label_cache_hit_total += metrics.cache_hit_count as u64;
+                debug_metrics.atlas_label_provider_text_total += metrics.provider_text_count as u64;
+            },
+        );
+        Ok(())
+    }
+
+    fn check_superseded(
+        &self,
+        generation_key: AtlasGenerationKey,
+        target_epoch: u64,
+    ) -> Result<(), String> {
+        let superseded = self
+            .pending
+            .lock()
+            .map(|pending| request_is_superseded(&pending, generation_key, target_epoch))
+            .unwrap_or(true);
+        if superseded {
+            Err(ATLAS_SUPERSEDED.to_string())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl ActiveSemanticState {
+    pub(super) fn vault_atlas(
+        &self,
+        generation_key: AtlasGenerationKey,
+        activity_by_note_id: HashMap<String, NoteActivity>,
+        revision: u64,
+    ) -> Result<VaultAtlasResponse, String> {
+        let connection = open_database(&self.db_path)?;
+        super::ensure_schema(&connection)?;
+        let (_, _, dependencies) = persisted_atlas_inputs(&connection, generation_key)?;
+        let pointer_path = ready_pointer_path(&self.atlas_cache_dir, generation_key);
+        let pointer = read_json::<AtlasReadyPointer>(&pointer_path).ok();
+        let mut published = pointer.as_ref().and_then(|pointer| {
+            if pointer.format_version != ATLAS_GENERATION_FORMAT_VERSION {
+                return None;
+            }
+            read_json::<AtlasGenerationArtifact>(
+                &atlas_root(&self.atlas_cache_dir).join(&pointer.artifact_file),
+            )
+            .ok()
+            .map(|artifact| artifact.response)
+        });
+        let compatible = pointer
+            .as_ref()
+            .is_some_and(|pointer| pointer_is_compatible(pointer, &dependencies, revision));
+        let mut label_compatible = false;
+        let mut label_request = None;
+        let expected_label_model = self.provider.model_info().fingerprint();
+        if let Some(response) = &mut published {
+            let membership =
+                cloud_membership_fingerprint(&response.structural_generation, &response.clouds);
+            label_request = Some(AtlasLabelRequest {
+                structural_generation: response.structural_generation.clone(),
+                membership_fingerprint: membership.clone(),
+            });
+            if let Ok(label_pointer) = read_json::<AtlasLabelReadyPointer>(
+                &label_ready_pointer_path(&self.atlas_cache_dir, generation_key),
+            ) {
+                if label_pointer_is_compatible(
+                    &label_pointer,
+                    &response.structural_generation,
+                    &membership,
+                    &expected_label_model,
+                ) {
+                    if let Ok(labels) = read_json::<AtlasLabelGenerationArtifact>(
+                        &atlas_root(&self.atlas_cache_dir).join(&label_pointer.artifact_file),
+                    ) {
+                        if labels.structural_generation == response.structural_generation
+                            && labels.membership_fingerprint == membership
+                            && labels.algorithm_version == LABEL_ALGORITHM_VERSION
+                            && labels.model_fingerprint == expected_label_model
+                            && labels.label_generation == label_pointer.label_generation
+                        {
+                            for cloud in &mut response.clouds {
+                                if let Some(published) = labels.labels.get(&cloud.id) {
+                                    cloud.label = Some(published.label.clone());
+                                    cloud.label_confidence = published.confidence;
+                                }
+                            }
+                            response.label_generation = Some(labels.label_generation);
+                            label_compatible = true;
+                        }
+                    }
+                }
+            }
+        }
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+        let building = pending
+            .atlas_building
+            .get(&generation_key)
+            .is_some_and(|epoch| *epoch >= revision);
+        let mut enqueued = false;
+        if !compatible && !building {
+            pending
+                .atlas_requests
+                .entry(generation_key)
+                .and_modify(|epoch| *epoch = (*epoch).max(revision))
+                .or_insert(revision);
+            enqueued = true;
+        }
+        let label_building = pending.atlas_label_building.contains(&generation_key);
+        if compatible && !label_compatible && !label_building {
+            if let Some(request) = label_request {
+                pending.atlas_label_requests.insert(generation_key, request);
+                enqueued = true;
+            }
+        }
+        let queued = pending.atlas_requests.contains_key(&generation_key);
+        let label_queued = pending.atlas_label_requests.contains_key(&generation_key);
+        drop(pending);
+        if enqueued {
+            self.request_wake()?;
+        }
+        if let Some(mut response) = published.take() {
+            let max_modified = response
+                .nodes
+                .iter()
+                .map(|node| node.modified_at_millis)
+                .max()
+                .unwrap_or(0);
+            for node in &mut response.nodes {
+                let last_viewed = node
+                    .note_id
+                    .as_ref()
+                    .and_then(|id| activity_by_note_id.get(id))
+                    .map(|activity| activity.last_viewed_at_millis);
+                node.last_viewed_at_millis = last_viewed;
+                node.stale_score =
+                    stale_score(last_viewed.unwrap_or(node.modified_at_millis), max_modified);
+                (node.drift_x, node.drift_y) = drift_position(node.x, node.y, node.stale_score);
+            }
+            response.status = "ready".to_string();
+            response.stale = !compatible;
+            response.publish_in_progress = building || queued || label_building || label_queued;
+            return Ok(response);
+        }
+        let mut response =
+            empty_atlas("building", "Atlas is building in the background.", revision)?;
+        response.publish_in_progress = true;
+        Ok(response)
     }
 
     pub(super) fn search_vault_atlas(
         &self,
+        generation_key: AtlasGenerationKey,
         query: String,
-        metadata: HashMap<String, AtlasNoteMetadata>,
         activity_by_note_id: HashMap<String, NoteActivity>,
     ) -> Result<AtlasSearchResponse, String> {
         let trimmed_query = query.trim().to_string();
@@ -640,6 +1312,7 @@ impl ActiveSemanticState {
 
         let connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
+        let (metadata, _, _) = persisted_atlas_inputs(&connection, generation_key)?;
         let indexed_notes = visible_atlas_notes(
             load_atlas_note_embeddings(&connection)?,
             &metadata,
@@ -683,8 +1356,8 @@ impl ActiveSemanticState {
                 let preview = meta.map(|item| item.preview.as_str()).unwrap_or("");
                 let tags = meta.map_or(&[] as &[String], |item| item.tags.as_slice());
                 let semantic_score = if note
-                    .content_hash
-                    .starts_with(NAVIGATION_ONLY_CONTENT_HASH_PREFIX)
+                    .semantic_input_hash
+                    .starts_with(NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX)
                 {
                     0.0
                 } else {
@@ -766,12 +1439,76 @@ impl ActiveSemanticState {
     }
 }
 
+fn elapsed_millis(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn record_atlas_phase(debug: &super::debug::SemanticDebugState, phase: &str, started: Instant) {
+    let duration_millis = elapsed_millis(started);
+    debug.record_timing(
+        "atlas",
+        phase,
+        None,
+        duration_millis,
+        |metrics| match phase {
+            "load" => {
+                metrics.atlas_load_duration_total_millis += duration_millis;
+                metrics.atlas_load_duration_max_millis =
+                    metrics.atlas_load_duration_max_millis.max(duration_millis);
+            }
+            "graph" => {
+                metrics.atlas_graph_duration_total_millis += duration_millis;
+                metrics.atlas_graph_duration_max_millis =
+                    metrics.atlas_graph_duration_max_millis.max(duration_millis);
+            }
+            "cloud" => {
+                metrics.atlas_cloud_duration_total_millis += duration_millis;
+                metrics.atlas_cloud_duration_max_millis =
+                    metrics.atlas_cloud_duration_max_millis.max(duration_millis);
+            }
+            "layout" => {
+                metrics.atlas_layout_duration_total_millis += duration_millis;
+                metrics.atlas_layout_duration_max_millis = metrics
+                    .atlas_layout_duration_max_millis
+                    .max(duration_millis);
+            }
+            "persist" => {
+                metrics.atlas_persist_duration_total_millis += duration_millis;
+                metrics.atlas_persist_duration_max_millis = metrics
+                    .atlas_persist_duration_max_millis
+                    .max(duration_millis);
+            }
+            _ => {}
+        },
+    );
+}
+
+fn record_atlas_total(debug: &super::debug::SemanticDebugState, started: Instant, cache_hit: bool) {
+    let duration_millis = elapsed_millis(started);
+    debug.record_timing(
+        "atlas",
+        "build_completed",
+        Some(format!("cache_hit={cache_hit}")),
+        duration_millis,
+        |metrics| {
+            metrics.atlas_duration_total_millis += duration_millis;
+            metrics.atlas_duration_max_millis =
+                metrics.atlas_duration_max_millis.max(duration_millis);
+        },
+    );
+}
+
 fn empty_atlas(status: &str, reason: &str, revision: u64) -> Result<VaultAtlasResponse, String> {
     Ok(VaultAtlasResponse {
         status: status.to_string(),
         reason: Some(reason.to_string()),
         revision,
         generated_at_millis: current_time_millis()?,
+        structural_generation: String::new(),
+        label_generation: None,
+        published_at_millis: 0,
+        stale: false,
+        publish_in_progress: false,
         stats: VaultAtlasStats {
             note_count: 0,
             cloud_count: 0,
@@ -781,149 +1518,6 @@ fn empty_atlas(status: &str, reason: &str, revision: u64) -> Result<VaultAtlasRe
         nodes: Vec::new(),
         links: Vec::new(),
         clouds: Vec::new(),
-    })
-}
-
-fn atlas_layout_signature(notes: &[StoredAtlasNoteEmbedding], layout_pull: f32) -> String {
-    let mut parts = notes
-        .iter()
-        .map(|note| format!("{}:{}", note.note_path, note.content_hash))
-        .collect::<Vec<_>>();
-    parts.sort();
-    format!(
-        "v{ATLAS_LAYOUT_ALGORITHM_VERSION}|hnsw-k:{KNN_GRAPH_K}|min:{KNN_MIN_SCORE:.2}|pull:{layout_pull:.2}|{}",
-        parts.join("|")
-    )
-}
-
-fn load_atlas_graph_snapshot(
-    connection: &rusqlite::Connection,
-) -> Result<Option<AtlasGraphSnapshot>, String> {
-    let Some(raw) = load_atlas_graph_snapshot_json(connection)? else {
-        return Ok(None);
-    };
-    serde_json::from_str(&raw)
-        .map(Some)
-        .map_err(|err| err.to_string())
-}
-
-fn save_atlas_graph_snapshot(
-    connection: &rusqlite::Connection,
-    snapshot: &AtlasGraphSnapshot,
-) -> Result<(), String> {
-    let raw = serde_json::to_string(snapshot).map_err(|err| err.to_string())?;
-    save_atlas_graph_snapshot_json(connection, &raw)
-}
-
-fn snapshot_covers_notes(
-    snapshot: &AtlasGraphSnapshot,
-    notes: &[StoredAtlasNoteEmbedding],
-) -> bool {
-    if snapshot.nodes.len() != notes.len() {
-        return false;
-    }
-    let snapshot_paths = snapshot
-        .nodes
-        .iter()
-        .map(|node| node.note_path.as_str())
-        .collect::<HashSet<_>>();
-    notes
-        .iter()
-        .all(|note| snapshot_paths.contains(note.note_path.as_str()))
-}
-
-fn hydrate_atlas_from_snapshot(
-    snapshot: AtlasGraphSnapshot,
-    indexed_notes: &[StoredAtlasNoteEmbedding],
-    metadata: &HashMap<String, AtlasNoteMetadata>,
-    activity_by_note_id: &HashMap<String, NoteActivity>,
-    max_modified: u64,
-    revision: u64,
-) -> Result<VaultAtlasResponse, String> {
-    let indexed_by_path = indexed_notes
-        .iter()
-        .map(|note| (note.note_path.as_str(), note))
-        .collect::<HashMap<_, _>>();
-    let response_nodes = snapshot
-        .nodes
-        .into_iter()
-        .filter_map(|node| {
-            let indexed = indexed_by_path.get(node.note_path.as_str())?;
-            let meta = metadata.get(&node.note_path);
-            let note_id = meta.and_then(|item| item.note_id.clone());
-            let last_viewed = note_id
-                .as_ref()
-                .and_then(|id| activity_by_note_id.get(id))
-                .map(|activity| activity.last_viewed_at_millis);
-            let stale = stale_score(last_viewed.unwrap_or(indexed.modified_millis), max_modified);
-            let drift = drift_position(node.x, node.y, stale);
-            Some(AtlasNode {
-                id: node.note_path.clone(),
-                note_id,
-                note_path: node.note_path.clone(),
-                title: meta
-                    .map(|item| item.title.clone())
-                    .filter(|title| !title.trim().is_empty())
-                    .unwrap_or_else(|| indexed.note_title.clone()),
-                file_name: meta
-                    .map(|item| item.file_name.clone())
-                    .unwrap_or_else(|| file_name_for_path(&node.note_path)),
-                document_kind: meta.map(|item| item.document_kind).unwrap_or_default(),
-                x: node.x,
-                y: node.y,
-                drift_x: drift.0,
-                drift_y: drift.1,
-                radius: NOTE_RADIUS_MIN
-                    + (NOTE_RADIUS_MAX - NOTE_RADIUS_MIN) * node.centrality.clamp(0.0, 1.0),
-                cloud_id: node.cloud_id.clone(),
-                parent_cloud_id: node.parent_cloud_id.clone(),
-                child_cloud_id: node.child_cloud_id.clone(),
-                cluster_id: node.cloud_id,
-                subcluster_id: node.child_cloud_id,
-                centrality: node.centrality,
-                degree: node.degree,
-                importance: node.importance,
-                modified_at_millis: indexed.modified_millis,
-                last_viewed_at_millis: last_viewed,
-                created_at_millis: parse_rfc3339_millis(&indexed.created_at)
-                    .unwrap_or(indexed.modified_millis),
-                updated_at_millis: parse_rfc3339_millis(&indexed.updated_at)
-                    .unwrap_or(indexed.modified_millis),
-                stale_score: stale,
-                preview: meta.map(|item| item.preview.clone()).unwrap_or_default(),
-                tags: meta.map(|item| item.tags.clone()).unwrap_or_default(),
-                isolated: node.isolated,
-            })
-        })
-        .collect::<Vec<_>>();
-    let response_links = snapshot
-        .links
-        .into_iter()
-        .enumerate()
-        .map(|(index, link)| AtlasLink {
-            id: format!("{}:{}:{index}", link.source_id, link.target_id),
-            source_id: link.source_id,
-            target_id: link.target_id,
-            kind: link.kind,
-            score: link.score,
-            strength: link.strength,
-        })
-        .collect::<Vec<_>>();
-    let clouds = snapshot.clouds;
-    Ok(VaultAtlasResponse {
-        status: "ready".to_string(),
-        reason: None,
-        revision,
-        generated_at_millis: current_time_millis()?,
-        stats: VaultAtlasStats {
-            note_count: response_nodes.len(),
-            cloud_count: clouds.len(),
-            link_count: response_links.len(),
-            isolated_count: response_nodes.iter().filter(|node| node.isolated).count(),
-        },
-        nodes: response_nodes,
-        links: response_links,
-        clouds,
     })
 }
 
@@ -1149,6 +1743,9 @@ fn place_uncached_nodes_from_neighbors(
     }
 }
 
+/// Structural link weights may depend on durable note structure only. Activity
+/// is an overlay (drift/staleness/search) and must not perturb graph topology,
+/// centrality, clouds, or cached layout.
 fn boost_links(links: &mut [WorkingLink], nodes: &[WorkingNode]) {
     let node_by_id = nodes
         .iter()
@@ -1163,9 +1760,6 @@ fn boost_links(links: &mut [WorkingLink], nodes: &[WorkingNode]) {
         };
         if parent_folder(&source.note_path) == parent_folder(&target.note_path) {
             link.strength += FOLDER_BOOST;
-        }
-        if source.stale_score < 0.35 && target.stale_score < 0.35 {
-            link.strength += RECENT_ACTIVITY_BOOST;
         }
         link.strength = link.strength.clamp(0.0, 1.0);
     }
@@ -3202,7 +3796,18 @@ fn build_cloud(spec: &CloudSpec, nodes: &[WorkingNode], links: &[WorkingLink]) -
     } else {
         core_members.clone()
     };
-    let (label, confidence) = label_for_cloud(&label_members, density);
+    let label_notes = label_members
+        .iter()
+        .map(|node| AtlasLabelNote {
+            id: node.id.clone(),
+            title: node.title.clone(),
+            preview: node.preview.clone(),
+            tags: node.tags.clone(),
+            embedding: node.embedding.clone(),
+        })
+        .collect::<Vec<_>>();
+    let label_refs = label_notes.iter().collect::<Vec<_>>();
+    let label = medoid_placeholder(&label_refs);
     let representative_node_ids = {
         let mut ranked = members.iter().copied().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
@@ -3223,7 +3828,7 @@ fn build_cloud(spec: &CloudSpec, nodes: &[WorkingNode], links: &[WorkingLink]) -
         parent_id: spec.parent_id.clone(),
         level: spec.level,
         label,
-        label_confidence: confidence,
+        label_confidence: 0.0,
         note_count,
         density,
         color: cloud_color(&spec.id, spec.level),
@@ -3464,65 +4069,6 @@ fn cloud_density(links: &[WorkingLink], member_ids: &HashSet<String>, note_count
     (internal / possible).clamp(0.0, 1.0)
 }
 
-fn label_for_cloud(nodes: &[&WorkingNode], density: f32) -> (Option<String>, f32) {
-    let mut counts = HashMap::<String, f32>::new();
-    for node in nodes {
-        count_label_terms(&node.title, 1.0, &mut counts);
-        count_label_terms(&node.preview, 0.35, &mut counts);
-        for tag in &node.tags {
-            count_label_terms(tag, 1.35, &mut counts);
-        }
-    }
-    let Some((word, count)) = counts.iter().max_by(|left, right| {
-        left.1
-            .total_cmp(&right.1)
-            .then_with(|| right.0.cmp(&left.0))
-    }) else {
-        return fallback_cloud_label(nodes, density);
-    };
-    let confidence = ((count / nodes.len().max(1) as f32) * 0.7 + density * 0.3).clamp(0.0, 1.0);
-
-    (Some(title_case(word)), confidence)
-}
-
-fn count_label_terms(text: &str, weight: f32, counts: &mut HashMap<String, f32>) {
-    // Count a term at most once per source so a word repeated throughout one note
-    // cannot outweigh a topic shared by several notes in the cloud.
-    for word in label_terms(text).into_iter().collect::<HashSet<_>>() {
-        *counts.entry(word).or_default() += weight;
-    }
-}
-
-fn label_terms(text: &str) -> Vec<String> {
-    text.split(|character: char| !character.is_alphanumeric())
-        .map(|word| word.trim().to_lowercase())
-        .filter(|word| {
-            word.len() >= 3 && word.chars().any(char::is_alphabetic) && !is_stop_word(word)
-        })
-        .collect()
-}
-
-fn fallback_cloud_label(nodes: &[&WorkingNode], density: f32) -> (Option<String>, f32) {
-    let mut ranked_nodes = nodes.to_vec();
-    ranked_nodes.sort_by(|left, right| {
-        right
-            .centrality
-            .total_cmp(&left.centrality)
-            .then_with(|| left.title.cmp(&right.title))
-    });
-    let fallback = ranked_nodes
-        .into_iter()
-        .find_map(|node| {
-            label_terms(&node.title)
-                .into_iter()
-                .next()
-                .map(|word| title_case(&word))
-        })
-        .filter(|label| !label.is_empty())
-        .unwrap_or_else(|| "Cluster".to_string());
-    (Some(fallback), (0.18 + density * 0.2).clamp(0.12, 0.36))
-}
-
 fn parse_rfc3339_millis(value: &str) -> Option<u64> {
     let value = value.trim();
     if value.len() < 20 {
@@ -3723,151 +4269,241 @@ fn parent_folder(note_path: &str) -> String {
         .unwrap_or_default()
 }
 
-fn is_stop_word(word: &str) -> bool {
-    is_phrase_filler_word(word)
-        || matches!(
-            word,
-            "basic"
-                | "day"
-                | "details"
-                | "draft"
-                | "drafts"
-                | "here"
-                | "idea"
-                | "ideas"
-                | "item"
-                | "items"
-                | "list"
-                | "lists"
-                | "note"
-                | "notes"
-                | "plan"
-                | "project"
-                | "meeting"
-                | "misc"
-                | "overview"
-                | "research"
-                | "report"
-                | "reports"
-                | "setup"
-                | "summary"
-                | "thing"
-                | "things"
-                | "today"
-                | "untitled"
-                | "update"
-                | "updates"
-                | "year"
-        )
-}
-
-fn is_phrase_filler_word(word: &str) -> bool {
-    matches!(
-        word,
-        "about"
-            | "after"
-            | "again"
-            | "against"
-            | "all"
-            | "also"
-            | "and"
-            | "any"
-            | "are"
-            | "because"
-            | "been"
-            | "before"
-            | "being"
-            | "between"
-            | "both"
-            | "but"
-            | "can"
-            | "could"
-            | "did"
-            | "does"
-            | "doing"
-            | "don"
-            | "each"
-            | "few"
-            | "for"
-            | "from"
-            | "further"
-            | "had"
-            | "has"
-            | "have"
-            | "having"
-            | "how"
-            | "into"
-            | "its"
-            | "itself"
-            | "just"
-            | "more"
-            | "most"
-            | "nor"
-            | "not"
-            | "now"
-            | "off"
-            | "once"
-            | "only"
-            | "other"
-            | "our"
-            | "ours"
-            | "out"
-            | "over"
-            | "own"
-            | "same"
-            | "she"
-            | "should"
-            | "some"
-            | "such"
-            | "than"
-            | "that"
-            | "the"
-            | "their"
-            | "theirs"
-            | "them"
-            | "themselves"
-            | "then"
-            | "there"
-            | "these"
-            | "they"
-            | "this"
-            | "those"
-            | "through"
-            | "too"
-            | "under"
-            | "until"
-            | "very"
-            | "was"
-            | "were"
-            | "what"
-            | "when"
-            | "where"
-            | "which"
-            | "while"
-            | "who"
-            | "why"
-            | "will"
-            | "with"
-            | "would"
-            | "you"
-            | "your"
-            | "yours"
-            | "yourself"
-            | "yourselves"
-    )
-}
-
-fn title_case(word: &str) -> String {
-    let mut chars = word.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("gneauxghts-atlas-{label}-{unique}"));
+        fs::create_dir_all(&path).expect("create test directory");
+        path
+    }
+
+    fn test_dependencies(source_key: &str, input_hash: &str) -> AtlasDependencies {
+        AtlasDependencies {
+            source_key: source_key.to_string(),
+            input_hash: input_hash.to_string(),
+            note_ann_generation: "ann-1".to_string(),
+            edge_generation: "edge-1".to_string(),
+            edge_algorithm_version: "edge-v1".to_string(),
+            cloud_algorithm_version: ATLAS_CLOUD_ALGORITHM_VERSION,
+            layout_algorithm_version: ATLAS_LAYOUT_ALGORITHM_VERSION,
+        }
+    }
+
+    #[test]
+    fn atomic_publication_keeps_previous_generation_until_pointer_flip() {
+        let cache = test_dir("atomic");
+        let key = AtlasGenerationKey::default();
+        let root = atlas_root(&cache);
+        let old_artifact = AtlasGenerationArtifact {
+            response: empty_atlas("ready", "", 1).expect("old response"),
+        };
+        let new_artifact = AtlasGenerationArtifact {
+            response: empty_atlas("ready", "", 2).expect("new response"),
+        };
+        atomic_write_json(&root.join("generation-hidden-old.json"), &old_artifact)
+            .expect("old artifact");
+        atomic_write_json(
+            &ready_pointer_path(&cache, key),
+            &AtlasReadyPointer {
+                format_version: ATLAS_GENERATION_FORMAT_VERSION,
+                structural_generation: "old".to_string(),
+                target_epoch: 1,
+                published_at_millis: 1,
+                artifact_file: "generation-hidden-old.json".to_string(),
+                dependencies: test_dependencies("hidden", "old"),
+            },
+        )
+        .expect("old pointer");
+        atomic_write_json(&root.join("generation-hidden-new.json"), &new_artifact)
+            .expect("new artifact");
+        let before: AtlasReadyPointer =
+            read_json(&ready_pointer_path(&cache, key)).expect("read old pointer");
+        assert_eq!(before.structural_generation, "old");
+
+        let mut next = before;
+        next.structural_generation = "new".to_string();
+        next.target_epoch = 2;
+        next.artifact_file = "generation-hidden-new.json".to_string();
+        atomic_write_json(&ready_pointer_path(&cache, key), &next).expect("flip pointer");
+        let after: AtlasReadyPointer =
+            read_json(&ready_pointer_path(&cache, key)).expect("read new pointer");
+        assert_eq!(after.structural_generation, "new");
+        fs::remove_dir_all(cache).expect("cleanup");
+    }
+
+    #[test]
+    fn compatibility_rejects_input_and_algorithm_changes() {
+        let current = test_dependencies("remembered:set-a", "input-a");
+        assert_eq!(current, current.clone());
+        let mut changed_set = current.clone();
+        changed_set.source_key = "remembered:set-b".to_string();
+        assert_ne!(current, changed_set);
+        let mut changed_layout = current.clone();
+        changed_layout.layout_algorithm_version += 1;
+        assert_ne!(current, changed_layout);
+        let mut changed_edge = current.clone();
+        changed_edge.edge_generation = "edge-2".to_string();
+        assert_ne!(current, changed_edge);
+    }
+
+    #[test]
+    fn warm_generation_is_served_stale_while_new_epoch_builds() {
+        let dependencies = test_dependencies("hidden", "input");
+        let pointer = AtlasReadyPointer {
+            format_version: ATLAS_GENERATION_FORMAT_VERSION,
+            structural_generation: "generation-1".to_string(),
+            target_epoch: 4,
+            published_at_millis: 10,
+            artifact_file: "generation-hidden-1.json".to_string(),
+            dependencies: dependencies.clone(),
+        };
+        assert!(pointer_is_compatible(&pointer, &dependencies, 4));
+        assert!(!pointer_is_compatible(&pointer, &dependencies, 5));
+        let mut changed = dependencies.clone();
+        changed.input_hash = "edited".to_string();
+        assert!(!pointer_is_compatible(&pointer, &changed, 4));
+    }
+
+    #[test]
+    fn label_pointer_requires_current_algorithm_and_model() {
+        let mut pointer = AtlasLabelReadyPointer {
+            format_version: ATLAS_GENERATION_FORMAT_VERSION,
+            structural_generation: "structure-1".to_string(),
+            membership_fingerprint: "members-1".to_string(),
+            algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
+            model_fingerprint: "model-1".to_string(),
+            label_generation: "labels-1".to_string(),
+            artifact_file: "labels.json".to_string(),
+        };
+        assert!(label_pointer_is_compatible(
+            &pointer,
+            "structure-1",
+            "members-1",
+            "model-1"
+        ));
+        pointer.algorithm_version = "old-algorithm".to_string();
+        assert!(!label_pointer_is_compatible(
+            &pointer,
+            "structure-1",
+            "members-1",
+            "model-1"
+        ));
+        pointer.algorithm_version = LABEL_ALGORITHM_VERSION.to_string();
+        pointer.model_fingerprint = "model-2".to_string();
+        assert!(!label_pointer_is_compatible(
+            &pointer,
+            "structure-1",
+            "members-1",
+            "model-1"
+        ));
+    }
+
+    #[test]
+    fn variant_targets_coalesce_to_newest_epoch() {
+        let key = AtlasGenerationKey {
+            chat_visibility: AtlasChatVisibilityKey::Remembered,
+        };
+        let mut pending = PendingIndexState::default();
+        for epoch in [3, 8, 5] {
+            pending
+                .atlas_requests
+                .entry(key)
+                .and_modify(|target| *target = (*target).max(epoch))
+                .or_insert(epoch);
+        }
+        assert_eq!(pending.atlas_requests.get(&key), Some(&8));
+        pending.atlas_building.insert(key, 8);
+        assert!(pending
+            .atlas_building
+            .get(&key)
+            .is_some_and(|epoch| *epoch >= 8));
+        assert!(request_is_superseded(&pending, key, 7));
+        assert!(!request_is_superseded(&pending, key, 8));
+    }
+
+    #[test]
+    fn persisted_visibility_variants_distinguish_remembered_chat_set() {
+        let row = |path: &str, kind, chunk_count| StoredAtlasNoteMetadata {
+            note_path: path.to_string(),
+            title: path.to_string(),
+            modified_millis: 1,
+            document_kind: kind,
+            note_id: String::new(),
+            preview: String::new(),
+            tags: Vec::new(),
+            wikilink_targets: Vec::new(),
+            chunk_count,
+            presentation_hash: format!("presentation-{path}"),
+        };
+        let note = row("note.md", DocumentKind::Note, 1);
+        let remembered = row("remembered.md", DocumentKind::ChatIndex, 2);
+        let navigation_only = row("navigation.md", DocumentKind::ChatIndex, 0);
+        let transcript = row("transcript.md", DocumentKind::ChatTranscript, 4);
+        assert!(atlas_row_visible(&note, AtlasChatVisibilityKey::Hidden));
+        assert!(!atlas_row_visible(
+            &remembered,
+            AtlasChatVisibilityKey::Hidden
+        ));
+        assert!(atlas_row_visible(
+            &remembered,
+            AtlasChatVisibilityKey::Remembered
+        ));
+        assert!(!atlas_row_visible(
+            &navigation_only,
+            AtlasChatVisibilityKey::Remembered
+        ));
+        assert!(atlas_row_visible(
+            &navigation_only,
+            AtlasChatVisibilityKey::All
+        ));
+        assert!(!atlas_row_visible(&transcript, AtlasChatVisibilityKey::All));
+    }
+
+    #[test]
+    fn gc_preserves_every_referenced_variant_and_removes_orphans() {
+        let cache = test_dir("gc");
+        let root = atlas_root(&cache);
+        fs::create_dir_all(&root).expect("atlas root");
+        for visibility in [
+            AtlasChatVisibilityKey::Hidden,
+            AtlasChatVisibilityKey::Remembered,
+            AtlasChatVisibilityKey::All,
+        ] {
+            let name = format!("generation-{}-kept.json", visibility.signature_value());
+            fs::write(root.join(&name), b"{}").expect("artifact");
+            atomic_write_json(
+                &ready_pointer_path(
+                    &cache,
+                    AtlasGenerationKey {
+                        chat_visibility: visibility,
+                    },
+                ),
+                &AtlasReadyPointer {
+                    format_version: ATLAS_GENERATION_FORMAT_VERSION,
+                    structural_generation: "kept".to_string(),
+                    target_epoch: 1,
+                    published_at_millis: 1,
+                    artifact_file: name,
+                    dependencies: test_dependencies(visibility.signature_value(), "input"),
+                },
+            )
+            .expect("pointer");
+        }
+        fs::write(root.join("generation-hidden-orphan.json"), b"{}").expect("orphan");
+        gc_unreferenced_generations(&cache).expect("gc");
+        assert!(!root.join("generation-hidden-orphan.json").exists());
+        assert!(root.join("generation-hidden-kept.json").exists());
+        assert!(root.join("generation-remembered-kept.json").exists());
+        assert!(root.join("generation-all-kept.json").exists());
+        fs::remove_dir_all(cache).expect("cleanup");
+    }
 
     #[test]
     fn complete_knn_rows_for_umap_keeps_full_rows_without_exact_fill() {
@@ -3960,7 +4596,8 @@ mod tests {
                 note_path: "/vault/note.md".to_string(),
                 note_title: "Note".to_string(),
                 modified_millis: 1,
-                content_hash: "note-hash".to_string(),
+                semantic_input_hash: "note-hash".to_string(),
+                structure_hash: "note-structure".to_string(),
                 created_at: String::new(),
                 updated_at: String::new(),
                 embedding: vec![1.0, 0.0, 0.0],
@@ -3969,7 +4606,8 @@ mod tests {
                 note_path: "/vault/Chats/remembered/Conversation.md".to_string(),
                 note_title: "Remembered".to_string(),
                 modified_millis: 1,
-                content_hash: "recall-hash".to_string(),
+                semantic_input_hash: "recall-hash".to_string(),
+                structure_hash: "recall-structure".to_string(),
                 created_at: String::new(),
                 updated_at: String::new(),
                 embedding: vec![0.0, 1.0, 0.0],
@@ -4017,46 +4655,8 @@ mod tests {
             .find(|note| note.note_title == "New chat")
             .expect("navigation-only chat");
         assert!(chat
-            .content_hash
-            .starts_with(NAVIGATION_ONLY_CONTENT_HASH_PREFIX));
-    }
-
-    #[test]
-    fn atlas_graph_snapshot_round_trip_covers_notes() {
-        let notes = vec![StoredAtlasNoteEmbedding {
-            note_path: "/vault/a.md".to_string(),
-            note_title: "A".to_string(),
-            modified_millis: 1,
-            content_hash: "h1".to_string(),
-            created_at: String::new(),
-            updated_at: String::new(),
-            embedding: vec![1.0, 0.0],
-        }];
-        let snapshot = AtlasGraphSnapshot {
-            signature: "sig".to_string(),
-            nodes: vec![AtlasSnapshotNode {
-                note_path: "/vault/a.md".to_string(),
-                x: 1.0,
-                y: 2.0,
-                cloud_id: Some("cloud-1".to_string()),
-                parent_cloud_id: None,
-                child_cloud_id: None,
-                centrality: 0.5,
-                degree: 1,
-                importance: 0.4,
-                isolated: false,
-                modified_at_millis: 1,
-                created_at_millis: 1,
-                updated_at_millis: 1,
-            }],
-            links: Vec::new(),
-            clouds: Vec::new(),
-        };
-        assert!(snapshot_covers_notes(&snapshot, &notes));
-        let encoded = serde_json::to_string(&snapshot).expect("encode");
-        let decoded: AtlasGraphSnapshot = serde_json::from_str(&encoded).expect("decode");
-        assert_eq!(decoded.signature, "sig");
-        assert_eq!(decoded.nodes.len(), 1);
+            .semantic_input_hash
+            .starts_with(NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX));
     }
 
     fn test_node(id: &str, title: &str, x: f32, y: f32) -> WorkingNode {
@@ -4139,82 +4739,29 @@ mod tests {
     }
 
     #[test]
-    fn label_for_cloud_uses_one_word_for_low_confidence_labels() {
-        let nodes = [
-            test_node("a", "Bell Trip Summary", 0.0, 0.0),
-            test_node("b", "Hotel Booking Details", 1.0, 0.0),
-            test_node("c", "Warsaw Day Photos", 0.0, 1.0),
-        ];
-        let refs = nodes.iter().collect::<Vec<_>>();
-
-        let (label, confidence) = label_for_cloud(&refs, 0.1);
-
-        assert!(label.as_deref().is_some_and(|value| !value.contains(' ')));
-        assert!(confidence < 0.38);
-    }
-
-    #[test]
-    fn label_for_cloud_never_uses_connector_words_as_the_topic() {
-        let nodes = [
-            test_node("a", "And Bug Reports", 0.0, 0.0),
-            test_node("b", "The Bug Triage", 1.0, 0.0),
-            test_node("c", "Bug Fix Notes", 0.0, 1.0),
-        ];
-        let refs = nodes.iter().collect::<Vec<_>>();
-
-        let (label, _) = label_for_cloud(&refs, 0.8);
-        let label = label.expect("label");
-
-        assert_eq!(label, "Bug");
-    }
-
-    #[test]
-    fn label_for_cloud_uses_cluster_when_every_title_is_filler() {
-        let nodes = [
-            test_node("a", "And", 0.0, 0.0),
-            test_node("b", "The", 1.0, 0.0),
-            test_node("c", "You But", 0.0, 1.0),
-        ];
-        let refs = nodes.iter().collect::<Vec<_>>();
-
-        let (label, _) = label_for_cloud(&refs, 0.2);
-
-        assert_eq!(label.as_deref(), Some("Cluster"));
-    }
-
-    #[test]
-    fn label_for_cloud_uses_a_repeated_useful_word() {
-        let nodes = [
-            test_node("a", "Garden Plan", 0.0, 0.0),
-            test_node("b", "Garden Ideas", 1.0, 0.0),
-            test_node("c", "Garden Notes", 0.0, 1.0),
-        ];
-        let refs = nodes.iter().collect::<Vec<_>>();
-
-        let (label, confidence) = label_for_cloud(&refs, 0.8);
-
-        assert_eq!(label.as_deref(), Some("Garden"));
-        assert!(confidence > 0.8);
-    }
-
-    #[test]
-    fn label_for_cloud_ignores_generic_and_numeric_title_terms() {
-        let nodes = [
-            test_node("a", "2026 Basic Android Setup", 0.0, 0.0),
-            test_node("b", "Android Release Checklist", 1.0, 0.0),
-            test_node("c", "Android Build Notes", 0.0, 1.0),
-        ];
-        let refs = nodes.iter().collect::<Vec<_>>();
-
-        let (label, _) = label_for_cloud(&refs, 0.8);
-
-        assert_eq!(label.as_deref(), Some("Android"));
-    }
-
-    #[test]
     fn stale_score_uses_recent_activity_as_zero_and_old_activity_as_outer_pull() {
         assert_eq!(stale_score(100, 100), 0.0);
         assert!(stale_score(0, 1000 * 60 * 60 * 24 * 45) > 0.9);
+    }
+
+    #[test]
+    fn activity_does_not_change_structural_link_strength() {
+        let mut recent_nodes = [test_node("a", "A", 0.0, 0.0), test_node("b", "B", 1.0, 0.0)];
+        recent_nodes[0].note_path = "folder/a.md".to_string();
+        recent_nodes[1].note_path = "folder/b.md".to_string();
+        recent_nodes[0].stale_score = 0.0;
+        recent_nodes[1].stale_score = 0.0;
+        let mut stale_nodes = recent_nodes.clone();
+        stale_nodes[0].stale_score = 1.0;
+        stale_nodes[1].stale_score = 1.0;
+        let mut recent_links = vec![test_working_link("a", "b", 0.5)];
+        let mut stale_links = recent_links.clone();
+
+        boost_links(&mut recent_links, &recent_nodes);
+        boost_links(&mut stale_links, &stale_nodes);
+
+        assert_eq!(recent_links[0].strength, stale_links[0].strength);
+        assert_eq!(recent_links[0].strength, 0.5 + FOLDER_BOOST);
     }
 
     #[test]

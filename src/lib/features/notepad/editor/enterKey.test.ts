@@ -81,6 +81,36 @@ describe('markdownEnter', () => {
     expect(doc).toBe('1. a\n2. ');
   });
 
+  it('continues a structurally nested list item at the same level', () => {
+    const input = '- parent\n  - child';
+    const { handled, dispatches, doc } = runEnter(input, input.length);
+
+    expect(handled).toBe(true);
+    expect(dispatches).toBe(1);
+    expect(doc).toBe('- parent\n  - child\n  - ');
+  });
+
+  it.each([
+    ['bullet', '- parent\n- ', '- parent\n'],
+    ['nested bullet', '- parent\n  - ', '- parent\n'],
+    ['ordered', '1. parent\n2. ', '1. parent\n'],
+    ['task', '- [ ] parent\n- [ ] ', '- [ ] parent\n']
+  ])('removes an empty %s item instead of continuing the list', (_name, input, expected) => {
+    const { handled, dispatches, doc } = runEnter(input, input.length);
+
+    expect(handled).toBe(true);
+    expect(dispatches).toBe(1);
+    expect(doc).toBe(expected);
+  });
+
+  it('leaves a blank line when removing an empty item between list items', () => {
+    const input = '- first\n- \n- second';
+    const emptyItemEnd = input.indexOf('- \n') + 2;
+    const { doc } = runEnter(input, emptyItemEnd);
+
+    expect(doc).toBe('- first\n\n- second');
+  });
+
   it('never declines — Enter is always handled so it cannot fall through to native', () => {
     // The crux of the fix: on a plain line the command must still return true
     // (handled) so the browser never inserts its own extra line break.

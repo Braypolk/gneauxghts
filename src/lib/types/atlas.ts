@@ -6,6 +6,11 @@ export interface VaultAtlasResponse {
   reason: string | null;
   revision: number;
   generatedAtMillis: number;
+  structuralGeneration: string;
+  labelGeneration: string | null;
+  publishedAtMillis: number;
+  stale: boolean;
+  publishInProgress: boolean;
   stats: {
     noteCount: number;
     cloudCount: number;

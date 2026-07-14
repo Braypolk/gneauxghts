@@ -55,6 +55,19 @@ pub(crate) struct ModelInfo {
     pub(crate) error: Option<String>,
 }
 
+impl ModelInfo {
+    /// Stable identity for persisted embeddings. It intentionally excludes
+    /// runtime status and absolute paths, while including the exact configured
+    /// model artifact identity and output shape.
+    pub(crate) fn fingerprint(&self) -> String {
+        let identity = format!(
+            "{}\0{}\0{}\0{}",
+            self.id, self.model_repo_id, MODEL_FILENAME, self.dimensions
+        );
+        blake3::hash(identity.as_bytes()).to_hex().to_string()
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum EmbeddingInputKind {
     Document,

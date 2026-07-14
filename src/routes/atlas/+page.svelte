@@ -1,16 +1,22 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import {
     ArrowDownLeftFromCircle,
     ExternalLink,
-    EyeOff,
     Focus,
     Link as LinkIcon,
     LoaderCircle,
     X
   } from '@lucide/svelte';
-  import { onDestroy, onMount, tick } from 'svelte';
-  import { atlasStore, getNodePosition, linkEndpoints } from '$lib/features/atlas/atlasStore.svelte';
+  import { onMount, tick } from 'svelte';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import {
+    atlasLabelRenderKey,
+    atlasStore,
+    getNodePosition,
+    linkEndpoints
+  } from '$lib/features/atlas/atlasStore.svelte';
   import { storePendingNoteTarget } from '$lib/noteNavigation';
   import SearchBar from '$lib/ui/search/SearchBar.svelte';
   import SearchDock from '$lib/ui/search/SearchDock.svelte';
@@ -27,9 +33,9 @@
   const LIGHT_NODE_NEUTRAL: [number, number, number] = [76, 86, 98];
 
   let containerEl = $state<HTMLDivElement | null>(null);
-  let deck: any = null;
-  let deckCore: any = null;
-  let deckLayers: any = null;
+  let deck = $state.raw<any>(null);
+  let deckCore = $state.raw<any>(null);
+  let deckLayers = $state.raw<any>(null);
   let isDeckVisible = $state(false);
   let isHoveringNote = $state(false);
   let viewState = $state<{ target: [number, number, number]; zoom: number }>({
@@ -37,8 +43,19 @@
     zoom: 0
   });
 
-  const nodeById = $derived(new Map((atlas.response?.nodes ?? []).map((node) => [node.id, node])));
-  const cloudById = $derived(new Map((atlas.response?.clouds ?? []).map((cloud) => [cloud.id, cloud])));
+  const nodeById = $derived(
+    new SvelteMap((atlas.response?.nodes ?? []).map((node) => [node.id, node]))
+  );
+  const cloudById = $derived(
+    new SvelteMap((atlas.response?.clouds ?? []).map((cloud) => [cloud.id, cloud]))
+  );
+  const hasReadyMap = $derived(
+    atlas.response?.status === 'ready' && atlas.response.nodes.length > 0
+  );
+  const isColdBuilding = $derived(
+    !hasReadyMap && (atlas.isLoading || atlas.response?.status === 'building')
+  );
+  const labelRenderKey = $derived(atlasLabelRenderKey(atlas.response));
 
   function atlasThemeColors() {
     const isDark =
@@ -272,7 +289,7 @@
     const tier = atlas.zoomTier;
     const showAllTitles = tier === 'close';
     const showRepresentativeTitles = tier === 'near';
-    const titleNodeIds = new Set<string>();
+    const titleNodeIds = new SvelteSet<string>();
     for (const cloud of atlas.visibleClouds) {
       for (const id of cloud.representativeNodeIds) titleNodeIds.add(id);
     }
@@ -409,7 +426,9 @@
         getPosition: getCloudLabelPosition,
         updateTriggers: {
           getPosition: [atlas.driftStaleNotes, atlas.searchResponse, atlas.zoom],
-          getColor: [atlas.searchResponse, selectedCloudId, hoveredCloudId]
+          getColor: [atlas.searchResponse, selectedCloudId, hoveredCloudId],
+          getText: [labelRenderKey],
+          getSize: [labelRenderKey]
         },
         getText: (cloud: AtlasCloud) => truncateCloudLabel(cloud.label ?? 'Semantic cloud'),
         getSize: getCloudLabelSize,
@@ -455,12 +474,21 @@
     ];
   }
 
+  const renderedLayers = $derived.by(() => buildLayers());
+
   function renderDeck() {
     if (!deck) return;
     deck.setProps({
       viewState,
       layers: buildLayers()
     });
+  }
+
+  function syncDeckLayers() {
+    const currentDeck = deck;
+    const layers = renderedLayers;
+    if (!currentDeck) return;
+    currentDeck.setProps({ layers });
   }
 
   function fittedViewState(): { target: [number, number, number]; zoom: number } | null {
@@ -508,7 +536,7 @@
       notePath: node.notePath,
       documentKind: node.documentKind
     });
-    await goto('/');
+    await goto(resolve('/'));
   }
 
   function handleNodeHover(node: AtlasNode | null) {
@@ -564,6 +592,19 @@
       atlas.setZoom(Math.pow(2, viewState.zoom));
       renderDeck();
     }
+  }
+
+  function attachContainer(element: HTMLDivElement) {
+    containerEl = element;
+    if (deck) {
+      deck.setProps({
+        viewState,
+        layers: renderedLayers
+      });
+    }
+    return () => {
+      if (containerEl === element) containerEl = null;
+    };
   }
 
   onMount(() => {
@@ -631,26 +672,6 @@
     };
   });
 
-  onDestroy(() => {
-    atlas.dispose();
-  });
-
-  $effect(() => {
-    atlas.searchQuery;
-    atlas.searchResponse;
-    atlas.searchError;
-    atlas.isSearching;
-    atlas.matchCase;
-    atlas.matchWholeWord;
-    atlas.driftStaleNotes;
-    atlas.showLinks;
-    atlas.selectedNodeId;
-    atlas.hoveredNodeId;
-    atlas.selectedCloudId;
-    atlas.hoveredCloudId;
-    atlas.response;
-    renderDeck();
-  });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -658,7 +679,8 @@
 <div class="atlas-surface relative h-full w-full overflow-hidden text-white">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    bind:this={containerEl}
+    {@attach attachContainer}
+    {@attach syncDeckLayers}
     ondblclick={() => void openSelectedNode()}
     class={`absolute inset-0 transition-opacity duration-100 ${isDeckVisible ? 'opacity-100' : 'opacity-0'} ${isHoveringNote ? 'cursor-pointer' : 'cursor-grab'}`}
   ></div>
@@ -725,7 +747,7 @@
     </SearchBar>
   </SearchDock>
 
-  {#if atlas.error || atlas.response?.status === 'unavailable' || atlas.response?.status === 'empty'}
+  {#if (!hasReadyMap && atlas.error) || atlas.response?.status === 'unavailable' || atlas.response?.status === 'empty'}
     <div class="absolute inset-0 z-20 flex items-center justify-center px-4">
       <div class="max-w-md rounded-[1.5rem] border border-border/80 bg-card/90 px-5 py-5 text-center shadow-md backdrop-blur-md">
         <p class="text-sm font-semibold">
@@ -738,19 +760,32 @@
           <button
             type="button"
             class="mt-4 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background"
-            onclick={() => void goto('/settings')}
+            onclick={() => void goto(resolve('/settings'))}
           >
             Open Settings
           </button>
         {/if}
       </div>
     </div>
-  {:else if atlas.isLoading && !atlas.response}
+  {:else if isColdBuilding}
     <div class="absolute inset-0 z-20 flex items-center justify-center">
-      <div class="inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/90 px-4 py-2 text-sm text-muted-foreground shadow-sm backdrop-blur-md">
-        <LoaderCircle class="h-4 w-4 animate-spin" />
-        Loading atlas
+      <div class="max-w-md rounded-[1.5rem] border border-border/80 bg-card/90 px-5 py-5 text-center shadow-md backdrop-blur-md">
+        <LoaderCircle class="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
+        <p class="mt-3 text-sm font-semibold">Building your atlas</p>
+        <p class="mt-2 text-sm text-muted-foreground">
+          {atlas.response?.reason ?? 'Semantic structure is being prepared in the background.'}
+        </p>
       </div>
+    </div>
+  {/if}
+
+  {#if hasReadyMap && atlas.isRevalidating}
+    <div
+      class="pointer-events-none absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/80 px-3 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-md"
+      aria-live="polite"
+    >
+      <LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+      Updating atlas
     </div>
   {/if}
 
@@ -817,7 +852,7 @@
         <div class="mt-4">
           <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/45">Tags</p>
           <div class="mt-2 flex flex-wrap gap-1.5">
-            {#each atlas.selectedNode.tags as tag}
+            {#each atlas.selectedNode.tags as tag (tag)}
               <span class="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[0.68rem] text-white/68">{tag}</span>
             {/each}
           </div>
@@ -944,12 +979,6 @@
     </aside>
   {/if}
 
-  {#if atlas.response?.status === 'building'}
-    <div class="absolute bottom-24 right-4 z-20 inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/90 px-4 py-2 text-sm text-muted-foreground shadow-sm backdrop-blur-md">
-      <EyeOff class="h-4 w-4" />
-      Semantic index is warming
-    </div>
-  {/if}
 </div>
 
 <style>

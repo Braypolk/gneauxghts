@@ -1,23 +1,25 @@
 pub(crate) mod activity;
 pub(crate) mod ann;
 pub(crate) mod atlas;
+pub(crate) mod atlas_labels;
 pub(crate) mod chunking;
 pub(crate) mod db;
 pub(crate) mod debug;
 pub(crate) mod embed;
 pub(crate) mod indexer;
+pub(crate) mod note_ann;
 pub(crate) mod related;
 pub(crate) mod similarity;
 
 use self::{
     activity::BackgroundWorkGate,
     ann::AnnIndexState,
-    atlas::{AtlasHardLink, AtlasNoteMetadata, AtlasSearchResponse, VaultAtlasResponse},
+    atlas::{AtlasChatVisibilityKey, AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse},
     db::{
-        clear_atlas_cache, content_hash, count_indexed_items, edges_are_stale, ensure_schema,
-        load_chunks_by_ann_labels, load_latest_job, load_note_record, load_related_note_previews,
-        load_semantic_settings, mark_running_jobs_interrupted, open_database,
-        save_semantic_settings,
+        clear_atlas_cache, content_hash, count_indexed_items, edges_are_stale_for_generation,
+        edges_are_stale_for_model, ensure_schema, load_chunks_by_ann_labels, load_latest_job,
+        load_note_record, load_related_note_previews, load_semantic_settings,
+        mark_running_jobs_interrupted, open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
@@ -25,6 +27,7 @@ use self::{
         chat_recall_content_hash, spawn_indexing_worker, ChatRecallExcerpt, PendingIndexState,
         PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument, WorkerSignal,
     },
+    note_ann::{NoteAnnIndexState, NoteAnnMatch},
     related::{build_excerpt, related_scope_label},
     similarity::cosine_similarity,
 };
@@ -91,6 +94,11 @@ pub(crate) struct SemanticStatus {
     pub(crate) ann_rebuild_pending: bool,
     pub(crate) ann_last_dumped_at_millis: Option<u64>,
     pub(crate) ann_indexed_chunks: usize,
+    pub(crate) note_ann_index_loaded: bool,
+    pub(crate) note_ann_index_dirty: bool,
+    pub(crate) note_ann_rebuild_pending: bool,
+    pub(crate) note_ann_indexed_notes: usize,
+    pub(crate) note_ann_generation_id: Option<String>,
     pub(crate) last_indexed_at_millis: Option<u64>,
     pub(crate) last_error: Option<String>,
     pub(crate) current_job_label: Option<String>,
@@ -153,6 +161,7 @@ pub(super) struct RuntimeState {
     progress_total: usize,
     rebuild_reason: Option<String>,
     last_job_scanned_count: usize,
+    last_job_edges_dirtied: bool,
     edges_stale: bool,
 }
 
@@ -170,6 +179,7 @@ impl Default for RuntimeState {
             progress_total: 0,
             rebuild_reason: None,
             last_job_scanned_count: 0,
+            last_job_edges_dirtied: false,
             edges_stale: false,
         }
     }
@@ -186,11 +196,13 @@ enum SemanticStateInner {
 
 struct ActiveSemanticState {
     db_path: PathBuf,
+    atlas_cache_dir: PathBuf,
     settings: Arc<Mutex<SemanticSettings>>,
     provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     runtime: Arc<Mutex<RuntimeState>>,
     debug: Arc<SemanticDebugState>,
     ann: Arc<AnnIndexState>,
+    note_ann: Arc<NoteAnnIndexState>,
     signal_tx: Sender<WorkerSignal>,
     pending: Arc<Mutex<PendingIndexState>>,
     wake_pending: Arc<AtomicBool>,
@@ -232,7 +244,6 @@ impl SemanticState {
         if stored_settings.is_none() {
             save_semantic_settings(&connection, &initial_settings)?;
         }
-        let initial_edges_stale = edges_are_stale(&connection)?;
         let settings = Arc::new(Mutex::new(initial_settings));
         let debug = Arc::new(SemanticDebugState::new());
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> =
@@ -246,6 +257,14 @@ impl SemanticState {
             semantic_dir.clone(),
             provider.model_info().dimensions,
             debug.clone(),
+        )?);
+        let model = provider.model_info();
+        let model_signature = format!("{}::{}", model.id, model.model_repo_id);
+        let initial_edges_stale = edges_are_stale_for_model(&connection, Some(&model_signature))?;
+        let note_ann = Arc::new(NoteAnnIndexState::new(
+            semantic_dir.clone(),
+            model.dimensions,
+            model_signature,
         )?);
         // Drop the schema-setup connection before kicking off the
         // background ANN load: deserializing the persisted HNSW graph +
@@ -273,6 +292,7 @@ impl SemanticState {
             notes_dir.clone(),
             provider.clone(),
             ann.clone(),
+            note_ann.clone(),
             signal_rx,
             pending.clone(),
             wake_pending.clone(),
@@ -284,11 +304,13 @@ impl SemanticState {
 
         let state = ActiveSemanticState {
             db_path: db_path.clone(),
+            atlas_cache_dir: semantic_dir.clone(),
             settings,
             provider,
             runtime: runtime.clone(),
             debug: debug.clone(),
             ann: ann.clone(),
+            note_ann: note_ann.clone(),
             signal_tx: signal_tx.clone(),
             pending: pending.clone(),
             wake_pending: wake_pending.clone(),
@@ -305,6 +327,7 @@ impl SemanticState {
         // authoritative.
         spawn_ann_initialize_and_scan_in_background(
             ann,
+            note_ann,
             db_path,
             debug,
             signal_tx,
@@ -664,24 +687,6 @@ impl SemanticState {
         Some(record.content_hash)
     }
 
-    pub(crate) fn remembered_chat_paths(
-        &self,
-    ) -> Result<std::collections::HashSet<String>, String> {
-        let SemanticStateInner::Active(state) = &self.inner else {
-            return Ok(std::collections::HashSet::new());
-        };
-        let connection = open_database(&state.db_path)?;
-        ensure_schema(&connection)?;
-        let mut statement = connection
-            .prepare("SELECT path FROM notes WHERE document_kind = 'chatIndex' AND chunk_count > 0")
-            .map_err(|err| err.to_string())?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|err| err.to_string())?;
-        rows.collect::<Result<std::collections::HashSet<_>, _>>()
-            .map_err(|err| err.to_string())
-    }
-
     pub(crate) fn debug_snapshot(&self) -> Result<SemanticDebugSnapshot, String> {
         self.debug_state().snapshot()
     }
@@ -695,7 +700,31 @@ impl SemanticState {
             SemanticStateInner::Active(state) => {
                 let connection = open_database(&state.db_path)?;
                 ensure_schema(&connection)?;
-                clear_atlas_cache(&connection)
+                clear_atlas_cache(&connection)?;
+                let atlas_dir = state.atlas_cache_dir.join("atlas");
+                if atlas_dir.exists() {
+                    fs::remove_dir_all(&atlas_dir).map_err(|err| err.to_string())?;
+                }
+                {
+                    let mut pending = state
+                        .pending
+                        .lock()
+                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                    let revision = state.index_revision.load(Ordering::Acquire);
+                    for visibility in [
+                        AtlasChatVisibilityKey::Hidden,
+                        AtlasChatVisibilityKey::Remembered,
+                        AtlasChatVisibilityKey::All,
+                    ] {
+                        pending.atlas_requests.insert(
+                            AtlasGenerationKey {
+                                chat_visibility: visibility,
+                            },
+                            revision,
+                        );
+                    }
+                }
+                state.request_wake()
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -835,6 +864,45 @@ impl SemanticState {
         }
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn note_ann_matches(
+        &self,
+        query_embedding: &[f32],
+        candidate_k: usize,
+        limit: usize,
+        exclude_note_path: Option<&str>,
+    ) -> Result<Vec<NoteAnnMatch>, String> {
+        let SemanticStateInner::Active(state) = &self.inner else {
+            return Ok(Vec::new());
+        };
+        let connection = open_database(&state.db_path)?;
+        ensure_schema(&connection)?;
+        state.note_ann.search(
+            &connection,
+            query_embedding,
+            candidate_k,
+            limit,
+            exclude_note_path,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn note_ann_neighbors(
+        &self,
+        note_path: &str,
+        candidate_k: usize,
+        limit: usize,
+    ) -> Result<Vec<NoteAnnMatch>, String> {
+        let SemanticStateInner::Active(state) = &self.inner else {
+            return Ok(Vec::new());
+        };
+        let connection = open_database(&state.db_path)?;
+        ensure_schema(&connection)?;
+        state
+            .note_ann
+            .neighbors_for_note(&connection, note_path, candidate_k, limit)
+    }
+
     pub(crate) fn related_notes(
         &self,
         current_path: Option<&str>,
@@ -862,14 +930,12 @@ impl SemanticState {
 
     pub(crate) fn vault_atlas(
         &self,
-        metadata: std::collections::HashMap<String, AtlasNoteMetadata>,
-        hard_links: Vec<AtlasHardLink>,
+        generation_key: AtlasGenerationKey,
         activity_by_note_id: std::collections::HashMap<String, crate::state::NoteActivity>,
     ) -> Result<VaultAtlasResponse, String> {
         match &self.inner {
             SemanticStateInner::Active(state) => state.vault_atlas(
-                metadata,
-                hard_links,
+                generation_key,
                 activity_by_note_id,
                 self.current_index_revision(),
             ),
@@ -878,6 +944,11 @@ impl SemanticState {
                 reason: Some(state.reason.clone()),
                 revision: 0,
                 generated_at_millis: current_time_millis()?,
+                structural_generation: String::new(),
+                label_generation: None,
+                published_at_millis: 0,
+                stale: false,
+                publish_in_progress: false,
                 stats: atlas::VaultAtlasStats {
                     note_count: 0,
                     cloud_count: 0,
@@ -893,13 +964,13 @@ impl SemanticState {
 
     pub(crate) fn search_vault_atlas(
         &self,
+        generation_key: AtlasGenerationKey,
         query: String,
-        metadata: std::collections::HashMap<String, AtlasNoteMetadata>,
         activity_by_note_id: std::collections::HashMap<String, crate::state::NoteActivity>,
     ) -> Result<AtlasSearchResponse, String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
-                state.search_vault_atlas(query, metadata, activity_by_note_id)
+                state.search_vault_atlas(generation_key, query, activity_by_note_id)
             }
             SemanticStateInner::Disabled(state) => Ok(AtlasSearchResponse {
                 status: "unavailable".to_string(),
@@ -969,6 +1040,10 @@ impl ActiveSemanticState {
     fn warmup_model_in_background(&self) {
         let provider = Arc::clone(&self.provider);
         let debug = Arc::clone(&self.debug);
+        let db_path = self.db_path.clone();
+        let note_ann = Arc::clone(&self.note_ann);
+        let pending = Arc::clone(&self.pending);
+        let runtime = Arc::clone(&self.runtime);
         let _ = thread::Builder::new()
             .name("semantic-model-warmup".to_string())
             .spawn(move || {
@@ -978,6 +1053,26 @@ impl ActiveSemanticState {
                 });
                 match provider.prepare() {
                     Ok(()) => {
+                        let generation = note_ann.generation_id();
+                        let edges_stale = open_database(&db_path)
+                            .ok()
+                            .and_then(|connection| {
+                                edges_are_stale_for_generation(
+                                    &connection,
+                                    note_ann.model_signature(),
+                                    generation.as_deref(),
+                                )
+                                .ok()
+                            })
+                            .unwrap_or(true);
+                        if edges_stale {
+                            if let Ok(mut pending) = pending.lock() {
+                                pending.edge_refresh_requested = true;
+                            }
+                            if let Ok(mut runtime) = runtime.lock() {
+                                runtime.edges_stale = true;
+                            }
+                        }
                         let elapsed =
                             started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
                         debug.record_timing(
@@ -1018,6 +1113,7 @@ impl ActiveSemanticState {
         let latest_job = load_latest_job(&connection)?;
         let model = self.provider.model_info();
         let ann_status = self.ann.status_snapshot();
+        let note_ann_status = self.note_ann.status_snapshot();
         let runtime = self
             .runtime
             .lock()
@@ -1038,6 +1134,11 @@ impl ActiveSemanticState {
             ann_rebuild_pending: ann_status.rebuild_pending,
             ann_last_dumped_at_millis: ann_status.last_dumped_at_millis,
             ann_indexed_chunks: ann_status.indexed_chunks,
+            note_ann_index_loaded: note_ann_status.loaded,
+            note_ann_index_dirty: note_ann_status.dirty,
+            note_ann_rebuild_pending: note_ann_status.rebuild_pending,
+            note_ann_indexed_notes: note_ann_status.indexed_notes,
+            note_ann_generation_id: note_ann_status.generation_id,
             last_indexed_at_millis: runtime.last_indexed_at_millis.or(last_indexed_at_millis),
             last_error: runtime.last_error.clone().or(model.error.clone()),
             current_job_label: runtime.current_job_label.clone(),
@@ -1167,6 +1268,11 @@ impl DisabledSemanticState {
             ann_rebuild_pending: false,
             ann_last_dumped_at_millis: None,
             ann_indexed_chunks: 0,
+            note_ann_index_loaded: false,
+            note_ann_index_dirty: false,
+            note_ann_rebuild_pending: false,
+            note_ann_indexed_notes: 0,
+            note_ann_generation_id: None,
             last_indexed_at_millis: None,
             last_error: None,
             current_job_label: None,
@@ -1204,6 +1310,7 @@ fn disabled_settings(mut settings: SemanticSettings) -> SemanticSettings {
 /// the saved snapshot was already authoritative.
 fn spawn_ann_initialize_and_scan_in_background(
     ann: Arc<AnnIndexState>,
+    note_ann: Arc<NoteAnnIndexState>,
     db_path: PathBuf,
     debug: Arc<SemanticDebugState>,
     signal_tx: Sender<WorkerSignal>,
@@ -1220,7 +1327,10 @@ fn spawn_ann_initialize_and_scan_in_background(
                 Ok(connection)
             });
             match connection_result {
-                Ok(connection) => match ann.initialize(&connection) {
+                Ok(connection) => match ann
+                    .initialize(&connection)
+                    .and_then(|()| note_ann.initialize(&connection))
+                {
                     Ok(()) => {
                         let elapsed =
                             started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;

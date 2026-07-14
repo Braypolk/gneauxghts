@@ -31,7 +31,12 @@ const DECORATORS: readonly MarkdownNodeDecorator[] = [
   decorateLink
 ];
 
-function buildDecorations(view: EditorView): DecorationSet {
+interface BuiltMarkdownDecorations {
+  decorations: DecorationSet;
+  atomicIndents: DecorationSet;
+}
+
+function buildDecorations(view: EditorView): BuiltMarkdownDecorations {
   const decorations: Range<Decoration>[] = [];
   const ctx: MarkdownDecorationContext = {
     view,
@@ -59,20 +64,31 @@ function buildDecorations(view: EditorView): DecorationSet {
   for (const decoration of decorations) {
     builder.add(decoration.from, decoration.to, decoration.value);
   }
-  return builder.finish();
+  return {
+    decorations: builder.finish(),
+    atomicIndents: Decoration.set(
+      decorations.filter((range) => range.value.spec.gnAtomicIndent === true),
+      true
+    )
+  };
 }
 
 const markdownDecorationPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
+    atomicIndents: DecorationSet;
 
     constructor(view: EditorView) {
-      this.decorations = buildDecorations(view);
+      const built = buildDecorations(view);
+      this.decorations = built.decorations;
+      this.atomicIndents = built.atomicIndents;
     }
 
     update(update: ViewUpdate) {
       if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = buildDecorations(update.view);
+        const built = buildDecorations(update.view);
+        this.decorations = built.decorations;
+        this.atomicIndents = built.atomicIndents;
       }
     }
   },
@@ -93,6 +109,9 @@ export function createMarkdownExtensions(): Extension[] {
     markdownEditorClass,
     createMarkdownLanguage(),
     createMarkdownHighlight(),
-    markdownDecorationPlugin
+    markdownDecorationPlugin,
+    EditorView.atomicRanges.of(
+      (view) => view.plugin(markdownDecorationPlugin)?.atomicIndents ?? Decoration.none
+    )
   ];
 }

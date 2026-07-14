@@ -4,9 +4,10 @@ import { EditorState, type Extension } from '@codemirror/state';
 // Editor indentation defaults. These are the seam a future settings panel would
 // drive; today they are constants so the behavior is fixed and testable.
 //
-// `INDENT_SPACES` is the *logical* indent: the actual characters inserted into
-// the document when indenting (Tab, list indent, indent-on-input). Two spaces by
-// default — the document never contains tab characters from our own edits.
+// `INDENT_SPACES` is the default logical indent used by CodeMirror for ordinary
+// Markdown blocks and indent-on-input. Structural list indentation may use a
+// wider offset when the parent marker requires it (for example `10. `), but all
+// editor-owned indentation is still written as spaces rather than tab chars.
 //
 // `VISUAL_TAB_WIDTH` is the *visual* width, in character columns, of a literal
 // tab (`\t`) that may already exist in pasted or imported content. It is wider

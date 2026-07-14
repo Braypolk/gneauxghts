@@ -44,8 +44,6 @@ export type KeyboardShortcutId =
   | 'editorMoveLineDown'
   | 'editorCutLine'
   | 'editorHardBreak'
-  | 'editorIndentList'
-  | 'editorOutdentList'
   | 'editorBold'
   | 'editorItalic'
   | 'editorLink';
@@ -260,20 +258,6 @@ const shortcutDefinitionsBase = [
     description: 'Insert line break without splitting block.',
     group: 'editor',
     defaultBinding: 'Shift+Enter'
-  },
-  {
-    id: 'editorIndentList',
-    label: 'Indent List Item',
-    description: 'Indent selected list item.',
-    group: 'editor',
-    defaultBinding: 'Tab'
-  },
-  {
-    id: 'editorOutdentList',
-    label: 'Outdent List Item',
-    description: 'Outdent selected list item.',
-    group: 'editor',
-    defaultBinding: 'Shift+Tab'
   },
   {
     id: 'editorBold',

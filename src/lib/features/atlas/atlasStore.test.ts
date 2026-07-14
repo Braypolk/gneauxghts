@@ -1,13 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  atlasLabelRenderKey,
+  AtlasStore,
   getNodePosition,
   getZoomTier,
+  isAtlasResponsePending,
   isAtlasSearchHit,
   isHighConfidenceLink,
   linkEndpoints,
   strongestLinksPerNode
 } from './atlasStore.svelte';
-import type { AtlasLink, AtlasNode, AtlasSearchMatch } from '$lib/types/atlas';
+import type {
+  AtlasLink,
+  AtlasNode,
+  AtlasSearchMatch,
+  VaultAtlasResponse
+} from '$lib/types/atlas';
+import type { AtlasChatVisibility } from '$lib/features/chat/types';
+
+const appStoreMock = vi.hoisted(() => ({
+  bootstrap: vi.fn(async () => undefined),
+  semanticStatus: null,
+  subscribeVaultNoteChanged: vi.fn(() => () => undefined),
+  subscribeNoteSaved: vi.fn(() => () => undefined),
+  subscribeVaultChanged: vi.fn(() => () => undefined),
+  subscribeSemanticStatusChanged: vi.fn(() => () => undefined)
+}));
+
+vi.mock('$lib/app/appStore.svelte', () => ({ appStore: appStoreMock }));
 
 function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10): AtlasNode {
   return {
@@ -39,6 +59,41 @@ function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10
     tags: [],
     isolated: true
   };
+}
+
+function atlasResponse(
+  revision: number,
+  overrides: Partial<VaultAtlasResponse> = {}
+): VaultAtlasResponse {
+  return {
+    status: 'ready',
+    reason: null,
+    revision,
+    generatedAtMillis: revision,
+    structuralGeneration: `structural-${revision}`,
+    labelGeneration: `labels-${revision}`,
+    publishedAtMillis: revision,
+    stale: false,
+    publishInProgress: false,
+    stats: {
+      noteCount: 1,
+      cloudCount: 0,
+      linkCount: 0,
+      isolatedCount: 1
+    },
+    nodes: [node(`note-${revision}`, revision, revision)],
+    links: [],
+    clouds: [],
+    ...overrides
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolver) => {
+    resolve = resolver;
+  });
+  return { promise, resolve };
 }
 
 describe('atlas view helpers', () => {
@@ -140,5 +195,236 @@ describe('atlas view helpers', () => {
         0.95
       )
     ).toBe(true);
+  });
+});
+
+describe('AtlasStore stale-while-revalidate', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('retains the published response during revalidation', async () => {
+    const next = deferred<VaultAtlasResponse>();
+    const initial = atlasResponse(1);
+    const loadAtlas = vi
+      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .mockResolvedValueOnce(initial)
+      .mockImplementationOnce(() => next.promise);
+    const store = new AtlasStore(loadAtlas);
+
+    await store.refresh();
+    const refresh = store.refresh();
+
+    expect(store.response).toBe(initial);
+    expect(store.isLoading).toBe(true);
+    expect(store.isRevalidating).toBe(true);
+
+    const updated = atlasResponse(2);
+    next.resolve(updated);
+    await refresh;
+
+    expect(store.response).toBe(updated);
+    expect(store.isLoading).toBe(false);
+    store.dispose();
+  });
+
+  it('accepts a stale published response and polls until it becomes current', async () => {
+    const stale = atlasResponse(1, { stale: true, publishInProgress: true });
+    const current = atlasResponse(2);
+    const loadAtlas = vi
+      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .mockResolvedValueOnce(stale)
+      .mockResolvedValueOnce(current);
+    const store = new AtlasStore(loadAtlas);
+
+    await store.refresh();
+
+    expect(store.response).toBe(stale);
+    expect(store.isStale).toBe(true);
+    expect(store.isRevalidating).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(store.response).toBe(current);
+    expect(store.isStale).toBe(false);
+    expect(store.isRevalidating).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(loadAtlas).toHaveBeenCalledTimes(2);
+    store.dispose();
+  });
+
+  it('treats missing cloud labels as pending even without a stale flag', () => {
+    const pending = atlasResponse(1, {
+      labelGeneration: null,
+      clouds: [
+        {
+          id: 'cloud',
+          parentId: null,
+          level: 0,
+          label: null,
+          labelConfidence: 0,
+          noteCount: 1,
+          density: 1,
+          color: [1, 2, 3, 255],
+          centroid: [0, 0],
+          labelAnchor: [0, 0],
+          radius: 10,
+          hull: [],
+          memberNodeIds: ['note-1'],
+          coreNodeIds: ['note-1'],
+          outlierNodeIds: [],
+          childCloudIds: [],
+          representativeNodeIds: ['note-1']
+        }
+      ]
+    });
+
+    expect(isAtlasResponsePending(pending)).toBe(true);
+  });
+
+  it('changes the renderer label key when generated cloud labels arrive', () => {
+    const pending = atlasResponse(1, {
+      labelGeneration: null,
+      clouds: [
+        {
+          id: 'cloud',
+          parentId: null,
+          level: 0,
+          label: null,
+          labelConfidence: 0,
+          noteCount: 1,
+          density: 1,
+          color: [1, 2, 3, 255],
+          centroid: [0, 0],
+          labelAnchor: [0, 0],
+          radius: 10,
+          hull: [],
+          memberNodeIds: ['note-1'],
+          coreNodeIds: ['note-1'],
+          outlierNodeIds: [],
+          childCloudIds: [],
+          representativeNodeIds: ['note-1']
+        }
+      ]
+    });
+    const labelled = {
+      ...pending,
+      labelGeneration: 'keybert-1',
+      clouds: pending.clouds.map((cloud) => ({ ...cloud, label: 'Machine learning' }))
+    };
+
+    expect(atlasLabelRenderKey(labelled)).not.toBe(atlasLabelRenderKey(pending));
+    expect(atlasLabelRenderKey(labelled)).toContain('Machine learning');
+  });
+
+  it('continues capped-delay polling beyond the former attempt ceiling', async () => {
+    const pending = atlasResponse(1, { stale: true, publishInProgress: true });
+    const loadAtlas = vi
+      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .mockResolvedValue(pending);
+    const store = new AtlasStore(loadAtlas);
+
+    await store.refresh();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(loadAtlas.mock.calls.length).toBeGreaterThan(21);
+    expect(store.isRevalidating).toBe(true);
+    store.dispose();
+  });
+
+  it('keeps debounce refresh and background poll timers independent', async () => {
+    const pending = atlasResponse(1, { stale: true, publishInProgress: true });
+    const debounced = deferred<VaultAtlasResponse>();
+    const loadAtlas = vi
+      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .mockResolvedValueOnce(pending)
+      .mockImplementationOnce(() => debounced.promise)
+      .mockResolvedValueOnce(atlasResponse(2));
+    const store = new AtlasStore(loadAtlas);
+
+    await store.refresh();
+    store.scheduleRefresh(100);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(loadAtlas).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(300);
+    debounced.resolve(pending);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(loadAtlas).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(80);
+    expect(loadAtlas).toHaveBeenCalledTimes(3);
+    expect(store.response?.revision).toBe(2);
+    store.dispose();
+  });
+
+  it('initializes visibility from persisted chat settings before loading the atlas', async () => {
+    const loadAtlas = vi
+      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .mockResolvedValue(atlasResponse(1));
+    const store = new AtlasStore(loadAtlas, async () => 'remembered', async () => undefined);
+
+    await store.initialize();
+
+    expect(store.chatVisibility).toBe('remembered');
+    expect(loadAtlas).toHaveBeenCalledWith('remembered');
+    store.dispose();
+  });
+
+  it('preserves a local visibility selection while persisted settings are loading', async () => {
+    const persisted = deferred<AtlasChatVisibility>();
+    const saveVisibility = vi.fn(async (_visibility: AtlasChatVisibility) => undefined);
+    const loadAtlas = vi
+      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .mockResolvedValue(atlasResponse(1));
+    const store = new AtlasStore(loadAtlas, () => persisted.promise, saveVisibility);
+
+    const initialize = store.initialize();
+    store.setChatVisibility('all');
+    persisted.resolve('remembered');
+    await initialize;
+    await Promise.resolve();
+
+    expect(store.chatVisibility).toBe('all');
+    expect(loadAtlas).toHaveBeenCalledWith('all');
+    expect(saveVisibility).toHaveBeenCalledWith('all');
+    store.dispose();
+  });
+
+  it('discards an obsolete visibility request and loads the selected variant', async () => {
+    const obsolete = deferred<VaultAtlasResponse>();
+    const initial = atlasResponse(1);
+    const selectedVariant = atlasResponse(3);
+    const loadAtlas = vi
+      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .mockResolvedValueOnce(initial)
+      .mockImplementationOnce(() => obsolete.promise)
+      .mockResolvedValueOnce(selectedVariant);
+    const store = new AtlasStore(loadAtlas, async () => 'hidden', async () => undefined);
+    await store.initialize();
+
+    const oldRefresh = store.refresh();
+    store.setChatVisibility('all');
+
+    expect(store.response).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(0);
+    obsolete.resolve(atlasResponse(2));
+    await oldRefresh;
+    await vi.advanceTimersByTimeAsync(80);
+
+    expect(loadAtlas.mock.calls.map(([visibility]) => visibility)).toEqual([
+      'hidden',
+      'hidden',
+      'all'
+    ]);
+    expect(store.response).toBe(selectedVariant);
+    store.dispose();
   });
 });

@@ -190,7 +190,7 @@ impl AnnIndexState {
 
     pub(crate) fn apply_note_upsert(
         &self,
-        note_path: &Path,
+        stable_note_label: u64,
         previous_labels: &HashSet<u64>,
         chunks: &[SemanticChunk],
         embeddings: &[Vec<f32>],
@@ -205,10 +205,9 @@ impl AnnIndexState {
             return Ok(false);
         };
 
-        let raw_note_path = note_path.to_string_lossy().into_owned();
         let next_labels = chunks
             .iter()
-            .map(|chunk| ann_label_for(&raw_note_path, chunk.ordinal))
+            .map(|chunk| ann_label_for(stable_note_label, chunk.ordinal))
             .collect::<HashSet<_>>();
 
         for removed_label in previous_labels.difference(&next_labels) {
@@ -225,7 +224,7 @@ impl AnnIndexState {
 
         let mut touched = previous_labels.len() != next_labels.len();
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
-            let label = ann_label_for(&raw_note_path, chunk.ordinal);
+            let label = ann_label_for(stable_note_label, chunk.ordinal);
             match snapshot
                 .graph
                 .set(&snapshot.vectors, label, embedding.as_slice())
@@ -695,29 +694,27 @@ fn reconcile_snapshot_delta(
             .map(|source| source.chunk_count)
             .unwrap_or(0);
         let new_count = after.as_ref().map(|source| source.chunk_count).unwrap_or(0);
-        let path = after
-            .as_ref()
-            .map(|source| source.path.as_str())
-            .or_else(|| before.as_ref().map(|source| source.path.as_str()))
-            .unwrap_or_default();
+        let source = after.as_ref().or(before.as_ref()).expect("delta source");
+        let path = source.path.as_str();
+        let stable_note_label = source.stable_ann_label;
         if after.is_none() {
             for ordinal in 0..old_count {
                 graph
-                    .delete(&ann_label_for(path, ordinal))
+                    .delete(&ann_label_for(stable_note_label, ordinal))
                     .map_err(|err| err.to_string())?;
             }
             continue;
         }
         for ordinal in new_count..old_count {
             graph
-                .delete(&ann_label_for(path, ordinal))
+                .delete(&ann_label_for(stable_note_label, ordinal))
                 .map_err(|err| err.to_string())?;
         }
         for chunk in load_ann_chunks_for_note(connection, path)? {
             graph
                 .set(
                     vectors,
-                    ann_label_for(path, chunk.ordinal),
+                    ann_label_for(stable_note_label, chunk.ordinal),
                     chunk.embedding.as_slice(),
                 )
                 .map_err(|err| err.to_string())?;
@@ -864,7 +861,10 @@ mod tests {
     use super::{AnnIndexState, ANN_TOMBSTONE_REBUILD_MIN};
     use crate::semantic::{
         chunking::SemanticChunk,
-        db::{ensure_schema, load_note_chunk_labels, open_database, upsert_note_chunks},
+        db::{
+            ensure_schema, load_note_chunk_labels, open_database, upsert_note_chunks,
+            SemanticNoteMetadata,
+        },
         debug::SemanticDebugState,
     };
     use blake3::hash;
@@ -1079,6 +1079,7 @@ mod tests {
             "2026-01-01T00:00:00Z",
             "2026-01-01T00:00:00Z",
             crate::note::DocumentKind::Note,
+            &SemanticNoteMetadata::default(),
             &chunks,
             &embeddings,
         )

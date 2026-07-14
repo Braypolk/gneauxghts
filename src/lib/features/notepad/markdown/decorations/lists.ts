@@ -10,6 +10,14 @@ import type { MarkdownNodeDecorator } from './types';
 
 const TASK_MARKER_RE = /^(\s*(?:[-*+]|\d+\.)\s*)\[([ xX])\]/;
 
+// Markdown stores list nesting as leading whitespace. The editor renders that
+// nesting as line padding, so exposing the whitespace as ordinary text would
+// create a second, editable indent before the marker. Keep the characters in
+// the document for Markdown persistence, but conceal them in the editing view.
+// `gnAtomicIndent` lets markdownExtensions also expose these exact ranges via
+// EditorView.atomicRanges, preventing caret motion into the hidden characters.
+const concealedListIndent = Decoration.replace({ gnAtomicIndent: true });
+
 // Interactive checkbox shown in place of the raw `[ ]`/`[x]` task marker when
 // the line is not being edited. Clicking toggles the marker char in the doc.
 class TaskCheckboxWidget extends WidgetType {
@@ -103,6 +111,11 @@ export const decorateList: MarkdownNodeDecorator = (ctx, node) => {
           attributes: { style: `--gn-depth: ${depth}` }
         }).range(line.from)
       );
+
+      const indentLength = line.text.match(/^[\t ]*/)?.[0].length ?? 0;
+      if (indentLength > 0) {
+        decorations.push(concealedListIndent.range(line.from, line.from + indentLength));
+      }
       break;
     }
 

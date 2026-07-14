@@ -102,6 +102,15 @@ impl ActiveSemanticState {
         let connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
         let effective_limit = limit.max(1);
+        let edges_stale = super::db::edges_are_stale_for_generation(
+            &connection,
+            self.note_ann.model_signature(),
+            self.note_ann.generation_id().as_deref(),
+        )? || self
+            .runtime
+            .lock()
+            .map(|runtime| runtime.edges_stale)
+            .unwrap_or(true);
 
         let (response, strategy) = if normalized_selection.is_none() {
             match current_path
@@ -110,11 +119,6 @@ impl ActiveSemanticState {
                     current_path.unwrap_or_default(),
                 )?)
                 .filter(|(note_path, stored)| {
-                    let edges_stale = self
-                        .runtime
-                        .lock()
-                        .map(|runtime| runtime.edges_stale)
-                        .unwrap_or(true);
                     stored.content_hash == content_hash(current_markdown)
                         && !note_path.is_empty()
                         && !edges_stale

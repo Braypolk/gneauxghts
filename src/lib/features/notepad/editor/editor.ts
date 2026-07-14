@@ -6,7 +6,6 @@ import {
   defaultKeymap,
   history,
   historyKeymap,
-  indentWithTab,
   insertNewlineAndIndent,
   isolateHistory,
   redo,
@@ -20,6 +19,7 @@ import {
   Annotation,
   type EditorSelection as CmEditorSelection,
   EditorState,
+  Prec,
   RangeSetBuilder,
   type Extension,
   StateField,
@@ -36,7 +36,7 @@ import {
   type ViewUpdate
 } from '@codemirror/view';
 import { indentOnInput } from '@codemirror/language';
-import { insertNewlineContinueMarkup, markdownKeymap } from '@codemirror/lang-markdown';
+import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
 import {
   getSearchQuery,
   SearchQuery,
@@ -58,7 +58,11 @@ import {
   type BlockDescriptor
 } from '$lib/features/notepad/editor/blockTypes';
 import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
-import { INDENT_SPACES, createIndentExtensions } from '$lib/features/notepad/editor/indentConfig';
+import { createIndentExtensions } from '$lib/features/notepad/editor/indentConfig';
+import {
+  indentEditorSelection,
+  outdentEditorSelection
+} from '$lib/features/notepad/editor/structuralIndentation';
 import { createMarkdownExtensions } from '$lib/features/notepad/markdown/markdownExtensions';
 import { getEditorContentSurface } from '$lib/features/notepad/editor/editorDom';
 import {
@@ -250,7 +254,8 @@ function readSelection(view: EditorView): EditorSelection {
 
 // CodeMirror baseline shared by the root state and every pane, mirroring the
 // flags draftly used previously: markdown editing keymap, soft wrapping, and
-// indent-on-input with Tab. `defaultKeymap` is intentionally NOT bundled here —
+// indent-on-input and one context-aware Tab binding. `defaultKeymap` is
+// intentionally NOT bundled here —
 // pane views add a filtered copy in createPaneExtensions, and the root view is
 // the headless history owner that never receives direct key events.
 // The single authoritative Enter handler. It ALWAYS handles Enter (returns
@@ -258,23 +263,39 @@ function readSelection(view: EditorView): EditorSelection {
 // contentEditable handling — that fallback was inserting an extra line break on
 // top of CodeMirror's own, producing the reported "more than one new line".
 //
-// On a list item / blockquote it continues the Markdown markup
+// An empty list item drops its complete marker so Enter exits the list. A
+// non-empty list item / blockquote continues its Markdown markup
 // (`insertNewlineContinueMarkup`); on any other line that command declines and
 // we insert exactly one newline preserving indentation (`insertNewlineAndIndent`).
 // Mod-Enter ("insert block below") and Shift-Enter ("hard break") are owned by
 // the editor shortcuts and are not Enter, so they do not collide.
 export function markdownEnter(view: EditorView): boolean {
+  const selection = view.state.selection.main;
+  if (selection.empty) {
+    const line = view.state.doc.lineAt(selection.head);
+    if (
+      selection.head === line.to &&
+      /^[\t ]*(?:[-+*]|\d{1,9}[.)])(?:[\t ]+\[[ xX]\])?[\t ]+$/.test(line.text)
+    ) {
+      view.dispatch(
+        view.state.update({
+          changes: { from: line.from, to: line.to, insert: '' },
+          selection: { anchor: line.from },
+          scrollIntoView: true,
+          userEvent: 'input'
+        })
+      );
+      return true;
+    }
+  }
+
   return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
 }
 
-// markdownKeymap minus its Enter binding: keep the Markdown-aware Backspace
-// (`deleteMarkupBackward`) but route Enter solely through `markdownEnter` so
-// there is exactly one Enter handler (the language sets addKeymap:false, so this
-// is the only place the markdown keys are registered).
-const markdownEditingKeymap = [
-  { key: 'Enter', run: markdownEnter },
-  ...markdownKeymap.filter((binding) => binding.key !== 'Enter')
-];
+// Enter is the only Markdown-specific editing key. Backspace and Delete remain
+// ordinary character edits from defaultKeymap so users directly edit the raw
+// marker text instead of having list markup replaced with synthetic padding.
+const markdownEditingKeymap = [{ key: 'Enter', run: markdownEnter }];
 
 function createMarkdownBaseExtensions(): Extension[] {
   return [
@@ -284,7 +305,11 @@ function createMarkdownBaseExtensions(): Extension[] {
     createIndentExtensions(),
     indentOnInput(),
     createSelectionSurroundExtension(),
-    keymap.of([indentWithTab])
+    Prec.highest(
+      keymap.of([
+        { key: 'Tab', run: indentEditorSelection, shift: outdentEditorSelection }
+      ])
+    )
   ];
 }
 
@@ -778,16 +803,6 @@ function createEditorShortcuts(controller: () => EditorController | null) {
         return true;
       }
 
-      if (keyboardShortcutMatchesEvent(event, 'editorIndentList')) {
-        event.preventDefault();
-        return adjustListIndent(view, INDENT_SPACES);
-      }
-
-      if (keyboardShortcutMatchesEvent(event, 'editorOutdentList')) {
-        event.preventDefault();
-        return adjustListIndent(view, -INDENT_SPACES);
-      }
-
       if (keyboardShortcutMatchesEvent(event, 'editorBold')) {
         event.preventDefault();
         return applyInlineFormat(view, 'bold');
@@ -806,36 +821,6 @@ function createEditorShortcuts(controller: () => EditorController | null) {
       return false;
     }
   });
-}
-
-function adjustListIndent(view: EditorView, amount: number) {
-  const selection = view.state.selection.main;
-  const startLine = view.state.doc.lineAt(selection.from).number;
-  const endLine = view.state.doc.lineAt(selection.to).number;
-  const changes = [];
-
-  for (let lineNo = startLine; lineNo <= endLine; lineNo += 1) {
-    const line = view.state.doc.line(lineNo);
-    if (!/^(\s*)(?:[-+*]|\d+\.)\s+/.test(line.text)) {
-      continue;
-    }
-
-    if (amount > 0) {
-      changes.push({ from: line.from, to: line.from, insert: ' '.repeat(amount) });
-    } else {
-      const removable = Math.min(Math.abs(amount), line.text.match(/^\s*/)?.[0]?.length ?? 0);
-      if (removable > 0) {
-        changes.push({ from: line.from, to: line.from + removable, insert: '' });
-      }
-    }
-  }
-
-  if (changes.length === 0) {
-    return false;
-  }
-
-  view.dispatch(view.state.update({ changes }));
-  return true;
 }
 
 function createWikilinkExtensions(sharedResources: SharedEditorResources | null) {

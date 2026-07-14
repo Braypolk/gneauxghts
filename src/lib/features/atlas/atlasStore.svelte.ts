@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { appStore } from '$lib/app/appStore.svelte';
+import { chatApi } from '$lib/features/chat/api';
 import type {
   AtlasCloud,
   AtlasLink,
@@ -28,9 +30,15 @@ const ATLAS_SEARCH_HIT_MIN_SCORE = 0.32;
 const ATLAS_SEARCH_HIT_MIN_SEMANTIC = 0.5;
 const ATLAS_SEARCH_HIT_MIN_LEXICAL = 0.65;
 const ATLAS_SEARCH_HIT_MIN_STRUCTURAL = 0.38;
+const ATLAS_POLL_INITIAL_DELAY_MILLIS = 400;
+const ATLAS_POLL_MAX_DELAY_MILLIS = 2_500;
+
+type AtlasResponseLoader = (chatVisibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>;
+type AtlasChatVisibilityLoader = () => Promise<AtlasChatVisibility>;
+type AtlasChatVisibilitySaver = (visibility: AtlasChatVisibility) => Promise<void>;
 
 export class AtlasStore {
-  response = $state<VaultAtlasResponse | null>(null);
+  response = $state.raw<VaultAtlasResponse | null>(null);
   isLoading = $state(false);
   isStale = $state(false);
   error = $state<string | null>(null);
@@ -49,13 +57,43 @@ export class AtlasStore {
   chatVisibility = $state<AtlasChatVisibility>('hidden');
   zoom = $state(1);
 
-  #refreshTimer: number | null = null;
-  #searchTimer: number | null = null;
+  #refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  #pollTimer: ReturnType<typeof setTimeout> | null = null;
+  #searchTimer: ReturnType<typeof setTimeout> | null = null;
   #disposeCallbacks: (() => void)[] = [];
   #lastIndexingInProgress = false;
   #lastIndexedAtMillis: number | null = null;
   #refreshRequestedDuringLoad = false;
+  #responseVisibility: AtlasChatVisibility | null = null;
+  #refreshSequence = 0;
+  #pollAttempts = 0;
+  #initialized = false;
+  #disposed = false;
+  #visibilitySequence = 0;
+  #visibilityPersistence = Promise.resolve();
   #searchSequence = 0;
+  #loadAtlas: AtlasResponseLoader;
+  #loadChatVisibility: AtlasChatVisibilityLoader;
+  #saveChatVisibility: AtlasChatVisibilitySaver;
+
+  constructor(
+    loadAtlas: AtlasResponseLoader = (chatVisibility) =>
+      invoke<VaultAtlasResponse>('get_vault_atlas', { chatVisibility }),
+    loadChatVisibility: AtlasChatVisibilityLoader = async () =>
+      (await chatApi.getSettings()).atlasVisibility,
+    saveChatVisibility: AtlasChatVisibilitySaver = async (visibility) => {
+      const settings = await chatApi.getSettings();
+      await chatApi.setSettings({ ...settings, atlasVisibility: visibility });
+    }
+  ) {
+    this.#loadAtlas = loadAtlas;
+    this.#loadChatVisibility = loadChatVisibility;
+    this.#saveChatVisibility = saveChatVisibility;
+  }
+
+  isRevalidating = $derived(
+    Boolean(this.response) && (this.isLoading || this.isStale || isAtlasResponsePending(this.response))
+  );
 
   selectedNode = $derived.by(() =>
     this.response?.nodes.find((node) => node.id === this.selectedNodeId) ?? null
@@ -75,7 +113,7 @@ export class AtlasStore {
     if (!selectedNodeId || !response) {
       return { wikilinks: [] as AtlasLinkedNote[], semantic: [] as AtlasLinkedNote[] };
     }
-    const nodesById = new Map(response.nodes.map((node) => [node.id, node]));
+    const nodesById = new SvelteMap(response.nodes.map((node) => [node.id, node]));
     const linked = response.links
       .filter((link) => link.sourceId === selectedNodeId || link.targetId === selectedNodeId)
       .filter((link) => isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR))
@@ -99,13 +137,13 @@ export class AtlasStore {
 
   searchMatchesByPath = $derived.by(() => {
     const matches = this.searchResponse?.matches ?? [];
-    return new Map(matches.map((match) => [match.notePath, match]));
+    return new SvelteMap(matches.map((match) => [match.notePath, match]));
   });
 
   searchMatchesByNodeId = $derived.by(() => {
     const nodes = this.response?.nodes ?? [];
     const byPath = this.searchMatchesByPath;
-    return new Map(
+    return new SvelteMap(
       nodes
         .map((node) => {
           const match = byPath.get(node.notePath) ?? null;
@@ -119,7 +157,7 @@ export class AtlasStore {
     return this.response?.nodes ?? [];
   });
 
-  visibleNodeIds = $derived.by(() => new Set(this.visibleNodes.map((node) => node.id)));
+  visibleNodeIds = $derived.by(() => new SvelteSet(this.visibleNodes.map((node) => node.id)));
 
   visibleLinks = $derived.by(() => {
     if (!this.showLinks) return [];
@@ -131,7 +169,7 @@ export class AtlasStore {
     if (!selectedNodeId && !selectedCloudId && !hoveredNodeId && (tier === 'far' || tier === 'mid')) {
       return [];
     }
-    const nodesById = new Map((this.response?.nodes ?? []).map((node) => [node.id, node]));
+    const nodesById = new SvelteMap((this.response?.nodes ?? []).map((node) => [node.id, node]));
     const candidates = (this.response?.links ?? []).filter((link) => {
       if (!ids.has(link.sourceId) || !ids.has(link.targetId)) return false;
       const touchesSelection = selectedNodeId
@@ -184,6 +222,17 @@ export class AtlasStore {
   });
 
   async initialize() {
+    this.#disposed = false;
+    this.#initialized = true;
+    const visibilitySequence = this.#visibilitySequence;
+    const persistedVisibility = await this.#loadChatVisibility().catch(() => null);
+    if (
+      persistedVisibility &&
+      visibilitySequence === this.#visibilitySequence &&
+      this.chatVisibility !== persistedVisibility
+    ) {
+      this.#applyChatVisibility(persistedVisibility, false);
+    }
     await appStore.bootstrap().catch(() => undefined);
     this.#lastIndexingInProgress = appStore.semanticStatus?.indexingInProgress ?? false;
     this.#lastIndexedAtMillis = appStore.semanticStatus?.lastIndexedAtMillis ?? null;
@@ -197,7 +246,9 @@ export class AtlasStore {
       }),
       appStore.subscribeNoteSaved(() => this.scheduleRefresh()),
       appStore.subscribeVaultChanged(() => {
+        this.#refreshSequence += 1;
         this.response = null;
+        this.#responseVisibility = null;
         this.selectedNodeId = null;
         this.selectedCloudId = null;
         this.hoveredCloudId = null;
@@ -228,12 +279,16 @@ export class AtlasStore {
   }
 
   dispose() {
+    this.#disposed = true;
+    this.#initialized = false;
+    this.#refreshSequence += 1;
     if (this.#refreshTimer) {
-      window.clearTimeout(this.#refreshTimer);
+      globalThis.clearTimeout(this.#refreshTimer);
       this.#refreshTimer = null;
     }
+    this.#stopPolling();
     if (this.#searchTimer) {
-      window.clearTimeout(this.#searchTimer);
+      globalThis.clearTimeout(this.#searchTimer);
       this.#searchTimer = null;
     }
     for (const dispose of this.#disposeCallbacks) {
@@ -245,9 +300,9 @@ export class AtlasStore {
   scheduleRefresh(delay = 700) {
     this.isStale = true;
     if (this.#refreshTimer) {
-      window.clearTimeout(this.#refreshTimer);
+      globalThis.clearTimeout(this.#refreshTimer);
     }
-    this.#refreshTimer = window.setTimeout(() => {
+    this.#refreshTimer = globalThis.setTimeout(() => {
       this.#refreshTimer = null;
       void this.refresh();
     }, delay);
@@ -257,14 +312,16 @@ export class AtlasStore {
     return Boolean(
       this.response &&
         this.response.status === 'ready' &&
-        this.response.revision === appStore.indexRevision &&
-        !appStore.semanticStatus?.indexingInProgress
+        this.#responseVisibility === this.chatVisibility &&
+        !isAtlasResponsePending(this.response)
     );
   }
 
   /** Drop the in-memory atlas payload so the next open/refetch hits the backend. */
   invalidateCachedResponse() {
+    this.#refreshSequence += 1;
     this.response = null;
+    this.#responseVisibility = null;
     this.searchResponse = null;
     this.isStale = true;
     this.error = null;
@@ -275,36 +332,50 @@ export class AtlasStore {
   }
 
   async refresh() {
+    if (this.#disposed) return;
     if (this.isLoading) {
       this.#refreshRequestedDuringLoad = true;
       this.isStale = true;
       return;
     }
+    const requestVisibility = this.chatVisibility;
+    const sequence = ++this.#refreshSequence;
     this.isLoading = true;
     this.error = null;
     try {
-      this.response = await invoke<VaultAtlasResponse>('get_vault_atlas', {
-        chatVisibility: this.chatVisibility
-      });
-      this.isStale = false;
+      const response = await this.#loadAtlas(requestVisibility);
+      if (sequence !== this.#refreshSequence || requestVisibility !== this.chatVisibility) return;
+      this.response = response;
+      this.#responseVisibility = requestVisibility;
+      this.isStale = isAtlasResponsePending(response);
       this.scheduleSearch(80);
-      if (this.selectedNodeId && !this.response.nodes.some((node) => node.id === this.selectedNodeId)) {
+      if (this.selectedNodeId && !response.nodes.some((node) => node.id === this.selectedNodeId)) {
         this.selectedNodeId = null;
       }
       if (
         this.selectedCloudId &&
-        !this.response.clouds.some((cloud) => cloud.id === this.selectedCloudId)
+        !response.clouds.some((cloud) => cloud.id === this.selectedCloudId)
       ) {
         this.selectedCloudId = null;
       }
       if (
         this.hoveredCloudId &&
-        !this.response.clouds.some((cloud) => cloud.id === this.hoveredCloudId)
+        !response.clouds.some((cloud) => cloud.id === this.hoveredCloudId)
       ) {
         this.hoveredCloudId = null;
       }
+      if (isAtlasResponsePending(response)) {
+        this.#schedulePoll();
+      } else {
+        this.#stopPolling();
+      }
     } catch (error) {
-      this.error = String(error);
+      if (sequence === this.#refreshSequence) {
+        this.error = String(error);
+        if (this.response && (this.isStale || isAtlasResponsePending(this.response))) {
+          this.#schedulePoll();
+        }
+      }
     } finally {
       this.isLoading = false;
       if (this.#refreshRequestedDuringLoad) {
@@ -312,6 +383,27 @@ export class AtlasStore {
         this.scheduleRefresh(80);
       }
     }
+  }
+
+  #schedulePoll() {
+    if (this.#disposed) return;
+    const delay = Math.min(
+      ATLAS_POLL_INITIAL_DELAY_MILLIS * 2 ** Math.min(this.#pollAttempts, 3),
+      ATLAS_POLL_MAX_DELAY_MILLIS
+    );
+    this.#pollAttempts += 1;
+    if (this.#pollTimer) globalThis.clearTimeout(this.#pollTimer);
+    this.#pollTimer = globalThis.setTimeout(() => {
+      this.#pollTimer = null;
+      void this.refresh();
+    }, delay);
+  }
+
+  #stopPolling() {
+    this.#pollAttempts = 0;
+    if (!this.#pollTimer) return;
+    globalThis.clearTimeout(this.#pollTimer);
+    this.#pollTimer = null;
   }
 
   selectNode(node: AtlasNode | null) {
@@ -353,7 +445,7 @@ export class AtlasStore {
 
   scheduleSearch(delay = 180) {
     if (this.#searchTimer) {
-      window.clearTimeout(this.#searchTimer);
+      globalThis.clearTimeout(this.#searchTimer);
     }
     const query = this.searchQuery.trim();
     if (!query) {
@@ -362,7 +454,7 @@ export class AtlasStore {
       this.isSearching = false;
       return;
     }
-    this.#searchTimer = window.setTimeout(() => {
+    this.#searchTimer = globalThis.setTimeout(() => {
       this.#searchTimer = null;
       void this.runSearch(query);
     }, delay);
@@ -397,9 +489,32 @@ export class AtlasStore {
 
   setChatVisibility(visibility: AtlasChatVisibility) {
     if (visibility === this.chatVisibility) return;
+    const sequence = ++this.#visibilitySequence;
+    this.#applyChatVisibility(visibility, true);
+    this.#visibilityPersistence = this.#visibilityPersistence
+      .catch(() => undefined)
+      .then(async () => {
+        if (sequence !== this.#visibilitySequence) return;
+        await this.#saveChatVisibility(visibility);
+      })
+      .catch(() => undefined);
+  }
+
+  #applyChatVisibility(visibility: AtlasChatVisibility, refresh: boolean) {
     this.chatVisibility = visibility;
     this.selectedNodeId = null;
-    this.invalidateCachedResponse();
+    this.selectedCloudId = null;
+    this.hoveredCloudId = null;
+    this.hoveredNodeId = null;
+    this.#refreshSequence += 1;
+    this.response = null;
+    this.#responseVisibility = null;
+    this.searchResponse = null;
+    this.error = null;
+    this.searchError = null;
+    this.isStale = true;
+    this.#stopPolling();
+    if (refresh && this.#initialized) this.scheduleRefresh(0);
   }
 
   searchMatchForNode(node: AtlasNode): AtlasSearchMatch | null {
@@ -428,7 +543,7 @@ export class AtlasStore {
 
   cloudSearchOpacity(cloud: AtlasCloud): number {
     if (!this.searchQuery.trim()) return 1;
-    const ids = new Set(cloud.memberNodeIds);
+    const ids = new SvelteSet(cloud.memberNodeIds);
     const scores = [...this.searchMatchesByNodeId.entries()]
       .filter(([nodeId, match]) => ids.has(nodeId) && isAtlasSearchHit(match))
       .map(([, match]) => match.score);
@@ -438,7 +553,7 @@ export class AtlasStore {
 
   cloudHasSearchHit(cloud: AtlasCloud): boolean {
     if (!this.searchQuery.trim()) return true;
-    const ids = new Set(cloud.memberNodeIds);
+    const ids = new SvelteSet(cloud.memberNodeIds);
     return [...this.searchMatchesByNodeId.entries()].some(
       ([nodeId, match]) => ids.has(nodeId) && isAtlasSearchHit(match)
     );
@@ -458,6 +573,21 @@ export class AtlasStore {
 }
 
 export const atlasStore = new AtlasStore();
+
+export function isAtlasResponsePending(response: VaultAtlasResponse | null): boolean {
+  if (!response) return false;
+  if (response.publishInProgress) return true;
+  if (response.status !== 'ready') return false;
+  const labelsPending = response.clouds.length > 0 && response.labelGeneration === null;
+  return response.stale || labelsPending;
+}
+
+export function atlasLabelRenderKey(response: VaultAtlasResponse | null): string {
+  if (!response) return '';
+  return `${response.labelGeneration ?? 'pending'}:${response.clouds
+    .map((cloud) => `${cloud.id}=${cloud.label ?? ''}`)
+    .join('|')}`;
+}
 
 export function getZoomTier(zoom: number): AtlasZoomTier {
   if (zoom < 0.4) return 'far';
@@ -481,7 +611,7 @@ export function isAtlasSearchHit(match: AtlasSearchMatch | null): boolean {
 }
 
 export function strongestLinksPerNode(links: AtlasLink[], maxPerNode: number): AtlasLink[] {
-  const counts = new Map<string, number>();
+  const counts = new SvelteMap<string, number>();
   return [...links]
     .sort((left, right) => {
       const leftKindBoost = left.kind === 'wikilink' ? 1 : 0;
