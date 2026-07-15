@@ -1,7 +1,7 @@
 use super::{
     atlas_labels::{
-        cloud_membership_fingerprint, generate_labels, medoid_placeholder, AtlasLabelNote,
-        LABEL_ALGORITHM_VERSION,
+        cloud_membership_fingerprint, generate_labels_progressive, medoid_placeholder,
+        AtlasLabelNote, LABEL_ALGORITHM_VERSION,
     },
     db::{
         load_atlas_note_embeddings, load_atlas_note_metadata, load_atlas_positions,
@@ -29,7 +29,7 @@ use std::{
     io::{BufWriter, Write},
     panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Once},
     time::Instant,
 };
 use umap_rs::{GraphParams, OptimizationParams, Umap, UmapConfig};
@@ -56,12 +56,13 @@ const DEFAULT_LAYOUT_PULL: f32 = 1.4;
 const LAYOUT_LINKS_PER_NODE: usize = 8;
 const LAYOUT_MAX_DEGREE: usize = 14;
 const CHILD_TARGET_MAX_NOTES: usize = 16;
-const UMAP_ITERATIONS_MAX: usize = 220;
-const UMAP_ITERATIONS_BASE: usize = 60;
-const UMAP_ITERATIONS_SQRT_SCALE: f32 = 4.0;
+const UMAP_ITERATIONS_MAX: usize = 140;
+const UMAP_ITERATIONS_BASE: usize = 40;
+const UMAP_ITERATIONS_SQRT_SCALE: f32 = 3.0;
+/// Bumped when layout/clustering parallelism or iteration budgets change.
+const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 16;
 const DISC_LAYOUT_FULL_PAIR_MAX: usize = 80;
 const DISC_LAYOUT_REPULSION_NEIGHBORS: usize = 16;
-const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 14;
 const ATLAS_CLOUD_ALGORITHM_VERSION: u32 = 1;
 const ATLAS_GENERATION_FORMAT_VERSION: u32 = 1;
 const ATLAS_SUPERSEDED: &str = "atlas generation superseded";
@@ -277,6 +278,10 @@ pub(crate) struct AtlasCloud {
     pub(crate) level: usize,
     pub(crate) label: Option<String>,
     pub(crate) label_confidence: f32,
+    /// `pending` while waiting for KeyBERT, `keybert` for content labels,
+    /// `medoid` when falling back to a representative note title/filename.
+    #[serde(default = "default_pending_label_source")]
+    pub(crate) label_source: String,
     pub(crate) note_count: usize,
     pub(crate) density: f32,
     pub(crate) color: [u8; 4],
@@ -289,6 +294,10 @@ pub(crate) struct AtlasCloud {
     pub(crate) outlier_node_ids: Vec<String>,
     pub(crate) child_cloud_ids: Vec<String>,
     pub(crate) representative_node_ids: Vec<String>,
+}
+
+fn default_pending_label_source() -> String {
+    "pending".to_string()
 }
 
 #[derive(Clone)]
@@ -426,6 +435,14 @@ struct AtlasLabelGenerationArtifact {
     model_fingerprint: String,
     label_generation: String,
     labels: HashMap<String, AtlasPublishedLabel>,
+    /// False while labels are still streaming in; true when the job finished.
+    /// Missing on older artifacts — treat as complete.
+    #[serde(default = "default_label_artifact_complete")]
+    complete: bool,
+}
+
+fn default_label_artifact_complete() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -433,6 +450,12 @@ struct AtlasLabelGenerationArtifact {
 struct AtlasPublishedLabel {
     label: String,
     confidence: f32,
+    #[serde(default = "default_medoid_label_source")]
+    source: String,
+}
+
+fn default_medoid_label_source() -> String {
+    "medoid".to_string()
 }
 
 pub(crate) struct AtlasWorkerContext {
@@ -736,6 +759,7 @@ impl AtlasWorkerContext {
         generation_key: AtlasGenerationKey,
         revision: u64,
     ) -> Result<VaultAtlasResponse, String> {
+        ensure_rayon_uses_all_cores();
         let activity_by_note_id: HashMap<String, NoteActivity> = HashMap::new();
         let request_started = Instant::now();
         self.debug.record_with_metrics(
@@ -1030,6 +1054,7 @@ impl AtlasWorkerContext {
         generation_key: AtlasGenerationKey,
         request: &AtlasLabelRequest,
     ) -> Result<(), String> {
+        ensure_rayon_uses_all_cores();
         let started = Instant::now();
         let pointer_path = ready_pointer_path(&self.cache_dir, generation_key);
         let structural_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
@@ -1058,17 +1083,6 @@ impl AtlasWorkerContext {
         .into_iter()
         .map(|note| (note.note_path, normalized_embedding(note.embedding)))
         .collect::<HashMap<_, _>>();
-        let (labels, metrics) = generate_labels(
-            &mut connection,
-            self.provider.as_ref(),
-            &structural.response.clouds,
-            &structural.response.nodes,
-            &note_embeddings,
-        )?;
-        let latest_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
-        if latest_pointer.structural_generation != request.structural_generation {
-            return Err(ATLAS_SUPERSEDED.to_string());
-        }
 
         let generated_at = current_time_millis()?;
         let model_fingerprint = self.provider.model_info().fingerprint();
@@ -1087,33 +1101,28 @@ impl AtlasWorkerContext {
             )
             .to_hex()[..16]
         );
-        let published = labels
-            .into_iter()
-            .map(|(cloud_id, (label, confidence))| {
-                (cloud_id, AtlasPublishedLabel { label, confidence })
-            })
-            .collect();
         let artifact_file = format!(
             "label-generation-{}-{}.json",
             generation_key.chat_visibility.signature_value(),
             label_generation
         );
-        atomic_write_json(
-            &root.join(&artifact_file),
-            &AtlasLabelGenerationArtifact {
-                structural_generation: request.structural_generation.clone(),
-                membership_fingerprint: request.membership_fingerprint.clone(),
-                algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
-                model_fingerprint: model_fingerprint.clone(),
-                label_generation: label_generation.clone(),
-                labels: published,
-            },
-        )?;
-        let latest_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
-        if latest_pointer.structural_generation != request.structural_generation {
-            let _ = fs::remove_file(root.join(&artifact_file));
-            return Err(ATLAS_SUPERSEDED.to_string());
-        }
+        let artifact_path = root.join(&artifact_file);
+        let published = std::sync::Mutex::new(HashMap::<String, AtlasPublishedLabel>::new());
+        let write_artifact = |labels: &HashMap<String, AtlasPublishedLabel>, complete: bool| {
+            atomic_write_json(
+                &artifact_path,
+                &AtlasLabelGenerationArtifact {
+                    structural_generation: request.structural_generation.clone(),
+                    membership_fingerprint: request.membership_fingerprint.clone(),
+                    algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
+                    model_fingerprint: model_fingerprint.clone(),
+                    label_generation: label_generation.clone(),
+                    labels: labels.clone(),
+                    complete,
+                },
+            )
+        };
+        write_artifact(&HashMap::new(), false)?;
         atomic_write_json(
             &label_ready_pointer_path(&self.cache_dir, generation_key),
             &AtlasLabelReadyPointer {
@@ -1121,23 +1130,68 @@ impl AtlasWorkerContext {
                 structural_generation: request.structural_generation.clone(),
                 membership_fingerprint: request.membership_fingerprint.clone(),
                 algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
-                model_fingerprint,
-                label_generation,
-                artifact_file,
+                model_fingerprint: model_fingerprint.clone(),
+                label_generation: label_generation.clone(),
+                artifact_file: artifact_file.clone(),
             },
         )?;
+
+        let metrics = {
+            let (_, metrics) = generate_labels_progressive(
+                &mut connection,
+                self.provider.as_ref(),
+                &structural.response.clouds,
+                &structural.response.nodes,
+                &note_embeddings,
+                |cloud_id, assignment| {
+                    let latest_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
+                    if latest_pointer.structural_generation != request.structural_generation {
+                        let _ = fs::remove_file(&artifact_path);
+                        return Err(ATLAS_SUPERSEDED.to_string());
+                    }
+                    let mut labels = published
+                        .lock()
+                        .map_err(|_| "Atlas label publish lock poisoned".to_string())?;
+                    labels.insert(
+                        cloud_id.to_string(),
+                        AtlasPublishedLabel {
+                            label: assignment.label.clone(),
+                            confidence: assignment.confidence,
+                            source: assignment.source.as_str().to_string(),
+                        },
+                    );
+                    write_artifact(&labels, false)?;
+                    Ok(())
+                },
+            )?;
+            metrics
+        };
+
+        let latest_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
+        if latest_pointer.structural_generation != request.structural_generation {
+            let _ = fs::remove_file(&artifact_path);
+            return Err(ATLAS_SUPERSEDED.to_string());
+        }
+        let final_labels = published
+            .into_inner()
+            .map_err(|_| "Atlas label publish lock poisoned".to_string())?;
+        write_artifact(&final_labels, true)?;
         gc_unreferenced_generations(&self.cache_dir)?;
         self.debug.record_timing(
             "atlas_labels",
             "published",
             Some(format!(
-                "clouds={} candidates={} unique={} cache_hits={} provider_texts={} batches={}",
+                "clouds={} candidates={} unique={} chunks={} selected={} cache_hits={} provider_texts={} batches={} keybert={} medoid_fallbacks={}",
                 metrics.cloud_count,
                 metrics.candidate_count,
                 metrics.unique_candidate_count,
+                metrics.chunk_count,
+                metrics.selected_chunk_count,
                 metrics.cache_hit_count,
                 metrics.provider_text_count,
-                metrics.provider_batch_count
+                metrics.provider_batch_count,
+                metrics.keybert_label_count,
+                metrics.medoid_fallback_count
             )),
             started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             |debug_metrics| {
@@ -1194,6 +1248,7 @@ impl ActiveSemanticState {
             .as_ref()
             .is_some_and(|pointer| pointer_is_compatible(pointer, &dependencies, revision));
         let mut label_compatible = false;
+        let mut label_complete = false;
         let mut label_request = None;
         let expected_label_model = self.provider.model_info().fingerprint();
         if let Some(response) = &mut published {
@@ -1225,10 +1280,12 @@ impl ActiveSemanticState {
                                 if let Some(published) = labels.labels.get(&cloud.id) {
                                     cloud.label = Some(published.label.clone());
                                     cloud.label_confidence = published.confidence;
+                                    cloud.label_source = published.source.clone();
                                 }
                             }
                             response.label_generation = Some(labels.label_generation);
                             label_compatible = true;
+                            label_complete = labels.complete;
                         }
                     }
                 }
@@ -1252,7 +1309,9 @@ impl ActiveSemanticState {
             enqueued = true;
         }
         let label_building = pending.atlas_label_building.contains(&generation_key);
-        if compatible && !label_compatible && !label_building {
+        // Re-run labeling when missing/incompatible, or when a partial artifact
+        // was left incomplete (e.g. interrupted progressive publish).
+        if compatible && !(label_compatible && label_complete) && !label_building {
             if let Some(request) = label_request {
                 pending.atlas_label_requests.insert(generation_key, request);
                 enqueued = true;
@@ -1751,18 +1810,18 @@ fn boost_links(links: &mut [WorkingLink], nodes: &[WorkingNode]) {
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
-    for link in links {
+    links.par_iter_mut().for_each(|link| {
         let Some(source) = node_by_id.get(link.source_id.as_str()) else {
-            continue;
+            return;
         };
         let Some(target) = node_by_id.get(link.target_id.as_str()) else {
-            continue;
+            return;
         };
         if parent_folder(&source.note_path) == parent_folder(&target.note_path) {
             link.strength += FOLDER_BOOST;
         }
         link.strength = link.strength.clamp(0.0, 1.0);
-    }
+    });
 }
 
 fn apply_centrality(nodes: &mut [WorkingNode], links: &[WorkingLink]) {
@@ -1959,14 +2018,16 @@ fn connected_components(nodes: &[WorkingNode], edges: &[LayoutEdge]) -> Vec<Vec<
 
 fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSpec> {
     let adjacency = build_edge_adjacency(edges);
-    let mut top_groups = Vec::<Vec<String>>::new();
-    for component in connected_components(nodes, edges) {
-        if component.len() < CLOUD_MIN_NOTES {
-            continue;
-        }
-        let groups = partition_by_content(&component, nodes, edges, &adjacency);
-        top_groups.extend(groups);
-    }
+    let components = connected_components(nodes, edges);
+    let mut top_groups = components
+        .into_par_iter()
+        .flat_map(|component| {
+            if component.len() < CLOUD_MIN_NOTES {
+                return Vec::new();
+            }
+            partition_by_content(&component, nodes, edges, &adjacency)
+        })
+        .collect::<Vec<_>>();
     top_groups = merge_high_affinity_groups(top_groups, nodes, edges, &adjacency);
     let mut top_groups = promote_mature_subclouds(top_groups, nodes, edges, &adjacency, 1);
     top_groups.sort_by(|left, right| {
@@ -1981,9 +2042,26 @@ fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSp
         .enumerate()
         .map(|(index, node)| (node.id.clone(), index))
         .collect::<HashMap<_, _>>();
+
+    // Detect child communities in parallel before assigning sequential cloud IDs.
+    let prepared = top_groups
+        .into_par_iter()
+        .map(|top| {
+            let group = top.members;
+            let child_groups = match top.precomputed_children {
+                Some(children) => children,
+                None => detect_child_communities(&group, nodes, edges, &adjacency),
+            };
+            let centrality = group_centrality(&group, nodes);
+            let centroid = centroid_for_ids(&group, nodes);
+            (group, child_groups, centrality, centroid)
+        })
+        .collect::<Vec<_>>();
+
     let mut specs = Vec::<CloudSpec>::new();
-    for (cloud_index, top) in top_groups.into_iter().enumerate() {
-        let group = top.members;
+    for (cloud_index, (group, child_groups, centrality, centroid)) in
+        prepared.into_iter().enumerate()
+    {
         let cloud_id = format!("cloud-{}", cloud_index + 1);
         for member_id in &group {
             if let Some(index) = node_index.get(member_id).copied() {
@@ -1994,10 +2072,6 @@ fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSp
             }
         }
 
-        let child_groups = match top.precomputed_children {
-            Some(children) => children,
-            None => detect_child_communities(&group, nodes, edges, &adjacency),
-        };
         let mut child_cloud_ids = Vec::new();
         let mut child_specs = Vec::new();
         for (child_index, child_group) in child_groups.into_iter().enumerate() {
@@ -2034,8 +2108,8 @@ fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSp
             parent_id: None,
             level: 0,
             radius: top_cloud_radius(group.len()).max(child_area_radius + 58.0),
-            centrality: group_centrality(&group, nodes),
-            centroid: centroid_for_ids(&group, nodes),
+            centrality,
+            centroid,
             member_node_ids: group,
             core_node_ids: Vec::new(),
             outlier_node_ids: Vec::new(),
@@ -2216,9 +2290,13 @@ fn leiden_partition_group(
     let config = LeidenConfig::builder()
         .quality(QualityType::RBConfiguration)
         .resolution(resolution)
-        .max_iterations(48)
+        .max_iterations(24)
         .min_iterations(2)
         .seed(seed)
+        // Prefer the parallel local-moving path whenever the group is large
+        // enough for leiden-rs (it still requires n >= 100 internally).
+        .parallel_local_moving_threshold(1)
+        .parallel_aggregation_threshold(1)
         .build();
     let Ok(result) = Leiden::new(config).run(&graph) else {
         return Vec::new();
@@ -2495,63 +2573,65 @@ fn promote_mature_subclouds(
     adjacency: &EdgeAdjacency,
     remaining_depth: usize,
 ) -> Vec<TopGroupPartition> {
-    let mut promoted = Vec::<TopGroupPartition>::new();
-    for group in groups {
-        let child_groups = detect_child_communities(&group, nodes, edges, adjacency);
-        let mature: Vec<Vec<String>> = child_groups
-            .iter()
-            .filter(|child| child.len() >= SUBCLOUD_PROMOTE_MIN)
-            .cloned()
-            .collect();
-        let separation = if child_groups.len() >= 2 {
-            partition_separation(&child_groups, edges, adjacency)
-        } else {
-            0.0
-        };
-        let should_promote = mature.len() >= 2
-            && (group.len() >= TOP_CLOUD_SOFT_MAX || separation >= CHILD_PARTITION_SEPARATION_MIN);
+    groups
+        .into_par_iter()
+        .flat_map(|group| {
+            let child_groups = detect_child_communities(&group, nodes, edges, adjacency);
+            let mature: Vec<Vec<String>> = child_groups
+                .iter()
+                .filter(|child| child.len() >= SUBCLOUD_PROMOTE_MIN)
+                .cloned()
+                .collect();
+            let separation = if child_groups.len() >= 2 {
+                partition_separation(&child_groups, edges, adjacency)
+            } else {
+                0.0
+            };
+            let should_promote = mature.len() >= 2
+                && (group.len() >= TOP_CLOUD_SOFT_MAX || separation >= CHILD_PARTITION_SEPARATION_MIN);
 
-        if !should_promote {
-            promoted.push(TopGroupPartition {
-                members: group,
-                precomputed_children: Some(child_groups),
-            });
-            continue;
-        }
-
-        let mature_ids: HashSet<String> = mature.iter().flatten().cloned().collect();
-        let leftovers: Vec<String> = group
-            .into_iter()
-            .filter(|id| !mature_ids.contains(id))
-            .collect();
-
-        let mut next_groups = mature;
-        if leftovers.len() >= CLOUD_MIN_NOTES {
-            next_groups.push(leftovers);
-        } else if !leftovers.is_empty() && !next_groups.is_empty() {
-            let target = strongest_group_index(&leftovers, &next_groups, nodes, edges, adjacency);
-            next_groups[target].extend(leftovers);
-            next_groups[target].sort();
-        }
-
-        if remaining_depth > 0 {
-            promoted.extend(promote_mature_subclouds(
-                next_groups,
-                nodes,
-                edges,
-                adjacency,
-                remaining_depth - 1,
-            ));
-        } else {
-            for members in next_groups {
-                promoted.push(TopGroupPartition {
-                    members,
-                    precomputed_children: None,
-                });
+            if !should_promote {
+                return vec![TopGroupPartition {
+                    members: group,
+                    precomputed_children: Some(child_groups),
+                }];
             }
-        }
-    }
-    promoted
+
+            let mature_ids: HashSet<String> = mature.iter().flatten().cloned().collect();
+            let leftovers: Vec<String> = group
+                .into_iter()
+                .filter(|id| !mature_ids.contains(id))
+                .collect();
+
+            let mut next_groups = mature;
+            if leftovers.len() >= CLOUD_MIN_NOTES {
+                next_groups.push(leftovers);
+            } else if !leftovers.is_empty() && !next_groups.is_empty() {
+                let target =
+                    strongest_group_index(&leftovers, &next_groups, nodes, edges, adjacency);
+                next_groups[target].extend(leftovers);
+                next_groups[target].sort();
+            }
+
+            if remaining_depth > 0 {
+                promote_mature_subclouds(
+                    next_groups,
+                    nodes,
+                    edges,
+                    adjacency,
+                    remaining_depth - 1,
+                )
+            } else {
+                next_groups
+                    .into_iter()
+                    .map(|members| TopGroupPartition {
+                        members,
+                        precomputed_children: None,
+                    })
+                    .collect()
+            }
+        })
+        .collect()
 }
 
 fn strongest_group_index(
@@ -2928,30 +3008,41 @@ fn complete_knn_rows_for_umap(
     knn_rows: &[Vec<KnnNeighbor>],
     neighbor_count: usize,
 ) -> Vec<Vec<KnnNeighbor>> {
-    let mut completed = Vec::with_capacity(knn_rows.len());
-    let mut deficient_indices = Vec::new();
-    for (row_index, row) in knn_rows.iter().enumerate() {
-        let mut merged = Vec::<KnnNeighbor>::with_capacity(neighbor_count);
-        for neighbor in row {
-            if neighbor.index != row_index {
-                push_unique_neighbor(&mut merged, neighbor.index, neighbor.similarity);
+    let mut completed = knn_rows
+        .par_iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            let mut merged = Vec::<KnnNeighbor>::with_capacity(neighbor_count);
+            for neighbor in row {
+                if neighbor.index != row_index {
+                    push_unique_neighbor(&mut merged, neighbor.index, neighbor.similarity);
+                }
+                if merged.len() == neighbor_count {
+                    break;
+                }
             }
-            if merged.len() == neighbor_count {
-                break;
+            merged.sort_by(|left, right| {
+                right
+                    .similarity
+                    .total_cmp(&left.similarity)
+                    .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
+            });
+            merged.truncate(neighbor_count);
+            merged
+        })
+        .collect::<Vec<_>>();
+
+    let deficient_indices = completed
+        .iter()
+        .enumerate()
+        .filter_map(|(row_index, merged)| {
+            if merged.len() < neighbor_count {
+                Some(row_index)
+            } else {
+                None
             }
-        }
-        merged.sort_by(|left, right| {
-            right
-                .similarity
-                .total_cmp(&left.similarity)
-                .then_with(|| nodes[left.index].id.cmp(&nodes[right.index].id))
-        });
-        merged.truncate(neighbor_count);
-        if merged.len() < neighbor_count {
-            deficient_indices.push(row_index);
-        }
-        completed.push(merged);
-    }
+        })
+        .collect::<Vec<_>>();
 
     if deficient_indices.is_empty() {
         return completed;
@@ -3008,10 +3099,10 @@ fn apply_normalized_embedding(nodes: &mut [WorkingNode], embedding: &Array2<f32>
     let scale = target_span / width.max(height);
     let center_x = (min_x + max_x) / 2.0;
     let center_y = (min_y + max_y) / 2.0;
-    for (index, node) in nodes.iter_mut().enumerate() {
+    nodes.par_iter_mut().enumerate().for_each(|(index, node)| {
         node.x = (embedding[(index, 0)] - center_x) * scale;
         node.y = (embedding[(index, 1)] - center_y) * scale;
-    }
+    });
 }
 
 fn refresh_cloud_geometry(specs: &mut [CloudSpec], nodes: &[WorkingNode]) {
@@ -3019,21 +3110,28 @@ fn refresh_cloud_geometry(specs: &mut [CloudSpec], nodes: &[WorkingNode]) {
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
-    for spec in specs {
-        let centroid = centroid_for_ids(&spec.member_node_ids, nodes);
+    let updates = specs
+        .par_iter()
+        .map(|spec| {
+            let centroid = centroid_for_ids(&spec.member_node_ids, nodes);
+            let member_radius = spec
+                .member_node_ids
+                .iter()
+                .filter_map(|id| node_by_id.get(id.as_str()).copied())
+                .map(|node| distance([node.x, node.y], centroid))
+                .fold(0.0_f32, f32::max);
+            let base = if spec.level == 0 {
+                top_cloud_radius(spec.member_node_ids.len())
+            } else {
+                child_cloud_radius(spec.member_node_ids.len())
+            };
+            let radius = base.max(member_radius + if spec.level == 0 { 86.0 } else { 44.0 });
+            (centroid, radius)
+        })
+        .collect::<Vec<_>>();
+    for (spec, (centroid, radius)) in specs.iter_mut().zip(updates) {
         spec.centroid = centroid;
-        let member_radius = spec
-            .member_node_ids
-            .iter()
-            .filter_map(|id| node_by_id.get(id.as_str()).copied())
-            .map(|node| distance([node.x, node.y], centroid))
-            .fold(0.0_f32, f32::max);
-        let base = if spec.level == 0 {
-            top_cloud_radius(spec.member_node_ids.len())
-        } else {
-            child_cloud_radius(spec.member_node_ids.len())
-        };
-        spec.radius = base.max(member_radius + if spec.level == 0 { 86.0 } else { 44.0 });
+        spec.radius = radius;
     }
 }
 
@@ -3223,7 +3321,9 @@ fn place_top_level_clouds(specs: &mut [CloudSpec], edges: &[LayoutEdge], layout_
         layout_pull,
         150,
     );
-    enforce_cloud_non_overlap(&top_indices, specs, TOP_LEVEL_CLOUD_GAP, 1_200);
+    // Jacobi-style overlap resolve (parallel per iteration). Fewer passes than
+    // the old 1200-step Gauss-Seidel loop, which pinned a single core for ages.
+    enforce_cloud_non_overlap(&top_indices, specs, TOP_LEVEL_CLOUD_GAP, 360);
     let anchor = order[0];
     let offset = specs[anchor].centroid;
     for &index in &top_indices {
@@ -3265,26 +3365,31 @@ fn find_non_overlapping_center(
     gap: f32,
 ) -> [f32; 2] {
     let phase = stable_angle(&spec.id);
-    let mut best = None;
-    let mut best_score = f32::MAX;
-    for step in 0..320 {
-        let ring = (step / 24) as f32;
-        let angle = phase + step as f32 * 2.399_963_1;
-        let distance = spec.radius + gap + 70.0 + ring * (spec.radius * 0.22 + 58.0);
-        let candidate = [
-            anchor[0] + angle.cos() * distance,
-            anchor[1] + angle.sin() * distance,
-        ];
-        if !cloud_center_overlaps(candidate, spec.radius, placed, specs, gap) {
-            let score = squared_distance(candidate, anchor)
-                + squared_distance(candidate, [0.0, 0.0]) * 0.08;
-            if score < best_score {
-                best = Some(candidate);
-                best_score = score;
+    let best = (0..320_u32)
+        .into_par_iter()
+        .filter_map(|step| {
+            let ring = (step / 24) as f32;
+            let angle = phase + step as f32 * 2.399_963_1;
+            let distance = spec.radius + gap + 70.0 + ring * (spec.radius * 0.22 + 58.0);
+            let candidate = [
+                anchor[0] + angle.cos() * distance,
+                anchor[1] + angle.sin() * distance,
+            ];
+            if !cloud_center_overlaps(candidate, spec.radius, placed, specs, gap) {
+                let score = squared_distance(candidate, anchor)
+                    + squared_distance(candidate, [0.0, 0.0]) * 0.08;
+                Some((candidate, score))
+            } else {
+                None
             }
-        }
-    }
-    best.unwrap_or_else(|| {
+        })
+        .min_by(|left, right| {
+            left.1
+                .total_cmp(&right.1)
+                .then_with(|| left.0[0].total_cmp(&right.0[0]))
+                .then_with(|| left.0[1].total_cmp(&right.0[1]))
+        });
+    best.map(|(candidate, _)| candidate).unwrap_or_else(|| {
         let fallback_distance =
             placed.iter().map(|index| specs[*index].radius).sum::<f32>() + spec.radius + gap;
         [
@@ -3345,6 +3450,16 @@ fn cloud_center_overlaps(
     })
 }
 
+fn cloud_index_pairs(indices: &[usize]) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::with_capacity(indices.len().saturating_mul(indices.len()) / 2);
+    for left_offset in 0..indices.len() {
+        for right_offset in (left_offset + 1)..indices.len() {
+            pairs.push((indices[left_offset], indices[right_offset]));
+        }
+    }
+    pairs
+}
+
 fn relax_cloud_centers(
     indices: &[usize],
     specs: &mut [CloudSpec],
@@ -3354,21 +3469,23 @@ fn relax_cloud_centers(
     layout_pull: f32,
     iterations: usize,
 ) {
+    let pairs = cloud_index_pairs(indices);
     for _ in 0..iterations {
-        let mut deltas = HashMap::<usize, [f32; 2]>::new();
-        for &left in indices {
-            for &right in indices {
-                if left >= right {
-                    continue;
-                }
+        let pair_deltas = pairs
+            .par_iter()
+            .filter_map(|&(left, right)| {
                 let dx = specs[left].centroid[0] - specs[right].centroid[0];
                 let dy = specs[left].centroid[1] - specs[right].centroid[1];
                 let dist = (dx * dx + dy * dy).sqrt().max(1.0);
                 let desired = specs[left].radius + specs[right].radius + gap;
+                let mut left_delta = [0.0_f32, 0.0_f32];
+                let mut right_delta = [0.0_f32, 0.0_f32];
                 if dist < desired {
                     let force = ((desired - dist) / desired).min(1.0) * 16.0;
-                    add_delta(&mut deltas, left, [dx / dist * force, dy / dist * force]);
-                    add_delta(&mut deltas, right, [-dx / dist * force, -dy / dist * force]);
+                    left_delta[0] += dx / dist * force;
+                    left_delta[1] += dy / dist * force;
+                    right_delta[0] -= dx / dist * force;
+                    right_delta[1] -= dy / dist * force;
                 }
                 let affinity = cloud_affinity(&specs[left], &specs[right], edges, adjacency);
                 if affinity > 0.0 && dist > desired + 80.0 {
@@ -3376,11 +3493,24 @@ fn relax_cloud_centers(
                     if dist > target {
                         let force =
                             ((dist - target) / dist) * affinity.min(8.0) * 0.24 * layout_pull;
-                        add_delta(&mut deltas, left, [-dx / dist * force, -dy / dist * force]);
-                        add_delta(&mut deltas, right, [dx / dist * force, dy / dist * force]);
+                        left_delta[0] -= dx / dist * force;
+                        left_delta[1] -= dy / dist * force;
+                        right_delta[0] += dx / dist * force;
+                        right_delta[1] += dy / dist * force;
                     }
                 }
-            }
+                if left_delta == [0.0, 0.0] && right_delta == [0.0, 0.0] {
+                    None
+                } else {
+                    Some((left, left_delta, right, right_delta))
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let mut deltas = HashMap::<usize, [f32; 2]>::new();
+        for (left, left_delta, right, right_delta) in pair_deltas {
+            add_delta(&mut deltas, left, left_delta);
+            add_delta(&mut deltas, right, right_delta);
         }
         for &index in indices {
             let center = specs[index].centroid;
@@ -3399,30 +3529,38 @@ fn enforce_cloud_non_overlap(
     gap: f32,
     iterations: usize,
 ) {
+    let pairs = cloud_index_pairs(indices);
     for _ in 0..iterations {
-        let mut changed = false;
-        for &left in indices {
-            for &right in indices {
-                if left >= right {
-                    continue;
-                }
+        let pushes = pairs
+            .par_iter()
+            .filter_map(|&(left, right)| {
                 let dx = specs[left].centroid[0] - specs[right].centroid[0];
                 let dy = specs[left].centroid[1] - specs[right].centroid[1];
                 let dist = (dx * dx + dy * dy).sqrt().max(1.0);
                 let desired = specs[left].radius + specs[right].radius + gap;
                 if dist >= desired {
-                    continue;
+                    return None;
                 }
                 let push = (desired - dist) / 2.0 + 0.5;
-                specs[left].centroid[0] += dx / dist * push;
-                specs[left].centroid[1] += dy / dist * push;
-                specs[right].centroid[0] -= dx / dist * push;
-                specs[right].centroid[1] -= dy / dist * push;
-                changed = true;
-            }
-        }
-        if !changed {
+                Some((
+                    left,
+                    [dx / dist * push, dy / dist * push],
+                    right,
+                    [-dx / dist * push, -dy / dist * push],
+                ))
+            })
+            .collect::<Vec<_>>();
+        if pushes.is_empty() {
             break;
+        }
+        let mut deltas = HashMap::<usize, [f32; 2]>::new();
+        for (left, left_delta, right, right_delta) in pushes {
+            add_delta(&mut deltas, left, left_delta);
+            add_delta(&mut deltas, right, right_delta);
+        }
+        for (index, delta) in deltas {
+            specs[index].centroid[0] += delta[0];
+            specs[index].centroid[1] += delta[1];
         }
     }
 }
@@ -3661,55 +3799,82 @@ fn apply_disc_repulsion(
     deltas: &mut HashMap<usize, [f32; 2]>,
 ) {
     if members.len() <= DISC_LAYOUT_FULL_PAIR_MAX {
-        for left_offset in 0..members.len() {
-            for right_offset in (left_offset + 1)..members.len() {
-                apply_disc_pair_repulsion(
-                    nodes,
-                    members[left_offset],
-                    members[right_offset],
-                    deltas,
-                );
-            }
+        let pairs = (0..members.len())
+            .flat_map(|left_offset| {
+                ((left_offset + 1)..members.len())
+                    .map(move |right_offset| (members[left_offset], members[right_offset]))
+            })
+            .collect::<Vec<_>>();
+        let pair_deltas = pairs
+            .par_iter()
+            .filter_map(|&(left, right)| {
+                let dx = nodes[left].x - nodes[right].x;
+                let dy = nodes[left].y - nodes[right].y;
+                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                let desired = nodes[left].centrality.max(nodes[right].centrality) * 3.0 + 18.0;
+                if dist >= desired {
+                    return None;
+                }
+                let force = (desired - dist) * 0.18;
+                Some((
+                    left,
+                    [dx / dist * force, dy / dist * force],
+                    right,
+                    [-dx / dist * force, -dy / dist * force],
+                ))
+            })
+            .collect::<Vec<_>>();
+        for (left, left_delta, right, right_delta) in pair_deltas {
+            add_delta(deltas, left, left_delta);
+            add_delta(deltas, right, right_delta);
         }
         return;
     }
 
     // Large clouds: only repel against nearest spatial neighbors instead of all pairs.
-    for (left_offset, &left) in members.iter().enumerate() {
-        let mut nearest = members
-            .iter()
-            .enumerate()
-            .filter(|(right_offset, _)| *right_offset != left_offset)
-            .map(|(_, &right)| {
+    let nearest_deltas = members
+        .par_iter()
+        .enumerate()
+        .map(|(left_offset, &left)| {
+            let mut nearest = members
+                .iter()
+                .enumerate()
+                .filter(|(right_offset, _)| *right_offset != left_offset)
+                .map(|(_, &right)| {
+                    let dx = nodes[left].x - nodes[right].x;
+                    let dy = nodes[left].y - nodes[right].y;
+                    (right, dx * dx + dy * dy)
+                })
+                .collect::<Vec<_>>();
+            nearest.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+            nearest.truncate(DISC_LAYOUT_REPULSION_NEIGHBORS);
+            let mut local = Vec::new();
+            for (right, _) in nearest {
+                // Only emit each unordered pair once to avoid double-counting.
+                if left >= right {
+                    continue;
+                }
                 let dx = nodes[left].x - nodes[right].x;
                 let dy = nodes[left].y - nodes[right].y;
-                (right, dx * dx + dy * dy)
-            })
-            .collect::<Vec<_>>();
-        nearest.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-        nearest.truncate(DISC_LAYOUT_REPULSION_NEIGHBORS);
-        for (right, _) in nearest {
-            if left < right {
-                apply_disc_pair_repulsion(nodes, left, right, deltas);
+                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                let desired = nodes[left].centrality.max(nodes[right].centrality) * 3.0 + 18.0;
+                if dist < desired {
+                    let force = (desired - dist) * 0.18;
+                    local.push((
+                        left,
+                        [dx / dist * force, dy / dist * force],
+                        right,
+                        [-dx / dist * force, -dy / dist * force],
+                    ));
+                }
             }
-        }
-    }
-}
-
-fn apply_disc_pair_repulsion(
-    nodes: &[WorkingNode],
-    left: usize,
-    right: usize,
-    deltas: &mut HashMap<usize, [f32; 2]>,
-) {
-    let dx = nodes[left].x - nodes[right].x;
-    let dy = nodes[left].y - nodes[right].y;
-    let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-    let desired = nodes[left].centrality.max(nodes[right].centrality) * 3.0 + 18.0;
-    if dist < desired {
-        let force = (desired - dist) * 0.18;
-        add_delta(deltas, left, [dx / dist * force, dy / dist * force]);
-        add_delta(deltas, right, [-dx / dist * force, -dy / dist * force]);
+            local
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    for (left, left_delta, right, right_delta) in nearest_deltas {
+        add_delta(deltas, left, left_delta);
+        add_delta(deltas, right, right_delta);
     }
 }
 
@@ -3719,46 +3884,52 @@ fn finalize_cloud_cores(nodes: &[WorkingNode], edges: &[LayoutEdge], specs: &mut
         .iter()
         .map(|node| (node.id.as_str(), node))
         .collect::<HashMap<_, _>>();
-    for spec in specs {
-        let members = spec
-            .member_node_ids
-            .iter()
-            .filter_map(|id| node_by_id.get(id.as_str()).copied())
-            .collect::<Vec<_>>();
-        if members.is_empty() {
-            continue;
-        }
-        let mut distances = members
-            .iter()
-            .map(|node| {
-                let dx = node.x - spec.centroid[0];
-                let dy = node.y - spec.centroid[1];
-                (node.id.clone(), (dx * dx + dy * dy).sqrt())
-            })
-            .collect::<Vec<_>>();
-        distances.sort_by(|left, right| {
-            left.1
-                .total_cmp(&right.1)
-                .then_with(|| left.0.cmp(&right.0))
-        });
-        let threshold = robust_distance_threshold(&distances);
-        let mut core = Vec::new();
-        let mut outliers = Vec::new();
-        for (id, dist) in distances {
-            let affinity = node_internal_affinity(&id, &spec.member_node_ids, edges, &adjacency);
-            if spec.member_node_ids.len().saturating_sub(outliers.len()) > CLOUD_MIN_NOTES
-                && dist > threshold
-                && affinity < 0.55
-            {
-                outliers.push(id);
-            } else {
-                core.push(id);
+    let cores = specs
+        .par_iter()
+        .map(|spec| {
+            let members = spec
+                .member_node_ids
+                .iter()
+                .filter_map(|id| node_by_id.get(id.as_str()).copied())
+                .collect::<Vec<_>>();
+            if members.is_empty() {
+                return (Vec::new(), Vec::new());
             }
-        }
-        if core.len() < CLOUD_MIN_NOTES {
-            core = spec.member_node_ids.clone();
-            outliers.clear();
-        }
+            let mut distances = members
+                .iter()
+                .map(|node| {
+                    let dx = node.x - spec.centroid[0];
+                    let dy = node.y - spec.centroid[1];
+                    (node.id.clone(), (dx * dx + dy * dy).sqrt())
+                })
+                .collect::<Vec<_>>();
+            distances.sort_by(|left, right| {
+                left.1
+                    .total_cmp(&right.1)
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+            let threshold = robust_distance_threshold(&distances);
+            let mut core = Vec::new();
+            let mut outliers = Vec::new();
+            for (id, dist) in distances {
+                let affinity = node_internal_affinity(&id, &spec.member_node_ids, edges, &adjacency);
+                if spec.member_node_ids.len().saturating_sub(outliers.len()) > CLOUD_MIN_NOTES
+                    && dist > threshold
+                    && affinity < 0.55
+                {
+                    outliers.push(id);
+                } else {
+                    core.push(id);
+                }
+            }
+            if core.len() < CLOUD_MIN_NOTES {
+                (spec.member_node_ids.clone(), Vec::new())
+            } else {
+                (core, outliers)
+            }
+        })
+        .collect::<Vec<_>>();
+    for (spec, (core, outliers)) in specs.iter_mut().zip(cores) {
         spec.core_node_ids = core;
         spec.outlier_node_ids = outliers;
     }
@@ -3801,7 +3972,6 @@ fn build_cloud(spec: &CloudSpec, nodes: &[WorkingNode], links: &[WorkingLink]) -
         .map(|node| AtlasLabelNote {
             id: node.id.clone(),
             title: node.title.clone(),
-            preview: node.preview.clone(),
             tags: node.tags.clone(),
             embedding: node.embedding.clone(),
         })
@@ -3829,6 +3999,7 @@ fn build_cloud(spec: &CloudSpec, nodes: &[WorkingNode], links: &[WorkingLink]) -
         level: spec.level,
         label,
         label_confidence: 0.0,
+        label_source: "pending".to_string(),
         note_count,
         density,
         color: cloud_color(&spec.id, spec.level),
@@ -4269,6 +4440,25 @@ fn parent_folder(note_path: &str) -> String {
         .unwrap_or_default()
 }
 
+fn ensure_rayon_uses_all_cores() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let threads = std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(1)
+            .max(1);
+        // Ignore error if another subsystem already built the global pool.
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|index| format!("atlas-rayon-{index}"))
+            .build_global();
+        eprintln!(
+            "[atlas] rayon threads requested={threads} active={}",
+            rayon::current_num_threads()
+        );
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4403,6 +4593,46 @@ mod tests {
             "members-1",
             "model-1"
         ));
+    }
+
+    #[test]
+    fn label_artifact_complete_defaults_true_for_legacy_payloads() {
+        let legacy = serde_json::json!({
+            "structuralGeneration": "structure-1",
+            "membershipFingerprint": "members-1",
+            "algorithmVersion": LABEL_ALGORITHM_VERSION,
+            "modelFingerprint": "model-1",
+            "labelGeneration": "labels-1",
+            "labels": {
+                "cloud-a": { "label": "garden", "confidence": 0.9, "source": "keybert" }
+            }
+        });
+        let artifact: AtlasLabelGenerationArtifact =
+            serde_json::from_value(legacy).expect("legacy artifact");
+        assert!(artifact.complete);
+        assert_eq!(artifact.labels.len(), 1);
+
+        let incomplete = AtlasLabelGenerationArtifact {
+            structural_generation: "structure-1".to_string(),
+            membership_fingerprint: "members-1".to_string(),
+            algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
+            model_fingerprint: "model-1".to_string(),
+            label_generation: "labels-1".to_string(),
+            labels: HashMap::from([(
+                "cloud-a".to_string(),
+                AtlasPublishedLabel {
+                    label: "garden".to_string(),
+                    confidence: 0.9,
+                    source: "keybert".to_string(),
+                },
+            )]),
+            complete: false,
+        };
+        let encoded = serde_json::to_value(&incomplete).expect("encode");
+        assert_eq!(encoded["complete"], false);
+        let roundtrip: AtlasLabelGenerationArtifact =
+            serde_json::from_value(encoded).expect("roundtrip");
+        assert!(!roundtrip.complete);
     }
 
     #[test]

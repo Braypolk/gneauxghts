@@ -251,7 +251,9 @@
 
   function cloudLabel(id: string | null) {
     if (!id) return 'None';
-    return cloudById.get(id)?.label ?? id;
+    const cloud = cloudById.get(id);
+    if (!cloud) return id;
+    return formatCloudLabelText(cloud);
   }
 
   function truncateAtlasLabel(label: string) {
@@ -260,14 +262,26 @@
     return `${normalized.slice(0, NOTE_LABEL_MAX_LENGTH - 3).trimEnd()}...`;
   }
 
-  function truncateCloudLabel(label: string) {
-    const normalized = label.trim();
-    if (normalized.length <= CLOUD_LABEL_MAX_LENGTH) return normalized;
-    return `${normalized.slice(0, CLOUD_LABEL_MAX_LENGTH - 3).trimEnd()}...`;
+  function truncateCloudLabel(cloud: AtlasCloud) {
+    const raw = formatCloudLabelText(cloud);
+    if (raw.length <= CLOUD_LABEL_MAX_LENGTH) return raw;
+    return `${raw.slice(0, CLOUD_LABEL_MAX_LENGTH - 3).trimEnd()}...`;
+  }
+
+  function formatCloudLabelText(cloud: AtlasCloud) {
+    const source = cloud.labelSource ?? 'pending';
+    if (source === 'pending') {
+      return 'Naming…';
+    }
+    const base = (cloud.label ?? 'Semantic cloud').trim();
+    if (source === 'medoid') {
+      return `~ ${base}`;
+    }
+    return base;
   }
 
   function getCloudLabelSize(cloud: AtlasCloud) {
-    const label = cloud.label ?? 'Semantic cloud';
+    const label = formatCloudLabelText(cloud);
     const baseSize = cloud.parentId ? 11 : 14;
     return label.length > 16 ? baseSize - 1 : baseSize;
   }
@@ -430,16 +444,22 @@
           getText: [labelRenderKey],
           getSize: [labelRenderKey]
         },
-        getText: (cloud: AtlasCloud) => truncateCloudLabel(cloud.label ?? 'Semantic cloud'),
+        getText: (cloud: AtlasCloud) => truncateCloudLabel(cloud),
         getSize: getCloudLabelSize,
         sizeUnits: 'pixels',
         getColor: (cloud: AtlasCloud) => {
-          const labelColor = cloud.id === selectedCloudId || cloud.id === hoveredCloudId ? colors.cloudLabel : colors.cloudLabelMuted;
+          const source = cloud.labelSource ?? 'pending';
+          const base =
+            cloud.id === selectedCloudId || cloud.id === hoveredCloudId
+              ? colors.cloudLabel
+              : colors.cloudLabelMuted;
+          const sourceAlpha =
+            source === 'keybert' ? 1 : source === 'medoid' ? 0.72 : 0.55;
           return [
-            labelColor[0],
-            labelColor[1],
-            labelColor[2],
-            Math.round(labelColor[3] * atlas.cloudSearchOpacity(cloud))
+            base[0],
+            base[1],
+            base[2],
+            Math.round(base[3] * sourceAlpha * atlas.cloudSearchOpacity(cloud))
           ];
         },
         getTextAnchor: 'middle',
@@ -946,9 +966,14 @@
     <aside class="absolute bottom-24 right-4 z-20 w-[min(22rem,calc(100vw-2rem))] rounded-[1.5rem] border border-border/80 bg-card/90 p-4 shadow-lg backdrop-blur-md">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <p class="text-sm font-semibold">{atlas.selectedCloud.label ?? 'Semantic cloud'}</p>
+          <p class="text-sm font-semibold">{formatCloudLabelText(atlas.selectedCloud)}</p>
           <p class="mt-1 text-xs text-muted-foreground">
             {atlas.selectedCloud.noteCount} notes · {Math.round(atlas.selectedCloud.density * 100)}% density
+            {#if (atlas.selectedCloud.labelSource ?? 'pending') === 'pending'}
+              · naming in progress
+            {:else if atlas.selectedCloud.labelSource === 'medoid'}
+              · title fallback
+            {/if}
           </p>
         </div>
         <button

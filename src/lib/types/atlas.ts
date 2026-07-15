@@ -67,6 +67,8 @@ export interface AtlasCloud {
   level: number;
   label: string | null;
   labelConfidence: number;
+  /** pending = structural placeholder, keybert = content label, medoid = title/filename fallback */
+  labelSource: 'pending' | 'keybert' | 'medoid';
   noteCount: number;
   density: number;
   color: [number, number, number, number];

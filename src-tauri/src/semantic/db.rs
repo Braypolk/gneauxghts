@@ -35,6 +35,16 @@ pub(crate) struct StoredChunkRow {
     pub(crate) block_anchor: Option<String>,
 }
 
+/// Chunk payload used by Atlas content-based cloud labeling.
+#[derive(Clone, Debug)]
+pub(crate) struct AtlasLabelChunk {
+    pub(crate) note_path: String,
+    pub(crate) ordinal: usize,
+    pub(crate) section_label: String,
+    pub(crate) text: String,
+    pub(crate) embedding: Vec<f32>,
+}
+
 pub(crate) struct StoredNoteEmbedding {
     pub(crate) note_path: String,
     pub(crate) embedding: Vec<f32>,
@@ -937,6 +947,56 @@ where
     }
 
     Ok(())
+}
+
+/// Load chunk text + embeddings for Atlas label candidate selection.
+pub(crate) fn load_chunks_for_note_paths(
+    connection: &Connection,
+    note_paths: &[String],
+) -> Result<HashMap<String, Vec<AtlasLabelChunk>>, String> {
+    let mut output: HashMap<String, Vec<AtlasLabelChunk>> = HashMap::new();
+    if note_paths.is_empty() {
+        return Ok(output);
+    }
+
+    let mut seen = HashSet::new();
+    let paths = note_paths
+        .iter()
+        .filter(|path| seen.insert(path.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    for batch in paths.chunks(400) {
+        let placeholders = std::iter::repeat_n("?", batch.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "
+            SELECT note_path, ordinal, section_label, text, embedding_blob
+            FROM chunks
+            WHERE note_path IN ({placeholders})
+            ORDER BY note_path, ordinal
+            "
+        );
+        let mut statement = connection.prepare(&sql).map_err(|err| err.to_string())?;
+        let params = rusqlite::params_from_iter(batch.iter());
+        let mut rows = statement.query(params).map_err(|err| err.to_string())?;
+        while let Some(row) = rows.next().map_err(|err| err.to_string())? {
+            let note_path = row.get::<_, String>(0).map_err(|err| err.to_string())?;
+            let chunk = AtlasLabelChunk {
+                note_path: note_path.clone(),
+                ordinal: row.get::<_, usize>(1).map_err(|err| err.to_string())?,
+                section_label: row.get::<_, String>(2).map_err(|err| err.to_string())?,
+                text: row.get::<_, String>(3).map_err(|err| err.to_string())?,
+                embedding: deserialize_embedding(
+                    &row.get::<_, Vec<u8>>(4).map_err(|err| err.to_string())?,
+                ),
+            };
+            output.entry(note_path).or_default().push(chunk);
+        }
+    }
+
+    Ok(output)
 }
 
 pub(crate) fn load_chunks_by_ann_labels(

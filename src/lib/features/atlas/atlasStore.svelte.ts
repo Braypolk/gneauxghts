@@ -585,7 +585,7 @@ export function isAtlasResponsePending(response: VaultAtlasResponse | null): boo
 export function atlasLabelRenderKey(response: VaultAtlasResponse | null): string {
   if (!response) return '';
   return `${response.labelGeneration ?? 'pending'}:${response.clouds
-    .map((cloud) => `${cloud.id}=${cloud.label ?? ''}`)
+    .map((cloud) => `${cloud.id}=${cloud.labelSource ?? 'pending'}:${cloud.label ?? ''}`)
     .join('|')}`;
 }
 

@@ -247,6 +247,11 @@ impl JinaLlamaEmbeddingProvider {
             command.env("LLAMA_OFFLINE", "1");
         }
         let ModelSource::LocalFile(model_path) = model_source;
+        let thread_count = resolve_llama_thread_count();
+        let parallel_slots = resolve_llama_parallel_slots(thread_count);
+        eprintln!(
+            "[embed] spawning llama-server threads={thread_count} parallel_slots={parallel_slots}"
+        );
         command.arg("-m").arg(model_path);
         let mut child = command
             .arg("--embeddings")
@@ -258,6 +263,19 @@ impl JinaLlamaEmbeddingProvider {
             .arg(port.to_string())
             .arg("--ctx-size")
             .arg(resolve_llama_ctx_size().to_string())
+            // Use all cores for both decode and prompt/embed batch work.
+            .arg("--threads")
+            .arg(thread_count.to_string())
+            .arg("--threads-batch")
+            .arg(thread_count.to_string())
+            // Slots for concurrent HTTP; labeler prefers one large batch at a
+            // time so this mainly helps search/index overlap.
+            .arg("--parallel")
+            .arg(parallel_slots.to_string())
+            // Prefer GPU offload on Apple Silicon / CUDA hosts. Harmless no-op
+            // when no accelerator is available (falls back to CPU threads).
+            .arg("-ngl")
+            .arg("99")
             // Suppress llama-server's debug-level chatter (the per-request
             // `srv update:` prompt-cache dumps that otherwise dominate the log).
             // Warnings, errors and the request log are still emitted.
@@ -1093,6 +1111,31 @@ fn resolve_llama_ctx_size() -> u32 {
         .unwrap_or(DEFAULT_LLAMA_CTX_SIZE)
 }
 
+/// CPU threads for llama-server (`--threads` / `--threads-batch`). Defaults to
+/// all logical cores; override with `GNEAUXGHTS_LLAMA_THREADS`.
+fn resolve_llama_thread_count() -> usize {
+    env::var("GNEAUXGHTS_LLAMA_THREADS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|threads| *threads >= 1)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|value| value.get())
+                .unwrap_or(1)
+        })
+}
+
+/// Concurrent request slots (`--parallel`). Defaults to `min(4, threads)` so
+/// embed HTTP batches can overlap without exploding memory; override with
+/// `GNEAUXGHTS_LLAMA_PARALLEL`.
+fn resolve_llama_parallel_slots(thread_count: usize) -> usize {
+    env::var("GNEAUXGHTS_LLAMA_PARALLEL")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|slots| *slots >= 1)
+        .unwrap_or_else(|| thread_count.min(4).max(1))
+}
+
 fn find_open_port() -> Result<u16, String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|err| err.to_string())?;
     listener
@@ -1260,6 +1303,35 @@ mod tests {
         match previous {
             Some(value) => env::set_var(key, value),
             None => env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn resolve_llama_thread_and_parallel_defaults() {
+        let key_threads = "GNEAUXGHTS_LLAMA_THREADS";
+        let key_parallel = "GNEAUXGHTS_LLAMA_PARALLEL";
+        let previous_threads = env::var_os(key_threads);
+        let previous_parallel = env::var_os(key_parallel);
+        env::remove_var(key_threads);
+        env::remove_var(key_parallel);
+
+        let threads = resolve_llama_thread_count();
+        assert!(threads >= 1);
+        assert_eq!(resolve_llama_parallel_slots(8), 4);
+        assert_eq!(resolve_llama_parallel_slots(2), 2);
+
+        env::set_var(key_threads, "6");
+        env::set_var(key_parallel, "3");
+        assert_eq!(resolve_llama_thread_count(), 6);
+        assert_eq!(resolve_llama_parallel_slots(6), 3);
+
+        match previous_threads {
+            Some(value) => env::set_var(key_threads, value),
+            None => env::remove_var(key_threads),
+        }
+        match previous_parallel {
+            Some(value) => env::set_var(key_parallel, value),
+            None => env::remove_var(key_parallel),
         }
     }
 }

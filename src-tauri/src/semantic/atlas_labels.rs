@@ -1,73 +1,212 @@
 use super::{
     atlas::{AtlasCloud, AtlasNode},
-    db::{load_atlas_label_embeddings, save_atlas_label_embeddings},
+    db::{
+        load_atlas_label_embeddings, load_chunks_for_note_paths, save_atlas_label_embeddings,
+        AtlasLabelChunk,
+    },
     embed::{EmbeddingInputKind, EmbeddingProvider},
     similarity::cosine_similarity,
 };
 use rusqlite::Connection;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
-pub(crate) const LABEL_ALGORITHM_VERSION: &str = "keybert-atlas-v5";
-pub(crate) const MEDOID_NOTE_LIMIT: usize = 3;
-pub(crate) const CANDIDATES_PER_CLOUD: usize = 48;
-pub(crate) const GLOBAL_UNIQUE_CANDIDATE_LIMIT: usize = 256;
-pub(crate) const EMBEDDING_BATCH_SIZE: usize = 32;
-/// Reject unigrams that appear in more than this fraction of vault notes.
-/// This only catches terms that are common in titles/previews/tags. Sparse
-/// titles often omit connectors, so ranking also uses a null-centroid residual.
-const MAX_DOCUMENT_FREQUENCY_RATIO: f32 = 0.25;
-/// Title/preview unigrams whose cloud residual is below this are treated as
-/// generic filler (e.g. "from", "with") even when rare in the vault.
-const MIN_TITLE_UNIGRAM_RESIDUAL: f32 = 0.12;
+pub(crate) const LABEL_ALGORITHM_VERSION: &str = "chunk-keybert-atlas-v7";
+/// Texts per llama-server HTTP call. Larger batches keep `--threads-batch`
+/// busy inside one request; concurrent HTTP calls rarely help on Metal.
+pub(crate) const EMBEDDING_BATCH_SIZE: usize = 128;
+/// Soft per-cloud candidate budget: `clamp(MIN, members * SCALE, MAX)`.
+const CANDIDATES_PER_CLOUD_MIN: usize = 24;
+const CANDIDATES_PER_CLOUD_MAX: usize = 64;
+const CANDIDATES_PER_MEMBER: usize = 4;
+const CHUNKS_PER_CLOUD: usize = 12;
+const CHUNKS_PER_NOTE: usize = 3;
+/// Reject unigrams that appear in more than this fraction of selected
+/// cloud-content documents (centroid-nearest chunks across the vault).
+const MAX_DOCUMENT_FREQUENCY_RATIO: f32 = 0.35;
+/// Drop body/heading unigrams whose cloud residual is below this. Function-word
+/// embeddings sit near the vault average, so their residual collapses.
+const MIN_CONTENT_UNIGRAM_RESIDUAL: f32 = 0.05;
+
+const GENERIC_SECTION_LABELS: &[&str] = &["Title", "Overview", "Remembered passage"];
+
+/// Closed-class words (sorted for binary search). Classic KeyBERT drops these
+/// via `CountVectorizer(stop_words='english')` before embedding; DF alone is
+/// not enough because short connectors still embed and can beat weak phrases.
+const FUNCTION_WORDS: &[&str] = &[
+    "about",
+    "after",
+    "again",
+    "against",
+    "all",
+    "also",
+    "among",
+    "and",
+    "another",
+    "any",
+    "anyone",
+    "are",
+    "because",
+    "been",
+    "before",
+    "being",
+    "between",
+    "both",
+    "but",
+    "can",
+    "could",
+    "did",
+    "during",
+    "each",
+    "every",
+    "everyone",
+    "everything",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "her",
+    "here",
+    "him",
+    "his",
+    "how",
+    "however",
+    "into",
+    "its",
+    "just",
+    "more",
+    "most",
+    "much",
+    "not",
+    "nothing",
+    "once",
+    "one",
+    "only",
+    "other",
+    "our",
+    "out",
+    "over",
+    "same",
+    "she",
+    "should",
+    "some",
+    "someone",
+    "something",
+    "such",
+    "than",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "there",
+    "therefore",
+    "these",
+    "they",
+    "thing",
+    "things",
+    "this",
+    "those",
+    "through",
+    "too",
+    "under",
+    "upon",
+    "very",
+    "was",
+    "were",
+    "what",
+    "whatever",
+    "when",
+    "whenever",
+    "where",
+    "which",
+    "while",
+    "who",
+    "will",
+    "with",
+    "within",
+    "without",
+    "would",
+    "you",
+    "your",
+];
+
+fn is_function_word(normalized: &str) -> bool {
+    if normalized.len() <= 2 {
+        return matches!(
+            normalized,
+            "a" | "an"
+                | "as"
+                | "at"
+                | "be"
+                | "by"
+                | "do"
+                | "if"
+                | "in"
+                | "is"
+                | "it"
+                | "me"
+                | "my"
+                | "no"
+                | "of"
+                | "on"
+                | "or"
+                | "so"
+                | "to"
+                | "up"
+                | "us"
+                | "we"
+        );
+    }
+    FUNCTION_WORDS.binary_search(&normalized).is_ok()
+}
+
+fn phrase_has_content_token(normalized: &str) -> bool {
+    normalized
+        .split_whitespace()
+        .any(|token| is_candidate_token(token) && !is_function_word(token))
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct AtlasLabelNote {
     pub(crate) id: String,
     pub(crate) title: String,
-    pub(crate) preview: String,
     pub(crate) tags: Vec<String>,
     pub(crate) embedding: Vec<f32>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct DocumentFrequency {
-    note_count: usize,
+    document_count: usize,
     term_frequency: HashMap<String, usize>,
 }
 
 impl DocumentFrequency {
-    fn from_notes(notes: &HashMap<String, AtlasLabelNote>) -> Self {
+    fn from_documents(documents: &[String]) -> Self {
         let mut term_frequency = HashMap::new();
-        for note in notes.values() {
+        for document in documents {
             let mut terms = HashSet::new();
-            collect_document_terms(&note.title, &mut terms);
-            collect_document_terms(&note.preview, &mut terms);
-            for tag in &note.tags {
-                collect_document_terms(tag, &mut terms);
-            }
+            collect_document_terms(document, &mut terms);
             for term in terms {
                 *term_frequency.entry(term).or_default() += 1;
             }
         }
         Self {
-            note_count: notes.len(),
+            document_count: documents.len(),
             term_frequency,
         }
     }
 
     fn is_ubiquitous(&self, term: &str) -> bool {
-        // Tiny vaults lack enough mass for a stable ratio; keep all candidates.
-        if self.note_count < 3 {
+        if self.document_count < 3 {
             return false;
         }
         let frequency = self.term_frequency.get(term).copied().unwrap_or_default();
-        // A term in a single note is rare by definition. Without this floor,
-        // vaults of size 3–4 treat every 1-note term as ubiquitous (1/3 > 0.25)
-        // and wipe the entire candidate set.
         if frequency < 2 {
             return false;
         }
-        (frequency as f32 / self.note_count as f32) > MAX_DOCUMENT_FREQUENCY_RATIO
+        (frequency as f32 / self.document_count as f32) > MAX_DOCUMENT_FREQUENCY_RATIO
     }
 }
 
@@ -88,28 +227,32 @@ fn is_candidate_token(normalized: &str) -> bool {
             .all(|character| character.is_ascii_digit())
 }
 
-fn mean_embedding(embeddings: &[Vec<f32>]) -> Vec<f32> {
-    let dimensions = embeddings.first().map(Vec::len).unwrap_or(0);
-    if dimensions == 0 {
-        return Vec::new();
-    }
-    let mut mean = vec![0.0; dimensions];
-    let mut count = 0usize;
-    for embedding in embeddings {
-        if embedding.len() != dimensions {
-            continue;
-        }
-        for (target, value) in mean.iter_mut().zip(embedding) {
-            *target += *value;
-        }
-        count += 1;
-    }
-    if count > 0 {
-        for value in &mut mean {
-            *value /= count as f32;
+fn is_generic_section_label(label: &str) -> bool {
+    GENERIC_SECTION_LABELS
+        .iter()
+        .any(|generic| generic.eq_ignore_ascii_case(label.trim()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CloudLabelSource {
+    Keybert,
+    Medoid,
+}
+
+impl CloudLabelSource {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Keybert => "keybert",
+            Self::Medoid => "medoid",
         }
     }
-    mean
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CloudLabelAssignment {
+    pub(crate) label: String,
+    pub(crate) confidence: f32,
+    pub(crate) source: CloudLabelSource,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -117,17 +260,21 @@ pub(crate) struct LabelPipelineMetrics {
     pub(crate) cloud_count: usize,
     pub(crate) candidate_count: usize,
     pub(crate) unique_candidate_count: usize,
+    pub(crate) chunk_count: usize,
+    pub(crate) selected_chunk_count: usize,
     pub(crate) cache_hit_count: usize,
     pub(crate) provider_text_count: usize,
     pub(crate) provider_batch_count: usize,
+    pub(crate) keybert_label_count: usize,
+    pub(crate) medoid_fallback_count: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct CandidateEvidence {
     display: String,
     source_priority: u8,
     note_ids: HashSet<String>,
-    word_count: usize,
+    term_frequency: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -135,7 +282,6 @@ struct ScoredCandidate {
     display: String,
     source_priority: u8,
     note_count: usize,
-    word_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -207,10 +353,8 @@ pub(crate) fn medoid_note_ids(notes: &[&AtlasLabelNote], limit: usize) -> Vec<St
     let mut ranked = notes
         .iter()
         .map(|note| {
-            (
-                note.id.clone(),
-                cosine_similarity(&centroid, &note.embedding),
-            )
+            let similarity = cosine_similarity(&centroid, &note.embedding);
+            (note.id.clone(), similarity)
         })
         .collect::<Vec<_>>();
     ranked.sort_by(|left, right| {
@@ -358,118 +502,196 @@ fn add_source_candidates(
     evidence: &mut HashMap<String, CandidateEvidence>,
 ) {
     let sanitized = sanitize_label_text(text);
-    // Drop vault-ubiquitous unigrams before building n-grams when DF has
-    // enough signal. Titles often omit connectors, so ranking still applies a
-    // null-centroid residual for rare-but-generic words.
-    let words = sanitized
+    // Single-word labels only: drop function words and vault-ubiquitous terms
+    // before collecting unigrams.
+    for word in sanitized
         .split_whitespace()
         .filter(|word| {
             let normalized = word.to_lowercase();
-            is_candidate_token(&normalized) && !document_frequency.is_ubiquitous(&normalized)
+            is_candidate_token(&normalized)
+                && !is_function_word(&normalized)
+                && !document_frequency.is_ubiquitous(&normalized)
         })
-        .take(48)
-        .collect::<Vec<_>>();
-    if words.is_empty() {
-        return;
-    }
-    let max_words = words.len().min(3);
-    for start in 0..words.len() {
-        for length in 1..=max_words.min(words.len() - start) {
-            let display = words[start..start + length].join(" ");
-            let normalized = normalized_phrase(&display);
-            if normalized.len() < 3 {
-                continue;
-            }
-            let entry = evidence
-                .entry(normalized)
-                .or_insert_with(|| CandidateEvidence {
-                    display,
-                    source_priority,
-                    note_ids: HashSet::new(),
-                    word_count: length,
-                });
-            entry.source_priority = entry.source_priority.min(source_priority);
-            entry.note_ids.insert(note_id.to_string());
-            entry.word_count = length;
+        .take(64)
+    {
+        let normalized = word.to_lowercase();
+        if normalized.len() < 3 || !phrase_has_content_token(&normalized) {
+            continue;
         }
+        let entry = evidence
+            .entry(normalized.clone())
+            .or_insert_with(|| CandidateEvidence {
+                display: normalized,
+                source_priority,
+                note_ids: HashSet::new(),
+                term_frequency: 0,
+            });
+        entry.source_priority = entry.source_priority.min(source_priority);
+        entry.note_ids.insert(note_id.to_string());
+        entry.term_frequency = entry.term_frequency.saturating_add(1);
     }
 }
 
-fn candidates_for_cloud(
+fn select_chunks_for_cloud(
+    cloud: &AtlasCloud,
+    chunks_by_note: &HashMap<String, Vec<AtlasLabelChunk>>,
+    centroid: &[f32],
+) -> Vec<AtlasLabelChunk> {
+    let mut selected = pick_chunks_for_cloud(cloud, chunks_by_note, centroid, false);
+    // Short notes often only have a Title chunk; still mine that text so the
+    // cloud is not forced straight to a medoid filename fallback.
+    if selected.is_empty() {
+        selected = pick_chunks_for_cloud(cloud, chunks_by_note, centroid, true);
+    }
+    selected
+}
+
+fn pick_chunks_for_cloud(
+    cloud: &AtlasCloud,
+    chunks_by_note: &HashMap<String, Vec<AtlasLabelChunk>>,
+    centroid: &[f32],
+    include_title: bool,
+) -> Vec<AtlasLabelChunk> {
+    let mut ranked = Vec::new();
+    let mut unscored = Vec::new();
+    for member_id in &cloud.member_node_ids {
+        let Some(chunks) = chunks_by_note.get(member_id) else {
+            continue;
+        };
+        for chunk in chunks {
+            if !include_title && chunk.section_label.eq_ignore_ascii_case("Title") {
+                continue;
+            }
+            if chunk.text.trim().is_empty() {
+                continue;
+            }
+            if !centroid.is_empty()
+                && !chunk.embedding.is_empty()
+                && chunk.embedding.len() == centroid.len()
+            {
+                let similarity = cosine_similarity(centroid, &chunk.embedding);
+                ranked.push((similarity, chunk));
+            } else {
+                unscored.push(chunk);
+            }
+        }
+    }
+    ranked.sort_by(|left, right| {
+        right
+            .0
+            .total_cmp(&left.0)
+            .then_with(|| left.1.note_path.cmp(&right.1.note_path))
+            .then_with(|| left.1.ordinal.cmp(&right.1.ordinal))
+    });
+
+    let had_scored = !ranked.is_empty();
+    let mut ordered = ranked
+        .into_iter()
+        .map(|(_, chunk)| chunk)
+        .chain(unscored)
+        .collect::<Vec<_>>();
+    if !had_scored {
+        ordered.sort_by(|left, right| {
+            left.note_path
+                .cmp(&right.note_path)
+                .then_with(|| left.ordinal.cmp(&right.ordinal))
+        });
+    }
+
+    let mut per_note = HashMap::<&str, usize>::new();
+    let mut selected = Vec::new();
+    for chunk in ordered {
+        let count = per_note.entry(chunk.note_path.as_str()).or_insert(0);
+        if *count >= CHUNKS_PER_NOTE {
+            continue;
+        }
+        *count += 1;
+        selected.push(chunk.clone());
+        if selected.len() >= CHUNKS_PER_CLOUD {
+            break;
+        }
+    }
+    selected
+}
+
+fn candidate_budget_for_cloud(member_count: usize) -> usize {
+    let scaled = member_count.saturating_mul(CANDIDATES_PER_MEMBER);
+    scaled.clamp(CANDIDATES_PER_CLOUD_MIN, CANDIDATES_PER_CLOUD_MAX)
+}
+
+fn candidates_from_selected_chunks(
     cloud: &AtlasCloud,
     notes_by_id: &HashMap<String, AtlasLabelNote>,
+    selected: &[AtlasLabelChunk],
     document_frequency: &DocumentFrequency,
+    centroid: Vec<f32>,
 ) -> CloudCandidates {
-    let members = cloud
-        .member_node_ids
-        .iter()
-        .filter_map(|id| notes_by_id.get(id))
-        .collect::<Vec<_>>();
-    let medoid_ids = medoid_note_ids(&members, MEDOID_NOTE_LIMIT)
-        .into_iter()
-        .collect::<HashSet<_>>();
     let mut evidence = HashMap::new();
-    for note in &members {
-        for tag in &note.tags {
-            add_source_candidates(tag, &note.id, 0, document_frequency, &mut evidence);
+    for note_id in &cloud.member_node_ids {
+        if let Some(note) = notes_by_id.get(note_id) {
+            for tag in &note.tags {
+                add_source_candidates(tag, note_id, 0, document_frequency, &mut evidence);
+            }
         }
-        add_source_candidates(&note.title, &note.id, 1, document_frequency, &mut evidence);
-        if medoid_ids.contains(&note.id) {
+    }
+    for chunk in selected {
+        if !is_generic_section_label(&chunk.section_label) {
             add_source_candidates(
-                &note.preview,
-                &note.id,
-                2,
+                &chunk.section_label,
+                &chunk.note_path,
+                1,
                 document_frequency,
                 &mut evidence,
             );
         }
+        add_source_candidates(
+            &chunk.text,
+            &chunk.note_path,
+            2,
+            document_frequency,
+            &mut evidence,
+        );
     }
+
     let mut ranked = evidence.into_iter().collect::<Vec<_>>();
     ranked.sort_by(|left, right| {
         left.1
             .source_priority
             .cmp(&right.1.source_priority)
             .then_with(|| right.1.note_ids.len().cmp(&left.1.note_ids.len()))
-            .then_with(|| right.1.word_count.cmp(&left.1.word_count))
+            .then_with(|| right.1.term_frequency.cmp(&left.1.term_frequency))
             .then_with(|| left.0.cmp(&right.0))
     });
+
+    let budget = candidate_budget_for_cloud(cloud.member_node_ids.len());
     CloudCandidates {
         cloud_id: cloud.id.clone(),
-        centroid: cloud_centroid(&members),
+        centroid,
         phrases: ranked
             .into_iter()
-            .filter(|(_, value)| {
-                // Single-word title/preview terms need cross-note support.
-                // Tags may still label a cloud from one distinctive note.
-                value.word_count > 1 || value.source_priority == 0 || value.note_ids.len() >= 2
-            })
-            .take(CANDIDATES_PER_CLOUD)
+            .take(budget)
             .map(|(_, value)| ScoredCandidate {
                 display: value.display,
                 source_priority: value.source_priority,
                 note_count: value.note_ids.len(),
-                word_count: value.word_count,
             })
             .collect(),
     }
 }
 
-fn globally_embedded_candidates(candidate_clouds: &[CloudCandidates]) -> Vec<String> {
+/// Deduplicate every cloud's candidate phrases for embedding. Cost scales with
+/// cloud count and each cloud's member-scaled budget, reduced by phrase overlap;
+/// there is no fixed vault-wide ceiling that starves later clouds.
+fn phrases_to_embed(candidate_clouds: &[CloudCandidates]) -> Vec<String> {
     let mut unique = Vec::new();
     let mut seen = HashSet::new();
-    for phrase in candidate_clouds
-        .iter()
-        .flat_map(|cloud| cloud.phrases.iter().map(|candidate| &candidate.display))
-    {
-        let key = normalized_phrase(phrase);
-        if seen.contains(&key) {
-            continue;
+    for cloud in candidate_clouds {
+        for candidate in &cloud.phrases {
+            let key = normalized_phrase(&candidate.display);
+            if seen.insert(key) {
+                unique.push(candidate.display.clone());
+            }
         }
-        if seen.len() >= GLOBAL_UNIQUE_CANDIDATE_LIMIT {
-            break;
-        }
-        seen.insert(key);
-        unique.push(phrase.clone());
     }
     unique
 }
@@ -479,26 +701,174 @@ fn candidate_rank_score(
     null_similarity: f32,
     candidate: &ScoredCandidate,
 ) -> f32 {
-    // Prefer phrases that match the cloud more than generic vault meaning.
-    // Connectors embed near the vault average, so their residual collapses.
     let residual = cloud_similarity - null_similarity;
-    let phrase_bonus = candidate.word_count.saturating_sub(1) as f32 * 0.08;
-    let coverage_bonus = ((candidate.note_count as f32).ln_1p()) * 0.04;
+    residual + lexical_prior(candidate)
+}
+
+fn lexical_prior(candidate: &ScoredCandidate) -> f32 {
+    let coverage_bonus = ((candidate.note_count as f32).ln_1p()) * 0.02;
     let tag_bonus = if candidate.source_priority == 0 {
         0.03
+    } else if candidate.source_priority == 1 {
+        0.015
     } else {
         0.0
     };
-    residual + phrase_bonus + coverage_bonus + tag_bonus
+    coverage_bonus + tag_bonus
+}
+
+fn mean_embedding(embeddings: &[Vec<f32>]) -> Vec<f32> {
+    let dimensions = embeddings.first().map(Vec::len).unwrap_or(0);
+    if dimensions == 0 {
+        return Vec::new();
+    }
+    let mut mean = vec![0.0; dimensions];
+    let mut count = 0usize;
+    for embedding in embeddings {
+        if embedding.len() != dimensions {
+            continue;
+        }
+        for (target, value) in mean.iter_mut().zip(embedding) {
+            *target += *value;
+        }
+        count += 1;
+    }
+    if count > 0 {
+        for value in &mut mean {
+            *value /= count as f32;
+        }
+    }
+    mean
+}
+
+fn assign_unique_labels(
+    ranked_by_cloud: Vec<(String, Vec<(String, f32)>)>,
+) -> HashMap<String, CloudLabelAssignment> {
+    let mut used = HashSet::new();
+    let mut output = HashMap::new();
+    for (cloud_id, ranked) in ranked_by_cloud {
+        if let Some(assignment) = take_unique_label(&ranked, &used) {
+            used.insert(normalized_phrase(&assignment.label));
+            output.insert(cloud_id, assignment);
+        }
+    }
+    output
+}
+
+fn take_unique_label(
+    ranked: &[(String, f32)],
+    used: &HashSet<String>,
+) -> Option<CloudLabelAssignment> {
+    let choice = ranked
+        .iter()
+        .find(|(phrase, _)| !used.contains(&normalized_phrase(phrase)))?;
+    Some(CloudLabelAssignment {
+        // Canonical lowercase so HubSpot / hubspot cannot both win.
+        label: normalized_phrase(&choice.0),
+        confidence: choice.1,
+        source: CloudLabelSource::Keybert,
+    })
+}
+
+fn unused_medoid_placeholder(
+    notes: &[&AtlasLabelNote],
+    used: &HashSet<String>,
+) -> Option<String> {
+    let limit = notes.len().max(1);
+    for note_id in medoid_note_ids(notes, limit) {
+        let Some(title) = notes
+            .iter()
+            .find(|note| note.id == note_id)
+            .map(|note| sanitize_label_text(&note.title))
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        if !used.contains(&normalized_phrase(&title)) {
+            return Some(title);
+        }
+    }
+    None
+}
+
+fn rank_cloud_phrases(
+    phrases: &[ScoredCandidate],
+    centroid: &[f32],
+    null_centroid: &[f32],
+    embeddings: &HashMap<String, Vec<f32>>,
+) -> Vec<(String, f32)> {
+    let mut ranked = phrases
+        .iter()
+        .filter_map(|candidate| {
+            let key = normalized_phrase(&candidate.display);
+            if !phrase_has_content_token(&key) {
+                return None;
+            }
+            let embedding = embeddings.get(&key)?;
+            if centroid.is_empty() || embedding.len() != centroid.len() {
+                return None;
+            }
+            let cloud_similarity = cosine_similarity(centroid, embedding);
+            let null_similarity = if null_centroid.is_empty() || embedding.len() != null_centroid.len()
+            {
+                0.0
+            } else {
+                cosine_similarity(null_centroid, embedding)
+            };
+            // Keep low-residual words in the list so uniqueness can still
+            // pick a runner-up instead of falling back to a note title.
+            let mut score = candidate_rank_score(cloud_similarity, null_similarity, candidate);
+            let residual = cloud_similarity - null_similarity;
+            if candidate.source_priority > 0 && residual < MIN_CONTENT_UNIGRAM_RESIDUAL {
+                score -= MIN_CONTENT_UNIGRAM_RESIDUAL;
+            }
+            Some((candidate.display.clone(), score))
+        })
+        .collect::<Vec<_>>();
+
+    if ranked.is_empty() {
+        ranked = phrases
+            .iter()
+            .filter(|candidate| phrase_has_content_token(&normalized_phrase(&candidate.display)))
+            .map(|candidate| {
+                let score = 0.04 + lexical_prior(candidate);
+                (candidate.display.clone(), score)
+            })
+            .collect();
+    }
+
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .total_cmp(&left.1)
+            .then_with(|| normalized_phrase(&left.0).cmp(&normalized_phrase(&right.0)))
+    });
+    ranked
 }
 
 pub(crate) fn generate_labels(
     connection: &mut Connection,
-    provider: &dyn EmbeddingProvider,
+    provider: &(dyn EmbeddingProvider + Sync),
     clouds: &[AtlasCloud],
     nodes: &[AtlasNode],
     note_embeddings: &HashMap<String, Vec<f32>>,
-) -> Result<(HashMap<String, (String, f32)>, LabelPipelineMetrics), String> {
+) -> Result<(HashMap<String, CloudLabelAssignment>, LabelPipelineMetrics), String> {
+    generate_labels_progressive(connection, provider, clouds, nodes, note_embeddings, |_, _| {
+        Ok(())
+    })
+}
+
+pub(crate) fn generate_labels_progressive<F>(
+    connection: &mut Connection,
+    provider: &(dyn EmbeddingProvider + Sync),
+    clouds: &[AtlasCloud],
+    nodes: &[AtlasNode],
+    note_embeddings: &HashMap<String, Vec<f32>>,
+    mut on_labeled: F,
+) -> Result<(HashMap<String, CloudLabelAssignment>, LabelPipelineMetrics), String>
+where
+    F: FnMut(&str, &CloudLabelAssignment) -> Result<(), String>,
+{
     let notes_by_id = nodes
         .iter()
         .filter_map(|node| {
@@ -507,34 +877,84 @@ pub(crate) fn generate_labels(
                 .map(|embedding| AtlasLabelNote {
                     id: node.id.clone(),
                     title: node.title.clone(),
-                    preview: node.preview.clone(),
                     tags: node.tags.clone(),
                     embedding: embedding.clone(),
                 })
         })
         .map(|note| (note.id.clone(), note))
         .collect::<HashMap<_, _>>();
-    let document_frequency = DocumentFrequency::from_notes(&notes_by_id);
+    let clouds_by_id = clouds
+        .iter()
+        .map(|cloud| (cloud.id.as_str(), cloud))
+        .collect::<HashMap<_, _>>();
+
+    let mut member_paths = HashSet::new();
+    for cloud in clouds {
+        for member in &cloud.member_node_ids {
+            member_paths.insert(member.clone());
+        }
+    }
+    let member_paths = member_paths.into_iter().collect::<Vec<_>>();
+    let chunks_by_note = load_chunks_for_note_paths(connection, &member_paths)?;
+    let chunk_count = chunks_by_note.values().map(Vec::len).sum();
+
+    // DF over all member body chunks (not only the selected subset) so common
+    // English connectors are reliably marked ubiquitous.
+    let mut corpus_documents = Vec::new();
+    for chunks in chunks_by_note.values() {
+        for chunk in chunks {
+            if chunk.section_label.eq_ignore_ascii_case("Title") {
+                continue;
+            }
+            if !chunk.text.trim().is_empty() {
+                corpus_documents.push(chunk.text.clone());
+            }
+            if !is_generic_section_label(&chunk.section_label) {
+                corpus_documents.push(chunk.section_label.clone());
+            }
+        }
+    }
+    let document_frequency = DocumentFrequency::from_documents(&corpus_documents);
     let null_centroid = mean_embedding(
         &notes_by_id
             .values()
             .map(|note| note.embedding.clone())
             .collect::<Vec<_>>(),
     );
-    let mut candidate_clouds = clouds
-        .iter()
-        .map(|cloud| candidates_for_cloud(cloud, &notes_by_id, &document_frequency))
+
+    let prepared = clouds
+        .par_iter()
+        .map(|cloud| {
+            let members = cloud
+                .member_node_ids
+                .iter()
+                .filter_map(|id| notes_by_id.get(id))
+                .collect::<Vec<_>>();
+            let centroid = cloud_centroid(&members);
+            let selected = select_chunks_for_cloud(cloud, &chunks_by_note, &centroid);
+            let selected_count = selected.len();
+            let candidates = candidates_from_selected_chunks(
+                cloud,
+                &notes_by_id,
+                &selected,
+                &document_frequency,
+                centroid,
+            );
+            (candidates, selected_count)
+        })
+        .collect::<Vec<_>>();
+    let selected_chunk_count = prepared.iter().map(|(_, count)| *count).sum::<usize>();
+    let mut candidate_clouds = prepared
+        .into_iter()
+        .map(|(candidates, _)| candidates)
         .collect::<Vec<_>>();
     candidate_clouds.sort_by(|left, right| left.cloud_id.cmp(&right.cloud_id));
+
     let candidate_count = candidate_clouds
         .iter()
         .map(|cloud| cloud.phrases.len())
         .sum();
-
-    // Budget provider work globally, without removing phrases from any cloud.
-    // A shared phrase is embedded once and every cloud ranks it through the
-    // shared normalized-key lookup below.
-    let unique = globally_embedded_candidates(&candidate_clouds);
+    let unique = phrases_to_embed(&candidate_clouds);
 
     let fingerprint = model_cache_fingerprint(provider);
     let normalized = unique
@@ -554,7 +974,11 @@ pub(crate) fn generate_labels(
         .filter(|(_, key)| !embeddings.contains_key(*key))
         .map(|(phrase, key)| (phrase.clone(), key.clone()))
         .collect::<Vec<_>>();
-    let mut provider_batches = 0usize;
+    let provider_batches = missing.chunks(EMBEDDING_BATCH_SIZE).len();
+    // Sequential HTTP batches on purpose: llama-server (especially Metal) already
+    // parallelizes inside a request via --threads/--threads-batch. Fan-out HTTP
+    // mostly queues on the same GPU/CPU pool and makes gneauxghts look idle.
+    let mut embedded_batches = Vec::with_capacity(provider_batches);
     for batch in missing.chunks(EMBEDDING_BATCH_SIZE) {
         let texts = batch
             .iter()
@@ -562,79 +986,110 @@ pub(crate) fn generate_labels(
             .collect::<Vec<_>>();
         let vectors = provider.embed_texts(&texts, EmbeddingInputKind::Document)?;
         if vectors.len() != batch.len() {
-            return Err("Atlas label embedding provider returned an unexpected count".to_string());
+            return Err(
+                "Atlas label embedding provider returned an unexpected count".to_string(),
+            );
         }
-        let rows = batch
-            .iter()
-            .zip(vectors)
-            .map(|((_, key), vector)| (key.clone(), vector))
-            .collect::<Vec<_>>();
+        embedded_batches.push(
+            batch
+                .iter()
+                .zip(vectors)
+                .map(|((_, key), vector)| (key.clone(), vector))
+                .collect::<Vec<_>>(),
+        );
+    }
+    for rows in embedded_batches {
         save_atlas_label_embeddings(connection, &rows, &fingerprint, LABEL_ALGORITHM_VERSION)?;
         embeddings.extend(rows);
-        provider_batches += 1;
     }
 
-    let mut ranked_by_cloud = Vec::new();
-    for cloud in candidate_clouds {
-        let mut ranked = cloud
-            .phrases
-            .into_iter()
-            .filter_map(|candidate| {
-                let key = normalized_phrase(&candidate.display);
-                let embedding = embeddings.get(&key)?;
-                let cloud_similarity = cosine_similarity(&cloud.centroid, embedding);
-                let null_similarity = cosine_similarity(&null_centroid, embedding);
-                let residual = cloud_similarity - null_similarity;
-                // Rare connectors still embed near the vault average. Drop them
-                // unless they are tags or multi-word phrases.
-                if candidate.word_count == 1
-                    && candidate.source_priority > 0
-                    && residual < MIN_TITLE_UNIGRAM_RESIDUAL
-                {
-                    return None;
-                }
-                let score = candidate_rank_score(cloud_similarity, null_similarity, &candidate);
-                Some((candidate.display, score))
+    let mut ranked_clouds = candidate_clouds
+        .into_par_iter()
+        .map(|cloud_candidates| {
+            let ranked = rank_cloud_phrases(
+                &cloud_candidates.phrases,
+                &cloud_candidates.centroid,
+                &null_centroid,
+                &embeddings,
+            );
+            (cloud_candidates.cloud_id, cloud_candidates.phrases, ranked)
+        })
+        .collect::<Vec<_>>();
+    ranked_clouds.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let mut used = HashSet::new();
+    let mut labels = HashMap::new();
+    let mut keybert_label_count = 0usize;
+    let mut medoid_fallback_count = 0usize;
+
+    for (cloud_id, phrases, ranked) in ranked_clouds {
+        let assignment = take_unique_label(&ranked, &used)
+            .or_else(|| {
+                // Top of the ranked list was already claimed; try any remaining
+                // unused candidate words before a medoid title.
+                let mut leftovers = phrases
+                    .iter()
+                    .filter(|candidate| {
+                        let key = normalized_phrase(&candidate.display);
+                        phrase_has_content_token(&key) && !used.contains(&key)
+                    })
+                    .map(|candidate| {
+                        let score = 0.02 + lexical_prior(candidate);
+                        (candidate.display.clone(), score)
+                    })
+                    .collect::<Vec<_>>();
+                leftovers.sort_by(|left, right| {
+                    right
+                        .1
+                        .total_cmp(&left.1)
+                        .then_with(|| {
+                            normalized_phrase(&left.0).cmp(&normalized_phrase(&right.0))
+                        })
+                });
+                take_unique_label(&leftovers, &used)
             })
-            .collect::<Vec<_>>();
-        ranked.sort_by(|left, right| {
-            right
-                .1
-                .total_cmp(&left.1)
-                .then_with(|| normalized_phrase(&left.0).cmp(&normalized_phrase(&right.0)))
-        });
-        ranked_by_cloud.push((cloud.cloud_id, ranked));
+            .or_else(|| {
+                let cloud = clouds_by_id.get(cloud_id.as_str())?;
+                let members = cloud
+                    .member_node_ids
+                    .iter()
+                    .filter_map(|id| notes_by_id.get(id))
+                    .collect::<Vec<_>>();
+                unused_medoid_placeholder(&members, &used).map(|placeholder| {
+                    CloudLabelAssignment {
+                        label: placeholder,
+                        confidence: 0.0,
+                        source: CloudLabelSource::Medoid,
+                    }
+                })
+            });
+
+        if let Some(assignment) = assignment {
+            used.insert(normalized_phrase(&assignment.label));
+            match assignment.source {
+                CloudLabelSource::Keybert => keybert_label_count += 1,
+                CloudLabelSource::Medoid => medoid_fallback_count += 1,
+            }
+            on_labeled(&cloud_id, &assignment)?;
+            labels.insert(cloud_id, assignment);
+        }
     }
-    let labels = assign_unique_labels(ranked_by_cloud);
+
     Ok((
         labels,
         LabelPipelineMetrics {
             cloud_count: clouds.len(),
             candidate_count,
             unique_candidate_count: unique.len(),
+            chunk_count,
+            selected_chunk_count,
             cache_hit_count: cached.len(),
             provider_text_count: missing.len(),
             provider_batch_count: provider_batches,
+            keybert_label_count,
+            medoid_fallback_count,
         },
     ))
-}
-
-fn assign_unique_labels(
-    ranked_by_cloud: Vec<(String, Vec<(String, f32)>)>,
-) -> HashMap<String, (String, f32)> {
-    let mut used = HashSet::new();
-    let mut output = HashMap::new();
-    for (cloud_id, ranked) in ranked_by_cloud {
-        let choice = ranked
-            .iter()
-            .find(|(phrase, _)| !used.contains(&normalized_phrase(phrase)))
-            .or_else(|| ranked.first());
-        if let Some((phrase, score)) = choice {
-            used.insert(normalized_phrase(phrase));
-            output.insert(cloud_id, (phrase.clone(), *score));
-        }
-    }
-    output
 }
 
 #[cfg(test)]
@@ -642,6 +1097,7 @@ mod tests {
     use super::*;
     use crate::{
         note::DocumentKind,
+        semantic::db::ensure_schema,
         semantic::embed::{ModelInfo, SemanticModelDownloadResult},
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -650,7 +1106,6 @@ mod tests {
         AtlasLabelNote {
             id: id.to_string(),
             title: title.to_string(),
-            preview: String::new(),
             tags: Vec::new(),
             embedding,
         }
@@ -691,10 +1146,20 @@ mod tests {
             Ok(texts
                 .iter()
                 .map(|text| {
-                    if text.to_lowercase().contains("garden") {
+                    let lower = text.to_lowercase();
+                    if lower.contains("garden")
+                        || lower.contains("soil")
+                        || lower.contains("compost")
+                        || lower.contains("vegetable")
+                    {
                         vec![1.0, 0.0]
-                    } else {
+                    } else if lower.contains("airport")
+                        || lower.contains("travel")
+                        || lower.contains("trip")
+                    {
                         vec![0.0, 1.0]
+                    } else {
+                        vec![0.5, 0.5]
                     }
                 })
                 .collect())
@@ -765,11 +1230,12 @@ mod tests {
 
     fn cloud(ids: &[&str]) -> AtlasCloud {
         AtlasCloud {
-            id: "cloud".to_string(),
+            id: format!("cloud-{}", ids.join("-")),
             parent_id: None,
             level: 0,
             label: None,
             label_confidence: 0.0,
+            label_source: "pending".to_string(),
             note_count: ids.len(),
             density: 0.0,
             color: [0; 4],
@@ -785,6 +1251,57 @@ mod tests {
         }
     }
 
+    fn serialize_embedding(values: &[f32]) -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect()
+    }
+
+    fn insert_chunk(
+        connection: &Connection,
+        note_path: &str,
+        ordinal: usize,
+        section_label: &str,
+        text: &str,
+        embedding: &[f32],
+    ) {
+        connection
+            .execute(
+                "
+                INSERT OR IGNORE INTO notes (
+                    path, title, modified_millis, content_hash, chunk_count, indexed_at_millis
+                ) VALUES (?1, ?1, 0, 'hash', 1, 0)
+                ",
+                [note_path],
+            )
+            .expect("note");
+        let ann_label = blake3::hash(format!("{note_path}\0{ordinal}").as_bytes()).as_bytes()[0]
+            as u64
+            | ((ordinal as u64) << 8)
+            | 1;
+        connection
+            .execute(
+                "
+                INSERT INTO chunks (
+                    note_path, ordinal, ann_label, section_label, text, text_hash,
+                    start_line, end_line, embedding_blob, embedding_dim, indexed_at_millis
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 1, ?7, ?8, 0)
+                ",
+                rusqlite::params![
+                    note_path,
+                    ordinal,
+                    ann_label,
+                    section_label,
+                    text,
+                    format!("hash-{note_path}-{ordinal}"),
+                    serialize_embedding(embedding),
+                    embedding.len(),
+                ],
+            )
+            .expect("chunk");
+    }
+
     #[test]
     fn sanitizes_urls_markdown_code_images_and_wikilinks() {
         let value = sanitize_label_text(
@@ -796,130 +1313,6 @@ mod tests {
         assert_eq!(value, "Keep recipe text Useful Alias bold words");
         assert!(!value.to_lowercase().contains("wprm"));
         assert!(!value.contains("https"));
-    }
-
-    #[test]
-    fn high_document_frequency_terms_never_become_label_candidates() {
-        let mut notes = HashMap::new();
-        for index in 0..8 {
-            let id = format!("filler-{index}");
-            notes.insert(
-                id.clone(),
-                note(
-                    &id,
-                    "After the notes from with updates about the day",
-                    vec![0.0, 1.0],
-                ),
-            );
-        }
-        notes.insert(
-            "a".to_string(),
-            note("a", "After the Meeting with Alice", vec![1.0, 0.0]),
-        );
-        notes.insert(
-            "b".to_string(),
-            note("b", "From the Notes with Bob", vec![0.9, 0.1]),
-        );
-        notes.insert(
-            "c".to_string(),
-            note("c", "With the Project after Launch", vec![0.8, 0.2]),
-        );
-
-        let document_frequency = DocumentFrequency::from_notes(&notes);
-        assert!(document_frequency.is_ubiquitous("the"));
-        assert!(document_frequency.is_ubiquitous("from"));
-        assert!(document_frequency.is_ubiquitous("with"));
-        assert!(document_frequency.is_ubiquitous("after"));
-        assert!(!document_frequency.is_ubiquitous("meeting"));
-        assert!(!document_frequency.is_ubiquitous("project"));
-
-        let candidates =
-            candidates_for_cloud(&cloud(&["a", "b", "c"]), &notes, &document_frequency);
-        let normalized = candidates
-            .phrases
-            .iter()
-            .map(|phrase| normalized_phrase(&phrase.display))
-            .collect::<HashSet<_>>();
-
-        for common in ["the", "from", "with", "after", "notes"] {
-            assert!(
-                !normalized.contains(common),
-                "high-DF term `{common}` should not be a candidate: {normalized:?}"
-            );
-        }
-        assert!(normalized.iter().any(|phrase| phrase.contains("meeting")));
-        assert!(normalized.iter().any(|phrase| phrase.contains("project")));
-        assert!(normalized.iter().any(|phrase| phrase.contains("alice")));
-    }
-
-    #[test]
-    fn null_centroid_residual_prefers_topic_over_generic_unigram() {
-        let topic = ScoredCandidate {
-            display: "Garden".to_string(),
-            source_priority: 1,
-            note_count: 3,
-            word_count: 1,
-        };
-        let connector = ScoredCandidate {
-            display: "From".to_string(),
-            source_priority: 1,
-            note_count: 1,
-            word_count: 1,
-        };
-        // Both are close to the cloud, but the connector is also close to the
-        // vault-wide average ("null") meaning.
-        let topic_score = candidate_rank_score(0.82, 0.20, &topic);
-        let connector_score = candidate_rank_score(0.80, 0.78, &connector);
-        assert!(topic_score > connector_score);
-    }
-
-    #[test]
-    fn singleton_title_unigrams_are_dropped_without_cross_note_support() {
-        let notes = [
-            note("a", "From Alice Meeting", vec![1.0, 0.0]),
-            note("b", "Bob Planning", vec![0.9, 0.1]),
-            note("c", "Carol Launch", vec![0.8, 0.2]),
-        ]
-        .into_iter()
-        .map(|note| (note.id.clone(), note))
-        .collect::<HashMap<_, _>>();
-        let document_frequency = DocumentFrequency::from_notes(&notes);
-        // Rare terms must not be treated as ubiquitous in small vaults.
-        assert!(!document_frequency.is_ubiquitous("from"));
-        assert!(!document_frequency.is_ubiquitous("alice"));
-        let candidates =
-            candidates_for_cloud(&cloud(&["a", "b", "c"]), &notes, &document_frequency);
-        let normalized = candidates
-            .phrases
-            .iter()
-            .map(|phrase| normalized_phrase(&phrase.display))
-            .collect::<HashSet<_>>();
-        assert!(!normalized.contains("from"));
-        assert!(!normalized.contains("alice"));
-        assert!(normalized.iter().any(|phrase| phrase.contains("alice")));
-    }
-
-    #[test]
-    fn weak_residual_title_unigrams_are_skipped_during_ranking() {
-        let topic = ScoredCandidate {
-            display: "Gardening".to_string(),
-            source_priority: 1,
-            note_count: 2,
-            word_count: 1,
-        };
-        let connector = ScoredCandidate {
-            display: "From".to_string(),
-            source_priority: 1,
-            note_count: 2,
-            word_count: 1,
-        };
-        assert!(candidate_rank_score(0.85, 0.20, &topic) > MIN_TITLE_UNIGRAM_RESIDUAL);
-        // Connector is near both cloud and vault average → residual collapses.
-        let connector_residual = 0.80 - 0.78;
-        assert!(connector_residual < MIN_TITLE_UNIGRAM_RESIDUAL);
-        assert!(
-            candidate_rank_score(0.85, 0.20, &topic) > candidate_rank_score(0.80, 0.78, &connector)
-        );
     }
 
     #[test]
@@ -946,143 +1339,168 @@ mod tests {
                 vec![("Shared".to_string(), 0.95), ("Second".to_string(), 0.7)],
             ),
         ]);
-        assert_eq!(assigned["a"].0, "Shared");
-        assert_eq!(assigned["b"].0, "Second");
+        assert_eq!(assigned["a"].label, "shared");
+        assert_eq!(assigned["a"].source, CloudLabelSource::Keybert);
+        assert_eq!(assigned["b"].label, "second");
+        assert_eq!(assigned["b"].source, CloudLabelSource::Keybert);
     }
 
     #[test]
-    fn highest_similarity_wins_without_threshold() {
-        let assigned = assign_unique_labels(vec![(
-            "a".to_string(),
-            vec![
-                ("Tiny winner".to_string(), -0.1),
-                ("Other".to_string(), -0.2),
-            ],
-        )]);
-        assert_eq!(assigned["a"], ("Tiny winner".to_string(), -0.1));
-    }
-
-    #[test]
-    fn model_and_version_are_part_of_cache_identity() {
-        assert_ne!(
-            format!("model-a:{LABEL_ALGORITHM_VERSION}"),
-            format!("model-b:{LABEL_ALGORITHM_VERSION}")
-        );
-        assert_ne!(
-            format!("model-a:{LABEL_ALGORITHM_VERSION}"),
-            "model-a:keybert-atlas-v999"
-        );
-    }
-
-    #[test]
-    fn candidate_budget_is_bounded_and_globally_deduplicated() {
-        let notes = (0..20)
-            .map(|index| {
-                note(
-                    &format!("n{index}"),
-                    &format!("Topic{index} Subtopic{index} Detail{index} Extra{index} Item{index}"),
-                    vec![1.0, 0.0],
-                )
-            })
-            .map(|note| (note.id.clone(), note))
-            .collect::<HashMap<_, _>>();
-        let document_frequency = DocumentFrequency::from_notes(&notes);
-        let candidates = candidates_for_cloud(
-            &cloud(
-                &(0..20)
-                    .map(|index| format!("n{index}"))
-                    .collect::<Vec<_>>()
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>(),
+    fn label_uniqueness_is_case_insensitive() {
+        let assigned = assign_unique_labels(vec![
+            (
+                "a".to_string(),
+                vec![("HubSpot".to_string(), 0.9), ("crm".to_string(), 0.5)],
             ),
-            &notes,
-            &document_frequency,
+            (
+                "b".to_string(),
+                vec![("hubspot".to_string(), 0.95), ("pipeline".to_string(), 0.8)],
+            ),
+        ]);
+        assert_eq!(assigned["a"].label, "hubspot");
+        assert_eq!(assigned["b"].label, "pipeline");
+        assert_ne!(
+            normalized_phrase(&assigned["a"].label),
+            normalized_phrase(&assigned["b"].label)
         );
-        assert!(candidates.phrases.len() <= CANDIDATES_PER_CLOUD);
-        assert!(!candidates.phrases.is_empty());
-        let unique = candidates
-            .phrases
-            .iter()
-            .map(|phrase| normalized_phrase(&phrase.display))
-            .collect::<HashSet<_>>();
-        assert_eq!(unique.len(), candidates.phrases.len());
     }
 
     #[test]
-    fn global_budget_keeps_duplicate_phrases_reusable_by_every_cloud() {
-        let shared = ScoredCandidate {
-            display: "Shared Topic".to_string(),
-            source_priority: 1,
-            note_count: 2,
-            word_count: 2,
-        };
-        let clouds = vec![
-            CloudCandidates {
-                cloud_id: "a".to_string(),
-                centroid: vec![1.0, 0.0],
-                phrases: std::iter::once(shared.clone())
-                    .chain(
-                        (0..GLOBAL_UNIQUE_CANDIDATE_LIMIT).map(|index| ScoredCandidate {
-                            display: format!("candidate {index}"),
-                            source_priority: 1,
-                            note_count: 1,
-                            word_count: 2,
-                        }),
-                    )
-                    .collect(),
-            },
-            CloudCandidates {
-                cloud_id: "b".to_string(),
-                centroid: vec![1.0, 0.0],
-                phrases: vec![
-                    shared.clone(),
-                    ScoredCandidate {
-                        display: "over budget".to_string(),
-                        source_priority: 1,
-                        note_count: 1,
-                        word_count: 2,
-                    },
+    fn uniqueness_prefers_runner_up_word_over_empty() {
+        // Only the winning word is contested; runner-up must still be chosen.
+        let assigned = assign_unique_labels(vec![
+            (
+                "a".to_string(),
+                vec![("hubspot".to_string(), 1.0)],
+            ),
+            (
+                "b".to_string(),
+                vec![
+                    ("HubSpot".to_string(), 0.99),
+                    ("crm".to_string(), 0.4),
+                    ("deals".to_string(), 0.35),
                 ],
-            },
-        ];
+            ),
+        ]);
+        assert_eq!(assigned["a"].label, "hubspot");
+        assert_eq!(assigned["b"].label, "crm");
+        assert_eq!(assigned["b"].source, CloudLabelSource::Keybert);
+    }
 
-        let embedded = globally_embedded_candidates(&clouds);
-        assert_eq!(embedded.len(), GLOBAL_UNIQUE_CANDIDATE_LIMIT);
-        assert_eq!(
-            embedded
-                .iter()
-                .filter(|phrase| normalized_phrase(phrase) == normalized_phrase(&shared.display))
-                .count(),
-            1
+    #[test]
+    fn membership_fingerprint_binds_structural_generation_and_members() {
+        let first = cloud_membership_fingerprint("generation-a", &[cloud(&["a", "b"])]);
+        let next_generation = cloud_membership_fingerprint("generation-b", &[cloud(&["a", "b"])]);
+        let next_members = cloud_membership_fingerprint("generation-a", &[cloud(&["a", "c"])]);
+        assert_ne!(first, next_generation);
+        assert_ne!(first, next_members);
+    }
+
+    #[test]
+    fn chunk_keybert_ranks_content_phrases_near_cloud_centroid() {
+        let mut connection = Connection::open_in_memory().expect("database");
+        ensure_schema(&connection).expect("schema");
+        insert_chunk(&connection, "a", 0, "Title", "From the notes", &[1.0, 0.0]);
+        insert_chunk(
+            &connection,
+            "a",
+            1,
+            "Soil Care",
+            "Garden soil needs compost and mulch for healthy vegetables.",
+            &[1.0, 0.0],
         );
-        assert!(clouds[1]
-            .phrases
-            .iter()
-            .any(|phrase| phrase.display == shared.display));
+        insert_chunk(
+            &connection,
+            "b",
+            1,
+            "Planting",
+            "Vegetable beds benefit from compost tea before planting season.",
+            &[0.95, 0.05],
+        );
+        insert_chunk(
+            &connection,
+            "c",
+            1,
+            "Travel",
+            "Airport delays ruined the weekend trip itinerary.",
+            &[0.0, 1.0],
+        );
+
+        let (node_a, emb_a) = atlas_node("a", "From the notes", &[1.0, 0.0]);
+        let (node_b, emb_b) = atlas_node("b", "Weekly log", &[0.95, 0.05]);
+        let (node_c, emb_c) = atlas_node("c", "Trip", &[0.0, 1.0]);
+        let nodes = vec![node_a, node_b, node_c];
+        let embeddings = HashMap::from([
+            ("a".to_string(), emb_a),
+            ("b".to_string(), emb_b),
+            ("c".to_string(), emb_c),
+        ]);
+        let clouds = vec![cloud(&["a", "b"]), cloud(&["c"])];
+        let provider = MockProvider::new();
+        let (labels, metrics) =
+            generate_labels(&mut connection, &provider, &clouds, &nodes, &embeddings)
+                .expect("labels");
+
+        assert!(metrics.selected_chunk_count > 0);
+        assert!(metrics.provider_text_count > 0);
+        let garden = &labels[&clouds[0].id].label.to_lowercase();
+        assert_eq!(labels[&clouds[0].id].source, CloudLabelSource::Keybert);
+        assert!(
+            garden.contains("soil")
+                || garden.contains("compost")
+                || garden.contains("vegetable")
+                || garden.contains("garden"),
+            "expected content label, got {garden}"
+        );
+        // Connector-only unigrams should lose to content terms.
+        assert_ne!(garden.as_str(), "from");
+        assert!(
+            !garden.contains(' '),
+            "expected single-word label, got {garden}"
+        );
+        let travel = &labels[&clouds[1].id].label.to_lowercase();
+        assert_eq!(labels[&clouds[1].id].source, CloudLabelSource::Keybert);
+        assert!(
+            travel == "airport" || travel == "trip" || travel == "travel",
+            "expected travel content label, got {travel}"
+        );
+        assert!(!travel.contains(' '));
     }
 
     #[test]
     fn phrase_cache_hit_skips_embedding_provider() {
         let mut connection = Connection::open_in_memory().expect("database");
-        crate::semantic::db::ensure_schema(&connection).expect("schema");
-        let provider = MockProvider::new();
-        let (first, first_embedding) = atlas_node("a", "Garden Planning", &[1.0, 0.0]);
-        let (second, second_embedding) = atlas_node("b", "Garden Ideas", &[0.9, 0.1]);
-        let nodes = vec![first, second];
-        let embeddings = HashMap::from([
-            ("a".to_string(), first_embedding),
-            ("b".to_string(), second_embedding),
-        ]);
+        ensure_schema(&connection).expect("schema");
+        insert_chunk(
+            &connection,
+            "a",
+            1,
+            "Soil Care",
+            "Garden soil needs compost for healthy vegetables.",
+            &[1.0, 0.0],
+        );
+        insert_chunk(
+            &connection,
+            "b",
+            1,
+            "Planting",
+            "Garden beds benefit from compost tea.",
+            &[0.95, 0.05],
+        );
+        let (node_a, emb_a) = atlas_node("a", "Notes", &[1.0, 0.0]);
+        let (node_b, emb_b) = atlas_node("b", "Log", &[0.95, 0.05]);
+        let nodes = vec![node_a, node_b];
+        let embeddings = HashMap::from([("a".to_string(), emb_a), ("b".to_string(), emb_b)]);
         let clouds = vec![cloud(&["a", "b"])];
+        let provider = MockProvider::new();
 
         let (_, first_metrics) =
             generate_labels(&mut connection, &provider, &clouds, &nodes, &embeddings)
-                .expect("first labels");
+                .expect("first");
         let calls_after_first = provider.calls.load(Ordering::Relaxed);
         let (_, second_metrics) =
             generate_labels(&mut connection, &provider, &clouds, &nodes, &embeddings)
-                .expect("cached labels");
+                .expect("cached");
 
         assert!(first_metrics.provider_text_count > 0);
         assert!(second_metrics.cache_hit_count > 0);
@@ -1091,14 +1509,21 @@ mod tests {
     }
 
     #[test]
-    fn provider_failure_returns_without_a_label_generation() {
+    fn provider_failure_returns_without_labels() {
         let mut connection = Connection::open_in_memory().expect("database");
-        crate::semantic::db::ensure_schema(&connection).expect("schema");
-        let provider = MockProvider::failing();
+        ensure_schema(&connection).expect("schema");
+        insert_chunk(
+            &connection,
+            "a",
+            1,
+            "Soil Care",
+            "Garden soil needs compost.",
+            &[1.0, 0.0],
+        );
         let (node, embedding) = atlas_node("a", "Garden Planning", &[1.0, 0.0]);
         let result = generate_labels(
             &mut connection,
-            &provider,
+            &MockProvider::failing(),
             &[cloud(&["a"])],
             &[node],
             &HashMap::from([("a".to_string(), embedding)]),
@@ -1110,11 +1535,228 @@ mod tests {
     }
 
     #[test]
-    fn membership_fingerprint_binds_structural_generation_and_members() {
-        let first = cloud_membership_fingerprint("generation-a", &[cloud(&["a", "b"])]);
-        let next_generation = cloud_membership_fingerprint("generation-b", &[cloud(&["a", "b"])]);
-        let next_members = cloud_membership_fingerprint("generation-a", &[cloud(&["a", "c"])]);
-        assert_ne!(first, next_generation);
-        assert_ne!(first, next_members);
+    fn empty_chunks_fall_back_to_medoid_title() {
+        let mut connection = Connection::open_in_memory().expect("database");
+        ensure_schema(&connection).expect("schema");
+        let (node, embedding) = atlas_node("a", "Garden Planning", &[1.0, 0.0]);
+        let cloud = cloud(&["a"]);
+        let (labels, _) = generate_labels(
+            &mut connection,
+            &MockProvider::new(),
+            &[cloud.clone()],
+            &[node],
+            &HashMap::from([("a".to_string(), embedding)]),
+        )
+        .expect("labels");
+        assert_eq!(labels[&cloud.id].label, "Garden Planning");
+        assert_eq!(labels[&cloud.id].source, CloudLabelSource::Medoid);
+    }
+
+    #[test]
+    fn algorithm_version_identifies_chunk_keybert_path() {
+        assert!(LABEL_ALGORITHM_VERSION.contains("chunk-keybert"));
+    }
+
+    #[test]
+    fn function_words_never_become_standalone_or_function_only_phrases() {
+        assert!(is_function_word("the"));
+        assert!(is_function_word("from"));
+        assert!(is_function_word("things"));
+        assert!(!is_function_word("garden"));
+        assert!(!phrase_has_content_token("the"));
+        assert!(!phrase_has_content_token("for being you"));
+        assert!(!phrase_has_content_token("from the"));
+        assert!(phrase_has_content_token("garden soil"));
+        assert!(phrase_has_content_token("hubspot"));
+    }
+
+    #[test]
+    fn function_words_are_stripped_before_unigrams() {
+        let mut evidence = HashMap::new();
+        let df = DocumentFrequency::default();
+        add_source_candidates(
+            "From the notes about garden soil and the compost",
+            "a",
+            2,
+            &df,
+            &mut evidence,
+        );
+        let keys = evidence.keys().cloned().collect::<HashSet<_>>();
+        assert!(!keys.contains("the"));
+        assert!(!keys.contains("from"));
+        assert!(!keys.contains("and"));
+        assert!(!keys.contains("about"));
+        assert!(!keys.iter().any(|key| key.contains(' ')));
+        assert!(keys.contains("garden") || keys.contains("soil") || keys.contains("compost"));
+    }
+
+    #[test]
+    fn candidate_budget_scales_with_membership() {
+        assert_eq!(candidate_budget_for_cloud(0), CANDIDATES_PER_CLOUD_MIN);
+        assert_eq!(candidate_budget_for_cloud(1), CANDIDATES_PER_CLOUD_MIN);
+        assert_eq!(candidate_budget_for_cloud(6), 24);
+        assert_eq!(candidate_budget_for_cloud(8), 32);
+        assert_eq!(candidate_budget_for_cloud(16), 64);
+        assert_eq!(candidate_budget_for_cloud(100), CANDIDATES_PER_CLOUD_MAX);
+    }
+
+    #[test]
+    fn embeds_all_cloud_candidates_without_global_cap() {
+        let mut clouds = Vec::new();
+        for index in 0..40 {
+            let phrases = (0..24)
+                .map(|phrase_index| ScoredCandidate {
+                    display: format!("cloud{index}word{phrase_index}"),
+                    source_priority: 2,
+                    note_count: 1,
+                })
+                .collect();
+            clouds.push(CloudCandidates {
+                cloud_id: format!("c{index}"),
+                centroid: vec![1.0, 0.0],
+                phrases,
+            });
+        }
+        let unique = phrases_to_embed(&clouds);
+        assert_eq!(unique.len(), 40 * 24);
+        for cloud in &clouds {
+            let covered = cloud
+                .phrases
+                .iter()
+                .filter(|candidate| {
+                    unique.iter().any(|phrase| {
+                        normalized_phrase(phrase) == normalized_phrase(&candidate.display)
+                    })
+                })
+                .count();
+            assert_eq!(covered, cloud.phrases.len(), "cloud {} starved", cloud.cloud_id);
+        }
+    }
+
+    #[test]
+    fn shared_phrases_are_embedded_once() {
+        let shared = ScoredCandidate {
+            display: "garden".to_string(),
+            source_priority: 2,
+            note_count: 2,
+        };
+        let clouds = vec![
+            CloudCandidates {
+                cloud_id: "a".to_string(),
+                centroid: vec![1.0, 0.0],
+                phrases: vec![
+                    shared.clone(),
+                    ScoredCandidate {
+                        display: "compost".to_string(),
+                        source_priority: 2,
+                        note_count: 1,
+                    },
+                ],
+            },
+            CloudCandidates {
+                cloud_id: "b".to_string(),
+                centroid: vec![0.0, 1.0],
+                phrases: vec![shared],
+            },
+        ];
+        let unique = phrases_to_embed(&clouds);
+        assert_eq!(unique.len(), 2);
+    }
+
+    #[test]
+    fn title_only_chunks_still_produce_keybert_label() {
+        let mut connection = Connection::open_in_memory().expect("database");
+        ensure_schema(&connection).expect("schema");
+        insert_chunk(
+            &connection,
+            "a",
+            0,
+            "Title",
+            "Vegetable garden beds need deep compost mulch.",
+            &[1.0, 0.0],
+        );
+        let (node, embedding) = atlas_node("a", "note-a", &[1.0, 0.0]);
+        let cloud = cloud(&["a"]);
+        let (labels, metrics) = generate_labels(
+            &mut connection,
+            &MockProvider::new(),
+            &[cloud.clone()],
+            &[node],
+            &HashMap::from([("a".to_string(), embedding)]),
+        )
+        .expect("labels");
+        assert_eq!(labels[&cloud.id].source, CloudLabelSource::Keybert);
+        assert_ne!(labels[&cloud.id].label, "note-a");
+        assert_eq!(metrics.medoid_fallback_count, 0);
+        assert!(metrics.selected_chunk_count > 0);
+    }
+
+    #[test]
+    fn progressive_callback_fires_once_per_cloud_in_sorted_id_order() {
+        let mut connection = Connection::open_in_memory().expect("database");
+        ensure_schema(&connection).expect("schema");
+        insert_chunk(
+            &connection,
+            "a",
+            1,
+            "Soil Care",
+            "Garden soil needs compost and mulch for healthy vegetables.",
+            &[1.0, 0.0],
+        );
+        insert_chunk(
+            &connection,
+            "b",
+            1,
+            "Planting",
+            "Vegetable beds benefit from compost tea before planting season.",
+            &[0.95, 0.05],
+        );
+        insert_chunk(
+            &connection,
+            "c",
+            1,
+            "Travel",
+            "Airport delays ruined the weekend trip itinerary.",
+            &[0.0, 1.0],
+        );
+        let (node_a, emb_a) = atlas_node("a", "From the notes", &[1.0, 0.0]);
+        let (node_b, emb_b) = atlas_node("b", "Weekly log", &[0.95, 0.05]);
+        let (node_c, emb_c) = atlas_node("c", "Trip", &[0.0, 1.0]);
+        let nodes = vec![node_a, node_b, node_c];
+        let embeddings = HashMap::from([
+            ("a".to_string(), emb_a),
+            ("b".to_string(), emb_b),
+            ("c".to_string(), emb_c),
+        ]);
+        // cloud-c sorts before cloud-a-b by id.
+        let clouds = vec![cloud(&["a", "b"]), cloud(&["c"])];
+        let mut expected_ids = clouds.iter().map(|cloud| cloud.id.clone()).collect::<Vec<_>>();
+        expected_ids.sort();
+
+        let mut seen = Vec::new();
+        let mut seen_labels = HashSet::new();
+        let (labels, _) = generate_labels_progressive(
+            &mut connection,
+            &MockProvider::new(),
+            &clouds,
+            &nodes,
+            &embeddings,
+            |cloud_id, assignment| {
+                seen.push(cloud_id.to_string());
+                assert!(
+                    seen_labels.insert(normalized_phrase(&assignment.label)),
+                    "duplicate progressive label {}",
+                    assignment.label
+                );
+                Ok(())
+            },
+        )
+        .expect("labels");
+
+        assert_eq!(seen, expected_ids);
+        assert_eq!(labels.len(), expected_ids.len());
+        for cloud_id in &expected_ids {
+            assert!(labels.contains_key(cloud_id));
+        }
     }
 }
