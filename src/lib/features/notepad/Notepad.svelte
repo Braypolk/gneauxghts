@@ -67,13 +67,14 @@
   } from '$lib/features/notepad/orchestration/notepadRefreshController';
   import {
     createPaneSessionController,
-    findPaneCommandPreviousItem,
     getSplitSourceNote,
-    paneCommandNoteLabel,
-    paneCommandPreviousNoteLabel as buildPaneCommandPreviousNoteLabel
+    paneCommandNoteLabel
   } from '$lib/features/notepad/orchestration/paneSessionController';
   import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
-  import { createNotepadCommands } from '$lib/features/notepad/orchestration/notepadCommands';
+  import {
+    createNotepadCommands,
+    type LocationHistoryEntry
+  } from '$lib/features/notepad/orchestration/notepadCommands';
   import {
     createNotepadWorkspaceCommands,
     type NotepadDerivedViewCommands,
@@ -148,6 +149,7 @@
   import { formatShortcutBinding, keyboardShortcutBindings } from '$lib/keyboardShortcuts';
   import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
   import '$lib/features/notepad/editor/editor.css';
+  import '$lib/features/notepad/editor/editorTypography.css';
   import '$lib/features/notepad/markdown/inlineFormatting.css';
 
   type PaneId = NotepadPaneId;
@@ -219,22 +221,8 @@
     paneCommandNoteLabel(getSplitSourceNote(notepadState, paneCommandSourceNoteKey))
   );
 
-  let paneCommandPreviousItem = $derived.by((): SearchItem | null => {
-    if (paneCommandPaneId === null || !paneCommandSourceNoteKey) {
-      return null;
-    }
-    return findPaneCommandPreviousItem(
-      searchState.recentNotes,
-      getSplitSourceNote(notepadState, paneCommandSourceNoteKey)
-    );
-  });
-
-  let paneCommandPreviousNoteLabel = $derived(
-    buildPaneCommandPreviousNoteLabel(paneCommandPreviousItem)
-  );
-  let paneCommandPreviousNoteShortcutLabel = $derived(
-    formatShortcutBinding($keyboardShortcutBindings.goToPreviousNote)
-  );
+  let locationHistoryEpoch = $state(0);
+  let locationHistoryItems = $state<LocationHistoryEntry[]>([]);
 
   // ---------------------------------------------------------------------------
   // State accessor helpers (kept as thin getters; the document/pane/command
@@ -321,6 +309,8 @@
     touchPaneLocationForHistory(paneId);
     setStoredPaneKind(notepadState, paneId, 'chat');
     setPaneChatConversationId(notepadState, paneId, conversationId);
+    // Record chat into the session MRU after kind flips so Recent keeps the slot.
+    touchPaneLocationForHistory(paneId);
     chatTargetAnchors[paneId] = targetAnchor;
     workspaceStore.setActivePaneId(paneId);
     await getChatController(paneId).initialize(conversationId);
@@ -783,8 +773,6 @@
     scheduleSearch,
     loadRecentNotes,
     loadRecentTasks,
-    openRecentNoteItem,
-    openRecentNoteByIndex,
     openRecentTaskByIndex,
     handleSearchInput,
     handleSearchModeChange,
@@ -1004,7 +992,6 @@
   // the component does not own every flow body.
   // ---------------------------------------------------------------------------
   const notepadWorkspaceCommands = createNotepadWorkspaceCommands<PaneId>(workspaceStore, {
-    getPreviousItem: () => paneCommandPreviousItem,
     getFocusEl: () => paneCommandFocusEl
   });
 
@@ -1059,6 +1046,41 @@
     forgottenNoteRetentionPreference: () => $forgottenNoteRetentionPreference
   });
   touchPaneLocationForHistory = commands.touchCurrentLocation;
+  commands.setLocationHistoryEpochListener((epoch) => {
+    locationHistoryEpoch = epoch;
+  });
+
+  let paneCommandPreviousNoteLabel = $derived.by(() => {
+    void locationHistoryEpoch;
+    if (paneCommandPaneId === null) {
+      return null;
+    }
+    return commands.paneCommandPreviousLocationLabel(paneCommandPaneId);
+  });
+  let paneCommandPreviousNoteShortcutLabel = $derived(
+    formatShortcutBinding($keyboardShortcutBindings.goToPreviousNote)
+  );
+
+  let locationHistoryRequestId = 0;
+
+  async function refreshLocationHistory() {
+    const requestId = ++locationHistoryRequestId;
+    const paneId = activePaneId;
+    // Paint synchronously from the session MRU first so chat cannot flash away
+    // while a seed await is in flight.
+    locationHistoryItems = commands.peekLocationHistory(paneId);
+    const items = await commands.listLocationHistory(paneId);
+    if (requestId !== locationHistoryRequestId || paneId !== activePaneId) {
+      return;
+    }
+    locationHistoryItems = items;
+  }
+
+  $effect(() => {
+    void locationHistoryEpoch;
+    void activePaneId;
+    void refreshLocationHistory();
+  });
 
   featureHost = createNotepadFeatureHost({
     getActiveDocument: getDocumentSession,
@@ -1243,10 +1265,13 @@
 
     if (choice) {
       const targetPaneId = workspaceStore.paneCommand.paneId;
-      // If there is no recent note, preserve the picker so it can explain the
+      // If there is no previous location, preserve the picker so it can explain the
       // unavailable option instead of silently resolving to a blank pane.
-      if (targetPaneId && (choice !== 'previous' || paneCommandPreviousItem !== null)) {
-        await commands.resolvePaneCommandChoice(targetPaneId, choice);
+      const hasPrevious =
+        targetPaneId !== null &&
+        (await commands.resolvePreviousLocationForPaneCommand(targetPaneId as PaneId)) !== null;
+      if (targetPaneId && (choice !== 'previous' || hasPrevious)) {
+        await commands.resolvePaneCommandChoice(targetPaneId as PaneId, choice);
       }
     }
   }
@@ -1262,14 +1287,7 @@
     }
 
     if (choice === 'previous') {
-      await loadRecentNotes();
-      const previousItem = findPaneCommandPreviousItem(
-        searchState.recentNotes,
-        getPaneDocumentSession(activePaneId)
-      );
-      if (previousItem) {
-        await openRecentNoteItem(previousItem);
-      }
+      await commands.goToPreviousLocation();
     }
   }
 
@@ -1338,6 +1356,9 @@
       chatSelectionActions: chatSelectionActions(),
       onChatConversationChange: (conversationId) => {
         setPaneChatConversationId(notepadState, paneId, conversationId);
+        if (getPaneKind(paneId) === 'chat') {
+          touchPaneLocationForHistory(paneId);
+        }
       },
       paneCommandHighlightedIndex,
       paneCommandMode,
@@ -1357,7 +1378,8 @@
     onClose: commands.closePane,
     onSplit: splitWorkspaceIfAllowed,
     onOpenPaneChoice: openPaneChoiceInCurrent,
-    onSwitchToEditor: (paneId) => commands.setPaneKind(paneId, 'editor'),
+    // Same path as Cmd+L: restore the previous location from the pane MRU.
+    onSwitchToEditor: (paneId) => commands.goToPreviousLocation(paneId),
     onTitleFocus: handleTitleFocus,
     onTitleInput: handleTitleInput,
     onTitleBlur: handleTitleBlur,
@@ -1607,7 +1629,7 @@
           matchCase: searchState.matchCase,
           matchWholeWord: searchState.matchWholeWord,
           searchResults: searchState.searchResults,
-          recentNotes: searchState.recentNotes,
+          recentLocations: locationHistoryItems,
           recentTasks: searchState.recentTasks,
           isSearching: searchState.isSearching,
           onSearchInput: handleSearchInput,
@@ -1622,17 +1644,27 @@
             void handleSearchResultNavigate(result).catch((error) => {
               console.error('Failed to navigate search result:', error);
             }),
-          onRecentNoteSelect: (result) =>
-            void openRecentNoteItem(result).catch((error) => {
-              console.error('Failed to open recent note:', error);
+          onRecentLocationSelect: (entry) =>
+            void commands.openLocationFromHistory(entry.location).catch((error) => {
+              console.error('Failed to open recent location:', error);
             }),
           onRecentTaskSelect: (task) =>
             void handleRecentTaskSelect(task).catch((error) => {
               console.error('Failed to open recent task:', error);
             }),
-          onRecentNoteShortcut: (index) => void openRecentNoteByIndex(index),
+          onRecentLocationShortcut: (index) => {
+            const entry = locationHistoryItems[index];
+            if (entry) {
+              void commands.openLocationFromHistory(entry.location).catch((error) => {
+                console.error('Failed to open recent location:', error);
+              });
+            }
+          },
           onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
-          onSearchOpen: handleSearchOpen,
+          onSearchOpen: () => {
+            handleSearchOpen();
+            void refreshLocationHistory();
+          },
           onCommand: (command) => commands.handleNotepadCommandBarCommand(command)
         }}
       />

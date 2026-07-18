@@ -34,7 +34,7 @@ describe('notepad search IPC payloads', () => {
     const { computeDraftHash } = await import('./draftRef');
     const body = 'large unsaved body';
 
-    await searchNotes('atlas', 'all', {
+    await searchNotes('atlas', {
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
       currentMarkdown: body
@@ -42,8 +42,6 @@ describe('notepad search IPC payloads', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('search_notes_hybrid', {
       query: 'atlas',
-      mode: 'all',
-      scope: 'notes',
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
       currentMarkdown: body,
@@ -58,14 +56,14 @@ describe('notepad search IPC payloads', () => {
     const { computeDraftHash } = await import('./draftRef');
     const body = 'large unsaved body';
 
-    await searchNotes('atlas', 'all', {
+    await searchNotes('atlas', {
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
       currentMarkdown: body
     });
     invokeMock.mockClear();
 
-    await searchNotes('atla', 'all', {
+    await searchNotes('atla', {
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
       currentMarkdown: body
@@ -73,8 +71,6 @@ describe('notepad search IPC payloads', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('search_notes_hybrid', {
       query: 'atla',
-      mode: 'all',
-      scope: 'notes',
       currentPath: '/vault/current.md',
       currentTitle: 'Current',
       currentMarkdown: null,
@@ -82,5 +78,4 @@ describe('notepad search IPC payloads', () => {
       limit: 12
     });
   });
-
 });

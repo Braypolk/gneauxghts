@@ -4,7 +4,6 @@ export type ChatStatus = 'active' | 'archived' | 'projectionConflict';
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'cancelled' | 'error';
 export type ChatRole = 'user' | 'assistant' | 'system';
 export type DocumentKind = 'note' | 'chatIndex' | 'chatTranscript';
-export type SearchScope = 'notes' | 'chats' | 'everything';
 export type AtlasChatVisibility = 'hidden' | 'remembered' | 'all';
 export type ChatServiceTier = 'standard' | 'flex';
 

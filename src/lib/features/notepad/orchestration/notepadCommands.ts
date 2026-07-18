@@ -1,7 +1,4 @@
 import { tick } from 'svelte';
-import {
-  openSearchResult,
-} from '$lib/features/notepad/navigation/openFlow';
 import { focusEditorAtEnd } from '$lib/features/notepad/navigation/navigation';
 import {
   createForgottenNote,
@@ -38,15 +35,19 @@ import {
   getEditorPaneCountForNote
 } from '$lib/features/notepad/session/noteRuntime';
 import {
-  createLocationMruStore,
   editorLocationFromRecent,
+  loadPersistedChatLocation,
+  locationDisplayLabel,
   locationsEqual,
+  notepadLocationMru,
+  type LocationHistoryEntry,
   type NavLocation
 } from '$lib/features/notepad/navigation/locationMru';
 import { createPaneCommandGroup } from './paneCommandGroup';
 import type { NotepadCommandsDeps, PaneKind } from './notepadCommandFacades';
 
 export type { NotepadCommandsDeps } from './notepadCommandFacades';
+export type { LocationHistoryEntry, NavLocation } from '$lib/features/notepad/navigation/locationMru';
 
 export function createNotepadCommands<TPaneId extends string>(deps: NotepadCommandsDeps<TPaneId>) {
   const { state, maxVisiblePanes, workspace, panes, persistence, derivedViews, documentSync, documents, paneLifecycle, refresh, forgottenNoteRetentionPreference } = deps;
@@ -62,7 +63,6 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const getPaneCommandSourceNoteKey = workspace.getPaneCommandSourceNoteKey;
   const getPaneCommandHighlightedIndex = workspace.getPaneCommandHighlightedIndex;
   const getPaneCommandMode = workspace.getPaneCommandMode;
-  const getPaneCommandPreviousItem = workspace.getPaneCommandPreviousItem;
 
   const getPaneKind = panes.getPaneKind;
   const getPaneDocument = panes.getPaneDocument;
@@ -71,8 +71,6 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const getNextPaneId = panes.getNextPaneId;
   const getPaneRuntime = panes.getPaneRuntime;
   const getNoteByKey = panes.getNoteByKey;
-  const getOpenContext = panes.getOpenContext;
-  const getNavigationContext = panes.getNavigationContext;
   const activatePaneSession = panes.activatePaneSession;
   const setPaneDocumentSession = panes.setPaneDocumentSession;
   const getPaneTitleInput = panes.getPaneTitleInput;
@@ -104,8 +102,20 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const isRefreshingFromDisk = refresh.isRefreshingFromDisk;
   const setRefreshingFromDisk = refresh.setRefreshingFromDisk;
 
-  const locationMru = createLocationMruStore<TPaneId>();
+  const locationMru = notepadLocationMru;
   let suppressLocationTouch = false;
+  let locationHistoryEpoch = 0;
+  let onLocationHistoryEpochChange: ((epoch: number) => void) | null = null;
+
+  function bumpLocationHistoryEpoch() {
+    locationHistoryEpoch += 1;
+    onLocationHistoryEpochChange?.(locationHistoryEpoch);
+  }
+
+  function setLocationHistoryEpochListener(listener: ((epoch: number) => void) | null) {
+    onLocationHistoryEpochChange = listener;
+    listener?.(locationHistoryEpoch);
+  }
 
   function capturePaneLocation(paneId: TPaneId): NavLocation | null {
     const pane = getPaneState(state, paneId);
@@ -135,6 +145,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     const current = capturePaneLocation(paneId);
     if (current) {
       locationMru.touch(paneId, current);
+      bumpLocationHistoryEpoch();
     }
   }
 
@@ -143,6 +154,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return;
     }
     locationMru.touch(paneId, location);
+    bumpLocationHistoryEpoch();
   }
 
   async function ensureLocationMruSeeded(paneId: TPaneId) {
@@ -150,6 +162,10 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return;
     }
     await loadRecentNotes();
+    // Re-check after await: navigation may have touched the MRU meanwhile.
+    if (locationMru.list(paneId).length > 0) {
+      return;
+    }
     const seeded = getRecentNotesForSeed()
       .map((item) =>
         editorLocationFromRecent({
@@ -158,7 +174,14 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
         })
       )
       .filter((location): location is NavLocation => location !== null);
+    const persistedChat = await loadPersistedChatLocation();
+    if (persistedChat) {
+      seeded.unshift(persistedChat);
+    }
     locationMru.seedIfEmpty(paneId, seeded);
+    if (locationMru.list(paneId).length > 0) {
+      bumpLocationHistoryEpoch();
+    }
   }
 
   async function restoreLocation(paneId: TPaneId, location: NavLocation) {
@@ -167,19 +190,19 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       activatePaneSession(paneId);
 
       if (location.kind === 'editor') {
-        if (getPaneKind(paneId) !== 'editor') {
-          setStoredPaneKind(state, paneId, 'editor');
-          await tick();
-          await paneLifecycle.ensurePaneEditors();
-          flushDocumentEditorSync(getPaneDocument(paneId));
-          updateSelectedRelatedText();
-        }
+        // Load the target note before revealing the editor so leaving chat
+        // does not briefly paint the chat context note (often the 2nd recent).
         await openNotePath(location.notePath, {
           noteId: location.noteId,
-          focusEditorAfterOpen: true
+          focusEditorAfterOpen: true,
+          revealEditorAfterOpen: true
         });
         return;
       }
+
+      // Remember chat before restore so Recent keeps the slot even if a
+      // mid-navigation history refresh runs while chat is current.
+      locationMru.rememberChat(paneId, location);
 
       const document = getPaneDocument(paneId);
       const needsContextNote =
@@ -203,19 +226,89 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       }
     } finally {
       suppressLocationTouch = false;
+      // Refresh history after navigation settles so an in-flight refresh that
+      // still saw chat as "current" cannot stick a chat-less list in the UI.
+      bumpLocationHistoryEpoch();
     }
   }
 
-  async function goToPreviousLocation() {
-    const paneId = getActivePaneId();
+  async function goToPreviousLocation(paneId: TPaneId = getActivePaneId()) {
+    activatePaneSession(paneId);
     const current = capturePaneLocation(paneId);
     await ensureLocationMruSeeded(paneId);
     const previous = locationMru.previousExcluding(paneId, current);
     if (!previous) {
+      // No MRU target (e.g. fresh chat): still leave chat for the bound note.
+      if (getPaneKind(paneId) === 'chat') {
+        setStoredPaneKind(state, paneId, 'editor');
+        await tick();
+        await paneLifecycle.ensurePaneEditors();
+        flushDocumentEditorSync(getPaneDocument(paneId));
+        updateSelectedRelatedText();
+        bumpLocationHistoryEpoch();
+      }
       return;
     }
     touchLocation(paneId, current);
     await restoreLocation(paneId, previous);
+  }
+
+  function findPaneCommandReferencePaneId(targetPaneId: TPaneId): TPaneId {
+    if (getPaneCommandMode() !== 'split') {
+      return targetPaneId;
+    }
+    const sourceKey = getPaneCommandSourceNoteKey();
+    if (!sourceKey) {
+      return targetPaneId;
+    }
+    return (
+      getPaneOrder().find(
+        (paneId) => paneId !== targetPaneId && getPaneDocument(paneId).key === sourceKey
+      ) ?? targetPaneId
+    );
+  }
+
+  async function resolvePreviousLocationForPaneCommand(
+    targetPaneId: TPaneId
+  ): Promise<NavLocation | null> {
+    const referencePaneId = findPaneCommandReferencePaneId(targetPaneId);
+    await ensureLocationMruSeeded(referencePaneId);
+    return locationMru.previousExcluding(referencePaneId, capturePaneLocation(referencePaneId));
+  }
+
+  function peekPreviousLocationForPaneCommand(targetPaneId: TPaneId): NavLocation | null {
+    const referencePaneId = findPaneCommandReferencePaneId(targetPaneId);
+    return locationMru.previousExcluding(referencePaneId, capturePaneLocation(referencePaneId));
+  }
+
+  function paneCommandPreviousLocationLabel(targetPaneId: TPaneId): string | null {
+    const previous = peekPreviousLocationForPaneCommand(targetPaneId);
+    return previous ? locationDisplayLabel(previous) : null;
+  }
+
+  function peekLocationHistory(paneId: TPaneId = getActivePaneId()): LocationHistoryEntry[] {
+    return locationMru.historyExcluding(paneId, capturePaneLocation(paneId));
+  }
+
+  async function listLocationHistory(
+    paneId: TPaneId = getActivePaneId()
+  ): Promise<LocationHistoryEntry[]> {
+    // Snapshot current before any await so a seed load cannot race with a
+    // mid-flight pane-kind change and drop chat from the visible list.
+    const current = capturePaneLocation(paneId);
+    await ensureLocationMruSeeded(paneId);
+    const settled = capturePaneLocation(paneId) ?? current;
+    return locationMru.historyExcluding(paneId, settled);
+  }
+
+  async function openLocationFromHistory(location: NavLocation) {
+    const paneId = getActivePaneId();
+    const current = capturePaneLocation(paneId);
+    if (current && locationsEqual(current, location)) {
+      return;
+    }
+    touchLocation(paneId, current);
+    await restoreLocation(paneId, location);
   }
 
   const paneCommands = createPaneCommandGroup<TPaneId, NoteDraftState>({
@@ -287,6 +380,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
   async function openStartPaneCommand(paneId: TPaneId, noteKey: NoteKey) {
     await loadRecentNotes();
+    await ensureLocationMruSeeded(paneId);
     beginPaneCommand(paneId, noteKey, 'start');
     activatePaneSession(paneId);
     await tick();
@@ -483,6 +577,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       noteId?: string | null;
       currentNoteAlreadySaved?: boolean;
       focusEditorAfterOpen?: boolean;
+      /** Leave chat only after the target note is loaded (avoids flashing chat context). */
+      revealEditorAfterOpen?: boolean;
     } = {}
   ) {
     const paneId = getActivePaneId();
@@ -502,16 +598,15 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
     if (!suppressLocationTouch && currentLocation && !isSameEditorLocation) {
       locationMru.touch(paneId, currentLocation);
+      bumpLocationHistoryEpoch();
     }
 
-    // User-initiated note opens leave chat so Cmd+L / search never only rebind chat context.
-    if (!suppressLocationTouch && getPaneKind(paneId) === 'chat') {
-      setStoredPaneKind(state, paneId, 'editor');
-      await tick();
-      await paneLifecycle.ensurePaneEditors();
-      flushDocumentEditorSync(getPaneDocument(paneId));
-      updateSelectedRelatedText();
-    }
+    // Leave chat after the note loads so we never paint the chat context note first.
+    // restoreLocation passes revealEditorAfterOpen; user opens use !suppressLocationTouch.
+    // Chat-context rebinds keep suppress on and omit reveal so the pane stays in chat.
+    const leavingChat =
+      getPaneKind(paneId) === 'chat' &&
+      (!suppressLocationTouch || Boolean(options.revealEditorAfterOpen));
 
     resetPaneCommand();
 
@@ -553,6 +648,17 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     closeWikilinkAutocomplete(paneId);
     clearSelectedRelatedText();
 
+    if (leavingChat) {
+      setStoredPaneKind(state, paneId, 'editor');
+      await tick();
+      if (isStale()) {
+        return;
+      }
+      await paneLifecycle.ensurePaneEditors();
+      flushDocumentEditorSync(getPaneDocument(paneId));
+      updateSelectedRelatedText();
+    }
+
     if (
       getPaneRuntime(paneId).ui.isEditorReady &&
       getPaneKind(paneId) === 'editor' &&
@@ -580,6 +686,9 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       cleanupNoteRuntime(previousDocument.key);
     }
     scheduleRelatedIfNeeded({ immediate: true });
+    if (!suppressLocationTouch) {
+      bumpLocationHistoryEpoch();
+    }
   }
 
   async function splitWorkspace() {
@@ -603,6 +712,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     const sharedDocument = getPaneDocument(sourcePaneId);
 
     await loadRecentNotes();
+    await ensureLocationMruSeeded(sourcePaneId);
 
     const placeholderDraft = createFreshDraftNote(state);
     addPane(state, targetPaneId, placeholderDraft.key, 'editor');
@@ -657,11 +767,22 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
     const document = getPaneDocument(paneId);
     setStoredPaneKind(state, paneId, kind);
+    if (kind === 'chat') {
+      // Persist the chat slot as soon as we enter thought partner, not only
+      // when leaving — so Recent keeps it across later note↔note jumps.
+      touchLocation(paneId, {
+        kind: 'chat',
+        conversationId: getPaneState(state, paneId).chatConversationId,
+        contextNoteId: document.currentNoteId,
+        contextNotePath: document.currentNotePath
+      });
+    }
     activatePaneSession(paneId);
     await tick();
     await paneLifecycle.ensurePaneEditors();
     flushDocumentEditorSync(document);
     updateSelectedRelatedText();
+    bumpLocationHistoryEpoch();
   }
 
   async function handleNotepadCommandBarCommand(command: string): Promise<boolean> {
@@ -694,11 +815,14 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   }
 
   function movePaneCommandHighlight(direction: 1 | -1) {
+    const pickerPaneId = getPaneCommandPaneId();
+    const hasPrevious =
+      pickerPaneId !== null && peekPreviousLocationForPaneCommand(pickerPaneId) !== null;
     setPaneCommandHighlight(
       getNextPaneCommandIndex(
         getPaneCommandHighlightedIndex(),
         direction,
-        getPaneCommandPreviousItem() !== null,
+        hasPrevious,
         getPaneCommandMode()
       )
     );
@@ -718,7 +842,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
 
     const sourceKey = getPaneCommandSourceNoteKey();
-    const previousItem = getPaneCommandPreviousItem();
+    const previousLocation =
+      choice === 'previous' ? await resolvePreviousLocationForPaneCommand(paneId) : null;
     const placeholderDocument = getPaneDocument(paneId);
     const placeholderKey = placeholderDocument.key;
 
@@ -760,16 +885,16 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
 
     if (choice === 'previous') {
-      if (!previousItem) return;
+      if (!previousLocation) return;
 
-      touchCurrentLocation(paneId);
-      setStoredPaneKind(state, paneId, 'editor');
-      if (previousItem.notePath) {
-        await openNotePath(previousItem.notePath, { noteId: previousItem.noteId ?? null });
+      // Same-pane previous (start picker / Cmd+L) shares goToPreviousLocation.
+      // Split fills this pane with the reference pane's previous without touching
+      // that pane's MRU order beyond what restore needs.
+      if (findPaneCommandReferencePaneId(paneId) === paneId) {
+        await goToPreviousLocation(paneId);
       } else {
-        await openSearchResult(getOpenContext(), getNavigationContext(paneId), previousItem);
+        await restoreLocation(paneId, previousLocation);
       }
-
       await finalizePaneCommandSelection(paneId);
       return;
     }
@@ -806,7 +931,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
     const choice = getPaneCommandChoiceByIndex(
       getPaneCommandHighlightedIndex(),
-      getPaneCommandPreviousItem() !== null,
+      peekPreviousLocationForPaneCommand(paneId) !== null,
       getPaneCommandMode()
     );
     if (choice) {
@@ -857,7 +982,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
     const shortcutChoice = getPaneCommandForShortcut(
       event.key,
-      getPaneCommandPreviousItem() !== null,
+      peekPreviousLocationForPaneCommand(pickerPaneId) !== null,
       getPaneCommandMode()
     );
     if (shortcutChoice === null) {
@@ -887,6 +1012,14 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     setPaneKind,
     touchCurrentLocation,
     goToPreviousLocation,
+    listLocationHistory,
+    peekLocationHistory,
+    openLocationFromHistory,
+    paneCommandPreviousLocationLabel,
+    peekPreviousLocationForPaneCommand,
+    resolvePreviousLocationForPaneCommand,
+    ensureLocationMruSeeded,
+    setLocationHistoryEpochListener,
     handleNotepadCommandBarCommand,
     switchActivePane,
     resolvePaneCommandChoice,

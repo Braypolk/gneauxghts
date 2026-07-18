@@ -13,10 +13,11 @@ import {
 } from '$lib/ui/listSelection';
 import type { SearchItem } from '$lib/types/semantic';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
+import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 
 export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }
-  | { kind: 'note'; item: SearchItem }
+  | { kind: 'location'; item: LocationHistoryEntry }
   | { kind: 'task'; item: RecentTaskItem };
 
 interface TextRange {
@@ -36,7 +37,7 @@ interface NotepadCommandBarStateDeps {
   getSearchQuery: () => string;
   getSearchResults: () => SearchItem[];
   getSearchNavigationResults?: () => SearchItem[];
-  getRecentNotes: () => SearchItem[];
+  getRecentLocations: () => LocationHistoryEntry[];
   getRecentTasks: () => RecentTaskItem[];
   getVisibleItems: () => NotepadCommandBarVisibleItem[];
   getForgetHoldDurationMs: () => number;
@@ -45,9 +46,9 @@ interface NotepadCommandBarStateDeps {
   onSearchInput: (value: string) => void;
   onSearchSelect: (result: SearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
-  onRecentNoteSelect: (result: SearchItem) => void;
+  onRecentLocationSelect: (entry: LocationHistoryEntry) => void;
   onRecentTaskSelect: (task: RecentTaskItem) => void;
-  onRecentNoteShortcut: (index: number) => void | Promise<void>;
+  onRecentLocationShortcut: (index: number) => void | Promise<void>;
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
   closeSearch: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;
@@ -69,13 +70,13 @@ function createInitialState(): NotepadCommandBarState {
 export function deriveNotepadCommandBarVisibleItems(
   searchQuery: string,
   searchResults: SearchItem[],
-  recentNotes: SearchItem[],
+  recentLocations: LocationHistoryEntry[],
   recentTasks: RecentTaskItem[]
 ): NotepadCommandBarVisibleItem[] {
   if (searchQuery.trim() === '') {
     return [
       ...recentTasks.map((item) => ({ kind: 'task' as const, item })),
-      ...recentNotes.map((item) => ({ kind: 'note' as const, item }))
+      ...recentLocations.map((item) => ({ kind: 'location' as const, item }))
     ];
   }
 
@@ -113,7 +114,7 @@ export function createNotepadCommandBarState({
   getSearchQuery,
   getSearchResults,
   getSearchNavigationResults,
-  getRecentNotes,
+  getRecentLocations,
   getRecentTasks,
   getVisibleItems,
   getForgetHoldDurationMs,
@@ -122,9 +123,9 @@ export function createNotepadCommandBarState({
   onSearchInput,
   onSearchSelect,
   onSearchNavigate,
-  onRecentNoteSelect,
+  onRecentLocationSelect,
   onRecentTaskSelect,
-  onRecentNoteShortcut,
+  onRecentLocationShortcut,
   onRecentTaskShortcut,
   closeSearch,
   onCommand,
@@ -182,13 +183,13 @@ export function createNotepadCommandBarState({
       if (keyboardShortcutMatchesEvent(event, noteShortcutId)) {
         event.preventDefault();
 
-        const note = getRecentNotes()[shortcutIndex];
-        if (note) {
-          selectItem({ kind: 'note', item: note });
+        const location = getRecentLocations()[shortcutIndex];
+        if (location) {
+          selectItem({ kind: 'location', item: location });
           return true;
         }
 
-        void onRecentNoteShortcut(shortcutIndex);
+        void onRecentLocationShortcut(shortcutIndex);
         return true;
       }
     }
@@ -204,8 +205,8 @@ export function createNotepadCommandBarState({
       return;
     }
 
-    if (item.kind === 'note') {
-      onRecentNoteSelect(item.item);
+    if (item.kind === 'location') {
+      onRecentLocationSelect(item.item);
       return;
     }
 
@@ -239,7 +240,7 @@ export function createNotepadCommandBarState({
     const items = getVisibleItems();
     const state = getState();
     const isPanelVisible =
-      (getSearchQuery().trim() !== '' || getRecentNotes().length > 0 || getRecentTasks().length > 0);
+      (getSearchQuery().trim() !== '' || getRecentLocations().length > 0 || getRecentTasks().length > 0);
 
     if (event.key === 'Escape') {
       event.preventDefault();

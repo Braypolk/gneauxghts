@@ -6,8 +6,7 @@
   import type {
     AtlasChatVisibility,
     ChatMode,
-    ChatSettings,
-    VaultAccess
+    VaultAccess, ChatSettings
   } from '$lib/features/chat/types';
 
   const api = new TauriChatApi();

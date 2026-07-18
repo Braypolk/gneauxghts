@@ -7,8 +7,7 @@ import type {
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import { callWithDraft, computeDraftHash } from '$lib/features/notepad/search/draftRef';
 
-export type SearchMode = 'current' | 'all' | 'chats' | 'everything';
-export type SearchScope = 'notes' | 'chats' | 'everything';
+export type SearchMode = 'current' | 'all';
 const RECENT_ITEMS_LIMIT = 20;
 
 export interface SearchContext {
@@ -25,12 +24,7 @@ export function isSemanticOnlyResult(result: SearchItem) {
   return result.reasonLabels.includes('semantic') && !isKeywordResult(result);
 }
 
-export async function searchNotes(
-  query: string,
-  mode: SearchMode,
-  context: SearchContext,
-  scope: SearchScope = mode === 'chats' ? 'chats' : mode === 'everything' ? 'everything' : 'notes'
-) {
+export async function searchNotes(query: string, context: SearchContext) {
   const hash = computeDraftHash(context.currentMarkdown);
   return callWithDraft(
     context.currentPath,
@@ -39,8 +33,6 @@ export async function searchNotes(
     (currentMarkdown, currentBodyHash) =>
       invoke<SearchItem[]>('search_notes_hybrid', {
         query,
-        mode: 'all',
-        scope,
         currentPath: context.currentPath,
         currentTitle: context.currentTitle,
         currentMarkdown,
@@ -66,6 +58,11 @@ export async function listRecentTasks() {
 export interface RecentFocusBundle {
   recentNotes: SearchItem[];
   recentTasks: RecentTaskItem[];
+  lastChat: {
+    conversationId: string;
+    contextNoteId: string | null;
+    contextNotePath: string | null;
+  } | null;
 }
 
 export async function listRecentFocus(context: Pick<SearchContext, 'currentPath'>) {

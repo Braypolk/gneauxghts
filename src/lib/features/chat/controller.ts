@@ -8,8 +8,7 @@ import type {
   ChatMessage,
   ChatMode,
   ChatNoteGrant,
-  ChatSettings,
-  VaultAccess
+  VaultAccess, ChatSettings
 } from './types';
 
 export interface ChatControllerState {

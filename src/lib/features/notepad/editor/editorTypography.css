@@ -1,0 +1,34 @@
+/* Editor typography scale — overrides hardcoded sizes in editor.css via cascade.
+   Values are driven by `--gn-editor-*-size` on `:root` (see editorTextSize.ts). */
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-scroller {
+  font-size: var(--gn-editor-font-size, 1rem);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h1 {
+  font-size: var(--gn-editor-h1-size, 1.75rem);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h2 {
+  font-size: var(--gn-editor-h2-size, 1.375rem);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h3 {
+  font-size: var(--gn-editor-h3-size, 1.125rem);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h4 {
+  font-size: var(--gn-editor-h4-size, 1rem);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h5 {
+  font-size: var(--gn-editor-h5-size, 0.875rem);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h6 {
+  font-size: var(--gn-editor-h6-size, 0.8125rem);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-block-line {
+  font-size: 0.92em;
+}

@@ -6,6 +6,7 @@
   import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
   import ChatSettingsPanel from '$lib/features/settings/ChatSettingsPanel.svelte';
+  import EditorTextSizePanel from '$lib/features/settings/EditorTextSizePanel.svelte';
   import SettingsCard from '$lib/features/settings/SettingsCard.svelte';
   import SettingsLabel from '$lib/features/settings/SettingsLabel.svelte';
   import {
@@ -35,7 +36,7 @@
     label: string;
     description: string;
   }[] = [
-    { id: 'appearance', label: 'Appearance', description: 'Theme and display' },
+    { id: 'appearance', label: 'Appearance', description: 'Theme and editor text size' },
     { id: 'shortcuts', label: 'Shortcuts', description: 'Customize keyboard shortcuts' },
     {
       id: 'forgetting',
@@ -173,42 +174,46 @@
             </header>
 
             {#if $settings.activeGeneralSection === 'appearance'}
-              <div class="settings-section">
-                <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p class="text-sm font-medium">Theme</p>
-                    <p class="mt-0.5 text-xs text-muted-foreground">Auto follows your system appearance.</p>
+              <div class="space-y-5">
+                <div class="settings-section">
+                  <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p class="text-sm font-medium">Theme</p>
+                      <p class="mt-0.5 text-xs text-muted-foreground">Auto follows your system appearance.</p>
+                    </div>
+
+                    <fieldset
+                      class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1"
+                    >
+                      <legend class="sr-only">Theme preference</legend>
+
+                      {#each themeOptions as option}
+                        {@const Icon = themeIcons[option.id]}
+                        <label
+                          title={option.description}
+                          class={`flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                            $themePreference === option.id
+                              ? 'bg-foreground text-background shadow-sm'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <input
+                            class="sr-only"
+                            type="radio"
+                            name="theme-preference"
+                            value={option.id}
+                            checked={$themePreference === option.id}
+                            onchange={() => void setThemePreference(option.id)}
+                          />
+                          <Icon class="h-3.5 w-3.5" />
+                          <span>{option.label}</span>
+                        </label>
+                      {/each}
+                    </fieldset>
                   </div>
-
-                  <fieldset
-                    class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1"
-                  >
-                    <legend class="sr-only">Theme preference</legend>
-
-                    {#each themeOptions as option}
-                      {@const Icon = themeIcons[option.id]}
-                      <label
-                        title={option.description}
-                        class={`flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                          $themePreference === option.id
-                            ? 'bg-foreground text-background shadow-sm'
-                            : 'text-muted-foreground hover:text-foreground'
-                        }`}
-                      >
-                        <input
-                          class="sr-only"
-                          type="radio"
-                          name="theme-preference"
-                          value={option.id}
-                          checked={$themePreference === option.id}
-                          onchange={() => void setThemePreference(option.id)}
-                        />
-                        <Icon class="h-3.5 w-3.5" />
-                        <span>{option.label}</span>
-                      </label>
-                    {/each}
-                  </fieldset>
                 </div>
+
+                <EditorTextSizePanel />
               </div>
             {:else if $settings.activeGeneralSection === 'shortcuts'}
               <KeyboardShortcutsPanel />

@@ -6,7 +6,8 @@
     Brain,
     Circle,
     ChevronDown,
-    ChevronRight
+    ChevronRight,
+    MessagesSquare
   } from '@lucide/svelte';
   import {
     forgetButtonDurationPreference,
@@ -25,6 +26,7 @@
   } from '$lib/features/notepad/ui/notepadCommandBarProps';
   import SearchBar, { type SearchBarHandle } from '$lib/ui/search/SearchBar.svelte';
   import type { SearchItem } from '$lib/types/semantic';
+  import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 
   const RECENT_TASKS_COLLAPSED_STORAGE_KEY = 'gneauxghts:bottom-bar:recent-tasks-collapsed';
 
@@ -51,7 +53,7 @@
   const matchCase = $derived(search.matchCase);
   const matchWholeWord = $derived(search.matchWholeWord);
   const searchResults = $derived(search.searchResults);
-  const recentNotes = $derived(search.recentNotes);
+  const recentLocations = $derived(search.recentLocations);
   const recentTasks = $derived(search.recentTasks);
   const isSearching = $derived(search.isSearching);
   const onSearchInput = $derived(search.onSearchInput);
@@ -60,20 +62,16 @@
   const onMatchWholeWordChange = $derived(search.onMatchWholeWordChange);
   const onSearchSelect = $derived(search.onSearchSelect);
   const onSearchNavigate = $derived(search.onSearchNavigate);
-  const onRecentNoteSelect = $derived(search.onRecentNoteSelect);
+  const onRecentLocationSelect = $derived(search.onRecentLocationSelect);
   const onRecentTaskSelect = $derived(search.onRecentTaskSelect);
-  const onRecentNoteShortcut = $derived(search.onRecentNoteShortcut);
+  const onRecentLocationShortcut = $derived(search.onRecentLocationShortcut);
   const onRecentTaskShortcut = $derived(search.onRecentTaskShortcut);
   const onSearchOpen = $derived(search.onSearchOpen);
   const onCommand = $derived(search.onCommand);
   const searchScopeTitle = $derived(
     searchMode === 'current'
       ? 'Searching only the current note'
-      : searchMode === 'chats'
-        ? 'Searching chat transcripts'
-        : searchMode === 'everything'
-          ? 'Searching notes and chats'
-          : 'Searching across all notes'
+      : 'Searching across all notes'
   );
   const searchScopeOptions = [
     {
@@ -89,18 +87,6 @@
       ariaLabel: 'Search all notes',
       title: 'Search all notes',
       tone: 'all'
-    },
-    {
-      id: 'chats',
-      label: 'Chats',
-      ariaLabel: 'Search chat transcripts',
-      title: 'Search chat transcripts'
-    },
-    {
-      id: 'everything',
-      label: 'Everything',
-      ariaLabel: 'Search notes and chats',
-      title: 'Search notes and chats'
     }
   ];
 
@@ -123,9 +109,9 @@
     searchQuery.trim() === '' && !areRecentTasksVisuallyCollapsed ? recentTasks : []
   );
   const visibleItems = $derived.by<NotepadCommandBarVisibleItem[]>(() =>
-    deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, recentNotes, visibleRecentTasks)
+    deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, recentLocations, visibleRecentTasks)
   );
-  const hasRecentContent = $derived(recentNotes.length > 0 || recentTasks.length > 0);
+  const hasRecentContent = $derived(recentLocations.length > 0 || recentTasks.length > 0);
   const hasVisibleSearchContent = $derived(
     searchQuery.trim() === '' ? hasRecentContent : visibleItems.length > 0
   );
@@ -137,7 +123,7 @@
     getSearchQuery: () => searchQuery,
     getSearchResults: () => visibleSearchResults,
     getSearchNavigationResults: () => (searchMode === 'current' ? searchResults : visibleSearchResults),
-    getRecentNotes: () => recentNotes,
+    getRecentLocations: () => recentLocations,
     getRecentTasks: () => visibleRecentTasks,
     getVisibleItems: () => visibleItems,
     getForgetHoldDurationMs: () => forgetHoldDurationMs,
@@ -146,9 +132,9 @@
     onSearchInput: (value) => onSearchInput(value),
     onSearchSelect: (result) => onSearchSelect(result),
     onSearchNavigate: (result) => onSearchNavigate?.(result),
-    onRecentNoteSelect: (result) => onRecentNoteSelect(result),
+    onRecentLocationSelect: (entry) => onRecentLocationSelect(entry),
     onRecentTaskSelect: (task) => onRecentTaskSelect(task),
-    onRecentNoteShortcut: (index) => onRecentNoteShortcut(index),
+    onRecentLocationShortcut: (index) => onRecentLocationShortcut(index),
     onRecentTaskShortcut: (index) => onRecentTaskShortcut(index),
     closeSearch: () => searchBar?.closeSearch(),
     onCommand: (command) => onCommand?.(command) ?? false,
@@ -163,7 +149,9 @@
       visibleItems[0]
         ? visibleItems[0].kind === 'task'
           ? `t:${visibleItems[0].item.taskKey}`
-          : `n:${visibleItems[0].item.notePath ?? ''}|${visibleItems[0].item.fileName}|${visibleItems[0].item.sectionLabel ?? ''}|${visibleItems[0].item.matchText ?? ''}`
+          : visibleItems[0].kind === 'location'
+            ? `l:${visibleItems[0].item.location.kind}:${visibleItems[0].item.label}`
+            : `s:${visibleItems[0].item.notePath ?? ''}|${visibleItems[0].item.fileName}|${visibleItems[0].item.sectionLabel ?? ''}|${visibleItems[0].item.matchText ?? ''}`
         : ''
     }`
   );
@@ -211,7 +199,7 @@
   }
 
   function handleSharedSearchModeChange(mode: string) {
-    if (mode !== 'current' && mode !== 'all' && mode !== 'chats' && mode !== 'everything') return;
+    if (mode !== 'current' && mode !== 'all') return;
     return onSearchModeChange(mode);
   }
 
@@ -241,8 +229,15 @@
     return 'h-[15rem] overflow-y-auto';
   }
 
+  function locationHistoryKey(item: LocationHistoryEntry, index: number) {
+    if (item.location.kind === 'chat') {
+      return `chat-${item.location.conversationId ?? 'slot'}`;
+    }
+    return `note-${item.location.notePath ?? item.location.noteId ?? 'current'}-${index}`;
+  }
+
   function getRecentNoteItemClass() {
-    return 'search-result-item flex h-[2.75rem] w-full items-center rounded-[1.1rem] px-4 py-1.5 text-left transition-colors';
+    return 'search-result-item flex h-[2.75rem] w-full items-center gap-2 rounded-[1.1rem] px-4 py-1.5 text-left transition-colors';
   }
 
   function getRecentTaskItemClass() {
@@ -266,7 +261,7 @@
     }
   }
 
-  function getSearchResultItemClass(mode: 'current' | 'all' | 'chats' | 'everything') {
+  function getSearchResultItemClass(mode: 'current' | 'all') {
     return mode === 'current'
       ? 'search-result-item grid min-h-10 w-full grid-cols-[minmax(0,1fr)_max-content] items-center gap-3 rounded-[0.9rem] px-3 py-2 text-left transition-colors'
       : 'search-result-item flex w-full flex-col gap-2 rounded-[1.1rem] px-4 py-3 text-left transition-colors';
@@ -568,7 +563,7 @@
             {#if recentTasks.length > 0}
               <section
                 class={`min-w-0 flex-1 lg:order-2 ${
-                  recentNotes.length > 0
+                  recentLocations.length > 0
                     ? 'border-b border-border/70 pb-2 lg:border-b-0 lg:border-l lg:border-border/70 lg:pb-0 lg:pl-3'
                     : ''
                 }`}
@@ -620,26 +615,29 @@
               </section>
             {/if}
 
-            {#if recentNotes.length > 0}
+            {#if recentLocations.length > 0}
               <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
                 <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                  Recent Notes
+                  Recent
                 </div>
                 <div class={getRecentNotesViewportClass()}>
-                  {#each recentNotes as item, index (`note-${item.notePath ?? 'current'}-${item.fileName}-${index}`)}
+                  {#each recentLocations as item, index (locationHistoryKey(item, index))}
                     {@const globalIndex = visibleRecentTasks.length + index}
                     <button
                       type="button"
                       data-search-result-active={globalIndex === $commandBarState.activeIndex ? 'true' : 'false'}
                       class={getRecentNoteItemClass()}
                       class:bg-accent={globalIndex === $commandBarState.activeIndex}
-                      aria-label={`Open recent note: ${item.fileName}`}
-                      title={item.fileName}
+                      aria-label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
+                      title={item.label}
                       onmousedown={(event) => event.preventDefault()}
                       onpointerenter={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
-                      onclick={() => commandBarState.selectItem({ kind: 'note', item })}
+                      onclick={() => commandBarState.selectItem({ kind: 'location', item })}
                     >
-                      <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
+                      {#if item.location.kind === 'chat'}
+                        <MessagesSquare class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      {/if}
+                      <span class="truncate text-sm font-semibold text-popover-foreground">{item.label}</span>
                     </button>
                   {/each}
                 </div>
@@ -681,7 +679,7 @@
                       </span>
                       {#if item.reasonLabels && item.reasonLabels.length > 0}
                         <div class="mt-1 flex flex-wrap gap-1.5">
-                          {#each item.reasonLabels as label}
+                          {#each item.reasonLabels as label, labelIndex (`${label}-${labelIndex}`)}
                             <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                               {label}
                             </span>
@@ -715,7 +713,7 @@
     <SearchBar
       bind:this={searchBar}
       value={searchQuery}
-      placeholder={searchMode === 'current' ? 'Search this note' : searchMode === 'chats' ? 'Search chats' : searchMode === 'everything' ? 'Search everything' : 'Search all notes'}
+      placeholder={searchMode === 'current' ? 'Search this note' : 'Search all notes'}
       ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search the selected scope'}`}
       matchCase={matchCase}
       matchWholeWord={matchWholeWord}

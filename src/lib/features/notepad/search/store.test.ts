@@ -170,7 +170,8 @@ describe('NotepadSearchStore', () => {
           lineNumber: 3,
           updatedAtMillis: 1
         }
-      ]
+      ],
+      lastChat: null
     });
 
     store.handleSearchOpen();

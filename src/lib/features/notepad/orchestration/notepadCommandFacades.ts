@@ -35,7 +35,6 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
   getPaneCommandSourceNoteKey: () => NoteKey | null;
   getPaneCommandHighlightedIndex: () => number;
   getPaneCommandMode: () => PaneCommandMode;
-  getPaneCommandPreviousItem: () => SearchItem | null;
   getPaneCommandFocusEl: () => HTMLElement | null;
 }
 
@@ -107,7 +106,6 @@ export interface NotepadCommandsDeps<TPaneId extends string> {
 }
 
 export interface NotepadPaneCommandAccess {
-  getPreviousItem: () => SearchItem | null;
   getFocusEl: () => HTMLElement | null;
 }
 
@@ -129,7 +127,6 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
     getPaneCommandSourceNoteKey: () => workspace.paneCommand.sourceNoteKey,
     getPaneCommandHighlightedIndex: () => workspace.paneCommand.highlightedIndex,
     getPaneCommandMode: () => workspace.paneCommand.mode,
-    getPaneCommandPreviousItem: paneCommand.getPreviousItem,
     getPaneCommandFocusEl: paneCommand.getFocusEl
   };
 }

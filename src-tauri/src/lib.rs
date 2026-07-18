@@ -136,6 +136,8 @@ pub fn run() {
             commands::forgotten_note_commands::delete_forgotten_notes,
             commands::search_commands::list_recent_notes,
             commands::search_commands::list_recent_focus,
+            commands::search_commands::get_last_chat_location,
+            commands::search_commands::set_last_chat_location,
             commands::list_recent_tasks,
             commands::list_tasks,
             commands::get_task_group,

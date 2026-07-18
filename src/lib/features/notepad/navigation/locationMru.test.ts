@@ -1,10 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createLocationMruStore,
   editorLocationFromRecent,
+  loadPersistedChatLocation,
   locationsEqual,
+  persistChatLocation,
   type NavLocation
 } from '$lib/features/notepad/navigation/locationMru';
+
+const invokeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...args: unknown[]) => invokeMock(...args)
+}));
 
 const noteA: NavLocation = {
   kind: 'editor',
@@ -82,7 +89,7 @@ describe('locationMru', () => {
     expect(current).toEqual(chatA);
   });
 
-  it('treats chat locations equal by conversation id, including null', () => {
+  it('treats all chat locations as one MRU slot', () => {
     expect(
       locationsEqual(chatFresh, {
         kind: 'chat',
@@ -91,7 +98,12 @@ describe('locationMru', () => {
         contextNotePath: '/vault/Other.md'
       })
     ).toBe(true);
-    expect(locationsEqual(chatA, chatFresh)).toBe(false);
+    expect(locationsEqual(chatA, chatFresh)).toBe(true);
+
+    const mru = createLocationMruStore<'p1'>();
+    mru.touch('p1', chatFresh);
+    mru.touch('p1', chatA);
+    expect(mru.list('p1')).toEqual([chatA]);
   });
 
   it('seeds only when empty and skips non-restorable editor rows', () => {
@@ -112,4 +124,64 @@ describe('locationMru', () => {
     expect(mru.previousExcluding('p1', null)).toEqual(noteA);
     expect(mru.previousExcluding('p2', null)).toEqual(noteB);
   });
+
+  it('reinjects lastChat when the MRU list no longer contains chat', () => {
+    const mru = createLocationMruStore<'p1'>();
+    mru.rememberChat('p1', chatA);
+    mru.touch('p1', noteA);
+    mru.touch('p1', noteB);
+
+    expect(mru.list('p1')).toEqual([noteB, noteA]);
+    expect(mru.historyExcluding('p1', noteB)).toEqual([
+      { location: noteA, label: 'A' },
+      { location: chatA, label: 'Thought partner' }
+    ]);
+  });
+
+  it('hides chat in history only while chat is current', () => {
+    const mru = createLocationMruStore<'p1'>();
+    mru.touch('p1', noteA);
+    mru.touch('p1', chatA);
+
+    expect(mru.historyExcluding('p1', chatA)).toEqual([{ location: noteA, label: 'A' }]);
+    expect(mru.historyExcluding('p1', noteA).some((entry) => entry.location.kind === 'chat')).toBe(
+      true
+    );
+  });
+
+  it('historyExcluding skips the current location and keeps chat rows', () => {
+    const mru = createLocationMruStore<'p1'>();
+    mru.touch('p1', noteA);
+    mru.touch('p1', chatA);
+    mru.touch('p1', noteB);
+
+    expect(mru.historyExcluding('p1', noteB)).toEqual([
+      { location: chatA, label: 'Thought partner' },
+      { location: noteA, label: 'A' }
+    ]);
+  });
+
+  it('persists and reloads a chat conversation pointer via backend', async () => {
+    invokeMock.mockReset();
+
+    invokeMock.mockResolvedValueOnce(undefined);
+    await persistChatLocation(chatA);
+    expect(invokeMock).toHaveBeenCalledWith('set_last_chat_location', {
+      conversationId: 'conv-a',
+      contextNoteId: 'a',
+      contextNotePath: '/vault/A.md'
+    });
+
+    invokeMock.mockResolvedValueOnce({
+      conversationId: 'conv-a',
+      contextNoteId: 'a',
+      contextNotePath: '/vault/A.md'
+    });
+    expect(await loadPersistedChatLocation()).toEqual(chatA);
+
+    invokeMock.mockClear();
+    await persistChatLocation(chatFresh);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
 });
+

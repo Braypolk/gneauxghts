@@ -148,7 +148,7 @@ export class NotepadSearchStore {
         return;
       }
 
-      const results = await searchNotes(trimmedQuery, this.searchMode, {
+      const results = await searchNotes(trimmedQuery, {
         currentPath: this.#deps.getCurrentPath(),
         currentTitle: this.#deps.getCurrentTitle(),
         currentMarkdown: this.#deps.getCurrentMarkdown()

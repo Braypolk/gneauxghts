@@ -10,9 +10,8 @@ import type {
   ChatMode,
   ChatNoteGrant,
   ChatSendReceipt,
-  ChatSettings,
   ProjectionConflictResolution,
-  VaultAccess
+  VaultAccess, ChatSettings
 } from './types';
 
 interface RawChatSettings {

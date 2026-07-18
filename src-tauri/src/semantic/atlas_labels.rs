@@ -738,20 +738,6 @@ fn mean_embedding(embeddings: &[Vec<f32>]) -> Vec<f32> {
     mean
 }
 
-fn assign_unique_labels(
-    ranked_by_cloud: Vec<(String, Vec<(String, f32)>)>,
-) -> HashMap<String, CloudLabelAssignment> {
-    let mut used = HashSet::new();
-    let mut output = HashMap::new();
-    for (cloud_id, ranked) in ranked_by_cloud {
-        if let Some(assignment) = take_unique_label(&ranked, &used) {
-            used.insert(normalized_phrase(&assignment.label));
-            output.insert(cloud_id, assignment);
-        }
-    }
-    output
-}
-
 fn take_unique_label(
     ranked: &[(String, f32)],
     used: &HashSet<String>,
@@ -841,18 +827,6 @@ fn rank_cloud_phrases(
             .then_with(|| normalized_phrase(&left.0).cmp(&normalized_phrase(&right.0)))
     });
     ranked
-}
-
-pub(crate) fn generate_labels(
-    connection: &mut Connection,
-    provider: &(dyn EmbeddingProvider + Sync),
-    clouds: &[AtlasCloud],
-    nodes: &[AtlasNode],
-    note_embeddings: &HashMap<String, Vec<f32>>,
-) -> Result<(HashMap<String, CloudLabelAssignment>, LabelPipelineMetrics), String> {
-    generate_labels_progressive(connection, provider, clouds, nodes, note_embeddings, |_, _| {
-        Ok(())
-    })
 }
 
 pub(crate) fn generate_labels_progressive<F>(
@@ -1326,62 +1300,63 @@ mod tests {
 
     #[test]
     fn duplicate_labels_choose_runner_up_deterministically() {
-        let assigned = assign_unique_labels(vec![
-            (
-                "a".to_string(),
-                vec![("Shared".to_string(), 0.9), ("First".to_string(), 0.8)],
-            ),
-            (
-                "b".to_string(),
-                vec![("Shared".to_string(), 0.95), ("Second".to_string(), 0.7)],
-            ),
-        ]);
-        assert_eq!(assigned["a"].label, "shared");
-        assert_eq!(assigned["a"].source, CloudLabelSource::Keybert);
-        assert_eq!(assigned["b"].label, "second");
-        assert_eq!(assigned["b"].source, CloudLabelSource::Keybert);
+        // Matches production: clouds are labeled in sorted id order with a shared
+        // used-set, so the first cloud keeps "shared" and the second takes runner-up.
+        let mut used = HashSet::new();
+        let a = take_unique_label(
+            &[("Shared".to_string(), 0.9), ("First".to_string(), 0.8)],
+            &used,
+        )
+        .expect("cloud a");
+        used.insert(normalized_phrase(&a.label));
+        let b = take_unique_label(
+            &[("Shared".to_string(), 0.95), ("Second".to_string(), 0.7)],
+            &used,
+        )
+        .expect("cloud b");
+        assert_eq!(a.label, "shared");
+        assert_eq!(a.source, CloudLabelSource::Keybert);
+        assert_eq!(b.label, "second");
+        assert_eq!(b.source, CloudLabelSource::Keybert);
     }
 
     #[test]
     fn label_uniqueness_is_case_insensitive() {
-        let assigned = assign_unique_labels(vec![
-            (
-                "a".to_string(),
-                vec![("HubSpot".to_string(), 0.9), ("crm".to_string(), 0.5)],
-            ),
-            (
-                "b".to_string(),
-                vec![("hubspot".to_string(), 0.95), ("pipeline".to_string(), 0.8)],
-            ),
-        ]);
-        assert_eq!(assigned["a"].label, "hubspot");
-        assert_eq!(assigned["b"].label, "pipeline");
-        assert_ne!(
-            normalized_phrase(&assigned["a"].label),
-            normalized_phrase(&assigned["b"].label)
-        );
+        let mut used = HashSet::new();
+        let a = take_unique_label(
+            &[("HubSpot".to_string(), 0.9), ("crm".to_string(), 0.5)],
+            &used,
+        )
+        .expect("cloud a");
+        used.insert(normalized_phrase(&a.label));
+        let b = take_unique_label(
+            &[("hubspot".to_string(), 0.95), ("pipeline".to_string(), 0.8)],
+            &used,
+        )
+        .expect("cloud b");
+        assert_eq!(a.label, "hubspot");
+        assert_eq!(b.label, "pipeline");
+        assert_ne!(normalized_phrase(&a.label), normalized_phrase(&b.label));
     }
 
     #[test]
     fn uniqueness_prefers_runner_up_word_over_empty() {
         // Only the winning word is contested; runner-up must still be chosen.
-        let assigned = assign_unique_labels(vec![
-            (
-                "a".to_string(),
-                vec![("hubspot".to_string(), 1.0)],
-            ),
-            (
-                "b".to_string(),
-                vec![
-                    ("HubSpot".to_string(), 0.99),
-                    ("crm".to_string(), 0.4),
-                    ("deals".to_string(), 0.35),
-                ],
-            ),
-        ]);
-        assert_eq!(assigned["a"].label, "hubspot");
-        assert_eq!(assigned["b"].label, "crm");
-        assert_eq!(assigned["b"].source, CloudLabelSource::Keybert);
+        let mut used = HashSet::new();
+        let a = take_unique_label(&[("hubspot".to_string(), 1.0)], &used).expect("cloud a");
+        used.insert(normalized_phrase(&a.label));
+        let b = take_unique_label(
+            &[
+                ("HubSpot".to_string(), 0.99),
+                ("crm".to_string(), 0.4),
+                ("deals".to_string(), 0.35),
+            ],
+            &used,
+        )
+        .expect("cloud b");
+        assert_eq!(a.label, "hubspot");
+        assert_eq!(b.label, "crm");
+        assert_eq!(b.source, CloudLabelSource::Keybert);
     }
 
     #[test]
@@ -1434,9 +1409,15 @@ mod tests {
         ]);
         let clouds = vec![cloud(&["a", "b"]), cloud(&["c"])];
         let provider = MockProvider::new();
-        let (labels, metrics) =
-            generate_labels(&mut connection, &provider, &clouds, &nodes, &embeddings)
-                .expect("labels");
+        let (labels, metrics) = generate_labels_progressive(
+            &mut connection,
+            &provider,
+            &clouds,
+            &nodes,
+            &embeddings,
+            |_, _| Ok(()),
+        )
+        .expect("labels");
 
         assert!(metrics.selected_chunk_count > 0);
         assert!(metrics.provider_text_count > 0);
@@ -1491,13 +1472,25 @@ mod tests {
         let clouds = vec![cloud(&["a", "b"])];
         let provider = MockProvider::new();
 
-        let (_, first_metrics) =
-            generate_labels(&mut connection, &provider, &clouds, &nodes, &embeddings)
-                .expect("first");
+        let (_, first_metrics) = generate_labels_progressive(
+            &mut connection,
+            &provider,
+            &clouds,
+            &nodes,
+            &embeddings,
+            |_, _| Ok(()),
+        )
+        .expect("first");
         let calls_after_first = provider.calls.load(Ordering::Relaxed);
-        let (_, second_metrics) =
-            generate_labels(&mut connection, &provider, &clouds, &nodes, &embeddings)
-                .expect("cached");
+        let (_, second_metrics) = generate_labels_progressive(
+            &mut connection,
+            &provider,
+            &clouds,
+            &nodes,
+            &embeddings,
+            |_, _| Ok(()),
+        )
+        .expect("cached");
 
         assert!(first_metrics.provider_text_count > 0);
         assert!(second_metrics.cache_hit_count > 0);
@@ -1518,12 +1511,13 @@ mod tests {
             &[1.0, 0.0],
         );
         let (node, embedding) = atlas_node("a", "Garden Planning", &[1.0, 0.0]);
-        let result = generate_labels(
+        let result = generate_labels_progressive(
             &mut connection,
             &MockProvider::failing(),
             &[cloud(&["a"])],
             &[node],
             &HashMap::from([("a".to_string(), embedding)]),
+            |_, _| Ok(()),
         );
         assert_eq!(
             result.expect_err("provider failure"),
@@ -1537,12 +1531,13 @@ mod tests {
         ensure_schema(&connection).expect("schema");
         let (node, embedding) = atlas_node("a", "Garden Planning", &[1.0, 0.0]);
         let cloud = cloud(&["a"]);
-        let (labels, _) = generate_labels(
+        let (labels, _) = generate_labels_progressive(
             &mut connection,
             &MockProvider::new(),
             &[cloud.clone()],
             &[node],
             &HashMap::from([("a".to_string(), embedding)]),
+            |_, _| Ok(()),
         )
         .expect("labels");
         assert_eq!(labels[&cloud.id].label, "Garden Planning");
@@ -1674,12 +1669,13 @@ mod tests {
         );
         let (node, embedding) = atlas_node("a", "note-a", &[1.0, 0.0]);
         let cloud = cloud(&["a"]);
-        let (labels, metrics) = generate_labels(
+        let (labels, metrics) = generate_labels_progressive(
             &mut connection,
             &MockProvider::new(),
             &[cloud.clone()],
             &[node],
             &HashMap::from([("a".to_string(), embedding)]),
+            |_, _| Ok(()),
         )
         .expect("labels");
         assert_eq!(labels[&cloud.id].source, CloudLabelSource::Keybert);

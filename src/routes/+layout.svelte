@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import "../app.css";
   import { initializeTheme } from '$lib/theme';
+  import '$lib/editorTextSize';
   import { mobileViewport } from '$lib/ui/mobileViewport';
   import NavBar from '$lib/ui/NavBar.svelte';
   import { appStore } from '$lib/app/appStore.svelte';

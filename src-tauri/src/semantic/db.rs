@@ -1631,34 +1631,6 @@ pub(crate) struct EdgeRebuildStats {
     pub(crate) comparisons: u64,
 }
 
-#[cfg(test)]
-pub(crate) fn rebuild_edges(
-    connection: &mut Connection,
-    neighbors_per_note: usize,
-    min_score: f32,
-) -> Result<EdgeRebuildStats, String> {
-    rebuild_edges_with_checkpoint(connection, neighbors_per_note, min_score, |_, _| {})
-}
-
-pub(crate) fn rebuild_edges_with_checkpoint<F>(
-    connection: &mut Connection,
-    neighbors_per_note: usize,
-    min_score: f32,
-    checkpoint: F,
-) -> Result<EdgeRebuildStats, String>
-where
-    F: FnMut(usize, usize),
-{
-    rebuild_edges_with_provenance(
-        connection,
-        neighbors_per_note,
-        min_score,
-        "",
-        "legacy",
-        checkpoint,
-    )
-}
-
 pub(crate) fn rebuild_edges_with_provenance<F>(
     connection: &mut Connection,
     neighbors_per_note: usize,
@@ -2613,9 +2585,9 @@ mod tests {
         ann_label_for, clear_atlas_cache, delete_note, edge_dirty_count,
         edge_generation_requires_full_rebuild, edges_are_stale_for_generation,
         edges_are_stale_for_model, ensure_schema, for_each_chunk_embedding, load_dirty_edge_paths,
-        mark_running_jobs_interrupted, move_note, open_database, rebuild_edges,
-        rebuild_edges_with_provenance, repair_dirty_edges, save_atlas_positions,
-        sum_chunk_text_bytes, upsert_note_chunks, SemanticNoteMetadata, StoredAtlasPosition,
+        mark_running_jobs_interrupted, move_note, open_database, rebuild_edges_with_provenance,
+        repair_dirty_edges, save_atlas_positions, sum_chunk_text_bytes, upsert_note_chunks,
+        SemanticNoteMetadata, StoredAtlasPosition,
     };
     use crate::note::DocumentKind;
     use crate::semantic::chunking::SemanticChunk;
@@ -2694,7 +2666,15 @@ mod tests {
             );
         }
 
-        let stats = rebuild_edges(&mut connection, neighbors_per_note, 0.5).expect("rebuild edges");
+        let stats = rebuild_edges_with_provenance(
+            &mut connection,
+            neighbors_per_note,
+            0.5,
+            "note-gen-test",
+            "model-test",
+            |_, _| {},
+        )
+        .expect("rebuild edges");
         assert_eq!(stats.note_count, note_count);
         assert_eq!(stats.dimensions, 2);
         // N sources each comparing against the other N-1.
@@ -2726,7 +2706,15 @@ mod tests {
         seed_note(&mut connection, "notes/a.md", &[1.0, 0.0]);
         seed_note(&mut connection, "notes/b.md", &[0.0, 1.0]);
 
-        let stats = rebuild_edges(&mut connection, 4, 0.5).expect("rebuild edges");
+        let stats = rebuild_edges_with_provenance(
+            &mut connection,
+            4,
+            0.5,
+            "note-gen-test",
+            "model-test",
+            |_, _| {},
+        )
+        .expect("rebuild edges");
         assert_eq!(stats.note_count, 2);
         assert_eq!(stats.edge_count, 0, "orthogonal notes must not be linked");
     }

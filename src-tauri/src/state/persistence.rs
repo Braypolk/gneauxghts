@@ -100,6 +100,13 @@ pub(crate) struct PersistedState {
     pub(crate) collapsed_note_ids: Vec<String>,
     #[serde(default)]
     pub(crate) forgotten_notes: Vec<PersistedForgottenNote>,
+    /// Last thought-partner conversation opened in the notepad (Recent history).
+    #[serde(default)]
+    pub(crate) last_chat_conversation_id: Option<String>,
+    #[serde(default)]
+    pub(crate) last_chat_context_note_id: Option<String>,
+    #[serde(default)]
+    pub(crate) last_chat_context_note_path: Option<String>,
 }
 
 pub(crate) fn read_state(notes_dir: &Path) -> Result<PersistedState, String> {
@@ -592,6 +599,35 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|err| err.to_string())?;
     migrate_note_activity_columns(connection)?;
+    migrate_last_chat_columns(connection)?;
+    Ok(())
+}
+
+fn migrate_last_chat_columns(connection: &Connection) -> Result<(), String> {
+    if !has_column(connection, "app_state", "last_chat_conversation_id")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state ADD COLUMN last_chat_conversation_id TEXT",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    if !has_column(connection, "app_state", "last_chat_context_note_id")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state ADD COLUMN last_chat_context_note_id TEXT",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    if !has_column(connection, "app_state", "last_chat_context_note_path")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state ADD COLUMN last_chat_context_note_path TEXT",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
     Ok(())
 }
 
@@ -693,15 +729,31 @@ fn database_has_persisted_state(connection: &Connection) -> Result<bool, String>
 }
 
 fn read_state_from_database(connection: &Connection) -> Result<PersistedState, String> {
-    let last_opened_note_id = connection
+    let (
+        last_opened_note_id,
+        last_chat_conversation_id,
+        last_chat_context_note_id,
+        last_chat_context_note_path,
+    ) = connection
         .query_row(
-            "SELECT last_opened_note_id FROM app_state WHERE id = ?1",
+            "SELECT last_opened_note_id,
+                    last_chat_conversation_id,
+                    last_chat_context_note_id,
+                    last_chat_context_note_path
+             FROM app_state WHERE id = ?1",
             params![APP_STATE_SINGLETON_ID],
-            |row| row.get::<_, Option<String>>(0),
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
         )
         .optional()
         .map_err(|err| err.to_string())?
-        .flatten();
+        .unwrap_or((None, None, None, None));
 
     let recent_note_ids = read_ordered_string_column(
         connection,
@@ -750,6 +802,9 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
         note_order_note_ids,
         collapsed_note_ids,
         forgotten_notes,
+        last_chat_conversation_id,
+        last_chat_context_note_id,
+        last_chat_context_note_path,
     })
 }
 
@@ -778,11 +833,26 @@ fn write_state_to_connection(
 
     transaction
         .execute(
-            "INSERT INTO app_state (id, last_opened_note_id)
-             VALUES (?1, ?2)
-             ON CONFLICT(id) DO UPDATE
-             SET last_opened_note_id = excluded.last_opened_note_id",
-            params![APP_STATE_SINGLETON_ID, state.last_opened_note_id.as_deref()],
+            "INSERT INTO app_state (
+                id,
+                last_opened_note_id,
+                last_chat_conversation_id,
+                last_chat_context_note_id,
+                last_chat_context_note_path
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                last_opened_note_id = excluded.last_opened_note_id,
+                last_chat_conversation_id = excluded.last_chat_conversation_id,
+                last_chat_context_note_id = excluded.last_chat_context_note_id,
+                last_chat_context_note_path = excluded.last_chat_context_note_path",
+            params![
+                APP_STATE_SINGLETON_ID,
+                state.last_opened_note_id.as_deref(),
+                state.last_chat_conversation_id.as_deref(),
+                state.last_chat_context_note_id.as_deref(),
+                state.last_chat_context_note_path.as_deref(),
+            ],
         )
         .map_err(|err| err.to_string())?;
 
@@ -880,6 +950,37 @@ pub(crate) fn db_set_last_opened_note_id(note_id: Option<&str>) -> Result<(), St
                  ON CONFLICT(id) DO UPDATE
                  SET last_opened_note_id = excluded.last_opened_note_id",
                 params![APP_STATE_SINGLETON_ID, note_id],
+            )
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+pub(crate) fn db_set_last_chat_location(
+    conversation_id: &str,
+    context_note_id: Option<&str>,
+    context_note_path: Option<&str>,
+) -> Result<(), String> {
+    with_state_database(|connection| {
+        connection
+            .execute(
+                "INSERT INTO app_state (
+                    id,
+                    last_chat_conversation_id,
+                    last_chat_context_note_id,
+                    last_chat_context_note_path
+                 )
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET
+                    last_chat_conversation_id = excluded.last_chat_conversation_id,
+                    last_chat_context_note_id = excluded.last_chat_context_note_id,
+                    last_chat_context_note_path = excluded.last_chat_context_note_path",
+                params![
+                    APP_STATE_SINGLETON_ID,
+                    conversation_id,
+                    context_note_id,
+                    context_note_path
+                ],
             )
             .map(|_| ())
             .map_err(|err| err.to_string())

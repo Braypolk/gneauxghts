@@ -1,4 +1,5 @@
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
+import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 import type { SearchItem } from '$lib/types/semantic';
 import type { SearchMode } from '$lib/features/notepad/search/search';
 
@@ -27,7 +28,7 @@ export interface NotepadCommandBarSearchProps {
   matchCase: boolean;
   matchWholeWord: boolean;
   searchResults: SearchItem[];
-  recentNotes: SearchItem[];
+  recentLocations: LocationHistoryEntry[];
   recentTasks: RecentTaskItem[];
   isSearching: boolean;
   onSearchInput: (value: string) => void;
@@ -36,9 +37,9 @@ export interface NotepadCommandBarSearchProps {
   onMatchWholeWordChange: (enabled: boolean) => void | Promise<void>;
   onSearchSelect: (result: SearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
-  onRecentNoteSelect: (result: SearchItem) => void;
+  onRecentLocationSelect: (entry: LocationHistoryEntry) => void;
   onRecentTaskSelect: (task: RecentTaskItem) => void;
-  onRecentNoteShortcut: (index: number) => void | Promise<void>;
+  onRecentLocationShortcut: (index: number) => void | Promise<void>;
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
   onSearchOpen: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;

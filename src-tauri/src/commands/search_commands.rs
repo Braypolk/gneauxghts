@@ -1,5 +1,5 @@
 use super::{
-    prepare_notes_dir, DraftRef, RecentTaskItem, SearchMode, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+    prepare_notes_dir, DraftRef, RecentTaskItem, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
 use crate::{
     index::{build_current_override, normalize_search_text, AppState, IndexedNote, NotesIndex},
@@ -12,9 +12,9 @@ use crate::{
     },
     services::{resolve_current_document, CurrentDocumentRequest},
     state::{
-        db_load_note_activity, effective_open_count, prune_recent_note_ids, read_state,
-        resolve_note_id_from_path, task_projection::list_recent_open_tasks, validate_current_path,
-        write_state, NoteActivity,
+        db_load_note_activity, db_set_last_chat_location, effective_open_count,
+        prune_recent_note_ids, read_state, resolve_note_id_from_path,
+        task_projection::list_recent_open_tasks, validate_current_path, write_state, NoteActivity,
     },
     time::current_time_millis,
 };
@@ -29,7 +29,7 @@ use std::{
 use tauri::State;
 
 /// Phase 5: short-lived cache of search/related results. Keys include the
-/// query text, mode, current path, and current draft hash so that
+/// query text, current path, and current draft hash so that
 /// repeated keystrokes that resolve to the same input get a cached
 /// response. Cache TTL is intentionally tiny — just long enough to absorb
 /// double-fires from the editor.
@@ -247,11 +247,20 @@ pub(crate) fn list_recent_notes(
     ))
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LastChatLocation {
+    conversation_id: String,
+    context_note_id: Option<String>,
+    context_note_path: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecentFocusBundle {
     recent_notes: Vec<NoteSearchResult>,
     recent_tasks: Vec<RecentTaskItem>,
+    last_chat: Option<LastChatLocation>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -348,10 +357,50 @@ pub(crate) fn list_recent_focus(
         })
         .collect();
 
+    let last_chat = persisted_state
+        .last_chat_conversation_id
+        .as_ref()
+        .map(|conversation_id| LastChatLocation {
+            conversation_id: conversation_id.clone(),
+            context_note_id: persisted_state.last_chat_context_note_id.clone(),
+            context_note_path: persisted_state.last_chat_context_note_path.clone(),
+        });
+
     Ok(RecentFocusBundle {
         recent_notes,
         recent_tasks,
+        last_chat,
     })
+}
+
+#[tauri::command]
+pub(crate) fn get_last_chat_location() -> Result<Option<LastChatLocation>, String> {
+    let notes_dir = prepare_notes_dir(false)?;
+    let state = read_state(&notes_dir)?;
+    Ok(state
+        .last_chat_conversation_id
+        .as_ref()
+        .map(|conversation_id| LastChatLocation {
+            conversation_id: conversation_id.clone(),
+            context_note_id: state.last_chat_context_note_id.clone(),
+            context_note_path: state.last_chat_context_note_path.clone(),
+        }))
+}
+
+#[tauri::command]
+pub(crate) fn set_last_chat_location(
+    conversation_id: String,
+    context_note_id: Option<String>,
+    context_note_path: Option<String>,
+) -> Result<(), String> {
+    if conversation_id.trim().is_empty() {
+        return Err("conversation_id is required".to_string());
+    }
+    db_set_last_chat_location(
+        &conversation_id,
+        context_note_id.as_deref(),
+        context_note_path.as_deref(),
+    )
 }
 
 pub(super) fn collect_recent_note_results(
@@ -382,8 +431,6 @@ pub(super) fn collect_recent_note_results(
 pub(crate) async fn search_notes_hybrid(
     state: State<'_, AppState>,
     query: String,
-    mode: SearchMode,
-    scope: Option<super::SearchScope>,
     current_path: Option<String>,
     current_title: String,
     current_markdown: Option<String>,
@@ -409,7 +456,6 @@ pub(crate) async fn search_notes_hybrid(
         return Ok(Vec::new());
     }
     let effective_limit = limit;
-    let scope = scope.unwrap_or_default();
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
@@ -424,8 +470,6 @@ pub(crate) async fn search_notes_hybrid(
     let draft = resolved_current.draft;
     let cache_fingerprint = build_search_fingerprint(
         &normalized_query,
-        &mode,
-        &scope,
         current_path.as_deref(),
         draft.hash.as_deref(),
         effective_limit,
@@ -475,7 +519,7 @@ pub(crate) async fn search_notes_hybrid(
         let activity_by_note_id = db_load_note_activity().unwrap_or_default();
         let note_lookup = note_access_lookup(&state);
         let now = current_time_millis().unwrap_or(0);
-        let results = filter_search_scope(
+        let results = filter_note_results(
             merge_hybrid_candidates(
                 lexical_candidates,
                 Vec::new(),
@@ -488,7 +532,6 @@ pub(crate) async fn search_notes_hybrid(
                 &note_lookup,
                 now,
             ),
-            &scope,
             effective_limit,
         );
         search_cache_put(cache_fingerprint, results.clone());
@@ -510,7 +553,7 @@ pub(crate) async fn search_notes_hybrid(
     let activity_by_note_id = db_load_note_activity().unwrap_or_default();
     let note_lookup = note_access_lookup(&state);
     let now = current_time_millis().unwrap_or(0);
-    let ranked = filter_search_scope(
+    let ranked = filter_note_results(
         merge_hybrid_candidates(
             lexical_candidates,
             semantic_matches,
@@ -523,7 +566,6 @@ pub(crate) async fn search_notes_hybrid(
             &note_lookup,
             now,
         ),
-        &scope,
         effective_limit,
     );
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
@@ -785,8 +827,6 @@ pub(super) fn build_draft_ref(
 #[allow(clippy::too_many_arguments)]
 fn build_search_fingerprint(
     normalized_query: &str,
-    mode: &SearchMode,
-    scope: &super::SearchScope,
     current_path: Option<&Path>,
     body_hash: Option<&str>,
     limit: usize,
@@ -794,10 +834,8 @@ fn build_search_fingerprint(
     semantic_weight: Option<f32>,
 ) -> String {
     format!(
-        "{}|{:?}|{:?}|{}|{}|{}|{:?}|{:?}",
+        "{}|{}|{}|{}|{:?}|{:?}",
         normalized_query,
-        mode,
-        scope,
         current_path
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default(),
@@ -808,18 +846,10 @@ fn build_search_fingerprint(
     )
 }
 
-fn filter_search_scope(
-    results: Vec<NoteSearchResult>,
-    scope: &super::SearchScope,
-    limit: usize,
-) -> Vec<NoteSearchResult> {
+fn filter_note_results(results: Vec<NoteSearchResult>, limit: usize) -> Vec<NoteSearchResult> {
     results
         .into_iter()
-        .filter(|result| match scope {
-            super::SearchScope::Notes => result.document_kind == crate::note::DocumentKind::Note,
-            super::SearchScope::Chats => result.document_kind != crate::note::DocumentKind::Note,
-            super::SearchScope::Everything => true,
-        })
+        .filter(|result| result.document_kind == crate::note::DocumentKind::Note)
         .take(limit)
         .collect()
 }

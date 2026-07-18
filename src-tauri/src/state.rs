@@ -13,7 +13,8 @@ pub(crate) use config::{
 #[allow(unused_imports)]
 pub(crate) use persistence::{
     db_insert_forgotten_note, db_load_note_activity, db_remove_forgotten_note,
-    db_set_last_opened_note_id, db_set_note_collapsed, db_set_note_hidden, db_set_note_order,
+    db_set_last_chat_location, db_set_last_opened_note_id, db_set_note_collapsed,
+    db_set_note_hidden, db_set_note_order,
     db_set_recent_note_ids, db_touch_note_activity, derive_file_stem,
     derive_file_stem_from_title_and_markdown, effective_open_count, is_forgotten_note_path,
     is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
@@ -215,6 +216,7 @@ mod tests {
                         purge_at_millis: 60,
                     },
                 ],
+                ..PersistedState::default()
             },
         )
         .expect("write state");

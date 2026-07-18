@@ -4,6 +4,7 @@ import {
   deriveNotepadCommandBarVisibleItems
 } from './notepadCommandBarState';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
+import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 import type { SearchItem } from '$lib/types/semantic';
 
 function searchItem(overrides: Partial<SearchItem> = {}): SearchItem {
@@ -24,6 +25,19 @@ function searchItem(overrides: Partial<SearchItem> = {}): SearchItem {
   };
 }
 
+function locationEntry(
+  overrides: Partial<LocationHistoryEntry> & { location?: LocationHistoryEntry['location'] } = {}
+): LocationHistoryEntry {
+  return {
+    location: overrides.location ?? {
+      kind: 'editor',
+      noteId: 'note-id',
+      notePath: '/vault/Note.md'
+    },
+    label: overrides.label ?? 'Note'
+  };
+}
+
 function taskItem(overrides: Partial<RecentTaskItem> = {}): RecentTaskItem {
   return {
     noteId: 'note-id',
@@ -38,10 +52,10 @@ function taskItem(overrides: Partial<RecentTaskItem> = {}): RecentTaskItem {
 }
 
 describe('deriveNotepadCommandBarVisibleItems', () => {
-  it('orders recent tasks before recent notes for empty search', () => {
-    const items = deriveNotepadCommandBarVisibleItems('', [], [searchItem()], [taskItem()]);
+  it('orders recent tasks before recent locations for empty search', () => {
+    const items = deriveNotepadCommandBarVisibleItems('', [], [locationEntry()], [taskItem()]);
 
-    expect(items.map((item) => item.kind)).toEqual(['task', 'note']);
+    expect(items.map((item) => item.kind)).toEqual(['task', 'location']);
   });
 });
 
@@ -52,7 +66,7 @@ describe('createNotepadCommandBarState', () => {
     return createNotepadCommandBarState({
       getSearchQuery: () => '',
       getSearchResults: () => [],
-      getRecentNotes: () => [],
+      getRecentLocations: () => [],
       getRecentTasks: () => [],
       getVisibleItems: () => [],
       getForgetHoldDurationMs: () => 0,
@@ -61,9 +75,9 @@ describe('createNotepadCommandBarState', () => {
       onSearchInput: () => {},
       onSearchSelect: () => {},
       onSearchNavigate: () => {},
-      onRecentNoteSelect: () => {},
+      onRecentLocationSelect: () => {},
       onRecentTaskSelect: () => {},
-      onRecentNoteShortcut: () => {},
+      onRecentLocationShortcut: () => {},
       onRecentTaskShortcut: () => {},
       closeSearch: () => {},
       onForget: () => {},

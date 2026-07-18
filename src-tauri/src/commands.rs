@@ -93,21 +93,6 @@ pub(crate) struct StoredImageAsset {
     file_path: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum SearchMode {
-    All,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum SearchScope {
-    #[default]
-    Notes,
-    Chats,
-    Everything,
-}
-
 /// Phase 5: lightweight draft pointer used internally for search/related/
 /// wikilink flows. The frontend sends `currentMarkdown` and
 /// `currentBodyHash` as flat fields; commands assemble a `DraftRef` to call
