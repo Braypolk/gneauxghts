@@ -104,6 +104,7 @@ export interface SemanticDebugMetrics {
   relatedSelectionRequestCount: number;
   relatedCacheHitCount: number;
   relatedEdgeReuseCount: number;
+  relatedNoteAnnCount: number;
   relatedSemanticQueryCount: number;
   relatedInsufficientContentCount: number;
   relatedUnavailableCount: number;

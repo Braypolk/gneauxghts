@@ -53,6 +53,7 @@ pub(crate) struct SemanticDebugMetrics {
     pub(crate) related_selection_request_count: u64,
     pub(crate) related_cache_hit_count: u64,
     pub(crate) related_edge_reuse_count: u64,
+    pub(crate) related_note_ann_count: u64,
     pub(crate) related_semantic_query_count: u64,
     pub(crate) related_insufficient_content_count: u64,
     pub(crate) related_unavailable_count: u64,

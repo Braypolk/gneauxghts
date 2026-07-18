@@ -11,7 +11,7 @@ use super::{
         update_moved_note_metadata, upsert_note_chunks, EdgeRebuildStats, SemanticNoteMetadata,
     },
     debug::SemanticDebugState,
-    embed::{EmbeddingInputKind, EmbeddingProvider},
+    embed::{EmbeddingInputKind, EmbeddingProvider, EMBEDDING_BATCH_SIZE},
     note_ann::NoteAnnIndexState,
     RuntimeState,
 };
@@ -341,14 +341,10 @@ fn process_pending_jobs(
         } else if batch.automatic_rebuild_requested {
             handled_automatic_rebuild = true;
             update_runtime(runtime, |state| {
-                state.recovery_state = "waitingForIdle".to_string();
+                state.recovery_state = "rebuilding".to_string();
                 state.rebuild_reason = Some("ANN snapshot requires fallback rebuild".to_string());
                 state.indexing_in_progress = true;
-                state.current_job_label = Some("Waiting for idle".to_string());
-            });
-            background_gate.wait_for_automatic_idle();
-            update_runtime(runtime, |state| {
-                state.recovery_state = "rebuilding".to_string();
+                state.current_job_label = Some("Rebuilding ANN snapshot".to_string());
             });
             run_job(
                 db_path,
@@ -361,17 +357,16 @@ fn process_pending_jobs(
                             state.progress_current = current;
                             state.progress_total = total;
                         });
+                        background_gate.checkpoint_manual_pause();
                     };
                     ann.rebuild_from_connection_with_gate(
                         connection,
                         Some(background_gate.as_ref()),
-                        true,
                         Some(&progress),
                     )?;
                     note_ann.rebuild_from_connection_with_gate(
                         connection,
                         Some(background_gate.as_ref()),
-                        true,
                         Some(&progress),
                     )?;
                     Ok(JobOutcome::default())
@@ -380,14 +375,10 @@ fn process_pending_jobs(
         } else if batch.edge_refresh_requested {
             handled_edges = true;
             update_runtime(runtime, |state| {
-                state.recovery_state = "waitingForIdle".to_string();
+                state.recovery_state = "rebuilding".to_string();
                 state.rebuild_reason = Some("Related-note edges are stale".to_string());
                 state.indexing_in_progress = true;
-                state.current_job_label = Some("Waiting for idle".to_string());
-            });
-            background_gate.wait_for_automatic_idle();
-            update_runtime(runtime, |state| {
-                state.recovery_state = "rebuilding".to_string();
+                state.current_job_label = Some("Refreshing related notes".to_string());
             });
             run_job(
                 db_path,
@@ -430,7 +421,7 @@ fn process_pending_jobs(
                                     state.progress_current = current;
                                     state.progress_total = total;
                                 });
-                                background_gate.wait_for_automatic_idle();
+                                background_gate.checkpoint_manual_pause();
                             },
                         )?;
                         record_edge_rebuild(debug, &stats, started_at.elapsed().as_millis() as u64);
@@ -500,8 +491,6 @@ fn process_pending_jobs(
         } else if !batch.atlas_requests.is_empty() {
             handled_atlas = true;
             handled_structural_atlas = true;
-            thread::sleep(std::time::Duration::from_secs(2));
-            background_gate.wait_for_automatic_idle();
             let cache_dir = db_path
                 .parent()
                 .map(|parent| parent.join(crate::state::VAULT_CACHE_DIR_NAME))
@@ -563,7 +552,6 @@ fn process_pending_jobs(
         } else if !batch.atlas_label_requests.is_empty() {
             handled_atlas = true;
             handled_label_atlas = true;
-            background_gate.wait_for_automatic_idle();
             let cache_dir = db_path
                 .parent()
                 .map(|parent| parent.join(crate::state::VAULT_CACHE_DIR_NAME))
@@ -1048,13 +1036,11 @@ fn process_rebuild(
     ann.rebuild_from_connection_with_gate(
         connection,
         Some(background_gate.as_ref()),
-        false,
         Some(&progress),
     )?;
     note_ann.rebuild_from_connection_with_gate(
         connection,
         Some(background_gate.as_ref()),
-        false,
         Some(&progress),
     )?;
     Ok(outcome)
@@ -1072,14 +1058,14 @@ fn process_note_batch(
 ) -> Result<JobOutcome, String> {
     let mut scanned_count = 0usize;
     let mut embedded_count = 0usize;
-    let mut needs_ann_rebuild = ann.needs_rebuild();
-    let mut needs_note_ann_rebuild = note_ann.needs_rebuild();
+    let mut force_ann_rebuild = false;
+    let mut force_note_ann_rebuild = false;
     let mutation_count = note_updates.len() + deleted_notes.len() + moved_notes.len();
     let mut defer_ann_updates = mutation_count > ANN_MAX_INCREMENTAL_DOCUMENTS;
     let mut changed_chunk_count = 0usize;
     if defer_ann_updates {
-        needs_ann_rebuild = true;
-        needs_note_ann_rebuild = true;
+        force_ann_rebuild = true;
+        force_note_ann_rebuild = true;
     }
 
     // Process moves first: re-key existing rows from old path to new path,
@@ -1130,13 +1116,13 @@ fn process_note_batch(
                 note::DocumentKind::Note,
                 &metadata,
             )?;
-            needs_ann_rebuild = true;
+            force_ann_rebuild = true;
             let stable_ann_label = previous_note
                 .as_ref()
                 .map(|note| note.stable_ann_label)
                 .unwrap_or(0);
             if !note_ann.apply_note_move(stable_ann_label, &old_path_str, &new_path_str)? {
-                needs_note_ann_rebuild = true;
+                force_note_ann_rebuild = true;
             }
         } else {
             let indexed_note = index_note_content(
@@ -1147,9 +1133,9 @@ fn process_note_batch(
                 moved.modified_millis,
             )?;
             embedded_count += indexed_note.embedded_count;
-            needs_ann_rebuild = true;
+            force_ann_rebuild = true;
             if !note_ann.apply_note_upsert(connection, &new_path_str)? {
-                needs_note_ann_rebuild = true;
+                force_note_ann_rebuild = true;
             }
         }
         scanned_count += 1;
@@ -1166,10 +1152,10 @@ fn process_note_batch(
         changed_chunk_count = changed_chunk_count.saturating_add(previous_labels.len());
         if changed_chunk_count > ANN_MAX_INCREMENTAL_CHUNKS {
             defer_ann_updates = true;
-            needs_ann_rebuild = true;
+            force_ann_rebuild = true;
         }
         if !defer_ann_updates && !ann.apply_note_delete(&previous_labels)? {
-            needs_ann_rebuild = true;
+            force_ann_rebuild = true;
         }
         if !defer_ann_updates
             && !note_ann.apply_note_delete(
@@ -1179,26 +1165,30 @@ fn process_note_batch(
                     .unwrap_or(0),
             )?
         {
-            needs_note_ann_rebuild = true;
+            force_note_ann_rebuild = true;
         }
         scanned_count += 1;
     }
 
+    // Prepare every dirty document first, then embed missing chunks across the
+    // whole batch so llama-server/Metal sees large HTTP requests instead of one
+    // small request per note.
+    let mut pending_updates = Vec::new();
     for (note_path, update) in note_updates {
         let path_str = note_path.to_string_lossy().into_owned();
         let previous_labels = load_note_chunk_labels(connection, &path_str)?;
         let previous_note = load_note_record(connection, &path_str)?;
-        let indexed_note = match update.document {
+        let prepared = match update.document {
             PendingSemanticDocument::NoteMarkdown(markdown) => {
                 if !crate::note::semantic_recall_eligible(&markdown) {
                     delete_note(connection, &path_str)?;
                     changed_chunk_count = changed_chunk_count.saturating_add(previous_labels.len());
                     if changed_chunk_count > ANN_MAX_INCREMENTAL_CHUNKS {
                         defer_ann_updates = true;
-                        needs_ann_rebuild = true;
+                        force_ann_rebuild = true;
                     }
                     if !defer_ann_updates && !ann.apply_note_delete(&previous_labels)? {
-                        needs_ann_rebuild = true;
+                        force_ann_rebuild = true;
                     }
                     if !defer_ann_updates
                         && !note_ann.apply_note_delete(
@@ -1208,57 +1198,62 @@ fn process_note_batch(
                                 .unwrap_or(0),
                         )?
                     {
-                        needs_note_ann_rebuild = true;
+                        force_note_ann_rebuild = true;
                     }
                     scanned_count += 1;
                     continue;
                 }
-                index_note_content(
+                prepare_note_content(connection, &note_path, &markdown, update.modified_millis)?
+            }
+            PendingSemanticDocument::ChatRecall { title, excerpts } => {
+                prepare_chat_recall_content(
                     connection,
-                    provider,
                     &note_path,
-                    &markdown,
+                    &title,
+                    &excerpts,
                     update.modified_millis,
                 )?
             }
-            PendingSemanticDocument::ChatRecall { title, excerpts } => index_chat_recall_content(
-                connection,
-                provider,
-                &note_path,
-                &title,
-                &excerpts,
-                update.modified_millis,
-            )?,
         };
-        embedded_count += indexed_note.embedded_count;
+        pending_updates.push(PendingIndexedUpdate {
+            path_str,
+            previous_labels,
+            prepared,
+        });
+    }
+
+    embedded_count += fill_prepared_embeddings(provider, &mut pending_updates)?;
+
+    for update in pending_updates {
+        let indexed_note = persist_prepared_note(connection, &update.path_str, update.prepared)?;
         changed_chunk_count = changed_chunk_count
-            .saturating_add(previous_labels.len().max(indexed_note.chunks.len()));
+            .saturating_add(update.previous_labels.len().max(indexed_note.chunks.len()));
         if changed_chunk_count > ANN_MAX_INCREMENTAL_CHUNKS {
             defer_ann_updates = true;
-            needs_ann_rebuild = true;
+            force_ann_rebuild = true;
         }
         if !defer_ann_updates
             && !ann.apply_note_upsert(
-                load_note_record(connection, &note_path.to_string_lossy())?
+                load_note_record(connection, &update.path_str)?
                     .ok_or_else(|| "Indexed note row missing after upsert".to_string())?
                     .stable_ann_label,
-                &previous_labels,
+                &update.previous_labels,
                 &indexed_note.chunks,
                 &indexed_note.embeddings,
             )?
         {
-            needs_ann_rebuild = true;
+            force_ann_rebuild = true;
         }
-        if !defer_ann_updates && !note_ann.apply_note_upsert(connection, &path_str)? {
-            needs_note_ann_rebuild = true;
+        if !defer_ann_updates && !note_ann.apply_note_upsert(connection, &update.path_str)? {
+            force_note_ann_rebuild = true;
         }
         scanned_count += 1;
     }
 
-    if scanned_count > 0 && needs_ann_rebuild {
+    if scanned_count > 0 && force_ann_rebuild {
         ann.request_rebuild("incremental_update_requires_compaction");
     }
-    if scanned_count > 0 && needs_note_ann_rebuild {
+    if scanned_count > 0 && force_note_ann_rebuild {
         note_ann.request_rebuild();
     }
     if scanned_count > 0 {
@@ -1272,14 +1267,37 @@ fn process_note_batch(
     })
 }
 
-fn index_chat_recall_content(
+fn index_note_content(
     connection: &mut rusqlite::Connection,
     provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
+    note_path: &Path,
+    markdown: &str,
+    modified_millis: u64,
+) -> Result<IndexedNoteContent, String> {
+    let prepared = prepare_note_content(connection, note_path, markdown, modified_millis)?;
+    let path_str = note_path.to_string_lossy().into_owned();
+    let mut pending = vec![PendingIndexedUpdate {
+        path_str: path_str.clone(),
+        previous_labels: HashSet::new(),
+        prepared,
+    }];
+    let embedded_count = fill_prepared_embeddings(provider, &mut pending)?;
+    let prepared = pending
+        .pop()
+        .ok_or_else(|| "Prepared note missing after embedding".to_string())?
+        .prepared;
+    let mut indexed = persist_prepared_note(connection, &path_str, prepared)?;
+    indexed.embedded_count = embedded_count;
+    Ok(indexed)
+}
+
+fn prepare_chat_recall_content(
+    connection: &mut rusqlite::Connection,
     conversation_path: &Path,
     title: &str,
     excerpts: &[ChatRecallExcerpt],
     modified_millis: u64,
-) -> Result<IndexedNoteContent, String> {
+) -> Result<PreparedNoteContent, String> {
     let path = conversation_path.to_string_lossy().into_owned();
     let chunks = excerpts
         .iter()
@@ -1296,8 +1314,8 @@ fn index_chat_recall_content(
         .collect::<Vec<_>>();
     let stored_chunks = load_existing_chunk_embeddings(connection, &path)?;
     let mut embeddings = vec![Vec::new(); chunks.len()];
-    let mut texts_to_embed = Vec::new();
-    let mut embed_indexes = Vec::new();
+    let mut pending_chunk_indexes = Vec::new();
+    let mut pending_texts = Vec::new();
     for (index, chunk) in chunks.iter().enumerate() {
         if let Some(existing) = stored_chunks.get(&chunk.ordinal) {
             if existing.text_hash == chunk.text_hash && !existing.embedding.is_empty() {
@@ -1305,12 +1323,8 @@ fn index_chat_recall_content(
                 continue;
             }
         }
-        texts_to_embed.push(chunk.text.clone());
-        embed_indexes.push(index);
-    }
-    let fresh = provider.embed_texts(&texts_to_embed, EmbeddingInputKind::Document)?;
-    for (embedding, index) in fresh.into_iter().zip(embed_indexes) {
-        embeddings[index] = embedding;
+        pending_chunk_indexes.push(index);
+        pending_texts.push(chunk.text.clone());
     }
     let timestamp = crate::note::timestamp_millis_to_rfc3339(modified_millis);
     let semantic_input_hash = hash_parts(
@@ -1331,33 +1345,27 @@ fn index_chat_recall_content(
             .unwrap_or_default(),
         ..SemanticNoteMetadata::default()
     };
-    upsert_note_chunks(
-        connection,
-        &path,
-        title,
+    Ok(PreparedNoteContent {
+        title: title.to_string(),
         modified_millis,
-        &chat_recall_content_hash(excerpts),
-        &timestamp,
-        &timestamp,
-        crate::note::DocumentKind::ChatIndex,
-        &metadata,
-        &chunks,
-        &embeddings,
-    )?;
-    Ok(IndexedNoteContent {
-        embedded_count: texts_to_embed.len(),
+        content_hash: chat_recall_content_hash(excerpts),
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+        document_kind: crate::note::DocumentKind::ChatIndex,
+        metadata,
         chunks,
         embeddings,
+        pending_chunk_indexes,
+        pending_texts,
     })
 }
 
-fn index_note_content(
+fn prepare_note_content(
     connection: &mut rusqlite::Connection,
-    provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
     note_path: &Path,
     markdown: &str,
     modified_millis: u64,
-) -> Result<IndexedNoteContent, String> {
+) -> Result<PreparedNoteContent, String> {
     let fallback_title = fallback_title_for_path(note_path, markdown);
     let chunked_note = chunk_markdown(markdown, &fallback_title);
     let note_path = note_path.to_string_lossy().into_owned();
@@ -1383,8 +1391,8 @@ fn index_note_content(
     let metadata = note_semantic_metadata(&note_path, &chunked_note, &parsed_note, modified_millis);
 
     let mut embeddings = vec![Vec::new(); chunked_note.chunks.len()];
-    let mut texts_to_embed = Vec::new();
-    let mut embed_indexes = Vec::new();
+    let mut pending_chunk_indexes = Vec::new();
+    let mut pending_texts = Vec::new();
 
     for (index, chunk) in chunked_note.chunks.iter().enumerate() {
         if let Some(existing_chunk) = stored_chunks.get(&chunk.ordinal) {
@@ -1394,33 +1402,96 @@ fn index_note_content(
             }
         }
 
-        texts_to_embed.push(chunk.text.clone());
-        embed_indexes.push(index);
+        pending_chunk_indexes.push(index);
+        pending_texts.push(chunk.text.clone());
     }
 
-    let new_embeddings = provider.embed_texts(&texts_to_embed, EmbeddingInputKind::Document)?;
-    for (embedding, index) in new_embeddings.into_iter().zip(embed_indexes.into_iter()) {
-        embeddings[index] = embedding;
-    }
-
-    upsert_note_chunks(
-        connection,
-        &note_path,
-        &chunked_note.title,
+    Ok(PreparedNoteContent {
+        title: chunked_note.title,
         modified_millis,
-        &content_hash(markdown),
-        &created_at,
-        &updated_at,
-        crate::note::DocumentKind::Note,
-        &metadata,
-        &chunked_note.chunks,
-        &embeddings,
-    )?;
-
-    Ok(IndexedNoteContent {
-        embedded_count: texts_to_embed.len(),
+        content_hash: content_hash(markdown),
+        created_at,
+        updated_at,
+        document_kind: crate::note::DocumentKind::Note,
+        metadata,
         chunks: chunked_note.chunks,
         embeddings,
+        pending_chunk_indexes,
+        pending_texts,
+    })
+}
+
+fn fill_prepared_embeddings(
+    provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
+    pending_updates: &mut [PendingIndexedUpdate],
+) -> Result<usize, String> {
+    let mut texts = Vec::new();
+    let mut targets = Vec::new();
+    for (update_index, update) in pending_updates.iter().enumerate() {
+        for (pending_offset, &chunk_index) in update.prepared.pending_chunk_indexes.iter().enumerate()
+        {
+            let Some(text) = update.prepared.pending_texts.get(pending_offset) else {
+                return Err("Prepared embedding text/index mismatch".to_string());
+            };
+            targets.push((update_index, chunk_index));
+            texts.push(text.clone());
+        }
+    }
+    if texts.is_empty() {
+        return Ok(0);
+    }
+
+    // Sequential HTTP batches on purpose: llama-server (especially Metal) already
+    // parallelizes inside a request via --threads/--threads-batch. Fan-out HTTP
+    // mostly queues on the same GPU/CPU pool and makes indexing look idle.
+    let mut embedded_count = 0usize;
+    let mut offset = 0usize;
+    while offset < texts.len() {
+        let end = (offset + EMBEDDING_BATCH_SIZE).min(texts.len());
+        let batch = &texts[offset..end];
+        let vectors = provider.embed_texts(batch, EmbeddingInputKind::Document)?;
+        if vectors.len() != batch.len() {
+            return Err(
+                "Embedding provider returned an unexpected count for an index batch".to_string(),
+            );
+        }
+        for (batch_offset, vector) in vectors.into_iter().enumerate() {
+            let (update_index, chunk_index) = targets[offset + batch_offset];
+            pending_updates[update_index].prepared.embeddings[chunk_index] = vector;
+        }
+        embedded_count += batch.len();
+        offset = end;
+    }
+
+    for update in pending_updates.iter_mut() {
+        update.prepared.pending_chunk_indexes.clear();
+        update.prepared.pending_texts.clear();
+    }
+    Ok(embedded_count)
+}
+
+fn persist_prepared_note(
+    connection: &mut rusqlite::Connection,
+    note_path: &str,
+    prepared: PreparedNoteContent,
+) -> Result<IndexedNoteContent, String> {
+    upsert_note_chunks(
+        connection,
+        note_path,
+        &prepared.title,
+        prepared.modified_millis,
+        &prepared.content_hash,
+        &prepared.created_at,
+        &prepared.updated_at,
+        prepared.document_kind,
+        &prepared.metadata,
+        &prepared.chunks,
+        &prepared.embeddings,
+    )?;
+    Ok(IndexedNoteContent {
+        embedded_count: 0,
+        chunks: prepared.chunks,
+        embeddings: prepared.embeddings,
     })
 }
 
@@ -1647,6 +1718,26 @@ struct IndexedNoteContent {
     embeddings: Vec<Vec<f32>>,
 }
 
+struct PendingIndexedUpdate {
+    path_str: String,
+    previous_labels: HashSet<u64>,
+    prepared: PreparedNoteContent,
+}
+
+struct PreparedNoteContent {
+    title: String,
+    modified_millis: u64,
+    content_hash: String,
+    created_at: String,
+    updated_at: String,
+    document_kind: crate::note::DocumentKind,
+    metadata: SemanticNoteMetadata,
+    chunks: Vec<super::chunking::SemanticChunk>,
+    embeddings: Vec<Vec<f32>>,
+    pending_chunk_indexes: Vec<usize>,
+    pending_texts: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1706,7 +1797,7 @@ mod tests {
             SemanticNoteMetadata,
         },
         debug::SemanticDebugState,
-        embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo},
+        embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo, EMBEDDING_BATCH_SIZE},
         note_ann::NoteAnnIndexState,
     };
     use std::{
@@ -2078,7 +2169,69 @@ mod tests {
         assert_eq!(metrics.edge_rebuild_count, 0);
     }
 
+    #[test]
+    fn note_batch_embeds_across_notes_in_large_provider_requests() {
+        let temp = TestDir::new("indexer-cross-note-batch");
+        let db_path = temp.path().join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        let recorder = Arc::new(RecordingEmbeddingProvider::default());
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = recorder.clone();
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(
+            AnnIndexState::new(temp.path().join("cache"), 3, debug.clone()).expect("create ann"),
+        );
+        let note_ann = test_note_ann(&temp.path().join("cache"));
+
+        let mut updates = HashMap::new();
+        for note_index in 0..5 {
+            let path = temp.path().join(format!("note-{note_index}.md"));
+            let body = (0..10)
+                .map(|chunk_index| {
+                    format!("Paragraph {note_index}.{chunk_index} with enough text to stay distinct.")
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            updates.insert(
+                path,
+                PendingNoteUpdate {
+                    document: PendingSemanticDocument::NoteMarkdown(format!(
+                        "---\ntitle: Note {note_index}\n---\n\n{body}"
+                    )),
+                    modified_millis: note_index as u64 + 1,
+                },
+            );
+        }
+
+        let outcome = process_note_batch(
+            &mut connection,
+            &provider,
+            &ann,
+            &note_ann,
+            updates,
+            HashSet::new(),
+            HashMap::new(),
+            &debug,
+        )
+        .expect("index notes");
+
+        assert!(outcome.embedded_count >= 5);
+        let call_sizes = recorder.call_sizes.lock().expect("call sizes");
+        assert_eq!(
+            call_sizes.len(),
+            1,
+            "expected one cross-note embedding request, got {call_sizes:?}"
+        );
+        assert_eq!(call_sizes[0], outcome.embedded_count);
+        assert!(call_sizes[0] <= EMBEDDING_BATCH_SIZE);
+    }
+
     struct MockEmbeddingProvider;
+
+    #[derive(Default)]
+    struct RecordingEmbeddingProvider {
+        call_sizes: Mutex<Vec<usize>>,
+    }
 
     fn test_note_ann(cache_dir: &Path) -> Arc<NoteAnnIndexState> {
         Arc::new(
@@ -2124,6 +2277,30 @@ mod tests {
                 status: "ready".to_string(),
                 error: None,
             }
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    impl EmbeddingProvider for RecordingEmbeddingProvider {
+        fn embed_texts(
+            &self,
+            texts: &[String],
+            kind: EmbeddingInputKind,
+        ) -> Result<Vec<Vec<f32>>, String> {
+            self.call_sizes
+                .lock()
+                .map_err(|_| "call sizes lock poisoned".to_string())?
+                .push(texts.len());
+            MockEmbeddingProvider.embed_texts(texts, kind)
+        }
+
+        fn prepare(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn model_info(&self) -> ModelInfo {
+            MockEmbeddingProvider.model_info()
         }
 
         fn shutdown(&self) {}

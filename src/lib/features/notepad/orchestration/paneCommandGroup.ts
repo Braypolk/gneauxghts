@@ -5,6 +5,7 @@ import { focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
 export interface PaneCommandGroupDeps<TPaneId extends string, TDocument> {
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   getPaneEditorRoot: (paneId: TPaneId) => HTMLElement | null;
+  getPaneChatComposer: (paneId: TPaneId) => HTMLTextAreaElement | null;
   getPaneDocument: (paneId: TPaneId) => TDocument;
   flushDocumentEditorSync: (document: TDocument) => void;
   activatePaneSession: (paneId: TPaneId) => unknown;
@@ -23,15 +24,25 @@ export function createPaneCommandGroup<TPaneId extends string, TDocument>(
       return;
     }
 
-    const cmContent = findCmContentElement(deps.getPaneEditorRoot(paneId));
-    if (cmContent instanceof HTMLElement) {
-      const view = EditorView.findFromDOM(cmContent);
-      if (view) {
-        view.focus();
+    const editorRoot = deps.getPaneEditorRoot(paneId);
+    if (editorRoot) {
+      const cmContent = findCmContentElement(editorRoot);
+      if (cmContent instanceof HTMLElement) {
+        const view = EditorView.findFromDOM(cmContent);
+        if (view) {
+          view.focus();
+          return;
+        }
+
+        cmContent.focus({ preventScroll: true });
         return;
       }
+    }
 
-      cmContent.focus({ preventScroll: true });
+    const chatComposer = deps.getPaneChatComposer(paneId);
+    if (chatComposer) {
+      // Preserve caret/selection left in the composer when leaving the pane.
+      chatComposer.focus({ preventScroll: true });
       return;
     }
 

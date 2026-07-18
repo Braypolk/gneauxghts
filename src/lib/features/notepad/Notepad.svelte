@@ -179,6 +179,8 @@
   let activeSelectionMenuPaneId = $state<PaneId | null>(null);
   let activeWikilinkPaneId = $state<PaneId | null>(null);
   let featureHost: NotepadFeatureHost;
+  /** Assigned after `commands` is created; used by early chat open helpers. */
+  let touchPaneLocationForHistory: (paneId: PaneId) => void = () => {};
 
   let canUnforget = $derived(notepadState.recentlyForgotten !== null);
   let currentSearchHighlightMode: SearchMode = 'all';
@@ -316,6 +318,7 @@
   ) {
     const conversationId = await conversationIdForProjection(notePath);
     if (!conversationId) return false;
+    touchPaneLocationForHistory(paneId);
     setStoredPaneKind(notepadState, paneId, 'chat');
     setPaneChatConversationId(notepadState, paneId, conversationId);
     chatTargetAnchors[paneId] = targetAnchor;
@@ -424,6 +427,14 @@
 
   function getPaneEditorRoot(paneId: PaneId) {
     return getPaneRuntime(paneId).refs.editorRoot;
+  }
+
+  function getPaneChatComposer(paneId: PaneId) {
+    return (
+      getPaneRuntime(paneId).refs.paneCard?.querySelector<HTMLTextAreaElement>(
+        '.chat-pane-shell textarea'
+      ) ?? null
+    );
   }
 
   function getPaneTitleInput(paneId: PaneId) {
@@ -1011,6 +1022,7 @@
     setPaneDocumentSession,
     getPaneTitleInput,
     getPaneEditorRoot,
+    getPaneChatComposer,
     createPane: createPaneRuntime,
     closePaneRuntime,
     updateSelectedRelatedText,
@@ -1023,6 +1035,7 @@
     scheduleRelatedIfNeeded,
     clearSelectedRelatedText,
     loadRecentNotes,
+    getRecentNotesForSeed: () => searchState.recentNotes,
     setRecentlyForgotten,
     closeWikilinkAutocomplete
   };
@@ -1045,6 +1058,7 @@
     },
     forgottenNoteRetentionPreference: () => $forgottenNoteRetentionPreference
   });
+  touchPaneLocationForHistory = commands.touchCurrentLocation;
 
   featureHost = createNotepadFeatureHost({
     getActiveDocument: getDocumentSession,
@@ -1238,6 +1252,10 @@
   }
 
   async function openPaneChoiceInCurrent(choice: PaneCommandChoice) {
+    if (choice === 'current') {
+      await commands.setPaneKind(activePaneId, 'editor');
+      return;
+    }
     if (choice === 'thoughtPartner') {
       await commands.setPaneKind(activePaneId, 'chat');
       return;
@@ -1267,7 +1285,7 @@
     switchActivePane: commands.switchActivePane,
     startNewNoteFlow: commands.startNewNoteFlow,
     toggleRelatedPanel,
-    openRecentNoteByIndex,
+    goToPreviousLocation: commands.goToPreviousLocation,
     focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
     handlePaneCommandGlobalKeydown: commands.handlePaneCommandGlobalKeydown,
     handleWikilinkKeydown
@@ -1339,6 +1357,7 @@
     onClose: commands.closePane,
     onSplit: splitWorkspaceIfAllowed,
     onOpenPaneChoice: openPaneChoiceInCurrent,
+    onSwitchToEditor: (paneId) => commands.setPaneKind(paneId, 'editor'),
     onTitleFocus: handleTitleFocus,
     onTitleInput: handleTitleInput,
     onTitleBlur: handleTitleBlur,

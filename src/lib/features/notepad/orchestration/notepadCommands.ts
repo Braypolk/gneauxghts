@@ -23,10 +23,12 @@ import {
   adoptSnapshotForPane,
   applySnapshotToNote,
   createFreshDraftNote,
+  getPaneState,
   removePane as removeStoredPane,
   removeNoteIfUnreferenced,
   replaceReferencedNoteWithFreshDraft,
   setNoteStatus,
+  setPaneChatConversationId,
   setPaneKind as setStoredPaneKind,
   type NoteDraftState,
   type NoteKey,
@@ -35,6 +37,12 @@ import {
   cleanupNoteRuntime,
   getEditorPaneCountForNote
 } from '$lib/features/notepad/session/noteRuntime';
+import {
+  createLocationMruStore,
+  editorLocationFromRecent,
+  locationsEqual,
+  type NavLocation
+} from '$lib/features/notepad/navigation/locationMru';
 import { createPaneCommandGroup } from './paneCommandGroup';
 import type { NotepadCommandsDeps, PaneKind } from './notepadCommandFacades';
 
@@ -86,6 +94,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const scheduleRelatedIfNeeded = derivedViews.scheduleRelatedIfNeeded;
   const clearSelectedRelatedText = derivedViews.clearSelectedRelatedText;
   const loadRecentNotes = derivedViews.loadRecentNotes;
+  const getRecentNotesForSeed = derivedViews.getRecentNotesForSeed;
   const setRecentlyForgotten = derivedViews.setRecentlyForgotten;
 
   const flushDocumentEditorSync = documentSync.flushDocumentEditorSync;
@@ -95,9 +104,124 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const isRefreshingFromDisk = refresh.isRefreshingFromDisk;
   const setRefreshingFromDisk = refresh.setRefreshingFromDisk;
 
+  const locationMru = createLocationMruStore<TPaneId>();
+  let suppressLocationTouch = false;
+
+  function capturePaneLocation(paneId: TPaneId): NavLocation | null {
+    const pane = getPaneState(state, paneId);
+    const document = getPaneDocument(paneId);
+    if (pane.kind === 'chat') {
+      return {
+        kind: 'chat',
+        conversationId: pane.chatConversationId,
+        contextNoteId: document.currentNoteId,
+        contextNotePath: document.currentNotePath
+      };
+    }
+    if (!document.currentNoteId && !document.currentNotePath) {
+      return null;
+    }
+    return {
+      kind: 'editor',
+      noteId: document.currentNoteId,
+      notePath: document.currentNotePath
+    };
+  }
+
+  function touchCurrentLocation(paneId: TPaneId = getActivePaneId()) {
+    if (suppressLocationTouch) {
+      return;
+    }
+    const current = capturePaneLocation(paneId);
+    if (current) {
+      locationMru.touch(paneId, current);
+    }
+  }
+
+  function touchLocation(paneId: TPaneId, location: NavLocation | null) {
+    if (suppressLocationTouch || !location) {
+      return;
+    }
+    locationMru.touch(paneId, location);
+  }
+
+  async function ensureLocationMruSeeded(paneId: TPaneId) {
+    if (locationMru.list(paneId).length > 0) {
+      return;
+    }
+    await loadRecentNotes();
+    const seeded = getRecentNotesForSeed()
+      .map((item) =>
+        editorLocationFromRecent({
+          noteId: item.noteId,
+          notePath: item.notePath
+        })
+      )
+      .filter((location): location is NavLocation => location !== null);
+    locationMru.seedIfEmpty(paneId, seeded);
+  }
+
+  async function restoreLocation(paneId: TPaneId, location: NavLocation) {
+    suppressLocationTouch = true;
+    try {
+      activatePaneSession(paneId);
+
+      if (location.kind === 'editor') {
+        if (getPaneKind(paneId) !== 'editor') {
+          setStoredPaneKind(state, paneId, 'editor');
+          await tick();
+          await paneLifecycle.ensurePaneEditors();
+          flushDocumentEditorSync(getPaneDocument(paneId));
+          updateSelectedRelatedText();
+        }
+        await openNotePath(location.notePath, {
+          noteId: location.noteId,
+          focusEditorAfterOpen: true
+        });
+        return;
+      }
+
+      const document = getPaneDocument(paneId);
+      const needsContextNote =
+        (location.contextNoteId || location.contextNotePath) &&
+        (document.currentNoteId !== location.contextNoteId ||
+          document.currentNotePath !== location.contextNotePath);
+      if (needsContextNote) {
+        await openNotePath(location.contextNotePath, {
+          noteId: location.contextNoteId,
+          focusEditorAfterOpen: false
+        });
+      }
+
+      // Set conversation id before flipping to chat so ChatPanel mounts with it.
+      setPaneChatConversationId(state, paneId, location.conversationId);
+      if (getPaneKind(paneId) !== 'chat') {
+        setStoredPaneKind(state, paneId, 'chat');
+        await tick();
+        await paneLifecycle.ensurePaneEditors();
+        updateSelectedRelatedText();
+      }
+    } finally {
+      suppressLocationTouch = false;
+    }
+  }
+
+  async function goToPreviousLocation() {
+    const paneId = getActivePaneId();
+    const current = capturePaneLocation(paneId);
+    await ensureLocationMruSeeded(paneId);
+    const previous = locationMru.previousExcluding(paneId, current);
+    if (!previous) {
+      return;
+    }
+    touchLocation(paneId, current);
+    await restoreLocation(paneId, previous);
+  }
+
   const paneCommands = createPaneCommandGroup<TPaneId, NoteDraftState>({
     getPaneTitleInput,
     getPaneEditorRoot,
+    getPaneChatComposer: panes.getPaneChatComposer,
     getPaneDocument,
     flushDocumentEditorSync,
     activatePaneSession,
@@ -367,6 +491,28 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return;
     }
 
+    const targetLocation: NavLocation = {
+      kind: 'editor',
+      noteId: options.noteId ?? null,
+      notePath
+    };
+    const currentLocation = capturePaneLocation(paneId);
+    const isSameEditorLocation =
+      currentLocation?.kind === 'editor' && locationsEqual(currentLocation, targetLocation);
+
+    if (!suppressLocationTouch && currentLocation && !isSameEditorLocation) {
+      locationMru.touch(paneId, currentLocation);
+    }
+
+    // User-initiated note opens leave chat so Cmd+L / search never only rebind chat context.
+    if (!suppressLocationTouch && getPaneKind(paneId) === 'chat') {
+      setStoredPaneKind(state, paneId, 'editor');
+      await tick();
+      await paneLifecycle.ensurePaneEditors();
+      flushDocumentEditorSync(getPaneDocument(paneId));
+      updateSelectedRelatedText();
+    }
+
     resetPaneCommand();
 
     if (hasPendingDocumentSync(previousDocument)) {
@@ -507,6 +653,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return;
     }
 
+    touchCurrentLocation(paneId);
+
     const document = getPaneDocument(paneId);
     setStoredPaneKind(state, paneId, kind);
     activatePaneSession(paneId);
@@ -589,6 +737,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       const shared = getNoteByKey(sourceKey);
       if (!shared) return;
 
+      touchCurrentLocation(paneId);
       setStoredPaneKind(state, paneId, 'editor');
       setPaneDocumentSession(paneId, shared);
 
@@ -613,6 +762,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     if (choice === 'previous') {
       if (!previousItem) return;
 
+      touchCurrentLocation(paneId);
       setStoredPaneKind(state, paneId, 'editor');
       if (previousItem.notePath) {
         await openNotePath(previousItem.notePath, { noteId: previousItem.noteId ?? null });
@@ -625,11 +775,21 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
 
     if (choice === 'thoughtPartner') {
+      const sourceNote = sourceKey ? getNoteByKey(sourceKey) : null;
+      if (sourceNote) {
+        touchLocation(paneId, {
+          kind: 'editor',
+          noteId: sourceNote.currentNoteId,
+          notePath: sourceNote.currentNotePath
+        });
+      } else {
+        touchCurrentLocation(paneId);
+      }
       setStoredPaneKind(state, paneId, 'chat');
       // Keep the source note associated with the pane as an explicit insertion
       // target. Conversation identity lives on PaneState, never in NoteDraftState.
-      if (sourceKey && getNoteByKey(sourceKey)) {
-        setPaneDocumentSession(paneId, getNoteByKey(sourceKey)!);
+      if (sourceNote) {
+        setPaneDocumentSession(paneId, sourceNote);
       }
       if (placeholderKey !== sourceKey) {
         removeNoteIfUnreferenced(state, placeholderKey);
@@ -725,6 +885,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     splitWorkspace,
     closePane,
     setPaneKind,
+    touchCurrentLocation,
+    goToPreviousLocation,
     handleNotepadCommandBarCommand,
     switchActivePane,
     resolvePaneCommandChoice,

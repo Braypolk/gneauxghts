@@ -164,7 +164,7 @@ const shortcutDefinitionsBase = [
   {
     id: 'goToPreviousNote',
     label: 'Go to Previous Note',
-    description: 'Open the note you had open immediately before this one.',
+    description: 'Open the previous note or chat location (toggles with Cmd+L).',
     group: 'workspace',
     defaultBinding: 'Meta+l'
   },

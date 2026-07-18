@@ -57,6 +57,7 @@ export interface PaneWorkspaceActions {
   onClose: (paneId: NotepadPaneId) => void | Promise<void>;
   onSplit: (choice?: PaneCommandChoice) => void | Promise<void>;
   onOpenPaneChoice: (choice: PaneCommandChoice) => void | Promise<void>;
+  onSwitchToEditor: (paneId: NotepadPaneId) => void | Promise<void>;
   onTitleFocus: (paneId: NotepadPaneId) => void;
   onTitleInput: (paneId: NotepadPaneId) => void;
   onTitleBlur: (paneId: NotepadPaneId, rawTitle: string) => void;

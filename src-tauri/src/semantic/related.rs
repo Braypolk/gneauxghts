@@ -1,12 +1,17 @@
 use super::{
-    chunking, content_hash, load_note_record, load_related_note_previews, open_database,
-    ActiveSemanticState, RelatedNoteMatch, RelatedNotesResponse, SemanticChunkMatch,
+    chunking, content_hash, load_note_record, load_related_note_previews,
+    load_related_note_previews_for_paths, open_database, ActiveSemanticState, RelatedNoteMatch,
+    RelatedNotesResponse, SemanticChunkMatch,
 };
-use std::{sync::atomic::Ordering, time::Instant};
+use super::similarity::MIN_SEMANTIC_MATCH_SCORE;
+use std::{fs, sync::atomic::Ordering, time::Instant};
 
 const RELATED_QUERY_CACHE_LIMIT: usize = 32;
 const MIN_RELATED_NOTE_CHARS: usize = 80;
 const MIN_RELATED_SELECTION_CHARS: usize = 48;
+/// Keep related-note query embeddings under the llama-server physical batch
+/// limit (512 tokens). ~1600 chars stays safely below that for this model.
+const MAX_RELATED_QUERY_CHARS: usize = 1600;
 
 impl ActiveSemanticState {
     pub(super) fn related_notes(
@@ -113,127 +118,57 @@ impl ActiveSemanticState {
             .unwrap_or(true);
 
         let (response, strategy) = if normalized_selection.is_none() {
-            match current_path
-                .zip(load_note_record(
-                    &connection,
-                    current_path.unwrap_or_default(),
-                )?)
-                .filter(|(note_path, stored)| {
-                    stored.content_hash == content_hash(current_markdown)
-                        && !note_path.is_empty()
-                        && !edges_stale
-                }) {
-                Some((note_path, _)) => {
-                    let items =
-                        load_related_note_previews(&connection, note_path, effective_limit)?
-                            .into_iter()
-                            .map(|preview| RelatedNoteMatch {
-                                note_path: preview.note_path,
-                                note_title: preview.note_title,
-                                section_label: preview.section_label,
-                                excerpt: build_excerpt(&preview.text, 180),
-                                match_text: preview.text,
-                                score: preview.score,
-                                start_line: preview.start_line,
-                                end_line: preview.end_line,
-                                document_kind: preview.document_kind,
-                                block_anchor: preview.block_anchor,
-                            })
-                            .collect::<Vec<_>>();
-
-                    (
-                        RelatedNotesResponse {
-                            status: "ready".to_string(),
-                            scope: "note".to_string(),
-                            reason: None,
-                            items,
-                        },
-                        "edges",
-                    )
-                }
-                None => {
-                    let ann_status = self.ann.status_snapshot();
-                    if !ann_status.loaded || ann_status.indexed_chunks == 0 {
-                        let response = RelatedNotesResponse {
-                            status: "unavailable".to_string(),
-                            scope: "note".to_string(),
-                            reason: Some(
-                                "Semantic index is still warming up or has not been built yet."
-                                    .to_string(),
-                            ),
-                            items: Vec::new(),
-                        };
-                        self.record_related_response(
-                            &scope,
-                            &response.status,
-                            "semantic",
-                            0,
-                            started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-                        );
-                        return Ok(response);
-                    }
-
-                    let matches = self.semantic_matches_for_text(
-                        current_markdown,
-                        current_path,
-                        effective_limit.saturating_mul(4),
-                    )?;
-
-                    (
-                        RelatedNotesResponse {
-                            status: "ready".to_string(),
-                            scope: "note".to_string(),
-                            reason: None,
-                            items: collapse_related_matches(matches, effective_limit),
-                        },
-                        "semantic",
-                    )
-                }
+            if let Some(items) =
+                self.related_from_edges(&connection, current_path, edges_stale, effective_limit)?
+            {
+                (
+                    RelatedNotesResponse {
+                        status: "ready".to_string(),
+                        scope: "note".to_string(),
+                        reason: None,
+                        items,
+                    },
+                    "edges",
+                )
+            } else if let Some(items) =
+                self.related_from_note_ann(&connection, current_path, effective_limit)?
+            {
+                (
+                    RelatedNotesResponse {
+                        status: "ready".to_string(),
+                        scope: "note".to_string(),
+                        reason: None,
+                        items,
+                    },
+                    "note_ann",
+                )
+            } else {
+                self.related_from_semantic_query(
+                    "note",
+                    &build_note_query_text(current_title, current_markdown),
+                    current_path,
+                    effective_limit,
+                )?
             }
         } else {
-            let ann_status = self.ann.status_snapshot();
-            if !ann_status.loaded || ann_status.indexed_chunks == 0 {
-                let response = RelatedNotesResponse {
-                    status: "unavailable".to_string(),
-                    scope: "selection".to_string(),
-                    reason: Some(
-                        "Semantic index is still warming up or has not been built yet.".to_string(),
-                    ),
-                    items: Vec::new(),
-                };
-                self.record_related_response(
-                    &scope,
-                    &response.status,
-                    "semantic",
-                    0,
-                    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-                );
-                return Ok(response);
-            }
-
-            let query_text = build_selection_query_text(
+            let query_text = truncate_related_query(&build_selection_query_text(
                 current_title,
                 current_markdown,
                 normalized_selection.as_deref().unwrap_or_default(),
-            );
-            let matches = self.semantic_matches_for_text(
+            ));
+            self.related_from_semantic_query(
+                "selection",
                 &query_text,
                 current_path,
-                effective_limit.saturating_mul(4),
-            )?;
-
-            (
-                RelatedNotesResponse {
-                    status: "ready".to_string(),
-                    scope: "selection".to_string(),
-                    reason: None,
-                    items: collapse_related_matches(matches, effective_limit),
-                },
-                "semantic",
-            )
+                effective_limit,
+            )?
         };
 
-        self.store_related_query_cache(cache_key, revision, response.clone())?;
+        // Don't cache unavailable/warming responses — the index may become ready
+        // without bumping the related-query cache revision.
+        if response.status == "ready" {
+            self.store_related_query_cache(cache_key, revision, response.clone())?;
+        }
         self.record_related_response(
             &scope,
             &response.status,
@@ -242,6 +177,138 @@ impl ActiveSemanticState {
             started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
         );
         Ok(response)
+    }
+
+    fn related_from_edges(
+        &self,
+        connection: &rusqlite::Connection,
+        current_path: Option<&str>,
+        edges_stale: bool,
+        limit: usize,
+    ) -> Result<Option<Vec<RelatedNoteMatch>>, String> {
+        let Some(note_path) = current_path.filter(|path| !path.is_empty()) else {
+            return Ok(None);
+        };
+        if edges_stale {
+            return Ok(None);
+        }
+        let Some(stored) = load_note_record(connection, note_path)? else {
+            return Ok(None);
+        };
+        // Compare against on-disk content (what the indexer hashed), not the
+        // editor body. The frontend sends title-stripped body markdown, so
+        // hashing that never matched the stored full-file content hash and
+        // permanently skipped the edges shortcut.
+        if !indexed_note_matches_disk(note_path, &stored.content_hash) {
+            return Ok(None);
+        }
+
+        let items = load_related_note_previews(connection, note_path, limit)?
+            .into_iter()
+            .map(related_match_from_preview)
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(items))
+    }
+
+    fn related_from_note_ann(
+        &self,
+        connection: &rusqlite::Connection,
+        current_path: Option<&str>,
+        limit: usize,
+    ) -> Result<Option<Vec<RelatedNoteMatch>>, String> {
+        let Some(note_path) = current_path.filter(|path| !path.is_empty()) else {
+            return Ok(None);
+        };
+        let note_ann_status = self.note_ann.status_snapshot();
+        if !note_ann_status.loaded || note_ann_status.indexed_notes == 0 {
+            return Ok(None);
+        }
+
+        let neighbors = self.note_ann.neighbors_for_note(
+            connection,
+            note_path,
+            limit.saturating_mul(4).max(16),
+            limit,
+        )?;
+        if neighbors.is_empty() {
+            return Ok(None);
+        }
+
+        let scored_paths = neighbors
+            .into_iter()
+            .filter(|neighbor| neighbor.score >= MIN_SEMANTIC_MATCH_SCORE)
+            .map(|neighbor| (neighbor.note_path, neighbor.score))
+            .collect::<Vec<_>>();
+        if scored_paths.is_empty() {
+            return Ok(None);
+        }
+
+        let items = load_related_note_previews_for_paths(connection, &scored_paths)?
+            .into_iter()
+            .map(related_match_from_preview)
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(items))
+    }
+
+    fn related_from_semantic_query(
+        &self,
+        response_scope: &str,
+        query_text: &str,
+        current_path: Option<&str>,
+        limit: usize,
+    ) -> Result<(RelatedNotesResponse, &'static str), String> {
+        let ann_status = self.ann.status_snapshot();
+        if !ann_status.loaded || ann_status.indexed_chunks == 0 {
+            return Ok((
+                RelatedNotesResponse {
+                    status: "unavailable".to_string(),
+                    scope: response_scope.to_string(),
+                    reason: Some(
+                        "Semantic index is still warming up or has not been built yet.".to_string(),
+                    ),
+                    items: Vec::new(),
+                },
+                "semantic",
+            ));
+        }
+
+        let matches = match self.semantic_matches_for_text(
+            query_text,
+            current_path,
+            limit.saturating_mul(4),
+        ) {
+            Ok(matches) => matches,
+            Err(_) => {
+                return Ok((
+                    RelatedNotesResponse {
+                        status: "unavailable".to_string(),
+                        scope: response_scope.to_string(),
+                        reason: Some(
+                            "Related notes could not be computed from the current note right now."
+                                .to_string(),
+                        ),
+                        items: Vec::new(),
+                    },
+                    "semantic",
+                ));
+            }
+        };
+
+        Ok((
+            RelatedNotesResponse {
+                status: "ready".to_string(),
+                scope: response_scope.to_string(),
+                reason: None,
+                items: collapse_related_matches(matches, limit),
+            },
+            "semantic",
+        ))
     }
 
     fn record_related_response(
@@ -269,6 +336,7 @@ impl ActiveSemanticState {
                 match strategy {
                     "cache" => metrics.related_cache_hit_count += 1,
                     "edges" => metrics.related_edge_reuse_count += 1,
+                    "note_ann" => metrics.related_note_ann_count += 1,
                     "semantic" => metrics.related_semantic_query_count += 1,
                     _ => {}
                 }
@@ -344,6 +412,52 @@ pub(super) fn build_excerpt(text: &str, max_chars: usize) -> String {
 
 fn normalize_related_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_related_query(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= MAX_RELATED_QUERY_CHARS {
+        return trimmed.to_string();
+    }
+
+    let truncated = trimmed
+        .chars()
+        .take(MAX_RELATED_QUERY_CHARS)
+        .collect::<String>();
+    format!("{}…", truncated.trim_end())
+}
+
+fn build_note_query_text(current_title: &str, current_markdown: &str) -> String {
+    let body = normalize_related_text(current_markdown);
+    let query = if current_title.trim().is_empty() {
+        body
+    } else {
+        format!("{}\n\n{body}", current_title.trim())
+    };
+    truncate_related_query(&query)
+}
+
+fn indexed_note_matches_disk(note_path: &str, stored_content_hash: &str) -> bool {
+    fs::read_to_string(note_path)
+        .ok()
+        .is_some_and(|disk| content_hash(&disk) == stored_content_hash)
+}
+
+fn related_match_from_preview(
+    preview: super::db::StoredRelatedNotePreview,
+) -> RelatedNoteMatch {
+    RelatedNoteMatch {
+        note_path: preview.note_path,
+        note_title: preview.note_title,
+        section_label: preview.section_label,
+        excerpt: build_excerpt(&preview.text, 180),
+        match_text: preview.text,
+        score: preview.score,
+        start_line: preview.start_line,
+        end_line: preview.end_line,
+        document_kind: preview.document_kind,
+        block_anchor: preview.block_anchor,
+    }
 }
 
 fn build_related_cache_key(
@@ -433,4 +547,61 @@ fn collapse_related_matches(
     });
     collapsed.truncate(limit);
     collapsed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_note_query_text, indexed_note_matches_disk, truncate_related_query,
+        MAX_RELATED_QUERY_CHARS,
+    };
+    use crate::semantic::db::content_hash;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn truncate_related_query_keeps_short_text() {
+        assert_eq!(truncate_related_query("  hello world  "), "hello world");
+    }
+
+    #[test]
+    fn truncate_related_query_caps_long_text() {
+        let long = "x".repeat(MAX_RELATED_QUERY_CHARS + 40);
+        let truncated = truncate_related_query(&long);
+        assert!(truncated.chars().count() <= MAX_RELATED_QUERY_CHARS + 1);
+        assert!(truncated.ends_with('…'));
+    }
+
+    #[test]
+    fn build_note_query_text_includes_title_and_truncates() {
+        let body = "word ".repeat(800);
+        let query = build_note_query_text("Ceremony", &body);
+        assert!(query.starts_with("Ceremony"));
+        assert!(query.chars().count() <= MAX_RELATED_QUERY_CHARS + 1);
+    }
+
+    #[test]
+    fn indexed_note_matches_disk_compares_full_file_hash() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("gneauxghts-related-{nanos}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("note.md");
+        let contents = "---\nid: abc\n---\n\n# Title\n\nBody text here.\n";
+        fs::write(&path, contents).expect("write note");
+        let hash = content_hash(contents);
+        assert!(indexed_note_matches_disk(
+            path.to_str().expect("utf8 path"),
+            &hash
+        ));
+        assert!(!indexed_note_matches_disk(
+            path.to_str().expect("utf8 path"),
+            &content_hash("Body text here.\n")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

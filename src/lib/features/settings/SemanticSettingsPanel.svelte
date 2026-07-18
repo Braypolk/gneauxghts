@@ -175,8 +175,6 @@
         <p class="mt-2 text-sm font-medium">
           {#if semanticStatus.indexingPaused}
             Paused
-          {:else if semanticStatus.recoveryState === 'waitingForIdle'}
-            Waiting for idle
           {:else if semanticStatus.recoveryState === 'catchingUp'}
             Applying{semanticStatus.progressTotal > 0 ? ` ${semanticStatus.progressTotal} changes` : ' changes'}
           {:else if semanticStatus.recoveryState === 'rebuilding'}
@@ -336,7 +334,7 @@
               note {metrics.relatedNoteRequestCount} · selection {metrics.relatedSelectionRequestCount}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
-              cache {metrics.relatedCacheHitCount} · edges {metrics.relatedEdgeReuseCount} · semantic {metrics.relatedSemanticQueryCount}
+              cache {metrics.relatedCacheHitCount} · edges {metrics.relatedEdgeReuseCount} · note-ann {metrics.relatedNoteAnnCount} · semantic {metrics.relatedSemanticQueryCount}
             </p>
             <p class="mt-1 text-xs text-muted-foreground">
               avg {formatMillis(averageDuration(metrics.relatedDurationTotalMillis, metrics.relatedRequestCount))}

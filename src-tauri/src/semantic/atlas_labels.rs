@@ -4,7 +4,7 @@ use super::{
         load_atlas_label_embeddings, load_chunks_for_note_paths, save_atlas_label_embeddings,
         AtlasLabelChunk,
     },
-    embed::{EmbeddingInputKind, EmbeddingProvider},
+    embed::{EmbeddingInputKind, EmbeddingProvider, EMBEDDING_BATCH_SIZE},
     similarity::cosine_similarity,
 };
 use rusqlite::Connection;
@@ -12,9 +12,6 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 pub(crate) const LABEL_ALGORITHM_VERSION: &str = "chunk-keybert-atlas-v7";
-/// Texts per llama-server HTTP call. Larger batches keep `--threads-batch`
-/// busy inside one request; concurrent HTTP calls rarely help on Metal.
-pub(crate) const EMBEDDING_BATCH_SIZE: usize = 128;
 /// Soft per-cloud candidate budget: `clamp(MIN, members * SCALE, MAX)`.
 const CANDIDATES_PER_CLOUD_MIN: usize = 24;
 const CANDIDATES_PER_CLOUD_MAX: usize = 64;

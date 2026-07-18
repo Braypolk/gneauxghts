@@ -18,7 +18,8 @@ use self::{
     db::{
         clear_atlas_cache, content_hash, count_indexed_items, edges_are_stale_for_generation,
         edges_are_stale_for_model, ensure_schema, load_chunks_by_ann_labels, load_latest_job,
-        load_note_record, load_related_note_previews, load_semantic_settings,
+        load_note_record, load_related_note_previews, load_related_note_previews_for_paths,
+        load_semantic_settings,
         mark_running_jobs_interrupted, open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
@@ -29,7 +30,7 @@ use self::{
     },
     note_ann::{NoteAnnIndexState, NoteAnnMatch},
     related::{build_excerpt, related_scope_label},
-    similarity::cosine_similarity,
+    similarity::{cosine_similarity, MIN_SEMANTIC_MATCH_SCORE},
 };
 use crate::time::current_time_millis;
 use serde::{Deserialize, Serialize};
@@ -1192,7 +1193,7 @@ impl ActiveSemanticState {
             .filter(|chunk| exclude_note_path != Some(chunk.note_path.as_str()))
             .filter_map(|chunk| {
                 let score = cosine_similarity(&query_embedding, &chunk.embedding);
-                if score < 0.18 {
+                if score < MIN_SEMANTIC_MATCH_SCORE {
                     return None;
                 }
 

@@ -294,14 +294,13 @@ impl AnnIndexState {
 
     #[cfg(test)]
     pub(crate) fn rebuild_from_connection(&self, connection: &Connection) -> Result<(), String> {
-        self.rebuild_from_connection_with_gate(connection, None, false, None)
+        self.rebuild_from_connection_with_gate(connection, None, None)
     }
 
     pub(crate) fn rebuild_from_connection_with_gate(
         &self,
         connection: &Connection,
         gate: Option<&BackgroundWorkGate>,
-        automatic: bool,
         progress: Option<&dyn Fn(usize, usize)>,
     ) -> Result<(), String> {
         let started_at = Instant::now();
@@ -310,14 +309,8 @@ impl AnnIndexState {
             .filter(|dimensions| *dimensions > 0)
             .unwrap_or_else(|| self.dimensions.max(1));
         let manifest = self.manifest_for_signature(&signature, dimensions);
-        let (graph, vectors) = build_snapshot_streaming(
-            connection,
-            &manifest,
-            gate,
-            automatic,
-            progress,
-            signature.chunk_count,
-        )?;
+        let (graph, vectors) =
+            build_snapshot_streaming(connection, &manifest, gate, progress, signature.chunk_count)?;
 
         let sources = load_ann_source_inventory(connection)?;
         let manifest = self.persist_parts(&graph, &vectors, &manifest, &sources)?;
@@ -481,7 +474,7 @@ impl AnnIndexState {
 
         // The structurally valid generation remains queryable. Candidate
         // labels are hydrated from current SQLite rows, so stale/deleted
-        // entries cannot surface while the idle rebuild is pending.
+        // entries cannot surface while a rebuild is pending.
         let live_len = graph.live_len();
         self.install_loaded_snapshot(graph, vectors, manifest, true, live_len)?;
         Ok(true)
@@ -753,7 +746,6 @@ fn build_snapshot_streaming(
     connection: &Connection,
     manifest: &AnnManifest,
     gate: Option<&BackgroundWorkGate>,
-    automatic: bool,
     progress: Option<&dyn Fn(usize, usize)>,
     total: usize,
 ) -> Result<(AnnGraph, AnnVectors), String> {
@@ -771,11 +763,7 @@ fn build_snapshot_streaming(
     for_each_chunk_embedding(connection, |row| {
         if processed % 64 == 0 {
             if let Some(gate) = gate {
-                if automatic {
-                    gate.wait_for_automatic_idle();
-                } else {
-                    gate.checkpoint_manual_pause();
-                }
+                gate.checkpoint_manual_pause();
             }
         }
         processed = processed.saturating_add(1);

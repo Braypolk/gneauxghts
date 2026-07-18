@@ -30,6 +30,8 @@ import {
   EditorView,
   ViewPlugin,
   WidgetType,
+  drawSelection,
+  dropCursor,
   keymap,
   placeholder,
   type DecorationSet,
@@ -600,10 +602,17 @@ function createLayoutTheme() {
       maxWidth: '100%',
       width: 'min(100%, calc(var(--editor-readable-width) + var(--editor-left-padding) + var(--editor-handle-lane-width) + var(--editor-right-padding)))',
       margin: '0 auto',
+      // Horizontal inset lives on `.cm-line`, not here: `drawSelection` only
+      // accounts for line padding when filling open ranges, so content padding
+      // would paint selection into the handle lane / side margins.
       paddingTop: 'var(--editor-top-padding)',
-      paddingLeft: 'calc(var(--editor-left-padding) + var(--editor-handle-lane-width))',
-      paddingRight: 'var(--editor-right-padding)',
+      paddingLeft: '0',
+      paddingRight: '0',
       paddingBottom: 'var(--editor-bottom-padding)',
+      // Stable pixel-resolvable inset for handle-lane layout (not list/quote depth).
+      '--gn-editor-side-inset-left':
+        'calc(var(--editor-left-padding) + var(--editor-handle-lane-width))',
+      '--gn-editor-side-inset-right': 'var(--editor-right-padding)',
       color: 'var(--foreground)',
       caretColor: 'var(--foreground)',
       overflowAnchor: 'auto',
@@ -614,8 +623,23 @@ function createLayoutTheme() {
       backgroundColor: 'var(--gn-editor-selection-background) !important'
     },
     '&.cm-editor.cm-gn .cm-line': {
-      paddingInline: 0
+      paddingLeft: 'var(--gn-editor-side-inset-left)',
+      paddingRight: 'var(--gn-editor-side-inset-right)'
     },
+    // Beat editor.css decorative paddings so handle-lane inset is preserved
+    // (those rules omit the side inset now that it lives on `.cm-line`).
+    '&.cm-editor.cm-gn .cm-gn-quote-line': {
+      paddingLeft: 'calc(var(--gn-editor-side-inset-left) + 1rem) !important'
+    },
+    '&.cm-editor.cm-gn .cm-gn-code-block-line': {
+      paddingLeft: 'calc(var(--gn-editor-side-inset-left) + 0.85rem) !important',
+      paddingRight: 'calc(var(--gn-editor-side-inset-right) + 0.85rem) !important'
+    },
+    '&.cm-editor.cm-gn .cm-gn-list-line-ul, &.cm-editor.cm-gn .cm-gn-list-line-ol, &.cm-editor.cm-gn .cm-gn-task-line':
+      {
+        paddingLeft:
+          'calc(var(--gn-editor-side-inset-left) + 1.2rem * (var(--gn-depth, 0) + 1)) !important'
+      },
     '&.cm-editor.cm-gn .gn-markdown-table-line': {
       fontFamily: 'var(--font-jetbrains-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
       fontSize: '0.92em',
@@ -909,6 +933,21 @@ interface VisualLineAnchor {
   docBottom: number;
   centerDocY: number;
   isBlank: boolean;
+}
+
+/** Resolve a CSS length (incl. rem/calc vars) to device pixels against `host`. */
+function resolveCssLength(host: Element, value: string): number {
+  if (!value) {
+    return 0;
+  }
+
+  const probe = document.createElement('div');
+  probe.style.cssText =
+    'position:absolute;visibility:hidden;pointer-events:none;height:0;width:' + value;
+  host.appendChild(probe);
+  const width = probe.getBoundingClientRect().width;
+  probe.remove();
+  return width;
 }
 
 interface HandleLaneMetrics {
@@ -1347,8 +1386,12 @@ function createBlockHandleExtension(
         const surface = getEditorContentSurface(this.#view);
         const surfaceRect = surface.getBoundingClientRect();
         const rootRect = this.#editorRoot.getBoundingClientRect();
-        const styles = getComputedStyle(surface);
-        const paddingLeft = Number.parseFloat(styles.paddingLeft || '0') || 0;
+        // Resolve the base side inset (handle lane), not a list/quote line's
+        // deeper padding — those vary per line and would misplace the handle.
+        const insetValue = getComputedStyle(surface)
+          .getPropertyValue('--gn-editor-side-inset-left')
+          .trim();
+        const paddingLeft = resolveCssLength(surface, insetValue || '0px');
         const handleWidth = this.#content.getBoundingClientRect().width;
         const nextMetrics = {
           rootTop: rootRect.top,
@@ -1437,6 +1480,11 @@ function createPaneExtensions(
     search(),
     createExternalSearchHighlightExtension(),
     createLayoutTheme(),
+    // Paint selection/cursor from the document model. Native DOM selection
+    // cannot span CodeMirror's virtualized viewport, so without this Cmd+A
+    // (and any selection larger than the rendered range) visually clamps.
+    drawSelection(),
+    dropCursor(),
     createOverlayScrollMargins(editorRoot),
     placeholder('Start typing here.'),
     createPassiveTableExtension(),
@@ -1483,14 +1531,15 @@ function createPaneExtensions(
     }),
     // The markdown layer does not bundle defaultKeymap, so without this the
     // editing surface falls back to the browser's raw contentEditable handling.
-    // We restore CodeMirror's keymap mainly for model-level Cmd+A (native
-    // select-all only reaches the virtualized DOM). Enter / Mod-Enter stay
-    // excluded here: Enter is owned by `markdownEnter` in the shared base keymap
-    // (the single authoritative handler), and Mod-Enter is the editor shortcut
-    // "insert block below". The old ArrowUp/ArrowDown exclusion is gone: list
-    // lines use padding-based block-flow indent instead of draftly's flex +
-    // absolute layout, so cursorLineUp/Down's goal-column geometry is correct
-    // again. History stays owned by the shared root view (no historyKeymap here).
+    // We restore CodeMirror's keymap mainly for model-level Cmd+A; paired with
+    // drawSelection() above so the full-doc selection is painted correctly.
+    // Enter / Mod-Enter stay excluded here: Enter is owned by `markdownEnter`
+    // in the shared base keymap (the single authoritative handler), and
+    // Mod-Enter is the editor shortcut "insert block below". The old
+    // ArrowUp/ArrowDown exclusion is gone: list lines use padding-based
+    // block-flow indent instead of draftly's flex + absolute layout, so
+    // cursorLineUp/Down's goal-column geometry is correct again. History
+    // stays owned by the shared root view (no historyKeymap here).
     // Mod-i is excluded: defaultKeymap binds it to selectParentSyntax (expand
     // selection by syntax node). We own Cmd+I for italic via editor shortcuts.
     keymap.of(

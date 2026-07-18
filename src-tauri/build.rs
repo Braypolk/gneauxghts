@@ -63,6 +63,13 @@ fn bundle_llama_server() -> Result<(), String> {
                 "failed to rewrite llama-server dylib paths for bundling: {error}"
             ));
         }
+        if let Err(error) =
+            assert_macos_bundle_load_paths_resolved(&destination, &bin_dir, &resources_lib_dir)
+        {
+            return Err(format!(
+                "bundled llama-server still has unresolved dylib load paths: {error}"
+            ));
+        }
         if let Err(error) = ad_hoc_codesign_bundled_llama_server(&destination, &resources_lib_dir) {
             return Err(format!(
                 "failed to codesign bundled llama-server for macOS (unsigned helpers are often killed with no log output): {error}"
@@ -271,12 +278,18 @@ fn backend_plugin_paths() -> Result<Vec<PathBuf>, String> {
     }
 }
 
-/// Older llama.cpp builds shipped extra `libggml-*` backends; current Homebrew
-/// often links only `libggml` + `libggml-base` from the `ggml` formula.
+/// Optional dylibs that exist only on some llama.cpp / ggml formula versions.
+/// - Extra `libggml-*` backends: older kegs only; current Homebrew often ships
+///   just `libggml` + `libggml-base` plus `libexec` plugins.
+/// - `libllama-server-impl`: newer Homebrew splits the server into a thin binary
+///   + this dylib; older builds embed the server and omit the file.
 fn is_optional_bundled_dylib(file_name: &str) -> bool {
     matches!(
         file_name,
-        "libggml-cpu.0.dylib" | "libggml-blas.0.dylib" | "libggml-metal.0.dylib"
+        "libggml-cpu.0.dylib"
+            | "libggml-blas.0.dylib"
+            | "libggml-metal.0.dylib"
+            | "libllama-server-impl.dylib"
     )
 }
 
@@ -416,6 +429,54 @@ fn relink_macos_bundle(binary: &Path, bin_dir: &Path, lib_dir: &Path) -> Result<
     Ok(())
 }
 
+/// Fail the release stage if any Mach-O still references a non-system dylib that
+/// is not present under the staged `bin`/`lib` layout (e.g. a new Homebrew
+/// `@rpath/libllama-*-impl.dylib` we forgot to copy).
+#[cfg(target_os = "macos")]
+fn assert_macos_bundle_load_paths_resolved(
+    binary: &Path,
+    bin_dir: &Path,
+    lib_dir: &Path,
+) -> Result<(), String> {
+    let mut macho_files: Vec<PathBuf> = vec![binary.to_path_buf()];
+    macho_files.extend(dylibs_in_directory(lib_dir)?);
+    macho_files.extend(dylibs_in_directory(bin_dir)?);
+
+    let mut unresolved = Vec::new();
+    for macho in &macho_files {
+        for load_path in otool_load_dylibs(macho)? {
+            if load_path.starts_with("/usr/lib/") || load_path.starts_with("/System/") {
+                continue;
+            }
+            if load_path.starts_with("@loader_path/") {
+                let relative = load_path.trim_start_matches("@loader_path/");
+                let Some(parent) = macho.parent() else {
+                    unresolved.push(format!("{} -> {load_path}", macho.display()));
+                    continue;
+                };
+                let resolved = parent.join(relative);
+                if !resolved.is_file() {
+                    unresolved.push(format!(
+                        "{} -> {load_path} (missing {})",
+                        macho.display(),
+                        resolved.display()
+                    ));
+                }
+                continue;
+            }
+            if load_path.starts_with('@') || load_path.starts_with('/') {
+                unresolved.push(format!("{} -> {load_path}", macho.display()));
+            }
+        }
+    }
+
+    if unresolved.is_empty() {
+        Ok(())
+    } else {
+        Err(unresolved.join("; "))
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn rewrite_dependency_paths(macho: &Path, bin_dir: &Path, lib_dir: &Path) -> Result<(), String> {
     for old in otool_load_dylibs(macho)? {
@@ -492,8 +553,9 @@ fn run_install_name_tool(args: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-fn runtime_library_file_names() -> [&'static str; 11] {
+fn runtime_library_file_names() -> [&'static str; 12] {
     [
+        "libllama-server-impl.dylib",
         "libllama-common.0.dylib",
         "libmtmd.0.dylib",
         "libllama.0.dylib",

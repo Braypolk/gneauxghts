@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { X } from '@lucide/svelte';
+  import { FileText, X } from '@lucide/svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
   import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
   import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
@@ -90,7 +90,16 @@
         </div>
       </div>
     {:else}
-      <div class="absolute right-4 top-4 z-30">
+      <div class="absolute right-4 top-4 z-30 flex items-center gap-2">
+        <button
+          type="button"
+          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          onclick={() => void actions.onSwitchToEditor(viewModel.paneId)}
+          aria-label="Back to note"
+          title="Back to note"
+        >
+          <FileText class="h-4 w-4" />
+        </button>
         {#if viewModel.showCloseButton}
           {@render closePaneButton()}
         {:else}
@@ -152,7 +161,7 @@
         </div>
       </div>
     {:else}
-      <div class="flex min-h-0 flex-1 pb-20 sm:pb-24">
+      <div class="chat-pane-shell flex min-h-0 flex-1 pb-20 sm:pb-24">
         {#if viewModel.chatController}
           <ChatPanel
             controller={viewModel.chatController}
@@ -169,3 +178,10 @@
     {/if}
   </div>
 </div>
+
+<style>
+  /* Reserve header space for Back to note + close/split chrome. */
+  .chat-pane-shell :global(.chat-panel--pane > header) {
+    padding-right: 7rem;
+  }
+</style>

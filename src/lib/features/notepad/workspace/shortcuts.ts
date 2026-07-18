@@ -12,7 +12,7 @@ export interface WorkspaceShortcutDeps<TPaneId extends string> {
   switchActivePane: () => Promise<void>;
   startNewNoteFlow: () => Promise<void>;
   toggleRelatedPanel: () => void;
-  openRecentNoteByIndex: (index: number) => void | Promise<void>;
+  goToPreviousLocation: () => void | Promise<void>;
   focusPaneAfterShortcut: (paneId: TPaneId, options?: { preferTitle?: boolean }) => void;
   /** Pane content-picker keydown branch — return true if handled. */
   handlePaneCommandGlobalKeydown: (event: KeyboardEvent) => boolean;
@@ -139,7 +139,7 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
 
     if (keyboardShortcutMatchesEvent(event, 'goToPreviousNote')) {
       event.preventDefault();
-      void deps.openRecentNoteByIndex(0);
+      void deps.goToPreviousLocation();
       return;
     }
 

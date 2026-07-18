@@ -19,6 +19,10 @@ const HF_REPO_GGUF_FILE: &str = "v5-nano-retrieval-Q6_K.gguf";
 const QUERY_PREFIX: &str = "Query: ";
 const DOCUMENT_PREFIX: &str = "Document: ";
 
+/// Texts per llama-server HTTP call. Larger batches keep `--threads-batch`
+/// busy inside one request; concurrent HTTP calls rarely help on Metal.
+pub(crate) const EMBEDDING_BATCH_SIZE: usize = 128;
+
 /// Default llama-server context window. The Jina runtime's resident memory is
 /// dominated by this KV-cache allocation, so it is the main lever for the
 /// embedding process's footprint. Operators can override it via

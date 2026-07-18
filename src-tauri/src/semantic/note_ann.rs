@@ -400,14 +400,13 @@ impl NoteAnnIndexState {
 
     #[cfg(test)]
     pub(crate) fn rebuild_from_connection(&self, connection: &Connection) -> Result<(), String> {
-        self.rebuild_from_connection_with_gate(connection, None, false, None)
+        self.rebuild_from_connection_with_gate(connection, None, None)
     }
 
     pub(crate) fn rebuild_from_connection_with_gate(
         &self,
         connection: &Connection,
         gate: Option<&BackgroundWorkGate>,
-        automatic: bool,
         progress: Option<&dyn Fn(usize, usize)>,
     ) -> Result<(), String> {
         let signature = load_note_ann_index_signature(connection)?;
@@ -419,8 +418,7 @@ impl NoteAnnIndexState {
             );
         }
         let manifest = self.manifest_for_signature(&signature);
-        let (graph, vectors) =
-            build_snapshot_streaming(connection, &manifest, gate, automatic, progress)?;
+        let (graph, vectors) = build_snapshot_streaming(connection, &manifest, gate, progress)?;
         let sources = load_note_ann_source_inventory(connection)?;
         validate_sources(&sources)?;
         let manifest = self.persist_parts(&graph, &vectors, &manifest, &sources)?;
@@ -688,7 +686,6 @@ fn build_snapshot_streaming(
     connection: &Connection,
     manifest: &NoteAnnManifest,
     gate: Option<&BackgroundWorkGate>,
-    automatic: bool,
     progress: Option<&dyn Fn(usize, usize)>,
 ) -> Result<(NoteAnnGraph, NoteAnnVectors), String> {
     let graph = Hnsw::new(
@@ -704,11 +701,7 @@ fn build_snapshot_streaming(
     for_each_note_embedding(connection, |row| {
         if processed % 64 == 0 {
             if let Some(gate) = gate {
-                if automatic {
-                    gate.wait_for_automatic_idle();
-                } else {
-                    gate.checkpoint_manual_pause();
-                }
+                gate.checkpoint_manual_pause();
             }
         }
         if row.stable_ann_label == 0 || row.semantic_input_hash.is_empty() {

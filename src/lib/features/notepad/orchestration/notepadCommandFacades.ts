@@ -53,6 +53,7 @@ export interface NotepadPaneCommands<TPaneId extends string> {
   setPaneDocumentSession: (paneId: TPaneId, document: NoteDraftState) => unknown;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   getPaneEditorRoot: (paneId: TPaneId) => HTMLElement | null;
+  getPaneChatComposer: (paneId: TPaneId) => HTMLTextAreaElement | null;
   createPane: () => TPaneId;
   closePaneRuntime: (paneId: TPaneId) => Promise<void>;
   updateSelectedRelatedText: (paneId?: TPaneId) => void;
@@ -74,6 +75,8 @@ export interface NotepadDerivedViewCommands<TPaneId extends string> {
   scheduleRelatedIfNeeded: (options?: { immediate?: boolean }) => void;
   clearSelectedRelatedText: () => void;
   loadRecentNotes: () => Promise<unknown> | unknown;
+  /** Recent notes used to bootstrap the Cmd+L location MRU when empty. */
+  getRecentNotesForSeed: () => SearchItem[];
   setRecentlyForgotten: (value: ForgottenNote | null) => void;
   closeWikilinkAutocomplete: (paneId?: TPaneId) => void;
 }
