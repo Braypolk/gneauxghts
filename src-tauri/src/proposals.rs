@@ -244,15 +244,6 @@ fn create_target_path(notes_dir: &Path, title: &str, markdown: &str) -> Result<P
     Ok(notes_dir.join(format!("{file_stem}.md")))
 }
 
-#[allow(dead_code)]
-pub(crate) fn preview_note_change(change: &NoteChange) -> String {
-    match change {
-        NoteChange::UpdateNote { new_markdown, .. } => note::strip_frontmatter(new_markdown),
-        NoteChange::CreateNote { markdown, .. } => note::strip_frontmatter(markdown),
-        NoteChange::DeleteNote { path, .. } => format!("Delete {path}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{apply_note_changes, NoteChange};

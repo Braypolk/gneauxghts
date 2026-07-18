@@ -28,7 +28,7 @@ use self::{
         chat_recall_content_hash, spawn_indexing_worker, ChatRecallExcerpt, PendingIndexState,
         PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument, WorkerSignal,
     },
-    note_ann::{NoteAnnIndexState, NoteAnnMatch},
+    note_ann::NoteAnnIndexState,
     related::{build_excerpt, related_scope_label},
     similarity::{cosine_similarity, MIN_SEMANTIC_MATCH_SCORE},
 };
@@ -865,45 +865,6 @@ impl SemanticState {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn note_ann_matches(
-        &self,
-        query_embedding: &[f32],
-        candidate_k: usize,
-        limit: usize,
-        exclude_note_path: Option<&str>,
-    ) -> Result<Vec<NoteAnnMatch>, String> {
-        let SemanticStateInner::Active(state) = &self.inner else {
-            return Ok(Vec::new());
-        };
-        let connection = open_database(&state.db_path)?;
-        ensure_schema(&connection)?;
-        state.note_ann.search(
-            &connection,
-            query_embedding,
-            candidate_k,
-            limit,
-            exclude_note_path,
-        )
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn note_ann_neighbors(
-        &self,
-        note_path: &str,
-        candidate_k: usize,
-        limit: usize,
-    ) -> Result<Vec<NoteAnnMatch>, String> {
-        let SemanticStateInner::Active(state) = &self.inner else {
-            return Ok(Vec::new());
-        };
-        let connection = open_database(&state.db_path)?;
-        ensure_schema(&connection)?;
-        state
-            .note_ann
-            .neighbors_for_note(&connection, note_path, candidate_k, limit)
-    }
-
     pub(crate) fn related_notes(
         &self,
         current_path: Option<&str>,
@@ -990,43 +951,6 @@ impl ActiveSemanticState {
             .lock()
             .map(|settings| settings.clone())
             .map_err(|_| "Semantic settings lock poisoned".to_string())
-    }
-
-    #[allow(dead_code)]
-    fn enqueue_scan(&self, force: bool) -> Result<(), String> {
-        let now = current_time_millis()?;
-        {
-            let mut runtime = self
-                .runtime
-                .lock()
-                .map_err(|_| "Semantic runtime lock poisoned".to_string())?;
-            runtime.last_scan_requested_at_millis = Some(now);
-        }
-        self.debug.record_with_metrics(
-            "index",
-            if force {
-                "enqueue_full_scan_force"
-            } else {
-                "enqueue_full_scan"
-            },
-            None,
-            None,
-            |metrics| metrics.index_job_enqueued_count += 1,
-        );
-        {
-            let mut pending = self
-                .pending
-                .lock()
-                .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
-            if !pending.rebuild_requested {
-                pending.full_scan_requested = true;
-                pending.force_full_scan |= force;
-                pending.note_updates.clear();
-                pending.deleted_notes.clear();
-                pending.moved_notes.clear();
-            }
-        }
-        self.request_wake()
     }
 
     fn request_wake(&self) -> Result<(), String> {
@@ -1373,11 +1297,11 @@ fn spawn_ann_initialize_and_scan_in_background(
         });
 }
 
-/// Mirrors `ActiveSemanticState::enqueue_scan` but only needs the
-/// channel + state handles passed in, so the background ANN-load thread
-/// can fire it without holding a `&self` reference. Errors are logged
-/// to the semantic debug stream rather than propagated, since the
-/// caller has nowhere to surface them.
+/// Enqueue a full scan using only the wake/pending handles.
+///
+/// Used by the indexer worker and the background ANN-load thread without a
+/// full `ActiveSemanticState` borrow. Errors are logged to the semantic debug
+/// stream rather than propagated, since the caller has nowhere to surface them.
 fn enqueue_initial_scan_after_warmup(
     signal_tx: &Sender<WorkerSignal>,
     wake_pending: &AtomicBool,

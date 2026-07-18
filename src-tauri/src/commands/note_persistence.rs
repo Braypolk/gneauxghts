@@ -92,17 +92,6 @@ fn build_saved_note_session(
     }
 }
 
-#[allow(dead_code)]
-pub(crate) fn persist_note_session(
-    state: &State<'_, AppState>,
-    title: String,
-    markdown: String,
-    current_path: Option<String>,
-    mode: NotePersistenceMode,
-) -> Result<Option<NoteSession>, String> {
-    Ok(persist_note_session_with_outcome(state, title, markdown, current_path, mode)?.session)
-}
-
 pub(crate) fn persist_note_session_with_outcome(
     state: &State<'_, AppState>,
     title: String,

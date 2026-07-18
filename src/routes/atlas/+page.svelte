@@ -667,7 +667,9 @@
             zoom: nextViewState.zoom ?? 0
           };
           atlas.setZoom(Math.pow(2, nextViewState.zoom));
-          renderDeck();
+          // Push viewState only; layer rebuilds come from `$derived`
+          // `renderedLayers` → `syncDeckLayers` when zoom tier / selection changes.
+          deck?.setProps({ viewState });
         },
         onClick: ({ object }: { object?: unknown }) => {
           if (!object) {

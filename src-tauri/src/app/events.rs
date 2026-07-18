@@ -133,11 +133,6 @@ impl EventBus {
         Self { app_handle }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn handle(&self) -> &AppHandle {
-        &self.app_handle
-    }
-
     /// Best-effort emit. Errors from the IPC layer are swallowed because
     /// we never want a failed event delivery to fail the underlying
     /// command (the previous code base already used `let _ = ...`).

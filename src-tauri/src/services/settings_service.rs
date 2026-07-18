@@ -1,31 +1,18 @@
 //! Settings application service.
 //!
-//! Owns the cross-cutting "give me the current settings view" use case
-//! (vault info + semantic status/settings) and the vault
-//! switching command. Settings mutations emit
-//! [`crate::app::AppEvent::VaultChanged`] when the vault path changes
+//! Owns vault info reads and the vault switching command. Settings mutations
+//! emit [`crate::app::AppEvent::VaultChanged`] when the vault path changes
 //! and [`crate::app::AppEvent::SemanticStatusChanged`] when the semantic
-//! indexer status moves.
+//! indexer status moves. The bundled settings payload lives in
+//! [`crate::commands::get_settings_view`].
 
 use crate::app::AppData;
 use crate::index::AppState;
-use crate::semantic::{debug::SemanticDebugSnapshot, SemanticSettings, SemanticStatus};
 use crate::state::{
     current_vault_info, ensure_vault_scaffold, set_notes_root, vault_root, VaultInfo,
 };
-use serde::Serialize;
 use std::path::Path;
 use tauri::State;
-
-#[allow(dead_code)]
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SettingsView {
-    pub vault: VaultInfo,
-    pub semantic_status: SemanticStatus,
-    pub semantic_settings: SemanticSettings,
-    pub semantic_debug: SemanticDebugSnapshot,
-}
 
 pub(crate) struct SettingsService;
 
@@ -36,19 +23,6 @@ impl SettingsService {
 
     pub(crate) fn vault_info(&self) -> Result<VaultInfo, String> {
         current_vault_info()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn settings_view(
-        &self,
-        app_state: &State<'_, AppState>,
-    ) -> Result<SettingsView, String> {
-        Ok(SettingsView {
-            vault: current_vault_info()?,
-            semantic_status: app_state.semantic.get_status()?,
-            semantic_settings: app_state.semantic.get_settings()?,
-            semantic_debug: app_state.semantic.debug_snapshot()?,
-        })
     }
 
     pub(crate) fn set_vault(

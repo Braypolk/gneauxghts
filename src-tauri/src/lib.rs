@@ -58,8 +58,7 @@ pub fn run() {
                 chat_service.reconcile_semantic_recall(&state.semantic)?;
             }
             app.manage(chat_service);
-            // One managed `AppData` carrying the typed event bus and
-            // `NoteCatalog` facade.
+            // One managed `AppData` carrying the typed event bus.
             app.manage(AppData::new(app.handle().clone()));
             // Vault watcher registration walks the notes directory tree
             // recursively; on large vaults that adds noticeable latency to
