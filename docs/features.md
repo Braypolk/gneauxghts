@@ -178,7 +178,9 @@ Current capabilities:
 - update indexes after apply;
 - chat strip: proposed file list with Keep / Undo / Review batch actions;
 - notepad: CodeMirror inline red/green unified diff with Keep / Undo;
-- fixture loader for QA until chat/AI produces real `NoteChange[]`.
+- make-mode chat can emit a `gneauxghts-proposal` JSON fence that loads into
+  the shared review session (hashes filled client-side from the context note);
+- fixture loader for QA when you need a canned multi-file proposal.
 
 Keep writes immediately; Undo drops the change from the review session without
 writing. v1 Keep/Undo is per note change (whole `NoteChange`), with line-level
@@ -193,8 +195,9 @@ Key files:
 - review feature: `src/lib/features/proposals/` (session, diff model, chat card,
   CodeMirror review extension, orchestration).
 
-Future AI / make-mode chat should emit `NoteChange[]` into the shared review
-session instead of writing notes directly.
+Future AI / make-mode chat should keep emitting `NoteChange` drafts via the
+`gneauxghts-proposal` fence (or a future structured event) into the shared
+review session instead of writing notes directly.
 
 ## Retrieval Context
 

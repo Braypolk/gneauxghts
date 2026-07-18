@@ -2,6 +2,11 @@ import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/edito
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import { createProposalApplyController } from './applyController';
 import {
+  parseChatProposalDrafts,
+  resolveChatProposalDrafts,
+  type ChatProposalContext
+} from './chatProposalParse';
+import {
   loadMultiFileFixture,
   type FixtureActiveNote
 } from './fixtures';
@@ -22,6 +27,8 @@ import type { PendingProposalChange } from './types';
 
 export interface ProposalOrchestrationDeps {
   getEditorPaneDocument: () => NoteDraftState | null;
+  /** Note bound to the active chat pane (context for make-mode proposals). */
+  getChatContextNote?: () => ChatProposalContext | null;
   getEditorForDocument: (document: NoteDraftState) => EditorCapabilityAdapter | null;
   openNotePath: (notePath: string, options?: { noteId?: string | null }) => Promise<void>;
   ensureEditorPaneForReview: () => Promise<void>;
@@ -192,6 +199,51 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
   }
 
+  /**
+   * Lift a make-mode assistant message's `gneauxghts-proposal` fence into the
+   * shared review session. No-ops when the message has no valid proposal block.
+   */
+  async function loadFromMakeModeMessage(content: string): Promise<boolean> {
+    const drafts = parseChatProposalDrafts(content);
+    if (!drafts) return false;
+
+    const context =
+      deps.getChatContextNote?.() ??
+      (() => {
+        const document = deps.getEditorPaneDocument();
+        if (!document?.currentNotePath) return null;
+        return {
+          path: document.currentNotePath,
+          title: document.title,
+          lastSavedMarkdown: document.lastSavedMarkdown
+        } satisfies ChatProposalContext;
+      })();
+
+    if (!context?.path) {
+      session.setError('Open a saved note before applying make-mode proposals.');
+      return false;
+    }
+
+    try {
+      const resolved = await resolveChatProposalDrafts(drafts, context);
+      if (!resolved) {
+        session.setError('Make-mode proposal could not be resolved for the open note.');
+        return false;
+      }
+
+      session.load(resolved.changes, resolved.baseMarkdownByPath, 'make');
+      const first = session.pendingChanges()[0];
+      if (first) await showChange(first);
+      return true;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to load make-mode proposal.';
+      session.setError(message);
+      console.error('Make-mode proposal load failed:', error);
+      return false;
+    }
+  }
+
   function isReviewingDocument(document: NoteDraftState): boolean {
     return holds.isHolding(document.key);
   }
@@ -206,6 +258,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     showChange,
     reviewNext,
     loadFixture,
+    loadFromMakeModeMessage,
     isReviewingDocument
   };
 }

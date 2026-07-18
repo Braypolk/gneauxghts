@@ -245,10 +245,27 @@
   function getChatController(paneId: PaneId) {
     let controller = chatControllers.get(paneId);
     if (!controller) {
-      controller = createChatController();
+      controller = createChatController(chatApi, {
+        onAssistantCompleted: async ({ conversation, message }) => {
+          if (conversation.mode !== 'make') return;
+          // proposalOrchestration is initialized later in this module; by the
+          // time chat completions fire, the composition root is fully set up.
+          const orchestration = getProposalOrchestration();
+          await orchestration.loadFromMakeModeMessage(message.content);
+        }
+      });
       chatControllers.set(paneId, controller);
     }
     return controller;
+  }
+
+  let proposalOrchestrationInstance: ReturnType<typeof createProposalOrchestration> | null =
+    null;
+  function getProposalOrchestration() {
+    if (!proposalOrchestrationInstance) {
+      throw new Error('Proposal orchestration is not ready yet.');
+    }
+    return proposalOrchestrationInstance;
   }
 
   function formatChatInsertion(selection: ChatSelection) {
@@ -1139,6 +1156,20 @@
       const chatPaneId = paneOrder.find((id) => getPaneKind(id) === 'chat');
       return chatPaneId ? getPaneDocumentSession(chatPaneId) : null;
     },
+    getChatContextNote: () => {
+      const chatPaneId =
+        (activePaneId && getPaneKind(activePaneId) === 'chat' ? activePaneId : null) ??
+        paneOrder.find((id) => getPaneKind(id) === 'chat') ??
+        getNearestEditorPaneId();
+      if (!chatPaneId) return null;
+      const document = getPaneDocumentSession(chatPaneId);
+      if (!document.currentNotePath) return null;
+      return {
+        path: document.currentNotePath,
+        title: document.title,
+        lastSavedMarkdown: document.lastSavedMarkdown
+      };
+    },
     getEditorForDocument: (document) => {
       const paneId = getPaneIdsForDocument(document).find(
         (id) => getPaneKind(id) === 'editor'
@@ -1246,6 +1277,7 @@
       }
     }
   });
+  proposalOrchestrationInstance = proposalOrchestration;
 
   // ---------------------------------------------------------------------------
   // Refresh controller (window focus / vault changes / visibility).

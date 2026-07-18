@@ -271,8 +271,8 @@ Backend Rust remains authoritative for validation and file mutation.
 
 ### Proposal Apply
 
-1. A producer (fixture today; future chat/AI) loads `NoteChange[]` into the
-   review session with base markdown for diffs.
+1. A producer (make-mode `gneauxghts-proposal` fence, or the fixture loader)
+   loads `NoteChange[]` into the review session with base markdown for diffs.
 2. Chat shows the proposed file list; opening a row enters inline review in an
    editor pane (unified red/green diff).
 3. Keep calls `apply_note_change_proposal` with that change (or Keep all with

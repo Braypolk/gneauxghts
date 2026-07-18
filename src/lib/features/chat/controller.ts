@@ -77,7 +77,21 @@ function upsertTerminalMessage(messages: ChatMessage[], message: ChatMessage): C
   });
 }
 
-export function createChatController(api: ChatApi = chatApi): ChatController {
+export interface ChatControllerOptions {
+  /**
+   * Fired after a successful assistant completion for the open conversation.
+   * Used by make-mode to lift structured note proposals into the review session.
+   */
+  onAssistantCompleted?: (info: {
+    conversation: ChatConversation;
+    message: ChatMessage;
+  }) => void | Promise<void>;
+}
+
+export function createChatController(
+  api: ChatApi = chatApi,
+  options: ChatControllerOptions = {}
+): ChatController {
   const store = writable<ChatControllerState>(initialState);
   const unlisteners: Array<() => void> = [];
   let initializeSequence = 0;
@@ -154,6 +168,17 @@ export function createChatController(api: ChatApi = chatApi): ChatController {
         messages: upsertTerminalMessage(conversation.messages, event.message)
       }));
       patch({ isSending: false });
+      const conversation = get(store).conversation;
+      if (
+        conversation &&
+        event.message.role === 'assistant' &&
+        event.message.status === 'completed'
+      ) {
+        void options.onAssistantCompleted?.({
+          conversation,
+          message: event.message
+        });
+      }
     }),
     'chat://cancelled': (event) => ifCurrent(event, () => {
       updateConversation((conversation) => ({

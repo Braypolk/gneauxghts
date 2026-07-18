@@ -129,6 +129,27 @@ describe('createChatController', () => {
     expect(controller.getSnapshot().isSending).toBe(false);
   });
 
+  it('notifies onAssistantCompleted for finished assistant messages', async () => {
+    const fake = fakeApi();
+    const onAssistantCompleted = vi.fn();
+    const controller = createChatController(fake.api, { onAssistantCompleted });
+    await controller.initialize('conversation-1');
+
+    fake.emit('chat://completed', {
+      requestId: 'request-1',
+      conversationId: 'conversation-1',
+      messageId: 'message-1',
+      message: message({ content: 'Done', status: 'completed' })
+    });
+
+    expect(onAssistantCompleted).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.objectContaining({ content: 'Done', status: 'completed' }),
+        conversation: expect.objectContaining({ id: 'conversation-1' })
+      })
+    );
+  });
+
   it('ignores stream events belonging to a different conversation', async () => {
     const fake = fakeApi();
     const controller = createChatController(fake.api);

@@ -57,10 +57,12 @@ chat/inbox context flow instead of adapting search UI results.
 
 The backend proposal core validates and applies changes. Frontend review UX now
 covers the chat file list, inline CodeMirror diffs, and Keep/Undo wiring to
-`apply_note_change_proposal`. Fixtures drive the flow for QA.
+`apply_note_change_proposal`. Make-mode completions that include a
+`gneauxghts-proposal` fence load into the shared review session; fixtures remain
+for QA.
 
-Recommended next step: have chat make-mode / AI emit `NoteChange[]` into the
-shared review session instead of writing notes directly.
+Recommended next step: harden make-mode structured output (schema validation,
+multi-file base reads) and hide the fixture loader outside development.
 
 ### 6. `Notepad.svelte` Remains A Large Composition Root
 
