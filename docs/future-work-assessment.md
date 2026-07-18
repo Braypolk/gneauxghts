@@ -53,14 +53,14 @@ related notes and returns source/reason/score metadata.
 Recommended next step: use `retrieve_note_context` for the first future
 chat/inbox context flow instead of adapting search UI results.
 
-### 5. Proposal Core Needs Preview/Review Integration
+### 5. Proposal Review UX Is Live; Producer Still Missing
 
-The backend proposal core validates and applies changes. Frontend proposal
-helpers now also build a source-agnostic review model for non-AI preview/review
-flows.
+The backend proposal core validates and applies changes. Frontend review UX now
+covers the chat file list, inline CodeMirror diffs, and Keep/Undo wiring to
+`apply_note_change_proposal`. Fixtures drive the flow for QA.
 
-Recommended next step: when a UI is added, keep it over the existing proposal
-review model and backend apply command.
+Recommended next step: have chat make-mode / AI emit `NoteChange[]` into the
+shared review session instead of writing notes directly.
 
 ### 6. `Notepad.svelte` Remains A Large Composition Root
 

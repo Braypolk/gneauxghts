@@ -1,0 +1,80 @@
+/* Proposal review inline diff (CodeMirror). Uses design tokens only. */
+
+.cm-gn-proposal-removed {
+  background: color-mix(in oklab, var(--destructive) 14%, transparent);
+}
+
+.cm-gn-proposal-removed::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: color-mix(in oklab, var(--destructive) 70%, transparent);
+}
+
+.cm-gn-proposal-added {
+  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+}
+
+.cm-gn-proposal-added::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: color-mix(in oklab, var(--foreground) 45%, transparent);
+}
+
+.cm-editor .cm-line.cm-gn-proposal-removed,
+.cm-editor .cm-line.cm-gn-proposal-added {
+  position: relative;
+}
+
+.cm-gn-proposal-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.35rem 0 0.75rem;
+  padding-left: 0.15rem;
+}
+
+.cm-gn-proposal-undo,
+.cm-gn-proposal-keep {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.65rem;
+  padding: 0 0.75rem;
+  border-radius: var(--radius);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+.cm-gn-proposal-undo {
+  background: color-mix(in oklab, var(--background) 80%, transparent);
+  color: var(--muted-foreground);
+}
+
+.cm-gn-proposal-undo:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.cm-gn-proposal-keep {
+  background: var(--foreground);
+  border-color: transparent;
+  color: var(--background);
+}
+
+.cm-gn-proposal-keep:hover {
+  filter: brightness(1.08);
+}
+
+.cm-editor[data-proposal-review='true'] {
+  cursor: default;
+}

@@ -17,6 +17,7 @@ import {
 } from '@codemirror/commands';
 import {
   Annotation,
+  Compartment,
   type EditorSelection as CmEditorSelection,
   EditorState,
   Prec,
@@ -123,6 +124,8 @@ export interface EditorController {
   sharedResources: SharedEditorResources | null;
   paneKey: symbol;
   onMarkdownChange: (markdown: string) => void;
+  /** Compartment for proposal review decorations / read-only mode. */
+  proposalReviewCompartment: Compartment;
 }
 
 export interface EditorViewCallbacks {
@@ -1638,11 +1641,13 @@ export async function createEditor({
   runtime.ensureMarkdown(initialState?.markdown ?? initialValue);
 
   const paneKey = Symbol('editor-pane');
+  const proposalReviewCompartment = new Compartment();
   const slashMenuApi = createSlashMenuPlugin();
   const selectionMenuApi = createSelectionMenuPlugin();
   let controller: EditorController | null = null;
   const extensions = [
     ...createMarkdownBaseExtensions(),
+    proposalReviewCompartment.of([]),
     ...createPaneExtensions(
       () => controller,
       editorRoot,
@@ -1677,7 +1682,8 @@ export async function createEditor({
     view,
     sharedResources,
     paneKey,
-    onMarkdownChange
+    onMarkdownChange,
+    proposalReviewCompartment
   };
 
   sharedResources?.registerViewCallbacks(view, viewCallbacks ?? defaultViewCallbacks);
@@ -1765,8 +1771,10 @@ export function swapEditorRuntime(
   const slashMenuApi = createSlashMenuPlugin();
   const selectionMenuApi = createSelectionMenuPlugin();
   const nextPaneKey = Symbol('editor-pane');
+  const proposalReviewCompartment = new Compartment();
   const extensions = [
     ...createMarkdownBaseExtensions(),
+    proposalReviewCompartment.of([]),
     ...createPaneExtensions(
       () => controller,
       editorRoot,
@@ -1787,6 +1795,7 @@ export function swapEditorRuntime(
   controller.sharedResources = nextSharedResources;
   controller.paneKey = nextPaneKey;
   controller.onMarkdownChange = onMarkdownChange;
+  controller.proposalReviewCompartment = proposalReviewCompartment;
 
   nextSharedResources.registerViewCallbacks(view, viewCallbacks);
   nextRuntime.attachController(controller);
@@ -2005,5 +2014,23 @@ export function insertWikilinkSuggestion(
     })
   );
   controller.view.focus();
+  return true;
+}
+
+/** Enable or clear proposal-review extensions on a pane editor. */
+export function setProposalReviewExtensions(
+  controller: EditorController | null,
+  extension: Extension | readonly Extension[] | null
+) {
+  if (!controller) return false;
+  if (!controller.proposalReviewCompartment) {
+    console.error(
+      'Proposal review compartment missing — remount the editor (reload the note pane).'
+    );
+    return false;
+  }
+  controller.view.dispatch({
+    effects: controller.proposalReviewCompartment.reconfigure(extension ?? [])
+  });
   return true;
 }

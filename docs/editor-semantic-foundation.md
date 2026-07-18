@@ -20,9 +20,10 @@ CodeMirror internals, or semantic database/index internals.
   and future chat context. `retrieve_note_context` is the neutral context-pack
   API. Consumers should not depend on ANN, SQLite, or embedding implementation
   details.
-- Use the backend proposal core for note mutations. Frontend code may preview
-  review, and group proposed changes, but Rust remains authoritative for
-  content-hash validation and file writes.
+- Use the backend proposal core for note mutations. Frontend review UX (chat
+  file list + CodeMirror inline diff in `src/lib/features/proposals/`) calls
+  `apply_note_change_proposal`; Rust remains authoritative for content-hash
+  validation and file writes.
 - Keep inbox and chat as different UX surfaces over the same retrieval and
   proposal primitives.
 

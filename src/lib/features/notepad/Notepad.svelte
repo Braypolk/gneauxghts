@@ -1,15 +1,17 @@
 <script lang="ts">
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick, untrack } from 'svelte';
+  import { chatApi } from '$lib/features/chat/api';
   import {
-    chatApi,
     createChatController,
-    formatDiscussionDraft,
-    type ChatDraftSeed,
     type ChatController,
     type ChatSelection,
     type ChatSelectionActions
-  } from '$lib/features/chat';
+  } from '$lib/features/chat/controller';
+  import {
+    formatDiscussionDraft,
+    type ChatDraftSeed
+  } from '$lib/features/chat/discussionContext';
   import { forgottenNoteRetentionPreference } from '$lib/appSettings';
   import {
     focusEditorSearchRange,
@@ -20,6 +22,8 @@
     createNotepadFeatureHost,
     type NotepadFeatureHost
   } from '$lib/features/notepad/host';
+  import { createProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
+  import { shouldSuppressAutosaveForDocument } from '$lib/features/proposals/reviewHold.svelte';
   import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
   import { focusEditorAtEnd, focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
   import { registerPendingNoteSaveHandler } from '$lib/features/notepad/navigation/pendingNoteSave';
@@ -615,6 +619,10 @@
       return;
     }
 
+    if (shouldSuppressAutosaveForDocument(document)) {
+      return;
+    }
+
     if (nextMarkdown.trim() !== '') {
       setRecentlyForgotten(null);
     }
@@ -1115,6 +1123,130 @@
     }
   });
 
+  function getNearestEditorPaneId(fromPaneId: PaneId | null = activePaneId): PaneId | null {
+    const order = paneOrder;
+    if (fromPaneId && getPaneKind(fromPaneId) === 'editor') return fromPaneId;
+    return (
+      order.find((paneId) => getPaneKind(paneId) === 'editor') ?? null
+    );
+  }
+
+  const proposalOrchestration = createProposalOrchestration({
+    getEditorPaneDocument: () => {
+      const editorPaneId = getNearestEditorPaneId();
+      if (editorPaneId) return getPaneDocumentSession(editorPaneId);
+      // Chat-only: the bound note still lives on the chat pane.
+      const chatPaneId = paneOrder.find((id) => getPaneKind(id) === 'chat');
+      return chatPaneId ? getPaneDocumentSession(chatPaneId) : null;
+    },
+    getEditorForDocument: (document) => {
+      const paneId = getPaneIdsForDocument(document).find(
+        (id) => getPaneKind(id) === 'editor'
+      );
+      if (!paneId) return null;
+      const editor = editorCapabilities.get(paneId) ?? null;
+      // Adapter exists before the CM controller mounts — treat as missing until live.
+      if (!editor?.isReady()) return null;
+      return editor;
+    },
+    openNotePath: async (notePath, options) => {
+      await commands.openNotePath(notePath, { noteId: options?.noteId ?? null });
+    },
+    ensureEditorPaneForReview: async () => {
+      let editorPaneId = getNearestEditorPaneId();
+
+      if (!editorPaneId) {
+        // Chat-only (or no editor pane). Prefer chat | editor with the bound note.
+        if (paneOrder.length === 1 && window.innerWidth >= 640) {
+          await splitWorkspaceIfAllowed('current');
+          editorPaneId = getNearestEditorPaneId();
+        } else {
+          const chatPaneId =
+            (activePaneId && getPaneKind(activePaneId) === 'chat' ? activePaneId : null) ??
+            paneOrder.find((id) => getPaneKind(id) === 'chat') ??
+            null;
+          if (chatPaneId) {
+            await commands.setPaneKind(chatPaneId, 'editor');
+            editorPaneId = chatPaneId;
+          }
+        }
+      }
+
+      // Keep the proposal list visible: if we only have an editor, open chat beside it.
+      if (
+        paneOrder.length === 1 &&
+        editorPaneId &&
+        getPaneKind(editorPaneId) === 'editor' &&
+        window.innerWidth >= 640
+      ) {
+        await splitWorkspaceIfAllowed('thoughtPartner');
+      }
+
+      await tick();
+      await paneLifecycle.ensurePaneEditors();
+    },
+    activateEditorPane: async () => {
+      const editorPaneId = getNearestEditorPaneId();
+      if (editorPaneId) {
+        commands.activatePane(editorPaneId);
+        await tick();
+        await paneLifecycle.ensurePaneEditors();
+      }
+    },
+    replaceDocumentMarkdown: async (document, markdown) => {
+      const panes = getPaneIdsForDocument(document);
+      const editorPaneId =
+        panes.find((id) => getPaneKind(id) === 'editor') ?? getNearestEditorPaneId();
+      for (const paneId of panes) {
+        getPaneRuntime(paneId).ui.isApplyingExternalContent = true;
+      }
+      try {
+        if (document.bodyMarkdown !== markdown) {
+          document.bodyMarkdown = markdown;
+          document.operationRevision += 1;
+        }
+        const editor = editorPaneId ? editorCapabilities.get(editorPaneId) : null;
+        // Prefer the capability replace path (shared runtime + live view).
+        if (editor?.isReady() && editor.replaceDocument(markdown, { focus: false })) {
+          return;
+        }
+        if (editorPaneId) {
+          await getPaneControllers(editorPaneId).editorLifecycleController.replaceEditorContentInPlace(
+            markdown
+          );
+        } else if (panes.length > 0) {
+          for (const paneId of panes) {
+            await getPaneControllers(paneId).editorLifecycleController.replaceEditorContentInPlace(
+              markdown
+            );
+          }
+        } else {
+          await documents.replaceEditorContentInPlace(markdown);
+        }
+      } finally {
+        for (const paneId of panes) {
+          getPaneRuntime(paneId).ui.isApplyingExternalContent = false;
+        }
+      }
+    },
+    setDocumentTitle: (document, title) => {
+      document.title = title;
+    },
+    refreshDocumentAfterKeep: async (change, result) => {
+      const applied = result.applied[0];
+      if (change.change.kind === 'deleteNote') {
+        await commands.startNewNoteFlow();
+        return;
+      }
+      const nextPath = applied?.path ?? change.path;
+      if (nextPath) {
+        await commands.openNotePath(nextPath, { noteId: null });
+      } else {
+        await commands.refreshCurrentNoteIfChanged();
+      }
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Refresh controller (window focus / vault changes / visibility).
   // ---------------------------------------------------------------------------
@@ -1339,7 +1471,8 @@
       titleClass: paneTitleInputClass,
       titlePlaceholder: paneKind === 'editor' ? 'Title' : 'Chat title',
       titleValue: paneKind === 'editor' ? paneDocument.title : 'Thought partner',
-      titleReadonly: paneKind === 'chat',
+      titleReadonly:
+        paneKind === 'chat' || proposalOrchestration.isReviewingDocument(paneDocument),
       chatController: paneKind === 'chat' ? getChatController(paneId) : null,
       chatConversationId: getPaneState(notepadState, paneId).chatConversationId,
       chatDraftSeed: chatDraftSeeds[paneId] ?? null,
@@ -1360,6 +1493,15 @@
           touchPaneLocationForHistory(paneId);
         }
       },
+      proposalSnapshot: proposalOrchestration.session.snapshot,
+      proposalPendingCount: proposalOrchestration.session.pendingCount,
+      onProposalOpenChange: (change) => void proposalOrchestration.showChange(change),
+      onProposalKeep: (changeId) => void proposalOrchestration.keep(changeId),
+      onProposalUndo: (changeId) => void proposalOrchestration.undo(changeId),
+      onProposalKeepAll: () => void proposalOrchestration.keepAll(),
+      onProposalUndoAll: () => void proposalOrchestration.undoAll(),
+      onProposalReview: () => void proposalOrchestration.reviewNext(),
+      onProposalLoadFixture: () => void proposalOrchestration.loadFixture(),
       paneCommandHighlightedIndex,
       paneCommandMode,
       paneCommandCurrentNoteLabel,

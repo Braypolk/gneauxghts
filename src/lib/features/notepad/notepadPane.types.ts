@@ -2,6 +2,10 @@ import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.s
 import type { PaneCommandChoice, PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 import type { ChatContextNote, ChatController, ChatSelectionActions } from '$lib/features/chat';
 import type { ChatDraftSeed } from '$lib/features/chat';
+import type {
+  PendingProposalChange,
+  ProposalReviewSessionSnapshot
+} from '$lib/features/proposals/types';
 
 type PaneKind = 'editor' | 'chat';
 
@@ -30,6 +34,15 @@ export interface PaneViewModel {
   chatTargetAnchor: string | null;
   chatSelectionActions: ChatSelectionActions;
   onChatConversationChange: (conversationId: string | null) => void;
+  proposalSnapshot: ProposalReviewSessionSnapshot | null;
+  proposalPendingCount: number;
+  onProposalOpenChange: (change: PendingProposalChange) => void | Promise<void>;
+  onProposalKeep: (changeId: string) => void | Promise<void>;
+  onProposalUndo: (changeId: string) => void | Promise<void>;
+  onProposalKeepAll: () => void | Promise<void>;
+  onProposalUndoAll: () => void | Promise<void>;
+  onProposalReview: () => void | Promise<void>;
+  onProposalLoadFixture: () => void | Promise<void>;
   paneCommandHighlightedIndex: number;
   paneCommandMode: PaneCommandMode;
   paneCommandCurrentNoteLabel: string;

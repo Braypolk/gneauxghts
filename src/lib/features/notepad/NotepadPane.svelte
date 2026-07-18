@@ -172,6 +172,15 @@
             variant="pane"
             selectionActions={viewModel.chatSelectionActions}
             onConversationChange={viewModel.onChatConversationChange}
+            proposalSnapshot={viewModel.proposalSnapshot}
+            proposalPendingCount={viewModel.proposalPendingCount}
+            onProposalOpenChange={viewModel.onProposalOpenChange}
+            onProposalKeep={viewModel.onProposalKeep}
+            onProposalUndo={viewModel.onProposalUndo}
+            onProposalKeepAll={viewModel.onProposalKeepAll}
+            onProposalUndoAll={viewModel.onProposalUndoAll}
+            onProposalReview={viewModel.onProposalReview}
+            onProposalLoadFixture={viewModel.onProposalLoadFixture}
           />
         {/if}
       </div>

@@ -60,6 +60,7 @@ describe('createNotepadFeatureHost', () => {
     const host = createNotepadFeatureHost({
       getActiveDocument: () => document,
       getActiveEditor: () => ({
+        isReady: () => true,
         readSnapshot: () => ({
           markdown: document.bodyMarkdown,
           selection: { anchor: 0, head: 5 },
@@ -72,7 +73,8 @@ describe('createNotepadFeatureHost', () => {
           inserted = markdown;
           return { from: 0, to: 5, cursor: markdown.length };
         },
-        addReadOnlyOverlay: () => ({ dispose: () => {} })
+        addReadOnlyOverlay: () => ({ dispose: () => {} }),
+        setProposalReviewExtensions: () => false
       }),
       focusActiveEditor: () => {},
       saveActiveDocument: async () => {
@@ -126,6 +128,7 @@ describe('createNotepadFeatureHost', () => {
     const host = createNotepadFeatureHost({
       getActiveDocument: () => document,
       getActiveEditor: () => ({
+        isReady: () => true,
         readSnapshot: () => null,
         readSelection: () => null,
         readCurrentBlock: () => null,
@@ -134,7 +137,8 @@ describe('createNotepadFeatureHost', () => {
           insertionCount += 1;
           return { from: 0, to: 0, cursor: 1 };
         },
-        addReadOnlyOverlay: () => ({ dispose: () => {} })
+        addReadOnlyOverlay: () => ({ dispose: () => {} }),
+        setProposalReviewExtensions: () => false
       }),
       focusActiveEditor: () => {},
       saveActiveDocument: async () => {},

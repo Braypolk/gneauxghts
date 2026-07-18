@@ -3,11 +3,17 @@ use crate::{
     index::build_indexed_note,
     index::AppState,
     proposals::{apply_note_changes, ApplyNoteChangesResult, NoteChange},
+    semantic::db::content_hash,
     state::notes_root,
     time::current_time_millis,
 };
 use std::{fs, path::Path};
 use tauri::State;
+
+#[tauri::command]
+pub(crate) fn hash_markdown_content(markdown: String) -> String {
+    content_hash(&markdown)
+}
 
 #[tauri::command]
 pub(crate) fn apply_note_change_proposal(

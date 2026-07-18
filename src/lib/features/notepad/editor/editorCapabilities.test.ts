@@ -1,4 +1,4 @@
-import { EditorState, Transaction, type TransactionSpec } from '@codemirror/state';
+import { Compartment, EditorState, Transaction, type TransactionSpec } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -24,7 +24,8 @@ function createController(markdown: string, anchor: number, head = anchor) {
     view,
     sharedResources: null,
     paneKey: Symbol('test-pane'),
-    onMarkdownChange: () => {}
+    onMarkdownChange: () => {},
+    proposalReviewCompartment: new Compartment()
   } satisfies EditorController;
   return { controller, transactions, focus, readState: () => state };
 }

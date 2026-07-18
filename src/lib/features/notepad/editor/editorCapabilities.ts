@@ -2,10 +2,11 @@ import { describeBlockAt, type BlockDescriptor } from '$lib/features/notepad/edi
 import {
   readEditorState,
   replaceEditorDocument,
+  setProposalReviewExtensions,
   type EditorController,
   type EditorSnapshot
 } from '$lib/features/notepad/editor/editor';
-import { Transaction } from '@codemirror/state';
+import { Transaction, type Extension } from '@codemirror/state';
 
 export interface EditorSelectionCapabilitySnapshot {
   anchor: number;
@@ -37,6 +38,8 @@ export interface EditorMarkdownInsertResult {
 }
 
 export interface EditorCapabilityAdapter {
+  /** True when the live CodeMirror controller (and review compartment) exist. */
+  isReady: () => boolean;
   readSnapshot: () => EditorSnapshot | null;
   readSelection: () => EditorSelectionCapabilitySnapshot | null;
   readCurrentBlock: () => EditorCurrentBlockSnapshot | null;
@@ -54,6 +57,9 @@ export interface EditorCapabilityAdapter {
     options?: EditorMarkdownInsertOptions
   ) => EditorMarkdownInsertResult | null;
   addReadOnlyOverlay: (className: string) => ReadOnlyOverlayHandle;
+  setProposalReviewExtensions: (
+    extension: Extension | readonly Extension[] | null
+  ) => boolean;
 }
 
 export function insertEditorMarkdown(
@@ -97,6 +103,10 @@ export function createEditorCapabilityAdapter(
   getController: () => EditorController | null
 ): EditorCapabilityAdapter {
   return {
+    isReady: () => {
+      const controller = getController();
+      return Boolean(controller?.view && controller.proposalReviewCompartment);
+    },
     readSnapshot: () => readEditorState(getController()),
     readSelection: () => {
       const controller = getController();
@@ -143,6 +153,8 @@ export function createEditorCapabilityAdapter(
           overlay.remove();
         }
       };
-    }
+    },
+    setProposalReviewExtensions: (extension: Extension | readonly Extension[] | null) =>
+      setProposalReviewExtensions(getController(), extension)
   };
 }

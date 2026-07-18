@@ -18,6 +18,11 @@
   import type { ChatController, ChatControllerState } from './controller';
   import { mergeDiscussionDraft, type ChatDraftSeed } from './discussionContext';
   import type { ChatCitation, ChatContextNote, ChatExcerpt, ChatMode, ChatSelection, ChatSelectionActions, VaultAccess } from './types';
+  import ProposedChangesCard from '$lib/features/proposals/ProposedChangesCard.svelte';
+  import type {
+    PendingProposalChange,
+    ProposalReviewSessionSnapshot
+  } from '$lib/features/proposals/types';
 
   interface Props {
     controller: ChatController;
@@ -32,6 +37,15 @@
     draftSeed?: ChatDraftSeed | null;
     contextNote?: ChatContextNote | null;
     targetAnchor?: string | null;
+    proposalSnapshot?: ProposalReviewSessionSnapshot | null;
+    proposalPendingCount?: number;
+    onProposalOpenChange?: (change: PendingProposalChange) => void | Promise<void>;
+    onProposalKeep?: (changeId: string) => void | Promise<void>;
+    onProposalUndo?: (changeId: string) => void | Promise<void>;
+    onProposalKeepAll?: () => void | Promise<void>;
+    onProposalUndoAll?: () => void | Promise<void>;
+    onProposalReview?: () => void | Promise<void>;
+    onProposalLoadFixture?: () => void | Promise<void>;
   }
 
   let {
@@ -46,7 +60,16 @@
     placeholder = 'What are you thinking about?',
     draftSeed = null,
     contextNote = null,
-    targetAnchor = null
+    targetAnchor = null,
+    proposalSnapshot = null,
+    proposalPendingCount = 0,
+    onProposalOpenChange,
+    onProposalKeep,
+    onProposalUndo,
+    onProposalKeepAll,
+    onProposalUndoAll,
+    onProposalReview,
+    onProposalLoadFixture
   }: Props = $props();
 
   const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -391,6 +414,20 @@
     {/if}
   </div>
 
+  {#if proposalSnapshot != null || onProposalLoadFixture}
+    <ProposedChangesCard
+      snapshot={proposalSnapshot ?? { source: '', changes: [], activeChangeId: null, isApplying: false, error: null }}
+      pendingCount={proposalPendingCount}
+      onOpenChange={onProposalOpenChange ?? (() => {})}
+      onKeep={onProposalKeep ?? (() => {})}
+      onUndo={onProposalUndo ?? (() => {})}
+      onKeepAll={onProposalKeepAll ?? (() => {})}
+      onUndoAll={onProposalUndoAll ?? (() => {})}
+      onReview={onProposalReview ?? (() => {})}
+      onLoadFixture={onProposalLoadFixture}
+    />
+  {/if}
+
   <footer class="shrink-0 border-t border-border/50 bg-card/35 px-4 py-3 backdrop-blur-sm sm:px-6 sm:py-4">
     {#if snapshot.error || actionError}
       <div class="mb-2 flex items-start gap-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">
@@ -434,18 +471,18 @@
   .chat-history-control:hover, .chat-history-control:focus-within { background: var(--accent); color: var(--accent-foreground); }
   .chat-control { max-width: 8rem; border: 1px solid var(--border); border-radius: 9999px; background: color-mix(in oklab, var(--background) 70%, transparent); padding: 0.3rem 0.55rem; font-size: 0.7rem; color: var(--muted-foreground); outline: none; }
   .chat-message { max-width: min(94%, 44rem); padding: 0.35rem 0; }
-  .chat-message--user { align-self: flex-end; border-radius: 1rem; background: color-mix(in oklab, var(--accent) 72%, transparent); padding: 0.75rem 1rem; }
+  .chat-message--user { align-self: flex-end; border-radius: 1.1rem; background: color-mix(in oklab, var(--accent) 72%, transparent); padding: 0.75rem 1rem; }
   .chat-message-content :global(p) { margin: 0 0 0.65rem; }
   .chat-message-content :global(p:last-child) { margin-bottom: 0; }
   .chat-message-content :global(ul), .chat-message-content :global(ol) { margin: 0.45rem 0; padding-left: 1.35rem; }
-  .chat-message-content :global(pre) { overflow-x: auto; border-radius: 0.7rem; background: var(--muted); padding: 0.75rem; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5; }
-  .chat-message-content :global(code:not(pre code)) { border-radius: 0.3rem; background: var(--muted); padding: 0.1rem 0.3rem; font-family: var(--font-mono); font-size: 0.85em; }
+  .chat-message-content :global(pre) { overflow-x: auto; border-radius: 0.5rem; background: var(--muted); padding: 0.75rem; font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5; }
+  .chat-message-content :global(code:not(pre code)) { border-radius: 0.4rem; background: var(--muted); padding: 0.1rem 0.3rem; font-family: var(--font-mono); font-size: 0.85em; }
   .chat-message-content :global(a) { text-decoration: underline; text-underline-offset: 2px; }
   .chat-citation { display: inline-flex; align-items: center; gap: 0.25rem; border: 1px solid var(--border); border-radius: 9999px; padding: 0.2rem 0.5rem; font-size: 0.68rem; color: var(--muted-foreground); }
   .chat-citation:hover { background: var(--accent); color: var(--accent-foreground); }
-  .chat-selection-action { display: inline-flex; align-items: center; gap: 0.3rem; border-radius: 0.6rem; padding: 0.35rem 0.5rem; font-size: 0.7rem; font-weight: 500; color: var(--muted-foreground); }
+  .chat-selection-action { display: inline-flex; align-items: center; gap: 0.3rem; border-radius: 0.5rem; padding: 0.35rem 0.5rem; font-size: 0.7rem; font-weight: 500; color: var(--muted-foreground); }
   .chat-selection-action:hover { background: var(--accent); color: var(--accent-foreground); }
   .chat-send-button { display: inline-flex; height: 2rem; width: 2rem; align-items: center; justify-content: center; border-radius: 9999px; background: var(--foreground); color: var(--background); }
   .chat-send-button:disabled { cursor: default; opacity: 0.4; }
-  .chat-panel--inline { border-radius: 1rem; border: 1px solid var(--border); background: var(--card); }
+  .chat-panel--inline { border-radius: 1.1rem; border: 1px solid var(--border); background: var(--card); }
 </style>

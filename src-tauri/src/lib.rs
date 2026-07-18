@@ -173,6 +173,7 @@ pub fn run() {
             commands::chat_commands::chat_revoke_note,
             commands::chat_commands::chat_resolve_projection_conflict,
             commands::proposal_commands::apply_note_change_proposal,
+            commands::proposal_commands::hash_markdown_content,
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,

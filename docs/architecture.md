@@ -217,13 +217,16 @@ related-note cards.
 - `deleteNote`.
 
 Rust validates update/delete content hashes before writing. Validation happens
-before any write, so invalid change sets do not partially apply. The command
-`apply_note_change_proposal` applies the change set and updates lexical,
-in-memory, and semantic indexes.
+before any write within a single invoke, so invalid change sets do not partially
+apply. Callers send the accepted subset (often one change for Keep, or all
+pending for Keep all). The command `apply_note_change_proposal` applies the
+change set and updates lexical, in-memory, and semantic indexes.
+`hash_markdown_content` exposes the same blake3 hash used for OCC.
 
-Frontend mirror types live in `src/lib/types/proposals.ts`. They build
-preview/review models and filter invalid apply inputs, but backend Rust remains
-authoritative for validation and file mutation.
+Frontend mirror types live in `src/lib/types/proposals.ts`. The review UX lives
+in `src/lib/features/proposals/`: a shared review session, line-diff model,
+chat `ProposedChangesCard`, and CodeMirror decoration-based inline review.
+Backend Rust remains authoritative for validation and file mutation.
 
 ## Core Feature Flows
 
@@ -268,12 +271,15 @@ authoritative for validation and file mutation.
 
 ### Proposal Apply
 
-1. A future feature produces a `NoteChange[]`.
-2. Frontend may preview/group changes using `src/lib/types/proposals.ts`.
-3. Frontend calls `apply_note_change_proposal`.
-4. Rust validates all paths and content hashes first.
-5. Rust applies writes/deletes and updates lexical, in-memory, and semantic
-   indexes.
+1. A producer (fixture today; future chat/AI) loads `NoteChange[]` into the
+   review session with base markdown for diffs.
+2. Chat shows the proposed file list; opening a row enters inline review in an
+   editor pane (unified red/green diff).
+3. Keep calls `apply_note_change_proposal` with that change (or Keep all with
+   the pending subset). Undo drops the change client-side.
+4. Rust validates paths and content hashes, then applies writes/deletes and
+   updates lexical, in-memory, and semantic indexes.
+5. Frontend exits review mode and refreshes the open note from disk.
 
 ## Extension Rules
 

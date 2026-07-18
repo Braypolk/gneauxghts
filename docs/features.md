@@ -167,24 +167,34 @@ Backend:
 
 ## Proposals
 
-The current proposal system is a foundation layer, not a user-facing inbox.
+Note-change proposals are reviewed in a Cursor-like UX, then applied through the
+Rust proposal core.
 
 Current capabilities:
 
 - represent update/create/delete note changes;
-- validate content hashes before writes;
-- apply changes through Rust;
+- validate content hashes before writes (OCC);
+- apply one change or an accepted subset via `apply_note_change_proposal`;
 - update indexes after apply;
-- expose frontend preview/review helper types.
+- chat strip: proposed file list with Keep / Undo / Review batch actions;
+- notepad: CodeMirror inline red/green unified diff with Keep / Undo;
+- fixture loader for QA until chat/AI produces real `NoteChange[]`.
+
+Keep writes immediately; Undo drops the change from the review session without
+writing. v1 Keep/Undo is per note change (whole `NoteChange`), with line-level
+diffs for readability.
 
 Key files:
 
 - backend: `src-tauri/src/proposals.rs`;
-- command: `src-tauri/src/commands/proposal_commands.rs`;
-- frontend types: `src/lib/types/proposals.ts`.
+- commands: `src-tauri/src/commands/proposal_commands.rs`
+  (`apply_note_change_proposal`, `hash_markdown_content`);
+- frontend types: `src/lib/types/proposals.ts`;
+- review feature: `src/lib/features/proposals/` (session, diff model, chat card,
+  CodeMirror review extension, orchestration).
 
-Future AI inbox and AI chat should both use this proposal system for note
-mutations.
+Future AI / make-mode chat should emit `NoteChange[]` into the shared review
+session instead of writing notes directly.
 
 ## Retrieval Context
 
