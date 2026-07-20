@@ -113,10 +113,10 @@
     {/if}
 
     {#if viewModel.paneKind === 'editor'}
-      <div class="flex h-full flex-1 min-h-0 flex-col">
+      <div class="flex h-full min-w-0 flex-1 min-h-0 flex-col">
         <div
           bind:this={pane.refs.editorShell}
-          class={`notepad-editor-shell relative h-full min-h-0 flex-1 overflow-hidden overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
+          class={`notepad-editor-shell relative h-full min-h-0 min-w-0 flex-1 overflow-hidden overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
             viewModel.isSlashMenuOpen ? 'overscroll-none touch-none' : ''
           } ${
             viewModel.isPaneCommandOpen
@@ -134,7 +134,7 @@
 
           <div
             bind:this={pane.refs.editorRoot}
-            class="relative h-full min-h-full w-full max-w-full overflow-x-clip"
+            class="relative h-full min-h-full w-full min-w-0 max-w-full overflow-x-clip"
             use:editorAction={viewModel.editorLifecycle}
           ></div>
 

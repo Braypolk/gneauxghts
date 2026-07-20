@@ -600,6 +600,10 @@ function createLayoutTheme() {
     '&.cm-editor.cm-gn': {
       height: '100%',
       minHeight: '100%',
+      width: '100%',
+      maxWidth: '100%',
+      // Flex ancestors otherwise size to the widest preformatted table row.
+      minWidth: '0',
       border: 'none',
       outline: 'none',
       background: 'transparent'
@@ -612,11 +616,21 @@ function createLayoutTheme() {
     },
     '&.cm-editor.cm-gn .cm-scroller': {
       fontFamily: 'inherit',
-      lineHeight: '1.75'
+      lineHeight: '1.75',
+      width: '100%',
+      maxWidth: '100%',
+      minWidth: '0',
+      // Wide table rows scroll inside their own line boxes; keep the pane itself
+      // from growing or scrolling horizontally when a row exceeds the readable width.
+      overflowX: 'hidden',
+      overflowY: 'auto'
     },
-    '&.cm-editor.cm-gn .cm-content': {
+    '&.cm-editor.cm-gn .cm-content, &.cm-editor.cm-gn .cm-content.cm-lineWrapping': {
       boxSizing: 'border-box',
       minHeight: '100%',
+      // Critical: CM's flex scroller uses min-width:auto; preformatted table rows
+      // make min-content = full row width and expand the whole note without this.
+      minWidth: '0',
       maxWidth: '100%',
       width: 'min(100%, calc(var(--editor-readable-width) + var(--editor-left-padding) + var(--editor-handle-lane-width) + var(--editor-right-padding)))',
       margin: '0 auto',
@@ -635,14 +649,19 @@ function createLayoutTheme() {
       caretColor: 'var(--foreground)',
       overflowAnchor: 'auto',
       whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word'
+      wordBreak: 'break-word',
+      overflowWrap: 'anywhere',
+      flexShrink: '1'
     },
     '&.cm-editor.cm-gn .cm-selectionBackground': {
       backgroundColor: 'var(--gn-editor-selection-background) !important'
     },
     '&.cm-editor.cm-gn .cm-line': {
       paddingLeft: 'var(--gn-editor-side-inset-left)',
-      paddingRight: 'var(--gn-editor-side-inset-right)'
+      paddingRight: 'var(--gn-editor-side-inset-right)',
+      maxWidth: '100%',
+      minWidth: '0',
+      boxSizing: 'border-box'
     },
     // Beat editor.css decorative paddings so handle-lane inset is preserved
     // (those rules omit the side inset now that it lives on `.cm-line`).
@@ -659,14 +678,42 @@ function createLayoutTheme() {
           'calc(var(--gn-editor-side-inset-left) + 1.2rem * (var(--gn-depth, 0) + 1)) !important'
       },
     '&.cm-editor.cm-gn .gn-markdown-table-line': {
+      boxSizing: 'border-box',
+      // Sit in the text column (not the handle lane / side margins) so tables
+      // match the readable width of surrounding prose.
+      width: 'calc(100% - var(--gn-editor-side-inset-left) - var(--gn-editor-side-inset-right))',
+      maxWidth: 'calc(100% - var(--gn-editor-side-inset-left) - var(--gn-editor-side-inset-right))',
+      minWidth: '0',
+      marginLeft: 'var(--gn-editor-side-inset-left)',
+      marginRight: 'var(--gn-editor-side-inset-right)',
+      paddingLeft: '0.75rem !important',
+      paddingRight: '0.75rem !important',
+      overflowX: 'auto',
+      overflowY: 'hidden',
+      whiteSpace: 'pre',
+      wordBreak: 'normal',
+      overflowWrap: 'normal',
       fontFamily: 'var(--font-jetbrains-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
       fontSize: '0.92em',
       lineHeight: '1.7',
       color: 'var(--foreground)',
       backgroundColor: 'color-mix(in oklab, var(--card) 76%, var(--background))',
       boxShadow: 'inset 0 -1px 0 color-mix(in oklab, var(--border) 72%, transparent)',
-      overflowX: 'auto',
-      whiteSpace: 'pre'
+      // One scrollbar per table (on the end row); keep intermediate rows clean.
+      scrollbarWidth: 'none'
+    },
+    '&.cm-editor.cm-gn .gn-markdown-table-line::-webkit-scrollbar': {
+      height: '0'
+    },
+    '&.cm-editor.cm-gn .gn-markdown-table-line-end': {
+      scrollbarWidth: 'thin'
+    },
+    '&.cm-editor.cm-gn .gn-markdown-table-line-end::-webkit-scrollbar': {
+      height: '6px'
+    },
+    '&.cm-editor.cm-gn .gn-markdown-table-line-end::-webkit-scrollbar-thumb': {
+      background: 'color-mix(in oklab, var(--muted-foreground) 42%, transparent)',
+      borderRadius: '999px'
     },
     '&.cm-editor.cm-gn .gn-markdown-table-header': {
       fontWeight: '650',
@@ -709,9 +756,15 @@ function isMarkdownTableDelimiterLine(text: string) {
   return /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/.test(text);
 }
 
-function buildPassiveTableDecorations(view: EditorView): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
-  const doc = view.state.doc;
+type PassiveTableRange = {
+  headerFrom: number;
+  delimiterFrom: number;
+  bodyFroms: number[];
+  endFrom: number;
+};
+
+function collectPassiveTableRanges(doc: { lines: number; line: (n: number) => { from: number; text: string } }): PassiveTableRange[] {
+  const ranges: PassiveTableRange[] = [];
 
   for (let lineNumber = 2; lineNumber <= doc.lines; lineNumber += 1) {
     const delimiterLine = doc.line(lineNumber);
@@ -724,51 +777,180 @@ function buildPassiveTableDecorations(view: EditorView): DecorationSet {
       continue;
     }
 
-    builder.add(
-      headerLine.from,
-      headerLine.from,
-      Decoration.line({ class: 'gn-markdown-table-line gn-markdown-table-header' })
-    );
-    builder.add(
-      delimiterLine.from,
-      delimiterLine.from,
-      Decoration.line({ class: 'gn-markdown-table-line gn-markdown-table-delimiter' })
-    );
-
+    const bodyFroms: number[] = [];
     let bodyLineNumber = lineNumber + 1;
     while (bodyLineNumber <= doc.lines) {
       const bodyLine = doc.line(bodyLineNumber);
       if (!isMarkdownTableLine(bodyLine.text)) {
         break;
       }
-
-      builder.add(
-        bodyLine.from,
-        bodyLine.from,
-        Decoration.line({ class: 'gn-markdown-table-line' })
-      );
+      bodyFroms.push(bodyLine.from);
       bodyLineNumber += 1;
     }
+
+    const endFrom =
+      bodyFroms.length > 0 ? bodyFroms[bodyFroms.length - 1]! : delimiterLine.from;
+
+    ranges.push({
+      headerFrom: headerLine.from,
+      delimiterFrom: delimiterLine.from,
+      bodyFroms,
+      endFrom
+    });
 
     lineNumber = bodyLineNumber - 1;
   }
 
+  return ranges;
+}
+
+function buildPassiveTableDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  const ranges = collectPassiveTableRanges(view.state.doc);
+
+  for (const range of ranges) {
+    builder.add(
+      range.headerFrom,
+      range.headerFrom,
+      Decoration.line({
+        class: 'gn-markdown-table-line gn-markdown-table-header gn-markdown-table-line-start'
+      })
+    );
+    builder.add(
+      range.delimiterFrom,
+      range.delimiterFrom,
+      Decoration.line({
+        class: [
+          'gn-markdown-table-line',
+          'gn-markdown-table-delimiter',
+          range.endFrom === range.delimiterFrom ? 'gn-markdown-table-line-end' : ''
+        ]
+          .filter(Boolean)
+          .join(' ')
+      })
+    );
+
+    for (const bodyFrom of range.bodyFroms) {
+      builder.add(
+        bodyFrom,
+        bodyFrom,
+        Decoration.line({
+          class: [
+            'gn-markdown-table-line',
+            range.endFrom === bodyFrom ? 'gn-markdown-table-line-end' : ''
+          ]
+            .filter(Boolean)
+            .join(' ')
+        })
+      );
+    }
+  }
+
   return builder.finish();
+}
+
+function syncTableRowScroll(source: HTMLElement) {
+  const content = source.parentElement;
+  if (!content) return;
+
+  const rows = [...content.querySelectorAll<HTMLElement>('.gn-markdown-table-line')];
+  if (rows.length === 0) return;
+
+  // Group consecutive table rows so each table scrolls as one unit.
+  const groups: HTMLElement[][] = [];
+  let current: HTMLElement[] = [];
+  for (const row of rows) {
+    if (current.length === 0) {
+      current.push(row);
+      continue;
+    }
+    const previous = current[current.length - 1]!;
+    if (previous.nextElementSibling === row) {
+      current.push(row);
+    } else {
+      groups.push(current);
+      current = [row];
+    }
+  }
+  if (current.length > 0) groups.push(current);
+
+  const group = groups.find((candidate) => candidate.includes(source));
+  if (!group) return;
+
+  const left = source.scrollLeft;
+  for (const row of group) {
+    if (row !== source && row.scrollLeft !== left) {
+      row.scrollLeft = left;
+    }
+  }
+}
+
+function findTableLineElement(view: EditorView, pos: number): HTMLElement | null {
+  const dom = view.domAtPos(pos);
+  let node: Node | null = dom.node;
+  if (node.nodeType === Node.TEXT_NODE) {
+    node = node.parentElement;
+  }
+  while (node && node !== view.contentDOM) {
+    if (node instanceof HTMLElement && node.classList.contains('gn-markdown-table-line')) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function ensureTableCaretVisible(view: EditorView) {
+  const head = view.state.selection.main.head;
+  const row = findTableLineElement(view, head);
+  if (!row) return;
+
+  const coords = view.coordsAtPos(head);
+  if (!coords) return;
+
+  const visible = row.getBoundingClientRect();
+  const pad = 24;
+  if (coords.left > visible.right - 8) {
+    row.scrollLeft += coords.left - visible.right + pad;
+    syncTableRowScroll(row);
+  } else if (coords.left < visible.left + 8) {
+    row.scrollLeft -= visible.left - coords.left + pad;
+    syncTableRowScroll(row);
+  }
 }
 
 function createPassiveTableExtension() {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
+      #onScroll: (event: Event) => void;
+      #dom: HTMLElement;
 
       constructor(view: EditorView) {
         this.decorations = buildPassiveTableDecorations(view);
+        this.#dom = view.dom;
+        this.#onScroll = (event: Event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) return;
+          if (!target.classList.contains('gn-markdown-table-line')) return;
+          syncTableRowScroll(target);
+        };
+        // Capture so row-level overflow scrolls are seen even if CM stops bubbling.
+        this.#dom.addEventListener('scroll', this.#onScroll, true);
       }
 
-      update(update: import('@codemirror/view').ViewUpdate) {
-        if (update.docChanged) {
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
           this.decorations = buildPassiveTableDecorations(update.view);
         }
+        if (update.selectionSet || update.docChanged) {
+          // Defer until CM has applied DOM/caret geometry for this update.
+          queueMicrotask(() => ensureTableCaretVisible(update.view));
+        }
+      }
+
+      destroy() {
+        this.#dom.removeEventListener('scroll', this.#onScroll, true);
       }
     },
     {

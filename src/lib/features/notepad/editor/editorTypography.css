@@ -1,8 +1,39 @@
 /* Editor typography scale — overrides hardcoded sizes in editor.css via cascade.
    Values are driven by `--gn-editor-*-size` on `:root` (see editorTextSize.ts). */
 
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-scroller {
   font-size: var(--gn-editor-font-size, 1rem);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-content,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-content.cm-lineWrapping {
+  max-width: 100%;
+  /* Beat CM flex min-width:auto so preformatted table rows cannot widen the pane. */
+  min-width: 0 !important;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.gn-markdown-table-line {
+  box-sizing: border-box;
+  width: calc(100% - var(--gn-editor-side-inset-left) - var(--gn-editor-side-inset-right));
+  max-width: calc(100% - var(--gn-editor-side-inset-left) - var(--gn-editor-side-inset-right));
+  min-width: 0;
+  margin-left: var(--gn-editor-side-inset-left);
+  margin-right: var(--gn-editor-side-inset-right);
+  padding-left: 0.75rem !important;
+  padding-right: 0.75rem !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-line.cm-gn-line-h1 {

@@ -1544,8 +1544,8 @@
     return {
       paneId,
       ariaLabel: `Pane ${paneIndex + 1}`,
-      bodyClass: `relative flex min-h-0 flex-1 flex-col ${stackClass}`,
-      frameClass: `relative flex min-h-0 flex-1 overflow-hidden ${stackClass}`,
+      bodyClass: `relative flex min-h-0 min-w-0 flex-1 flex-col ${stackClass}`,
+      frameClass: `relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${stackClass}`,
       paneKind,
       isEditorReady: getPaneRuntime(paneId).ui.isEditorReady,
       isSlashMenuOpen: activeSlashMenuPaneId === paneId,
@@ -1864,7 +1864,7 @@
       ></div>
     {/if}
 
-    <div class="relative z-10 flex min-h-0 flex-1 gap-0 px-0 pt-0">
+    <div class="relative z-10 flex min-h-0 min-w-0 flex-1 gap-0 px-0 pt-0">
       {#each paneOrder as paneId (paneId)}
         <NotepadPane
           pane={getPaneRuntime(paneId)}
