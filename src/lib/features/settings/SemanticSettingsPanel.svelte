@@ -204,9 +204,9 @@
           () => void runAction(semanticStatus.indexingPaused ? 'resume_semantic_indexing' : 'pause_semantic_indexing')
         )}
         {@render semanticAction(
-          'Clear atlas cache',
+          'Clear map cache',
           () => void clearAtlasCache(),
-          'Clears atlas positions, layout signature, and graph snapshot so the next Atlas open runs a full cold generation.'
+          'Clears map positions, layout signature, and graph snapshot so the next Map open runs a full cold generation.'
         )}
 
         {#if isSaving || isRunningAction}
@@ -385,7 +385,7 @@
             {#if semanticDebug.recentEvents.length === 0}
               <p class="text-sm text-muted-foreground">No events captured yet.</p>
             {:else}
-              {#each semanticDebug.recentEvents as event}
+              {#each semanticDebug.recentEvents as event (event.timestampMillis + event.category + event.action + (event.detail ?? ''))}
                 <div class="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
                   <div class="flex items-center justify-between gap-3">
                     <p class="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">

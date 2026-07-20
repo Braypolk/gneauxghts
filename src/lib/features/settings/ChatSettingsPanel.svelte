@@ -182,7 +182,7 @@
           </SettingsField>
           <SettingsField label="Default chat mode">
             <select class="settings-control" bind:value={settings.defaultMode}>
-              {#each ['auto', 'explore', 'challenge', 'research', 'make'] as mode}
+              {#each ['auto', 'explore', 'challenge', 'research', 'make'] as mode (mode)}
                 <option value={mode}>{mode[0].toUpperCase() + mode.slice(1)}</option>
               {/each}
             </select>
@@ -194,7 +194,7 @@
               <option value="full">Full</option>
             </select>
           </SettingsField>
-          <SettingsField label="Atlas chat visibility">
+          <SettingsField label="Map chat visibility">
             <select class="settings-control" bind:value={settings.atlasVisibility}>
               <option value="hidden">Hidden</option>
               <option value="remembered">Remembered</option>

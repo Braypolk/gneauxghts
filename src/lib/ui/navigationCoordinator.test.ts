@@ -25,11 +25,11 @@ describe('createNavigationCoordinator', () => {
       navigate
     });
 
-    const atlasRequest = coordinator.request('/atlas');
+    const mapRequest = coordinator.request('/map');
     await Promise.resolve();
     const editorRequest = coordinator.request('/');
     pendingSave.resolve();
-    await Promise.all([atlasRequest, editorRequest]);
+    await Promise.all([mapRequest, editorRequest]);
 
     expect(navigate).not.toHaveBeenCalled();
     expect(currentPath).toBe('/');
@@ -39,7 +39,7 @@ describe('createNavigationCoordinator', () => {
     let currentPath = '/';
     const firstNavigation = deferred();
     const navigate = vi.fn(async (href: string) => {
-      if (href === '/atlas') await firstNavigation.promise;
+      if (href === '/map') await firstNavigation.promise;
       currentPath = href;
     });
     const coordinator = createNavigationCoordinator({
@@ -49,13 +49,13 @@ describe('createNavigationCoordinator', () => {
       navigate
     });
 
-    const atlasRequest = coordinator.request('/atlas');
+    const mapRequest = coordinator.request('/map');
     await Promise.resolve();
     const editorRequest = coordinator.request('/');
     firstNavigation.resolve();
-    await Promise.all([atlasRequest, editorRequest]);
+    await Promise.all([mapRequest, editorRequest]);
 
-    expect(navigate.mock.calls).toEqual([['/atlas'], ['/']]);
+    expect(navigate.mock.calls).toEqual([['/map'], ['/']]);
     expect(currentPath).toBe('/');
   });
 
@@ -75,10 +75,10 @@ describe('createNavigationCoordinator', () => {
       onFlushError
     });
 
-    await coordinator.request('/atlas');
+    await coordinator.request('/map');
 
     expect(onFlushError).toHaveBeenCalledOnce();
-    expect(navigate).toHaveBeenCalledWith('/atlas');
+    expect(navigate).toHaveBeenCalledWith('/map');
   });
 
   it('force-remounts when page.url already matches the target before goto', async () => {
@@ -96,14 +96,14 @@ describe('createNavigationCoordinator', () => {
       onForceRemount
     });
 
-    // Coordinator believes we are still on atlas (settled from construction
+    // Coordinator believes we are still on map (settled from construction
     // would be `/` here — seed by navigating away first).
-    currentPath = '/atlas';
-    await coordinator.request('/atlas');
+    currentPath = '/map';
+    await coordinator.request('/map');
     onForceRemount.mockClear();
     navigate.mockClear();
 
-    // Preload already flipped the live URL to notes while atlas is still up.
+    // Preload already flipped the live URL to notes while map is still up.
     currentPath = '/';
     await coordinator.request('/');
 
@@ -112,7 +112,7 @@ describe('createNavigationCoordinator', () => {
   });
 
   it('does not navigate again when already settled on the destination', async () => {
-    let currentPath = '/atlas';
+    let currentPath = '/map';
     const navigate = vi.fn(async (href: string) => {
       currentPath = href;
     });
@@ -123,7 +123,7 @@ describe('createNavigationCoordinator', () => {
       navigate
     });
 
-    await coordinator.request('/atlas');
+    await coordinator.request('/map');
     expect(navigate).not.toHaveBeenCalled();
   });
 });

@@ -3,7 +3,7 @@ use super::{
     ann::{AnnIndexState, ANN_MAX_INCREMENTAL_CHUNKS, ANN_MAX_INCREMENTAL_DOCUMENTS},
     atlas::{
         atlas_structural_build_covers_epoch, atlas_visibilities_for_mutation_batch,
-        AtlasGenerationKey, AtlasLabelRequest, AtlasWorkerContext,
+        AtlasGenerationKey, AtlasLabelRequest, AtlasWorkerContext, ATLAS_DEPENDENCIES_NOT_READY,
     },
     chunking::{chunk_markdown, ChunkedNote},
     db::{
@@ -386,7 +386,7 @@ fn process_pending_jobs(
                     Ok(JobOutcome::default())
                 },
             )
-        } else if batch.edge_refresh_requested {
+        } else if batch.edge_refresh_requested && !batch.snapshot_publish_requested {
             handled_edges = true;
             update_runtime(runtime, |state| {
                 state.recovery_state = "rebuilding".to_string();
@@ -540,6 +540,30 @@ fn process_pending_jobs(
                     }
                     Err(error) if error == "atlas generation superseded" => {
                         atlas_retry_attempts.remove(&key);
+                    }
+                    Err(error) if error == ATLAS_DEPENDENCIES_NOT_READY => {
+                        let attempt = atlas_retry_attempts.entry(key).or_default();
+                        *attempt = attempt.saturating_add(1);
+                        atlas_retry_delay = atlas_retry_delay.max(atlas_failure_backoff(*attempt));
+                        if let Ok(mut state) = pending.lock() {
+                            state
+                                .atlas_requests
+                                .entry(key)
+                                .and_modify(|epoch| *epoch = (*epoch).max(target_epoch))
+                                .or_insert(target_epoch);
+                        }
+                        // The ANN snapshot and its dependent edge generation are
+                        // loaded/published asynchronously. A request arriving in
+                        // that window is pending work, not a failed Atlas build.
+                        if *attempt == 1 {
+                            debug.record_with_metrics(
+                                "atlas",
+                                "build_deferred",
+                                Some(error),
+                                None,
+                                |_| {},
+                            );
+                        }
                     }
                     Err(error) => {
                         let attempt = atlas_retry_attempts.entry(key).or_default();
@@ -700,6 +724,13 @@ fn process_pending_jobs(
                     && !handled_automatic_rebuild
                 {
                     next.snapshot_publish_requested = true;
+                }
+                if handled_automatic_rebuild || handled_snapshot {
+                    // Rebuilding or persisting the note ANN publishes a fresh
+                    // generation ID. Edges must be refreshed afterward so their
+                    // provenance and the generation Atlas consumes cannot diverge.
+                    next.edge_refresh_requested = true;
+                    update_runtime(runtime, |state| state.edges_stale = true);
                 }
                 if !handled_atlas {
                     let cache_dir = db_path
@@ -1768,11 +1799,15 @@ struct PreparedNoteContent {
 mod tests {
     use super::{
         atlas_failure_backoff, dirty_count_allows_incremental, process_full_scan,
-        process_note_batch, run_label_atlas_build, run_structural_atlas_build, ChatRecallExcerpt,
-        PendingIndexState, PendingNoteUpdate, PendingSemanticDocument,
-        EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
+        process_note_batch, process_pending_jobs, run_label_atlas_build,
+        run_structural_atlas_build, ChatRecallExcerpt, PendingIndexState, PendingNoteUpdate,
+        PendingSemanticDocument, EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
     };
-    use crate::semantic::atlas::{AtlasChatVisibilityKey, AtlasGenerationKey};
+    use crate::semantic::{
+        activity::BackgroundWorkGate,
+        atlas::{AtlasChatVisibilityKey, AtlasGenerationKey},
+        RuntimeState,
+    };
 
     #[test]
     fn edge_dirty_threshold_forces_full_fallback() {
@@ -1783,6 +1818,74 @@ mod tests {
             EDGE_MAX_INCREMENTAL_DIRTY_NOTES + 1
         ));
         assert!(!dirty_count_allows_incremental(0));
+    }
+
+    #[test]
+    fn snapshot_publication_keeps_edge_generation_aligned_for_atlas() {
+        let temp = TestDir::new("snapshot-before-edges");
+        let semantic_dir = temp.path().join("semantic");
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).expect("create notes dir");
+        fs::write(
+            notes_dir.join("Atlas.md"),
+            "# Atlas\n\nA note with enough content to index.",
+        )
+        .expect("write note");
+        let db_path = semantic_dir.join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(
+            AnnIndexState::new(semantic_dir.clone(), 3, debug.clone()).expect("create ann"),
+        );
+        let note_ann = test_note_ann(&semantic_dir);
+        process_full_scan(
+            &mut connection,
+            &notes_dir,
+            &provider,
+            &ann,
+            &note_ann,
+            true,
+            &debug,
+        )
+        .expect("scan");
+        ann.rebuild_from_connection(&connection)
+            .expect("build ANN snapshot");
+        note_ann
+            .rebuild_from_connection(&connection)
+            .expect("build note ANN snapshot");
+        drop(connection);
+
+        let pending = Arc::new(Mutex::new(PendingIndexState {
+            edge_refresh_requested: true,
+            snapshot_publish_requested: true,
+            ..PendingIndexState::default()
+        }));
+        let runtime = Arc::new(Mutex::new(RuntimeState::default()));
+        let index_revision = Arc::new(AtomicU64::new(0));
+        let background_gate = Arc::new(BackgroundWorkGate::new());
+        process_pending_jobs(
+            &db_path,
+            &notes_dir,
+            &provider,
+            &ann,
+            &note_ann,
+            &pending,
+            &index_revision,
+            &runtime,
+            &debug,
+            &background_gate,
+        );
+
+        let connection = open_database(&db_path).expect("reopen database");
+        let edge_generation = load_edge_generation(&connection)
+            .expect("load edge generation")
+            .expect("published edge generation");
+        assert_eq!(
+            Some(edge_generation.note_ann_generation.as_str()),
+            note_ann.generation_id().as_deref()
+        );
     }
 
     #[test]
@@ -1819,8 +1922,8 @@ mod tests {
         ann::AnnIndexState,
         chunking::SemanticChunk,
         db::{
-            ensure_schema, load_ann_index_signature, open_database, upsert_note_chunks,
-            SemanticNoteMetadata,
+            ensure_schema, load_ann_index_signature, load_edge_generation, open_database,
+            upsert_note_chunks, SemanticNoteMetadata,
         },
         debug::SemanticDebugState,
         embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo, EMBEDDING_BATCH_SIZE},
@@ -1830,7 +1933,7 @@ mod tests {
         collections::{HashMap, HashSet},
         fs,
         path::{Path, PathBuf},
-        sync::{Arc, Mutex},
+        sync::{atomic::AtomicU64, Arc, Mutex},
         time::{SystemTime, UNIX_EPOCH},
     };
 

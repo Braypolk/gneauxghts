@@ -11,7 +11,7 @@
   import { createNavigationCoordinator } from '$lib/ui/navigationCoordinator';
 
   const navLinks = [
-    { href: '/atlas', label: 'Atlas', icon: Network },
+    { href: '/map', label: 'Map', icon: Network },
     { href: '/', label: 'Gneauxght', icon: House },
     { href: '/list', label: 'List', icon: ListTodo },
   ] as const;
@@ -100,7 +100,7 @@
     const shortcutEntries = [
       ['navNote', '/'],
       ['navList', '/list'],
-      ['navAtlas', '/atlas']
+      ['navAtlas', '/map']
     ] as const;
 
     for (const [shortcutId, href] of shortcutEntries) {

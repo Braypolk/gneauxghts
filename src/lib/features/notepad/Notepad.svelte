@@ -1754,7 +1754,7 @@
             });
           }
         }
-        // Remounts (e.g. returning from List/Atlas/Settings) restore the caret
+        // Remounts (e.g. returning from List/Map/Settings) restore the caret
         // but SvelteKit focuses <body> after navigation — put typing focus back
         // after a paint so we win that reset.
         if (!skipDefaultFocus) {

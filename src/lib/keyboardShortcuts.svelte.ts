@@ -127,8 +127,8 @@ const shortcutDefinitionsBase = [
   },
   {
     id: 'navAtlas',
-    label: 'Go to Atlas',
-    description: 'Open vault atlas.',
+    label: 'Go to Map',
+    description: 'Open vault map.',
     group: 'navigation',
     defaultBinding: 'Meta+3'
   },

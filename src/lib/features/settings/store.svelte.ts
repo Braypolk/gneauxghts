@@ -378,7 +378,7 @@ export class SettingsStore {
       await invoke('clear_atlas_cache');
       atlasStore.invalidateCachedResponse();
       this.semanticLayerMessage =
-        'Atlas cache cleared. Re-open Atlas to run a full cold generation.';
+        'Map cache cleared. Re-open Map to run a full cold generation.';
       this.semanticLayerError = null;
     } catch (error) {
       console.error('Failed to clear atlas cache:', error);

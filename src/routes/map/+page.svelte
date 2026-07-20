@@ -717,7 +717,7 @@
     <SearchBar
       value={atlas.searchQuery}
       placeholder="Find notes"
-      ariaLabel="Search atlas notes"
+      ariaLabel="Search map notes"
       matchCase={atlas.matchCase}
       matchWholeWord={atlas.matchWholeWord}
       showMatchOptions={false}
@@ -737,7 +737,7 @@
           id="atlas-chat-visibility"
           class="h-8 rounded-full border border-border bg-background px-2 text-xs text-foreground"
           value={atlas.chatVisibility}
-          title="Chat visibility in Atlas"
+          title="Chat visibility in Map"
           onchange={(event) => atlas.setChatVisibility(event.currentTarget.value as 'hidden' | 'remembered' | 'all')}
         >
           <option value="hidden">Notes only</option>
@@ -779,10 +779,10 @@
     <div class="absolute inset-0 z-20 flex items-center justify-center px-4">
       <div class="max-w-md rounded-[1.5rem] border border-border/80 bg-card/90 px-5 py-5 text-center shadow-md backdrop-blur-md">
         <p class="text-sm font-semibold">
-          {atlas.error ? 'Atlas unavailable' : atlas.response?.status === 'empty' ? 'No atlas yet' : 'Semantic atlas unavailable'}
+          {atlas.error ? 'Map unavailable' : atlas.response?.status === 'empty' ? 'No map yet' : 'Semantic map unavailable'}
         </p>
         <p class="mt-2 text-sm text-muted-foreground">
-          {atlas.error ?? atlas.response?.reason ?? 'Semantic indexing needs to finish before the atlas can be shown.'}
+          {atlas.error ?? atlas.response?.reason ?? 'Semantic indexing needs to finish before the map can be shown.'}
         </p>
         {#if atlas.response?.status === 'unavailable'}
           <button
@@ -799,7 +799,7 @@
     <div class="absolute inset-0 z-20 flex items-center justify-center">
       <div class="max-w-md rounded-[1.5rem] border border-border/80 bg-card/90 px-5 py-5 text-center shadow-md backdrop-blur-md">
         <LoaderCircle class="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
-        <p class="mt-3 text-sm font-semibold">Building your atlas</p>
+        <p class="mt-3 text-sm font-semibold">Building your map</p>
         <p class="mt-2 text-sm text-muted-foreground">
           {atlas.response?.reason ?? 'Semantic structure is being prepared in the background.'}
         </p>
@@ -813,7 +813,7 @@
       aria-live="polite"
     >
       <LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-      Updating atlas
+      Updating map
     </div>
   {/if}
 

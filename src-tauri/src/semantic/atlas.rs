@@ -66,6 +66,7 @@ const DISC_LAYOUT_REPULSION_NEIGHBORS: usize = 16;
 const ATLAS_CLOUD_ALGORITHM_VERSION: u32 = 1;
 const ATLAS_GENERATION_FORMAT_VERSION: u32 = 1;
 const ATLAS_SUPERSEDED: &str = "atlas generation superseded";
+pub(crate) const ATLAS_DEPENDENCIES_NOT_READY: &str = "Atlas dependencies are not ready";
 const ATLAS_SEARCH_SEMANTIC_WEIGHT: f32 = 0.55;
 const ATLAS_SEARCH_LEXICAL_WEIGHT: f32 = 0.25;
 const ATLAS_SEARCH_STRUCTURAL_WEIGHT: f32 = 0.10;
@@ -829,7 +830,7 @@ impl AtlasWorkerContext {
             || self.note_ann.generation_id().as_deref()
                 != Some(dependencies.note_ann_generation.as_str())
         {
-            return Err("Atlas dependencies are not ready".to_string());
+            return Err(ATLAS_DEPENDENCIES_NOT_READY.to_string());
         }
         let indexed_notes = visible_atlas_notes(
             load_atlas_note_embeddings(&connection)?,
