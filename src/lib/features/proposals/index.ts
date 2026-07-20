@@ -1,7 +1,6 @@
 export type {
   NoteChange,
   AppliedNoteChange,
-  ApplyNoteChangesResult,
   ProposedTextEdit,
   ProposalPreview,
   ProposalPreviewHunk,
@@ -25,27 +24,15 @@ export {
 } from './diffModel';
 
 export {
-  applyNoteChangeProposal,
   previewNoteChangeProposal,
   commitNoteReview,
-  hashMarkdownContent,
-  hashNoteAtPath
+  proposalErrorMessage
 } from './api';
 export {
   createProposalReviewSession,
   proposalReviewSession,
   type ProposalReviewSession
 } from './reviewSession.svelte';
-export {
-  createProposalApplyController,
-  type ProposalApplyController,
-  type ProposalApplyHooks
-} from './applyController';
-export {
-  loadUpdateFixtureForActiveNote,
-  loadMultiFileFixture,
-  type FixtureActiveNote
-} from './fixtures';
 export {
   createProposalReviewExtension,
   proposalTransaction,
@@ -56,9 +43,7 @@ export {
 export {
   reviewHoldStore,
   createReviewHoldStore,
-  assertCanKeepChange,
   shouldSuppressAutosaveForDocument,
-  findPendingReviewForDocument,
   type ReviewHoldStore,
   type ReviewDocumentHold
 } from './reviewHold.svelte';
@@ -74,11 +59,9 @@ export {
 export {
   extractProposalFence,
   parseChatProposalEdits,
-  parseChatProposalDrafts,
-  resolveChatProposalDrafts,
-  type ChatProposalDraft,
   type ChatProposalContext
 } from './chatProposalParse';
+
 export type {
   PendingProposalChange,
   ProposalChangeStatus,

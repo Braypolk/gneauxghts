@@ -345,23 +345,43 @@ class ImageEmbedWidget extends WidgetType {
   }
 }
 
+export interface ImageEmbedRange {
+  from: number;
+  to: number;
+}
+
+export interface ImageEmbedDecorationBuild {
+  decorations: DecorationSet;
+  /** All embed spans in the doc (including those hidden because selection intersects). */
+  ranges: ImageEmbedRange[];
+}
+
+export function selectionIntersectsImageEmbed(
+  selection: { from: number; to: number },
+  ranges: readonly ImageEmbedRange[]
+) {
+  return ranges.some((range) => selection.from < range.to && selection.to > range.from);
+}
+
 export function buildImageEmbedDecorations(
   view: EditorView,
   assetRootPath: string | null
-): DecorationSet {
+): ImageEmbedDecorationBuild {
   const builder = new RangeSetBuilder<Decoration>();
+  const ranges: ImageEmbedRange[] = [];
   if (!assetRootPath) {
-    return builder.finish();
+    return { decorations: builder.finish(), ranges };
   }
 
   const selection = view.state.selection.main;
   const text = view.state.doc.toString();
   forEachImageEmbed(text, ({ from, to, target, widgetKey }) => {
+    ranges.push({ from, to });
     if (selection.from < to && selection.to > from) {
       return;
     }
 
-    builder.add(from, to, Decoration.mark({ class: 'gn-image-embed-source' }));
+    // Widget side -1 must be added before the mark at the same `from`.
     builder.add(
       from,
       from,
@@ -370,7 +390,8 @@ export function buildImageEmbedDecorations(
         side: -1
       })
     );
+    builder.add(from, to, Decoration.mark({ class: 'gn-image-embed-source' }));
   });
 
-  return builder.finish();
+  return { decorations: builder.finish(), ranges };
 }

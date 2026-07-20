@@ -1,5 +1,6 @@
 pub(crate) mod activity;
 pub(crate) mod ann;
+mod ann_core;
 pub(crate) mod atlas;
 pub(crate) mod atlas_labels;
 pub(crate) mod chunking;
@@ -19,8 +20,8 @@ use self::{
         clear_atlas_cache, content_hash, count_indexed_items, edges_are_stale_for_generation,
         edges_are_stale_for_model, ensure_schema, load_chunks_by_ann_labels, load_latest_job,
         load_note_record, load_related_note_previews, load_related_note_previews_for_paths,
-        load_semantic_settings,
-        mark_running_jobs_interrupted, open_database, save_semantic_settings,
+        load_semantic_settings, mark_running_jobs_interrupted, open_database,
+        save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
@@ -712,6 +713,7 @@ impl SemanticState {
                         .lock()
                         .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
                     let revision = state.index_revision.load(Ordering::Acquire);
+                    // Full rebuild: always enqueue every visibility variant.
                     for visibility in [
                         AtlasChatVisibilityKey::Hidden,
                         AtlasChatVisibilityKey::Remembered,

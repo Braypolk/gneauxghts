@@ -10,15 +10,15 @@
     MessagesSquare
   } from '@lucide/svelte';
   import {
-    forgetButtonDurationPreference,
+    appSettings,
     resolveForgetButtonDurationMs
-  } from '$lib/appSettings';
+  } from '$lib/appSettings.svelte';
   import {
     buildHighlightedSegments,
     createNotepadCommandBarState,
     deriveNotepadCommandBarVisibleItems,
     type NotepadCommandBarVisibleItem
-  } from '$lib/features/notepad/ui/notepadCommandBarState';
+  } from '$lib/features/notepad/ui/notepadCommandBarState.svelte';
   import type {
     NotepadCommandBarForgetProps,
     NotepadCommandBarRememberProps,
@@ -94,7 +94,7 @@
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
   let forgetButton = $state<HTMLButtonElement | null>(null);
   let forgetCancelButton = $state<HTMLButtonElement | null>(null);
-  let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs($forgetButtonDurationPreference));
+  let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs(appSettings.forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
   let areRecentTasksCollapsed = $state(loadRecentTasksCollapsedPreference());
   let isAtLeastSmWidth = $state(false);
@@ -169,12 +169,12 @@
   });
 
   $effect(() => {
-    $forgetButtonDurationPreference;
+    appSettings.forgetButtonDurationPreference;
     commandBarState.resetForgetHold();
   });
 
   $effect(() => {
-    if (!$commandBarState.isForgetConfirmOpen) {
+    if (!commandBarState.isForgetConfirmOpen) {
       return;
     }
 
@@ -184,7 +184,7 @@
   });
 
   $effect(() => {
-    $commandBarState.activeIndex;
+    commandBarState.activeIndex;
     visibleItems;
     void commandBarState.syncActiveItemIntoView();
   });
@@ -456,10 +456,10 @@
     {:else}
       <div
         class={`relative inline-flex shrink-0 items-center rounded-full border bg-background p-1 text-muted-foreground shadow-sm ${
-          $commandBarState.isHoldingForget ? 'border-destructive/70' : 'border-border'
+          commandBarState.isHoldingForget ? 'border-destructive/70' : 'border-border'
         }`}
       >
-        {#if $commandBarState.isForgetConfirmOpen}
+        {#if commandBarState.isForgetConfirmOpen}
           <div
             id="forget-confirm-popover"
             class="absolute bottom-[calc(100%+0.75rem)] left-0 z-40 w-[min(18rem,calc(100vw-1.5rem))] rounded-[1.2rem] border border-border bg-popover/95 p-3 text-popover-foreground shadow-xl backdrop-blur-md"
@@ -505,14 +505,14 @@
         <button
           bind:this={forgetButton}
           type="button"
-          aria-expanded={$commandBarState.isForgetConfirmOpen}
-          aria-controls={$commandBarState.isForgetConfirmOpen ? 'forget-confirm-popover' : undefined}
+          aria-expanded={commandBarState.isForgetConfirmOpen}
+          aria-controls={commandBarState.isForgetConfirmOpen ? 'forget-confirm-popover' : undefined}
           class={`relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2 ${
-            $commandBarState.isHoldingForget
+            commandBarState.isHoldingForget
               ? 'forget-hold-animation text-destructive'
               : ''
           }`}
-          style={`--forget-progress: ${$commandBarState.forgetHoldProgress};`}
+          style={`--forget-progress: ${commandBarState.forgetHoldProgress};`}
           aria-label={commandBarState.getForgetButtonAriaLabel()}
           title={commandBarState.getForgetButtonAriaLabel()}
           onclick={commandBarState.handleForgetClick}
@@ -533,7 +533,7 @@
           </span>
           <Eraser
             class={`relative z-10 h-5 w-5 transition-transform duration-200 min-[700px]:hidden ${
-              $commandBarState.isHoldingForget ? '-translate-y-px' : ''
+              commandBarState.isHoldingForget ? '-translate-y-px' : ''
             }`}
           />
         </button>
@@ -543,7 +543,7 @@
     {#snippet searchPanel()}
       <div
         class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]"
-        data-search-navigation-mode={$commandBarState.searchNavigationMode}
+        data-search-navigation-mode={commandBarState.searchNavigationMode}
       >
         {#if isSearching && searchQuery.trim() !== ''}
           <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
@@ -592,9 +592,9 @@
                     {#each recentTasks as item, index (`task-${item.taskKey}-${index}`)}
                       <button
                         type="button"
-                        data-search-result-active={index === $commandBarState.activeIndex ? 'true' : 'false'}
+                        data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
                         class={getRecentTaskItemClass()}
-                        class:bg-accent={index === $commandBarState.activeIndex}
+                        class:bg-accent={index === commandBarState.activeIndex}
                         aria-label={`Open recent task: ${item.text}`}
                         title={`${item.text} - ${item.noteTitle}`}
                         onmousedown={(event) => event.preventDefault()}
@@ -625,9 +625,9 @@
                     {@const globalIndex = visibleRecentTasks.length + index}
                     <button
                       type="button"
-                      data-search-result-active={globalIndex === $commandBarState.activeIndex ? 'true' : 'false'}
+                      data-search-result-active={globalIndex === commandBarState.activeIndex ? 'true' : 'false'}
                       class={getRecentNoteItemClass()}
-                      class:bg-accent={globalIndex === $commandBarState.activeIndex}
+                      class:bg-accent={globalIndex === commandBarState.activeIndex}
                       aria-label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
                       title={item.label}
                       onmousedown={(event) => event.preventDefault()}
@@ -649,9 +649,9 @@
             {#each visibleSearchResults as item, index (`${item.notePath ?? 'current'}-${item.sectionLabel}-${item.matchText}-${index}`)}
               <button
                 type="button"
-                data-search-result-active={index === $commandBarState.activeIndex ? 'true' : 'false'}
+                data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
                 class={getSearchResultItemClass(searchMode)}
-                class:bg-accent={index === $commandBarState.activeIndex}
+                class:bg-accent={index === commandBarState.activeIndex}
                 aria-label={`Open search result: ${searchMode !== 'current' ? item.fileName : item.sectionLabel}`}
                 title={searchMode !== 'current' ? item.fileName : item.sectionLabel}
                 onmousedown={(event) => event.preventDefault()}

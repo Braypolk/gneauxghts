@@ -683,6 +683,54 @@ fn atlas_row_visible(row: &StoredAtlasNoteMetadata, visibility: AtlasChatVisibil
     }
 }
 
+const ATLAS_VISIBILITIES_ALL: &[AtlasChatVisibilityKey] = &[
+    AtlasChatVisibilityKey::Hidden,
+    AtlasChatVisibilityKey::Remembered,
+    AtlasChatVisibilityKey::All,
+];
+
+/// Remembered + All only. Hidden is notes-only (`atlas_row_visible`), so a
+/// ChatRecall-only mutation cannot change Hidden membership or its layout set.
+const ATLAS_VISIBILITIES_CHAT_AFFECTED: &[AtlasChatVisibilityKey] = &[
+    AtlasChatVisibilityKey::Remembered,
+    AtlasChatVisibilityKey::All,
+];
+
+/// Which per-visibility atlas rebuilds a semantic mutation batch can affect.
+///
+/// Notes appear under every visibility filter, so note markdown updates (and
+/// deletes/moves, whose document kinds are unknown at enqueue time) require
+/// all three variants. ChatRecall updates only touch ChatIndex rows, which
+/// Hidden never includes — rebuilding Hidden would be redundant work.
+///
+/// Non-document jobs (scans, edge refresh, ANN rebuild) should pass
+/// `force_all = true` so every ready variant still refreshes.
+pub(crate) fn atlas_visibilities_for_mutation_batch(
+    has_note_markdown: bool,
+    has_chat_recall: bool,
+    has_deletes_or_moves: bool,
+    force_all: bool,
+) -> &'static [AtlasChatVisibilityKey] {
+    if force_all || has_note_markdown || has_deletes_or_moves || !has_chat_recall {
+        ATLAS_VISIBILITIES_ALL
+    } else {
+        ATLAS_VISIBILITIES_CHAT_AFFECTED
+    }
+}
+
+/// True when a structural build for `key` is already covering `epoch` or newer,
+/// so re-enqueueing the same visibility would only add redundant queue work.
+pub(crate) fn atlas_structural_build_covers_epoch(
+    pending: &PendingIndexState,
+    key: AtlasGenerationKey,
+    epoch: u64,
+) -> bool {
+    pending
+        .atlas_building
+        .get(&key)
+        .is_some_and(|building| *building >= epoch)
+}
+
 fn persisted_hard_links(
     rows: &[StoredAtlasNoteMetadata],
     metadata: &HashMap<String, AtlasNoteMetadata>,
@@ -2588,7 +2636,8 @@ fn promote_mature_subclouds(
                 0.0
             };
             let should_promote = mature.len() >= 2
-                && (group.len() >= TOP_CLOUD_SOFT_MAX || separation >= CHILD_PARTITION_SEPARATION_MIN);
+                && (group.len() >= TOP_CLOUD_SOFT_MAX
+                    || separation >= CHILD_PARTITION_SEPARATION_MIN);
 
             if !should_promote {
                 return vec![TopGroupPartition {
@@ -2614,13 +2663,7 @@ fn promote_mature_subclouds(
             }
 
             if remaining_depth > 0 {
-                promote_mature_subclouds(
-                    next_groups,
-                    nodes,
-                    edges,
-                    adjacency,
-                    remaining_depth - 1,
-                )
+                promote_mature_subclouds(next_groups, nodes, edges, adjacency, remaining_depth - 1)
             } else {
                 next_groups
                     .into_iter()
@@ -3912,7 +3955,8 @@ fn finalize_cloud_cores(nodes: &[WorkingNode], edges: &[LayoutEdge], specs: &mut
             let mut core = Vec::new();
             let mut outliers = Vec::new();
             for (id, dist) in distances {
-                let affinity = node_internal_affinity(&id, &spec.member_node_ids, edges, &adjacency);
+                let affinity =
+                    node_internal_affinity(&id, &spec.member_node_ids, edges, &adjacency);
                 if spec.member_node_ids.len().saturating_sub(outliers.len()) > CLOUD_MIN_NOTES
                     && dist > threshold
                     && affinity < 0.55
@@ -4656,6 +4700,62 @@ mod tests {
             .is_some_and(|epoch| *epoch >= 8));
         assert!(request_is_superseded(&pending, key, 7));
         assert!(!request_is_superseded(&pending, key, 8));
+    }
+
+    #[test]
+    fn atlas_visibilities_for_mutation_batch_skips_hidden_for_chat_recall_only() {
+        assert_eq!(
+            atlas_visibilities_for_mutation_batch(false, true, false, false),
+            [
+                AtlasChatVisibilityKey::Remembered,
+                AtlasChatVisibilityKey::All,
+            ]
+        );
+        assert_eq!(
+            atlas_visibilities_for_mutation_batch(true, false, false, false),
+            [
+                AtlasChatVisibilityKey::Hidden,
+                AtlasChatVisibilityKey::Remembered,
+                AtlasChatVisibilityKey::All,
+            ]
+        );
+        assert_eq!(
+            atlas_visibilities_for_mutation_batch(true, true, false, false),
+            [
+                AtlasChatVisibilityKey::Hidden,
+                AtlasChatVisibilityKey::Remembered,
+                AtlasChatVisibilityKey::All,
+            ]
+        );
+        assert_eq!(
+            atlas_visibilities_for_mutation_batch(false, true, true, false),
+            [
+                AtlasChatVisibilityKey::Hidden,
+                AtlasChatVisibilityKey::Remembered,
+                AtlasChatVisibilityKey::All,
+            ]
+        );
+        assert_eq!(
+            atlas_visibilities_for_mutation_batch(false, false, false, true),
+            [
+                AtlasChatVisibilityKey::Hidden,
+                AtlasChatVisibilityKey::Remembered,
+                AtlasChatVisibilityKey::All,
+            ]
+        );
+    }
+
+    #[test]
+    fn atlas_structural_build_covers_epoch_skips_redundant_enqueue() {
+        let key = AtlasGenerationKey {
+            chat_visibility: AtlasChatVisibilityKey::Hidden,
+        };
+        let mut pending = PendingIndexState::default();
+        assert!(!atlas_structural_build_covers_epoch(&pending, key, 4));
+        pending.atlas_building.insert(key, 4);
+        assert!(atlas_structural_build_covers_epoch(&pending, key, 4));
+        assert!(atlas_structural_build_covers_epoch(&pending, key, 3));
+        assert!(!atlas_structural_build_covers_epoch(&pending, key, 5));
     }
 
     #[test]

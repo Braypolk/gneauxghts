@@ -1,4 +1,4 @@
-use crate::{commands::DraftRef, index::AppState};
+use crate::index::{AppState, DraftRef};
 use std::path::Path;
 
 #[derive(Clone, Debug)]

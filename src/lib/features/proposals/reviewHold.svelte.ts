@@ -1,6 +1,5 @@
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import type { PendingProposalChange } from './types';
-import type { ProposalReviewSession } from './reviewSession.svelte';
 
 export interface ReviewDocumentHold {
   title: string;
@@ -73,32 +72,6 @@ export type ReviewHoldStore = ReturnType<typeof createReviewHoldStore>;
 
 export const reviewHoldStore = createReviewHoldStore();
 
-export function assertCanKeepChange(
-  change: PendingProposalChange,
-  document: NoteDraftState | null,
-  holds: ReviewHoldStore
-): string | null {
-  if (change.change.kind === 'createNote') {
-    return null;
-  }
-
-  if (!document) {
-    return null;
-  }
-
-  const hold = holds.get(document.key);
-  const baseline = hold?.bodyMarkdown ?? document.bodyMarkdown;
-  if (baseline !== change.baseMarkdown) {
-    return 'Note changed since the proposal was created. Reload or recreate the proposal.';
-  }
-
-  if (!hold && document.bodyMarkdown !== document.lastSavedMarkdown) {
-    return 'Save or discard local edits before keeping this change.';
-  }
-
-  return null;
-}
-
 export function shouldSuppressAutosaveForDocument(
   document: NoteDraftState,
   holds: ReviewHoldStore = reviewHoldStore
@@ -106,9 +79,3 @@ export function shouldSuppressAutosaveForDocument(
   return holds.isHolding(document.key);
 }
 
-export function findPendingReviewForDocument(
-  session: ProposalReviewSession,
-  document: NoteDraftState
-): PendingProposalChange | null {
-  return session.findPendingForPath(document.currentNotePath);
-}

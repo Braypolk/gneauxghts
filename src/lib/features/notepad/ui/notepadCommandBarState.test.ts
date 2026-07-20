@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createNotepadCommandBarState,
   deriveNotepadCommandBarVisibleItems
-} from './notepadCommandBarState';
+} from './notepadCommandBarState.svelte';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 import type { SearchItem } from '$lib/types/semantic';
@@ -203,10 +203,7 @@ describe('createNotepadCommandBarState', () => {
       expect(state.handleForgetShortcutKeyDown(forgetShortcutEvent('keydown'))).toBe(true);
       expect(state.handleForgetShortcutKeyUp(forgetShortcutEvent('keyup'))).toBe(true);
 
-      let snapshot = { isForgetConfirmOpen: false, isHoldingForget: true };
-      state.subscribe((value) => {
-        snapshot = value;
-      })();
+      const snapshot = state.getSnapshot();
 
       expect(snapshot.isHoldingForget).toBe(false);
       expect(snapshot.isForgetConfirmOpen).toBe(true);
@@ -230,11 +227,7 @@ describe('createNotepadCommandBarState', () => {
       expect(onForget).toHaveBeenCalledOnce();
       expect(state.handleForgetShortcutKeyUp(forgetShortcutEvent('keyup'))).toBe(false);
 
-      let snapshot = { isForgetConfirmOpen: true };
-      state.subscribe((value) => {
-        snapshot = value;
-      })();
-      expect(snapshot.isForgetConfirmOpen).toBe(false);
+      expect(state.getSnapshot().isForgetConfirmOpen).toBe(false);
 
       state.dispose();
     });

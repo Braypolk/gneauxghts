@@ -15,7 +15,7 @@
     Send,
     Square
   } from '@lucide/svelte';
-  import type { ChatController, ChatControllerState } from './controller';
+  import type { ChatController, ChatControllerState } from './controller.svelte';
   import { mergeDiscussionDraft, type ChatDraftSeed } from './discussionContext';
   import type { ChatCitation, ChatContextNote, ChatExcerpt, ChatMode, ChatSelection, ChatSelectionActions, VaultAccess } from './types';
   import ProposedChangesCard from '$lib/features/proposals/ProposedChangesCard.svelte';

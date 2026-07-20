@@ -2,13 +2,13 @@
   import { type UnlistenFn } from '@tauri-apps/api/event';
   import { onMount, tick, untrack } from 'svelte';
   import { chatApi } from '$lib/features/chat/api';
-  import { createChatController, type ChatController } from '$lib/features/chat/controller';
+  import { createChatController, type ChatController } from '$lib/features/chat/controller.svelte';
   import type { ChatSelection, ChatSelectionActions } from '$lib/features/chat/types';
   import {
     formatDiscussionDraft,
     type ChatDraftSeed
   } from '$lib/features/chat/discussionContext';
-  import { forgottenNoteRetentionPreference } from '$lib/appSettings';
+  import { appSettings } from '$lib/appSettings.svelte';
   import {
     focusEditorSearchRange,
     setEditorCurrentSearchHighlightQuery
@@ -80,7 +80,7 @@
     type NotepadDerivedViewCommands,
     type NotepadPaneCommands
   } from '$lib/features/notepad/orchestration/notepadCommandFacades';
-  import { createRelatedNotesStore } from '$lib/features/notepad/related/store';
+  import { createRelatedNotesStore } from '$lib/features/notepad/related/store.svelte';
   import { createNotepadSearchStore } from '$lib/features/notepad/search/store.svelte';
   import { attachPaneSelectionTracking } from '$lib/features/notepad/editor/paneSelectionTracking';
   import type { PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
@@ -146,7 +146,7 @@
   import { consumePendingNoteTarget } from '$lib/noteNavigation';
   import { consumePendingTaskTarget } from '$lib/taskNavigation';
   import { formatNoteTitle } from '$lib/features/notepad/model/document';
-  import { formatShortcutBinding, keyboardShortcutBindings } from '$lib/keyboardShortcuts';
+  import { formatShortcutBinding, keyboardShortcuts } from '$lib/keyboardShortcuts.svelte';
   import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
   import '$lib/features/notepad/editor/editor.css';
   import '$lib/features/notepad/editor/editorTypography.css';
@@ -828,7 +828,7 @@
   }
 
   function scheduleRelatedIfNeeded(options: { immediate?: boolean } = { immediate: false }) {
-    if (!$relatedState.isPanelCollapsed) {
+    if (!relatedState.isPanelCollapsed) {
       scheduleRelated(options);
     }
   }
@@ -1079,7 +1079,7 @@
         notepadState.isRefreshingFromDisk = value;
       }
     },
-    forgottenNoteRetentionPreference: () => $forgottenNoteRetentionPreference,
+    forgottenNoteRetentionPreference: () => appSettings.forgottenNoteRetentionPreference,
     canLeaveDocument: () => true,
     onDocumentLeaving: (document) => {
       proposalOrchestrationInstance?.suspendDocument(
@@ -1107,7 +1107,7 @@
     return commands.paneCommandPreviousLocationLabel(paneCommandPaneId);
   });
   let paneCommandPreviousNoteShortcutLabel = $derived(
-    formatShortcutBinding($keyboardShortcutBindings.goToPreviousNote)
+    formatShortcutBinding(keyboardShortcuts.bindings.goToPreviousNote)
   );
 
   let locationHistoryRequestId = 0;
@@ -1810,11 +1810,11 @@
 <div bind:this={workspaceShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
   <div
     class="relative h-full min-h-0 w-full [--related-reserved-width:0px]"
-    style={getRelatedGroupStyle($relatedState.panelPlacement, $relatedState.reservedWidth)}
+    style={getRelatedGroupStyle(relatedState.panelPlacement, relatedState.reservedWidth)}
   >
   <div
     class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-[margin-left,width] duration-300 ease-out will-change-[margin-left,width] sm:rounded-4xl sm:border"
-    style={getCardStyle($relatedState.panelPlacement, $relatedState.reservedWidth)}
+    style={getCardStyle(relatedState.panelPlacement, relatedState.reservedWidth)}
   >
     <div class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"></div>
 
@@ -1970,17 +1970,17 @@
   }
 </style>
 
-  {#if $relatedState.panelPlacement === 'side'}
+  {#if relatedState.panelPlacement === 'side'}
     <RelatedPanelHost
-      placement={$relatedState.panelPlacement}
-      reservedWidth={$relatedState.reservedWidth}
-      collapsed={$relatedState.isPanelCollapsed}
-      items={$relatedState.items}
-      scope={$relatedState.scope}
-      status={$relatedState.status}
-      reason={$relatedState.reason}
-      loading={$relatedState.isLoading}
-      hasSelection={!!$relatedState.selectedText}
+      placement={relatedState.panelPlacement}
+      reservedWidth={relatedState.reservedWidth}
+      collapsed={relatedState.isPanelCollapsed}
+      items={relatedState.items}
+      scope={relatedState.scope}
+      status={relatedState.status}
+      reason={relatedState.reason}
+      loading={relatedState.isLoading}
+      hasSelection={!!relatedState.selectedText}
       onToggle={toggleRelatedPanel}
       onClose={closeRelatedPanel}
       onScopeChange={handleRelatedScopeChange}
@@ -1992,17 +1992,17 @@
   {/if}
   </div>
 
-  {#if $relatedState.panelPlacement !== 'side'}
+  {#if relatedState.panelPlacement !== 'side'}
     <RelatedPanelHost
-      placement={$relatedState.panelPlacement}
-      reservedWidth={$relatedState.reservedWidth}
-      collapsed={$relatedState.isPanelCollapsed}
-      items={$relatedState.items}
-      scope={$relatedState.scope}
-      status={$relatedState.status}
-      reason={$relatedState.reason}
-      loading={$relatedState.isLoading}
-      hasSelection={!!$relatedState.selectedText}
+      placement={relatedState.panelPlacement}
+      reservedWidth={relatedState.reservedWidth}
+      collapsed={relatedState.isPanelCollapsed}
+      items={relatedState.items}
+      scope={relatedState.scope}
+      status={relatedState.status}
+      reason={relatedState.reason}
+      loading={relatedState.isLoading}
+      hasSelection={!!relatedState.selectedText}
       onToggle={toggleRelatedPanel}
       onClose={closeRelatedPanel}
       onScopeChange={handleRelatedScopeChange}

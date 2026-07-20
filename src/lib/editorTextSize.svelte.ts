@@ -1,5 +1,3 @@
-import { get, writable } from 'svelte/store';
-
 export type EditorTextSizePreference = 'small' | 'medium' | 'large' | 'custom';
 
 export type EditorTextSizeCustom = {
@@ -81,43 +79,57 @@ export const HEADING_SCALE_MIN = 0.75;
 export const HEADING_SCALE_MAX = 1.5;
 export const HEADING_SCALE_STEP = 0.05;
 
-export const editorTextSizePreference = writable<EditorTextSizePreference>(
-  readStoredPreference()
-);
-export const editorTextSizeCustom = writable<EditorTextSizeCustom>(readStoredCustom());
+class EditorTextSizeStore {
+  preference = $state<EditorTextSizePreference>(readStoredPreference());
+  custom = $state<EditorTextSizeCustom>(readStoredCustom());
 
-if (isBrowser()) {
-  applyEditorTextSizes(
-    resolveEditorTextSizes(get(editorTextSizePreference), get(editorTextSizeCustom))
-  );
-}
-
-export function setEditorTextSizePreference(nextPreference: EditorTextSizePreference): void {
-  if (nextPreference === 'custom') {
-    const current = get(editorTextSizePreference);
-    if (current !== 'custom') {
-      const seeded = customFromResolved(resolveEditorTextSizes(current, get(editorTextSizeCustom)));
-      editorTextSizeCustom.set(seeded);
-      persistCustom(seeded);
+  constructor() {
+    if (isBrowser()) {
+      applyEditorTextSizes(resolveEditorTextSizes(this.preference, this.custom));
     }
   }
 
-  editorTextSizePreference.set(nextPreference);
-  persistPreference(nextPreference);
-  applyCurrentEditorTextSizes();
+  setPreference = (nextPreference: EditorTextSizePreference): void => {
+    if (nextPreference === 'custom') {
+      const current = this.preference;
+      if (current !== 'custom') {
+        const seeded = customFromResolved(resolveEditorTextSizes(current, this.custom));
+        this.custom = seeded;
+        persistCustom(seeded);
+      }
+    }
+
+    this.preference = nextPreference;
+    persistPreference(nextPreference);
+    this.#applyCurrent();
+  };
+
+  setCustom = (nextCustom: EditorTextSizeCustom): void => {
+    const normalized = normalizeCustom(nextCustom);
+    this.custom = normalized;
+    persistCustom(normalized);
+
+    if (this.preference !== 'custom') {
+      this.preference = 'custom';
+      persistPreference('custom');
+    }
+
+    this.#applyCurrent();
+  };
+
+  #applyCurrent = (): void => {
+    applyEditorTextSizes(resolveEditorTextSizes(this.preference, this.custom));
+  };
+}
+
+export const editorTextSize = new EditorTextSizeStore();
+
+export function setEditorTextSizePreference(nextPreference: EditorTextSizePreference): void {
+  editorTextSize.setPreference(nextPreference);
 }
 
 export function setEditorTextSizeCustom(nextCustom: EditorTextSizeCustom): void {
-  const normalized = normalizeCustom(nextCustom);
-  editorTextSizeCustom.set(normalized);
-  persistCustom(normalized);
-
-  if (get(editorTextSizePreference) !== 'custom') {
-    editorTextSizePreference.set('custom');
-    persistPreference('custom');
-  }
-
-  applyCurrentEditorTextSizes();
+  editorTextSize.setCustom(nextCustom);
 }
 
 export function resolveEditorTextSizes(
@@ -138,12 +150,6 @@ export function formatRemLabel(value: number): string {
 
 export function formatHeadingScaleLabel(value: number): string {
   return `${Math.round(value * 100)}%`;
-}
-
-function applyCurrentEditorTextSizes(): void {
-  applyEditorTextSizes(
-    resolveEditorTextSizes(get(editorTextSizePreference), get(editorTextSizeCustom))
-  );
 }
 
 function scaleMediumSizes(scale: number): EditorTextSizes {

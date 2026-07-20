@@ -125,13 +125,14 @@ pub(crate) fn persist_note_session_with_outcome(
         timestamp_millis,
     );
 
+    let saved_note_id = next_note.as_ref().map(|note| note.note_id.clone());
     let mut persisted_state = read_state(&notes_dir)?;
     persisted_state.last_opened_note_id = match mode {
-        NotePersistenceMode::Save => next_note.as_ref().map(|note| note.note_id.clone()),
+        NotePersistenceMode::Save => saved_note_id.clone(),
         NotePersistenceMode::Remember => None,
     };
-    if let Some(note) = next_note.as_ref() {
-        touch_recent_note_id(&mut persisted_state, note.note_id.clone());
+    if let Some(note_id) = saved_note_id.as_ref() {
+        touch_recent_note_id(&mut persisted_state, note_id.clone());
     }
     write_state(&notes_dir, &persisted_state)?;
 
@@ -139,8 +140,10 @@ pub(crate) fn persist_note_session_with_outcome(
         .as_deref()
         .filter(|previous_path| note_path_changed(previous_path, persisted_path.as_deref()));
 
-    if let (Some(path), Some(next_note)) = (persisted_path.as_deref(), next_note.as_ref()) {
-        upsert_notes_index_entry_for_save(state, PathBuf::from(path), next_note.clone())?;
+    // Move ownership into the save-path indexer (one clone inside for the
+    // background queue) instead of cloning here and again before the mutex.
+    if let (Some(path), Some(note)) = (persisted_path.as_deref(), next_note) {
+        upsert_notes_index_entry_for_save(state, PathBuf::from(path), note)?;
     }
     if let Some(previous_path) = removed_previous_path {
         remove_notes_index_entry_for_save(state, previous_path)?;
@@ -166,7 +169,7 @@ pub(crate) fn persist_note_session_with_outcome(
 
     let session = match mode {
         NotePersistenceMode::Save => Some(build_saved_note_session(
-            next_note.as_ref().map(|note| note.note_id.clone()),
+            saved_note_id,
             &title,
             &markdown,
             persisted_path.clone(),

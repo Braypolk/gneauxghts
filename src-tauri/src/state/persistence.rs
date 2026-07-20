@@ -229,15 +229,6 @@ pub(crate) fn touch_recent_note_id(state: &mut PersistedState, note_id: String) 
     state.recent_note_ids.truncate(MAX_RECENT_NOTES);
 }
 
-#[allow(dead_code)]
-pub(crate) fn push_unique(items: &mut Vec<String>, value: String) {
-    if items.iter().any(|existing_value| existing_value == &value) {
-        return;
-    }
-
-    items.push(value);
-}
-
 pub(crate) fn validate_current_path(
     current_path: Option<String>,
     notes_dir: &Path,
@@ -970,25 +961,7 @@ fn write_state_to_connection(
 // Row-scoped mutation helpers. These avoid the full DELETE + INSERT rewrite
 // of the entire app-state tables for ordinary mutations like toggling a single
 // hidden note id, touching a single recent entry, or upserting a single
-// task-timestamp row. Some helpers are not yet called from the existing
-// command surface but are kept here so subsequent migrations can swap their
-// callers over without re-deriving the SQL.
-
-#[allow(dead_code)]
-pub(crate) fn db_set_last_opened_note_id(note_id: Option<&str>) -> Result<(), String> {
-    with_state_database(|connection| {
-        connection
-            .execute(
-                "INSERT INTO app_state (id, last_opened_note_id)
-                 VALUES (?1, ?2)
-                 ON CONFLICT(id) DO UPDATE
-                 SET last_opened_note_id = excluded.last_opened_note_id",
-                params![APP_STATE_SINGLETON_ID, note_id],
-            )
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    })
-}
+// task-timestamp row.
 
 pub(crate) fn db_set_last_chat_location(
     conversation_id: &str,
@@ -1018,25 +991,6 @@ pub(crate) fn db_set_last_chat_location(
             )
             .map(|_| ())
             .map_err(|err| err.to_string())
-    })
-}
-
-#[allow(dead_code)]
-pub(crate) fn db_set_recent_note_ids(recent_note_ids: &[String]) -> Result<(), String> {
-    with_state_database(|connection| {
-        let transaction = connection.transaction().map_err(|err| err.to_string())?;
-        transaction
-            .execute("DELETE FROM app_state_recent_note_ids", [])
-            .map_err(|err| err.to_string())?;
-        for (index, note_id) in recent_note_ids.iter().enumerate() {
-            transaction
-                .execute(
-                    "INSERT INTO app_state_recent_note_ids (position, note_id) VALUES (?1, ?2)",
-                    params![to_i64(index)?, note_id],
-                )
-                .map_err(|err| err.to_string())?;
-        }
-        transaction.commit().map_err(|err| err.to_string())
     })
 }
 
@@ -1237,48 +1191,6 @@ pub(super) fn db_force_note_activity_for_tests(
                     to_i64(open_count)?,
                     to_i64(last_counted_open_at_millis)?,
                 ],
-            )
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    })
-}
-
-#[allow(dead_code)]
-pub(crate) fn db_insert_forgotten_note(
-    forgotten_note: &PersistedForgottenNote,
-) -> Result<(), String> {
-    with_state_database(|connection| {
-        connection
-            .execute(
-                "INSERT OR REPLACE INTO app_state_forgotten_notes (
-                    forgotten_path,
-                    original_path,
-                    title,
-                    forgotten_at_millis,
-                    purge_after_days,
-                    purge_at_millis
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    forgotten_note.forgotten_path.as_str(),
-                    forgotten_note.original_path.as_str(),
-                    forgotten_note.title.as_str(),
-                    to_i64(forgotten_note.forgotten_at_millis)?,
-                    i64::from(forgotten_note.purge_after_days),
-                    to_i64(forgotten_note.purge_at_millis)?,
-                ],
-            )
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    })
-}
-
-#[allow(dead_code)]
-pub(crate) fn db_remove_forgotten_note(forgotten_path: &str) -> Result<(), String> {
-    with_state_database(|connection| {
-        connection
-            .execute(
-                "DELETE FROM app_state_forgotten_notes WHERE forgotten_path = ?1",
-                params![forgotten_path],
             )
             .map(|_| ())
             .map_err(|err| err.to_string())

@@ -1,7 +1,10 @@
 use super::{
     activity::BackgroundWorkGate,
     ann::{AnnIndexState, ANN_MAX_INCREMENTAL_CHUNKS, ANN_MAX_INCREMENTAL_DOCUMENTS},
-    atlas::{AtlasChatVisibilityKey, AtlasGenerationKey, AtlasLabelRequest, AtlasWorkerContext},
+    atlas::{
+        atlas_structural_build_covers_epoch, atlas_visibilities_for_mutation_batch,
+        AtlasGenerationKey, AtlasLabelRequest, AtlasWorkerContext,
+    },
     chunking::{chunk_markdown, ChunkedNote},
     db::{
         content_hash, delete_note, edge_dirty_count, edge_generation_requires_full_rebuild,
@@ -257,6 +260,17 @@ fn process_pending_jobs(
         let has_document_mutations = !batch.note_updates.is_empty()
             || !batch.deleted_notes.is_empty()
             || !batch.moved_notes.is_empty();
+        // Capture mutation shape before `batch.*` fields move into the index job.
+        let document_batch_has_note_markdown = batch
+            .note_updates
+            .values()
+            .any(|update| matches!(update.document, PendingSemanticDocument::NoteMarkdown(_)));
+        let document_batch_has_chat_recall = batch
+            .note_updates
+            .values()
+            .any(|update| matches!(update.document, PendingSemanticDocument::ChatRecall { .. }));
+        let document_batch_has_deletes_or_moves =
+            !batch.deleted_notes.is_empty() || !batch.moved_notes.is_empty();
         let mut handled_documents = false;
         let mut handled_automatic_rebuild = false;
         let mut handled_edges = false;
@@ -692,14 +706,27 @@ fn process_pending_jobs(
                         .parent()
                         .map(|parent| parent.join(crate::state::VAULT_CACHE_DIR_NAME))
                         .unwrap_or_else(|| PathBuf::from(crate::state::VAULT_CACHE_DIR_NAME));
-                    for visibility in [
-                        AtlasChatVisibilityKey::Hidden,
-                        AtlasChatVisibilityKey::Remembered,
-                        AtlasChatVisibilityKey::All,
-                    ] {
+                    // After indexing, only enqueue visibility variants that the
+                    // batch can affect. ChatRecall-only skips Hidden (notes-only).
+                    // clear_atlas_cache still forces all three via mod.rs.
+                    let visibilities = if handled_documents {
+                        atlas_visibilities_for_mutation_batch(
+                            document_batch_has_note_markdown,
+                            document_batch_has_chat_recall,
+                            document_batch_has_deletes_or_moves,
+                            false,
+                        )
+                    } else {
+                        atlas_visibilities_for_mutation_batch(false, false, false, true)
+                    };
+                    for visibility in visibilities {
                         let key = AtlasGenerationKey {
-                            chat_visibility: visibility,
+                            chat_visibility: *visibility,
                         };
+                        // Same epoch already building → skip redundant enqueue.
+                        if atlas_structural_build_covers_epoch(&next, key, next_revision) {
+                            continue;
+                        }
                         let pointer = cache_dir
                             .join("atlas")
                             .join(format!("ready-{}.json", visibility.signature_value()));
@@ -1205,15 +1232,13 @@ fn process_note_batch(
                 }
                 prepare_note_content(connection, &note_path, &markdown, update.modified_millis)?
             }
-            PendingSemanticDocument::ChatRecall { title, excerpts } => {
-                prepare_chat_recall_content(
-                    connection,
-                    &note_path,
-                    &title,
-                    &excerpts,
-                    update.modified_millis,
-                )?
-            }
+            PendingSemanticDocument::ChatRecall { title, excerpts } => prepare_chat_recall_content(
+                connection,
+                &note_path,
+                &title,
+                &excerpts,
+                update.modified_millis,
+            )?,
         };
         pending_updates.push(PendingIndexedUpdate {
             path_str,
@@ -1428,7 +1453,8 @@ fn fill_prepared_embeddings(
     let mut texts = Vec::new();
     let mut targets = Vec::new();
     for (update_index, update) in pending_updates.iter().enumerate() {
-        for (pending_offset, &chunk_index) in update.prepared.pending_chunk_indexes.iter().enumerate()
+        for (pending_offset, &chunk_index) in
+            update.prepared.pending_chunk_indexes.iter().enumerate()
         {
             let Some(text) = update.prepared.pending_texts.get(pending_offset) else {
                 return Err("Prepared embedding text/index mismatch".to_string());
@@ -2188,7 +2214,9 @@ mod tests {
             let path = temp.path().join(format!("note-{note_index}.md"));
             let body = (0..10)
                 .map(|chunk_index| {
-                    format!("Paragraph {note_index}.{chunk_index} with enough text to stay distinct.")
+                    format!(
+                        "Paragraph {note_index}.{chunk_index} with enough text to stay distinct."
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");

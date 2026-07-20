@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRelatedNotesStore } from './store';
+import { createRelatedNotesStore } from './store.svelte';
 
 const { getRelatedNotesMock } = vi.hoisted(() => ({
   getRelatedNotesMock: vi.fn()

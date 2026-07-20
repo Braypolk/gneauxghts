@@ -4,7 +4,7 @@
   import { House, ListTodo, Network, Settings } from '@lucide/svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
-  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
+  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts.svelte';
   import { isTauriRuntime } from '$lib/tauriRuntime';
   import { createNavigationCoordinator } from '$lib/ui/navigationCoordinator';
 

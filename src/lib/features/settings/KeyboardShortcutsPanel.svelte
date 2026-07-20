@@ -5,7 +5,7 @@
     getKeyboardShortcutConflicts,
     getShortcutDefinition,
     isKeyboardShortcutCustomized,
-    keyboardShortcutBindings,
+    keyboardShortcuts,
     keyboardShortcutDefinitions,
     keyboardShortcutGroups,
     recordShortcutBindingFromEvent,
@@ -14,7 +14,7 @@
     setKeyboardShortcutBinding,
     type KeyboardShortcutDefinition,
     type KeyboardShortcutId
-  } from '$lib/keyboardShortcuts';
+  } from '$lib/keyboardShortcuts.svelte';
   import ShortcutBinding from '$lib/ui/ShortcutBinding.svelte';
 
   const groupedDefinitions = keyboardShortcutGroups.map((group) => ({
@@ -24,10 +24,10 @@
 
   let recordingShortcutId = $state<KeyboardShortcutId | null>(null);
   let searchQuery = $state('');
-  const conflictMap = $derived(getKeyboardShortcutConflicts($keyboardShortcutBindings));
+  const conflictMap = $derived(getKeyboardShortcutConflicts(keyboardShortcuts.bindings));
   const hasCustomizations = $derived(
     keyboardShortcutDefinitions.some((definition) =>
-      isKeyboardShortcutCustomized(definition.id, $keyboardShortcutBindings)
+      isKeyboardShortcutCustomized(definition.id, keyboardShortcuts.bindings)
     )
   );
   const normalizedSearchQuery = $derived(searchQuery.trim().toLowerCase());
@@ -107,7 +107,7 @@
     const haystack = [
       definition.label,
       definition.description,
-      formatShortcutBinding($keyboardShortcutBindings[definition.id]),
+      formatShortcutBinding(keyboardShortcuts.bindings[definition.id]),
       formatShortcutBinding(getDefaultKeyboardShortcutBinding(definition.id)),
       definition.group
     ]
@@ -177,8 +177,8 @@
 
       <div class="space-y-2">
         {#each group.items as definition}
-          {@const currentBinding = $keyboardShortcutBindings[definition.id]}
-          {@const isCustomized = isKeyboardShortcutCustomized(definition.id, $keyboardShortcutBindings)}
+          {@const currentBinding = keyboardShortcuts.bindings[definition.id]}
+          {@const isCustomized = isKeyboardShortcutCustomized(definition.id, keyboardShortcuts.bindings)}
           {@const conflictDescription = describeConflicts(definition)}
           <div class="rounded-xl border border-border/60 bg-background/60 px-3 py-3">
             <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">

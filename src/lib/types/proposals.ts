@@ -23,10 +23,6 @@ export interface AppliedNoteChange {
   previousPath: string | null;
 }
 
-export interface ApplyNoteChangesResult {
-  applied: AppliedNoteChange[];
-}
-
 export type ProposedTextEdit =
   | {
       kind: 'replace';

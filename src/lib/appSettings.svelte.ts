@@ -1,5 +1,3 @@
-import { writable } from 'svelte/store';
-
 export type ForgetButtonDurationPreference = 'none' | 'short' | 'medium' | 'long';
 export type ForgottenNoteRetentionPreference = 1 | 7 | 30;
 
@@ -40,10 +38,6 @@ export const forgetButtonDurationOptions = [
   description: string;
 }>;
 
-export const forgetButtonDurationPreference = writable<ForgetButtonDurationPreference>(
-  readStoredForgetButtonDurationPreference()
-);
-
 export const forgottenNoteRetentionOptions = [
   {
     id: 1,
@@ -66,15 +60,33 @@ export const forgottenNoteRetentionOptions = [
   description: string;
 }>;
 
-export const forgottenNoteRetentionPreference = writable<ForgottenNoteRetentionPreference>(
-  readStoredForgottenNoteRetentionPreference()
-);
+class AppSettingsStore {
+  forgetButtonDurationPreference = $state<ForgetButtonDurationPreference>(
+    readStoredForgetButtonDurationPreference()
+  );
+  forgottenNoteRetentionPreference = $state<ForgottenNoteRetentionPreference>(
+    readStoredForgottenNoteRetentionPreference()
+  );
+
+  setForgetButtonDurationPreference = (nextPreference: ForgetButtonDurationPreference): void => {
+    this.forgetButtonDurationPreference = nextPreference;
+    persistForgetButtonDurationPreference(nextPreference);
+  };
+
+  setForgottenNoteRetentionPreference = (
+    nextPreference: ForgottenNoteRetentionPreference
+  ): void => {
+    this.forgottenNoteRetentionPreference = nextPreference;
+    persistForgottenNoteRetentionPreference(nextPreference);
+  };
+}
+
+export const appSettings = new AppSettingsStore();
 
 export function setForgetButtonDurationPreference(
   nextPreference: ForgetButtonDurationPreference
 ): void {
-  forgetButtonDurationPreference.set(nextPreference);
-  persistForgetButtonDurationPreference(nextPreference);
+  appSettings.setForgetButtonDurationPreference(nextPreference);
 }
 
 export function resolveForgetButtonDurationMs(
@@ -86,8 +98,7 @@ export function resolveForgetButtonDurationMs(
 export function setForgottenNoteRetentionPreference(
   nextPreference: ForgottenNoteRetentionPreference
 ): void {
-  forgottenNoteRetentionPreference.set(nextPreference);
-  persistForgottenNoteRetentionPreference(nextPreference);
+  appSettings.setForgottenNoteRetentionPreference(nextPreference);
 }
 
 function readStoredForgetButtonDurationPreference(): ForgetButtonDurationPreference {

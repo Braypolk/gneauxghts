@@ -2334,9 +2334,7 @@ pub(crate) fn load_related_note_previews(
 
     while let Some(row) = rows.next().map_err(|err| err.to_string())? {
         let score = row.get::<_, f32>(8).map_err(|err| err.to_string())?;
-        previews.push(
-            related_note_preview_from_row(row, score).map_err(|err| err.to_string())?,
-        );
+        previews.push(related_note_preview_from_row(row, score).map_err(|err| err.to_string())?);
     }
 
     Ok(previews)

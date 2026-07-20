@@ -4,7 +4,7 @@ import {
   MEDIUM_EDITOR_TEXT_SIZES,
   resolveEditorTextSizes,
   type EditorTextSizeCustom
-} from './editorTextSize';
+} from './editorTextSize.svelte';
 
 describe('resolveEditorTextSizes', () => {
   const custom: EditorTextSizeCustom = { bodyRem: 1, headingScale: 1 };

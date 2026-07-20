@@ -1,6 +1,6 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
+import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts.svelte';
 import { isTauriRuntime } from '$lib/tauriRuntime';
 
 export interface WorkspaceShortcutDeps<TPaneId extends string> {

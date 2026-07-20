@@ -3,9 +3,8 @@
     BODY_SIZE_MAX_REM,
     BODY_SIZE_MIN_REM,
     BODY_SIZE_STEP_REM,
-    editorTextSizeCustom,
+    editorTextSize,
     editorTextSizeOptions,
-    editorTextSizePreference,
     formatHeadingScaleLabel,
     formatRemLabel,
     HEADING_SCALE_MAX,
@@ -14,10 +13,10 @@
     resolveEditorTextSizes,
     setEditorTextSizeCustom,
     setEditorTextSizePreference
-  } from '$lib/editorTextSize';
+  } from '$lib/editorTextSize.svelte';
 
   const resolvedSizes = $derived(
-    resolveEditorTextSizes($editorTextSizePreference, $editorTextSizeCustom)
+    resolveEditorTextSizes(editorTextSize.preference, editorTextSize.custom)
   );
 
   function handleBodySizeInput(event: Event) {
@@ -25,7 +24,7 @@
     if (!(target instanceof HTMLInputElement)) return;
     setEditorTextSizeCustom({
       bodyRem: Number(target.value),
-      headingScale: $editorTextSizeCustom.headingScale
+      headingScale: editorTextSize.custom.headingScale
     });
   }
 
@@ -33,7 +32,7 @@
     const target = event.currentTarget;
     if (!(target instanceof HTMLInputElement)) return;
     setEditorTextSizeCustom({
-      bodyRem: $editorTextSizeCustom.bodyRem,
+      bodyRem: editorTextSize.custom.bodyRem,
       headingScale: Number(target.value)
     });
   }
@@ -55,7 +54,7 @@
         <label
           title={option.description}
           class={`cursor-pointer rounded-xl border px-3.5 py-2 text-sm font-medium transition-colors ${
-            $editorTextSizePreference === option.id
+            editorTextSize.preference === option.id
               ? 'border-border bg-foreground text-background shadow-sm'
               : 'border-transparent bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
           }`}
@@ -65,7 +64,7 @@
             type="radio"
             name="editor-text-size"
             value={option.id}
-            checked={$editorTextSizePreference === option.id}
+            checked={editorTextSize.preference === option.id}
             onchange={() => setEditorTextSizePreference(option.id)}
           />
           <span>{option.label}</span>
@@ -74,13 +73,13 @@
     </fieldset>
   </div>
 
-  {#if $editorTextSizePreference === 'custom'}
+  {#if editorTextSize.preference === 'custom'}
     <div class="mt-5 grid gap-4 border-t border-border/60 pt-5 sm:grid-cols-2">
       <label class="grid gap-2">
         <div class="flex items-center justify-between gap-3">
           <span class="text-sm font-medium">Body text</span>
           <span class="text-xs tabular-nums text-muted-foreground">
-            {formatRemLabel($editorTextSizeCustom.bodyRem)}
+            {formatRemLabel(editorTextSize.custom.bodyRem)}
           </span>
         </div>
         <input
@@ -89,7 +88,7 @@
           min={BODY_SIZE_MIN_REM}
           max={BODY_SIZE_MAX_REM}
           step={BODY_SIZE_STEP_REM}
-          value={$editorTextSizeCustom.bodyRem}
+          value={editorTextSize.custom.bodyRem}
           oninput={handleBodySizeInput}
         />
         <p class="text-xs text-muted-foreground">Paragraph and list text size.</p>
@@ -99,7 +98,7 @@
         <div class="flex items-center justify-between gap-3">
           <span class="text-sm font-medium">Heading scale</span>
           <span class="text-xs tabular-nums text-muted-foreground">
-            {formatHeadingScaleLabel($editorTextSizeCustom.headingScale)}
+            {formatHeadingScaleLabel(editorTextSize.custom.headingScale)}
           </span>
         </div>
         <input
@@ -108,7 +107,7 @@
           min={HEADING_SCALE_MIN}
           max={HEADING_SCALE_MAX}
           step={HEADING_SCALE_STEP}
-          value={$editorTextSizeCustom.headingScale}
+          value={editorTextSize.custom.headingScale}
           oninput={handleHeadingScaleInput}
         />
         <p class="text-xs text-muted-foreground">

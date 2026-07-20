@@ -1,4 +1,3 @@
-import { get, writable } from 'svelte/store';
 import { logDevError } from '$lib/logDevError';
 
 type ModifierToken = 'Meta' | 'Ctrl' | 'Alt' | 'Shift';
@@ -326,9 +325,31 @@ export const defaultKeyboardShortcutBindings = keyboardShortcutDefinitions.reduc
   {} as KeyboardShortcutBindings
 );
 
-export const keyboardShortcutBindings = writable<KeyboardShortcutBindings>(
-  readStoredKeyboardShortcutBindings()
-);
+class KeyboardShortcutsStore {
+  bindings = $state<KeyboardShortcutBindings>(readStoredKeyboardShortcutBindings());
+
+  setBinding = (id: KeyboardShortcutId, binding: string) => {
+    const normalizedBinding = normalizeShortcutBinding(binding);
+    const next = {
+      ...this.bindings,
+      [id]: normalizedBinding
+    };
+    this.bindings = next;
+    persistKeyboardShortcutBindings(next);
+  };
+
+  resetBinding = (id: KeyboardShortcutId) => {
+    this.setBinding(id, defaultKeyboardShortcutBindings[id]);
+  };
+
+  resetAll = () => {
+    const next = { ...defaultKeyboardShortcutBindings };
+    this.bindings = next;
+    persistKeyboardShortcutBindings(next);
+  };
+}
+
+export const keyboardShortcuts = new KeyboardShortcutsStore();
 
 export function getShortcutDefinition(id: KeyboardShortcutId) {
   return keyboardShortcutDefinitionsById[id];
@@ -339,34 +360,24 @@ export function getDefaultKeyboardShortcutBinding(id: KeyboardShortcutId) {
 }
 
 export function getKeyboardShortcutBinding(id: KeyboardShortcutId) {
-  return get(keyboardShortcutBindings)[id];
+  return keyboardShortcuts.bindings[id];
 }
 
 export function setKeyboardShortcutBinding(id: KeyboardShortcutId, binding: string) {
-  const normalizedBinding = normalizeShortcutBinding(binding);
-  keyboardShortcutBindings.update((current) => {
-    const next = {
-      ...current,
-      [id]: normalizedBinding
-    };
-    persistKeyboardShortcutBindings(next);
-    return next;
-  });
+  keyboardShortcuts.setBinding(id, binding);
 }
 
 export function resetKeyboardShortcutBinding(id: KeyboardShortcutId) {
-  setKeyboardShortcutBinding(id, defaultKeyboardShortcutBindings[id]);
+  keyboardShortcuts.resetBinding(id);
 }
 
 export function resetAllKeyboardShortcuts() {
-  const next = { ...defaultKeyboardShortcutBindings };
-  keyboardShortcutBindings.set(next);
-  persistKeyboardShortcutBindings(next);
+  keyboardShortcuts.resetAll();
 }
 
 export function isKeyboardShortcutCustomized(
   id: KeyboardShortcutId,
-  bindings: KeyboardShortcutBindings = get(keyboardShortcutBindings)
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings
 ) {
   return bindings[id] !== defaultKeyboardShortcutBindings[id];
 }
@@ -402,7 +413,7 @@ export function recordShortcutBindingFromEvent(event: KeyboardEvent) {
 export function keyboardShortcutMatchesEvent(
   event: KeyboardEvent,
   id: KeyboardShortcutId,
-  bindings: KeyboardShortcutBindings = get(keyboardShortcutBindings)
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings
 ) {
   return shortcutBindingMatchesEvent(event, bindings[id]);
 }
@@ -429,14 +440,14 @@ export function shortcutBindingMatchesEvent(event: KeyboardEvent, binding: strin
 
 export function usesNativeCutShortcut(
   id: KeyboardShortcutId,
-  bindings: KeyboardShortcutBindings = get(keyboardShortcutBindings)
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings
 ) {
   const binding = bindings[id];
   return binding === 'Meta+x' || binding === 'Ctrl+x';
 }
 
 export function getKeyboardShortcutConflicts(
-  bindings: KeyboardShortcutBindings = get(keyboardShortcutBindings)
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings
 ) {
   const idsByBinding = new Map<string, KeyboardShortcutId[]>();
 

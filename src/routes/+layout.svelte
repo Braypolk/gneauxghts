@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import "../app.css";
-  import { initializeTheme } from '$lib/theme';
-  import '$lib/editorTextSize';
+  import { initializeTheme } from '$lib/theme.svelte';
+  import '$lib/editorTextSize.svelte';
   import { mobileViewport } from '$lib/ui/mobileViewport';
   import NavBar from '$lib/ui/NavBar.svelte';
   import { appStore } from '$lib/app/appStore.svelte';

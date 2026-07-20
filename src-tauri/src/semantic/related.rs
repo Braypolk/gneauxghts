@@ -1,9 +1,9 @@
+use super::similarity::MIN_SEMANTIC_MATCH_SCORE;
 use super::{
     chunking, content_hash, load_note_record, load_related_note_previews,
     load_related_note_previews_for_paths, open_database, ActiveSemanticState, RelatedNoteMatch,
     RelatedNotesResponse, SemanticChunkMatch,
 };
-use super::similarity::MIN_SEMANTIC_MATCH_SCORE;
 use std::{fs, sync::atomic::Ordering, time::Instant};
 
 const RELATED_QUERY_CACHE_LIMIT: usize = 32;
@@ -278,14 +278,12 @@ impl ActiveSemanticState {
             ));
         }
 
-        let matches = match self.semantic_matches_for_text(
-            query_text,
-            current_path,
-            limit.saturating_mul(4),
-        ) {
-            Ok(matches) => matches,
-            Err(_) => {
-                return Ok((
+        let matches =
+            match self.semantic_matches_for_text(query_text, current_path, limit.saturating_mul(4))
+            {
+                Ok(matches) => matches,
+                Err(_) => {
+                    return Ok((
                     RelatedNotesResponse {
                         status: "unavailable".to_string(),
                         scope: response_scope.to_string(),
@@ -297,8 +295,8 @@ impl ActiveSemanticState {
                     },
                     "semantic",
                 ));
-            }
-        };
+                }
+            };
 
         Ok((
             RelatedNotesResponse {
@@ -443,9 +441,7 @@ fn indexed_note_matches_disk(note_path: &str, stored_content_hash: &str) -> bool
         .is_some_and(|disk| content_hash(&disk) == stored_content_hash)
 }
 
-fn related_match_from_preview(
-    preview: super::db::StoredRelatedNotePreview,
-) -> RelatedNoteMatch {
+fn related_match_from_preview(preview: super::db::StoredRelatedNotePreview) -> RelatedNoteMatch {
     RelatedNoteMatch {
         note_path: preview.note_path,
         note_title: preview.note_title,

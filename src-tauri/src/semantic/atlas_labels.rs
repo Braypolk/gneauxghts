@@ -7,8 +7,8 @@ use super::{
     embed::{EmbeddingInputKind, EmbeddingProvider, EMBEDDING_BATCH_SIZE},
     similarity::cosine_similarity,
 };
-use rusqlite::Connection;
 use rayon::prelude::*;
+use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 
 pub(crate) const LABEL_ALGORITHM_VERSION: &str = "chunk-keybert-atlas-v7";
@@ -753,10 +753,7 @@ fn take_unique_label(
     })
 }
 
-fn unused_medoid_placeholder(
-    notes: &[&AtlasLabelNote],
-    used: &HashSet<String>,
-) -> Option<String> {
+fn unused_medoid_placeholder(notes: &[&AtlasLabelNote], used: &HashSet<String>) -> Option<String> {
     let limit = notes.len().max(1);
     for note_id in medoid_note_ids(notes, limit) {
         let Some(title) = notes
@@ -792,12 +789,12 @@ fn rank_cloud_phrases(
                 return None;
             }
             let cloud_similarity = cosine_similarity(centroid, embedding);
-            let null_similarity = if null_centroid.is_empty() || embedding.len() != null_centroid.len()
-            {
-                0.0
-            } else {
-                cosine_similarity(null_centroid, embedding)
-            };
+            let null_similarity =
+                if null_centroid.is_empty() || embedding.len() != null_centroid.len() {
+                    0.0
+                } else {
+                    cosine_similarity(null_centroid, embedding)
+                };
             // Keep low-residual words in the list so uniqueness can still
             // pick a runner-up instead of falling back to a note title.
             let mut score = candidate_rank_score(cloud_similarity, null_similarity, candidate);
@@ -957,9 +954,7 @@ where
             .collect::<Vec<_>>();
         let vectors = provider.embed_texts(&texts, EmbeddingInputKind::Document)?;
         if vectors.len() != batch.len() {
-            return Err(
-                "Atlas label embedding provider returned an unexpected count".to_string(),
-            );
+            return Err("Atlas label embedding provider returned an unexpected count".to_string());
         }
         embedded_batches.push(
             batch
@@ -1013,9 +1008,7 @@ where
                     right
                         .1
                         .total_cmp(&left.1)
-                        .then_with(|| {
-                            normalized_phrase(&left.0).cmp(&normalized_phrase(&right.0))
-                        })
+                        .then_with(|| normalized_phrase(&left.0).cmp(&normalized_phrase(&right.0)))
                 });
                 take_unique_label(&leftovers, &used)
             })
@@ -1026,12 +1019,10 @@ where
                     .iter()
                     .filter_map(|id| notes_by_id.get(id))
                     .collect::<Vec<_>>();
-                unused_medoid_placeholder(&members, &used).map(|placeholder| {
-                    CloudLabelAssignment {
-                        label: placeholder,
-                        confidence: 0.0,
-                        source: CloudLabelSource::Medoid,
-                    }
+                unused_medoid_placeholder(&members, &used).map(|placeholder| CloudLabelAssignment {
+                    label: placeholder,
+                    confidence: 0.0,
+                    source: CloudLabelSource::Medoid,
                 })
             });
 
@@ -1621,7 +1612,12 @@ mod tests {
                     })
                 })
                 .count();
-            assert_eq!(covered, cloud.phrases.len(), "cloud {} starved", cloud.cloud_id);
+            assert_eq!(
+                covered,
+                cloud.phrases.len(),
+                "cloud {} starved",
+                cloud.cloud_id
+            );
         }
     }
 
@@ -1723,7 +1719,10 @@ mod tests {
         ]);
         // cloud-c sorts before cloud-a-b by id.
         let clouds = vec![cloud(&["a", "b"]), cloud(&["c"])];
-        let mut expected_ids = clouds.iter().map(|cloud| cloud.id.clone()).collect::<Vec<_>>();
+        let mut expected_ids = clouds
+            .iter()
+            .map(|cloud| cloud.id.clone())
+            .collect::<Vec<_>>();
         expected_ids.sort();
 
         let mut seen = Vec::new();

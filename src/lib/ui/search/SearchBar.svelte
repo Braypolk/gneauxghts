@@ -30,7 +30,7 @@
     WholeWord,
     X
   } from '@lucide/svelte';
-  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts';
+  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts.svelte';
 
   interface SearchShortcutOptions {
     enabled: boolean;

@@ -81,7 +81,7 @@ import { createImagePasteExtension } from '$lib/features/notepad/images/imagePas
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
 import { createWikilinksExtension, type ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 import { applyInlineFormat } from '$lib/features/notepad/editor/inlineFormatting';
-import { keyboardShortcutMatchesEvent, usesNativeCutShortcut } from '$lib/keyboardShortcuts';
+import { keyboardShortcutMatchesEvent, usesNativeCutShortcut } from '$lib/keyboardShortcuts.svelte';
 
 interface CreateEditorOptions {
   editorRoot: HTMLDivElement;
@@ -359,6 +359,8 @@ class FileEditorRuntime {
   readonly rootView: EditorView;
   readonly paneControllers = new Map<symbol, EditorController>();
   revision = 0;
+  /** Lazily filled; cleared whenever the root document changes. */
+  #markdownCache: string | null = null;
 
   constructor(initialMarkdown = '') {
     this.rootView = new EditorView({
@@ -367,10 +369,11 @@ class FileEditorRuntime {
         this.applyRootTransactions(view, transactions, null);
       }
     });
+    this.#markdownCache = initialMarkdown;
   }
 
   get markdown() {
-    return this.rootView.state.doc.toString();
+    return (this.#markdownCache ??= this.rootView.state.doc.toString());
   }
 
   attachController(controller: EditorController) {
@@ -416,6 +419,7 @@ class FileEditorRuntime {
       this.rootView.update([this.rootView.state.update(buildRootForwardSpec(transaction))]);
     }
 
+    this.#markdownCache = null;
     this.revision += 1;
     this.broadcastTransactions(docChangedTransactions, controller.paneKey);
     this.notifyMarkdownChange(controller.paneKey);
@@ -432,6 +436,7 @@ class FileEditorRuntime {
       return;
     }
 
+    this.#markdownCache = null;
     this.revision += 1;
     // History (undo/redo) transactions carry the selection that existed before
     // the change. The root view holds the canonical history, so we forward that
@@ -461,6 +466,7 @@ class FileEditorRuntime {
         })
       ]);
     }
+    this.#markdownCache = markdown;
 
     const nextDocLength = markdown.length;
     for (const [paneKey, controller] of this.paneControllers) {

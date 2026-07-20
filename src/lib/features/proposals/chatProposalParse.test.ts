@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  extractProposalFence,
-  parseChatProposalDrafts,
-  resolveChatProposalDrafts
-} from './chatProposalParse';
+import { extractProposalFence, parseChatProposalEdits } from './chatProposalParse';
 
 describe('chatProposalParse', () => {
   it('extracts a gneauxghts-proposal fence', () => {
@@ -11,80 +7,80 @@ describe('chatProposalParse', () => {
     expect(extractProposalFence(content)).toBe('{"newMarkdown":"Hi"}');
   });
 
-  it('parses shorthand context-note updates', () => {
-    const drafts = parseChatProposalDrafts(
-      '```proposal\n{"newTitle":"T","newMarkdown":"Body"}\n```'
+  it('parses the live edits protocol', () => {
+    const edits = parseChatProposalEdits(
+      `\`\`\`gneauxghts-proposal
+{
+  "edits": [
+    { "kind": "replace", "oldText": "Hello", "newText": "Hi" },
+    { "kind": "insert", "newText": "\\nWorld", "contextAfter": "Hi" }
+  ]
+}
+\`\`\``,
+      'Hello'
     );
-    expect(drafts).toEqual([
-      { kind: 'updateNote', path: null, newTitle: 'T', newMarkdown: 'Body' }
+    expect(edits).toEqual([
+      { kind: 'replace', oldText: 'Hello', newText: 'Hi' },
+      { kind: 'insert', newText: '\nWorld', contextAfter: 'Hi' }
     ]);
   });
 
-  it('parses a changes array with create + update', () => {
-    const drafts = parseChatProposalDrafts(`\`\`\`gneauxghts-proposal
+  it('parses edits nested under a changes entry', () => {
+    const edits = parseChatProposalEdits(
+      `\`\`\`proposal
+{
+  "changes": [
+    {
+      "kind": "updateNote",
+      "edits": [{ "kind": "replace", "oldText": "A", "newText": "B" }]
+    }
+  ]
+}
+\`\`\``,
+      'A'
+    );
+    expect(edits).toEqual([{ kind: 'replace', oldText: 'A', newText: 'B' }]);
+  });
+
+  it('converts legacy full-body proposals to a trusted whole-body replace', () => {
+    const edits = parseChatProposalEdits(
+      '```gneauxghts-proposal\n{"kind":"updateNote","newTitle":"N","newMarkdown":"Next"}\n```',
+      'Base'
+    );
+    expect(edits).toEqual([{ kind: 'replace', oldText: 'Base', newText: 'Next' }]);
+  });
+
+  it('converts legacy changes-array full-body updates using base markdown', () => {
+    const edits = parseChatProposalEdits(
+      `\`\`\`gneauxghts-proposal
 {
   "changes": [
     { "kind": "updateNote", "newTitle": "A", "newMarkdown": "One" },
     { "kind": "createNote", "suggestedTitle": "B", "markdown": "Two" }
   ]
 }
-\`\`\``);
-    expect(drafts).toHaveLength(2);
-    expect(drafts?.[0]?.kind).toBe('updateNote');
-    expect(drafts?.[1]?.kind).toBe('createNote');
+\`\`\``,
+      'Old body'
+    );
+    expect(edits).toEqual([{ kind: 'replace', oldText: 'Old body', newText: 'One' }]);
   });
 
-  it('resolves hashes from context note markdown', async () => {
-    const drafts = parseChatProposalDrafts(
-      '```gneauxghts-proposal\n{"kind":"updateNote","newTitle":"N","newMarkdown":"Next"}\n```'
+  it('uses a newline base when converting empty legacy bodies', () => {
+    const edits = parseChatProposalEdits(
+      '```proposal\n{"newMarkdown":"Body"}\n```',
+      ''
     );
-    expect(drafts).not.toBeNull();
-    const resolved = await resolveChatProposalDrafts(drafts!, {
-      path: '/vault/Note.md',
-      title: 'Note',
-      lastSavedMarkdown: 'Base'
-    }, {
-      hashNotePath: async (path) => `disk:${path}`,
-      hashMarkdown: async (markdown) => `hash:${markdown}`
-    });
-
-    expect(resolved).toEqual({
-      changes: [
-        {
-          kind: 'updateNote',
-          path: '/vault/Note.md',
-          baseContentHash: 'disk:/vault/Note.md',
-          // Context updates keep the open note title (ignore model rename).
-          newTitle: 'Note',
-          newMarkdown: 'Next'
-        }
-      ],
-      baseMarkdownByPath: { '/vault/Note.md': 'Base' }
-    });
-  });
-
-  it('keeps context title when model invents a colliding rename', async () => {
-    const drafts = parseChatProposalDrafts(
-      '```gneauxghts-proposal\n{"kind":"updateNote","newTitle":"Fixture draft note","newMarkdown":"Body"}\n```'
-    );
-    const resolved = await resolveChatProposalDrafts(drafts!, {
-      path: '/vault/Fixture draft note 2.md',
-      title: 'Fixture draft note 2',
-      lastSavedMarkdown: 'Old'
-    }, {
-      hashNotePath: async () => 'disk-hash',
-      hashMarkdown: async () => 'body-hash'
-    });
-
-    expect(resolved?.changes[0]).toMatchObject({
-      kind: 'updateNote',
-      path: '/vault/Fixture draft note 2.md',
-      newTitle: 'Fixture draft note 2',
-      newMarkdown: 'Body'
-    });
+    expect(edits).toEqual([{ kind: 'replace', oldText: '\n', newText: 'Body' }]);
   });
 
   it('returns null when no fence is present', () => {
-    expect(parseChatProposalDrafts('Just a normal reply.')).toBeNull();
+    expect(parseChatProposalEdits('Just a normal reply.', 'Base')).toBeNull();
+  });
+
+  it('returns null for invalid JSON or empty edits', () => {
+    expect(parseChatProposalEdits('```proposal\n{not-json}\n```', 'Base')).toBeNull();
+    expect(
+      parseChatProposalEdits('```gneauxghts-proposal\n{"edits":[]}\n```', 'Base')
+    ).toBeNull();
   });
 });

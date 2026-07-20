@@ -19,7 +19,7 @@
     type TaskFilter,
     type TaskGroup,
     type TaskItem
-  } from '$lib/features/tasks/taskListStore';
+  } from '$lib/features/tasks/taskListStore.svelte';
   import SearchBar from '$lib/ui/search/SearchBar.svelte';
   import SearchDock from '$lib/ui/search/SearchDock.svelte';
   import { textMatchesSearch } from '$lib/ui/search/searchMatch';
@@ -38,9 +38,9 @@
   const normalizedSearchQuery = $derived(searchQuery.trim());
   const searchOptions = $derived({ matchCase, matchWholeWord });
   const visibleTaskGroups = $derived.by(() => {
-    if (normalizedSearchQuery === '') return $taskList.groups;
+    if (normalizedSearchQuery === '') return taskList.groups;
 
-    return $taskList.groups
+    return taskList.groups
       .map((group): TaskGroup | null => {
         const noteMatches = [group.noteTitle, group.fileName].some((value) =>
           textMatchesSearch(value, normalizedSearchQuery, searchOptions)
@@ -63,8 +63,8 @@
     const noun = count === 1 ? 'task' : 'tasks';
 
     if (normalizedSearchQuery !== '') return `${count} matching ${noun}`;
-    if ($taskList.filter === 'open') return `${count} open ${noun}`;
-    if ($taskList.filter === 'completed') return `${count} completed ${noun}`;
+    if (taskList.filter === 'open') return `${count} open ${noun}`;
+    if (taskList.filter === 'completed') return `${count} completed ${noun}`;
     return `${count} total ${noun}`;
   });
 
@@ -82,7 +82,7 @@
   let dragOverNoteId = $state<string | null>(null);
 
   function getGroupIndex(noteId: string) {
-    return $taskList.groups.findIndex((group) => group.noteId === noteId);
+    return taskList.groups.findIndex((group) => group.noteId === noteId);
   }
 
   function handleDragStart(noteId: string) {
@@ -122,7 +122,7 @@
   });
 
   afterNavigate(() => {
-    void taskList.load({ background: $taskList.groups.length > 0 });
+    void taskList.load({ background: taskList.groups.length > 0 });
   });
 </script>
 
@@ -144,7 +144,7 @@
                 <button
                   type="button"
                   class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                    $taskList.filter === option.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    taskList.filter === option.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                   }`}
                   onclick={() => taskList.setActiveFilter(option.id)}
                 >
@@ -156,13 +156,13 @@
             <button
               type="button"
               class={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
-                $taskList.showHidden
+                taskList.showHidden
                   ? 'border-border bg-card text-foreground'
                   : 'border-transparent bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
               }`}
               onclick={taskList.toggleShowHidden}
             >
-              {#if $taskList.showHidden}
+              {#if taskList.showHidden}
                 <Eye class="h-4 w-4" />
                 Hide hidden
               {:else}
@@ -184,13 +184,13 @@
       </div>
 
       <div class="flex-1 min-h-0 overflow-y-auto px-4 pb-24 pt-4 sm:px-6 sm:pb-28">
-        {#if $taskList.isLoading}
+        {#if taskList.isLoading}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-sm font-medium text-muted-foreground">
             Building the task list
           </div>
-        {:else if $taskList.errorMessage}
+        {:else if taskList.errorMessage}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-destructive/25 bg-destructive/10 px-6 text-sm font-medium text-destructive">
-            {$taskList.errorMessage}
+            {taskList.errorMessage}
           </div>
         {:else if visibleTaskGroups.length === 0}
           <div class="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-center">
@@ -214,7 +214,7 @@
                   group.noteHidden ? 'border-border bg-muted' : 'border-border bg-card'
                 } ${dragSrcNoteId === group.noteId ? 'opacity-50' : ''} ${dragOverNoteId === group.noteId && dragSrcNoteId !== group.noteId ? 'ring-2 ring-primary/50' : ''}`}
                 role="group"
-                draggable={!$taskList.mutatingNoteIds[group.noteId]}
+                draggable={!taskList.mutatingNoteIds[group.noteId]}
                 ondragstart={(e) => {
                   const under = document.elementFromPoint(e.clientX, e.clientY);
                   if (!under?.closest('[data-drag-handle]')) {
@@ -244,7 +244,7 @@
                     type="button"
                     class="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-foreground disabled:cursor-wait disabled:opacity-60"
                     onclick={() => void taskList.toggleNoteCollapsed(group)}
-                    disabled={!!$taskList.mutatingNoteIds[group.noteId]}
+                    disabled={!!taskList.mutatingNoteIds[group.noteId]}
                   >
                     <span class="shrink-0 text-muted-foreground">
                       {#if group.noteCollapsed}
@@ -282,7 +282,7 @@
                         type="button"
                         class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-wait disabled:opacity-45"
                         onclick={() => void taskList.setNoteHidden(group, !group.noteHidden)}
-                        disabled={!!$taskList.mutatingNoteIds[group.noteId]}
+                        disabled={!!taskList.mutatingNoteIds[group.noteId]}
                       >
                         {#if group.noteHidden}
                           <Eye class="h-3.5 w-3.5" />
@@ -316,7 +316,7 @@
                             type="button"
                             class="shrink-0 text-muted-foreground transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-45"
                             onclick={() => void taskList.toggleTask(task)}
-                            disabled={!!$taskList.togglingTaskKeys[task.taskKey] || !!$taskList.mutatingNoteIds[group.noteId]}
+                            disabled={!!taskList.togglingTaskKeys[task.taskKey] || !!taskList.mutatingNoteIds[group.noteId]}
                             aria-label={task.completed ? `Mark ${task.text} incomplete` : `Mark ${task.text} complete`}
                           >
                             {#if task.completed}
@@ -356,7 +356,7 @@
                               type="button"
                               class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-wait disabled:opacity-45"
                               onclick={() => void taskList.setTaskHidden(task, !task.hidden)}
-                              disabled={!!$taskList.mutatingNoteIds[group.noteId]}
+                              disabled={!!taskList.mutatingNoteIds[group.noteId]}
                             >
                               {#if task.hidden}
                                 <Eye class="h-3.5 w-3.5" />
@@ -371,7 +371,7 @@
                               type="button"
                               class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-wait disabled:opacity-45"
                               onclick={() => void taskList.deleteTask(task)}
-                              disabled={!!$taskList.deletingTaskKeys[task.taskKey] || !!$taskList.mutatingNoteIds[group.noteId]}
+                              disabled={!!taskList.deletingTaskKeys[task.taskKey] || !!taskList.mutatingNoteIds[group.noteId]}
                               aria-label={`Delete task: ${task.text}`}
                             >
                               <Trash2 class="h-3.5 w-3.5" />

@@ -17,6 +17,8 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::semantic::db::content_hash;
+
 const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 const MAX_PART_MESSAGES: i64 = 100;
 const MAX_PART_BYTES: i64 = 256 * 1024;
@@ -1891,10 +1893,6 @@ fn unique_converted_note_path(notes_root: &Path, content: &str) -> PathBuf {
         }
     }
     unreachable!()
-}
-
-fn content_hash(content: &str) -> String {
-    blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 
 fn generate_id(prefix: &str) -> String {

@@ -12,18 +12,14 @@ pub(crate) use config::{
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{
-    atomic_write_note,
-    db_insert_forgotten_note, db_load_note_activity, db_remove_forgotten_note,
-    db_set_last_chat_location, db_set_last_opened_note_id, db_set_note_collapsed,
-    db_set_note_hidden, db_set_note_order,
-    db_set_recent_note_ids, db_touch_note_activity, derive_file_stem,
+    atomic_write_note, db_load_note_activity, db_set_last_chat_location, db_set_note_collapsed,
+    db_set_note_hidden, db_set_note_order, db_touch_note_activity, derive_file_stem,
     derive_file_stem_from_title_and_markdown, effective_open_count, is_forgotten_note_path,
     is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
-    push_unique, read_state, read_state_with_lookup, resolve_note_id_from_path,
-    resolve_note_path_by_id, touch_recent_note_id, validate_current_path,
-    write_last_opened_and_recents, write_state, write_state_with_lookup, NoteActivity,
-    NoteIdLookup, PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS,
-    OPEN_COUNT_DECAY_INTERVAL_MS,
+    read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
+    touch_recent_note_id, validate_current_path, write_last_opened_and_recents, write_state,
+    write_state_with_lookup, NoteActivity, NoteIdLookup, PersistedForgottenNote, PersistedState,
+    OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 
 #[cfg(test)]
@@ -262,9 +258,18 @@ mod tests {
         // unknown ids actually land in the database — production code
         // would never persist garbage like this directly, but we need a
         // stored row that proves the cold-read path leaves it alone.
-        super::db_set_last_opened_note_id(Some(&live_note_id)).expect("seed last opened");
-        super::db_set_recent_note_ids(&[live_note_id.clone(), "unknown-id".to_string()])
-            .expect("seed recents");
+        super::write_last_opened_and_recents(&PersistedState {
+            last_opened_note_id: Some(live_note_id.clone()),
+            recent_note_ids: vec![live_note_id.clone(), "unknown-id".to_string()],
+            hidden_note_ids: Vec::new(),
+            note_order_note_ids: Vec::new(),
+            collapsed_note_ids: Vec::new(),
+            forgotten_notes: Vec::new(),
+            last_chat_conversation_id: None,
+            last_chat_context_note_id: None,
+            last_chat_context_note_path: None,
+        })
+        .expect("seed last opened and recents");
         super::db_set_note_hidden("another-unknown", true).expect("seed hidden");
         super::db_set_note_order(&["yet-another-unknown".to_string()]).expect("seed order");
 
@@ -307,9 +312,18 @@ mod tests {
         fs::write(&live_note, "# Live Note\n\nBody").expect("write live note");
         let live_note_id = resolve_note_id_from_path(&live_note).expect("live note id");
 
-        super::db_set_last_opened_note_id(Some("missing-id")).expect("seed last opened");
-        super::db_set_recent_note_ids(&[live_note_id.clone(), "missing-id".to_string()])
-            .expect("seed recents");
+        super::write_last_opened_and_recents(&PersistedState {
+            last_opened_note_id: Some("missing-id".to_string()),
+            recent_note_ids: vec![live_note_id.clone(), "missing-id".to_string()],
+            hidden_note_ids: Vec::new(),
+            note_order_note_ids: Vec::new(),
+            collapsed_note_ids: Vec::new(),
+            forgotten_notes: Vec::new(),
+            last_chat_conversation_id: None,
+            last_chat_context_note_id: None,
+            last_chat_context_note_path: None,
+        })
+        .expect("seed last opened and recents");
         super::db_set_note_hidden("missing-id", true).expect("seed hidden");
         super::db_set_note_order(&["missing-id".to_string()]).expect("seed order");
 

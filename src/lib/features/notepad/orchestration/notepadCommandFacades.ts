@@ -1,4 +1,4 @@
-import type { ForgottenNoteRetentionPreference } from '$lib/appSettings';
+import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { DocumentPaneCoordinator } from '$lib/features/notepad/document/documentPaneCoordinator';
 import type { PaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';

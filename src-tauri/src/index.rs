@@ -18,6 +18,25 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Lightweight draft pointer used internally for search/related/wikilink
+/// flows. The frontend sends `currentMarkdown` and `currentBodyHash` as flat
+/// fields; callers assemble a `DraftRef` to call
+/// [`AppState::resolve_draft_body`], which either returns the inlined body
+/// (and caches it) or replays a cached body for repeat hashes — letting the
+/// frontend skip resending the full markdown on every keystroke.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DraftRef {
+    pub(crate) path: Option<String>,
+    #[allow(dead_code)]
+    pub(crate) title: String,
+    pub(crate) hash: Option<String>,
+    pub(crate) body: Option<String>,
+    /// When true, the caller does not need a current-note override
+    /// (e.g. wikilink resolution that targets a different note). The backend
+    /// can skip body resolution entirely.
+    pub(crate) body_not_needed: bool,
+}
+
 pub(crate) struct AppState {
     pub(crate) notes_index: Mutex<NotesIndex>,
     pub(crate) lexical: Arc<LexicalIndex>,
@@ -226,10 +245,7 @@ impl AppState {
     ///   returned.
     /// - Otherwise the cache is consulted by `(path, hash)`. A cache miss
     ///   returns an explicit error so the frontend can retry with the body.
-    pub(crate) fn resolve_draft_body(
-        &self,
-        draft: &crate::commands::DraftRef,
-    ) -> Result<Option<String>, String> {
+    pub(crate) fn resolve_draft_body(&self, draft: &DraftRef) -> Result<Option<String>, String> {
         if draft.body_not_needed {
             return Ok(None);
         }
@@ -307,29 +323,30 @@ impl AppState {
         path: PathBuf,
         note: IndexedNote,
     ) -> Result<(), String> {
+        // One clone for the background queue; project from a borrow, then move
+        // the owned note into `notes_index` (avoids a second pre-mutex clone).
         let note_for_background = note.clone();
-        let note_for_projection = note.clone();
+        let timestamp = if note.modified_millis == 0 {
+            crate::time::current_time_millis().unwrap_or(0)
+        } else {
+            note.modified_millis
+        };
+        if note.document_kind == DocumentKind::Note {
+            let _ = crate::state::task_projection::reconcile_note_tasks(
+                &path,
+                Some(&note),
+                &note.note_id,
+                timestamp,
+            );
+        } else {
+            let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
+        }
         {
             let mut index = self
                 .notes_index
                 .lock()
                 .map_err(|_| "Search index lock poisoned".to_string())?;
             index.upsert_note(path.clone(), note);
-        }
-        let timestamp = if note_for_projection.modified_millis == 0 {
-            crate::time::current_time_millis().unwrap_or(0)
-        } else {
-            note_for_projection.modified_millis
-        };
-        if note_for_projection.document_kind == DocumentKind::Note {
-            let _ = crate::state::task_projection::reconcile_note_tasks(
-                &path,
-                Some(&note_for_projection),
-                &note_for_projection.note_id,
-                timestamp,
-            );
-        } else {
-            let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
         }
         self.clear_dirty_path(&path)?;
         self.background_index_queue
@@ -685,33 +702,8 @@ impl AppState {
 pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
     by_id: HashMap<String, PathBuf>,
-    /// Pre-built read model of open (non-completed) tasks for the
-    /// `list_recent_*` focus path. Maintained on every `insert_entry` /
-    /// `remove_entry` so the focus loader does not have to walk every
-    /// `IndexedNote` and re-clone per-task strings on each invocation.
-    /// Notes with zero open tasks contribute nothing — they are absent
-    /// from the map entirely.
-    open_tasks_by_path: HashMap<PathBuf, Vec<OpenTaskSummary>>,
     last_refresh_at: Option<Instant>,
     revision: u64,
-}
-
-/// Pre-computed slice of an open task plus the surrounding note metadata
-/// the focus loader needs. Strings are cloned once at index-update time
-/// so the read path can hand out `&OpenTaskSummary` borrows without
-/// touching `IndexedNote` again. Retained primarily for the in-memory
-/// open-task tests; the production focus path now reads from the
-/// SQLite-backed task projection.
-#[allow(dead_code)]
-#[derive(Clone)]
-pub(crate) struct OpenTaskSummary {
-    pub(crate) note_id: String,
-    pub(crate) task_key: String,
-    pub(crate) note_path_string: String,
-    pub(crate) note_title: String,
-    pub(crate) text: String,
-    pub(crate) line_number: usize,
-    pub(crate) note_modified_millis: u64,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -800,16 +792,6 @@ impl NotesIndex {
             .and_then(|path| self.entries.get(path).map(|note| (path, note)))
     }
 
-    /// Iterate the maintained open-task read model. Each yielded slice
-    /// contains the open tasks of a single note, keyed by its absolute
-    /// path; notes with no open tasks are absent from the iterator.
-    #[allow(dead_code)]
-    pub(crate) fn open_task_summaries(
-        &self,
-    ) -> impl Iterator<Item = (&PathBuf, &Vec<OpenTaskSummary>)> {
-        self.open_tasks_by_path.iter()
-    }
-
     fn insert_entry(&mut self, path: PathBuf, note: IndexedNote) {
         if let Some(previous) = self.entries.get(&path) {
             if previous.note_id != note.note_id {
@@ -820,12 +802,6 @@ impl NotesIndex {
             }
         }
         self.by_id.insert(note.note_id.clone(), path.clone());
-        let summaries = build_open_task_summaries(&path, &note);
-        if summaries.is_empty() {
-            self.open_tasks_by_path.remove(&path);
-        } else {
-            self.open_tasks_by_path.insert(path.clone(), summaries);
-        }
         self.entries.insert(path, note);
     }
 
@@ -834,7 +810,6 @@ impl NotesIndex {
         if self.by_id.get(&removed.note_id).map(PathBuf::as_path) == Some(path) {
             self.by_id.remove(&removed.note_id);
         }
-        self.open_tasks_by_path.remove(path);
         Some(removed)
     }
 
@@ -885,32 +860,6 @@ impl NotesIndex {
             self.revision = self.revision.wrapping_add(1);
         }
     }
-}
-
-/// Pre-build the open-task summaries for a single note. Returns an empty
-/// vector for notes whose tasks are all completed; the index drops empty
-/// entries entirely so iteration only walks notes with open work.
-fn build_open_task_summaries(path: &Path, note: &IndexedNote) -> Vec<OpenTaskSummary> {
-    let mut summaries = Vec::new();
-    let mut path_string: Option<String> = None;
-    for task in &note.tasks {
-        if task.completed {
-            continue;
-        }
-        let raw_path = path_string
-            .get_or_insert_with(|| path.to_string_lossy().into_owned())
-            .clone();
-        summaries.push(OpenTaskSummary {
-            note_id: note.note_id.clone(),
-            task_key: task_key(&note.note_id, task),
-            note_path_string: raw_path,
-            note_title: note.title.clone(),
-            text: task.text.clone(),
-            line_number: task.line_number,
-            note_modified_millis: note.modified_millis,
-        });
-    }
-    summaries
 }
 
 fn collect_dirty_updates(
@@ -1524,7 +1473,7 @@ mod tests {
     };
     use crate::test_support::{fixture_path, load_fixture, load_json_fixture, TestDir};
     use serde_json::json;
-    use std::{collections::HashMap, fs, path::PathBuf};
+    use std::{collections::HashMap, fs};
 
     #[test]
     fn build_indexed_note_matches_project_atlas_fixture() {
@@ -1643,68 +1592,6 @@ gneauxghts:
     }
 
     #[test]
-    fn open_task_summaries_track_only_open_tasks_and_drop_completed_notes() {
-        let temp = TestDir::new("index-open-task-summaries");
-        let mixed_path = temp.path().join("Mixed.md");
-        let completed_only_path = temp.path().join("Done.md");
-        fs::write(
-            &mixed_path,
-            "# Mixed\n\n- [ ] Open one\n- [x] Done one\n- [ ] Open two\n",
-        )
-        .expect("write mixed note");
-        fs::write(&completed_only_path, "# Done\n\n- [x] Already done\n")
-            .expect("write completed note");
-
-        let mut index = NotesIndex::default();
-        let mixed_note = build_indexed_note(
-            &mixed_path,
-            &fs::read_to_string(&mixed_path).expect("read mixed"),
-            10,
-        );
-        let completed_note = build_indexed_note(
-            &completed_only_path,
-            &fs::read_to_string(&completed_only_path).expect("read completed"),
-            20,
-        );
-        index.upsert_note(mixed_path.clone(), mixed_note);
-        index.upsert_note(completed_only_path.clone(), completed_note);
-
-        let mut summaries: Vec<&PathBuf> =
-            index.open_task_summaries().map(|(path, _)| path).collect();
-        summaries.sort();
-        assert_eq!(summaries, vec![&mixed_path]);
-
-        let mixed_open: Vec<String> = index
-            .open_task_summaries()
-            .find(|(path, _)| *path == &mixed_path)
-            .map(|(_, summaries)| summaries.iter().map(|task| task.text.clone()).collect())
-            .unwrap_or_default();
-        assert_eq!(
-            mixed_open,
-            vec!["Open one".to_string(), "Open two".to_string()]
-        );
-
-        // Replace mixed note with one whose tasks are all complete; entry
-        // should disappear from the maintained read model.
-        fs::write(&mixed_path, "# Mixed\n\n- [x] Closed\n").expect("rewrite mixed");
-        let next_mixed = build_indexed_note(
-            &mixed_path,
-            &fs::read_to_string(&mixed_path).expect("read mixed"),
-            30,
-        );
-        index.upsert_note(mixed_path.clone(), next_mixed);
-        let summaries: Vec<&PathBuf> = index.open_task_summaries().map(|(path, _)| path).collect();
-        assert!(
-            summaries.is_empty(),
-            "completed-only notes should not show up"
-        );
-
-        // Removing a path drops its entry too.
-        index.remove_note(&completed_only_path);
-        assert!(index.open_task_summaries().next().is_none());
-    }
-
-    #[test]
     fn prewarm_notes_index_populates_in_memory_map_and_warms_state() {
         use crate::semantic::SemanticState;
 
@@ -1712,12 +1599,11 @@ gneauxghts:
         fs::write(temp.path().join("Alpha.md"), "# Alpha\n\nBody").expect("write alpha");
         fs::write(temp.path().join("Beta.md"), "# Beta\n\nBody").expect("write beta");
 
-        let state =
-            AppState::new(
-                SemanticState::new_disabled("disabled"),
-                crate::app::EventBus::disabled(),
-            )
-            .expect("construct app state");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
         assert!(!state.has_warm_notes_index(), "starts cold");
 
         state
@@ -1738,12 +1624,11 @@ gneauxghts:
         let note_path = temp.path().join("Solo.md");
         fs::write(&note_path, "# Solo\n\nBody").expect("write solo");
 
-        let state =
-            AppState::new(
-                SemanticState::new_disabled("disabled"),
-                crate::app::EventBus::disabled(),
-            )
-            .expect("construct app state");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
 
         // Hold a foreground guard, then push the note's payload through
         // the prewarm — which enqueues it to the background queue. The
@@ -1782,12 +1667,11 @@ gneauxghts:
     fn foreground_guard_marks_state_busy_until_dropped() {
         use crate::semantic::SemanticState;
 
-        let state =
-            AppState::new(
-                SemanticState::new_disabled("disabled"),
-                crate::app::EventBus::disabled(),
-            )
-            .expect("construct app state");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
         assert!(!state.is_foreground_busy(), "starts idle");
 
         let outer = state.foreground_guard();
@@ -1809,12 +1693,11 @@ gneauxghts:
         let temp = TestDir::new("index-skip-full-scan");
         fs::write(temp.path().join("First.md"), "# First\n\nBody").expect("write first");
 
-        let state =
-            AppState::new(
-                SemanticState::new_disabled("disabled"),
-                crate::app::EventBus::disabled(),
-            )
-            .expect("construct app state");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
 
         // First call is the cold start: this is allowed to do a full scan.
         state

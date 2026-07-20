@@ -1,17 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
-  ApplyNoteChangesResult,
   CommitNoteReviewResult,
-  NoteChange,
   ProposalPreview,
   ProposedTextEdit
 } from '$lib/types/proposals';
-
-export async function applyNoteChangeProposal(
-  changes: NoteChange[]
-): Promise<ApplyNoteChangesResult> {
-  return invoke<ApplyNoteChangesResult>('apply_note_change_proposal', { changes });
-}
 
 export async function previewNoteChangeProposal(
   path: string,
@@ -30,19 +22,6 @@ export async function commitNoteReview(
     expectedBaseHash,
     markdown
   });
-}
-
-/** Hash arbitrary markdown (e.g. proposed body text). Not for OCC base hashes. */
-export async function hashMarkdownContent(markdown: string): Promise<string> {
-  return invoke<string>('hash_markdown_content', { markdown });
-}
-
-/**
- * Hash the on-disk note file. Use this for `baseContentHash` — session markdown
- * is body-only and will not match OCC validation against the full file.
- */
-export async function hashNoteAtPath(path: string): Promise<string> {
-  return invoke<string>('hash_note_at_path', { path });
 }
 
 /** Normalize Tauri invoke / unknown failures into a readable message. */

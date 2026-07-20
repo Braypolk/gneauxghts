@@ -1,5 +1,12 @@
 use super::{
     activity::BackgroundWorkGate,
+    ann_core::{
+        allocate_generation_artifacts, desired_capacity, file_timestamp_millis,
+        generation_path as core_generation_path, load_graph_and_vectors, new_hnsw_index,
+        remove_unreferenced_generations, should_rebuild_for_tombstones, write_generation_artifacts,
+        write_json_atomic, AnnGraph, AnnVectors, ANN_DISTANCE_KIND, ANN_EF_CONSTRUCTION, ANN_M,
+        ANN_TOMBSTONE_REBUILD_MIN,
+    },
     chunking::SemanticChunk,
     db::{
         ann_label_for, for_each_chunk_embedding, load_ann_chunks_for_note,
@@ -9,35 +16,26 @@ use super::{
     debug::SemanticDebugState,
 };
 use crate::time::current_time_millis;
-use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore, SetOutcome};
+use hnswlib_rs::SetOutcome;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
-    io::{BufReader, BufWriter, Write},
-    path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex, RwLock,
-    },
-    time::{Instant, UNIX_EPOCH},
+    io::BufReader,
+    path::PathBuf,
+    sync::{Arc, Mutex, RwLock},
+    time::Instant,
 };
 
 const ANN_SCHEMA_VERSION: u32 = 2;
-const ANN_DISTANCE_KIND: &str = "cosine";
-const ANN_M: usize = 16;
-const ANN_EF_CONSTRUCTION: usize = 200;
+/// Chunk ANN keeps a lower ef_search than note ANN (64 vs 96).
 const ANN_EF_SEARCH: usize = 64;
-const ANN_MIN_CAPACITY: usize = 1024;
-const ANN_TOMBSTONE_REBUILD_MIN: usize = 64;
-const ANN_TOMBSTONE_REBUILD_MAX: usize = 256;
+const ANN_FILE_STEM: &str = "hnsw";
+const ANN_FILE_PREFIX: &str = "hnsw.";
+const ANN_MANIFEST_FILE: &str = "hnsw.manifest.json";
 pub(crate) const ANN_MAX_INCREMENTAL_DOCUMENTS: usize = 128;
 pub(crate) const ANN_MAX_INCREMENTAL_CHUNKS: usize = 2_048;
-static ANN_GENERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-type AnnGraph = Hnsw<u64, Cosine<f32>>;
-type AnnVectors = InMemoryVectorStore<f32>;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -430,7 +428,7 @@ impl AnnIndexState {
         .map_err(|err| err.to_string())?;
         let current_sources = load_ann_source_inventory(connection)?;
         let (graph, vectors) =
-            load_graph_and_vectors(&graph_path, &vectors_path, manifest.ef_search)?;
+            load_graph_and_vectors(&graph_path, &vectors_path, manifest.ef_search, "ANN")?;
 
         let exact_signature = manifest.chunk_count == signature.chunk_count
             && manifest.max_indexed_at_millis == signature.max_indexed_at_millis
@@ -491,11 +489,7 @@ impl AnnIndexState {
     }
 
     fn generation_path(&self, file_name: &str) -> Result<PathBuf, String> {
-        let path = Path::new(file_name);
-        if file_name.is_empty() || path.components().count() != 1 {
-            return Err("Invalid ANN generation file name".to_string());
-        }
-        Ok(self.cache_dir.join(path))
+        core_generation_path(&self.cache_dir, file_name, "Invalid ANN generation file name")
     }
 
     fn install_loaded_snapshot(
@@ -568,38 +562,15 @@ impl AnnIndexState {
         manifest: &AnnManifest,
         sources: &[AnnSourceInventory],
     ) -> Result<AnnManifest, String> {
-        let generation = format!(
-            "{}-{}",
-            current_time_millis()?,
-            ANN_GENERATION_COUNTER.fetch_add(1, Ordering::AcqRel)
-        );
-        let graph_file = format!("hnsw.{generation}.snapshot");
-        let vectors_file = format!("hnsw.{generation}.vectors");
-        let source_inventory_file = format!("hnsw.{generation}.sources.json");
-        let graph_path = self.cache_dir.join(&graph_file);
-        let vectors_path = self.cache_dir.join(&vectors_file);
-        let sources_path = self.cache_dir.join(&source_inventory_file);
-
-        write_atomic(&graph_path, |writer| {
-            graph.save_to(writer).map_err(|err| err.to_string())
-        })?;
-        write_atomic(&vectors_path, |writer| {
-            vectors
-                .save_to(writer, graph.len())
-                .map_err(|err| err.to_string())
-        })?;
-        write_atomic(&sources_path, |writer| {
-            serde_json::to_writer_pretty(writer, sources).map_err(|err| err.to_string())
-        })?;
+        let names = allocate_generation_artifacts(ANN_FILE_STEM)?;
+        write_generation_artifacts(&self.cache_dir, &names, graph, vectors, &sources)?;
         let mut published = manifest.clone();
         published.schema_version = ANN_SCHEMA_VERSION;
-        published.generation = generation;
-        published.graph_file = graph_file;
-        published.vectors_file = vectors_file;
-        published.source_inventory_file = source_inventory_file;
-        write_atomic(&self.manifest_path, |writer| {
-            serde_json::to_writer_pretty(writer, &published).map_err(|err| err.to_string())
-        })?;
+        published.generation = names.generation;
+        published.graph_file = names.graph_file;
+        published.vectors_file = names.vectors_file;
+        published.source_inventory_file = names.source_inventory_file;
+        write_json_atomic(&self.manifest_path, &published)?;
         self.remove_unreferenced_generations(&published);
         Ok(published)
     }
@@ -609,20 +580,11 @@ impl AnnIndexState {
             manifest.graph_file.as_str(),
             manifest.vectors_file.as_str(),
             manifest.source_inventory_file.as_str(),
-            "hnsw.manifest.json",
+            ANN_MANIFEST_FILE,
         ]
         .into_iter()
         .collect::<HashSet<_>>();
-        let Ok(entries) = fs::read_dir(&self.cache_dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else { continue };
-            if name.starts_with("hnsw.") && !keep.contains(name) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
+        remove_unreferenced_generations(&self.cache_dir, ANN_FILE_PREFIX, &keep);
     }
 }
 
@@ -716,28 +678,6 @@ fn reconcile_snapshot_delta(
     Ok(())
 }
 
-fn load_graph_and_vectors(
-    graph_path: &Path,
-    vectors_path: &Path,
-    ef_search: usize,
-) -> Result<(AnnGraph, AnnVectors), String> {
-    let graph_file = File::open(graph_path).map_err(|err| err.to_string())?;
-    let mut graph_reader = BufReader::new(graph_file);
-    let graph = Hnsw::load_from(Cosine::new(), &mut graph_reader).map_err(|err| err.to_string())?;
-    graph.set_ef_search(ef_search);
-    let vectors_file = File::open(vectors_path).map_err(|err| err.to_string())?;
-    let mut vectors_reader = BufReader::new(vectors_file);
-    let (vectors, vector_count) = InMemoryVectorStore::<f32>::load_from(&mut vectors_reader)
-        .map_err(|err| err.to_string())?;
-    if vector_count != graph.len() {
-        return Err(format!(
-            "ANN graph/vector count mismatch: graph={} vectors={vector_count}",
-            graph.len()
-        ));
-    }
-    Ok((graph, vectors))
-}
-
 /// Build the HNSW graph and vector store by streaming chunk embeddings straight
 /// from SQLite. Unlike collecting a `Vec<StoredChunkRow>` first, this keeps only
 /// the graph plus one embedding row resident at a time, and never loads chunk
@@ -749,14 +689,13 @@ fn build_snapshot_streaming(
     progress: Option<&dyn Fn(usize, usize)>,
     total: usize,
 ) -> Result<(AnnGraph, AnnVectors), String> {
-    let graph = Hnsw::new(
-        Cosine::new(),
-        HnswConfig::new(manifest.dimensions, manifest.max_nodes)
-            .m(manifest.m)
-            .ef_construction(manifest.ef_construction)
-            .ef_search(manifest.ef_search),
+    let (graph, vectors) = new_hnsw_index(
+        manifest.dimensions,
+        manifest.max_nodes,
+        manifest.m,
+        manifest.ef_construction,
+        manifest.ef_search,
     );
-    let vectors = InMemoryVectorStore::<f32>::new(manifest.dimensions, manifest.max_nodes);
     let mut seen_labels = HashSet::new();
     let mut processed = 0usize;
 
@@ -795,53 +734,6 @@ fn build_snapshot_streaming(
     }
 
     Ok((graph, vectors))
-}
-
-fn desired_capacity(chunk_count: usize) -> usize {
-    let baseline = chunk_count.saturating_mul(2).max(ANN_MIN_CAPACITY);
-    baseline.next_power_of_two()
-}
-
-fn should_rebuild_for_tombstones(graph: &AnnGraph) -> bool {
-    let deleted = graph.deleted_len();
-    if deleted == 0 {
-        return false;
-    }
-
-    let live = graph.live_len().max(1);
-    deleted >= ANN_TOMBSTONE_REBUILD_MAX
-        || (deleted >= ANN_TOMBSTONE_REBUILD_MIN && deleted.saturating_mul(4) >= live)
-}
-
-fn write_atomic<F>(path: &Path, write: F) -> Result<(), String>
-where
-    F: FnOnce(&mut BufWriter<File>) -> Result<(), String>,
-{
-    let tmp_path = path.with_extension("tmp");
-    let file = File::create(&tmp_path).map_err(|err| err.to_string())?;
-    let mut writer = BufWriter::new(file);
-    write(&mut writer)?;
-    writer.flush().map_err(|err| err.to_string())?;
-    writer.get_ref().sync_all().map_err(|err| err.to_string())?;
-    drop(writer);
-    fs::rename(&tmp_path, path).map_err(|err| err.to_string())?;
-    if let Some(parent) = path.parent() {
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|err| err.to_string())?;
-    }
-    Ok(())
-}
-
-fn file_timestamp_millis(path: &Path) -> Result<u64, String> {
-    let modified = fs::metadata(path)
-        .map_err(|err| err.to_string())?
-        .modified()
-        .map_err(|err| err.to_string())?
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| err.to_string())?
-        .as_millis();
-    Ok(modified.min(u128::from(u64::MAX)) as u64)
 }
 
 #[cfg(test)]

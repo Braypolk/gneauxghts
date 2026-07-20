@@ -1,4 +1,4 @@
-import type { GeneralSection } from "./store";
+import type { GeneralSection } from "./store.svelte";
 
 export interface SettingsRefreshLoaders {
   loadSemanticState?: () => Promise<void>;

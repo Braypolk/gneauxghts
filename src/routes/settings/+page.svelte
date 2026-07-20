@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Monitor, Moon, RefreshCcw, Sun, FolderOpen } from '@lucide/svelte';
   import { onDestroy, onMount } from 'svelte';
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
@@ -16,20 +15,19 @@
     formatTimestamp
   } from '$lib/features/settings/formatters';
   import {
+    appSettings,
     forgetButtonDurationOptions,
-    forgetButtonDurationPreference,
     forgottenNoteRetentionOptions,
-    forgottenNoteRetentionPreference,
     setForgottenNoteRetentionPreference,
     setForgetButtonDurationPreference
-  } from '$lib/appSettings';
+  } from '$lib/appSettings.svelte';
   import {
     setThemePreference,
     themeOptions,
-    themePreference,
+    themeStore,
     type ThemePreference
-  } from '$lib/theme';
-  import { createSettingsStore, type GeneralSection, type SettingsTab } from '$lib/features/settings/store';
+  } from '$lib/theme.svelte';
+  import { createSettingsStore, type GeneralSection, type SettingsTab } from '$lib/features/settings/store.svelte';
 
   const generalSectionsNav: {
     id: GeneralSection;
@@ -56,12 +54,12 @@
 
   const settings = createSettingsStore();
   const activeSectionMeta = $derived(
-    generalSectionsNav.find((s) => s.id === $settings.activeGeneralSection) ?? generalSectionsNav[0]
+    generalSectionsNav.find((s) => s.id === settings.activeGeneralSection) ?? generalSectionsNav[0]
   );
   let allForgottenSelected = $derived(
-    $settings.forgottenNotes.length > 0 &&
-      $settings.forgottenNotes.every((note) =>
-        $settings.selectedForgottenPaths.includes(note.forgottenPath)
+    settings.forgottenNotes.length > 0 &&
+      settings.forgottenNotes.every((note) =>
+        settings.selectedForgottenPaths.includes(note.forgottenPath)
       )
   );
 
@@ -70,17 +68,17 @@
   }
 
   let selectedVaultPath = $derived(
-    $settings.vaultPathInput.trim() || $settings.vaultInfo?.currentPath || ''
+    settings.vaultPathInput.trim() || settings.vaultInfo?.currentPath || ''
   );
-  let savedVaultPath = $derived($settings.vaultInfo?.currentPath ?? '');
+  let savedVaultPath = $derived(settings.vaultInfo?.currentPath ?? '');
   let hasUnsavedVaultChange = $derived(
     Boolean(savedVaultPath) &&
       normalizeVaultPath(selectedVaultPath) !== normalizeVaultPath(savedVaultPath)
   );
   let vaultNeedsRestart = $derived(
-    Boolean($settings.activeVaultPath) &&
+    Boolean(settings.activeVaultPath) &&
       Boolean(savedVaultPath) &&
-      normalizeVaultPath(savedVaultPath) !== normalizeVaultPath($settings.activeVaultPath)
+      normalizeVaultPath(savedVaultPath) !== normalizeVaultPath(settings.activeVaultPath)
   );
 
   function handleVisibilityChange() {
@@ -109,7 +107,7 @@
         <div class="inline-flex items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
           <button
             class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-              $settings.activeTab === 'general'
+              settings.activeTab === 'general'
                 ? 'bg-foreground text-background shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
@@ -120,7 +118,7 @@
           </button>
           <button
             class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-              $settings.activeTab === 'forgotten'
+              settings.activeTab === 'forgotten'
                 ? 'bg-foreground text-background shadow-sm'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
@@ -135,7 +133,7 @@
         </div>
       </div>
 
-      {#if $settings.activeTab === 'general'}
+      {#if settings.activeTab === 'general'}
       <div class="border-t border-border/70">
         <div
           class="flex flex-col lg:grid lg:grid-cols-[minmax(10.5rem,13.5rem)_minmax(0,1fr)] lg:items-start lg:divide-x lg:divide-border/70"
@@ -148,17 +146,17 @@
               <button
                 type="button"
                 class={`shrink-0 rounded-xl border px-3 py-2 text-left transition-colors lg:w-full lg:px-3.5 lg:py-2.5 ${
-                  $settings.activeGeneralSection === item.id
+                  settings.activeGeneralSection === item.id
                     ? 'border-border bg-foreground text-background shadow-sm'
                     : 'border-transparent bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
                 }`}
-                aria-current={$settings.activeGeneralSection === item.id ? 'page' : undefined}
+                aria-current={settings.activeGeneralSection === item.id ? 'page' : undefined}
                 onclick={() => settings.setActiveGeneralSection(item.id)}
               >
                 <span class="block text-sm font-medium">{item.label}</span>
                 <span
                   class={`mt-0.5 hidden text-xs leading-snug sm:block lg:mt-1 ${
-                    $settings.activeGeneralSection === item.id ? 'text-background/75' : ''
+                    settings.activeGeneralSection === item.id ? 'text-background/75' : ''
                   }`}
                 >
                   {item.description}
@@ -173,7 +171,7 @@
               <p class="mt-1 text-sm text-muted-foreground">{activeSectionMeta.description}</p>
             </header>
 
-            {#if $settings.activeGeneralSection === 'appearance'}
+            {#if settings.activeGeneralSection === 'appearance'}
               <div class="space-y-5">
                 <div class="settings-section">
                   <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -192,7 +190,7 @@
                         <label
                           title={option.description}
                           class={`flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                            $themePreference === option.id
+                            themeStore.preference === option.id
                               ? 'bg-foreground text-background shadow-sm'
                               : 'text-muted-foreground hover:text-foreground'
                           }`}
@@ -202,7 +200,7 @@
                             type="radio"
                             name="theme-preference"
                             value={option.id}
-                            checked={$themePreference === option.id}
+                            checked={themeStore.preference === option.id}
                             onchange={() => void setThemePreference(option.id)}
                           />
                           <Icon class="h-3.5 w-3.5" />
@@ -215,11 +213,11 @@
 
                 <EditorTextSizePanel />
               </div>
-            {:else if $settings.activeGeneralSection === 'shortcuts'}
+            {:else if settings.activeGeneralSection === 'shortcuts'}
               <KeyboardShortcutsPanel />
-            {:else if $settings.activeGeneralSection === 'ai'}
+            {:else if settings.activeGeneralSection === 'ai'}
               <ChatSettingsPanel />
-            {:else if $settings.activeGeneralSection === 'forgetting'}
+            {:else if settings.activeGeneralSection === 'forgetting'}
               <div class="space-y-5">
                 <div class="settings-section">
                   <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -239,7 +237,7 @@
                         <label
                           title={option.description}
                           class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                            $forgetButtonDurationPreference === option.id
+                            appSettings.forgetButtonDurationPreference === option.id
                               ? 'bg-foreground text-background shadow-sm'
                               : 'text-muted-foreground hover:text-foreground'
                           }`}
@@ -249,7 +247,7 @@
                             type="radio"
                             name="forget-button-duration"
                             value={option.id}
-                            checked={$forgetButtonDurationPreference === option.id}
+                            checked={appSettings.forgetButtonDurationPreference === option.id}
                             onchange={() => setForgetButtonDurationPreference(option.id)}
                           />
                           <span>{option.label}</span>
@@ -277,7 +275,7 @@
                         <label
                           title={option.description}
                           class={`flex cursor-pointer items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                            $forgottenNoteRetentionPreference === option.id
+                            appSettings.forgottenNoteRetentionPreference === option.id
                               ? 'bg-foreground text-background shadow-sm'
                               : 'text-muted-foreground hover:text-foreground'
                           }`}
@@ -287,7 +285,7 @@
                             type="radio"
                             name="forgotten-note-retention"
                             value={option.id}
-                            checked={$forgottenNoteRetentionPreference === option.id}
+                            checked={appSettings.forgottenNoteRetentionPreference === option.id}
                             onchange={() => setForgottenNoteRetentionPreference(option.id)}
                           />
                           <span>{option.label}</span>
@@ -314,13 +312,13 @@
                   tab.
                 </p>
               </div>
-            {:else if $settings.activeGeneralSection === 'vault'}
+            {:else if settings.activeGeneralSection === 'vault'}
               <div class="flex flex-col gap-4">
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-sm font-medium">Vault Directory</p>
               <p class="mt-0.5 text-xs text-muted-foreground">
-                {#if $settings.vaultInfo?.canConfigurePath ?? true}
+                {#if settings.vaultInfo?.canConfigurePath ?? true}
                   Choose a folder for your notes. The new vault takes full effect after you restart the app.
                 {:else}
                   iPhone builds currently keep notes inside the app sandbox. Custom vault locations are disabled for now.
@@ -350,21 +348,21 @@
               class="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
               type="button"
               disabled={
-                $settings.isPickingVault ||
-                $settings.isSavingVault ||
-                !($settings.vaultInfo?.canConfigurePath ?? true)
+                settings.isPickingVault ||
+                settings.isSavingVault ||
+                !(settings.vaultInfo?.canConfigurePath ?? true)
               }
               onclick={() => void settings.pickVaultDirectory()}
             >
               <FolderOpen class="h-4 w-4" />
-              {$settings.isPickingVault ? 'Opening picker…' : 'Choose folder'}
+              {settings.isPickingVault ? 'Opening picker…' : 'Choose folder'}
             </button>
             <button
               class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
               type="button"
-              disabled={$settings.isSavingVault || !($settings.vaultInfo?.canConfigurePath ?? true)}
+              disabled={settings.isSavingVault || !(settings.vaultInfo?.canConfigurePath ?? true)}
               onclick={() => {
-                settings.setVaultPathInput($settings.vaultInfo?.defaultPath ?? '');
+                settings.setVaultPathInput(settings.vaultInfo?.defaultPath ?? '');
                 void settings.saveVaultDirectory();
               }}
             >
@@ -374,13 +372,13 @@
               class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
               type="button"
               disabled={
-                $settings.isSavingVault ||
-                !($settings.vaultInfo?.canConfigurePath ?? true) ||
+                settings.isSavingVault ||
+                !(settings.vaultInfo?.canConfigurePath ?? true) ||
                 !hasUnsavedVaultChange
               }
               onclick={() => void settings.saveVaultDirectory()}
             >
-              {$settings.isSavingVault ? 'Saving…' : 'Apply folder'}
+              {settings.isSavingVault ? 'Saving…' : 'Apply folder'}
             </button>
           </div>
 
@@ -389,63 +387,63 @@
               <p class="font-medium">Restart required</p>
               <p class="mt-1 text-sm text-amber-800 dark:text-amber-200">
                 The app is still using
-                <span class="font-medium break-all">{$settings.activeVaultPath}</span>.
+                <span class="font-medium break-all">{settings.activeVaultPath}</span>.
                 Restart now to open notes from
                 <span class="font-medium break-all">{savedVaultPath}</span>.
               </p>
               <button
                 class="mt-4 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-60"
                 type="button"
-                disabled={$settings.isRestarting}
+                disabled={settings.isRestarting}
                 onclick={() => void settings.restartApp()}
               >
-                {$settings.isRestarting ? 'Restarting…' : 'Restart app'}
+                {settings.isRestarting ? 'Restarting…' : 'Restart app'}
               </button>
             </div>
           {/if}
 
-          {#if $settings.vaultSaveError}
+          {#if settings.vaultSaveError}
             <div class="rounded-3xl border border-destructive/40 bg-destructive/10 px-5 py-4 text-sm text-destructive">
-              {$settings.vaultSaveError}
+              {settings.vaultSaveError}
             </div>
           {/if}
 
-          {#if $settings.vaultInfo?.pathConfigurationNote}
+          {#if settings.vaultInfo?.pathConfigurationNote}
             <div class="rounded-3xl border border-sky-300/60 bg-sky-50 px-5 py-4 text-sm text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
-              {$settings.vaultInfo.pathConfigurationNote}
+              {settings.vaultInfo.pathConfigurationNote}
             </div>
           {/if}
 
-          {#if $settings.vaultInfo}
+          {#if settings.vaultInfo}
             <div class="grid gap-4 md:grid-cols-3">
               <SettingsCard>
                 <SettingsLabel text="Active vault" />
-                <p class="mt-2 text-sm font-medium break-all">{$settings.activeVaultPath}</p>
+                <p class="mt-2 text-sm font-medium break-all">{settings.activeVaultPath}</p>
               </SettingsCard>
               <SettingsCard>
                 <SettingsLabel text="Forgotten notes" />
-                <p class="mt-2 text-sm font-medium break-all">{$settings.vaultInfo.forgottenPath}</p>
+                <p class="mt-2 text-sm font-medium break-all">{settings.vaultInfo.forgottenPath}</p>
               </SettingsCard>
               <SettingsCard>
                 <SettingsLabel text="Vault stats" />
-                <p class="mt-2 text-sm font-medium">{$settings.vaultInfo.noteCount} notes</p>
+                <p class="mt-2 text-sm font-medium">{settings.vaultInfo.noteCount} notes</p>
                 <p class="mt-1 text-xs text-muted-foreground">
-                  {$settings.vaultInfo.isDefault ? 'Using default path' : 'Custom path'} · {$settings.vaultInfo.requiresRestart ? 'restart required after changes' : 'live'}
+                  {settings.vaultInfo.isDefault ? 'Using default path' : 'Custom path'} · {settings.vaultInfo.requiresRestart ? 'restart required after changes' : 'live'}
                 </p>
               </SettingsCard>
             </div>
           {/if}
         </div>
-            {:else if $settings.activeGeneralSection === 'search'}
+            {:else if settings.activeGeneralSection === 'search'}
       <SemanticSettingsPanel
         embedded
-        semanticSettings={$settings.semanticSettings}
-        semanticStatus={$settings.semanticStatus}
-        semanticDebug={$settings.semanticDebug}
-        semanticLayerError={$settings.semanticLayerError}
-        semanticLayerMessage={$settings.semanticLayerMessage}
-        isSaving={$settings.isSaving}
-        isRunningAction={$settings.isRunningAction}
+        semanticSettings={settings.semanticSettings}
+        semanticStatus={settings.semanticStatus}
+        semanticDebug={settings.semanticDebug}
+        semanticLayerError={settings.semanticLayerError}
+        semanticLayerMessage={settings.semanticLayerMessage}
+        isSaving={settings.isSaving}
+        isRunningAction={settings.isRunningAction}
         loadSemanticState={settings.loadSemanticState}
         updateSetting={settings.updateSetting}
         runAction={settings.runAction}
@@ -462,11 +460,11 @@
       </div>
       {:else}
         <ForgottenNotesPanel
-          forgottenNotes={$settings.forgottenNotes}
+          forgottenNotes={settings.forgottenNotes}
           {allForgottenSelected}
-          selectedForgottenPaths={$settings.selectedForgottenPaths}
-          isLoadingForgottenNotes={$settings.isLoadingForgottenNotes}
-          isUpdatingForgottenNotes={$settings.isUpdatingForgottenNotes}
+          selectedForgottenPaths={settings.selectedForgottenPaths}
+          isLoadingForgottenNotes={settings.isLoadingForgottenNotes}
+          isUpdatingForgottenNotes={settings.isUpdatingForgottenNotes}
           loadForgottenNotes={settings.loadForgottenNotes}
           runForgottenAction={settings.runForgottenAction}
           toggleForgottenSelection={settings.toggleForgottenSelection}

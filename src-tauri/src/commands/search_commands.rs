@@ -1,8 +1,8 @@
-use super::{
-    prepare_notes_dir, DraftRef, RecentTaskItem, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-};
+use super::{prepare_notes_dir, RecentTaskItem, INTERACTIVE_INDEX_REFRESH_MAX_AGE};
 use crate::{
-    index::{build_current_override, normalize_search_text, AppState, IndexedNote, NotesIndex},
+    index::{
+        build_current_override, normalize_search_text, AppState, DraftRef, IndexedNote, NotesIndex,
+    },
     search::{
         build_recent_result, search_note, NoteSearchResult, ScoredSearchResult, MAX_SEARCH_RESULTS,
     },
@@ -517,7 +517,7 @@ pub(crate) async fn search_notes_hybrid(
             },
         );
         let activity_by_note_id = db_load_note_activity().unwrap_or_default();
-        let note_lookup = note_access_lookup(&state);
+        let note_lookup = note_access_lookup_for_candidates(&state, &lexical_candidates, &[]);
         let now = current_time_millis().unwrap_or(0);
         let results = filter_note_results(
             merge_hybrid_candidates(
@@ -551,7 +551,8 @@ pub(crate) async fn search_notes_hybrid(
     .map_err(|err| err.to_string())??;
 
     let activity_by_note_id = db_load_note_activity().unwrap_or_default();
-    let note_lookup = note_access_lookup(&state);
+    let note_lookup =
+        note_access_lookup_for_candidates(&state, &lexical_candidates, &semantic_matches);
     let now = current_time_millis().unwrap_or(0);
     let ranked = filter_note_results(
         merge_hybrid_candidates(
@@ -712,6 +713,11 @@ pub(crate) async fn retrieve_note_context(
             } else {
                 Vec::new()
             };
+            let note_lookup = note_access_lookup_for_candidates(
+                &state,
+                &lexical_candidates,
+                &semantic_matches,
+            );
             let merged = merge_hybrid_candidates(
                 lexical_candidates,
                 semantic_matches,
@@ -721,7 +727,7 @@ pub(crate) async fn retrieve_note_context(
                 settings.lexical_weight.max(0.0),
                 settings.semantic_weight.max(0.0),
                 &db_load_note_activity().unwrap_or_default(),
-                &note_access_lookup(&state),
+                &note_lookup,
                 current_time_millis().unwrap_or(0),
             );
             return Ok(RetrievalContextResponse {
@@ -936,19 +942,56 @@ impl NoteAccessLookup {
     }
 }
 
-fn note_access_lookup(state: &State<'_, AppState>) -> NoteAccessLookup {
+fn note_access_lookup_for_candidates(
+    state: &State<'_, AppState>,
+    lexical_candidates: &[ScoredSearchResult],
+    semantic_matches: &[SemanticChunkMatch],
+) -> NoteAccessLookup {
     let Ok(index) = state.notes_index.lock() else {
         return NoteAccessLookup {
             modified_by_note_id: HashMap::new(),
             note_id_by_path: HashMap::new(),
         };
     };
+    note_access_lookup_from_index(&index, lexical_candidates, semantic_matches)
+}
+
+/// Build access metadata only for hybrid-search candidates (O(candidates)),
+/// not the full vault map.
+pub(super) fn note_access_lookup_from_index(
+    index: &NotesIndex,
+    lexical_candidates: &[ScoredSearchResult],
+    semantic_matches: &[SemanticChunkMatch],
+) -> NoteAccessLookup {
     let mut modified_by_note_id = HashMap::new();
     let mut note_id_by_path = HashMap::new();
-    for (path, note) in &index.entries {
-        modified_by_note_id.insert(note.note_id.clone(), note.modified_millis);
-        note_id_by_path.insert(path.to_string_lossy().into_owned(), note.note_id.clone());
+
+    for candidate in lexical_candidates {
+        if let Some(note_id) = candidate.result.note_id.as_deref() {
+            if let Some((path, note)) = index.get_note_by_note_id(note_id) {
+                modified_by_note_id.insert(note_id.to_string(), note.modified_millis);
+                note_id_by_path.insert(path.to_string_lossy().into_owned(), note_id.to_string());
+            }
+        } else if let Some(path_str) = candidate.result.note_path.as_deref() {
+            if let Some(note) = index.entries.get(Path::new(path_str)) {
+                modified_by_note_id.insert(note.note_id.clone(), note.modified_millis);
+                note_id_by_path.insert(path_str.to_string(), note.note_id.clone());
+            }
+        }
     }
+
+    for semantic_match in semantic_matches {
+        if note_id_by_path.contains_key(&semantic_match.note_path) {
+            continue;
+        }
+        if let Some(note) = index.entries.get(Path::new(&semantic_match.note_path)) {
+            note_id_by_path.insert(semantic_match.note_path.clone(), note.note_id.clone());
+            modified_by_note_id
+                .entry(note.note_id.clone())
+                .or_insert(note.modified_millis);
+        }
+    }
+
     NoteAccessLookup {
         modified_by_note_id,
         note_id_by_path,
@@ -1204,4 +1247,75 @@ fn structural_boost_from_semantic(
         boost -= 0.2;
     }
     boost
+}
+
+#[cfg(test)]
+mod note_access_lookup_tests {
+    use super::{note_access_lookup_from_index, NoteAccessLookup};
+    use crate::{
+        index::{build_indexed_note, NotesIndex},
+        note::DocumentKind,
+        search::{NoteSearchResult, ScoredSearchResult},
+        semantic::SemanticChunkMatch,
+    };
+    use std::path::PathBuf;
+
+    fn sample_result(note_id: &str, note_path: &str) -> NoteSearchResult {
+        NoteSearchResult {
+            note_id: Some(note_id.to_string()),
+            note_path: Some(note_path.to_string()),
+            document_kind: DocumentKind::Note,
+            file_name: "a".into(),
+            section_label: String::new(),
+            excerpt: String::new(),
+            highlight_ranges: Vec::new(),
+            match_text: String::new(),
+            reason_labels: Vec::new(),
+            lexical_score: None,
+            semantic_score: None,
+            start_line: None,
+            end_line: None,
+            block_anchor: None,
+        }
+    }
+
+    #[test]
+    fn note_access_lookup_from_index_only_includes_candidates() {
+        let mut index = NotesIndex::default();
+        let keep_path = PathBuf::from("notes/keep.md");
+        let other_path = PathBuf::from("notes/other.md");
+        let keep = build_indexed_note(&keep_path, "# Keep\n\nbody", 100);
+        let other = build_indexed_note(&other_path, "# Other\n\nbody", 200);
+        let keep_id = keep.note_id.clone();
+        index.upsert_note(keep_path.clone(), keep);
+        index.upsert_note(other_path.clone(), other);
+
+        let lexical = vec![ScoredSearchResult {
+            score: 1,
+            result: sample_result(&keep_id, keep_path.to_str().unwrap()),
+        }];
+        let semantic = vec![SemanticChunkMatch {
+            note_path: keep_path.to_string_lossy().into_owned(),
+            note_title: "Keep".into(),
+            document_kind: DocumentKind::Note,
+            section_label: String::new(),
+            excerpt: String::new(),
+            match_text: String::new(),
+            score: 0.9,
+            start_line: 1,
+            end_line: 1,
+            block_anchor: None,
+        }];
+
+        let lookup: NoteAccessLookup =
+            note_access_lookup_from_index(&index, &lexical, &semantic);
+
+        assert_eq!(lookup.modified_by_note_id.len(), 1);
+        assert_eq!(lookup.note_id_by_path.len(), 1);
+        assert!(lookup.modified_by_note_id.contains_key(&keep_id));
+        assert!(!lookup
+            .note_id_by_path
+            .values()
+            .any(|id| id != &keep_id));
+    }
 }

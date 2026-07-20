@@ -1,5 +1,11 @@
 use super::{
     activity::BackgroundWorkGate,
+    ann_core::{
+        allocate_generation_artifacts, desired_capacity, generation_path as core_generation_path,
+        load_graph_and_vectors, new_hnsw_index, remove_unreferenced_generations,
+        should_rebuild_for_tombstones, write_generation_artifacts, write_json_atomic, AnnGraph,
+        AnnVectors, ANN_DISTANCE_KIND, ANN_EF_CONSTRUCTION, ANN_M,
+    },
     db::{
         for_each_note_embedding, load_note_ann_embedding_by_label, load_note_ann_index_signature,
         load_note_ann_source_inventory, load_note_embedding_for_path, NoteAnnIndexSignature,
@@ -7,35 +13,24 @@ use super::{
     },
     similarity::cosine_similarity,
 };
-use crate::time::current_time_millis;
-use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File},
-    io::{BufReader, BufWriter, Write},
+    io::BufReader,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Mutex, RwLock,
-    },
+    sync::{Arc, Mutex, RwLock},
 };
 
 const NOTE_ANN_SCHEMA_VERSION: u32 = 1;
 const NOTE_VECTOR_VERSION: &str = "mean-pool-l2-v1";
-const NOTE_ANN_DISTANCE_KIND: &str = "cosine";
-const NOTE_ANN_M: usize = 16;
-const NOTE_ANN_EF_CONSTRUCTION: usize = 200;
+/// Note ANN uses a higher ef_search than chunk ANN (96 vs 64).
 const NOTE_ANN_EF_SEARCH: usize = 96;
-const NOTE_ANN_MIN_CAPACITY: usize = 1024;
 const NOTE_ANN_MAX_INCREMENTAL_NOTES: usize = 128;
-const NOTE_ANN_TOMBSTONE_REBUILD_MIN: usize = 64;
-const NOTE_ANN_TOMBSTONE_REBUILD_MAX: usize = 256;
-static NOTE_ANN_GENERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-type NoteAnnGraph = Hnsw<u64, Cosine<f32>>;
-type NoteAnnVectors = InMemoryVectorStore<f32>;
+const NOTE_ANN_FILE_STEM: &str = "note-hnsw";
+const NOTE_ANN_FILE_PREFIX: &str = "note-hnsw.";
+const NOTE_ANN_MANIFEST_FILE: &str = "note-hnsw.manifest.json";
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -117,8 +112,8 @@ impl NotePathInventory {
 }
 
 struct NoteAnnSnapshot {
-    graph: NoteAnnGraph,
-    vectors: NoteAnnVectors,
+    graph: AnnGraph,
+    vectors: AnnVectors,
     manifest: NoteAnnManifest,
     paths: RwLock<NotePathInventory>,
 }
@@ -475,6 +470,7 @@ impl NoteAnnIndexState {
             &self.generation_path(&manifest.graph_file)?,
             &self.generation_path(&manifest.vectors_file)?,
             manifest.ef_search,
+            "Note ANN",
         )?;
         if manifest.note_count == signature.note_count
             && manifest.max_indexed_at_millis == signature.max_indexed_at_millis
@@ -507,10 +503,10 @@ impl NoteAnnIndexState {
             schema_version: NOTE_ANN_SCHEMA_VERSION,
             vector_version: NOTE_VECTOR_VERSION.to_string(),
             model_signature: self.model_signature.clone(),
-            distance_kind: NOTE_ANN_DISTANCE_KIND.to_string(),
+            distance_kind: ANN_DISTANCE_KIND.to_string(),
             dimensions: self.dimensions,
-            m: NOTE_ANN_M,
-            ef_construction: NOTE_ANN_EF_CONSTRUCTION,
+            m: ANN_M,
+            ef_construction: ANN_EF_CONSTRUCTION,
             ef_search: NOTE_ANN_EF_SEARCH,
             max_nodes: desired_capacity(signature.note_count),
             note_count: signature.note_count,
@@ -526,18 +522,18 @@ impl NoteAnnIndexState {
         manifest.schema_version == NOTE_ANN_SCHEMA_VERSION
             && manifest.vector_version == NOTE_VECTOR_VERSION
             && manifest.model_signature == self.model_signature
-            && manifest.distance_kind == NOTE_ANN_DISTANCE_KIND
+            && manifest.distance_kind == ANN_DISTANCE_KIND
             && manifest.dimensions == self.dimensions
-            && manifest.m == NOTE_ANN_M
-            && manifest.ef_construction == NOTE_ANN_EF_CONSTRUCTION
+            && manifest.m == ANN_M
+            && manifest.ef_construction == ANN_EF_CONSTRUCTION
             && manifest.ef_search == NOTE_ANN_EF_SEARCH
             && manifest.max_nodes >= manifest.note_count
     }
 
     fn install_snapshot(
         &self,
-        graph: NoteAnnGraph,
-        vectors: NoteAnnVectors,
+        graph: AnnGraph,
+        vectors: AnnVectors,
         manifest: NoteAnnManifest,
         sources: Vec<NoteAnnSourceInventory>,
         stale: bool,
@@ -576,38 +572,19 @@ impl NoteAnnIndexState {
 
     fn persist_parts(
         &self,
-        graph: &NoteAnnGraph,
-        vectors: &NoteAnnVectors,
+        graph: &AnnGraph,
+        vectors: &AnnVectors,
         manifest: &NoteAnnManifest,
         sources: &[NoteAnnSourceInventory],
     ) -> Result<NoteAnnManifest, String> {
-        let generation = format!(
-            "{}-{}",
-            current_time_millis()?,
-            NOTE_ANN_GENERATION_COUNTER.fetch_add(1, Ordering::AcqRel)
-        );
-        let graph_file = format!("note-hnsw.{generation}.snapshot");
-        let vectors_file = format!("note-hnsw.{generation}.vectors");
-        let source_inventory_file = format!("note-hnsw.{generation}.sources.json");
-        write_atomic(&self.cache_dir.join(&graph_file), |writer| {
-            graph.save_to(writer).map_err(|err| err.to_string())
-        })?;
-        write_atomic(&self.cache_dir.join(&vectors_file), |writer| {
-            vectors
-                .save_to(writer, graph.len())
-                .map_err(|err| err.to_string())
-        })?;
-        write_atomic(&self.cache_dir.join(&source_inventory_file), |writer| {
-            serde_json::to_writer_pretty(writer, sources).map_err(|err| err.to_string())
-        })?;
+        let names = allocate_generation_artifacts(NOTE_ANN_FILE_STEM)?;
+        write_generation_artifacts(&self.cache_dir, &names, graph, vectors, &sources)?;
         let mut published = manifest.clone();
-        published.generation = generation;
-        published.graph_file = graph_file;
-        published.vectors_file = vectors_file;
-        published.source_inventory_file = source_inventory_file;
-        write_atomic(&self.manifest_path, |writer| {
-            serde_json::to_writer_pretty(writer, &published).map_err(|err| err.to_string())
-        })?;
+        published.generation = names.generation;
+        published.graph_file = names.graph_file;
+        published.vectors_file = names.vectors_file;
+        published.source_inventory_file = names.source_inventory_file;
+        write_json_atomic(&self.manifest_path, &published)?;
         self.remove_unreferenced_generations(&published);
         Ok(published)
     }
@@ -624,11 +601,11 @@ impl NoteAnnIndexState {
     }
 
     fn generation_path(&self, file_name: &str) -> Result<PathBuf, String> {
-        let path = Path::new(file_name);
-        if file_name.is_empty() || path.components().count() != 1 {
-            return Err("Invalid note ANN generation file name".to_string());
-        }
-        Ok(self.cache_dir.join(path))
+        core_generation_path(
+            &self.cache_dir,
+            file_name,
+            "Invalid note ANN generation file name",
+        )
     }
 
     fn remove_unreferenced_generations(&self, manifest: &NoteAnnManifest) {
@@ -636,50 +613,24 @@ impl NoteAnnIndexState {
             manifest.graph_file.as_str(),
             manifest.vectors_file.as_str(),
             manifest.source_inventory_file.as_str(),
-            "note-hnsw.manifest.json",
+            NOTE_ANN_MANIFEST_FILE,
         ]
         .into_iter()
         .collect::<HashSet<_>>();
-        let Ok(entries) = fs::read_dir(&self.cache_dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else { continue };
-            if name.starts_with("note-hnsw.") && !keep.contains(name) {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
+        remove_unreferenced_generations(&self.cache_dir, NOTE_ANN_FILE_PREFIX, &keep);
     }
 }
 
 fn clone_graph_and_vectors(
     cache_dir: &Path,
     manifest: &NoteAnnManifest,
-) -> Result<(NoteAnnGraph, NoteAnnVectors), String> {
+) -> Result<(AnnGraph, AnnVectors), String> {
     load_graph_and_vectors(
         &cache_dir.join(&manifest.graph_file),
         &cache_dir.join(&manifest.vectors_file),
         manifest.ef_search,
+        "Note ANN",
     )
-}
-
-fn load_graph_and_vectors(
-    graph_path: &Path,
-    vectors_path: &Path,
-    ef_search: usize,
-) -> Result<(NoteAnnGraph, NoteAnnVectors), String> {
-    let mut graph_reader = BufReader::new(File::open(graph_path).map_err(|err| err.to_string())?);
-    let graph = Hnsw::load_from(Cosine::new(), &mut graph_reader).map_err(|err| err.to_string())?;
-    graph.set_ef_search(ef_search);
-    let mut vectors_reader =
-        BufReader::new(File::open(vectors_path).map_err(|err| err.to_string())?);
-    let (vectors, vector_count) = InMemoryVectorStore::<f32>::load_from(&mut vectors_reader)
-        .map_err(|err| err.to_string())?;
-    if vector_count != graph.len() {
-        return Err("Note ANN graph/vector count mismatch".to_string());
-    }
-    Ok((graph, vectors))
 }
 
 fn build_snapshot_streaming(
@@ -687,15 +638,14 @@ fn build_snapshot_streaming(
     manifest: &NoteAnnManifest,
     gate: Option<&BackgroundWorkGate>,
     progress: Option<&dyn Fn(usize, usize)>,
-) -> Result<(NoteAnnGraph, NoteAnnVectors), String> {
-    let graph = Hnsw::new(
-        Cosine::new(),
-        HnswConfig::new(manifest.dimensions, manifest.max_nodes)
-            .m(manifest.m)
-            .ef_construction(manifest.ef_construction)
-            .ef_search(manifest.ef_search),
+) -> Result<(AnnGraph, AnnVectors), String> {
+    let (graph, vectors) = new_hnsw_index(
+        manifest.dimensions,
+        manifest.max_nodes,
+        manifest.m,
+        manifest.ef_construction,
+        manifest.ef_search,
     );
-    let vectors = InMemoryVectorStore::<f32>::new(manifest.dimensions, manifest.max_nodes);
     let mut seen = HashSet::new();
     let mut processed = 0usize;
     for_each_note_embedding(connection, |row| {
@@ -777,8 +727,8 @@ fn source_delta(
 
 fn reconcile_delta(
     connection: &Connection,
-    graph: &NoteAnnGraph,
-    vectors: &NoteAnnVectors,
+    graph: &AnnGraph,
+    vectors: &AnnVectors,
     delta: &[(
         Option<NoteAnnSourceInventory>,
         Option<NoteAnnSourceInventory>,
@@ -796,40 +746,6 @@ fn reconcile_delta(
             .ok_or_else(|| format!("Missing note embedding for {}", source.path))?;
         graph
             .set(vectors, source.stable_ann_label, note.embedding.as_slice())
-            .map_err(|err| err.to_string())?;
-    }
-    Ok(())
-}
-
-fn desired_capacity(note_count: usize) -> usize {
-    note_count
-        .saturating_mul(2)
-        .max(NOTE_ANN_MIN_CAPACITY)
-        .next_power_of_two()
-}
-
-fn should_rebuild_for_tombstones(graph: &NoteAnnGraph) -> bool {
-    let deleted = graph.deleted_len();
-    let live = graph.live_len().max(1);
-    deleted >= NOTE_ANN_TOMBSTONE_REBUILD_MAX
-        || (deleted >= NOTE_ANN_TOMBSTONE_REBUILD_MIN && deleted.saturating_mul(4) >= live)
-}
-
-fn write_atomic<F>(path: &Path, write: F) -> Result<(), String>
-where
-    F: FnOnce(&mut BufWriter<File>) -> Result<(), String>,
-{
-    let tmp_path = path.with_extension("tmp");
-    let file = File::create(&tmp_path).map_err(|err| err.to_string())?;
-    let mut writer = BufWriter::new(file);
-    write(&mut writer)?;
-    writer.flush().map_err(|err| err.to_string())?;
-    writer.get_ref().sync_all().map_err(|err| err.to_string())?;
-    drop(writer);
-    fs::rename(&tmp_path, path).map_err(|err| err.to_string())?;
-    if let Some(parent) = path.parent() {
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
             .map_err(|err| err.to_string())?;
     }
     Ok(())

@@ -25,7 +25,8 @@ use crate::{
         SemanticStatus,
     },
     state::{
-        current_vault_info, ensure_vault_scaffold, notes_root, set_notes_root, vault_root, VaultInfo,
+        current_vault_info, ensure_vault_scaffold, notes_root, set_notes_root, vault_root,
+        VaultInfo,
     },
     time::current_time_millis,
 };
@@ -92,25 +93,6 @@ pub(crate) struct NoteLinkSuggestion {
 pub(crate) struct StoredImageAsset {
     file_name: String,
     file_path: String,
-}
-
-/// Phase 5: lightweight draft pointer used internally for search/related/
-/// wikilink flows. The frontend sends `currentMarkdown` and
-/// `currentBodyHash` as flat fields; commands assemble a `DraftRef` to call
-/// [`AppState::resolve_draft_body`], which either returns the inlined body
-/// (and caches it) or replays a cached body for repeat hashes — letting the
-/// frontend skip resending the full markdown on every keystroke.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct DraftRef {
-    pub(crate) path: Option<String>,
-    #[allow(dead_code)]
-    pub(crate) title: String,
-    pub(crate) hash: Option<String>,
-    pub(crate) body: Option<String>,
-    /// When true, the caller does not need a current-note override
-    /// (e.g. wikilink resolution that targets a different note). The backend
-    /// can skip body resolution entirely.
-    pub(crate) body_not_needed: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -368,11 +350,7 @@ pub(crate) fn remember_note(
     Ok(())
 }
 
-fn emit_note_saved(
-    state: &AppState,
-    outcome: &note_persistence::PersistNoteOutcome,
-    title: &str,
-) {
+fn emit_note_saved(state: &AppState, outcome: &note_persistence::PersistNoteOutcome, title: &str) {
     let path = outcome.persisted_path.clone();
     let note_id = outcome
         .session

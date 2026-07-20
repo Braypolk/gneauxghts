@@ -12,7 +12,7 @@ import {
   formatShortcutBinding,
   getKeyboardShortcutBinding,
   type KeyboardShortcutId
-} from '$lib/keyboardShortcuts';
+} from '$lib/keyboardShortcuts.svelte';
 
 export type InlineFormatId =
   | 'bold'

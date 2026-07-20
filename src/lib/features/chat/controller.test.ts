@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createChatController } from './controller';
+import { createChatController } from './controller.svelte';
 import type { ChatApi } from './api';
 import type { ChatConversation, ChatEventMap, ChatMessage, ChatSettings } from './types';
 
