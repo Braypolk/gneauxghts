@@ -1,7 +1,7 @@
 import { RangeSetBuilder } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin } from '@codemirror/view';
 
-const WIKILINK_PATTERN = /\[\[([^\[\]\n]+?)\]\]/g;
+const WIKILINK_PATTERN = /(?<!!)\[\[([^\[\]\n]+?)\]\]/g;
 const FENCE_PATTERN = /^\s*(```+|~~~+)/;
 
 interface WikilinkConfig {
@@ -110,6 +110,11 @@ function getActiveWikilink(view: EditorView): ActiveWikilink | null {
   const cursorOffset = selection.head - line.from;
   const start = lineText.lastIndexOf('[[', cursorOffset);
   if (start < 0 || cursorOffset < start + 2) {
+    return null;
+  }
+
+  // Image embeds use `![[file.png]]` — don't treat them as wikilinks.
+  if (start > 0 && lineText[start - 1] === '!') {
     return null;
   }
 

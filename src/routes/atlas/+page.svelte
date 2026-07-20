@@ -643,12 +643,13 @@
       deckCore = { Deck: DeckCtor, OrthographicView: OrthographicViewCtor };
       deckLayers = layers;
       await tick();
+      if (!mounted || !containerEl) return;
       const initialViewState = fittedViewState();
       if (initialViewState) {
         viewState = initialViewState;
         atlas.setZoom(Math.pow(2, viewState.zoom));
       }
-      deck = new DeckCtor({
+      const nextDeck = new DeckCtor({
         parent: containerEl,
         views: [new OrthographicViewCtor({ controller: true })],
         controller: true,
@@ -678,6 +679,11 @@
           }
         }
       });
+      if (!mounted) {
+        nextDeck.finalize();
+        return;
+      }
+      deck = nextDeck;
       renderDeck();
       await nextAnimationFrame();
       await nextAnimationFrame();
@@ -812,13 +818,13 @@
   {/if}
 
   {#if atlas.selectedNode}
-    <aside class="absolute right-5 top-14 z-20 flex max-h-[calc(100vh-5.5rem)] w-[min(23rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#08101a]/90 p-4 shadow-2xl backdrop-blur-md">
+    <aside class="absolute right-5 top-14 z-20 flex max-h-[calc(100vh-5.5rem)] w-[min(23rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card/90 p-4 text-foreground shadow-lg backdrop-blur-md">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
-          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/55">Note</p>
-          <p class="mt-5 min-w-0 text-xl font-semibold leading-7 text-white">{atlas.selectedNode.title}</p>
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Note</p>
+          <p class="mt-5 min-w-0 text-xl font-semibold leading-7 text-foreground">{atlas.selectedNode.title}</p>
           <div class="mt-1.5 flex items-center gap-2">
-            <span class="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[0.7rem] text-white/60">
+            <span class="shrink-0 rounded-full border border-border/80 bg-muted/40 px-2 py-0.5 text-[0.7rem] text-muted-foreground">
               Importance {Math.round(atlas.selectedNode.importance * 100)}%
             </span>
           </div>
@@ -843,47 +849,47 @@
         </div>
       </div>
       {#if atlas.selectedNode.preview}
-        <div class="mt-5 border-t border-white/10 pt-4">
-          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/45">Preview</p>
-          <p class="mt-2 max-h-24 overflow-hidden text-sm leading-6 text-white/68">{atlas.selectedNode.preview}</p>
+        <div class="mt-5 border-t border-border/70 pt-4">
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Preview</p>
+          <p class="mt-2 max-h-24 overflow-hidden text-sm leading-6 text-muted-foreground">{atlas.selectedNode.preview}</p>
         </div>
       {/if}
-      <div class="mt-4 grid gap-2 border-t border-white/10 pt-4 text-xs">
+      <div class="mt-4 grid gap-2 border-t border-border/70 pt-4 text-xs">
         <div class="flex items-center justify-between gap-3">
-          <span class="text-white/45">Last accessed</span>
-          <span class="truncate text-white/70">{formatTimestamp(atlas.selectedNode.lastViewedAtMillis)}</span>
+          <span class="text-muted-foreground">Last accessed</span>
+          <span class="truncate text-foreground/80">{formatTimestamp(atlas.selectedNode.lastViewedAtMillis)}</span>
         </div>
         <div class="flex items-center justify-between gap-3">
-          <span class="text-white/45">Created</span>
-          <span class="truncate text-white/70">{formatTimestamp(atlas.selectedNode.createdAtMillis)}</span>
+          <span class="text-muted-foreground">Created</span>
+          <span class="truncate text-foreground/80">{formatTimestamp(atlas.selectedNode.createdAtMillis)}</span>
         </div>
         <div class="flex items-center justify-between gap-3">
-          <span class="text-white/45">Updated</span>
-          <span class="truncate text-white/70">{formatTimestamp(atlas.selectedNode.updatedAtMillis)}</span>
+          <span class="text-muted-foreground">Updated</span>
+          <span class="truncate text-foreground/80">{formatTimestamp(atlas.selectedNode.updatedAtMillis)}</span>
         </div>
         <div class="flex items-center justify-between gap-3">
-          <span class="text-white/45">Cluster</span>
-          <span class="truncate text-white/70">{cloudLabel(atlas.selectedNode.clusterId)}</span>
+          <span class="text-muted-foreground">Cluster</span>
+          <span class="truncate text-foreground/80">{cloudLabel(atlas.selectedNode.clusterId)}</span>
         </div>
         <div class="flex items-center justify-between gap-3">
-          <span class="text-white/45">Sub-cluster</span>
-          <span class="truncate text-white/70">{cloudLabel(atlas.selectedNode.subclusterId)}</span>
+          <span class="text-muted-foreground">Sub-cluster</span>
+          <span class="truncate text-foreground/80">{cloudLabel(atlas.selectedNode.subclusterId)}</span>
         </div>
       </div>
       {#if atlas.selectedNode.tags.length > 0}
         <div class="mt-4">
-          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/45">Tags</p>
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Tags</p>
           <div class="mt-2 flex flex-wrap gap-1.5">
             {#each atlas.selectedNode.tags as tag (tag)}
-              <span class="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[0.68rem] text-white/68">{tag}</span>
+              <span class="rounded-full border border-border/80 bg-muted/40 px-2 py-1 text-[0.68rem] text-muted-foreground">{tag}</span>
             {/each}
           </div>
         </div>
       {/if}
-      <div class="mt-4 flex min-h-0 flex-1 flex-col border-t border-white/10 pt-3">
+      <div class="mt-4 flex min-h-0 flex-1 flex-col border-t border-border/70 pt-3">
         <div class="flex shrink-0 items-center justify-between gap-3">
-          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-white/45">Related notes</p>
-          <p class="text-xs text-white/45">
+          <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Related notes</p>
+          <p class="text-xs text-muted-foreground">
             {atlas.selectedNodeLinkedNotes.wikilinks.length + atlas.selectedNodeLinkedNotes.semantic.length}
           </p>
         </div>

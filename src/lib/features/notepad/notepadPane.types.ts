@@ -1,7 +1,12 @@
 import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
 import type { PaneCommandChoice, PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
-import type { ChatContextNote, ChatController, ChatSelectionActions } from '$lib/features/chat';
-import type { ChatDraftSeed } from '$lib/features/chat';
+import type {
+  ChatCitation,
+  ChatContextNote,
+  ChatController,
+  ChatDraftSeed,
+  ChatSelectionActions
+} from '$lib/features/chat';
 import type {
   PendingProposalChange,
   ProposalReviewSessionSnapshot
@@ -34,6 +39,7 @@ export interface PaneViewModel {
   chatTargetAnchor: string | null;
   chatSelectionActions: ChatSelectionActions;
   onChatConversationChange: (conversationId: string | null) => void;
+  onOpenCitation: (citation: Extract<ChatCitation, { kind: 'note' }>) => void | Promise<void>;
   proposalSnapshot: ProposalReviewSessionSnapshot | null;
   proposalPendingCount: number;
   onProposalOpenChange: (change: PendingProposalChange) => void | Promise<void>;

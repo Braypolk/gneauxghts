@@ -31,7 +31,14 @@ export function getExpandedRelatedDrawerWidth(viewportWidth = window.innerWidth)
 }
 
 export function getCollapsedRelatedDrawerWidth() {
-  return 44;
+  return 28;
+}
+
+/** Space between the related drawer and the notepad card. */
+export const RELATED_DRAWER_GAP = 8;
+
+export function getRelatedBalanceWidth() {
+  return getCollapsedRelatedDrawerWidth() + RELATED_DRAWER_GAP;
 }
 
 export function getLayoutRelatedDrawerWidth(
@@ -80,7 +87,7 @@ export function computeRelatedDrawerLayout(
   viewportWidth = window.innerWidth
 ): RelatedDrawerLayout {
   const shellRect = shellEl.getBoundingClientRect();
-  const drawerGap = 16;
+  const drawerGap = RELATED_DRAWER_GAP;
   const rightBoundary = findHorizontalClipBoundary(shellEl, viewportWidth) - 8;
   const availableRightSpace = Math.max(0, rightBoundary - shellRect.right);
   const openSideOverflow = Math.max(
@@ -111,19 +118,22 @@ export function getRelatedGroupStyle(
   relatedPanelPlacement: RelatedPanelPlacement,
   relatedDrawerReservedWidth: number
 ) {
-  const reserved = relatedPanelPlacement === 'bottom' ? 0 : relatedDrawerReservedWidth;
-  return `--related-reserved-width: ${reserved}px;`;
+  if (relatedPanelPlacement === 'bottom') {
+    return '--related-reserved-width: 0px; --related-balance-width: 0px;';
+  }
+
+  // Right-side balance stays at the collapsed peek gutter so opening RELATED
+  // only grows the left reserve (for the drawer) instead of shrinking the card
+  // from both sides.
+  return `--related-reserved-width: ${relatedDrawerReservedWidth}px; --related-balance-width: ${getRelatedBalanceWidth()}px;`;
 }
 
-export function getCardStyle(
-  relatedPanelPlacement: RelatedPanelPlacement,
-  relatedDrawerReservedWidth: number
-) {
+export function getCardStyle(relatedPanelPlacement: RelatedPanelPlacement) {
   if (relatedPanelPlacement === 'bottom') {
     return 'width: 100%;';
   }
 
-  return 'margin-left: var(--related-reserved-width); width: calc(100% - var(--related-reserved-width));';
+  return 'margin-left: var(--related-reserved-width); margin-right: var(--related-balance-width); width: calc(100% - var(--related-reserved-width) - var(--related-balance-width));';
 }
 
 export function getRelatedDrawerStyle(

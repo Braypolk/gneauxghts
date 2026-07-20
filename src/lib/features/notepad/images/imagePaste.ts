@@ -105,10 +105,13 @@ export function createImagePasteExtension(config: ImagesConfig) {
             }
 
             const embedMarkdown = assets.map((asset) => `![[${asset.fileName}]]`).join('\n\n');
+            const insertEnd = placeholderPos + embedMarkdown.length;
             view.dispatch(
               view.state.update({
                 changes: { from: placeholderPos, to: placeholderPos, insert: embedMarkdown },
-                effects: removePlaceholderEffect.of({ id: placeholderId })
+                selection: { anchor: insertEnd },
+                effects: removePlaceholderEffect.of({ id: placeholderId }),
+                scrollIntoView: true
               })
             );
           })

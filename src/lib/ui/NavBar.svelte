@@ -1,11 +1,13 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { page } from '$app/state';
   import { House, ListTodo, Network, Settings } from '@lucide/svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
   import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts.svelte';
   import { isTauriRuntime } from '$lib/tauriRuntime';
+  import { bumpAppShellViewGeneration } from '$lib/ui/appShellNavigation.svelte';
   import { createNavigationCoordinator } from '$lib/ui/navigationCoordinator';
 
   const navLinks = [
@@ -72,7 +74,8 @@
     getCurrentPathname: () => currentPathname,
     normalizePathname,
     flushPendingWork: awaitPendingNoteSave,
-    navigate: goto,
+    navigate: (href) => goto(resolve(href)),
+    onForceRemount: bumpAppShellViewGeneration,
     onFlushError: (error) => {
       console.error('Failed to flush pending note save before navigation:', error);
     }
@@ -128,12 +131,14 @@
 
   <div class="relative z-10 flex min-w-0 justify-start sm:justify-center">
     <nav class="flex items-center gap-1 rounded-full border border-border/80 bg-card/70 p-1 shadow-sm backdrop-blur-md sm:gap-1 sm:p-1">
-      {#each navLinks as { href, label, icon }}
+      {#each navLinks as { href, label, icon } (href)}
         {@const Icon = icon}
         <a
-          href={href}
+          href={resolve(href)}
+          data-sveltekit-preload-data="off"
           class={linkClass(href)}
           aria-label={label}
+          aria-current={isActive(href, currentPathname) ? 'page' : undefined}
           onclick={(event) => void handleNavClick(event, href)}
         >
           <Icon class="h-4 w-4 shrink-0" />
@@ -145,9 +150,11 @@
 
   <div class="relative z-10 flex min-w-0 justify-end">
     <a
-      href={settingsHref}
+      href={resolve(settingsHref)}
+      data-sveltekit-preload-data="off"
       class={settingsButtonClass()}
       aria-label="Settings"
+      aria-current={isActive(settingsHref, currentPathname) ? 'page' : undefined}
       onclick={(event) => void handleNavClick(event, settingsHref)}
     >
       <Settings class="w-5 h-5" />

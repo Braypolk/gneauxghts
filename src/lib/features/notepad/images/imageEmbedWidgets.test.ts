@@ -39,7 +39,7 @@ describe('buildImageEmbedDecorations', () => {
     const to = doc.indexOf(']]') + 2;
     const view = createView(doc, from + 2);
 
-    const built = buildImageEmbedDecorations(view, '/assets');
+    const built = buildImageEmbedDecorations(view);
     expect(built.ranges).toEqual([{ from, to }]);
     expect(built.decorations.size).toBe(0);
   });
@@ -48,15 +48,15 @@ describe('buildImageEmbedDecorations', () => {
     const doc = 'before ![[shot.png]] after';
     const view = createView(doc, 0);
 
-    const built = buildImageEmbedDecorations(view, '/assets');
+    const built = buildImageEmbedDecorations(view);
     expect(built.ranges).toHaveLength(1);
     expect(built.decorations.size).toBeGreaterThan(0);
   });
 
-  it('returns empty ranges when asset root is missing', () => {
+  it('builds decorations without requiring an asset root path', () => {
     const view = createView('![[shot.png]]', 0);
-    const built = buildImageEmbedDecorations(view, null);
-    expect(built.ranges).toEqual([]);
-    expect(built.decorations.size).toBe(0);
+    const built = buildImageEmbedDecorations(view);
+    expect(built.ranges).toHaveLength(1);
+    expect(built.decorations.size).toBeGreaterThan(0);
   });
 });

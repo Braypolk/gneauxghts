@@ -6,14 +6,14 @@ import {
   type ImageEmbedRange
 } from '$lib/features/notepad/images/imageEmbedWidgets';
 
-export function createImageEmbedsExtension(config: ImagesConfig) {
+export function createImageEmbedsExtension(_config: ImagesConfig) {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       #embedRanges: ImageEmbedRange[] = [];
 
       constructor(view: import('@codemirror/view').EditorView) {
-        const built = buildImageEmbedDecorations(view, config.assetRootPath);
+        const built = buildImageEmbedDecorations(view);
         this.decorations = built.decorations;
         this.#embedRanges = built.ranges;
       }
@@ -40,7 +40,7 @@ export function createImageEmbedsExtension(config: ImagesConfig) {
       }
 
       private rebuild(view: import('@codemirror/view').EditorView) {
-        const built = buildImageEmbedDecorations(view, config.assetRootPath);
+        const built = buildImageEmbedDecorations(view);
         this.decorations = built.decorations;
         this.#embedRanges = built.ranges;
       }

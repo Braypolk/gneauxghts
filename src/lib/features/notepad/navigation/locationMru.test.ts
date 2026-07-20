@@ -125,6 +125,41 @@ describe('locationMru', () => {
     expect(mru.previousExcluding('p2', null)).toEqual(noteB);
   });
 
+  it('removes matching locations from all panes', () => {
+    const mru = createLocationMruStore<'p1' | 'p2'>();
+    mru.touch('p1', noteA);
+    mru.touch('p1', noteB);
+    mru.touch('p2', noteA);
+    mru.touch('p2', noteB);
+
+    mru.remove(noteA);
+
+    expect(mru.list('p1')).toEqual([noteB]);
+    expect(mru.list('p2')).toEqual([noteB]);
+  });
+
+  it('removes editor locations matched by notePath when noteId is missing', () => {
+    const mru = createLocationMruStore<'p1'>();
+    const pathOnly: NavLocation = {
+      kind: 'editor',
+      noteId: null,
+      notePath: '/vault/A.md'
+    };
+    mru.touch('p1', noteA);
+    mru.touch('p1', noteB);
+
+    mru.remove(pathOnly);
+
+    expect(mru.list('p1')).toEqual([noteB]);
+  });
+
+  it('remove is a no-op when the location is absent', () => {
+    const mru = createLocationMruStore<'p1'>();
+    mru.touch('p1', noteB);
+    mru.remove(noteA);
+    expect(mru.list('p1')).toEqual([noteB]);
+  });
+
   it('reinjects lastChat when the MRU list no longer contains chat', () => {
     const mru = createLocationMruStore<'p1'>();
     mru.rememberChat('p1', chatA);

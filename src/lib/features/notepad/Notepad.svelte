@@ -331,6 +331,8 @@
     chatTargetAnchors[paneId] = targetAnchor;
     workspaceStore.setActivePaneId(paneId);
     await getChatController(paneId).initialize(conversationId);
+    await tick();
+    commands.focusPaneAfterShortcut(paneId);
     return true;
   }
 
@@ -1139,7 +1141,7 @@
         focusTitleAtEnd();
         return;
       }
-      await focusEditorAtEnd(getPaneEditorRoot(getNavigationPaneId()));
+      commands.focusPaneAfterShortcut(getNavigationPaneId());
     },
     saveActiveDocument: async () => {
       await enqueueSave(getDocumentSession());
@@ -1574,6 +1576,23 @@
           touchPaneLocationForHistory(paneId);
         }
       },
+      onOpenCitation: async (citation) => {
+        const editorPaneId = getEditorPaneIds()[0];
+        if (editorPaneId) {
+          workspaceStore.setActivePaneId(editorPaneId);
+          await commands.openNotePath(citation.notePath, {
+            noteId: citation.noteId,
+            focusEditorAfterOpen: true
+          });
+          return;
+        }
+        workspaceStore.setActivePaneId(paneId);
+        await commands.openNotePath(citation.notePath, {
+          noteId: citation.noteId,
+          revealEditorAfterOpen: true,
+          focusEditorAfterOpen: true
+        });
+      },
       proposalSnapshot: proposalOrchestration.session.snapshot,
       proposalPendingCount: proposalOrchestration.session.pendingCount,
       onProposalOpenChange: (change) => void proposalOrchestration.showChange(change),
@@ -1710,8 +1729,10 @@
         await commands.refreshCurrentNoteFromTaskMutation();
         updateRelatedDrawerLayout();
         scheduleRelatedIfNeeded({ immediate: true });
+        let skipDefaultFocus = false;
         const pendingTaskTarget = consumePendingTaskTarget();
         if (pendingTaskTarget) {
+          skipDefaultFocus = true;
           await commands.openNotePath(pendingTaskTarget.notePath, {
             noteId: pendingTaskTarget.noteId,
             focusEditorAfterOpen: false
@@ -1720,6 +1741,7 @@
         }
         const pendingNoteTarget = consumePendingNoteTarget();
         if (pendingNoteTarget) {
+          skipDefaultFocus = true;
           if (
             pendingNoteTarget.documentKind &&
             pendingNoteTarget.documentKind !== 'note'
@@ -1730,6 +1752,20 @@
               noteId: pendingNoteTarget.noteId,
               focusEditorAfterOpen: true
             });
+          }
+        }
+        // Remounts (e.g. returning from List/Atlas/Settings) restore the caret
+        // but SvelteKit focuses <body> after navigation — put typing focus back
+        // after a paint so we win that reset.
+        if (!skipDefaultFocus) {
+          await tick();
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => resolve());
+            });
+          });
+          if (mounted) {
+            commands.focusPaneAfterShortcut(getNavigationPaneId());
           }
         }
         // Subscribe to vault note + semantic status changes through the
@@ -1809,12 +1845,12 @@
 
 <div bind:this={workspaceShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
   <div
-    class="relative h-full min-h-0 w-full [--related-reserved-width:0px]"
+    class="relative h-full min-h-0 w-full [--related-reserved-width:0px] [--related-balance-width:0px]"
     style={getRelatedGroupStyle(relatedState.panelPlacement, relatedState.reservedWidth)}
   >
   <div
-    class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-[margin-left,width] duration-300 ease-out will-change-[margin-left,width] sm:rounded-4xl sm:border"
-    style={getCardStyle(relatedState.panelPlacement, relatedState.reservedWidth)}
+    class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-[margin-left,margin-right,width] duration-300 ease-out will-change-[margin-left,margin-right,width] sm:rounded-4xl sm:border"
+    style={getCardStyle(relatedState.panelPlacement)}
   >
     <div class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"></div>
 
@@ -1905,8 +1941,8 @@
     --editor-readable-width: 100%;
     --editor-top-padding: 4.6rem;
     --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
-    --related-drawer-gap: 1rem;
-    --related-drawer-peek-width: 2.75rem;
+    --related-drawer-gap: 0.5rem;
+    --related-drawer-peek-width: 1.75rem;
     --related-bottom-offset: calc(6.1rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
     --crepe-color-background: var(--card);
     --crepe-color-on-background: var(--foreground);

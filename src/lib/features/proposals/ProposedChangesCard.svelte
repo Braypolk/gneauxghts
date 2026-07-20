@@ -59,7 +59,7 @@
 {#if !hasChanges}
   {#if onLoadFixture}
     <div
-      class="sticky bottom-0 z-10 border-t border-border/50 bg-card/35 px-4 py-2 backdrop-blur-sm"
+      class="px-4 py-2 sm:px-6"
       data-proposal-strip="fixture"
     >
       <button
@@ -73,7 +73,7 @@
   {/if}
 {:else}
   <div
-    class="sticky bottom-0 z-10 border-t border-border/50 bg-card/35 px-4 py-3 backdrop-blur-sm"
+    class="mx-4 mb-1 rounded-[1.1rem] border border-border/70 bg-background/70 px-3 py-2.5 sm:mx-6"
     data-proposal-strip="active"
   >
     <div class="flex items-center gap-2">

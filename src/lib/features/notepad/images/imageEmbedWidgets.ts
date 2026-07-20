@@ -194,7 +194,8 @@ function createImageEmbedElement(
   container.dataset.widgetKey = widgetKey;
 
   const image = document.createElement('img');
-  image.loading = 'lazy';
+  // Eager: src is set asynchronously to a data: URL after IPC. Lazy loading
+  // can skip decoding for zero-size widgets and leave the image blank forever.
   image.decoding = 'async';
 
   image.addEventListener('load', () => {
@@ -363,34 +364,27 @@ export function selectionIntersectsImageEmbed(
   return ranges.some((range) => selection.from < range.to && selection.to > range.from);
 }
 
-export function buildImageEmbedDecorations(
-  view: EditorView,
-  assetRootPath: string | null
-): ImageEmbedDecorationBuild {
+export function buildImageEmbedDecorations(view: EditorView): ImageEmbedDecorationBuild {
   const builder = new RangeSetBuilder<Decoration>();
   const ranges: ImageEmbedRange[] = [];
-  if (!assetRootPath) {
-    return { decorations: builder.finish(), ranges };
-  }
 
   const selection = view.state.selection.main;
   const text = view.state.doc.toString();
   forEachImageEmbed(text, ({ from, to, target, widgetKey }) => {
     ranges.push({ from, to });
+    // Hide the widget (show raw markdown) while the caret/selection touches
+    // the embed so the source remains editable.
     if (selection.from < to && selection.to > from) {
       return;
     }
 
-    // Widget side -1 must be added before the mark at the same `from`.
     builder.add(
       from,
-      from,
-      Decoration.widget({
-        widget: new ImageEmbedWidget(widgetKey, view, from, to, target),
-        side: -1
+      to,
+      Decoration.replace({
+        widget: new ImageEmbedWidget(widgetKey, view, from, to, target)
       })
     );
-    builder.add(from, to, Decoration.mark({ class: 'gn-image-embed-source' }));
   });
 
   return { decorations: builder.finish(), ranges };

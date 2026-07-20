@@ -263,6 +263,20 @@ export function createLocationMruStore<TPaneId extends string>() {
     return listFor(paneId);
   }
 
+  function remove(location: NavLocation): void {
+    for (const [paneId, list] of lists) {
+      const next = list.filter((entry) => !locationsEqual(entry, location));
+      if (next.length !== list.length) {
+        lists.set(paneId, next);
+      }
+    }
+    if (location.kind === 'chat') {
+      for (const paneId of lastChatByPane.keys()) {
+        lastChatByPane.delete(paneId);
+      }
+    }
+  }
+
   function clear(paneId: TPaneId): void {
     lists.delete(paneId);
     lastChatByPane.delete(paneId);
@@ -280,6 +294,7 @@ export function createLocationMruStore<TPaneId extends string>() {
     historyExcluding,
     seedIfEmpty,
     list,
+    remove,
     clear,
     clearAll
   };

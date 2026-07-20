@@ -64,7 +64,7 @@
     <div class="relative h-full min-h-0 w-full">
       <button
         type="button"
-        class="related-drawer-handle group absolute -mx-4 top-1/2 right-0 z-10 flex translate-x-1/2 -translate-y-1/2 items-center outline-none"
+        class="related-drawer-handle group absolute top-1/2 z-10 flex translate-x-1/2 -translate-y-1/2 items-center outline-none right-[calc(-1*var(--related-drawer-gap))]"
         aria-expanded={!collapsed}
         aria-controls="related-drawer-panel"
         aria-label={collapsed ? 'Expand related notes' : 'Collapse related notes'}

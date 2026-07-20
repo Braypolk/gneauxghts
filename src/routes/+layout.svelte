@@ -9,8 +9,10 @@
   import { logDevError } from '$lib/logDevError';
   import { page } from '$app/state';
   import { invoke } from '@tauri-apps/api/core';
+  import { getAppShellViewGeneration } from '$lib/ui/appShellNavigation.svelte';
 
   let { children } = $props();
+  let shellViewKey = $derived(`${page.url.pathname}::${getAppShellViewGeneration()}`);
 
   onMount(() => {
     void initializeTheme();
@@ -45,7 +47,7 @@
 >
   <NavBar />
   <div class="flex-1 min-h-0 overflow-hidden px-0 sm:px-4">
-    {#key page.url.pathname}
+    {#key shellViewKey}
       {@render children()}
     {/key}
   </div>

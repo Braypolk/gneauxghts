@@ -103,7 +103,10 @@
         {#if viewModel.showCloseButton}
           {@render closePaneButton()}
         {:else}
-          <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
+          <!-- Reserve horizontal room for SplitPaneButton's leftward fan so it never covers Back. -->
+          <div class="chat-pane-split-slot relative hidden h-9 shrink-0 sm:block">
+            <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
+          </div>
           <div class="h-9 w-9 shrink-0 sm:hidden" aria-hidden="true"></div>
         {/if}
       </div>
@@ -172,6 +175,7 @@
             variant="pane"
             selectionActions={viewModel.chatSelectionActions}
             onConversationChange={viewModel.onChatConversationChange}
+            onOpenCitation={viewModel.onOpenCitation}
             proposalSnapshot={viewModel.proposalSnapshot}
             proposalPendingCount={viewModel.proposalPendingCount}
             onProposalOpenChange={viewModel.onProposalOpenChange}
@@ -192,8 +196,17 @@
 </div>
 
 <style>
-  /* Reserve header space for Back to note + close/split chrome. */
-  .chat-pane-shell :global(.chat-panel--pane > header) {
-    padding-right: 7rem;
+  /*
+    SplitPaneButton fans options left from a w-9 anchor (::before uses -9.5rem).
+    Keep that fan inside this slot so Back to note stays clickable to the left.
+  */
+  .chat-pane-split-slot {
+    width: 11.75rem;
+  }
+
+  .chat-pane-split-slot :global(.split-pane-control) {
+    position: absolute;
+    top: 0;
+    right: 0;
   }
 </style>

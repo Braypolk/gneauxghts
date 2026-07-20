@@ -224,6 +224,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
         await paneLifecycle.ensurePaneEditors();
         updateSelectedRelatedText();
       }
+      await tick();
+      focusPaneAfterShortcut(paneId);
     } finally {
       suppressLocationTouch = false;
       // Refresh history after navigation settles so an in-flight refresh that
@@ -246,6 +248,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
         flushDocumentEditorSync(getPaneDocument(paneId));
         updateSelectedRelatedText();
         bumpLocationHistoryEpoch();
+        await tick();
+        focusPaneAfterShortcut(paneId);
       }
       return;
     }
@@ -423,6 +427,12 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
         setNoteStatus(note, 'error');
         return;
       }
+      locationMru.remove({
+        kind: 'editor',
+        noteId: draft.currentNoteId,
+        notePath: notePathToClear
+      });
+      bumpLocationHistoryEpoch();
     }
 
     invalidatePendingSaveResults(note);
@@ -791,6 +801,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
     activatePaneSession(remainingPaneId);
     updateSelectedRelatedText();
+    await tick();
+    focusPaneAfterShortcut(remainingPaneId);
   }
 
   async function setPaneKind(paneId: TPaneId, kind: PaneKind) {
@@ -832,6 +844,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     flushDocumentEditorSync(document);
     updateSelectedRelatedText();
     bumpLocationHistoryEpoch();
+    await tick();
+    focusPaneAfterShortcut(paneId);
   }
 
   async function handleNotepadCommandBarCommand(command: string): Promise<boolean> {
@@ -934,6 +948,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       // hook that installs any active proposal review in the new pane.
       deps.onDocumentPresented?.(shared);
       flushDocumentEditorSync(shared);
+      focusPaneAfterShortcut(paneId);
       return;
     }
 
@@ -974,6 +989,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
         cleanupNoteRuntime(placeholderKey);
       }
       await finalizePaneCommandSelection(paneId);
+      await tick();
+      focusPaneAfterShortcut(paneId);
       return;
     }
   }
