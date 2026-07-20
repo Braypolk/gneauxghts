@@ -1,5 +1,5 @@
-import type { NoteChange } from '$lib/types/proposals';
-import { hashMarkdownContent } from './api';
+import type { NoteChange, ProposedTextEdit } from '$lib/types/proposals';
+import { hashMarkdownContent, hashNoteAtPath } from './api';
 
 /** Draft shapes emitted by make-mode (no content hashes — filled client-side). */
 export type ChatProposalDraft =
@@ -27,6 +27,69 @@ export interface ChatProposalContext {
 
 const FENCE_RE = /```(?:gneauxghts-proposal|proposal)\s*\r?\n([\s\S]*?)```/i;
 
+function parseTextEdit(value: unknown): ProposedTextEdit | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === 'replace') {
+    if (typeof value.oldText !== 'string' || typeof value.newText !== 'string') return null;
+    return {
+      kind: 'replace',
+      oldText: value.oldText,
+      newText: value.newText,
+      ...(typeof value.contextBefore === 'string' ? { contextBefore: value.contextBefore } : {}),
+      ...(typeof value.contextAfter === 'string' ? { contextAfter: value.contextAfter } : {})
+    };
+  }
+  if (value.kind === 'insert') {
+    if (typeof value.newText !== 'string') return null;
+    return {
+      kind: 'insert',
+      newText: value.newText,
+      ...(typeof value.contextBefore === 'string' ? { contextBefore: value.contextBefore } : {}),
+      ...(typeof value.contextAfter === 'string' ? { contextAfter: value.contextAfter } : {})
+    };
+  }
+  return null;
+}
+
+/**
+ * Extract the new active-note edit protocol. Legacy full-body proposals are
+ * deliberately converted to one trusted whole-body replacement rather than
+ * trusting any model-provided path or hash.
+ */
+export function parseChatProposalEdits(content: string, baseMarkdown: string): ProposedTextEdit[] | null {
+  const fence = extractProposalFence(content);
+  if (!fence) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fence) as unknown;
+  } catch {
+    return null;
+  }
+  if (isRecord(parsed) && Array.isArray(parsed.edits)) {
+    const edits = parsed.edits.map(parseTextEdit).filter((edit): edit is ProposedTextEdit => edit !== null);
+    return edits.length > 0 ? edits : null;
+  }
+  if (isRecord(parsed) && Array.isArray(parsed.changes)) {
+    const update = parsed.changes.find((change) => isRecord(change) && Array.isArray(change.edits));
+    if (isRecord(update) && Array.isArray(update.edits)) {
+      const edits = update.edits
+        .map(parseTextEdit)
+        .filter((edit): edit is ProposedTextEdit => edit !== null);
+      return edits.length > 0 ? edits : null;
+    }
+    const legacy = parsed.changes.find(
+      (change) => isRecord(change) && (change.kind === 'updateNote' || 'newMarkdown' in change) && typeof change.newMarkdown === 'string'
+    );
+    if (isRecord(legacy) && typeof legacy.newMarkdown === 'string') {
+      return [{ kind: 'replace', oldText: baseMarkdown || '\n', newText: legacy.newMarkdown }];
+    }
+  }
+  if (isRecord(parsed) && typeof parsed.newMarkdown === 'string') {
+    return [{ kind: 'replace', oldText: baseMarkdown || '\n', newText: parsed.newMarkdown }];
+  }
+  return null;
+}
+
 export function extractProposalFence(content: string): string | null {
   const match = content.match(FENCE_RE);
   const body = match?.[1]?.trim();
@@ -39,6 +102,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+/** Basename without `.md` — used when context title is empty. */
+function titleFromNotePath(path: string): string {
+  const base = path.split(/[/\\]/).pop() ?? path;
+  return base.replace(/\.md$/i, '').trim();
+}
+
+/**
+ * Pathless / context-path updates keep the open note's title.
+ * Models often invent a different newTitle (e.g. from wikilinks), which would
+ * rename onto another existing file and fail Keep with "target already exists".
+ */
+function resolveUpdateTitle(
+  draftTitle: string,
+  context: ChatProposalContext,
+  path: string,
+  isContextUpdate: boolean
+): string {
+  if (isContextUpdate) {
+    return (
+      context.title.trim() ||
+      titleFromNotePath(path) ||
+      draftTitle.trim() ||
+      'Note'
+    );
+  }
+  return draftTitle.trim() || context.title.trim() || titleFromNotePath(path) || 'Note';
 }
 
 function parseDraft(value: unknown): ChatProposalDraft | null {
@@ -118,17 +209,26 @@ export function parseChatProposalDrafts(content: string): ChatProposalDraft[] | 
   return single ? [single] : null;
 }
 
+export interface ResolveChatProposalOptions {
+  /** Prefer on-disk file hash for OCC (default: hashNoteAtPath). */
+  hashNotePath?: (path: string) => Promise<string>;
+  /** Fallback when hashing body text only (tests). */
+  hashMarkdown?: (markdown: string) => Promise<string>;
+}
+
 /**
  * Resolve drafts into OCC-ready NoteChange[] using context note path/hash.
  */
 export async function resolveChatProposalDrafts(
   drafts: ChatProposalDraft[],
   context: ChatProposalContext,
-  hashFn: (markdown: string) => Promise<string> = hashMarkdownContent
+  options: ResolveChatProposalOptions = {}
 ): Promise<{
   changes: NoteChange[];
   baseMarkdownByPath: Record<string, string>;
 } | null> {
+  const hashNotePath = options.hashNotePath ?? hashNoteAtPath;
+  const hashMarkdown = options.hashMarkdown ?? hashMarkdownContent;
   const changes: NoteChange[] = [];
   const baseMarkdownByPath: Record<string, string> = {};
 
@@ -155,15 +255,23 @@ export async function resolveChatProposalDrafts(
       baseMarkdownByPath[path] = context.lastSavedMarkdown;
     }
 
-    const baseMarkdown = baseMarkdownByPath[path] ?? '';
-    const baseContentHash = await hashFn(baseMarkdown);
+    // OCC validates against full on-disk bytes, not the editor body snapshot.
+    let baseContentHash: string;
+    try {
+      baseContentHash = await hashNotePath(path);
+    } catch {
+      const baseMarkdown = baseMarkdownByPath[path] ?? '';
+      baseContentHash = await hashMarkdown(baseMarkdown);
+    }
 
     if (draft.kind === 'updateNote') {
+      const isContextUpdate =
+        !asNonEmptyString(draft.path) || draft.path === context.path;
       changes.push({
         kind: 'updateNote',
         path,
         baseContentHash,
-        newTitle: draft.newTitle.trim() || context.title || 'Note',
+        newTitle: resolveUpdateTitle(draft.newTitle, context, path, isContextUpdate),
         newMarkdown: draft.newMarkdown
       });
     } else {

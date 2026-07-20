@@ -5,11 +5,11 @@ import type { ProposalReviewSession } from './reviewSession.svelte';
 export interface ReviewDocumentHold {
   title: string;
   bodyMarkdown: string;
-  changeId: string;
+  changeId: string | null;
 }
 
 /**
- * Tracks temporary editor holds while a synthetic unified-diff document is shown.
+ * Tracks temporary editor holds while an editable proposed body is under review.
  * Autosave must be suppressed while a hold is active for a note key.
  * `version` is $state so Svelte can react when holds change.
  */
@@ -31,17 +31,17 @@ export function createReviewHoldStore() {
     return holds.get(noteKey);
   }
 
-  function begin(document: NoteDraftState, change: PendingProposalChange) {
+  function begin(document: NoteDraftState, change?: PendingProposalChange) {
     if (!holds.has(document.key)) {
       holds.set(document.key, {
         title: document.title,
         bodyMarkdown: document.bodyMarkdown,
-        changeId: change.id
+        changeId: change?.id ?? null
       });
     } else {
       const existing = holds.get(document.key);
       if (existing) {
-        holds.set(document.key, { ...existing, changeId: change.id });
+        holds.set(document.key, { ...existing, changeId: change?.id ?? existing.changeId });
       }
     }
     bump();

@@ -1,11 +1,10 @@
 //! Typed domain event bus.
 //!
 //! Replaces the previous pattern of scattered `app_handle.emit("...string...", ...)`
-//! calls with a single enum that owns the event names and payloads. The
-//! `EventBus` is held inside [`super::AppData`] so commands and services
-//! reach it through one place. The frontend continues to listen on the
-//! original event channel names (e.g. `vault-note-changed`) so the contract
-//! across IPC is preserved.
+//! calls with a single enum that owns the event names and payloads. The bus
+//! lives on [`crate::index::AppState`]. The frontend continues to listen on
+//! the original event channel names (e.g. `vault-note-changed`) so the
+//! contract across IPC is preserved.
 
 use crate::note::DocumentKind;
 use crate::semantic::SemanticStatus;
@@ -121,25 +120,36 @@ impl AppEvent {
 }
 
 /// Single emission point for typed [`AppEvent`]s. Holds the Tauri
-/// `AppHandle` and centralises error handling so callers do not need to
-/// match on emit results.
+/// `AppHandle` when running inside the app; tests use [`Self::disabled`]
+/// so emits are no-ops without a Tauri runtime.
 #[derive(Clone)]
 pub(crate) struct EventBus {
-    app_handle: AppHandle,
+    app_handle: Option<AppHandle>,
 }
 
 impl EventBus {
     pub(crate) fn new(app_handle: AppHandle) -> Self {
-        Self { app_handle }
+        Self {
+            app_handle: Some(app_handle),
+        }
+    }
+
+    /// No-op bus for unit tests that construct [`crate::index::AppState`]
+    /// outside a Tauri runtime.
+    pub(crate) fn disabled() -> Self {
+        Self { app_handle: None }
     }
 
     /// Best-effort emit. Errors from the IPC layer are swallowed because
     /// we never want a failed event delivery to fail the underlying
     /// command (the previous code base already used `let _ = ...`).
     pub(crate) fn emit(&self, event: AppEvent) {
+        let Some(app_handle) = &self.app_handle else {
+            return;
+        };
         let channel = event.channel();
         let payload = event.legacy_payload();
-        let _ = self.app_handle.emit(channel.0, payload);
+        let _ = app_handle.emit(channel.0, payload);
     }
 
     pub(crate) fn vault_note_changed(&self, path: &Path, deleted: bool) {

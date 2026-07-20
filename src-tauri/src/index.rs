@@ -22,6 +22,8 @@ pub(crate) struct AppState {
     pub(crate) notes_index: Mutex<NotesIndex>,
     pub(crate) lexical: Arc<LexicalIndex>,
     pub(crate) semantic: Arc<SemanticState>,
+    /// Typed domain event bus (vault/note/semantic/chat-projection).
+    pub(crate) events: crate::app::EventBus,
     interactive_invalidation: Mutex<InteractiveInvalidationState>,
     /// Phase 5: bounded cache of recent draft bodies keyed by `(path, hash)`.
     /// Frontend sends only `hash` for keystroke-driven requests; backend
@@ -161,7 +163,10 @@ fn apply_projection_payload(payload: ProjectionPayload) {
 }
 
 impl AppState {
-    pub(crate) fn new(semantic: SemanticState) -> Result<Self, String> {
+    pub(crate) fn new(
+        semantic: SemanticState,
+        events: crate::app::EventBus,
+    ) -> Result<Self, String> {
         let lexical = Arc::new(LexicalIndex::new()?);
         let foreground_activity = Arc::new(ForegroundActivity::default());
         let background_index_queue = crate::services::BackgroundIndexQueue::new(
@@ -172,6 +177,7 @@ impl AppState {
             notes_index: Mutex::new(NotesIndex::default()),
             lexical,
             semantic: Arc::new(semantic),
+            events,
             interactive_invalidation: Mutex::new(InteractiveInvalidationState::default()),
             draft_cache: Mutex::new(DraftCache::default()),
             background_index_queue,
@@ -1707,7 +1713,11 @@ gneauxghts:
         fs::write(temp.path().join("Beta.md"), "# Beta\n\nBody").expect("write beta");
 
         let state =
-            AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
+            AppState::new(
+                SemanticState::new_disabled("disabled"),
+                crate::app::EventBus::disabled(),
+            )
+            .expect("construct app state");
         assert!(!state.has_warm_notes_index(), "starts cold");
 
         state
@@ -1729,7 +1739,11 @@ gneauxghts:
         fs::write(&note_path, "# Solo\n\nBody").expect("write solo");
 
         let state =
-            AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
+            AppState::new(
+                SemanticState::new_disabled("disabled"),
+                crate::app::EventBus::disabled(),
+            )
+            .expect("construct app state");
 
         // Hold a foreground guard, then push the note's payload through
         // the prewarm — which enqueues it to the background queue. The
@@ -1769,7 +1783,11 @@ gneauxghts:
         use crate::semantic::SemanticState;
 
         let state =
-            AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
+            AppState::new(
+                SemanticState::new_disabled("disabled"),
+                crate::app::EventBus::disabled(),
+            )
+            .expect("construct app state");
         assert!(!state.is_foreground_busy(), "starts idle");
 
         let outer = state.foreground_guard();
@@ -1792,7 +1810,11 @@ gneauxghts:
         fs::write(temp.path().join("First.md"), "# First\n\nBody").expect("write first");
 
         let state =
-            AppState::new(SemanticState::new_disabled("disabled")).expect("construct app state");
+            AppState::new(
+                SemanticState::new_disabled("disabled"),
+                crate::app::EventBus::disabled(),
+            )
+            .expect("construct app state");
 
         // First call is the cold start: this is allowed to do a full scan.
         state

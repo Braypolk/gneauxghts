@@ -45,6 +45,9 @@
     onProposalKeepAll?: () => void | Promise<void>;
     onProposalUndoAll?: () => void | Promise<void>;
     onProposalReview?: () => void | Promise<void>;
+    onProposalRetry?: () => void | Promise<void>;
+    onProposalCopyCurrent?: () => void | Promise<void>;
+    onProposalReloadDisk?: () => void | Promise<void>;
     onProposalLoadFixture?: () => void | Promise<void>;
   }
 
@@ -69,6 +72,9 @@
     onProposalKeepAll,
     onProposalUndoAll,
     onProposalReview,
+    onProposalRetry,
+    onProposalCopyCurrent,
+    onProposalReloadDisk,
     onProposalLoadFixture
   }: Props = $props();
 
@@ -416,7 +422,7 @@
 
   {#if proposalSnapshot != null || onProposalLoadFixture}
     <ProposedChangesCard
-      snapshot={proposalSnapshot ?? { source: '', changes: [], activeChangeId: null, isApplying: false, error: null }}
+      snapshot={proposalSnapshot ?? { source: '', changes: [], activeChangeId: null, isApplying: false, isConflicted: false, error: null, reviewHunks: null }}
       pendingCount={proposalPendingCount}
       onOpenChange={onProposalOpenChange ?? (() => {})}
       onKeep={onProposalKeep ?? (() => {})}
@@ -424,6 +430,9 @@
       onKeepAll={onProposalKeepAll ?? (() => {})}
       onUndoAll={onProposalUndoAll ?? (() => {})}
       onReview={onProposalReview ?? (() => {})}
+      onRetry={onProposalRetry}
+      onCopyCurrent={onProposalCopyCurrent}
+      onReloadDisk={onProposalReloadDisk}
       onLoadFixture={onProposalLoadFixture}
     />
   {/if}

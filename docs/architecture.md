@@ -271,15 +271,17 @@ Backend Rust remains authoritative for validation and file mutation.
 
 ### Proposal Apply
 
-1. A producer (make-mode `gneauxghts-proposal` fence, or the fixture loader)
-   loads `NoteChange[]` into the review session with base markdown for diffs.
-2. Chat shows the proposed file list; opening a row enters inline review in an
-   editor pane (unified red/green diff).
-3. Keep calls `apply_note_change_proposal` with that change (or Keep all with
-   the pending subset). Undo drops the change client-side.
-4. Rust validates paths and content hashes, then applies writes/deletes and
-   updates lexical, in-memory, and semantic indexes.
-5. Frontend exits review mode and refreshes the open note from disk.
+1. A make-mode `gneauxghts-proposal` fence supplies pathless edit intents for
+   the active note.
+2. `preview_note_change_proposal` validates those edits in Rust, derives
+   UTF-16 CodeMirror ranges, and returns a no-write preview.
+3. The editor applies the proposed text as one non-history transaction and
+   layers mapped hunk metadata and Keep/Undo controls over the editable body.
+4. Final resolution calls `commit_note_review` with the current editor body;
+   Rust OCC-checks the full on-disk note before its single write.
+5. The ordinary save-side index/event paths refresh derived views after a
+   successful commit. External watcher changes leave the review buffer intact
+   and place the session into conflict state.
 
 ## Extension Rules
 

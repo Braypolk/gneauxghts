@@ -50,4 +50,16 @@ describe('createProposalReviewSession', () => {
     expect(session.findPendingForPath('/vault/Gone.md')?.change.kind).toBe('deleteNote');
     expect(session.findPendingForPath('/vault/Other.md')).toBeNull();
   });
+
+  it('keeps conflict recovery separate from ordinary review errors', () => {
+    const session = createProposalReviewSession();
+
+    expect(session.snapshot.isConflicted).toBe(false);
+    session.setError('Could not restore the original text.');
+    expect(session.snapshot.isConflicted).toBe(false);
+    session.setConflicted(true);
+    expect(session.snapshot.isConflicted).toBe(true);
+    session.setConflicted(false);
+    expect(session.snapshot.isConflicted).toBe(false);
+  });
 });

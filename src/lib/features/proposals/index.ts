@@ -1,7 +1,11 @@
 export type {
   NoteChange,
   AppliedNoteChange,
-  ApplyNoteChangesResult
+  ApplyNoteChangesResult,
+  ProposedTextEdit,
+  ProposalPreview,
+  ProposalPreviewHunk,
+  CommitNoteReviewResult
 } from '$lib/types/proposals';
 export {
   noteChangePath,
@@ -20,7 +24,13 @@ export {
   type NoteDiffModel
 } from './diffModel';
 
-export { applyNoteChangeProposal, hashMarkdownContent } from './api';
+export {
+  applyNoteChangeProposal,
+  previewNoteChangeProposal,
+  commitNoteReview,
+  hashMarkdownContent,
+  hashNoteAtPath
+} from './api';
 export {
   createProposalReviewSession,
   proposalReviewSession,
@@ -38,8 +48,10 @@ export {
 } from './fixtures';
 export {
   createProposalReviewExtension,
-  reviewStateFromChange,
-  type ProposalReviewEditorState
+  proposalTransaction,
+  resolveReviewHunk,
+  type ProposalReviewState,
+  type ReviewHunkState
 } from './reviewExtension';
 export {
   reviewHoldStore,
@@ -61,6 +73,7 @@ export {
 } from './proposalOrchestration';
 export {
   extractProposalFence,
+  parseChatProposalEdits,
   parseChatProposalDrafts,
   resolveChatProposalDrafts,
   type ChatProposalDraft,

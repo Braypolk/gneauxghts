@@ -103,6 +103,11 @@ export interface NotepadCommandsDeps<TPaneId extends string> {
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
   refresh: NotepadRefreshCommands;
   forgottenNoteRetentionPreference: () => ForgottenNoteRetentionPreference;
+  canLeaveDocument?: (document: NoteDraftState) => boolean;
+  onNavigationBlocked?: () => void;
+  onDocumentLeaving?: (document: NoteDraftState) => void;
+  onDocumentOpened?: (document: NoteDraftState) => void;
+  onDocumentPresented?: (document: NoteDraftState) => void;
 }
 
 export interface NotepadPaneCommandAccess {

@@ -167,8 +167,8 @@ Backend:
 
 ## Proposals
 
-Note-change proposals are reviewed in a Cursor-like UX, then applied through the
-Rust proposal core.
+Note-change proposals are reviewed as editable pending changes in the normal
+CodeMirror note pane, then committed through the Rust proposal core.
 
 Current capabilities:
 
@@ -177,14 +177,15 @@ Current capabilities:
 - apply one change or an accepted subset via `apply_note_change_proposal`;
 - update indexes after apply;
 - chat strip: proposed file list with Keep / Undo / Review batch actions;
-- notepad: CodeMirror inline red/green unified diff with Keep / Undo;
-- make-mode chat can emit a `gneauxghts-proposal` JSON fence that loads into
-  the shared review session (hashes filled client-side from the context note);
+- notepad: real proposed text with mapped inline hunk Keep / Undo controls;
+- make-mode chat emits pathless `replace` / `insert` edits in a
+  `gneauxghts-proposal` JSON fence; Rust validates them against the active note;
 - fixture loader for QA when you need a canned multi-file proposal.
 
-Keep writes immediately; Undo drops the change from the review session without
-writing. v1 Keep/Undo is per note change (whole `NoteChange`), with line-level
-diffs for readability.
+Preview never writes a file. Hunk decisions remain in memory until the final
+resolution, when the current editable body is OCC-checked and committed in one
+note write. Undo preserves edits outside untouched AI hunks; modified hunks
+require an explicit Keep Current or Restore Original decision.
 
 Key files:
 

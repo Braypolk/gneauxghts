@@ -12,6 +12,7 @@ pub(crate) use config::{
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{
+    atomic_write_note,
     db_insert_forgotten_note, db_load_note_activity, db_remove_forgotten_note,
     db_set_last_chat_location, db_set_last_opened_note_id, db_set_note_collapsed,
     db_set_note_hidden, db_set_note_order,

@@ -19,16 +19,17 @@ pub(crate) use note_session::{
 pub(crate) use note_session::{load_note_session_from_notes_dir, open_note_from_notes_dir};
 
 use crate::{
-    app::AppData,
     index::AppState,
     semantic::{
         debug::SemanticDebugSnapshot, embed::SemanticModelDownloadResult, SemanticSettings,
         SemanticStatus,
     },
-    services::{NoteService, SettingsService, TaskService},
-    state::{current_vault_info, notes_root, VaultInfo},
+    state::{
+        current_vault_info, ensure_vault_scaffold, notes_root, set_notes_root, vault_root, VaultInfo,
+    },
     time::current_time_millis,
 };
+use note_persistence::{persist_note_session_with_outcome, NotePersistenceMode};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -36,12 +37,12 @@ use std::{
     time::Duration,
 };
 use task_commands::{
-    list_recent_tasks as list_recent_tasks_impl, list_tasks as list_tasks_impl,
-    set_note_collapsed as set_note_collapsed_impl, set_note_hidden as set_note_hidden_impl,
-    set_note_order as set_note_order_impl, set_task_hidden as set_task_hidden_impl,
+    delete_task_with_view as delete_task_impl, list_recent_tasks as list_recent_tasks_impl,
+    list_tasks as list_tasks_impl, set_note_collapsed as set_note_collapsed_impl,
+    set_note_hidden as set_note_hidden_impl, set_note_order as set_note_order_impl,
+    set_task_hidden as set_task_hidden_impl, toggle_task_with_view as toggle_task_impl,
 };
 use tauri::State;
-use tauri::{AppHandle, Emitter, Manager};
 
 /// Legacy "max age" parameter still passed to
 /// [`AppState::ensure_interactive_index`] for call-site compatibility.
@@ -262,9 +263,9 @@ pub(crate) fn load_note_session(state: State<'_, AppState>) -> Result<NoteSessio
     // `read_state_with_lookup` / `write_last_opened_and_recents`.
     let _foreground_guard = state.foreground_guard();
     // Forgotten-note cleanup is throttled to startup + a 5-minute background
-    // pass; the service intentionally skips the per-call cleanup.
-    let _ = prepare_notes_dir_with_state(true, Some(&state))?;
-    NoteService::new().load_session(&state)
+    // pass; the open path intentionally skips the per-call cleanup.
+    let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
+    load_note_session_from_notes_dir_with_state(&notes_dir, Some(&state))
 }
 
 #[tauri::command]
@@ -275,8 +276,8 @@ pub(crate) fn open_note(
 ) -> Result<NoteSession, String> {
     // See `load_note_session` for the rationale on the foreground guard.
     let _foreground_guard = state.foreground_guard();
-    let _ = prepare_notes_dir_with_state(false, Some(&state))?;
-    NoteService::new().open(&state, note_id, path)
+    let notes_dir = prepare_notes_dir_with_state(false, Some(&state))?;
+    open_note_from_notes_dir_with_state(&notes_dir, note_id, path, Some(&state))
 }
 
 #[tauri::command]
@@ -295,38 +296,97 @@ pub(crate) fn read_note(
 
 #[tauri::command]
 pub(crate) fn get_vault_info() -> Result<VaultInfo, String> {
-    SettingsService::new().vault_info()
+    current_vault_info()
 }
 
 #[tauri::command]
 pub(crate) fn set_vault_directory(
     state: State<'_, AppState>,
-    app_data: State<'_, AppData>,
     path: Option<String>,
 ) -> Result<VaultInfo, String> {
-    SettingsService::new().set_vault(&app_data, &state, path)
+    let info = match path.as_deref().map(str::trim) {
+        Some("") | None => set_notes_root(None),
+        Some(raw) => set_notes_root(Some(Path::new(raw))),
+    }?;
+    // Scaffold the newly-selected vault's `.gneauxghts` data/cache dirs
+    // and manifest up front so that, on the next launch, opening this
+    // vault finds a clean, initialized layout. Vault-local DBs and the
+    // HNSW cache still initialize lazily on that launch; live switching
+    // is intentionally deferred (globals, DB handles, and the watcher
+    // are bound once at startup), so `VaultInfo.requires_restart`
+    // remains true and the UI prompts for a restart. Best-effort: a
+    // scaffold failure here must not block recording the new path.
+    if let Ok(new_root) = vault_root() {
+        let _ = ensure_vault_scaffold(&new_root);
+    }
+    if let Ok(status) = state.semantic.get_status() {
+        state.events.semantic_status_changed(status);
+    }
+    state.events.vault_changed(info.clone());
+    Ok(info)
 }
 
 #[tauri::command]
 pub(crate) fn save_note(
     state: State<'_, AppState>,
-    app_data: State<'_, AppData>,
     title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<NoteSession, String> {
-    NoteService::new().save(&app_data, &state, title, markdown, current_path)
+    let outcome = persist_note_session_with_outcome(
+        &state,
+        title.clone(),
+        markdown,
+        current_path,
+        NotePersistenceMode::Save,
+    )?;
+    let session = outcome
+        .session
+        .clone()
+        .ok_or_else(|| "Saved note session is missing".to_string())?;
+    emit_note_saved(&state, &outcome, &title);
+    Ok(session)
 }
 
 #[tauri::command]
 pub(crate) fn remember_note(
     state: State<'_, AppState>,
-    app_data: State<'_, AppData>,
     title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<(), String> {
-    NoteService::new().remember(&app_data, &state, title, markdown, current_path)
+    let outcome = persist_note_session_with_outcome(
+        &state,
+        title.clone(),
+        markdown,
+        current_path,
+        NotePersistenceMode::Remember,
+    )?;
+    if outcome.persisted_path.is_some() {
+        emit_note_saved(&state, &outcome, &title);
+    }
+    Ok(())
+}
+
+fn emit_note_saved(
+    state: &AppState,
+    outcome: &note_persistence::PersistNoteOutcome,
+    title: &str,
+) {
+    let path = outcome.persisted_path.clone();
+    let note_id = outcome
+        .session
+        .as_ref()
+        .and_then(|session| session.note_id.clone());
+    let revision = state
+        .notes_index
+        .lock()
+        .ok()
+        .map(|index| index.revision())
+        .unwrap_or(0);
+    state
+        .events
+        .note_saved(note_id, path, title.to_string(), revision);
 }
 
 #[tauri::command]
@@ -397,23 +457,35 @@ pub(crate) fn set_note_order(
 #[tauri::command]
 pub(crate) fn toggle_task(
     state: State<'_, AppState>,
-    app_data: State<'_, AppData>,
     task_id: String,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    TaskService::new().toggle(&app_data, state, task_id, filter, show_hidden)
+    let patch = toggle_task_impl(state.clone(), task_id, filter, show_hidden)?;
+    emit_task_note_changed(&state, &patch);
+    Ok(patch)
 }
 
 #[tauri::command]
 pub(crate) fn delete_task(
     state: State<'_, AppState>,
-    app_data: State<'_, AppData>,
     task_id: String,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    TaskService::new().delete(&app_data, state, task_id, filter, show_hidden)
+    let patch = delete_task_impl(state.clone(), task_id, filter, show_hidden)?;
+    emit_task_note_changed(&state, &patch);
+    Ok(patch)
+}
+
+fn emit_task_note_changed(state: &AppState, patch: &TaskListGroupPatch) {
+    if let Some(note_path) = patch.note_path.as_deref() {
+        state.events.vault_note_changed_from_source(
+            &PathBuf::from(note_path),
+            false,
+            "taskMutation",
+        );
+    }
 }
 
 #[tauri::command]
@@ -425,13 +497,12 @@ pub(crate) fn get_semantic_settings(
 
 #[tauri::command]
 pub(crate) fn set_semantic_settings(
-    app: AppHandle,
     state: State<'_, AppState>,
     settings: SemanticSettings,
 ) -> Result<SemanticSettings, String> {
     let next_settings = state.semantic.set_settings(settings)?;
     state.semantic.warmup_model_in_background();
-    emit_semantic_status_changed(&app, &state);
+    emit_semantic_status_changed(&state);
     Ok(next_settings)
 }
 
@@ -446,32 +517,23 @@ pub(crate) fn report_user_activity(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub(crate) fn rebuild_semantic_index(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub(crate) fn rebuild_semantic_index(state: State<'_, AppState>) -> Result<(), String> {
     state.semantic.rebuild_index()?;
-    emit_semantic_status_changed(&app, &state);
+    emit_semantic_status_changed(&state);
     Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn pause_semantic_indexing(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub(crate) fn pause_semantic_indexing(state: State<'_, AppState>) -> Result<(), String> {
     state.semantic.pause_indexing()?;
-    emit_semantic_status_changed(&app, &state);
+    emit_semantic_status_changed(&state);
     Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn resume_semantic_indexing(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
+pub(crate) fn resume_semantic_indexing(state: State<'_, AppState>) -> Result<(), String> {
     state.semantic.resume_indexing()?;
-    emit_semantic_status_changed(&app, &state);
+    emit_semantic_status_changed(&state);
     Ok(())
 }
 
@@ -505,21 +567,11 @@ pub(crate) fn clear_semantic_debug_metrics(state: State<'_, AppState>) -> Result
     state.semantic.clear_debug_metrics()
 }
 
-/// Re-export of the typed event channel name so legacy callers keep
-/// linking against `commands::SEMANTIC_STATUS_CHANGED_EVENT`.
-pub(crate) use crate::app::events::SEMANTIC_STATUS_CHANGED_EVENT;
-
 /// Best-effort emit of the current semantic status to the frontend.
 /// Used by mutation commands so the UI can reduce/avoid polling.
-/// Now routed through the typed event bus when an [`AppData`] state is
-/// available; falls back to the raw AppHandle emit as a safety net.
-pub(crate) fn emit_semantic_status_changed(app: &AppHandle, state: &AppState) {
+pub(crate) fn emit_semantic_status_changed(state: &AppState) {
     if let Ok(status) = state.semantic.get_status() {
-        if let Some(app_data) = app.try_state::<AppData>() {
-            app_data.events.semantic_status_changed(status);
-        } else {
-            let _ = app.emit(SEMANTIC_STATUS_CHANGED_EVENT, status);
-        }
+        state.events.semantic_status_changed(status);
     }
 }
 

@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 /// Strategy for resolving a note id to a path.
@@ -345,8 +347,40 @@ pub(crate) fn persist_note(
     }
 
     crate::vault_watcher::record_self_save(&target_path);
-    fs::write(&target_path, prepared_markdown).map_err(|err| err.to_string())?;
+    atomic_write_note(&target_path, prepared_markdown.as_bytes())?;
     Ok(Some(target_path.to_string_lossy().into_owned()))
+}
+
+/// Publish a fully-written note in one rename. Keeping the temporary file next
+/// to its destination makes the rename atomic on the vault filesystem.
+pub(crate) fn atomic_write_note(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Note path has no parent directory.".to_string())?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Note path has no file name.".to_string())?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| err.to_string())?
+        .as_nanos();
+    let temporary = parent.join(format!(".{name}.gneauxghts-{nonce}.tmp"));
+    let write_result = (|| -> Result<(), String> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|err| err.to_string())?;
+        file.write_all(contents).map_err(|err| err.to_string())?;
+        file.sync_all().map_err(|err| err.to_string())?;
+        fs::rename(&temporary, path).map_err(|err| err.to_string())?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    write_result
 }
 
 pub(crate) fn derive_file_stem(markdown: &str) -> String {

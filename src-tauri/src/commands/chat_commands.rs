@@ -8,7 +8,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp::Reverse, collections::HashSet, fs};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -199,7 +199,6 @@ pub(crate) fn chat_create_excerpt(
 
 #[tauri::command]
 pub(crate) fn chat_remember_excerpt(
-    app: AppHandle,
     service: State<'_, ChatService>,
     state: State<'_, AppState>,
     excerpt_id: String,
@@ -207,14 +206,13 @@ pub(crate) fn chat_remember_excerpt(
     let _foreground_guard = state.foreground_guard();
     let excerpt = service.set_excerpt_remembered(&excerpt_id, true)?;
     sync_chat_recall(&service, &state, &excerpt.conversation_id)?;
-    crate::commands::emit_semantic_status_changed(&app, &state);
-    emit_chat_recall_changed(&app, &service, &excerpt.conversation_id)?;
+    crate::commands::emit_semantic_status_changed(&state);
+    emit_chat_recall_changed(&service, &state, &excerpt.conversation_id)?;
     Ok(excerpt)
 }
 
 #[tauri::command]
 pub(crate) fn chat_unremember_excerpt(
-    app: AppHandle,
     service: State<'_, ChatService>,
     state: State<'_, AppState>,
     excerpt_id: String,
@@ -222,8 +220,8 @@ pub(crate) fn chat_unremember_excerpt(
     let _foreground_guard = state.foreground_guard();
     let excerpt = service.set_excerpt_remembered(&excerpt_id, false)?;
     sync_chat_recall(&service, &state, &excerpt.conversation_id)?;
-    crate::commands::emit_semantic_status_changed(&app, &state);
-    emit_chat_recall_changed(&app, &service, &excerpt.conversation_id)?;
+    crate::commands::emit_semantic_status_changed(&state);
+    emit_chat_recall_changed(&service, &state, &excerpt.conversation_id)?;
     Ok(excerpt)
 }
 
@@ -242,19 +240,17 @@ fn sync_chat_recall(
 }
 
 fn emit_chat_recall_changed(
-    app: &AppHandle,
     service: &ChatService,
+    state: &AppState,
     conversation_id: &str,
 ) -> Result<(), String> {
-    if let Some(app_data) = app.try_state::<crate::app::AppData>() {
-        app_data.events.vault_document_changed(
-            &service.recall_document(conversation_id)?.path,
-            false,
-            DocumentKind::ChatIndex,
-            "chatRecall",
-            Some(conversation_id.to_string()),
-        );
-    }
+    state.events.vault_document_changed(
+        &service.recall_document(conversation_id)?.path,
+        false,
+        DocumentKind::ChatIndex,
+        "chatRecall",
+        Some(conversation_id.to_string()),
+    );
     Ok(())
 }
 
@@ -289,22 +285,20 @@ pub(crate) fn chat_revoke_note(
 
 #[tauri::command]
 pub(crate) fn chat_resolve_projection_conflict(
-    app: AppHandle,
     service: State<'_, ChatService>,
+    state: State<'_, AppState>,
     conversation_id: String,
     action: String,
 ) -> Result<Option<String>, String> {
     let converted = service.resolve_projection_conflict(&conversation_id, &action)?;
-    if let Some(app_data) = app.try_state::<crate::app::AppData>() {
-        let projection = service.recall_document(&conversation_id)?.path;
-        app_data.events.vault_document_changed(
-            &projection,
-            false,
-            DocumentKind::ChatIndex,
-            "chatProjectionConflictResolved",
-            Some(conversation_id),
-        );
-    }
+    let projection = service.recall_document(&conversation_id)?.path;
+    state.events.vault_document_changed(
+        &projection,
+        false,
+        DocumentKind::ChatIndex,
+        "chatProjectionConflictResolved",
+        Some(conversation_id),
+    );
     Ok(converted)
 }
 

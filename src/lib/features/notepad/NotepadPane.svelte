@@ -180,6 +180,9 @@
             onProposalKeepAll={viewModel.onProposalKeepAll}
             onProposalUndoAll={viewModel.onProposalUndoAll}
             onProposalReview={viewModel.onProposalReview}
+            onProposalRetry={viewModel.onProposalRetry}
+            onProposalCopyCurrent={viewModel.onProposalCopyCurrent}
+            onProposalReloadDisk={viewModel.onProposalReloadDisk}
             onProposalLoadFixture={viewModel.onProposalLoadFixture}
           />
         {/if}

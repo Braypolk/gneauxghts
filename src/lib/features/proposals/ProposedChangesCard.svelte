@@ -11,6 +11,9 @@
     onKeepAll: () => void | Promise<void>;
     onUndoAll: () => void | Promise<void>;
     onReview: () => void | Promise<void>;
+    onRetry?: () => void | Promise<void>;
+    onCopyCurrent?: () => void | Promise<void>;
+    onReloadDisk?: () => void | Promise<void>;
     onLoadFixture?: () => void | Promise<void>;
   }
 
@@ -23,6 +26,9 @@
     onKeepAll,
     onUndoAll,
     onReview,
+    onRetry,
+    onCopyCurrent,
+    onReloadDisk,
     onLoadFixture
   }: Props = $props();
 
@@ -34,7 +40,9 @@
   );
   const batchDisabled = $derived(pendingCount === 0 || snapshot.isApplying);
   const filesLabel = $derived(
-    `${pendingCount} ${pendingCount === 1 ? 'File' : 'Files'}`
+    snapshot.reviewHunks
+      ? `${snapshot.reviewHunks.unresolved} of ${snapshot.reviewHunks.total} hunks remaining`
+      : `${pendingCount} ${pendingCount === 1 ? 'File' : 'Files'}`
   );
 
   function kindLabel(change: PendingProposalChange): string {
@@ -91,7 +99,7 @@
           disabled={batchDisabled}
           onclick={() => void onUndoAll()}
         >
-          Undo
+          {snapshot.reviewHunks?.unresolved === snapshot.reviewHunks?.total || pendingCount === snapshot.changes.length ? 'Undo All' : 'Undo Remaining'}
         </button>
         <button
           type="button"
@@ -99,7 +107,7 @@
           disabled={batchDisabled}
           onclick={() => void onKeepAll()}
         >
-          Keep
+          {snapshot.reviewHunks?.unresolved === snapshot.reviewHunks?.total || pendingCount === snapshot.changes.length ? 'Keep All' : 'Keep Remaining'}
         </button>
         <button
           type="button"
@@ -114,7 +122,7 @@
 
     {#if pendingCount > 0}
       <p class="mt-1.5 text-xs text-muted-foreground">
-        Review opens the note with an inline diff.
+        Review focuses the next unresolved hunk.
       </p>
     {/if}
 
@@ -174,6 +182,13 @@
         role="alert"
       >
         {snapshot.error}
+        {#if snapshot.isConflicted && (onRetry || onCopyCurrent || onReloadDisk)}
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            {#if onRetry}<button type="button" class="rounded border border-destructive/30 px-2 py-1" onclick={() => void onRetry()}>Retry</button>{/if}
+            {#if onCopyCurrent}<button type="button" class="rounded border border-destructive/30 px-2 py-1" onclick={() => void onCopyCurrent()}>Copy Current</button>{/if}
+            {#if onReloadDisk}<button type="button" class="rounded border border-destructive/30 px-2 py-1" onclick={() => void onReloadDisk()}>Reload Disk</button>{/if}
+          </div>
+        {/if}
       </div>
     {/if}
   </div>

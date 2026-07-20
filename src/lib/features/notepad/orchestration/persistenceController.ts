@@ -22,6 +22,8 @@ export interface PersistenceControllerParams {
     snapshot: SessionSnapshot,
   ) => NoteDraftState;
   isTitleEditing?: (note: NoteDraftState) => boolean;
+  /** Prevent generic save paths from persisting an editable proposal review. */
+  shouldSuppressPersistence?: (note: NoteDraftState) => boolean;
   /** @deprecated retained for backward compatibility; per-note timers now live in DocumentRegistry. */
   timers?: Map<NoteKey, number>;
   /** @deprecated retained for backward compatibility; per-note queues now live in DocumentRegistry. */
@@ -68,6 +70,9 @@ export function createNotepadPersistenceController(
   }
 
   async function persistNote(note: NoteDraftState) {
+    if (params.shouldSuppressPersistence?.(note)) {
+      return;
+    }
     const saveInvalidation = note.saveInvalidation;
     const title = note.title;
     const markdown = note.bodyMarkdown;

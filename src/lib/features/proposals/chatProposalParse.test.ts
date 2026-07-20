@@ -43,19 +43,44 @@ describe('chatProposalParse', () => {
       path: '/vault/Note.md',
       title: 'Note',
       lastSavedMarkdown: 'Base'
-    }, async (markdown) => `hash:${markdown}`);
+    }, {
+      hashNotePath: async (path) => `disk:${path}`,
+      hashMarkdown: async (markdown) => `hash:${markdown}`
+    });
 
     expect(resolved).toEqual({
       changes: [
         {
           kind: 'updateNote',
           path: '/vault/Note.md',
-          baseContentHash: 'hash:Base',
-          newTitle: 'N',
+          baseContentHash: 'disk:/vault/Note.md',
+          // Context updates keep the open note title (ignore model rename).
+          newTitle: 'Note',
           newMarkdown: 'Next'
         }
       ],
       baseMarkdownByPath: { '/vault/Note.md': 'Base' }
+    });
+  });
+
+  it('keeps context title when model invents a colliding rename', async () => {
+    const drafts = parseChatProposalDrafts(
+      '```gneauxghts-proposal\n{"kind":"updateNote","newTitle":"Fixture draft note","newMarkdown":"Body"}\n```'
+    );
+    const resolved = await resolveChatProposalDrafts(drafts!, {
+      path: '/vault/Fixture draft note 2.md',
+      title: 'Fixture draft note 2',
+      lastSavedMarkdown: 'Old'
+    }, {
+      hashNotePath: async () => 'disk-hash',
+      hashMarkdown: async () => 'body-hash'
+    });
+
+    expect(resolved?.changes[0]).toMatchObject({
+      kind: 'updateNote',
+      path: '/vault/Fixture draft note 2.md',
+      newTitle: 'Fixture draft note 2',
+      newMarkdown: 'Body'
     });
   });
 

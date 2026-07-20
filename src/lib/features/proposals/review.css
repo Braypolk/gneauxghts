@@ -18,6 +18,13 @@
   background: color-mix(in oklab, var(--foreground) 8%, transparent);
 }
 
+.cm-gn-proposal-deleted-anchor {
+  display: inline-block;
+  margin: 0 0.35rem;
+  color: var(--destructive);
+  font-weight: 700;
+}
+
 .cm-gn-proposal-added::before {
   content: '';
   position: absolute;
@@ -34,11 +41,10 @@
 }
 
 .cm-gn-proposal-actions {
-  display: flex;
+  display: inline-flex;
   gap: 0.5rem;
   align-items: center;
-  margin: 0.35rem 0 0.75rem;
-  padding-left: 0.15rem;
+  margin: 0 0 0 0.45rem;
 }
 
 .cm-gn-proposal-undo,
@@ -75,6 +81,7 @@
   filter: brightness(1.08);
 }
 
-.cm-editor[data-proposal-review='true'] {
-  cursor: default;
+.cm-gn-proposal-actions button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }

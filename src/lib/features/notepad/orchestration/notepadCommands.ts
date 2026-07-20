@@ -340,7 +340,6 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     ) {
       return;
     }
-
     setRefreshingFromDisk(true);
     try {
       const session = await readNoteSession(note.currentNoteId, currentPath);
@@ -499,6 +498,10 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     flushAllPendingDocumentSyncs();
     documents.flushAllPendingCursorSaves();
     const note = getNavigationDocument();
+    if (deps.canLeaveDocument?.(note) === false) {
+      deps.onNavigationBlocked?.();
+      return;
+    }
     documents.saveCursorPositionForDocument(note);
     documents.saveSharedEditorStateForDocument(note);
     cancelPendingAutosave(note);
@@ -529,6 +532,10 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     flushAllPendingDocumentSyncs();
     documents.flushAllPendingCursorSaves();
     const note = getPaneDocument(paneId);
+    if (deps.canLeaveDocument?.(note) === false) {
+      deps.onNavigationBlocked?.();
+      return note;
+    }
     documents.saveCursorPositionForDocument(note);
     documents.saveSharedEditorStateForDocument(note);
     cancelPendingAutosave(note);
@@ -585,6 +592,16 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     const previousDocument = getPaneDocument(paneId);
     if (!options.noteId && !notePath) {
       return;
+    }
+    if (
+      previousDocument.currentNotePath !== notePath &&
+      deps.canLeaveDocument?.(previousDocument) === false
+    ) {
+      deps.onNavigationBlocked?.();
+      return;
+    }
+    if (previousDocument.currentNotePath !== notePath) {
+      deps.onDocumentLeaving?.(previousDocument);
     }
 
     const targetLocation: NavLocation = {
@@ -644,6 +661,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
 
     const nextDocument = adoptSnapshotForPane(state, paneId, session);
+    deps.onDocumentOpened?.(nextDocument);
     setRecentlyForgotten(null);
     closeWikilinkAutocomplete(paneId);
     clearSelectedRelatedText();
@@ -672,6 +690,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
         return;
       }
     }
+    deps.onDocumentPresented?.(nextDocument);
 
     if ((options.focusEditorAfterOpen ?? true) && getPaneKind(paneId) === 'editor') {
       await tick();
@@ -734,6 +753,22 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return;
     }
 
+    const closingDocument = getPaneDocument(paneId);
+    const remainingEditorsForDocument = order.filter(
+      (candidate) =>
+        candidate !== paneId &&
+        getPaneKind(candidate) === 'editor' &&
+        getPaneDocument(candidate).key === closingDocument.key
+    ).length;
+    if (
+      deps.canLeaveDocument?.(closingDocument) === false &&
+      getPaneKind(paneId) === 'editor' &&
+      remainingEditorsForDocument === 0
+    ) {
+      deps.onNavigationBlocked?.();
+      return;
+    }
+
     const wasPaneCommand = getPaneCommandPaneId() === paneId;
     const orphanPlaceholderKey = wasPaneCommand ? getPaneDocument(paneId).key : null;
 
@@ -763,9 +798,23 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       return;
     }
 
-    touchCurrentLocation(paneId);
-
     const document = getPaneDocument(paneId);
+    if (kind === 'chat' && deps.canLeaveDocument?.(document) === false) {
+      const remainingEditorsForDocument = getPaneOrder().filter(
+        (candidate) =>
+          candidate !== paneId &&
+          getPaneKind(candidate) === 'editor' &&
+          getPaneDocument(candidate).key === document.key
+      ).length;
+      if (remainingEditorsForDocument === 0) {
+        deps.onNavigationBlocked?.();
+        return;
+      }
+    }
+    if (kind === 'chat') {
+      deps.onDocumentLeaving?.(document);
+    }
+    touchCurrentLocation(paneId);
     setStoredPaneKind(state, paneId, kind);
     if (kind === 'chat') {
       // Persist the chat slot as soon as we enter thought partner, not only
@@ -880,6 +929,10 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
         cleanupNoteRuntime(placeholderKey);
       }
       await finalizePaneCommandSelection(paneId);
+      // This shortcut shares the existing note directly instead of flowing
+      // through openNotePath, so it must explicitly run the same presentation
+      // hook that installs any active proposal review in the new pane.
+      deps.onDocumentPresented?.(shared);
       flushDocumentEditorSync(shared);
       return;
     }

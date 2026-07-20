@@ -1,20 +1,10 @@
-//! Application service layer.
+//! Application service helpers that sit beside command shims.
 //!
-//! Services sit between thin Tauri command shims (in
-//! [`crate::commands`]) and the lower-level domain/infrastructure
-//! modules. Each service exposes a small surface focused on a single use
-//! case. Services are stateless structs; they take the pieces they need
-//! (state references, event bus) as method parameters or borrow them from
-//! [`crate::app::AppData`].
+//! Prefer keeping orchestration in command modules and domain code.
+//! This module only holds shared workers that are not IPC entry points.
 
 pub(crate) mod background_index_queue;
 pub(crate) mod current_document;
-pub(crate) mod note_service;
-pub(crate) mod settings_service;
-pub(crate) mod task_service;
 
 pub(crate) use background_index_queue::BackgroundIndexQueue;
 pub(crate) use current_document::{resolve_current_document, CurrentDocumentRequest};
-pub(crate) use note_service::NoteService;
-pub(crate) use settings_service::SettingsService;
-pub(crate) use task_service::TaskService;

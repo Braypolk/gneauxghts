@@ -53,7 +53,9 @@ function emptySnapshot(): ProposalReviewSessionSnapshot {
     changes: [],
     activeChangeId: null,
     isApplying: false,
-    error: null
+    isConflicted: false,
+    error: null,
+    reviewHunks: null
   };
 }
 
@@ -101,7 +103,9 @@ export function createProposalReviewSession() {
       changes: pending,
       activeChangeId: pending.find((change) => change.status === 'pending')?.id ?? null,
       isApplying: false,
-      error: null
+      isConflicted: false,
+      error: null,
+      reviewHunks: null
     };
   }
 
@@ -148,6 +152,14 @@ export function createProposalReviewSession() {
     snapshot = { ...snapshot, error };
   }
 
+  function setConflicted(isConflicted: boolean) {
+    snapshot = { ...snapshot, isConflicted };
+  }
+
+  function setReviewHunks(total: number, unresolved: number) {
+    snapshot = { ...snapshot, reviewHunks: { total, unresolved } };
+  }
+
   function setChangeError(changeId: string, error: string) {
     setStatus(changeId, 'pending', error);
     snapshot = { ...snapshot, error };
@@ -187,6 +199,8 @@ export function createProposalReviewSession() {
     markAllUndone,
     setApplying,
     setError,
+    setConflicted,
+    setReviewHunks,
     setChangeError,
     findPendingForPath,
     nextPending

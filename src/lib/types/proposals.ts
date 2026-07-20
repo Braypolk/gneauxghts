@@ -27,6 +27,47 @@ export interface ApplyNoteChangesResult {
   applied: AppliedNoteChange[];
 }
 
+export type ProposedTextEdit =
+  | {
+      kind: 'replace';
+      oldText: string;
+      newText: string;
+      contextBefore?: string;
+      contextAfter?: string;
+    }
+  | {
+      kind: 'insert';
+      newText: string;
+      contextBefore?: string;
+      contextAfter?: string;
+    };
+
+export interface ProposalPreviewHunk {
+  id: string;
+  baseFrom: number;
+  baseTo: number;
+  proposedFrom: number;
+  proposedTo: number;
+  oldText: string;
+  newText: string;
+}
+
+export interface ProposalPreview {
+  reviewId: string;
+  notePath: string;
+  title: string;
+  baseContentHash: string;
+  baseEditorMarkdown: string;
+  proposedEditorMarkdown: string;
+  hunks: ProposalPreviewHunk[];
+}
+
+export interface CommitNoteReviewResult {
+  status: 'committed' | 'conflict';
+  applied: AppliedNoteChange | null;
+  message: string | null;
+}
+
 export function noteChangePath(change: NoteChange): string | null {
   if (change.kind === 'createNote') return null;
   return change.path;

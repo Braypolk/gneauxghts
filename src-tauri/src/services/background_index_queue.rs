@@ -1,10 +1,10 @@
 //! Background queue for save-side indexing/projection work.
 //!
-//! Save (`NoteService::save`) is a hot path. The frontend wants the saved
-//! `NoteSession` back as soon as the file is on disk so the UI can stop
-//! showing a "saving" indicator and so that an immediately-following
-//! `open_note` for a different note is not blocked behind lexical index
-//! and SQLite task projection writes.
+//! Note save is a hot path. The frontend wants the saved `NoteSession` back
+//! as soon as the file is on disk so the UI can stop showing a "saving"
+//! indicator and so that an immediately-following `open_note` for a
+//! different note is not blocked behind lexical index and SQLite task
+//! projection writes.
 //!
 //! This queue moves those two pieces of work onto a single dedicated worker
 //! thread:

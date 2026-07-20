@@ -470,7 +470,12 @@ class FileEditorRuntime {
         controller.view.state.update({
           changes: { from: 0, to: controller.view.state.doc.length, insert: markdown },
           selection,
-          annotations: [syncAnnotation.of(true), Transaction.addToHistory.of(false), isolateHistory.of('full')]
+          annotations: [
+            syncAnnotation.of(true),
+            Transaction.addToHistory.of(false),
+            isolateHistory.of('full'),
+            Transaction.userEvent.of('input.external-reset')
+          ]
         })
       );
     }
@@ -569,6 +574,10 @@ export function buildRootForwardSpec(transaction: Transaction) {
 
 function collectHistoryAnnotations(transaction: Transaction) {
   const annotations = [];
+  const addToHistory = transaction.annotation(Transaction.addToHistory);
+  if (addToHistory === false) {
+    annotations.push(Transaction.addToHistory.of(false));
+  }
   const userEvent = transaction.annotation(Transaction.userEvent);
   if (userEvent) {
     annotations.push(Transaction.userEvent.of(userEvent));
@@ -1825,11 +1834,15 @@ export function replaceEditorContent(
   }
 
   const selection = clampSelection(readSelection(controller.view), markdown.length);
-  controller.view.dispatch(
-    controller.view.state.update({
-      changes: { from: 0, to: controller.view.state.doc.length, insert: markdown },
-      selection,
-      annotations: [Transaction.addToHistory.of(false), isolateHistory.of('full')]
+    controller.view.dispatch(
+      controller.view.state.update({
+        changes: { from: 0, to: controller.view.state.doc.length, insert: markdown },
+        selection,
+        annotations: [
+          Transaction.addToHistory.of(false),
+          isolateHistory.of('full'),
+          Transaction.userEvent.of('input.external-reset')
+        ]
     })
   );
   controller.onMarkdownChange(markdown);

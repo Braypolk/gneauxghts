@@ -20,7 +20,9 @@ export interface ProposalReviewSessionSnapshot {
   changes: PendingProposalChange[];
   activeChangeId: string | null;
   isApplying: boolean;
+  isConflicted: boolean;
   error: string | null;
+  reviewHunks: { total: number; unresolved: number } | null;
 }
 
 export interface ProposalReviewActions {

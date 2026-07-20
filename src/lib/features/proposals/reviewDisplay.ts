@@ -1,85 +1,62 @@
+import type { ProposalPreview } from '$lib/types/proposals';
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import {
   createProposalReviewExtension,
-  reviewStateFromChange,
-  type ProposalReviewEditorState
+  proposalTransaction,
+  resolveReviewHunk,
+  type ReviewHunkState
 } from './reviewExtension';
-import type { PendingProposalChange } from './types';
-import type { ReviewHoldStore } from './reviewHold.svelte';
 import '$lib/features/proposals/review.css';
 
-export interface EnterProposalReviewParams {
-  document: NoteDraftState;
-  change: PendingProposalChange;
+export function enterProposalReviewView(params: {
+  preview: ProposalPreview;
   editor: EditorCapabilityAdapter | null;
-  holds: ReviewHoldStore;
-  onKeep: (changeId: string) => void;
-  onUndo: (changeId: string) => void;
-  replaceDocumentMarkdown: (markdown: string) => void | Promise<void>;
-  setTitle?: (title: string) => void;
-}
-
-export async function enterProposalReviewView(
-  params: EnterProposalReviewParams
-): Promise<void> {
-  const { document, change, editor, holds, onKeep, onUndo, replaceDocumentMarkdown, setTitle } =
-    params;
-
-  if (!editor?.isReady()) {
-    throw new Error('Editor is not ready for proposal review.');
+  siblingEditors?: EditorCapabilityAdapter[];
+  initialHunks?: ReviewHunkState[];
+  alreadyApplied?: boolean;
+  onKeep: (hunk: ReviewHunkState) => void;
+  onUndo: (hunk: ReviewHunkState) => void;
+  onStateChange?: (state: import('./reviewExtension').ProposalReviewState) => void;
+}): void {
+  const { preview, editor } = params;
+  if (!editor?.isReady()) throw new Error('Editor is not ready for proposal review.');
+  if (!params.alreadyApplied && editor.getDocumentText?.() !== preview.baseEditorMarkdown) {
+    throw new Error('Note changed before the proposal could be applied. Save or recreate it.');
   }
-
-  holds.begin(document, change);
-
-  try {
-    if (change.change.kind === 'updateNote') {
-      setTitle?.(change.change.newTitle);
-    } else if (change.change.kind === 'createNote') {
-      setTitle?.(change.title);
-    }
-
-    const review = reviewStateFromChange(change);
-    // Install decorations before replacing so the plugin rebuilds on doc change.
-    const ok = editor.setProposalReviewExtensions(
-      createProposalReviewExtension({
-        review,
-        onKeep,
-        onUndo
-      })
-    );
-    if (!ok) {
-      throw new Error(
-        'Could not enable proposal review decorations. Remount the note pane and try again.'
-      );
-    }
-
-    await replaceDocumentMarkdown(change.diff.unifiedText);
-  } catch (error) {
-    await exitProposalReviewView({
-      document,
-      editor,
-      holds,
-      restoreDocumentMarkdown: replaceDocumentMarkdown,
-      setTitle
+  const changes = preview.hunks.map((hunk) => ({
+    from: hunk.baseFrom,
+    to: hunk.baseTo,
+    insert: hunk.newText
+  }));
+  if (!params.alreadyApplied && !editor.applyChanges?.(changes, proposalTransaction.of(true))) {
+    throw new Error('Could not apply proposal changes to the editor.');
+  }
+  for (const candidate of [editor, ...(params.siblingEditors ?? [])]) {
+    if (!candidate?.isReady()) continue;
+    const review = createProposalReviewExtension({
+      reviewId: preview.reviewId,
+      hunks: preview.hunks,
+      initialHunks: params.initialHunks,
+      onKeep: params.onKeep,
+      onUndo: params.onUndo,
+      onStateChange: params.onStateChange
     });
-    throw error;
+    if (!candidate.setProposalReviewExtensions(review.extension)) {
+      throw new Error('Could not enable proposal review decorations.');
+    }
+    candidate.setProposalReviewStateReader?.(review.read);
   }
 }
 
-export async function exitProposalReviewView(params: {
-  document: NoteDraftState;
-  editor: EditorCapabilityAdapter | null;
-  holds: ReviewHoldStore;
-  restoreDocumentMarkdown: (markdown: string) => void | Promise<void>;
-  setTitle?: (title: string) => void;
-}): Promise<void> {
-  const hold = params.holds.end(params.document.key);
-  params.editor?.setProposalReviewExtensions(null);
-  if (hold) {
-    params.setTitle?.(hold.title);
-    await params.restoreDocumentMarkdown(hold.bodyMarkdown);
-  }
+export function resolveProposalHunk(
+  editor: EditorCapabilityAdapter | null,
+  id: string,
+  status: 'kept' | 'undone'
+): void {
+  editor?.dispatchEffects?.(resolveReviewHunk.of({ id, status }));
 }
 
-export type { ProposalReviewEditorState };
+export function exitProposalReviewView(editor: EditorCapabilityAdapter | null): void {
+  editor?.setProposalReviewExtensions(null);
+  editor?.setProposalReviewStateReader?.(null);
+}

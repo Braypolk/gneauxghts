@@ -1,5 +1,4 @@
 use crate::{
-    app::AppData,
     chat::ChatService,
     index::AppState,
     semantic::db::content_hash,
@@ -332,19 +331,15 @@ fn flush_dirty_batch(
             if let Some(chat) = app_handle.try_state::<ChatService>() {
                 let _ = chat.mark_projection_detached(&chat_id);
             }
-            if let Some(app_data) = app_handle.try_state::<AppData>() {
-                let kind = crate::note::document_kind(&markdown);
-                app_data.events.vault_document_changed(
-                    &path,
-                    false,
-                    kind,
-                    "externalChatProjection",
-                    Some(chat_id.clone()),
-                );
-                app_data
-                    .events
-                    .chat_projection_conflict(chat_id, &path, false);
-            }
+            let kind = crate::note::document_kind(&markdown);
+            state.events.vault_document_changed(
+                &path,
+                false,
+                kind,
+                "externalChatProjection",
+                Some(chat_id.clone()),
+            );
+            state.events.chat_projection_conflict(chat_id, &path, false);
             continue;
         }
         ordinary_present.push((path, markdown, modified_millis));
@@ -357,25 +352,21 @@ fn flush_dirty_batch(
             if let Some(chat) = app_handle.try_state::<ChatService>() {
                 let _ = chat.mark_projection_detached(&chat_id);
             }
-            if let Some(app_data) = app_handle.try_state::<AppData>() {
-                app_data.events.vault_document_changed(
-                    &path,
-                    true,
-                    if path
-                        .file_name()
-                        .is_some_and(|name| name == "Conversation.md")
-                    {
-                        crate::note::DocumentKind::ChatIndex
-                    } else {
-                        crate::note::DocumentKind::ChatTranscript
-                    },
-                    "externalChatProjection",
-                    Some(chat_id.clone()),
-                );
-                app_data
-                    .events
-                    .chat_projection_conflict(chat_id, &path, true);
-            }
+            state.events.vault_document_changed(
+                &path,
+                true,
+                if path
+                    .file_name()
+                    .is_some_and(|name| name == "Conversation.md")
+                {
+                    crate::note::DocumentKind::ChatIndex
+                } else {
+                    crate::note::DocumentKind::ChatTranscript
+                },
+                "externalChatProjection",
+                Some(chat_id.clone()),
+            );
+            state.events.chat_projection_conflict(chat_id, &path, true);
             continue;
         }
         ordinary_removed.push(path);
@@ -424,10 +415,8 @@ fn flush_dirty_batch(
         // and refresh the new one.
         state.mark_notes_index_dirty(removed_path, "watcher-move")?;
         state.mark_notes_index_dirty(new_path, "watcher-move")?;
-        if let Some(app_data) = app_handle.try_state::<AppData>() {
-            app_data.events.vault_note_changed(removed_path, true);
-            app_data.events.vault_note_changed(new_path, false);
-        }
+        state.events.vault_note_changed(removed_path, true);
+        state.events.vault_note_changed(new_path, false);
 
         present_consumed[present_index] = true;
         removed_consumed[removed_index] = true;
@@ -446,9 +435,7 @@ fn flush_dirty_batch(
                 .queue_note_update(path, markdown.clone(), *modified_millis)?;
         }
         state.mark_notes_index_dirty(path, "watcher")?;
-        if let Some(app_data) = app_handle.try_state::<AppData>() {
-            app_data.events.vault_note_changed(path, false);
-        }
+        state.events.vault_note_changed(path, false);
     }
 
     // Remaining removed paths are genuine deletes.
@@ -458,9 +445,7 @@ fn flush_dirty_batch(
         }
         state.semantic.queue_delete_note(path)?;
         state.mark_notes_index_dirty(path, "watcher")?;
-        if let Some(app_data) = app_handle.try_state::<AppData>() {
-            app_data.events.vault_note_changed(path, true);
-        }
+        state.events.vault_note_changed(path, true);
     }
 
     Ok(())

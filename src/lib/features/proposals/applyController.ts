@@ -1,5 +1,5 @@
 import type { ApplyNoteChangesResult } from '$lib/types/proposals';
-import { applyNoteChangeProposal } from './api';
+import { applyNoteChangeProposal, proposalErrorMessage } from './api';
 import type { ProposalReviewSession } from './reviewSession.svelte';
 import type { PendingProposalChange } from './types';
 
@@ -44,9 +44,11 @@ export function createProposalApplyController(
       await hooks.onKept?.(change, result);
       return true;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to apply this change.';
-      session.setChangeError(changeId, message);
+      console.error('Proposal keep failed:', error);
+      session.setChangeError(
+        changeId,
+        proposalErrorMessage(error, 'Unable to apply this change.')
+      );
       return false;
     } finally {
       session.setApplying(false);
@@ -76,9 +78,8 @@ export function createProposalApplyController(
       if (last) await hooks.onKept?.(last, result);
       return true;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unable to apply proposed changes.';
-      session.setError(message);
+      console.error('Proposal keep-all failed:', error);
+      session.setError(proposalErrorMessage(error, 'Unable to apply proposed changes.'));
       return false;
     } finally {
       session.setApplying(false);

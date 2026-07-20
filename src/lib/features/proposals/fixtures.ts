@@ -1,11 +1,11 @@
 import type { NoteChange } from '$lib/types/proposals';
-import { hashMarkdownContent } from './api';
+import { hashNoteAtPath } from './api';
 import { proposalReviewSession } from './reviewSession.svelte';
 
 export interface FixtureActiveNote {
   path: string | null;
   title: string;
-  /** Disk/saved markdown — used for base hash + diff. */
+  /** Disk/saved editor body — used for diffs (not OCC hashes). */
   lastSavedMarkdown: string;
 }
 
@@ -54,7 +54,7 @@ export async function loadUpdateFixtureForActiveNote(
     return false;
   }
 
-  const baseContentHash = await hashMarkdownContent(note.lastSavedMarkdown);
+  const baseContentHash = await hashNoteAtPath(note.path);
   const newTitle = `${note.title.trim() || 'Note'} (revised)`;
   const newMarkdown = buildFixtureProposedMarkdown(note.lastSavedMarkdown);
 
@@ -78,7 +78,7 @@ export async function loadMultiFileFixture(note: FixtureActiveNote): Promise<boo
     return false;
   }
 
-  const baseContentHash = await hashMarkdownContent(note.lastSavedMarkdown);
+  const baseContentHash = await hashNoteAtPath(note.path);
   const update: NoteChange = {
     kind: 'updateNote',
     path: note.path,

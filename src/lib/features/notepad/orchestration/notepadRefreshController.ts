@@ -26,6 +26,7 @@ interface NotepadRefreshControllerParams {
   ) => Promise<void>;
   replaceReferencedNoteWithFreshDraft: (noteKey: NoteKey) => NoteDraftState;
   noteKeyFromPath: (notePath: string) => NoteKey | null;
+  shouldDeferRefresh?: (notePath: string) => boolean;
 }
 
 export function createNotepadRefreshController(
@@ -52,6 +53,10 @@ export function createNotepadRefreshController(
 
   async function handleVaultNoteChanged(payload: VaultNoteChangeEvent) {
     if (payload.documentKind && payload.documentKind !== "note") return;
+    if (params.shouldDeferRefresh?.(payload.notePath)) {
+      await params.refreshDerivedViews();
+      return;
+    }
     const documentSession = params.getDocumentSession();
     if (documentSession.currentNotePath === payload.notePath) {
       if (payload.source === "taskMutation") {

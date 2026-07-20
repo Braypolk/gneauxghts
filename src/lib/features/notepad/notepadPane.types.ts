@@ -42,6 +42,9 @@ export interface PaneViewModel {
   onProposalKeepAll: () => void | Promise<void>;
   onProposalUndoAll: () => void | Promise<void>;
   onProposalReview: () => void | Promise<void>;
+  onProposalRetry: () => void | Promise<void>;
+  onProposalCopyCurrent: () => void | Promise<void>;
+  onProposalReloadDisk: () => void | Promise<void>;
   onProposalLoadFixture: () => void | Promise<void>;
   paneCommandHighlightedIndex: number;
   paneCommandMode: PaneCommandMode;

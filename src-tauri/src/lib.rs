@@ -15,7 +15,7 @@ mod test_support;
 mod time;
 mod vault_watcher;
 
-use app::AppData;
+use app::EventBus;
 use chat::ChatService;
 use index::AppState;
 use semantic::SemanticState;
@@ -51,15 +51,16 @@ pub fn run() {
                     bundled_runtime_path,
                 )?
             };
-            app.manage(AppState::new(semantic)?);
+            app.manage(AppState::new(
+                semantic,
+                EventBus::new(app.handle().clone()),
+            )?);
             let chat_service =
                 ChatService::new_managed(notes_dir, vault_data_dir, app.handle().clone())?;
             if let Some(state) = app.try_state::<AppState>() {
                 chat_service.reconcile_semantic_recall(&state.semantic)?;
             }
             app.manage(chat_service);
-            // One managed `AppData` carrying the typed event bus.
-            app.manage(AppData::new(app.handle().clone()));
             // Vault watcher registration walks the notes directory tree
             // recursively; on large vaults that adds noticeable latency to
             // the Tauri `setup` callback before first paint. Move the
@@ -173,7 +174,10 @@ pub fn run() {
             commands::chat_commands::chat_revoke_note,
             commands::chat_commands::chat_resolve_projection_conflict,
             commands::proposal_commands::apply_note_change_proposal,
+            commands::proposal_commands::preview_note_change_proposal,
+            commands::proposal_commands::commit_note_review,
             commands::proposal_commands::hash_markdown_content,
+            commands::proposal_commands::hash_note_at_path,
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,
