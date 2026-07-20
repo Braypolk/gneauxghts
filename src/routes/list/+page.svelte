@@ -25,10 +25,10 @@
   import { textMatchesSearch } from '$lib/ui/search/searchMatch';
 
   const filterOptions = [
-    { id: 'all', label: 'All tasks' },
-    { id: 'open', label: 'Open' },
-    { id: 'completed', label: 'Completed' }
-  ] as const satisfies ReadonlyArray<{ id: TaskFilter; label: string }>;
+    { id: 'all', label: 'All tasks', shortLabel: 'All' },
+    { id: 'open', label: 'Open', shortLabel: 'Open' },
+    { id: 'completed', label: 'Completed', shortLabel: 'Done' }
+  ] as const satisfies ReadonlyArray<{ id: TaskFilter; label: string; shortLabel: string }>;
 
   const taskList = createTaskListStore();
   let searchQuery = $state('');
@@ -75,7 +75,7 @@
   }
 
   function taskIndentStyle(depth: number) {
-    return `margin-left: ${Math.min(depth, 6) * 1.1}rem;`;
+    return `--task-indent: ${Math.min(depth, 6)};`;
   }
 
   let dragSrcNoteId = $state<string | null>(null);
@@ -132,58 +132,72 @@
 <div class="relative h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
   <main class="relative mx-auto flex w-full flex-1 flex-col justify-center overflow-hidden pb-0 sm:pb-4">
     <section class="relative mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden border-y border-border bg-card shadow-sm sm:rounded-4xl sm:border">
-      <div class="border-b border-border px-4 py-4 sm:px-8 sm:py-6">
-        <div class="flex flex-col gap-5">
+      <div class="border-b border-border px-3 py-3 sm:px-8 sm:py-6">
+        <div class="flex flex-col gap-3 sm:gap-5">
           <div class="space-y-2">
             <p class="text-sm text-muted-foreground">{taskCountLabel}</p>
           </div>
 
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="flex items-center gap-2 rounded-full bg-muted p-1">
-              {#each filterOptions as option}
+          <div class="flex items-center gap-2">
+            <div
+              class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-x-contain rounded-full bg-muted p-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:gap-2 [&::-webkit-scrollbar]:hidden"
+              role="toolbar"
+              aria-label="Task filters"
+            >
+              {#each filterOptions as option (option.id)}
                 <button
                   type="button"
-                  class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                  class={`min-h-10 shrink-0 rounded-full px-3 py-2 text-sm font-medium transition-colors touch-manipulation sm:min-h-0 sm:px-4 ${
                     taskList.filter === option.id ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                   }`}
                   onclick={() => taskList.setActiveFilter(option.id)}
+                  aria-label={option.label}
+                  aria-pressed={taskList.filter === option.id}
                 >
-                  {option.label}
+                  <span class="sm:hidden" aria-hidden="true">{option.shortLabel}</span>
+                  <span class="hidden sm:inline" aria-hidden="true">{option.label}</span>
                 </button>
               {/each}
             </div>
 
-            <button
-              type="button"
-              class={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
-                taskList.showHidden
-                  ? 'border-border bg-card text-foreground'
-                  : 'border-transparent bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-              }`}
-              onclick={taskList.toggleShowHidden}
-            >
-              {#if taskList.showHidden}
-                <Eye class="h-4 w-4" />
-                Hide hidden
-              {:else}
-                <EyeOff class="h-4 w-4" />
-                Show hidden
-              {/if}
-            </button>
+            <div class="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                class={`inline-flex h-10 w-10 items-center justify-center rounded-full border transition-colors touch-manipulation sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-2 sm:text-sm sm:font-medium ${
+                  taskList.showHidden
+                    ? 'border-border bg-card text-foreground'
+                    : 'border-transparent bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                }`}
+                onclick={taskList.toggleShowHidden}
+                aria-label={taskList.showHidden ? 'Hide hidden tasks' : 'Show hidden tasks'}
+                title={taskList.showHidden ? 'Hide hidden' : 'Show hidden'}
+              >
+                {#if taskList.showHidden}
+                  <Eye class="h-4 w-4" />
+                {:else}
+                  <EyeOff class="h-4 w-4" />
+                {/if}
+                <span class="hidden sm:inline">{taskList.showHidden ? 'Hide hidden' : 'Show hidden'}</span>
+              </button>
 
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-full bg-muted px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-              onclick={taskList.refresh}
-            >
-              <RefreshCw class="h-4 w-4" />
-              Refresh
-            </button>
+              <button
+                type="button"
+                class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors touch-manipulation hover:bg-accent hover:text-accent-foreground sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-2 sm:text-sm sm:font-medium"
+                onclick={taskList.refresh}
+                aria-label="Refresh task list"
+                title="Refresh"
+              >
+                <RefreshCw class="h-4 w-4" />
+                <span class="hidden sm:inline">Refresh</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="flex-1 min-h-0 overflow-y-auto px-4 pb-24 pt-4 sm:px-6 sm:pb-28">
+      <div
+        class="flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-3 pb-[calc(6.5rem+env(safe-area-inset-bottom,0px))] pt-3 sm:px-6 sm:pb-28 sm:pt-4 [-webkit-overflow-scrolling:touch]"
+      >
         {#if taskList.isLoading}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-sm font-medium text-muted-foreground">
             Building the task list
@@ -194,10 +208,10 @@
           </div>
         {:else if visibleTaskGroups.length === 0}
           <div class="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-center">
-            <p class="text-lg font-medium text-foreground">
+            <p class="text-balance text-lg font-medium text-foreground">
               {normalizedSearchQuery === '' ? 'No matching tasks yet' : 'No tasks found'}
             </p>
-            <p class="mt-2 max-w-md text-sm text-muted-foreground">
+            <p class="mt-2 max-w-md text-pretty text-sm text-muted-foreground">
               {#if normalizedSearchQuery === ''}
                 Add markdown checkboxes like <code class="rounded border border-border/70 bg-card px-1.5 py-0.5 text-xs text-foreground">- [ ]</code>
                 or <code class="rounded border border-border/70 bg-card px-1.5 py-0.5 text-xs text-foreground">* [x]</code> inside any note.
@@ -207,10 +221,10 @@
             </p>
           </div>
         {:else}
-          <div class="space-y-4">
-            {#each visibleTaskGroups as group, index}
+          <div class="space-y-3 sm:space-y-4">
+            {#each visibleTaskGroups as group (group.noteId)}
               <section
-                class={`overflow-hidden rounded-[1.35rem] border ${
+                class={`task-note-group overflow-hidden rounded-[1.2rem] border sm:rounded-[1.35rem] ${
                   group.noteHidden ? 'border-border bg-muted' : 'border-border bg-card'
                 } ${dragSrcNoteId === group.noteId ? 'opacity-50' : ''} ${dragOverNoteId === group.noteId && dragSrcNoteId !== group.noteId ? 'ring-2 ring-primary/50' : ''}`}
                 role="group"
@@ -229,10 +243,10 @@
                 ondrop={(e) => handleDrop(e, group.noteId)}
                 ondragend={handleDragEnd}
               >
-                <div class={`flex items-center gap-3 px-4 py-3 ${group.noteHidden ? 'bg-muted' : 'bg-card'}`}>
+                <div class={`flex items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3 ${group.noteHidden ? 'bg-muted' : 'bg-card'}`}>
                   <span
                     data-drag-handle
-                    class="shrink-0 cursor-grab text-muted-foreground/60 hover:text-muted-foreground active:cursor-grabbing"
+                    class="task-drag-handle shrink-0 cursor-grab text-muted-foreground/60 hover:text-muted-foreground active:cursor-grabbing"
                     role="button"
                     tabindex="0"
                     aria-label="Drag to reorder"
@@ -242,11 +256,11 @@
 
                   <button
                     type="button"
-                    class="flex min-w-0 flex-1 items-center gap-3 text-left transition-colors hover:text-foreground disabled:cursor-wait disabled:opacity-60"
+                    class="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors touch-manipulation hover:text-foreground disabled:cursor-wait disabled:opacity-60 sm:gap-3"
                     onclick={() => void taskList.toggleNoteCollapsed(group)}
                     disabled={!!taskList.mutatingNoteIds[group.noteId]}
                   >
-                    <span class="shrink-0 text-muted-foreground">
+                    <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground sm:h-auto sm:w-auto">
                       {#if group.noteCollapsed}
                         <ChevronRight class="h-4 w-4" />
                       {:else}
@@ -261,7 +275,7 @@
                       >
                         {group.noteTitle}
                       </span>
-                      <span class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                      <span class="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground sm:mt-1 sm:gap-x-3 sm:tracking-[0.18em]">
                         <span>{group.displayCount} shown</span>
                         {#if group.hiddenCount > 0}
                           <span>{group.hiddenCount} hidden</span>
@@ -270,113 +284,115 @@
                           <span>file hidden</span>
                         {/if}
                         {#if group.fileName !== group.noteTitle}
-                          <span title={group.fileName}>{group.fileName}</span>
+                          <span class="max-w-[10rem] truncate sm:max-w-none" title={group.fileName}>{group.fileName}</span>
                         {/if}
                       </span>
                     </span>
                   </button>
 
-                  <span class="shrink-0">
-                    <div class="flex items-center gap-1">
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-wait disabled:opacity-45"
-                        onclick={() => void taskList.setNoteHidden(group, !group.noteHidden)}
-                        disabled={!!taskList.mutatingNoteIds[group.noteId]}
-                      >
-                        {#if group.noteHidden}
-                          <Eye class="h-3.5 w-3.5" />
-                          Unhide file
-                        {:else}
-                          <EyeOff class="h-3.5 w-3.5" />
-                          Hide file
-                        {/if}
-                      </button>
-                    </div>
-                  </span>
+                  <button
+                    type="button"
+                    class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors touch-manipulation hover:bg-accent hover:text-accent-foreground disabled:cursor-wait disabled:opacity-45 sm:h-auto sm:w-auto sm:gap-1 sm:px-2.5 sm:py-1.5 sm:text-xs sm:font-medium"
+                    onclick={() => void taskList.setNoteHidden(group, !group.noteHidden)}
+                    disabled={!!taskList.mutatingNoteIds[group.noteId]}
+                    aria-label={group.noteHidden ? 'Unhide file' : 'Hide file'}
+                    title={group.noteHidden ? 'Unhide file' : 'Hide file'}
+                  >
+                    {#if group.noteHidden}
+                      <Eye class="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+                    {:else}
+                      <EyeOff class="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+                    {/if}
+                    <span class="hidden sm:inline">{group.noteHidden ? 'Unhide file' : 'Hide file'}</span>
+                  </button>
                 </div>
 
                 {#if !group.noteCollapsed}
-                  <div class="border-t border-border/70 px-3 py-3">
-                    <div class="space-y-2">
-                      {#each group.displayTasks as task}
+                  <div class="border-t border-border/70 px-1.5 py-1.5 sm:px-3 sm:py-3">
+                    <div class="space-y-1.5 sm:space-y-2">
+                      {#each group.displayTasks as task (task.taskKey)}
                         <div
-                          class={`flex items-center gap-3 rounded-[1rem] border px-3 py-2 ${
+                          class={`task-row flex items-start gap-1 rounded-[0.9rem] border px-1.5 py-1 sm:items-center sm:gap-3 sm:rounded-[1rem] sm:px-3 sm:py-2 ${
                             task.hidden ? 'border-border/60 bg-muted/70' : 'border-border bg-card'
                           }`}
                           style={taskIndentStyle(task.depth)}
                         >
                           {#if task.depth > 0}
-                            <span class="shrink-0 text-muted-foreground/55">
+                            <span class="mt-3 shrink-0 text-muted-foreground/55 sm:mt-0">
                               <CornerDownRight class="h-3.5 w-3.5" />
                             </span>
                           {/if}
 
                           <button
                             type="button"
-                            class="shrink-0 text-muted-foreground transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-45"
+                            class="inline-flex h-11 w-9 shrink-0 items-center justify-center text-muted-foreground transition-opacity touch-manipulation hover:opacity-80 disabled:cursor-wait disabled:opacity-45 sm:h-auto sm:w-auto"
                             onclick={() => void taskList.toggleTask(task)}
                             disabled={!!taskList.togglingTaskKeys[task.taskKey] || !!taskList.mutatingNoteIds[group.noteId]}
                             aria-label={task.completed ? `Mark ${task.text} incomplete` : `Mark ${task.text} complete`}
                           >
                             {#if task.completed}
-                              <CheckCircle2 class="h-4.5 w-4.5 text-emerald-500" />
+                              <CheckCircle2 class="h-5 w-5 text-emerald-500 sm:h-[1.125rem] sm:w-[1.125rem]" />
                             {:else}
-                              <Circle class="h-4.5 w-4.5 text-muted-foreground" />
+                              <Circle class="h-5 w-5 text-muted-foreground sm:h-[1.125rem] sm:w-[1.125rem]" />
                             {/if}
                           </button>
 
-                          <span class="min-w-0 flex-1">
-                            <span
-                              class={`block truncate text-sm leading-5 ${
-                                task.completed ? 'text-muted-foreground line-through' : task.hidden ? 'text-muted-foreground' : 'text-foreground'
-                              }`}
-                              title={task.text}
-                            >
-                              {task.text}
-                            </span>
-                            <span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
+                          <div class="flex min-w-0 flex-1 items-start gap-0.5 sm:items-center sm:gap-3">
+                            <span class="min-w-0 flex-1 py-2.5 sm:py-0">
+                              <span
+                                class={`block text-pretty text-sm leading-5 ${
+                                  task.completed ? 'text-muted-foreground line-through' : task.hidden ? 'text-muted-foreground' : 'text-foreground'
+                                }`}
+                              >
+                                {task.text}
+                              </span>
                               {#if task.sectionLabel}
-                                <span class="max-w-40 truncate" title={task.sectionLabel}>{task.sectionLabel}</span>
+                                <span class="mt-0.5 block text-pretty text-[11px] font-medium text-muted-foreground">
+                                  {task.sectionLabel}
+                                </span>
                               {/if}
                             </span>
-                          </span>
 
-                          <div class="flex shrink-0 items-center gap-1">
-                            <button
-                              type="button"
-                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                              onclick={() => taskList.openTask(task)}
-                            >
-                              <ExternalLink class="h-3.5 w-3.5" />
-                              Open
-                            </button>
+                            <div class="flex shrink-0 items-center self-start sm:self-auto">
+                              <button
+                                type="button"
+                                class="inline-flex h-11 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors touch-manipulation hover:bg-accent hover:text-accent-foreground sm:h-auto sm:w-auto sm:gap-1 sm:px-2.5 sm:py-1.5 sm:text-xs sm:font-medium"
+                                onclick={() => taskList.openTask(task)}
+                                aria-label={`Open task: ${task.text}`}
+                                title="Open"
+                              >
+                                <ExternalLink class="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+                                <span class="hidden sm:inline">Open</span>
+                              </button>
 
-                            <button
-                              type="button"
-                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-wait disabled:opacity-45"
-                              onclick={() => void taskList.setTaskHidden(task, !task.hidden)}
-                              disabled={!!taskList.mutatingNoteIds[group.noteId]}
-                            >
-                              {#if task.hidden}
-                                <Eye class="h-3.5 w-3.5" />
-                                Unhide
-                              {:else}
-                                <EyeOff class="h-3.5 w-3.5" />
-                                Hide
-                              {/if}
-                            </button>
+                              <button
+                                type="button"
+                                class="inline-flex h-11 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors touch-manipulation hover:bg-accent hover:text-accent-foreground disabled:cursor-wait disabled:opacity-45 sm:h-auto sm:w-auto sm:gap-1 sm:px-2.5 sm:py-1.5 sm:text-xs sm:font-medium"
+                                onclick={() => void taskList.setTaskHidden(task, !task.hidden)}
+                                disabled={!!taskList.mutatingNoteIds[group.noteId]}
+                                aria-label={task.hidden ? `Unhide task: ${task.text}` : `Hide task: ${task.text}`}
+                                title={task.hidden ? 'Unhide' : 'Hide'}
+                              >
+                                {#if task.hidden}
+                                  <Eye class="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+                                {:else}
+                                  <EyeOff class="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+                                {/if}
+                                <span class="hidden sm:inline">{task.hidden ? 'Unhide' : 'Hide'}</span>
+                              </button>
 
-                            <button
-                              type="button"
-                              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive disabled:cursor-wait disabled:opacity-45"
-                              onclick={() => void taskList.deleteTask(task)}
-                              disabled={!!taskList.deletingTaskKeys[task.taskKey] || !!taskList.mutatingNoteIds[group.noteId]}
-                              aria-label={`Delete task: ${task.text}`}
-                            >
-                              <Trash2 class="h-3.5 w-3.5" />
-                              Delete
-                            </button>
+                              <button
+                                type="button"
+                                class="inline-flex h-11 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors touch-manipulation hover:bg-destructive/15 hover:text-destructive disabled:cursor-wait disabled:opacity-45 sm:h-auto sm:w-auto sm:gap-1 sm:px-2.5 sm:py-1.5 sm:text-xs sm:font-medium"
+                                onclick={() => void taskList.deleteTask(task)}
+                                disabled={!!taskList.deletingTaskKeys[task.taskKey] || !!taskList.mutatingNoteIds[group.noteId]}
+                                aria-label={`Delete task: ${task.text}`}
+                                title="Delete"
+                              >
+                                <Trash2 class="h-4 w-4 sm:h-3.5 sm:w-3.5" />
+                                <span class="hidden sm:inline">Delete</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       {/each}
@@ -420,17 +436,36 @@
 <style>
   .list-search-backdrop {
     padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
     mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%);
     mask-size: 100% 100%;
     -webkit-mask-size: 100% 100%;
   }
 
+  .task-row {
+    margin-left: calc(var(--task-indent, 0) * 0.65rem);
+  }
+
+  /* HTML5 drag reorder is pointer-first; hide the handle on touch. */
+  .task-drag-handle {
+    display: none;
+  }
+
+  @media (pointer: fine) {
+    .task-drag-handle {
+      display: inline-flex;
+    }
+  }
+
   @media (min-width: 640px) {
     .list-search-backdrop {
       padding-top: 1rem;
       padding-bottom: 1rem;
+    }
+
+    .task-row {
+      margin-left: calc(var(--task-indent, 0) * 1.1rem);
     }
   }
 </style>

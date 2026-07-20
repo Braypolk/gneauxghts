@@ -74,7 +74,7 @@
     getCurrentPathname: () => currentPathname,
     normalizePathname,
     flushPendingWork: awaitPendingNoteSave,
-    navigate: (href) => goto(resolve(href)),
+    navigate: (href) => goto(resolve(href as '/' | '/map' | '/list' | '/settings' | '/atlas')),
     onForceRemount: bumpAppShellViewGeneration,
     onFlushError: (error) => {
       console.error('Failed to flush pending note save before navigation:', error);
@@ -120,7 +120,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <header
-  class="relative z-10 shrink-0 grid min-h-[3.75rem] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-4 pt-3 pb-2 select-none sm:min-h-[4.75rem] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-0 sm:px-6 sm:pt-4 sm:pb-4"
+  class="app-navigation-header relative z-10 shrink-0 grid min-h-[3.5rem] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-3 py-1.5 select-none sm:min-h-[4.75rem] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-0 sm:px-6 sm:pt-4 sm:pb-4"
   onmousedown={handleHeaderMouseDown}
 >
   <div data-tauri-drag-region class="absolute inset-x-0 top-0 h-8"></div>
@@ -161,3 +161,12 @@
     </a>
   </div>
 </header>
+
+<style>
+  @media (max-height: 559px) {
+    .app-navigation-header {
+      min-height: 3.5rem;
+      padding: 0.25rem 0.75rem;
+    }
+  }
+</style>

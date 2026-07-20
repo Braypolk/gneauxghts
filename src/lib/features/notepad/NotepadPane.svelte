@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FileText, X } from '@lucide/svelte';
+  import { FileText, MessagesSquare, X } from '@lucide/svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
   import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
   import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
@@ -53,9 +53,9 @@
     {#if viewModel.paneKind === 'editor'}
       <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20">
         <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
-        <div class="relative z-10 flex items-center justify-between gap-3 px-4 pt-4 pb-3">
-          <div class="h-9 w-9 shrink-0" aria-hidden="true"></div>
-          <div class="pointer-events-none absolute inset-x-16 top-4 flex justify-center">
+        <div class="notepad-editor-top-row relative z-10 flex items-center justify-between gap-2 px-3 pt-3 pb-2 sm:gap-3 sm:px-4 sm:pt-4 sm:pb-3">
+          <div class="h-10 w-10 shrink-0 sm:h-9 sm:w-9" aria-hidden="true"></div>
+          <div class="notepad-editor-title-wrap pointer-events-none absolute inset-x-14 top-3 flex justify-center sm:inset-x-16 sm:top-4">
             <div bind:this={pane.refs.titleShell} class="pointer-events-auto w-full max-w-[24rem] min-w-0">
               <input
                 bind:this={pane.refs.titleInput}
@@ -85,7 +85,15 @@
             {@render closePaneButton()}
           {:else}
             <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
-            <div class="h-9 w-9 shrink-0 sm:hidden" aria-hidden="true"></div>
+            <button
+              type="button"
+              class="mobile-thought-partner-button inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:hidden"
+              onclick={() => void actions.onOpenPaneChoice('thoughtPartner')}
+              aria-label="Open thought partner"
+              title="Open thought partner"
+            >
+              <MessagesSquare class="h-[1.1rem] w-[1.1rem]" />
+            </button>
           {/if}
         </div>
       </div>
@@ -164,7 +172,7 @@
         </div>
       </div>
     {:else}
-      <div class="chat-pane-shell flex min-h-0 flex-1 pb-20 sm:pb-24">
+      <div class="chat-pane-shell flex min-h-0 flex-1 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] sm:pb-24">
         {#if viewModel.chatController}
           <ChatPanel
             controller={viewModel.chatController}
@@ -208,5 +216,29 @@
     position: absolute;
     top: 0;
     right: 0;
+  }
+
+  /* Landscape phones can satisfy width-based desktop breakpoints while still
+     having very little vertical room. Keep their pane chrome mobile-sized. */
+  @media (max-height: 559px) {
+    .notepad-editor-top-row {
+      gap: 0.5rem;
+      padding: 0.75rem 0.75rem 0.5rem;
+    }
+
+    .notepad-editor-title-wrap {
+      top: 0.75rem;
+      right: 3.5rem;
+      left: 3.5rem;
+    }
+
+    .mobile-thought-partner-button {
+      display: inline-flex !important;
+    }
+
+    .chat-pane-split-slot,
+    :global(.split-pane-control) {
+      display: none !important;
+    }
   }
 </style>

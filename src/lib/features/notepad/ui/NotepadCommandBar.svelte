@@ -441,7 +441,7 @@
     class="absolute inset-0 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
     style="mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
   ></div>
-  <div class="relative z-10 flex min-w-0 items-center justify-between gap-2 px-3 py-2 sm:gap-4 sm:px-6 sm:py-4">
+  <div class="notepad-command-bar-content relative z-10 flex min-w-0 items-center justify-between gap-1.5 px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] sm:gap-4 sm:px-6 sm:py-4">
     {#if canUnforget}
       <button
         type="button"
@@ -776,6 +776,13 @@
     transition:
       background-color 160ms ease,
       border-color 160ms ease;
+  }
+
+  @media (max-height: 559px) {
+    .notepad-command-bar-content {
+      gap: 0.375rem;
+      padding: 0.5rem 0.625rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    }
   }
 
   .search-result-item[data-search-result-active='true'] {

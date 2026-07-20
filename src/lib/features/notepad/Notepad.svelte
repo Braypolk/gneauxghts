@@ -1237,7 +1237,7 @@
 
       if (!editorPaneId) {
         // Chat-only (or no editor pane). Prefer chat | editor with the bound note.
-        if (paneOrder.length === 1 && window.innerWidth >= 640) {
+        if (paneOrder.length === 1 && canUseSplitWorkspace()) {
           await splitWorkspaceIfAllowed('current');
           editorPaneId = getNearestEditorPaneId();
         } else {
@@ -1257,7 +1257,7 @@
         paneOrder.length === 1 &&
         editorPaneId &&
         getPaneKind(editorPaneId) === 'editor' &&
-        window.innerWidth >= 640
+        canUseSplitWorkspace()
       ) {
         await splitWorkspaceIfAllowed('thoughtPartner');
         editorPaneId = getNearestEditorPaneId() ?? editorPaneId;
@@ -1471,8 +1471,14 @@
     documents.saveCursorPositionForDocument();
   }
 
+  function canUseSplitWorkspace() {
+    return window.innerWidth >= 640 && window.innerHeight >= 560;
+  }
+
   async function splitWorkspaceIfAllowed(choice: PaneCommandChoice | undefined = undefined) {
-    if (window.innerWidth < 640) {
+    // A phone in landscape can cross the width breakpoint while still having
+    // far too little vertical room for a useful two-pane editor.
+    if (!canUseSplitWorkspace()) {
       return;
     }
 
@@ -1939,7 +1945,7 @@
     --editor-handle-lane-width: 2.75rem;
     --editor-right-padding: 1rem;
     --editor-readable-width: 100%;
-    --editor-top-padding: 4.6rem;
+    --editor-top-padding: 4.1rem;
     --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
     --related-drawer-gap: 0.5rem;
     --related-drawer-peek-width: 1.75rem;
@@ -2002,6 +2008,13 @@
       --editor-handle-lane-width: 3.1rem;
       --editor-right-padding: 1.8rem;
       --editor-readable-width: 42rem;
+    }
+  }
+
+  @media (max-height: 559px) {
+    .notepad-shell {
+      --editor-top-padding: 4.1rem;
+      --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
     }
   }
 </style>

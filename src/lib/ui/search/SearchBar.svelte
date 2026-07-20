@@ -51,6 +51,7 @@
     searchTypeOptions?: SearchChoice[];
     canNavigatePrevious?: boolean;
     canNavigateNext?: boolean;
+    showPlaceholderWhenIdle?: boolean;
     blurOnEscape?: boolean;
     shortcut?: SearchShortcutOptions;
     class?: string;
@@ -80,6 +81,7 @@
     searchTypeOptions = [],
     canNavigatePrevious = false,
     canNavigateNext = false,
+    showPlaceholderWhenIdle = false,
     blurOnEscape = true,
     shortcut = { enabled: false },
     class: className = '',
@@ -127,7 +129,13 @@
     inputEl?.blur();
   }
 
-  function handleFocusIn() {
+  function handleFocusIn(event: FocusEvent) {
+    if (
+      event.target instanceof Element
+      && event.target.closest('[data-search-focus-independent]')
+    ) {
+      return;
+    }
     openSearch();
   }
 
@@ -225,7 +233,7 @@
   onfocusin={handleFocusIn}
   onfocusout={handleFocusOut}
 >
-  <Search class="h-4 w-4 shrink-0 text-muted-foreground" />
+  <Search class="hidden h-4 w-4 shrink-0 text-muted-foreground min-[420px]:block" />
   <div class="min-w-0 flex-1">
     <input
       bind:this={inputEl}
@@ -235,7 +243,7 @@
       enterkeyhint="search"
       class="shared-search-bar-input w-full bg-transparent py-1.5 text-base text-foreground outline-none placeholder:text-muted-foreground min-[700px]:text-sm sm:py-2"
       aria-label={ariaLabel}
-      placeholder={isOpen ? placeholder : ''}
+      placeholder={isOpen || showPlaceholderWhenIdle ? placeholder : ''}
       value={value}
       oninput={handleInput}
       onkeydown={handleInputKeydown}
@@ -411,6 +419,13 @@
     .shared-search-bar-shell[data-search-expanded='true'] {
       flex: 1 1 42rem;
       max-width: 42rem;
+    }
+  }
+
+  @media (max-height: 559px) {
+    .shared-search-bar-shell {
+      gap: 0.5rem;
+      padding-left: 0.75rem;
     }
   }
 

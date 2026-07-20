@@ -3,6 +3,7 @@
   import { resolve } from '$app/paths';
   import {
     ArrowDownLeftFromCircle,
+    ChevronDown,
     ExternalLink,
     Focus,
     Link as LinkIcon,
@@ -38,6 +39,7 @@
   let deckLayers = $state.raw<any>(null);
   let isDeckVisible = $state(false);
   let isHoveringNote = $state(false);
+  let isCompactViewport = $state(false);
   let viewState = $state<{ target: [number, number, number]; zoom: number }>({
     target: [0, 0, 0],
     zoom: 0
@@ -290,6 +292,13 @@
     return (node.radius / 2) / Math.max(0.7, atlas.zoom);
   }
 
+  function updateViewportMode() {
+    const nextCompactViewport = window.innerWidth < 640 || window.innerHeight < 560;
+    if (isCompactViewport === nextCompactViewport) return;
+    isCompactViewport = nextCompactViewport;
+    renderDeck();
+  }
+
   function buildLayers() {
     if (!deckLayers || !deckCore || !atlas.response) return [];
     const { ScatterplotLayer, LineLayer, PathLayer, SolidPolygonLayer, TextLayer } = deckLayers;
@@ -411,13 +420,16 @@
         getPosition: (node: AtlasNode) => getNodePosition(node, atlas.driftStaleNotes),
         updateTriggers: {
           getPosition: [atlas.driftStaleNotes],
-          getRadius: [atlas.searchResponse, selectedNodeId],
+          getRadius: [atlas.searchResponse, selectedNodeId, isCompactViewport],
           getFillColor: [atlas.searchResponse, selectedNodeId],
           getLineWidth: [selectedNodeId]
         },
         getRadius: (node: AtlasNode) =>
-          (node.id === selectedNodeId ? node.radius + 4 : node.radius) * atlas.nodeSearchRadiusMultiplier(node),
+          (node.id === selectedNodeId ? node.radius + 4 : node.radius)
+          * atlas.nodeSearchRadiusMultiplier(node)
+          * (isCompactViewport ? 1.15 : 1),
         radiusUnits: 'pixels',
+        radiusMinPixels: isCompactViewport ? 8 : 4,
         getFillColor: (node: AtlasNode) => {
           const [r, g, b] = node.id === selectedNodeId ? [255, 255, 255] : refinedNodeColor(node);
           const alpha = node.id === selectedNodeId
@@ -629,6 +641,7 @@
 
   onMount(() => {
     let mounted = true;
+    updateViewportMode();
     (async () => {
       isDeckVisible = false;
       await atlas.initialize();
@@ -702,7 +715,7 @@
 
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onresize={updateViewportMode} />
 
 <div class="atlas-surface relative h-full w-full overflow-hidden text-white">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -713,11 +726,13 @@
     class={`absolute inset-0 transition-opacity duration-100 ${isDeckVisible ? 'opacity-100' : 'opacity-0'} ${isHoveringNote ? 'cursor-pointer' : 'cursor-grab'}`}
   ></div>
 
-  <SearchDock>
+  <SearchDock insetVariable="--atlas-search-dock-inset" class="atlas-search-dock">
     <SearchBar
+      class="atlas-search-bar"
       value={atlas.searchQuery}
       placeholder="Find notes"
       ariaLabel="Search map notes"
+      showPlaceholderWhenIdle={true}
       matchCase={atlas.matchCase}
       matchWholeWord={atlas.matchWholeWord}
       showMatchOptions={false}
@@ -732,23 +747,29 @@
         atlas.matchWholeWord = enabled;
       }}
     >
-        <label class="sr-only" for="atlas-chat-visibility">Chat visibility</label>
-        <select
-          id="atlas-chat-visibility"
-          class="h-8 rounded-full border border-border bg-background px-2 text-xs text-foreground"
-          value={atlas.chatVisibility}
-          title="Chat visibility in Map"
-          onchange={(event) => atlas.setChatVisibility(event.currentTarget.value as 'hidden' | 'remembered' | 'all')}
-        >
-          <option value="hidden">Notes only</option>
-          <option value="remembered">Remembered chats</option>
-          <option value="all">All chats</option>
-        </select>
+      <div class="atlas-map-tools flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-card/88 p-1 text-foreground shadow-lg backdrop-blur-md sm:contents">
+        <div class="relative shrink-0" data-search-focus-independent>
+          <label class="sr-only" for="atlas-chat-visibility">Chat visibility</label>
+          <select
+            id="atlas-chat-visibility"
+            class="h-10 max-w-[8.5rem] appearance-none rounded-full border border-transparent bg-muted/72 py-0 pr-8 pl-3 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25 sm:h-8 sm:max-w-none sm:pr-7 sm:pl-2.5 sm:font-normal"
+            value={atlas.chatVisibility}
+            title="Chat visibility in Map"
+            onchange={(event) => atlas.setChatVisibility(event.currentTarget.value as 'hidden' | 'remembered' | 'all')}
+          >
+            <option value="hidden">{isCompactViewport ? 'Notes' : 'Notes only'}</option>
+            <option value="remembered">{isCompactViewport ? 'Remembered' : 'Remembered chats'}</option>
+            <option value="all">All chats</option>
+          </select>
+          <ChevronDown class="pointer-events-none absolute top-1/2 right-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground sm:right-2 sm:h-3 sm:w-3" aria-hidden="true" />
+        </div>
         <button
           type="button"
-          class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+          class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8 ${
             atlas.driftStaleNotes ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
           }`}
+          aria-label="Drift stale notes"
+          aria-pressed={atlas.driftStaleNotes}
           title="Drift stale notes"
           onclick={handleToggleDrift}
         >
@@ -756,9 +777,11 @@
         </button>
         <button
           type="button"
-          class={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+          class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8 ${
             atlas.showLinks ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
           }`}
+          aria-label="Toggle links"
+          aria-pressed={atlas.showLinks}
           title="Toggle links"
           onclick={() => atlas.toggleLinks()}
         >
@@ -766,14 +789,22 @@
         </button>
         <button
           type="button"
-          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:bg-accent/80 sm:h-8 sm:w-8"
+          aria-label="Fit map to view"
           title="Fit view"
           onclick={fitView}
         >
           <Focus class="h-4 w-4" />
         </button>
+      </div>
     </SearchBar>
   </SearchDock>
+
+  {#if hasReadyMap}
+    <div class="atlas-touch-hint pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-border/70 bg-card/72 px-3 py-1.5 text-[11px] font-medium text-muted-foreground shadow-sm backdrop-blur-md sm:hidden">
+      Drag to explore · Pinch to zoom
+    </div>
+  {/if}
 
   {#if (!hasReadyMap && atlas.error) || atlas.response?.status === 'unavailable' || atlas.response?.status === 'empty'}
     <div class="absolute inset-0 z-20 flex items-center justify-center px-4">
@@ -809,7 +840,7 @@
 
   {#if hasReadyMap && atlas.isRevalidating}
     <div
-      class="pointer-events-none absolute bottom-5 left-5 z-20 inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/80 px-3 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-md"
+      class="pointer-events-none absolute top-3 left-3 z-20 inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/80 px-3 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-md sm:top-auto sm:bottom-5 sm:left-5"
       aria-live="polite"
     >
       <LoaderCircle class="h-3.5 w-3.5 animate-spin" />
@@ -818,11 +849,14 @@
   {/if}
 
   {#if atlas.selectedNode}
-    <aside class="absolute right-5 top-14 z-20 flex max-h-[calc(100vh-5.5rem)] w-[min(23rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card/90 p-4 text-foreground shadow-lg backdrop-blur-md">
+    <aside
+      class="atlas-node-inspector absolute inset-x-2 bottom-[calc(var(--atlas-search-dock-inset)+7rem)] z-20 flex max-h-[min(66%,34rem)] flex-col overflow-hidden rounded-[1.5rem] border border-border/80 bg-card/94 p-3 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:top-14 sm:right-5 sm:bottom-auto sm:max-h-[calc(100vh-5.5rem)] sm:w-[min(23rem,calc(100vw-2rem))] sm:rounded-2xl sm:bg-card/90 sm:p-4 sm:shadow-lg"
+      aria-label={`Selected note: ${atlas.selectedNode.title}`}
+    >
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
           <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Note</p>
-          <p class="mt-5 min-w-0 text-xl font-semibold leading-7 text-foreground">{atlas.selectedNode.title}</p>
+          <p class="mt-2 min-w-0 text-lg font-semibold leading-6 text-foreground sm:mt-5 sm:text-xl sm:leading-7">{atlas.selectedNode.title}</p>
           <div class="mt-1.5 flex items-center gap-2">
             <span class="shrink-0 rounded-full border border-border/80 bg-muted/40 px-2 py-0.5 text-[0.7rem] text-muted-foreground">
               Importance {Math.round(atlas.selectedNode.importance * 100)}%
@@ -832,7 +866,8 @@
         <div class="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            class="rounded-full p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80 sm:h-8 sm:w-8"
+            aria-label="Open selected note"
             title="Open note"
             onclick={() => void openSelectedNode()}
           >
@@ -840,7 +875,8 @@
           </button>
           <button
             type="button"
-            class="rounded-full p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80 sm:h-8 sm:w-8"
+            aria-label="Close note details"
             title="Clear selection"
             onclick={() => atlas.clearSelection()}
           >
@@ -849,12 +885,12 @@
         </div>
       </div>
       {#if atlas.selectedNode.preview}
-        <div class="mt-5 border-t border-border/70 pt-4">
+        <div class="mt-3 border-t border-border/70 pt-3 sm:mt-5 sm:pt-4">
           <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Preview</p>
-          <p class="mt-2 max-h-24 overflow-hidden text-sm leading-6 text-muted-foreground">{atlas.selectedNode.preview}</p>
+          <p class="mt-2 max-h-20 overflow-hidden text-sm leading-5 text-muted-foreground sm:max-h-24 sm:leading-6">{atlas.selectedNode.preview}</p>
         </div>
       {/if}
-      <div class="mt-4 grid gap-2 border-t border-border/70 pt-4 text-xs">
+      <div class="mt-4 hidden gap-2 border-t border-border/70 pt-4 text-xs sm:grid">
         <div class="flex items-center justify-between gap-3">
           <span class="text-muted-foreground">Last accessed</span>
           <span class="truncate text-foreground/80">{formatTimestamp(atlas.selectedNode.lastViewedAtMillis)}</span>
@@ -876,8 +912,33 @@
           <span class="truncate text-foreground/80">{cloudLabel(atlas.selectedNode.subclusterId)}</span>
         </div>
       </div>
+      <details class="mt-3 shrink-0 border-t border-border/70 pt-2 text-xs sm:hidden">
+        <summary class="cursor-pointer py-1 font-medium text-muted-foreground">Note details</summary>
+        <div class="mt-2 grid gap-2 rounded-xl bg-muted/35 p-3">
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-muted-foreground">Last accessed</span>
+            <span class="truncate text-foreground/80">{formatTimestamp(atlas.selectedNode.lastViewedAtMillis)}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-muted-foreground">Created</span>
+            <span class="truncate text-foreground/80">{formatTimestamp(atlas.selectedNode.createdAtMillis)}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-muted-foreground">Updated</span>
+            <span class="truncate text-foreground/80">{formatTimestamp(atlas.selectedNode.updatedAtMillis)}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-muted-foreground">Cluster</span>
+            <span class="truncate text-foreground/80">{cloudLabel(atlas.selectedNode.clusterId)}</span>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-muted-foreground">Sub-cluster</span>
+            <span class="truncate text-foreground/80">{cloudLabel(atlas.selectedNode.subclusterId)}</span>
+          </div>
+        </div>
+      </details>
       {#if atlas.selectedNode.tags.length > 0}
-        <div class="mt-4">
+        <div class="mt-3 shrink-0 sm:mt-4">
           <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Tags</p>
           <div class="mt-2 flex flex-wrap gap-1.5">
             {#each atlas.selectedNode.tags as tag (tag)}
@@ -886,7 +947,7 @@
           </div>
         </div>
       {/if}
-      <div class="mt-4 flex min-h-0 flex-1 flex-col border-t border-border/70 pt-3">
+      <div class="mt-3 flex min-h-0 flex-1 flex-col border-t border-border/70 pt-3 sm:mt-4">
         <div class="flex shrink-0 items-center justify-between gap-3">
           <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Related notes</p>
           <p class="text-xs text-muted-foreground">
@@ -971,7 +1032,10 @@
       </div>
     </aside>
   {:else if atlas.selectedCloud}
-    <aside class="absolute bottom-24 right-4 z-20 w-[min(22rem,calc(100vw-2rem))] rounded-[1.5rem] border border-border/80 bg-card/90 p-4 shadow-lg backdrop-blur-md">
+    <aside
+      class="atlas-cloud-inspector absolute inset-x-2 bottom-[calc(var(--atlas-search-dock-inset)+7rem)] z-20 rounded-[1.5rem] border border-border/80 bg-card/94 p-4 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:right-4 sm:bottom-24 sm:w-[min(22rem,calc(100vw-2rem))] sm:bg-card/90 sm:shadow-lg"
+      aria-label={`Selected cloud: ${formatCloudLabelText(atlas.selectedCloud)}`}
+    >
       <div class="flex items-start justify-between gap-3">
         <div>
           <p class="text-sm font-semibold">{formatCloudLabelText(atlas.selectedCloud)}</p>
@@ -986,7 +1050,8 @@
         </div>
         <button
           type="button"
-          class="rounded-full p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80 sm:h-8 sm:w-8"
+          aria-label="Close cloud details"
           title="Clear selection"
           onclick={() => atlas.clearSelection()}
         >
@@ -1016,10 +1081,40 @@
 
 <style>
   .atlas-surface {
+    --atlas-search-dock-inset: env(safe-area-inset-bottom, 0px);
     background: var(--background);
   }
 
   .atlas-surface::before {
     content: none;
+  }
+
+  :global(.atlas-search-bar) {
+    flex: 1 1 42rem;
+    max-width: 42rem;
+  }
+
+  :global(.atlas-search-bar > svg) {
+    display: block;
+  }
+
+  @media (max-width: 639px) {
+    .atlas-map-tools {
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 0.5rem);
+    }
+
+    :global([data-keyboard-open='true']) .atlas-node-inspector,
+    :global([data-keyboard-open='true']) .atlas-cloud-inspector,
+    :global([data-keyboard-open='true']) .atlas-touch-hint {
+      display: none;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .atlas-surface {
+      --atlas-search-dock-inset: calc(1rem + 1px);
+    }
   }
 </style>
