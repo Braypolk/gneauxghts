@@ -43,7 +43,7 @@
 
 <div
   use:mobileViewport
-  class="flex h-(--app-shell-height) min-h-(--app-shell-height) flex-col overflow-hidden bg-background pt-[env(safe-area-inset-top,0px)] text-foreground"
+  class="relative flex h-(--app-shell-height) min-h-(--app-shell-height) flex-col overflow-hidden bg-background pt-[env(safe-area-inset-top,0px)] text-foreground"
 >
   <NavBar />
   <div class="flex-1 min-h-0 overflow-hidden px-0 sm:px-4">

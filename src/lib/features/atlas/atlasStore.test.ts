@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   atlasLabelRenderKey,
   AtlasStore,
+  getNodeRadiusZoomMultiplier,
   getNodePosition,
   getZoomTier,
   isAtlasResponsePending,
@@ -116,6 +117,14 @@ describe('atlas view helpers', () => {
     expect(getZoomTier(0.6)).toBe('mid');
     expect(getZoomTier(1.1)).toBe('near');
     expect(getZoomTier(2)).toBe('close');
+  });
+
+  it('shrinks node radii with zoom while keeping the default size when zoomed in', () => {
+    expect(getNodeRadiusZoomMultiplier(0.25)).toBe(0.25);
+    expect(getNodeRadiusZoomMultiplier(0.6)).toBe(0.6);
+    expect(getNodeRadiusZoomMultiplier(1)).toBe(1);
+    expect(getNodeRadiusZoomMultiplier(2)).toBe(1);
+    expect(getNodeRadiusZoomMultiplier(0)).toBe(0.08);
   });
 
   it('does not treat weak recency-only atlas matches as colored search hits', () => {

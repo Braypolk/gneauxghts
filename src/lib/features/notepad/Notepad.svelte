@@ -217,10 +217,6 @@
     workspaceStore.setPaneCommandFocusEl(paneCommandFocusEl);
   });
 
-  let paneCommandCurrentNoteLabel = $derived.by(() =>
-    paneCommandNoteLabel(getSplitSourceNote(notepadState, paneCommandSourceNoteKey))
-  );
-
   let locationHistoryEpoch = $state(0);
   let locationHistoryItems = $state<LocationHistoryEntry[]>([]);
 
@@ -242,12 +238,14 @@
     let controller = chatControllers.get(paneId);
     if (!controller) {
       controller = createChatController(chatApi, {
-        onAssistantCompleted: async ({ conversation, message }) => {
-          if (conversation.mode !== 'make') return;
+        onAssistantCompleted: async ({ message }) => {
           // proposalOrchestration is initialized later in this module; by the
           // time chat completions fire, the composition root is fully set up.
           const orchestration = getProposalOrchestration();
-          await orchestration.loadFromMakeModeMessage(message.content);
+          await orchestration.loadFromChatMessage(
+            message.content,
+            getChatContextNoteForPane(paneId)
+          );
         }
       });
       chatControllers.set(paneId, controller);
@@ -1101,6 +1099,13 @@
     locationHistoryEpoch = epoch;
   });
 
+  let paneCommandCurrentNoteLabel = $derived.by(() => {
+    void locationHistoryEpoch;
+    if (paneCommandPaneId === null) {
+      return paneCommandNoteLabel(getSplitSourceNote(notepadState, paneCommandSourceNoteKey));
+    }
+    return commands.paneCommandCurrentLocationLabel(paneCommandPaneId);
+  });
   let paneCommandPreviousNoteLabel = $derived.by(() => {
     void locationHistoryEpoch;
     if (paneCommandPaneId === null) {
@@ -1174,8 +1179,39 @@
     );
   }
 
+  function getChatContextDocumentForPane(paneId: PaneId) {
+    const paneIndex = paneOrder.indexOf(paneId);
+    const nearestEditorPaneId = paneOrder
+      .filter((candidate) => getPaneKind(candidate) === 'editor')
+      .sort(
+        (left, right) =>
+          Math.abs(paneOrder.indexOf(left) - paneIndex) -
+          Math.abs(paneOrder.indexOf(right) - paneIndex)
+      )[0];
+    return nearestEditorPaneId
+      ? getPaneDocumentSession(nearestEditorPaneId)
+      : getPaneDocumentSession(paneId);
+  }
+
+  function getChatContextNoteForPane(paneId: PaneId) {
+    const document = getChatContextDocumentForPane(paneId);
+    if (!document.currentNotePath) return null;
+    return {
+      path: document.currentNotePath,
+      title: document.title,
+      lastSavedMarkdown: document.lastSavedMarkdown
+    };
+  }
+
   /** Prefer an editor that already has a saved note; skip pathless split placeholders. */
-  function getEditorPaneDocumentForReview() {
+  function getEditorPaneDocumentForReview(path: string | null = null) {
+    if (path) {
+      const matchingPaneId = paneOrder.find(
+        (paneId) => getPaneDocumentSession(paneId).currentNotePath === path
+      );
+      if (matchingPaneId) return getPaneDocumentSession(matchingPaneId);
+      return null;
+    }
     const editorPaneIds = paneOrder.filter((paneId) => getPaneKind(paneId) === 'editor');
     for (const paneId of editorPaneIds) {
       const document = getPaneDocumentSession(paneId);
@@ -1187,15 +1223,15 @@
   }
 
   const proposalOrchestration = createProposalOrchestration({
-    getEditorPaneDocument: () => getEditorPaneDocumentForReview(),
+    getEditorPaneDocument: (path) => getEditorPaneDocumentForReview(path),
     getChatContextNote: () => {
       const chatPaneId =
         (activePaneId && getPaneKind(activePaneId) === 'chat' ? activePaneId : null) ??
         paneOrder.find((id) => getPaneKind(id) === 'chat') ??
         getNearestEditorPaneId();
       if (!chatPaneId) return null;
-      const document = getPaneDocumentSession(chatPaneId);
-      if (!document.currentNotePath) {
+      const context = getChatContextNoteForPane(chatPaneId);
+      if (!context) {
         // Fall back to any open note when chat isn't bound yet.
         const fallback = getEditorPaneDocumentForReview();
         if (!fallback?.currentNotePath) return null;
@@ -1205,11 +1241,7 @@
           lastSavedMarkdown: fallback.lastSavedMarkdown
         };
       }
-      return {
-        path: document.currentNotePath,
-        title: document.title,
-        lastSavedMarkdown: document.lastSavedMarkdown
-      };
+      return context;
     },
     getEditorForDocument: (document) => {
       const paneId = getPaneIdsForDocument(document).find(
@@ -1232,8 +1264,10 @@
       await enqueueSave(document);
       await getNoteSaveQueue(document.key);
     },
-    ensureEditorPaneForReview: async () => {
-      let editorPaneId = getNearestEditorPaneId();
+    ensureEditorPaneForReview: async (document) => {
+      let editorPaneId = document
+        ? getPaneIdsForDocument(document).find((id) => getPaneKind(id) === 'editor') ?? null
+        : getNearestEditorPaneId();
 
       if (!editorPaneId) {
         // Chat-only (or no editor pane). Prefer chat | editor with the bound note.
@@ -1266,9 +1300,11 @@
       // Split can leave a pathless placeholder editor — bind the chat/context note.
       if (editorPaneId && !getPaneDocumentSession(editorPaneId).currentNotePath) {
         const source =
-          paneOrder
-            .map((id) => getPaneDocumentSession(id))
-            .find((doc) => doc.currentNotePath) ?? null;
+          document?.currentNotePath
+            ? document
+            : paneOrder
+                .map((id) => getPaneDocumentSession(id))
+                .find((doc) => doc.currentNotePath) ?? null;
         if (source) {
           setPaneDocumentSession(editorPaneId, source);
           flushDocumentEditorSync(source);
@@ -1278,9 +1314,12 @@
       await tick();
       await paneLifecycle.ensurePaneEditors();
     },
-    activateEditorPane: async () => {
+    activateEditorPane: async (document) => {
       // Prefer the editor that already hosts a saved note.
-      const withPath = paneOrder.find(
+      const withDocument = document
+        ? getPaneIdsForDocument(document).find((id) => getPaneKind(id) === 'editor') ?? null
+        : null;
+      const withPath = withDocument ?? paneOrder.find(
         (id) =>
           getPaneKind(id) === 'editor' &&
           Boolean(getPaneDocumentSession(id).currentNotePath)
@@ -1538,13 +1577,8 @@
     const paneDocument = getPaneDocumentSession(paneId);
     const paneIndex = paneOrder.indexOf(paneId);
     const stackClass = activePaneId === paneId ? 'z-10' : 'z-0';
-    const nearestEditorPaneId = paneKind === 'chat'
-      ? paneOrder
-          .filter((candidate) => getPaneKind(candidate) === 'editor')
-          .sort((left, right) => Math.abs(paneOrder.indexOf(left) - paneIndex) - Math.abs(paneOrder.indexOf(right) - paneIndex))[0]
-      : null;
-    const chatContextDocument = nearestEditorPaneId
-      ? getPaneDocumentSession(nearestEditorPaneId)
+    const chatContextDocument = paneKind === 'chat'
+      ? getChatContextDocumentForPane(paneId)
       : paneDocument;
 
     return {
@@ -1611,6 +1645,10 @@
       onProposalCopyCurrent: () => void proposalOrchestration.copyCurrent(),
       onProposalReloadDisk: () => void proposalOrchestration.reloadDisk(),
       onProposalLoadFixture: () => void proposalOrchestration.loadFixture(),
+      onProposalLoadMessage: (content) => void proposalOrchestration.loadFromChatMessage(
+        content,
+        getChatContextNoteForPane(paneId)
+      ),
       paneCommandHighlightedIndex,
       paneCommandMode,
       paneCommandCurrentNoteLabel,

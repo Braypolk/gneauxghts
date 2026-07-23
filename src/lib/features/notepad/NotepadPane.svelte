@@ -32,12 +32,24 @@
 {#snippet closePaneButton()}
   <button
     type="button"
-    class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+    class="mobile-touch-target mobile-pane-top-action inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
     onclick={() => void actions.onClose(viewModel.paneId)}
     aria-label="Close this pane"
     title="Close pane"
   >
     <X class="h-4 w-4" />
+  </button>
+{/snippet}
+
+{#snippet backToNoteButton()}
+  <button
+    type="button"
+    class="mobile-touch-target mobile-pane-top-action inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:h-9 sm:w-9"
+    onclick={() => void actions.onSwitchToEditor(viewModel.paneId)}
+    aria-label="Back to note"
+    title="Back to note"
+  >
+    <FileText class="h-4 w-4" />
   </button>
 {/snippet}
 
@@ -87,7 +99,7 @@
             <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
             <button
               type="button"
-              class="mobile-thought-partner-button inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:hidden"
+              class="mobile-touch-target mobile-pane-top-action mobile-thought-partner-button inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:hidden"
               onclick={() => void actions.onOpenPaneChoice('thoughtPartner')}
               aria-label="Open thought partner"
               title="Open thought partner"
@@ -98,24 +110,21 @@
         </div>
       </div>
     {:else}
-      <div class="absolute right-4 top-4 z-30 flex items-center gap-2">
-        <button
-          type="button"
-          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-          onclick={() => void actions.onSwitchToEditor(viewModel.paneId)}
-          aria-label="Back to note"
-          title="Back to note"
-        >
-          <FileText class="h-4 w-4" />
-        </button>
+      <div class="notepad-chat-top-actions absolute right-4 top-3 z-30 flex items-center gap-2 sm:top-4">
         {#if viewModel.showCloseButton}
+          {@render backToNoteButton()}
           {@render closePaneButton()}
         {:else}
-          <!-- Reserve horizontal room for SplitPaneButton's leftward fan so it never covers Back. -->
           <div class="chat-pane-split-slot relative hidden h-9 shrink-0 sm:block">
-            <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
+            <SplitPaneButton
+              onSplit={actions.onSplit}
+              onOpenCurrent={actions.onOpenPaneChoice}
+              onBackToNote={() => actions.onSwitchToEditor(viewModel.paneId)}
+            />
           </div>
-          <div class="h-9 w-9 shrink-0 sm:hidden" aria-hidden="true"></div>
+          <div class="sm:hidden">
+            {@render backToNoteButton()}
+          </div>
         {/if}
       </div>
     {/if}
@@ -196,6 +205,7 @@
             onProposalCopyCurrent={viewModel.onProposalCopyCurrent}
             onProposalReloadDisk={viewModel.onProposalReloadDisk}
             onProposalLoadFixture={viewModel.onProposalLoadFixture}
+            onProposalLoadMessage={viewModel.onProposalLoadMessage}
           />
         {/if}
       </div>
@@ -204,10 +214,7 @@
 </div>
 
 <style>
-  /*
-    SplitPaneButton fans options left from a w-9 anchor (::before uses -9.5rem).
-    Keep that fan inside this slot so Back to note stays clickable to the left.
-  */
+  /* SplitPaneButton fans its quick actions left from a w-9 anchor. */
   .chat-pane-split-slot {
     width: 11.75rem;
   }
@@ -218,9 +225,28 @@
     right: 0;
   }
 
+  @media (max-width: 639px) {
+    .notepad-editor-title-wrap {
+      right: 7rem;
+      left: 10rem;
+    }
+
+    .mobile-pane-top-action {
+      margin-right: 4.25rem;
+    }
+
+    .notepad-chat-top-actions {
+      right: 5rem;
+    }
+
+    .notepad-chat-top-actions .mobile-pane-top-action {
+      margin-right: 0;
+    }
+  }
+
   /* Landscape phones can satisfy width-based desktop breakpoints while still
      having very little vertical room. Keep their pane chrome mobile-sized. */
-  @media (max-height: 559px) {
+  @media (max-height: 559px) and (min-width: 640px) {
     .notepad-editor-top-row {
       gap: 0.5rem;
       padding: 0.75rem 0.75rem 0.5rem;

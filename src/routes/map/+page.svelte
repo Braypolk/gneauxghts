@@ -15,6 +15,7 @@
   import {
     atlasLabelRenderKey,
     atlasStore,
+    getNodeRadiusZoomMultiplier,
     getNodePosition,
     linkEndpoints
   } from '$lib/features/atlas/atlasStore.svelte';
@@ -288,8 +289,23 @@
     return label.length > 16 ? baseSize - 1 : baseSize;
   }
 
+  function getNodeMinRadiusPixels() {
+    return isCompactViewport ? 8 : 4;
+  }
+
+  function getNodeRadiusPixels(node: AtlasNode) {
+    const baseRadius = node.id === atlas.selectedNodeId ? node.radius + 4 : node.radius;
+    const scaledRadius =
+      baseRadius
+      * atlas.nodeSearchRadiusMultiplier(node)
+      * (isCompactViewport ? 1.15 : 1)
+      * getNodeRadiusZoomMultiplier(atlas.zoom);
+    return Math.max(getNodeMinRadiusPixels(), scaledRadius);
+  }
+
   function getNoteLabelOffsetWorldUnits(node: AtlasNode) {
-    return (node.radius / 2) / Math.max(0.7, atlas.zoom);
+    const labelClearancePixels = getNodeRadiusPixels(node) + 3;
+    return labelClearancePixels / Math.max(0.08, atlas.zoom);
   }
 
   function updateViewportMode() {
@@ -420,16 +436,13 @@
         getPosition: (node: AtlasNode) => getNodePosition(node, atlas.driftStaleNotes),
         updateTriggers: {
           getPosition: [atlas.driftStaleNotes],
-          getRadius: [atlas.searchResponse, selectedNodeId, isCompactViewport],
+          getRadius: [atlas.searchResponse, selectedNodeId, isCompactViewport, atlas.zoom],
           getFillColor: [atlas.searchResponse, selectedNodeId],
           getLineWidth: [selectedNodeId]
         },
-        getRadius: (node: AtlasNode) =>
-          (node.id === selectedNodeId ? node.radius + 4 : node.radius)
-          * atlas.nodeSearchRadiusMultiplier(node)
-          * (isCompactViewport ? 1.15 : 1),
+        getRadius: getNodeRadiusPixels,
         radiusUnits: 'pixels',
-        radiusMinPixels: isCompactViewport ? 8 : 4,
+        radiusMinPixels: getNodeMinRadiusPixels(),
         getFillColor: (node: AtlasNode) => {
           const [r, g, b] = node.id === selectedNodeId ? [255, 255, 255] : refinedNodeColor(node);
           const alpha = node.id === selectedNodeId
@@ -486,7 +499,13 @@
           return [x, y - getNoteLabelOffsetWorldUnits(node)];
         },
         updateTriggers: {
-          getPosition: [atlas.driftStaleNotes, atlas.zoom],
+          getPosition: [
+            atlas.driftStaleNotes,
+            atlas.searchResponse,
+            selectedNodeId,
+            isCompactViewport,
+            atlas.zoom
+          ],
           getText: [selectedNodeId, hoveredNodeId]
         },
         getText: (node: AtlasNode) =>
@@ -765,7 +784,7 @@
         </div>
         <button
           type="button"
-          class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8 ${
+          class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${
             atlas.driftStaleNotes ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
           }`}
           aria-label="Drift stale notes"
@@ -777,7 +796,7 @@
         </button>
         <button
           type="button"
-          class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors sm:h-8 sm:w-8 ${
+          class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${
             atlas.showLinks ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
           }`}
           aria-label="Toggle links"
@@ -789,7 +808,7 @@
         </button>
         <button
           type="button"
-          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:bg-accent/80 sm:h-8 sm:w-8"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:bg-accent/80"
           aria-label="Fit map to view"
           title="Fit view"
           onclick={fitView}
@@ -866,7 +885,7 @@
         <div class="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            class="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80 sm:h-8 sm:w-8"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80"
             aria-label="Open selected note"
             title="Open note"
             onclick={() => void openSelectedNode()}
@@ -875,7 +894,7 @@
           </button>
           <button
             type="button"
-            class="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80 sm:h-8 sm:w-8"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80"
             aria-label="Close note details"
             title="Clear selection"
             onclick={() => atlas.clearSelection()}
@@ -1050,7 +1069,7 @@
         </div>
         <button
           type="button"
-          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80 sm:h-8 sm:w-8"
+          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/80"
           aria-label="Close cloud details"
           title="Clear selection"
           onclick={() => atlas.clearSelection()}

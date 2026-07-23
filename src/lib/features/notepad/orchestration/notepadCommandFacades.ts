@@ -27,11 +27,13 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
   beginPaneCommand: (
     paneId: TPaneId,
     sourceNoteKey: NoteKey,
-    mode: PaneCommandMode
+    mode: PaneCommandMode,
+    sourcePaneId?: TPaneId
   ) => void;
   resetPaneCommand: () => void;
   setPaneCommandHighlight: (index: number) => void;
   getPaneCommandPaneId: () => TPaneId | null;
+  getPaneCommandSourcePaneId: () => TPaneId | null;
   getPaneCommandSourceNoteKey: () => NoteKey | null;
   getPaneCommandHighlightedIndex: () => number;
   getPaneCommandMode: () => PaneCommandMode;
@@ -124,11 +126,17 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
     setActivePaneId: (paneId) => workspace.setActivePaneId(paneId as NotepadPaneId),
     setPaneOrder: (order) => workspace.setPaneOrder(order as NotepadPaneId[]),
     removePane: (paneId) => workspace.removePane(paneId as NotepadPaneId),
-    beginPaneCommand: (paneId, sourceNoteKey, mode) =>
-      workspace.beginPaneCommand(paneId as NotepadPaneId, sourceNoteKey, mode),
+    beginPaneCommand: (paneId, sourceNoteKey, mode, sourcePaneId) =>
+      workspace.beginPaneCommand(
+        paneId as NotepadPaneId,
+        sourceNoteKey,
+        mode,
+        sourcePaneId as NotepadPaneId | undefined
+      ),
     resetPaneCommand: () => workspace.resetPaneCommand(),
     setPaneCommandHighlight: (index) => workspace.setPaneCommandHighlight(index),
     getPaneCommandPaneId: () => workspace.paneCommand.paneId as TPaneId | null,
+    getPaneCommandSourcePaneId: () => workspace.paneCommand.sourcePaneId as TPaneId | null,
     getPaneCommandSourceNoteKey: () => workspace.paneCommand.sourceNoteKey,
     getPaneCommandHighlightedIndex: () => workspace.paneCommand.highlightedIndex,
     getPaneCommandMode: () => workspace.paneCommand.mode,

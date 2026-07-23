@@ -93,7 +93,7 @@
   --shadow-2xl: 0px 1px 2px 0px hsl(0 0% 0% / 0.45);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
-  --app-shell-height: 100lvh;
+  --app-shell-height: 100dvh;
   --keyboard-inset-height: 0px;
   --selection-background: color-mix(in oklab, var(--foreground) 15%, var(--background));
   --selection-color: var(--foreground);
@@ -182,6 +182,30 @@ body {
   font-family: var(--font-sans);
   overscroll-behavior: none;
   touch-action: manipulation;
+}
+
+/*
+ * Keep primary controls comfortably tappable on phones. Dense controls can opt
+ * into the 40px variant below when several must fit in a single toolbar.
+ */
+@media (max-width: 639px) {
+  button,
+  [role='button'],
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    min-height: 2.75rem;
+  }
+
+  .mobile-touch-target {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .mobile-dense-touch-target {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
 }
 
 ::selection {

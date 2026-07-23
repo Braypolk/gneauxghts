@@ -25,8 +25,9 @@ use crate::{
         SemanticStatus,
     },
     state::{
-        current_vault_info, ensure_vault_scaffold, notes_root, set_notes_root, vault_root,
-        VaultInfo,
+        create_vault_folder as create_vault_folder_state, current_vault_info,
+        ensure_vault_scaffold, list_vault_folders as list_vault_folders_state, notes_root,
+        set_notes_root, vault_root, CreateVaultFolderResult, VaultFolderInfo, VaultInfo,
     },
     time::current_time_millis,
 };
@@ -279,6 +280,16 @@ pub(crate) fn read_note(
 #[tauri::command]
 pub(crate) fn get_vault_info() -> Result<VaultInfo, String> {
     current_vault_info()
+}
+
+#[tauri::command]
+pub(crate) fn list_vault_folders() -> Result<Vec<VaultFolderInfo>, String> {
+    list_vault_folders_state()
+}
+
+#[tauri::command]
+pub(crate) fn create_vault_folder(name: String) -> Result<CreateVaultFolderResult, String> {
+    create_vault_folder_state(&name)
 }
 
 #[tauri::command]

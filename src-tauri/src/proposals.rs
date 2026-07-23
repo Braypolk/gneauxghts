@@ -10,7 +10,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppliedNoteChange {
@@ -22,7 +21,11 @@ pub(crate) struct AppliedNoteChange {
 /// Untrusted edit input used only for preview. Positions are always derived by
 /// Rust; the model never gets to provide offsets or a content hash.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum ProposedTextEdit {
     Replace {
         old_text: String,
@@ -167,26 +170,50 @@ pub(crate) fn commit_note_review(
     })
 }
 
-fn resolve_text_edits(base: &str, edits: &[ProposedTextEdit]) -> Result<Vec<ResolvedTextEdit>, String> {
+fn resolve_text_edits(
+    base: &str,
+    edits: &[ProposedTextEdit],
+) -> Result<Vec<ResolvedTextEdit>, String> {
     if edits.is_empty() {
         return Err("Proposal contains no edits.".to_string());
     }
     let mut resolved = Vec::with_capacity(edits.len());
     for edit in edits {
         let (old_text, new_text, before, after, insertion) = match edit {
-            ProposedTextEdit::Replace { old_text, new_text, context_before, context_after } => {
+            ProposedTextEdit::Replace {
+                old_text,
+                new_text,
+                context_before,
+                context_after,
+            } => {
                 if old_text.is_empty() {
                     return Err("Replace edits must include non-empty oldText.".to_string());
                 }
-                (old_text.as_str(), new_text.as_str(), context_before.as_deref(), context_after.as_deref(), false)
+                (
+                    old_text.as_str(),
+                    new_text.as_str(),
+                    context_before.as_deref(),
+                    context_after.as_deref(),
+                    false,
+                )
             }
-            ProposedTextEdit::Insert { new_text, context_before, context_after } => {
+            ProposedTextEdit::Insert {
+                new_text,
+                context_before,
+                context_after,
+            } => {
                 if context_before.as_deref().unwrap_or("").is_empty()
                     && context_after.as_deref().unwrap_or("").is_empty()
                 {
                     return Err("Insert edits require contextBefore or contextAfter.".to_string());
                 }
-                ("", new_text.as_str(), context_before.as_deref(), context_after.as_deref(), true)
+                (
+                    "",
+                    new_text.as_str(),
+                    context_before.as_deref(),
+                    context_after.as_deref(),
+                    true,
+                )
             }
         };
         let candidates = if insertion {
@@ -197,8 +224,10 @@ fn resolve_text_edits(base: &str, edits: &[ProposedTextEdit]) -> Result<Vec<Reso
         } else {
             find_all(base, old_text)
                 .into_iter()
-                .filter(|pos| context_matches(base, *pos, before, None)
-                    && context_after_matches(base, *pos + old_text.len(), after))
+                .filter(|pos| {
+                    context_matches(base, *pos, before, None)
+                        && context_after_matches(base, *pos + old_text.len(), after)
+                })
                 .collect::<Vec<_>>()
         };
         if candidates.len() != 1 {
@@ -209,9 +238,16 @@ fn resolve_text_edits(base: &str, edits: &[ProposedTextEdit]) -> Result<Vec<Reso
             });
         }
         let from = candidates[0];
+        if insertion && !new_text.is_empty() && base[from..].starts_with(new_text) {
+            return Err("Could not apply safely: inserted text is already present.".to_string());
+        }
         resolved.push(ResolvedTextEdit {
             from,
-            to: if insertion { from } else { from + old_text.len() },
+            to: if insertion {
+                from
+            } else {
+                from + old_text.len()
+            },
             old_text: old_text.to_string(),
             new_text: new_text.to_string(),
         });
@@ -230,20 +266,32 @@ fn resolve_text_edits(base: &str, edits: &[ProposedTextEdit]) -> Result<Vec<Reso
 }
 
 fn context_matches(base: &str, pos: usize, before: Option<&str>, after: Option<&str>) -> bool {
-    before.map(|value| base[..pos].ends_with(value)).unwrap_or(true)
-        && after.map(|value| base[pos..].starts_with(value)).unwrap_or(true)
+    before
+        .map(|value| base[..pos].ends_with(value))
+        .unwrap_or(true)
+        && after
+            .map(|value| base[pos..].starts_with(value))
+            .unwrap_or(true)
 }
 
 fn context_after_matches(base: &str, pos: usize, after: Option<&str>) -> bool {
-    after.map(|value| base[pos..].starts_with(value)).unwrap_or(true)
+    after
+        .map(|value| base[pos..].starts_with(value))
+        .unwrap_or(true)
 }
 
 fn find_all(haystack: &str, needle: &str) -> Vec<usize> {
-    haystack.match_indices(needle).map(|(offset, _)| offset).collect()
+    haystack
+        .match_indices(needle)
+        .map(|(offset, _)| offset)
+        .collect()
 }
 
 fn string_boundaries(value: &str) -> Vec<usize> {
-    let mut positions = value.char_indices().map(|(offset, _)| offset).collect::<Vec<_>>();
+    let mut positions = value
+        .char_indices()
+        .map(|(offset, _)| offset)
+        .collect::<Vec<_>>();
     positions.push(value.len());
     positions
 }
@@ -316,6 +364,64 @@ mod tests {
     }
 
     #[test]
+    fn previews_fixture_style_append_at_the_end_of_a_note() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("proposal-append-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
+        let dir = setup("proposal-append");
+        let (path, _) = write_note(
+            &dir,
+            "Fixture.md",
+            "# Fixture\n\n- basil\n- tomato\n- cheese\n- dough\n- salami\n",
+        );
+
+        let preview = preview_note_change(
+            dir.path(),
+            &path,
+            &[ProposedTextEdit::Insert {
+                new_text: "\n- pizza\n- caprese salad\n- grilled cheese\n- pasta with tomato sauce\n- bruschetta"
+                    .to_string(),
+                context_before: Some("- salami".to_string()),
+                context_after: None,
+            }],
+        )
+        .expect("preview");
+
+        assert!(preview
+            .proposed_editor_markdown
+            .contains("- salami\n- pizza"));
+        assert_eq!(preview.hunks.len(), 1);
+        assert!(fs::read_to_string(path)
+            .expect("read")
+            .ends_with("- salami\n"));
+    }
+
+    #[test]
+    fn repeated_insert_proposals_do_not_duplicate_existing_text() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("proposal-repeat-insert-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
+        let dir = setup("proposal-repeat-insert");
+        let (path, _) = write_note(&dir, "Fixture.md", "# Fixture\n\n- salami\n- pizza\n");
+
+        let error = preview_note_change(
+            dir.path(),
+            &path,
+            &[ProposedTextEdit::Insert {
+                new_text: "\n- pizza".to_string(),
+                context_before: Some("- salami".to_string()),
+                context_after: None,
+            }],
+        )
+        .expect_err("duplicate insert should be rejected");
+
+        assert_eq!(
+            error,
+            "Could not apply safely: inserted text is already present."
+        );
+    }
+
+    #[test]
     fn commit_review_returns_conflict_without_overwriting() {
         let _guard = lock_test_env();
         let app_data = TestDir::new("proposal-review-commit-app-data");
@@ -324,8 +430,8 @@ mod tests {
         let (path, hash) = write_note(&dir, "Review.md", "# Review\n\nOld");
         fs::write(&path, "# Review\n\nExternal").expect("external change");
 
-        let result = commit_note_review(dir.path(), path.clone(), hash, "New".to_string())
-            .expect("result");
+        let result =
+            commit_note_review(dir.path(), path.clone(), hash, "New".to_string()).expect("result");
         assert_eq!(result.status, "conflict");
         assert!(fs::read_to_string(path).expect("read").contains("External"));
     }
@@ -339,13 +445,18 @@ mod tests {
         let raw = "---\ncustom: keep\n---\n# Display title\n\nOld";
         let (path, hash) = write_note(&dir, "Stable Path.md", raw);
 
-        let result = commit_note_review(dir.path(), path.clone(), hash, "New".to_string())
-            .expect("commit");
+        let result =
+            commit_note_review(dir.path(), path.clone(), hash, "New".to_string()).expect("commit");
 
         assert_eq!(result.status, "committed");
         assert_eq!(
             result.applied.and_then(|applied| applied.path),
-            Some(fs::canonicalize(&path).expect("canonical path").to_string_lossy().into_owned())
+            Some(
+                fs::canonicalize(&path)
+                    .expect("canonical path")
+                    .to_string_lossy()
+                    .into_owned()
+            )
         );
         assert!(std::path::Path::new(&path).exists());
         assert!(!dir.path().join("Display title.md").exists());

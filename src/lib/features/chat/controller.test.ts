@@ -7,7 +7,7 @@ const settings: ChatSettings = {
   provider: 'openai',
   model: 'test-model',
   serviceTier: 'standard',
-  defaultMode: 'auto',
+  webAccess: 'auto',
   defaultVaultAccess: 'limited',
   atlasVisibility: 'hidden'
 };
@@ -34,7 +34,6 @@ function conversation(overrides: Partial<ChatConversation> = {}): ChatConversati
     id: 'conversation-1',
     title: 'Test conversation',
     status: 'active',
-    mode: 'auto',
     vaultAccess: 'limited',
     createdAtMillis: 1,
     updatedAtMillis: 1,
@@ -60,7 +59,7 @@ function fakeApi() {
     getConversation: vi.fn(async () => conversation()),
     renameConversation: vi.fn(),
     archiveConversation: vi.fn(),
-    setConversationPreferences: vi.fn(async (_id, mode, vaultAccess) => conversation({ mode, vaultAccess })),
+    setConversationVaultAccess: vi.fn(async (_id, vaultAccess) => conversation({ vaultAccess })),
     sendMessage: vi.fn(),
     cancelRequest: vi.fn(),
     retryMessage: vi.fn(),
@@ -148,6 +147,25 @@ describe('createChatController', () => {
         conversation: expect.objectContaining({ id: 'conversation-1' })
       })
     );
+  });
+
+  it('forwards a one-message forced web search', async () => {
+    const fake = fakeApi();
+    vi.mocked(fake.api.sendMessage).mockResolvedValue({
+      requestId: 'request-1',
+      conversationId: 'conversation-1',
+      userMessage: message({ id: 'user-1', role: 'user', content: 'Latest news', status: 'completed' }),
+      assistantMessage: message()
+    });
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await expect(controller.send('Latest news', true)).resolves.toBe(true);
+    expect(fake.api.sendMessage).toHaveBeenCalledWith({
+      conversationId: 'conversation-1',
+      content: 'Latest news',
+      forceWebSearch: true
+    });
   });
 
   it('ignores stream events belonging to a different conversation', async () => {

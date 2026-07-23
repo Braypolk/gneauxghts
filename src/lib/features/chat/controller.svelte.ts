@@ -6,7 +6,6 @@ import type {
   ChatEventMap,
   ChatExcerpt,
   ChatMessage,
-  ChatMode,
   ChatNoteGrant,
   VaultAccess,
   ChatSettings
@@ -41,14 +40,13 @@ export interface ChatController extends Readable<ChatControllerState> {
   refreshList(): Promise<void>;
   createConversation(input?: {
     title?: string;
-    mode?: ChatMode;
     vaultAccess?: VaultAccess;
   }): Promise<ChatConversation | null>;
   openConversation(conversationId: string): Promise<ChatConversation | null>;
-  send(content: string, useWebSearch?: boolean): Promise<boolean>;
+  send(content: string, forceWebSearch?: boolean): Promise<boolean>;
   cancel(): Promise<void>;
   retry(messageId: string): Promise<void>;
-  setPreferences(mode: ChatMode, vaultAccess: VaultAccess): Promise<void>;
+  setVaultAccess(vaultAccess: VaultAccess): Promise<void>;
   grantNote(noteId: string): Promise<void>;
   revokeNote(noteId: string): Promise<void>;
   createExcerpt(messageId: string, text: string): Promise<ChatExcerpt>;
@@ -87,7 +85,6 @@ function mergeSummary(list: ChatConversationSummary[], summary: ChatConversation
     id: summary.id,
     title: summary.title,
     status: summary.status,
-    mode: summary.mode,
     vaultAccess: summary.vaultAccess,
     createdAtMillis: summary.createdAtMillis,
     updatedAtMillis: summary.updatedAtMillis,
@@ -102,7 +99,7 @@ function mergeSummary(list: ChatConversationSummary[], summary: ChatConversation
 export interface ChatControllerOptions {
   /**
    * Fired after a successful assistant completion for the open conversation.
-   * Used by make-mode to lift structured note proposals into the review session.
+   * Used to lift structured note proposals into the review session.
    */
   onAssistantCompleted?: (info: {
     conversation: ChatConversation;
@@ -320,7 +317,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   async createConversation(
-    input: { title?: string; mode?: ChatMode; vaultAccess?: VaultAccess } = {}
+    input: { title?: string; vaultAccess?: VaultAccess } = {}
   ) {
     this.#patch({ isLoadingConversation: true, error: null });
     try {
@@ -360,7 +357,7 @@ export class ChatControllerStore implements ChatController {
     }
   }
 
-  async send(content: string, useWebSearch = false) {
+  async send(content: string, forceWebSearch = false) {
     const trimmed = content.trim();
     if (!trimmed || this.isSending || !this.conversation) return false;
     this.#patch({ isSending: true, error: null });
@@ -368,7 +365,7 @@ export class ChatControllerStore implements ChatController {
       const receipt = await this.#api.sendMessage({
         conversationId: this.conversation.id,
         content: trimmed,
-        useWebSearch
+        forceWebSearch
       });
       this.#updateConversation((conversation) => ({
         ...conversation,
@@ -414,16 +411,16 @@ export class ChatControllerStore implements ChatController {
     }
   }
 
-  async setPreferences(mode: ChatMode, vaultAccess: VaultAccess) {
+  async setVaultAccess(vaultAccess: VaultAccess) {
     const conversation = this.conversation;
-    if (!conversation || (conversation.mode === mode && conversation.vaultAccess === vaultAccess)) {
+    if (!conversation || conversation.vaultAccess === vaultAccess) {
       return;
     }
     try {
-      const summary = await this.#api.setConversationPreferences(conversation.id, mode, vaultAccess);
+      const summary = await this.#api.setConversationVaultAccess(conversation.id, vaultAccess);
       this.#updateConversation((current) => ({ ...current, ...summary }));
     } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to change chat preferences.') });
+      this.#patch({ error: errorText(error, 'Unable to change vault access.') });
     }
   }
 

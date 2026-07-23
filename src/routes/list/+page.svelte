@@ -126,8 +126,8 @@
   });
 </script>
 
-<svelte:window onfocus={taskList.handleWindowFocus} />
-<svelte:document onvisibilitychange={taskList.handleVisibilityChange} />
+<svelte:window onfocus={() => taskList.handleWindowFocus()} />
+<svelte:document onvisibilitychange={() => taskList.handleVisibilityChange()} />
 
 <div class="relative h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
   <main class="relative mx-auto flex w-full flex-1 flex-col justify-center overflow-hidden pb-0 sm:pb-4">
@@ -140,7 +140,7 @@
 
           <div class="flex items-center gap-2">
             <div
-              class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-x-contain rounded-full bg-muted p-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:gap-2 [&::-webkit-scrollbar]:hidden"
+              class="inline-flex w-fit min-w-0 max-w-full items-center gap-0.5 overflow-x-auto overscroll-x-contain rounded-full bg-muted p-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:gap-2 [&::-webkit-scrollbar]:hidden"
               role="toolbar"
               aria-label="Task filters"
             >
@@ -168,7 +168,7 @@
                     ? 'border-border bg-card text-foreground'
                     : 'border-transparent bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                 }`}
-                onclick={taskList.toggleShowHidden}
+                onclick={() => taskList.toggleShowHidden()}
                 aria-label={taskList.showHidden ? 'Hide hidden tasks' : 'Show hidden tasks'}
                 title={taskList.showHidden ? 'Hide hidden' : 'Show hidden'}
               >
@@ -183,7 +183,7 @@
               <button
                 type="button"
                 class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors touch-manipulation hover:bg-accent hover:text-accent-foreground sm:h-auto sm:w-auto sm:gap-2 sm:px-4 sm:py-2 sm:text-sm sm:font-medium"
-                onclick={taskList.refresh}
+                onclick={() => taskList.refresh()}
                 aria-label="Refresh task list"
                 title="Refresh"
               >

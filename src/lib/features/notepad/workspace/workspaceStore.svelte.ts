@@ -11,12 +11,13 @@ import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 
 /**
  * Pane command UI state. The pane command overlay is shown while the user
- * chooses how to populate or repurpose a pane (typing, current note,
- * previous note, thought partner). It is workspace-level rather than
+ * chooses how to populate or repurpose a pane (typing, current location,
+ * previous location, thought partner). It is workspace-level rather than
  * pane-local because only one pane can host the overlay at a time.
  */
 export interface PaneCommandState {
   paneId: NotepadPaneId | null;
+  sourcePaneId: NotepadPaneId | null;
   sourceNoteKey: NoteKey | null;
   mode: PaneCommandMode;
   highlightedIndex: number;
@@ -36,6 +37,7 @@ export class WorkspaceStore {
   activePaneId = $state<NotepadPaneId>(notepadRuntimeState.activePaneId);
   paneCommand = $state<PaneCommandState>({
     paneId: null,
+    sourcePaneId: null,
     sourceNoteKey: null,
     mode: 'split',
     highlightedIndex: 0,
@@ -67,10 +69,12 @@ export class WorkspaceStore {
   beginPaneCommand(
     paneId: NotepadPaneId,
     sourceNoteKey: NoteKey,
-    mode: PaneCommandMode
+    mode: PaneCommandMode,
+    sourcePaneId: NotepadPaneId = paneId
   ): void {
     this.paneCommand = {
       paneId,
+      sourcePaneId,
       sourceNoteKey,
       mode,
       highlightedIndex: 0,
@@ -97,6 +101,7 @@ export class WorkspaceStore {
   resetPaneCommand(): void {
     this.paneCommand = {
       paneId: null,
+      sourcePaneId: null,
       sourceNoteKey: null,
       mode: 'split',
       highlightedIndex: 0,

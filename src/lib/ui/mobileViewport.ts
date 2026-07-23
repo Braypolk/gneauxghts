@@ -17,6 +17,20 @@ export function mobileViewport(node: HTMLElement) {
     const viewportWidth = Math.round(visualViewport?.width ?? window.innerWidth);
     const orientation = getOrientation();
     const viewportBottom = viewportHeight + viewportOffsetTop;
+    // CSS handles ordinary viewport resizing with 100dvh. Only override the
+    // shell height on touch devices, where the on-screen keyboard shrinks the
+    // visual viewport and we need to keep the document height stable.
+    const canHaveOnScreenKeyboard = window.matchMedia('(any-pointer: coarse)').matches;
+
+    if (!canHaveOnScreenKeyboard) {
+      maxViewportHeight = 0;
+      node.style.removeProperty('--app-shell-height');
+      node.style.setProperty('--keyboard-inset-height', '0px');
+      node.dataset.keyboardOpen = 'false';
+      lastViewportWidth = viewportWidth;
+      lastOrientation = orientation;
+      return;
+    }
 
     if (
       maxViewportHeight === 0

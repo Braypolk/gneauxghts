@@ -4,7 +4,7 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { appStore } from '$lib/app/appStore.svelte';
 import { atlasStore } from '$lib/features/atlas/atlasStore.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
-import type { VaultInfo } from '$lib/types/vault';
+import type { VaultFolderInfo, VaultInfo } from '$lib/types/vault';
 import type {
   SemanticDebugSnapshot,
   SemanticModelDownloadResult,
@@ -18,7 +18,11 @@ import {
 import { loadForgottenNotesSlice } from './loaders/forgottenLoader';
 import { loadSemanticSlice, loadSemanticStatusSlice } from './loaders/semanticLoader';
 import { loadSettingsViewSlice } from './loaders/settingsViewLoader';
-import { loadVaultInfoSlice } from './loaders/vaultLoader';
+import {
+  createVaultFolderSlice,
+  listVaultFoldersSlice,
+  loadVaultInfoSlice
+} from './loaders/vaultLoader';
 
 type SettingsTab = 'general' | 'forgotten';
 type GeneralSection =
@@ -48,6 +52,10 @@ export class SettingsStore {
   isSavingVault = $state(false);
   isPickingVault = $state(false);
   isRestarting = $state(false);
+  vaultFolders = $state<VaultFolderInfo[]>([]);
+  newVaultName = $state('');
+  isLoadingVaultFolders = $state(false);
+  isCreatingVaultFolder = $state(false);
   activeTab = $state<SettingsTab>('general');
   activeGeneralSection = $state<GeneralSection>('appearance');
   forgottenNotes = $state<ForgottenNoteSummary[]>([]);
@@ -67,6 +75,10 @@ export class SettingsStore {
   #disposeVaultNoteChanged: (() => void) | null = null;
   #disposeSemanticStatus: (() => void) | null = null;
 
+  get usesVaultContainer() {
+    return this.vaultInfo != null && this.vaultInfo.canPickArbitraryPath === false;
+  }
+
   setActiveTab(activeTab: SettingsTab) {
     this.activeTab = activeTab;
   }
@@ -77,6 +89,11 @@ export class SettingsStore {
 
   setVaultPathInput(vaultPathInput: string) {
     this.vaultPathInput = vaultPathInput;
+    this.vaultSaveError = null;
+  }
+
+  setNewVaultName(newVaultName: string) {
+    this.newVaultName = newVaultName;
     this.vaultSaveError = null;
   }
 
@@ -99,10 +116,61 @@ export class SettingsStore {
     this.activeVaultPath =
       this.activeVaultPath === '' ? nextVaultInfo.currentPath : this.activeVaultPath;
     this.vaultSaveError = null;
+    if (!nextVaultInfo.canPickArbitraryPath) {
+      void this.loadVaultFolders();
+    } else {
+      this.vaultFolders = [];
+    }
+  }
+
+  async loadVaultFolders() {
+    if (this.vaultInfo?.canPickArbitraryPath !== false) {
+      this.vaultFolders = [];
+      return;
+    }
+
+    this.isLoadingVaultFolders = true;
+    try {
+      this.vaultFolders = await listVaultFoldersSlice();
+    } catch (error) {
+      console.error('Failed to list vault folders:', error);
+      this.vaultSaveError = String(error);
+    } finally {
+      this.isLoadingVaultFolders = false;
+    }
+  }
+
+  selectVaultFolder(path: string) {
+    this.setVaultPathInput(path);
+  }
+
+  async createVaultFolder() {
+    const name = this.newVaultName.trim();
+    if (name === '') {
+      this.vaultSaveError = 'Enter a vault name.';
+      return;
+    }
+
+    this.isCreatingVaultFolder = true;
+    this.vaultSaveError = null;
+    try {
+      const result = await createVaultFolderSlice(name);
+      this.vaultFolders = result.folders;
+      this.newVaultName = '';
+      this.setVaultPathInput(result.createdPath);
+    } catch (error) {
+      console.error('Failed to create vault folder:', error);
+      this.vaultSaveError = String(error);
+    } finally {
+      this.isCreatingVaultFolder = false;
+    }
   }
 
   async pickVaultDirectory() {
     if (!(this.vaultInfo?.canConfigurePath ?? true)) {
+      return;
+    }
+    if (this.vaultInfo?.canPickArbitraryPath === false) {
       return;
     }
 

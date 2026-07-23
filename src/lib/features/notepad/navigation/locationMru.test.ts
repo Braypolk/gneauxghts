@@ -125,6 +125,17 @@ describe('locationMru', () => {
     expect(mru.previousExcluding('p2', null)).toEqual(noteB);
   });
 
+  it('makes a closed note pane the previous location of the surviving chat pane', () => {
+    const mru = createLocationMruStore<'chat' | 'note'>();
+    mru.touch('chat', chatA);
+    mru.touch('note', noteA);
+
+    mru.adoptClosedLocation('note', 'chat', noteA);
+
+    expect(mru.previousExcluding('chat', chatA)).toEqual(noteA);
+    expect(mru.list('note')).toEqual([]);
+  });
+
   it('removes matching locations from all panes', () => {
     const mru = createLocationMruStore<'p1' | 'p2'>();
     mru.touch('p1', noteA);
@@ -219,4 +230,3 @@ describe('locationMru', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
-

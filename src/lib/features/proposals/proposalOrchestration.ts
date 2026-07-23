@@ -2,19 +2,23 @@ import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/edito
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import type { ProposalPreview } from '$lib/types/proposals';
 import { commitNoteReview, previewNoteChangeProposal, proposalErrorMessage } from './api';
-import { parseChatProposalEdits, type ChatProposalContext } from './chatProposalParse';
+import {
+  extractProposalFence,
+  parseChatProposalEdits,
+  type ChatProposalContext
+} from './chatProposalParse';
 import { enterProposalReviewView, exitProposalReviewView, resolveProposalHunk } from './reviewDisplay';
 import { proposalTransaction, type ReviewHunkState } from './reviewExtension';
 import { reviewHoldStore, type ReviewHoldStore } from './reviewHold.svelte';
 import { proposalReviewSession, type ProposalReviewSession } from './reviewSession.svelte';
 
 export interface ProposalOrchestrationDeps {
-  getEditorPaneDocument: () => NoteDraftState | null;
+  getEditorPaneDocument: (path?: string | null) => NoteDraftState | null;
   getChatContextNote?: () => ChatProposalContext | null;
   getEditorForDocument: (document: NoteDraftState) => EditorCapabilityAdapter | null;
   getEditorsForDocument?: (document: NoteDraftState) => EditorCapabilityAdapter[];
-  ensureEditorPaneForReview: () => Promise<void>;
-  activateEditorPane?: () => void | Promise<void>;
+  ensureEditorPaneForReview: (document?: NoteDraftState) => Promise<void>;
+  activateEditorPane?: (document?: NoteDraftState) => void | Promise<void>;
   cancelPendingAutosave?: (document: NoteDraftState) => void;
   scheduleAutosave?: (document: NoteDraftState) => void;
   flushBeforePreview?: (document: NoteDraftState) => Promise<void>;
@@ -224,7 +228,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
           newMarkdown: preview.proposedEditorMarkdown
         }],
         { [preview.notePath]: preview.baseEditorMarkdown },
-        'make'
+        'chat'
       );
       syncHunkSummary();
       return true;
@@ -236,9 +240,14 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
   }
 
-  async function loadFromMakeModeMessage(content: string): Promise<boolean> {
-    const document = deps.getEditorPaneDocument();
-    const context = deps.getChatContextNote?.() ?? (document?.currentNotePath ? {
+  async function loadFromChatMessage(
+    content: string,
+    suppliedContext?: ChatProposalContext | null
+  ): Promise<boolean> {
+    if (!extractProposalFence(content)) return false;
+    const initialContext = suppliedContext ?? deps.getChatContextNote?.() ?? null;
+    const document = deps.getEditorPaneDocument(initialContext?.path);
+    const context = initialContext ?? (document?.currentNotePath ? {
       path: document.currentNotePath,
       title: document.title,
       lastSavedMarkdown: document.lastSavedMarkdown
@@ -251,24 +260,41 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       session.setError('Resolve the current proposed change first.');
       return false;
     }
-    await deps.flushBeforePreview?.(document);
-    const refreshedContext = deps.getChatContextNote?.() ?? context;
-    const edits = parseChatProposalEdits(content, refreshedContext.lastSavedMarkdown);
-    if (!edits) return false;
-    await deps.ensureEditorPaneForReview();
-    await deps.activateEditorPane?.();
-    const current = deps.getEditorPaneDocument();
-    if (!current?.currentNotePath || current.currentNotePath !== context.path) {
-      session.setError('The active note changed before the proposal was ready.');
-      return false;
-    }
-    const editor = deps.getEditorForDocument(current);
-    if (!editor) {
-      session.setError('Editor is not ready for proposal review.');
-      return false;
-    }
     try {
-      const preview = await previewNoteChangeProposal(context.path, edits);
+      await deps.flushBeforePreview?.(document);
+      const refreshedContext = suppliedContext
+        ? {
+            path: document.currentNotePath,
+            title: document.title,
+            lastSavedMarkdown: document.lastSavedMarkdown
+          }
+        : deps.getChatContextNote?.() ?? {
+            path: document.currentNotePath,
+            title: document.title,
+            lastSavedMarkdown: document.lastSavedMarkdown
+          };
+      if (!refreshedContext.path || refreshedContext.path !== context.path) {
+        session.setError('The note associated with this chat changed before the proposal was ready.');
+        return false;
+      }
+      const edits = parseChatProposalEdits(content, refreshedContext.lastSavedMarkdown);
+      if (!edits) {
+        session.setError('The assistant returned a proposal that could not be read.');
+        return false;
+      }
+      await deps.ensureEditorPaneForReview(document);
+      await deps.activateEditorPane?.(document);
+      const current = deps.getEditorPaneDocument(context.path);
+      if (!current?.currentNotePath || current.currentNotePath !== refreshedContext.path) {
+        session.setError('The active note changed before the proposal was ready.');
+        return false;
+      }
+      const editor = deps.getEditorForDocument(current);
+      if (!editor) {
+        session.setError('Editor is not ready for proposal review.');
+        return false;
+      }
+      const preview = await previewNoteChangeProposal(refreshedContext.path, edits);
       return await start(preview, current, editor);
     } catch (error) {
       session.setError(proposalErrorMessage(error, 'Could not apply proposal safely.'));
@@ -338,9 +364,9 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
           { kind: 'insert', newText: '\n\nFixture insertion.', contextBefore: document.lastSavedMarkdown }
         ]
       })}\n\`\`\``;
-      await loadFromMakeModeMessage(fixture);
+      await loadFromChatMessage(fixture);
     },
-    loadFromMakeModeMessage,
+    loadFromChatMessage,
     markConflict: (path: string) => {
       if (active?.preview.notePath === path) {
         active.conflicted = true;

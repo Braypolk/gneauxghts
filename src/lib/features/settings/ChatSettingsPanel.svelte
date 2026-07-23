@@ -3,11 +3,7 @@
   import SettingsField from './SettingsField.svelte';
   import { onMount } from 'svelte';
   import { TauriChatApi } from '$lib/features/chat/api';
-  import type {
-    AtlasChatVisibility,
-    ChatMode,
-    VaultAccess, ChatSettings
-  } from '$lib/features/chat/types';
+  import type { ChatSettings } from '$lib/features/chat/types';
 
   const api = new TauriChatApi();
 
@@ -180,11 +176,10 @@
               <option value="flex">Flex — lower cost, slower</option>
             </select>
           </SettingsField>
-          <SettingsField label="Default chat mode">
-            <select class="settings-control" bind:value={settings.defaultMode}>
-              {#each ['auto', 'explore', 'challenge', 'research', 'make'] as mode (mode)}
-                <option value={mode}>{mode[0].toUpperCase() + mode.slice(1)}</option>
-              {/each}
+          <SettingsField label="Web access">
+            <select class="settings-control" bind:value={settings.webAccess}>
+              <option value="auto">Auto — search when useful</option>
+              <option value="off">Off by default</option>
             </select>
           </SettingsField>
           <SettingsField label="Default vault access">
@@ -202,6 +197,10 @@
             </select>
           </SettingsField>
         </div>
+
+        <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
+          Auto lets the thought partner search when current information is needed. Off prevents automatic searches; the Web button in the composer can still require a search for one message.
+        </p>
 
         {#if settings.serviceTier === 'flex'}
           <p class="mt-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">

@@ -1,5 +1,5 @@
-export type ChatMode = 'auto' | 'explore' | 'challenge' | 'research' | 'make';
 export type VaultAccess = 'none' | 'limited' | 'full';
+export type WebAccess = 'off' | 'auto';
 export type ChatStatus = 'active' | 'archived' | 'projectionConflict';
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'cancelled' | 'error';
 export type ChatRole = 'user' | 'assistant' | 'system';
@@ -11,7 +11,7 @@ export interface ChatSettings {
   provider: string;
   model: string;
   serviceTier: ChatServiceTier;
-  defaultMode: ChatMode;
+  webAccess: WebAccess;
   defaultVaultAccess: VaultAccess;
   atlasVisibility: AtlasChatVisibility;
 }
@@ -26,7 +26,6 @@ export interface ChatConversationSummary {
   id: string;
   title: string;
   status: ChatStatus;
-  mode: ChatMode;
   vaultAccess: VaultAccess;
   createdAtMillis: number;
   updatedAtMillis: number;

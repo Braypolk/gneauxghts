@@ -282,6 +282,20 @@ export function createLocationMruStore<TPaneId extends string>() {
     lastChatByPane.delete(paneId);
   }
 
+  /**
+   * Closing a pane should make what it was showing the next "Previous"
+   * destination of the pane that remains. Pane-local history alone cannot do
+   * that because the closed pane's list disappears with it.
+   */
+  function adoptClosedLocation(
+    closedPaneId: TPaneId,
+    survivingPaneId: TPaneId,
+    location: NavLocation | null
+  ): void {
+    clear(closedPaneId);
+    if (location) touch(survivingPaneId, location);
+  }
+
   function clearAll(): void {
     lists.clear();
     lastChatByPane.clear();
@@ -296,6 +310,7 @@ export function createLocationMruStore<TPaneId extends string>() {
     list,
     remove,
     clear,
+    adoptClosedLocation,
     clearAll
   };
 }

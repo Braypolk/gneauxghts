@@ -24,7 +24,10 @@ export function createNavigationCoordinator(dependencies: NavigationCoordinatorD
       requestedHref = null;
       const target = dependencies.normalizePathname(href);
 
-      if (settledPathname === target) {
+      if (
+        settledPathname === target
+        && dependencies.normalizePathname(dependencies.getCurrentPathname()) === target
+      ) {
         continue;
       }
 
@@ -38,7 +41,10 @@ export function createNavigationCoordinator(dependencies: NavigationCoordinatorD
       // this stale route and let the next loop iteration handle the new one.
       if (requestedHref) continue;
 
-      if (settledPathname === target) {
+      if (
+        settledPathname === target
+        && dependencies.normalizePathname(dependencies.getCurrentPathname()) === target
+      ) {
         continue;
       }
 

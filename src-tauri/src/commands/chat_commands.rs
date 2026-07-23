@@ -1,7 +1,7 @@
 use crate::{
     chat::{
-        self, ChatConversation, ChatConversationSummary, ChatExcerpt, ChatGrant, ChatMode,
-        ChatRequestAccepted, ChatService, ChatSettings, ChatSource, VaultAccess,
+        ChatConversation, ChatConversationSummary, ChatExcerpt, ChatGrant, ChatRequestAccepted,
+        ChatService, ChatSettings, ChatSource, VaultAccess,
     },
     index::AppState,
     note::{self, DocumentKind},
@@ -20,7 +20,6 @@ pub(crate) struct ChatKeyStatus {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateConversationRequest {
     title: Option<String>,
-    mode: Option<ChatMode>,
     access: Option<VaultAccess>,
 }
 
@@ -30,7 +29,7 @@ pub(crate) struct SendMessageRequest {
     conversation_id: String,
     content: String,
     #[serde(default)]
-    use_web_search: bool,
+    force_web_search: bool,
 }
 
 #[tauri::command]
@@ -47,16 +46,16 @@ pub(crate) fn chat_set_settings(
 }
 
 #[tauri::command]
-pub(crate) fn chat_get_key_status() -> Result<ChatKeyStatus, String> {
+pub(crate) fn chat_get_key_status(app: AppHandle) -> Result<ChatKeyStatus, String> {
     Ok(ChatKeyStatus {
-        configured: chat::api_key_status()?,
+        configured: crate::secrets::read_openai_api_key(&app)?.is_some(),
     })
 }
 
 #[tauri::command]
-pub(crate) fn chat_set_api_key(api_key: String) -> Result<ChatKeyStatus, String> {
-    chat::set_api_key(&api_key)?;
-    chat_get_key_status()
+pub(crate) fn chat_set_api_key(app: AppHandle, api_key: String) -> Result<ChatKeyStatus, String> {
+    crate::secrets::set_openai_api_key(&app, &api_key)?;
+    chat_get_key_status(app)
 }
 
 #[tauri::command]
@@ -64,7 +63,7 @@ pub(crate) fn chat_create_conversation(
     service: State<'_, ChatService>,
     request: CreateConversationRequest,
 ) -> Result<ChatConversation, String> {
-    service.create_conversation(request.title, request.mode, request.access)
+    service.create_conversation(request.title, request.access)
 }
 
 #[tauri::command]
@@ -105,10 +104,9 @@ pub(crate) fn chat_archive_conversation(
 pub(crate) fn chat_update_conversation_policy(
     service: State<'_, ChatService>,
     conversation_id: String,
-    mode: ChatMode,
     access: VaultAccess,
 ) -> Result<ChatConversation, String> {
-    service.update_conversation_policy(&conversation_id, mode, access)
+    service.update_conversation_policy(&conversation_id, access)
 }
 
 #[tauri::command]
@@ -125,7 +123,7 @@ pub(crate) fn chat_send_message(
         &request.conversation_id,
         &request.content,
         sources,
-        request.use_web_search,
+        request.force_web_search,
         app,
     )
 }
@@ -165,13 +163,7 @@ pub(crate) fn chat_retry_message(
         .find(|message| message.ordinal < assistant.ordinal && message.role == "user")
         .ok_or_else(|| "The original user message is missing".to_string())?;
     let sources = build_context_sources(&service, &state, &conversation, &user.content)?;
-    service.begin_request(
-        &conversation_id,
-        &user.content,
-        sources,
-        conversation.summary.mode == ChatMode::Research,
-        app,
-    )
+    service.begin_request(&conversation_id, &user.content, sources, false, app)
 }
 
 #[tauri::command]

@@ -7,7 +7,6 @@ import type {
   ChatExcerpt,
   ChatKeyStatus,
   ChatMessage,
-  ChatMode,
   ChatNoteGrant,
   ChatSendReceipt,
   ProjectionConflictResolution,
@@ -15,12 +14,13 @@ import type {
 } from './types';
 
 interface RawChatSettings {
-  provider: string; model: string; defaultMode?: ChatMode; defaultAccess: VaultAccess;
+  provider: string; model: string; defaultAccess: VaultAccess;
   serviceTier?: ChatSettings['serviceTier'];
+  webAccess?: ChatSettings['webAccess'];
   atlasVisibility?: ChatSettings['atlasVisibility'];
 }
 interface RawSummary {
-  id: string; title: string; mode: ChatMode; access: VaultAccess; status: string;
+  id: string; title: string; access: VaultAccess; status: string;
   createdAtMillis: number; updatedAtMillis: number; messageCount: number; detached: boolean;
 }
 interface RawSource {
@@ -52,7 +52,7 @@ function normalizeSettings(raw: RawChatSettings): ChatSettings {
     provider: raw.provider,
     model: raw.model,
     serviceTier: raw.serviceTier ?? 'standard',
-    defaultMode: raw.defaultMode ?? 'auto',
+    webAccess: raw.webAccess ?? 'auto',
     defaultVaultAccess: raw.defaultAccess,
     atlasVisibility: raw.atlasVisibility ?? 'hidden'
   };
@@ -63,7 +63,6 @@ function normalizeSummary(raw: RawSummary): ChatConversationSummary {
     id: raw.id,
     title: raw.title,
     status: raw.detached ? 'projectionConflict' : raw.status === 'archived' ? 'archived' : 'active',
-    mode: raw.mode,
     vaultAccess: raw.access,
     createdAtMillis: raw.createdAtMillis,
     updatedAtMillis: raw.updatedAtMillis,
@@ -129,13 +128,13 @@ export interface ChatApi {
   setSettings(settings: ChatSettings): Promise<ChatSettings>;
   getKeyStatus(provider?: string): Promise<ChatKeyStatus>;
   setApiKey(provider: string, apiKey: string): Promise<ChatKeyStatus>;
-  createConversation(input?: { title?: string; mode?: ChatMode; vaultAccess?: VaultAccess }): Promise<ChatConversation>;
+  createConversation(input?: { title?: string; vaultAccess?: VaultAccess }): Promise<ChatConversation>;
   listConversations(includeArchived?: boolean): Promise<ChatConversationSummary[]>;
   getConversation(conversationId: string): Promise<ChatConversation>;
   renameConversation(conversationId: string, title: string): Promise<ChatConversationSummary>;
   archiveConversation(conversationId: string, archived: boolean): Promise<ChatConversationSummary>;
-  setConversationPreferences(conversationId: string, mode: ChatMode, vaultAccess: VaultAccess): Promise<ChatConversationSummary>;
-  sendMessage(input: { conversationId: string; content: string; useWebSearch?: boolean }): Promise<ChatSendReceipt>;
+  setConversationVaultAccess(conversationId: string, vaultAccess: VaultAccess): Promise<ChatConversationSummary>;
+  sendMessage(input: { conversationId: string; content: string; forceWebSearch?: boolean }): Promise<ChatSendReceipt>;
   cancelRequest(requestId: string): Promise<void>;
   retryMessage(messageId: string): Promise<ChatSendReceipt>;
   createExcerpt(messageId: string, text: string): Promise<ChatExcerpt>;
@@ -158,7 +157,7 @@ export const CHAT_COMMANDS = {
   getConversation: 'chat_get_conversation',
   renameConversation: 'chat_rename_conversation',
   archiveConversation: 'chat_archive_conversation',
-  setConversationPreferences: 'chat_update_conversation_policy',
+  setConversationVaultAccess: 'chat_update_conversation_policy',
   sendMessage: 'chat_send_message',
   cancelRequest: 'chat_cancel_request',
   retryMessage: 'chat_retry_message',
@@ -183,7 +182,7 @@ export class TauriChatApi implements ChatApi {
         provider: settings.provider,
         model: settings.model,
         serviceTier: settings.serviceTier,
-        defaultMode: settings.defaultMode,
+        webAccess: settings.webAccess,
         defaultAccess: settings.defaultVaultAccess,
         atlasVisibility: settings.atlasVisibility
       }
@@ -198,9 +197,9 @@ export class TauriChatApi implements ChatApi {
     const raw = await invoke<{ configured: boolean }>(CHAT_COMMANDS.setApiKey, { apiKey });
     return { provider, configured: raw.configured, displayHint: null };
   }
-  createConversation(input: { title?: string; mode?: ChatMode; vaultAccess?: VaultAccess } = {}) {
+  createConversation(input: { title?: string; vaultAccess?: VaultAccess } = {}) {
     return invoke<RawConversation>(CHAT_COMMANDS.createConversation, {
-      request: { title: input.title, mode: input.mode, access: input.vaultAccess }
+      request: { title: input.title, access: input.vaultAccess }
     }).then((raw) => this.#normalizeConversation(raw));
   }
   async listConversations(includeArchived = false) {
@@ -218,14 +217,14 @@ export class TauriChatApi implements ChatApi {
     await invoke(CHAT_COMMANDS.archiveConversation, { conversationId, archived });
     return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.getConversation, { conversationId }));
   }
-  async setConversationPreferences(conversationId: string, mode: ChatMode, vaultAccess: VaultAccess) {
-    return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.setConversationPreferences, {
-      conversationId, mode, access: vaultAccess
+  async setConversationVaultAccess(conversationId: string, vaultAccess: VaultAccess) {
+    return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.setConversationVaultAccess, {
+      conversationId, access: vaultAccess
     }));
   }
-  async sendMessage(input: { conversationId: string; content: string; useWebSearch?: boolean }) {
+  async sendMessage(input: { conversationId: string; content: string; forceWebSearch?: boolean }) {
     const raw = await invoke<RawReceipt>(CHAT_COMMANDS.sendMessage, {
-      request: { conversationId: input.conversationId, content: input.content, useWebSearch: input.useWebSearch }
+      request: { conversationId: input.conversationId, content: input.content, forceWebSearch: input.forceWebSearch }
     });
     this.#messageConversations.set(raw.userMessageId, raw.conversationId);
     this.#messageConversations.set(raw.assistantMessageId, raw.conversationId);

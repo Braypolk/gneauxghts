@@ -489,7 +489,11 @@ impl AnnIndexState {
     }
 
     fn generation_path(&self, file_name: &str) -> Result<PathBuf, String> {
-        core_generation_path(&self.cache_dir, file_name, "Invalid ANN generation file name")
+        core_generation_path(
+            &self.cache_dir,
+            file_name,
+            "Invalid ANN generation file name",
+        )
     }
 
     fn install_loaded_snapshot(

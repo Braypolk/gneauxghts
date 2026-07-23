@@ -41,7 +41,7 @@
   const description = $derived(
     mode === 'start'
       ? 'Start typing, reopen recent context, or switch into a thought partner.'
-      : 'Fill the new pane with the current note, recent context, or a thought partner.'
+      : 'Fill the new pane with the current location, recent context, or a thought partner.'
   );
   const pickerLabel = $derived(
     mode === 'start'
@@ -52,7 +52,7 @@
   const pickerInstruction = $derived(
     mode === 'start'
       ? 'Start typing to keep writing. Use the numbered choices to reopen context or open a thought partner.'
-      : 'Use the numbered choices to fill the pane with this note, recent context, or a thought partner.'
+      : 'Use the numbered choices to fill the pane with this location, recent context, or a thought partner.'
   );
   const previousIndex = $derived(
     mode === 'split' ? PANE_COMMAND_SPLIT_INDEX.previous : PANE_COMMAND_START_INDEX.previous
@@ -112,20 +112,20 @@
   const thoughtPartnerShortcutLabel = $derived(
     getPaneCommandShortcutLabel(thoughtPartnerIndex, mode)
   );
-  const currentOptionTitle = $derived(`Open current note (${currentShortcutLabel})`);
+  const currentOptionTitle = $derived(`Open current location (${currentShortcutLabel})`);
   const previousOptionTitle = $derived(
     hasPrevious
-      ? `Open previous note (${previousShortcutLabel})`
-      : 'No previous note available yet'
+      ? `Open previous location (${previousShortcutLabel})`
+      : 'No previous location available yet'
   );
   const thoughtPartnerOptionTitle = $derived(`Open thought partner (${thoughtPartnerShortcutLabel})`);
   const currentOptionAriaLabel = $derived(
-    `Open current note, ${currentNoteLabel}. Press ${currentShortcutLabel}.`
+    `Open current location, ${currentNoteLabel}. Press ${currentShortcutLabel}.`
   );
   const previousOptionAriaLabel = $derived(
     hasPrevious
-      ? `Open previous note, ${previousNoteLabel}. Press ${previousShortcutLabel}.`
-      : 'No previous note available yet.'
+      ? `Open previous location, ${previousNoteLabel}. Press ${previousShortcutLabel}.`
+      : 'No previous location available yet.'
   );
   const thoughtPartnerOptionAriaLabel = $derived(
     `Open thought partner. Press ${thoughtPartnerShortcutLabel}.`
@@ -198,7 +198,7 @@
           {/if}
         </span>
         <span class="mt-0.5 block text-xs text-muted-foreground/82">
-          {hasPrevious ? previousNoteLabel : 'No other recent note yet'}
+          {hasPrevious ? previousNoteLabel : 'No other recent location yet'}
         </span>
       </span>
     </button>

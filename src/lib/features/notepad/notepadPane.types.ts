@@ -52,6 +52,7 @@ export interface PaneViewModel {
   onProposalCopyCurrent: () => void | Promise<void>;
   onProposalReloadDisk: () => void | Promise<void>;
   onProposalLoadFixture: () => void | Promise<void>;
+  onProposalLoadMessage: (content: string) => void | Promise<void>;
   paneCommandHighlightedIndex: number;
   paneCommandMode: PaneCommandMode;
   paneCommandCurrentNoteLabel: string;

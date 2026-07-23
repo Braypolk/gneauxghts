@@ -107,7 +107,9 @@ pub(crate) fn load_graph_and_vectors(
     Ok((graph, vectors))
 }
 
-pub(crate) fn allocate_generation_artifacts(file_stem: &str) -> Result<GenerationArtifactNames, String> {
+pub(crate) fn allocate_generation_artifacts(
+    file_stem: &str,
+) -> Result<GenerationArtifactNames, String> {
     let generation = format!(
         "{}-{}",
         current_time_millis()?,
@@ -196,7 +198,10 @@ pub(crate) fn file_timestamp_millis(path: &Path) -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{desired_capacity, should_rebuild_for_tombstones, ANN_MIN_CAPACITY, ANN_TOMBSTONE_REBUILD_MIN};
+    use super::{
+        desired_capacity, should_rebuild_for_tombstones, ANN_MIN_CAPACITY,
+        ANN_TOMBSTONE_REBUILD_MIN,
+    };
     use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore};
 
     #[test]

@@ -12,18 +12,58 @@ describe('TauriChatApi', () => {
     listenMock.mockReset();
   });
 
-  it('adapts shared conversation preferences to the Rust IPC contract', async () => {
+  it('defaults automatic web access for settings from older vaults', async () => {
     invokeMock.mockResolvedValue({
-      id: 'chat-1', title: 'Test', mode: 'challenge', access: 'full', status: 'active',
+      provider: 'openai', model: 'test-model', serviceTier: 'standard',
+      defaultAccess: 'limited', atlasVisibility: 'hidden'
+    });
+    const { TauriChatApi } = await import('./api');
+    const settings = await new TauriChatApi().getSettings();
+
+    expect(settings.webAccess).toBe('auto');
+  });
+
+  it('persists web access without a legacy mode setting', async () => {
+    const settings = {
+      provider: 'openai' as const,
+      model: 'test-model',
+      serviceTier: 'standard' as const,
+      webAccess: 'off' as const,
+      defaultVaultAccess: 'limited' as const,
+      atlasVisibility: 'hidden' as const
+    };
+    invokeMock.mockResolvedValue({
+      ...settings,
+      defaultAccess: settings.defaultVaultAccess
+    });
+    const { TauriChatApi } = await import('./api');
+
+    await new TauriChatApi().setSettings(settings);
+
+    expect(invokeMock).toHaveBeenCalledWith('chat_set_settings', {
+      settings: {
+        provider: 'openai',
+        model: 'test-model',
+        serviceTier: 'standard',
+        webAccess: 'off',
+        defaultAccess: 'limited',
+        atlasVisibility: 'hidden'
+      }
+    });
+  });
+
+  it('adapts vault access changes to the Rust IPC contract', async () => {
+    invokeMock.mockResolvedValue({
+      id: 'chat-1', title: 'Test', access: 'full', status: 'active',
       createdAtMillis: 1, updatedAtMillis: 2, messageCount: 0, detached: false, messages: [], excerpts: []
     });
     const { TauriChatApi } = await import('./api');
     const api = new TauriChatApi();
 
-    const summary = await api.setConversationPreferences('chat-1', 'challenge', 'full');
+    const summary = await api.setConversationVaultAccess('chat-1', 'full');
 
     expect(invokeMock).toHaveBeenCalledWith('chat_update_conversation_policy', {
-      conversationId: 'chat-1', mode: 'challenge', access: 'full'
+      conversationId: 'chat-1', access: 'full'
     });
     expect(summary.vaultAccess).toBe('full');
   });
@@ -31,21 +71,21 @@ describe('TauriChatApi', () => {
   it('wraps create and send payloads and returns optimistic messages', async () => {
     invokeMock
       .mockResolvedValueOnce({
-        id: 'chat-1', title: 'New conversation', mode: 'auto', access: 'limited', status: 'active',
+        id: 'chat-1', title: 'New conversation', access: 'limited', status: 'active',
         createdAtMillis: 1, updatedAtMillis: 1, messageCount: 0, detached: false, messages: [], excerpts: []
       })
       .mockResolvedValueOnce({ requestId: 'request-1', conversationId: 'chat-1', userMessageId: 'user-1', assistantMessageId: 'assistant-1' });
     const { TauriChatApi } = await import('./api');
     const api = new TauriChatApi();
 
-    await api.createConversation({ mode: 'auto', vaultAccess: 'limited' });
-    const receipt = await api.sendMessage({ conversationId: 'chat-1', content: 'Hello' });
+    await api.createConversation({ vaultAccess: 'limited' });
+    const receipt = await api.sendMessage({ conversationId: 'chat-1', content: 'Hello', forceWebSearch: true });
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'chat_create_conversation', {
-      request: { title: undefined, mode: 'auto', access: 'limited' }
+      request: { title: undefined, access: 'limited' }
     });
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_send_message', {
-      request: { conversationId: 'chat-1', content: 'Hello', useWebSearch: undefined }
+      request: { conversationId: 'chat-1', content: 'Hello', forceWebSearch: true }
     });
     expect(receipt.userMessage.content).toBe('Hello');
     expect(receipt.assistantMessage?.status).toBe('streaming');
@@ -84,7 +124,7 @@ describe('TauriChatApi', () => {
 
   it('creates excerpts from rendered Markdown selections', async () => {
     const rawConversation = {
-      id: 'chat-1', title: 'Markdown', mode: 'auto', access: 'limited', status: 'active',
+      id: 'chat-1', title: 'Markdown', access: 'limited', status: 'active',
       createdAtMillis: 1, updatedAtMillis: 1, messageCount: 1, detached: false,
       messages: [{
         id: 'assistant-1', conversationId: 'chat-1', ordinal: 1, role: 'assistant', status: 'complete',

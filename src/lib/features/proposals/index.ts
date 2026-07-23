@@ -59,6 +59,7 @@ export {
 export {
   extractProposalFence,
   parseChatProposalEdits,
+  withoutProposalFence,
   type ChatProposalContext
 } from './chatProposalParse';
 

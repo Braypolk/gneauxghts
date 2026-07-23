@@ -36,14 +36,14 @@
   }
 
   const linkClass = (href: string) =>
-    `relative inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors sm:h-auto sm:w-auto sm:min-w-[105px] sm:gap-2 sm:px-3 sm:py-2 ${
+    `mobile-touch-target relative inline-flex h-10 w-10 items-center justify-center rounded-full border text-sm font-medium transition-colors sm:h-auto sm:w-auto sm:min-w-[105px] sm:gap-2 sm:px-3 sm:py-2 ${
       isActive(href, currentPathname)
         ? 'border-foreground/15 bg-card text-foreground shadow-sm'
         : 'border-transparent text-muted-foreground hover:border-border/80 hover:text-foreground'
     }`;
 
   const settingsButtonClass = () =>
-    `rounded-full border border-border/80 p-2 shadow-sm transition-colors ${
+    `mobile-touch-target inline-flex items-center justify-center rounded-full border border-border/80 p-2 shadow-sm transition-colors ${
       isActive(settingsHref, currentPathname)
         ? 'bg-accent text-accent-foreground'
         : 'bg-card text-muted-foreground hover:bg-accent hover:text-accent-foreground'
@@ -121,6 +121,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <header
   class="app-navigation-header relative z-10 shrink-0 grid min-h-[3.5rem] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-3 py-1.5 select-none sm:min-h-[4.75rem] sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-0 sm:px-6 sm:pt-4 sm:pb-4"
+  class:app-navigation-header--editor={currentPathname === '/'}
   onmousedown={handleHeaderMouseDown}
 >
   <div data-tauri-drag-region class="absolute inset-x-0 top-0 h-8"></div>
@@ -163,6 +164,26 @@
 </header>
 
 <style>
+  @media (max-width: 639px) {
+    .app-navigation-header--editor {
+      position: absolute;
+      top: env(safe-area-inset-top, 0px);
+      right: 0;
+      left: 0;
+      z-index: 40;
+      pointer-events: none;
+    }
+
+    .app-navigation-header--editor nav,
+    .app-navigation-header--editor a {
+      pointer-events: auto;
+    }
+
+    .app-navigation-header--editor [data-tauri-drag-region] {
+      display: none;
+    }
+  }
+
   @media (max-height: 559px) {
     .app-navigation-header {
       min-height: 3.5rem;

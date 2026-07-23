@@ -12,8 +12,8 @@ export interface PaneCommandOption {
 /** Shared copy and ordering for every surface that offers pane commands. */
 export const PANE_COMMAND_OPTIONS: Readonly<Record<PaneCommandChoice, PaneCommandOption>> = {
   typing: { choice: 'typing', label: 'Open blank pane', description: 'Start typing in a new pane' },
-  current: { choice: 'current', label: 'Open Current Note', description: 'Open this note in the new pane' },
-  previous: { choice: 'previous', label: 'Open Previous Note', description: 'Open your previous note in the new pane' },
+  current: { choice: 'current', label: 'Open Current', description: 'Open this location in the new pane' },
+  previous: { choice: 'previous', label: 'Open Previous', description: 'Open your previous location in the new pane' },
   thoughtPartner: { choice: 'thoughtPartner', label: 'Open Thought partner', description: 'Open AI chat alongside this thought' }
 };
 

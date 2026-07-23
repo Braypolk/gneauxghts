@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getNextPaneCommandIndex,
+  PANE_COMMAND_OPTIONS,
   PANE_COMMAND_SPLIT_OPTIONS,
   getPaneCommandChoiceByIndex,
   getPaneCommandForShortcut,
@@ -15,6 +16,8 @@ describe('paneCommandPicker', () => {
       'previous',
       'thoughtPartner'
     ]);
+    expect(PANE_COMMAND_OPTIONS.current.description).toContain('location');
+    expect(PANE_COMMAND_OPTIONS.previous.description).toContain('location');
   });
 
   it('maps fixed shortcut slots in each picker mode', () => {

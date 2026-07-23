@@ -3,7 +3,7 @@
   import {
     Eraser,
     Undo2,
-    Brain,
+    SquarePen,
     Circle,
     ChevronDown,
     ChevronRight,
@@ -445,13 +445,13 @@
     {#if canUnforget}
       <button
         type="button"
-        class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent min-[700px]:h-auto min-[700px]:w-[134px] min-[700px]:px-6 min-[700px]:py-2.5"
+        class="mobile-touch-target inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent sm:h-11 sm:w-[134px] sm:px-6"
         onclick={() => onUnforget()}
         aria-label="Restore the last forgotten note"
         title="Restore forgotten note"
       >
-        <span class="hidden min-[700px]:inline">unForget</span>
-        <Undo2 class="h-5 w-5 min-[700px]:hidden" />
+        <span class="hidden sm:inline">unForget</span>
+        <Undo2 class="h-5 w-5 sm:hidden" />
       </button>
     {:else}
       <div
@@ -507,7 +507,7 @@
           type="button"
           aria-expanded={commandBarState.isForgetConfirmOpen}
           aria-controls={commandBarState.isForgetConfirmOpen ? 'forget-confirm-popover' : undefined}
-          class={`relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2 ${
+          class={`mobile-touch-target relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5 ${
             commandBarState.isHoldingForget
               ? 'forget-hold-animation text-destructive'
               : ''
@@ -528,11 +528,11 @@
             style="transform: scaleX(var(--forget-progress, 0)); opacity: calc(0.14 + (var(--forget-progress, 0) * 0.58));"
             aria-hidden="true"
           ></span>
-          <span class="relative z-10 hidden min-[700px]:inline">
+          <span class="relative z-10 hidden sm:inline">
             Forget
           </span>
           <Eraser
-            class={`relative z-10 h-5 w-5 transition-transform duration-200 min-[700px]:hidden ${
+            class={`relative z-10 h-5 w-5 transition-transform duration-200 sm:hidden ${
               commandBarState.isHoldingForget ? '-translate-y-px' : ''
             }`}
           />
@@ -738,14 +738,14 @@
       class="inline-flex shrink-0 items-center rounded-full border border-border bg-background p-1 text-muted-foreground shadow-sm"
     >
       <button
-        class="inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 min-[700px]:h-auto min-[700px]:w-auto min-[700px]:min-w-[126px] min-[700px]:px-5 min-[700px]:py-2"
+        class="mobile-touch-target inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5"
         type="button"
         onclick={handleRemember}
         aria-label="New Idea. Start a blank note."
         title="New Idea"
       >
-        <span class="hidden min-[700px]:inline">New Idea</span>
-        <Brain class="h-5 w-5 min-[700px]:hidden" />
+        <span class="hidden sm:inline">New Idea</span>
+        <SquarePen class="h-5 w-5 sm:hidden" />
       </button>
     </div>
   </div>

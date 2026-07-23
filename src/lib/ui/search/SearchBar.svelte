@@ -254,7 +254,7 @@
     {#if value.length > 0}
       <button
         type="button"
-        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        class="mobile-dense-touch-target inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
         aria-label="Clear search"
         title="Clear search"
         onmousedown={(event) => event.preventDefault()}
@@ -267,7 +267,7 @@
     {#if value.trim() !== '' && onNavigate}
       <button
         type="button"
-        class="shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="mobile-dense-touch-target shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
         aria-label="Previous match"
         title="Previous match"
         disabled={!canNavigatePrevious}
@@ -278,7 +278,7 @@
       </button>
       <button
         type="button"
-        class="shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="mobile-dense-touch-target shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
         aria-label="Next match"
         title="Next match"
         disabled={!canNavigateNext}
@@ -292,7 +292,7 @@
     {#if isOpen && showMatchOptions}
       <button
         type="button"
-        class="shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
+        class="mobile-dense-touch-target shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
         class:shared-search-option-button-active={matchCase}
         aria-label={matchCase ? 'Disable match case' : 'Enable match case'}
         aria-pressed={matchCase}
@@ -304,7 +304,7 @@
       </button>
       <button
         type="button"
-        class="shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
+        class="mobile-dense-touch-target shared-search-option-button inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-transparent px-2 text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground"
         class:shared-search-option-button-active={matchWholeWord}
         aria-label={matchWholeWord ? 'Disable match whole word' : 'Enable match whole word'}
         aria-pressed={matchWholeWord}
@@ -320,7 +320,7 @@
       {@const ChoiceIcon = choice.icon}
       <button
         type="button"
-        class="shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="mobile-dense-touch-target shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
         class:shared-search-mode-button-active={isOpen && searchTypeId === choice.id}
         aria-label={choice.ariaLabel ?? choice.label}
         aria-pressed={searchTypeId === choice.id}
@@ -340,7 +340,7 @@
       {@const ChoiceIcon = getScopeIcon(choice)}
       <button
         type="button"
-        class="shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="mobile-dense-touch-target shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
         class:shared-search-mode-button-active={isOpen && scopeId === choice.id}
         aria-label={choice.ariaLabel ?? choice.label}
         aria-pressed={scopeId === choice.id}

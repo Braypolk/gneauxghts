@@ -41,7 +41,7 @@
       label: 'Forgetting',
       description: 'Forget button timing and trash retention'
     },
-    { id: 'vault', label: 'Vault', description: 'Where your notes are stored' },
+    { id: 'vault', label: 'Vault', description: 'Vault folders and note storage' },
     { id: 'ai', label: 'AI & Chat', description: 'Provider, API key, and chat defaults' },
     { id: 'search', label: 'Semantic search', description: 'Local index and embeddings' }
   ];
@@ -316,19 +316,23 @@
               <div class="flex flex-col gap-4">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <p class="text-sm font-medium">Vault Directory</p>
+              <p class="text-sm font-medium">
+                {settings.usesVaultContainer ? 'Vault folders' : 'Vault Directory'}
+              </p>
               <p class="mt-0.5 text-xs text-muted-foreground">
-                {#if settings.vaultInfo?.canConfigurePath ?? true}
+                {#if settings.usesVaultContainer}
+                  Create or select a vault folder under Files → On My iPhone → Gneauxghts. The new vault takes full effect after you restart the app.
+                {:else if settings.vaultInfo?.canConfigurePath ?? true}
                   Choose a folder for your notes. The new vault takes full effect after you restart the app.
                 {:else}
-                  iPhone builds currently keep notes inside the app sandbox. Custom vault locations are disabled for now.
+                  Vault location cannot be configured on this build.
                 {/if}
               </p>
             </div>
           </div>
 
           <SettingsCard>
-            <SettingsLabel text="Selected folder" />
+            <SettingsLabel text={settings.usesVaultContainer ? 'Selected vault' : 'Selected folder'} />
             <p class="mt-3 break-all text-sm font-medium">
               {#if selectedVaultPath}
                 {selectedVaultPath}
@@ -343,20 +347,100 @@
             {/if}
           </SettingsCard>
 
+          {#if settings.usesVaultContainer}
+            <SettingsCard>
+              <SettingsLabel text="Available vaults" />
+              {#if settings.isLoadingVaultFolders}
+                <p class="mt-3 text-sm text-muted-foreground">Loading vault folders…</p>
+              {:else if settings.vaultFolders.length === 0}
+                <p class="mt-3 text-sm text-muted-foreground">
+                  No vault folders yet. Create one below, or use the default Notes vault.
+                </p>
+              {:else}
+                <ul class="mt-3 flex flex-col gap-2">
+                  {#each settings.vaultFolders as folder (folder.path)}
+                    {@const isSelected =
+                      normalizeVaultPath(folder.path) === normalizeVaultPath(selectedVaultPath)}
+                    <li>
+                      <button
+                        type="button"
+                        class={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition-colors ${
+                          isSelected
+                            ? 'border-foreground bg-foreground text-background'
+                            : 'border-border bg-background hover:bg-accent'
+                        }`}
+                        disabled={settings.isSavingVault || settings.isCreatingVaultFolder}
+                        onclick={() => settings.selectVaultFolder(folder.path)}
+                      >
+                        <span class="min-w-0">
+                          <span class="block text-sm font-medium">{folder.name}</span>
+                          <span
+                            class={`mt-0.5 block truncate text-xs ${
+                              isSelected ? 'text-background/70' : 'text-muted-foreground'
+                            }`}
+                          >
+                            {folder.path}
+                          </span>
+                        </span>
+                        {#if isSelected}
+                          <span class="ml-3 shrink-0 text-xs font-medium">Selected</span>
+                        {/if}
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+
+              <div class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <label class="sr-only" for="new-vault-name">New vault name</label>
+                <input
+                  id="new-vault-name"
+                  class="min-w-0 flex-1 rounded-full border border-border bg-background px-4 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-foreground/20"
+                  type="text"
+                  placeholder="New vault name"
+                  autocomplete="off"
+                  value={settings.newVaultName}
+                  disabled={settings.isCreatingVaultFolder || settings.isSavingVault}
+                  oninput={(event) => settings.setNewVaultName(event.currentTarget.value)}
+                  onkeydown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      void settings.createVaultFolder();
+                    }
+                  }}
+                />
+                <button
+                  class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                  type="button"
+                  disabled={
+                    settings.isCreatingVaultFolder ||
+                    settings.isSavingVault ||
+                    settings.newVaultName.trim() === ''
+                  }
+                  onclick={() => void settings.createVaultFolder()}
+                >
+                  {settings.isCreatingVaultFolder ? 'Creating…' : 'Create vault'}
+                </button>
+              </div>
+            </SettingsCard>
+          {/if}
+
           <div class="flex flex-wrap items-center gap-2">
-            <button
-              class="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
-              type="button"
-              disabled={
-                settings.isPickingVault ||
-                settings.isSavingVault ||
-                !(settings.vaultInfo?.canConfigurePath ?? true)
-              }
-              onclick={() => void settings.pickVaultDirectory()}
-            >
-              <FolderOpen class="h-4 w-4" />
-              {settings.isPickingVault ? 'Opening picker…' : 'Choose folder'}
-            </button>
+            {#if !settings.usesVaultContainer}
+              <button
+                class="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
+                type="button"
+                disabled={
+                  settings.isPickingVault ||
+                  settings.isSavingVault ||
+                  !(settings.vaultInfo?.canConfigurePath ?? true)
+                }
+                onclick={() => void settings.pickVaultDirectory()}
+              >
+                <FolderOpen class="h-4 w-4" />
+                {settings.isPickingVault ? 'Opening picker…' : 'Choose folder'}
+              </button>
+            {/if}
             <button
               class="rounded-full border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent disabled:opacity-60"
               type="button"
@@ -378,7 +462,7 @@
               }
               onclick={() => void settings.saveVaultDirectory()}
             >
-              {settings.isSavingVault ? 'Saving…' : 'Apply folder'}
+              {settings.isSavingVault ? 'Saving…' : settings.usesVaultContainer ? 'Apply vault' : 'Apply folder'}
             </button>
           </div>
 

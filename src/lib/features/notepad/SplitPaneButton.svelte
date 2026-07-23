@@ -5,9 +5,10 @@
   interface Props {
     onSplit: (choice?: PaneCommandChoice) => void | Promise<void>;
     onOpenCurrent: (choice: PaneCommandChoice) => void | Promise<void>;
+    onBackToNote?: () => void | Promise<void>;
   }
 
-  let { onSplit, onOpenCurrent }: Props = $props();
+  let { onSplit, onOpenCurrent, onBackToNote }: Props = $props();
   let splitMode = $state(false);
   let controlElement = $state<HTMLDivElement | null>(null);
   const quickOptions = [...PANE_COMMAND_SPLIT_OPTIONS.slice(1)].reverse();
@@ -21,20 +22,30 @@
 
   const optionLabels = {
     typing: 'Open split pane options',
-    current: 'Split with current note',
-    previous: 'Split with previous note',
+    current: 'Split with current location',
+    previous: 'Split with previous location',
     thoughtPartner: 'Split with thought partner'
   } as const;
 
   const currentPaneLabels = {
     typing: 'Open split pane options',
-    current: 'Open current note',
-    previous: 'Open previous note in this pane',
+    current: 'Open current location',
+    previous: 'Open previous location in this pane',
     thoughtPartner: 'Open thought partner in this pane'
   } as const;
 
   function handleOptionClick(choice: PaneCommandChoice) {
+    if (choice === 'thoughtPartner' && onBackToNote) {
+      return onBackToNote();
+    }
     return splitMode ? onSplit(choice) : onOpenCurrent(choice);
+  }
+
+  function optionLabel(choice: PaneCommandChoice): string {
+    if (choice === 'thoughtPartner' && onBackToNote) {
+      return 'Back to note';
+    }
+    return splitMode ? optionLabels[choice] : currentPaneLabels[choice];
   }
 
   function handleFocusOut(event: FocusEvent) {
@@ -55,14 +66,14 @@
   onfocusout={handleFocusOut}
 >
   {#each quickOptions as option, index}
-    {@const OptionIcon = optionIcons[option.choice]}
+    {@const OptionIcon = option.choice === 'thoughtPartner' && onBackToNote ? FileText : optionIcons[option.choice]}
     <button
       type="button"
       class="split-pane-option absolute top-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent bg-muted/72 text-xs font-semibold text-muted-foreground shadow-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35"
       class:split-pane-option--current={option.choice === 'current'}
       style={`--split-pane-position: ${quickOptions.length - index}; --current-pane-position: ${quickOptions.length - index - 1}`}
-      aria-label={splitMode ? optionLabels[option.choice] : currentPaneLabels[option.choice]}
-      title={splitMode ? optionLabels[option.choice] : currentPaneLabels[option.choice]}
+      aria-label={optionLabel(option.choice)}
+      title={optionLabel(option.choice)}
       onclick={() => void handleOptionClick(option.choice)}
     >
       <OptionIcon class="h-4 w-4" />

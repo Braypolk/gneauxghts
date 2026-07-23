@@ -25,7 +25,6 @@
     ChatCitation,
     ChatContextNote,
     ChatExcerpt,
-    ChatMode,
     ChatSelection,
     ChatSelectionActions,
     VaultAccess
@@ -35,6 +34,10 @@
     PendingProposalChange,
     ProposalReviewSessionSnapshot
   } from '$lib/features/proposals/types';
+  import {
+    extractProposalFence,
+    withoutProposalFence
+  } from '$lib/features/proposals/chatProposalParse';
 
   interface Props {
     controller: ChatController;
@@ -61,6 +64,7 @@
     onProposalCopyCurrent?: () => void | Promise<void>;
     onProposalReloadDisk?: () => void | Promise<void>;
     onProposalLoadFixture?: () => void | Promise<void>;
+    onProposalLoadMessage?: (content: string) => void | Promise<void>;
   }
 
   let {
@@ -87,16 +91,9 @@
     onProposalRetry,
     onProposalCopyCurrent,
     onProposalReloadDisk,
-    onProposalLoadFixture
+    onProposalLoadFixture,
+    onProposalLoadMessage
   }: Props = $props();
-
-  const MODE_OPTIONS: { value: ChatMode; label: string; hint: string }[] = [
-    { value: 'auto', label: 'Auto', hint: 'Pick the best approach' },
-    { value: 'explore', label: 'Explore', hint: 'Widen the idea' },
-    { value: 'challenge', label: 'Challenge', hint: 'Push back gently' },
-    { value: 'research', label: 'Research', hint: 'Look things up' },
-    { value: 'make', label: 'Make', hint: 'Propose note edits' }
-  ];
 
   const ACCESS_OPTIONS: { value: VaultAccess; label: string; hint: string }[] = [
     { value: 'none', label: 'No vault', hint: 'Chat only' },
@@ -116,7 +113,7 @@
     error: null
   });
   let draft = $state('');
-  let useWebSearch = $state(false);
+  let forceWebSearch = $state(false);
   let selected = $state<ChatSelection | null>(null);
   let selectedExcerpt = $state<ChatExcerpt | null>(null);
   let actionError = $state<string | null>(null);
@@ -127,7 +124,7 @@
   let appliedDraftSeedId: string | null = null;
   let contextAccessBusy = $state(false);
   let appliedTargetAnchor: string | null = null;
-  let openMenu = $state<'history' | 'mode' | 'vault' | null>(null);
+  let openMenu = $state<'history' | 'vault' | null>(null);
 
   const conversation = $derived(snapshot.conversation);
   const canSend = $derived(Boolean(draft.trim()) && !snapshot.isSending && conversation?.status === 'active');
@@ -136,9 +133,6 @@
     contextNote?.noteId
       ? snapshot.grants.find((grant) => grant.noteId === contextNote.noteId) ?? null
       : null
-  );
-  const modeLabel = $derived(
-    MODE_OPTIONS.find((option) => option.value === conversation?.mode)?.label ?? 'Auto'
   );
   const vaultLabel = $derived.by(() => {
     if (!conversation) return 'No vault';
@@ -209,7 +203,9 @@
   });
 
   function rendered(content: string) {
-    return markdown.render(content);
+    if (!extractProposalFence(content)) return markdown.render(content);
+    const explanation = withoutProposalFence(content);
+    return markdown.render(explanation || 'Proposed note changes are ready for review.');
   }
 
   /** Absolute http(s) href for web citations — not an app route, so no resolve(). */
@@ -223,7 +219,7 @@
     }
   }
 
-  function toggleMenu(menu: 'history' | 'mode' | 'vault') {
+  function toggleMenu(menu: 'history' | 'vault') {
     openMenu = openMenu === menu ? null : menu;
   }
 
@@ -234,9 +230,11 @@
       const created = await controller.createConversation();
       if (!created) return;
     }
-    const activeConversation = controller.getSnapshot().conversation;
-    const sent = await controller.send(content, activeConversation?.mode === 'research' && useWebSearch);
-    if (sent) draft = '';
+    const sent = await controller.send(content, forceWebSearch);
+    if (sent) {
+      draft = '';
+      forceWebSearch = false;
+    }
   }
 
   function onComposerKeydown(event: KeyboardEvent) {
@@ -325,14 +323,9 @@
     }
   }
 
-  async function updateMode(mode: ChatMode) {
-    openMenu = null;
-    if (conversation) await controller.setPreferences(mode, conversation.vaultAccess);
-  }
-
   async function updateAccess(vaultAccess: VaultAccess) {
     openMenu = null;
-    if (conversation) await controller.setPreferences(conversation.mode, vaultAccess);
+    if (conversation) await controller.setVaultAccess(vaultAccess);
   }
 
   async function openConversation(id: string) {
@@ -444,6 +437,16 @@
               {@html rendered(message.content)}
             </div>
 
+            {#if message.role === 'assistant' && extractProposalFence(message.content) && proposalSnapshot?.changes.length === 0 && onProposalLoadMessage}
+              <button
+                type="button"
+                class="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent"
+                onclick={() => void onProposalLoadMessage?.(message.content)}
+              >
+                <FileInput class="h-3.5 w-3.5" /> Review proposed changes
+              </button>
+            {/if}
+
             {#if message.citations.length > 0}
               <div class="mt-3 flex flex-wrap gap-1.5" aria-label="Sources">
                 {#each message.citations as citation (citation.id)}
@@ -535,41 +538,6 @@
               <button
                 type="button"
                 class="chat-composer-chip"
-                aria-label="Thinking mode"
-                aria-expanded={openMenu === 'mode'}
-                aria-haspopup="menu"
-                onclick={() => toggleMenu('mode')}
-              >
-                <span>{modeLabel}</span>
-                <ChevronDown class="h-3 w-3 opacity-60" />
-              </button>
-              {#if openMenu === 'mode'}
-                <div class="chat-menu chat-menu--up" role="menu" aria-label="Thinking mode">
-                  {#each MODE_OPTIONS as option (option.value)}
-                    <button
-                      type="button"
-                      class="chat-menu-item"
-                      class:chat-menu-item--active={option.value === conversation.mode}
-                      role="menuitem"
-                      onclick={() => void updateMode(option.value)}
-                    >
-                      <span class="min-w-0 flex-1">
-                        <span class="block font-medium">{option.label}</span>
-                        <span class="block text-[11px] font-normal text-muted-foreground">{option.hint}</span>
-                      </span>
-                      {#if option.value === conversation.mode}
-                        <Check class="h-3.5 w-3.5 shrink-0" />
-                      {/if}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-
-            <div class="relative" data-chat-menu>
-              <button
-                type="button"
-                class="chat-composer-chip"
                 class:chat-composer-chip--emphasis={conversation.vaultAccess === 'limited' && contextNote && !contextGrant}
                 aria-label="Vault access"
                 aria-expanded={openMenu === 'vault'}
@@ -635,19 +603,19 @@
               <span class="px-1 text-[11px] text-muted-foreground">Save the note to grant access</span>
             {/if}
 
-            {#if conversation.mode === 'research'}
-              <button
-                type="button"
-                class="chat-composer-chip"
-                class:chat-composer-chip--on={useWebSearch}
-                aria-pressed={useWebSearch}
-                title="Search the web"
-                onclick={() => (useWebSearch = !useWebSearch)}
-              >
-                <Globe class="h-3.5 w-3.5" />
-                <span class="hidden sm:inline">Web</span>
-              </button>
-            {/if}
+            <button
+              type="button"
+              class="chat-composer-chip"
+              class:chat-composer-chip--on={forceWebSearch}
+              aria-pressed={forceWebSearch}
+              title={forceWebSearch
+                ? 'Web search required for this message'
+                : 'Require web search for this message; otherwise it is used automatically when allowed'}
+              onclick={() => (forceWebSearch = !forceWebSearch)}
+            >
+              <Globe class="h-3.5 w-3.5" />
+              <span class="hidden sm:inline">Web</span>
+            </button>
           {/if}
 
           <div class="ml-auto flex items-center">

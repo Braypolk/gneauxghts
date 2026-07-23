@@ -6,5 +6,17 @@ export interface VaultInfo {
   noteCount: number;
   requiresRestart: boolean;
   canConfigurePath: boolean;
+  canPickArbitraryPath: boolean;
+  vaultContainerPath: string | null;
   pathConfigurationNote: string | null;
+}
+
+export interface VaultFolderInfo {
+  name: string;
+  path: string;
+}
+
+export interface CreateVaultFolderResult {
+  createdPath: string;
+  folders: VaultFolderInfo[];
 }

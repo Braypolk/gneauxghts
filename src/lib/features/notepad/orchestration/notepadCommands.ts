@@ -60,6 +60,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   const resetPaneCommand = workspace.resetPaneCommand;
   const setPaneCommandHighlight = workspace.setPaneCommandHighlight;
   const getPaneCommandPaneId = workspace.getPaneCommandPaneId;
+  const getPaneCommandSourcePaneId = workspace.getPaneCommandSourcePaneId;
   const getPaneCommandSourceNoteKey = workspace.getPaneCommandSourceNoteKey;
   const getPaneCommandHighlightedIndex = workspace.getPaneCommandHighlightedIndex;
   const getPaneCommandMode = workspace.getPaneCommandMode;
@@ -261,15 +262,18 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     if (getPaneCommandMode() !== 'split') {
       return targetPaneId;
     }
-    const sourceKey = getPaneCommandSourceNoteKey();
-    if (!sourceKey) {
-      return targetPaneId;
+    const sourcePaneId = getPaneCommandSourcePaneId();
+    if (
+      sourcePaneId &&
+      sourcePaneId !== targetPaneId &&
+      getPaneOrder().includes(sourcePaneId)
+    ) {
+      return sourcePaneId;
     }
-    return (
-      getPaneOrder().find(
-        (paneId) => paneId !== targetPaneId && getPaneDocument(paneId).key === sourceKey
-      ) ?? targetPaneId
-    );
+    // A split currently has at most two panes. Fall back to the other visible
+    // pane for commands begun before sourcePaneId was recorded (for example,
+    // a pane picker already open across HMR).
+    return getPaneOrder().find((paneId) => paneId !== targetPaneId) ?? targetPaneId;
   }
 
   async function resolvePreviousLocationForPaneCommand(
@@ -288,6 +292,12 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   function paneCommandPreviousLocationLabel(targetPaneId: TPaneId): string | null {
     const previous = peekPreviousLocationForPaneCommand(targetPaneId);
     return previous ? locationDisplayLabel(previous) : null;
+  }
+
+  function paneCommandCurrentLocationLabel(targetPaneId: TPaneId): string {
+    const referencePaneId = findPaneCommandReferencePaneId(targetPaneId);
+    const current = capturePaneLocation(referencePaneId);
+    return current ? locationDisplayLabel(current) : 'Untitled note';
   }
 
   function peekLocationHistory(paneId: TPaneId = getActivePaneId()): LocationHistoryEntry[] {
@@ -747,7 +757,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     addPane(state, targetPaneId, placeholderDraft.key, 'editor');
     setStoredPaneKind(state, targetPaneId, 'editor');
     setPaneDocumentSession(targetPaneId, placeholderDraft);
-    beginPaneCommand(targetPaneId, sharedDocument.key, 'split');
+    beginPaneCommand(targetPaneId, sharedDocument.key, 'split', sourcePaneId);
 
     setPaneOrder([...order, targetPaneId]);
     activatePaneSession(targetPaneId);
@@ -764,6 +774,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
 
     const closingDocument = getPaneDocument(paneId);
+    const closingLocation = capturePaneLocation(paneId);
     const remainingEditorsForDocument = order.filter(
       (candidate) =>
         candidate !== paneId &&
@@ -799,6 +810,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     if (!remainingPaneId) {
       return;
     }
+    locationMru.adoptClosedLocation(paneId, remainingPaneId, closingLocation);
+    bumpLocationHistoryEpoch();
     activatePaneSession(remainingPaneId);
     updateSelectedRelatedText();
     await tick();
@@ -905,6 +918,10 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
 
     const sourceKey = getPaneCommandSourceNoteKey();
+    const commandMode = getPaneCommandMode();
+    const referencePaneId = findPaneCommandReferencePaneId(paneId);
+    const currentLocation =
+      commandMode === 'split' ? capturePaneLocation(referencePaneId) : null;
     const previousLocation =
       choice === 'previous' ? await resolvePreviousLocationForPaneCommand(paneId) : null;
     const placeholderDocument = getPaneDocument(paneId);
@@ -920,6 +937,16 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     }
 
     if (choice === 'current') {
+      if (currentLocation?.kind === 'chat') {
+        // "Current" means the source pane's visible location. A chat pane may
+        // carry a note document as insertion context, but that backing note is
+        // not the pane's current location.
+        await restoreLocation(paneId, currentLocation);
+        touchLocation(paneId, currentLocation);
+        await finalizePaneCommandSelection(paneId);
+        return;
+      }
+
       if (!sourceKey) return;
 
       const shared = getNoteByKey(sourceKey);
@@ -958,7 +985,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
       // Same-pane previous (start picker / Cmd+L) shares goToPreviousLocation.
       // Split fills this pane with the reference pane's previous without touching
       // that pane's MRU order beyond what restore needs.
-      if (findPaneCommandReferencePaneId(paneId) === paneId) {
+      if (referencePaneId === paneId) {
         await goToPreviousLocation(paneId);
       } else {
         await restoreLocation(paneId, previousLocation);
@@ -1085,6 +1112,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     listLocationHistory,
     peekLocationHistory,
     openLocationFromHistory,
+    paneCommandCurrentLocationLabel,
     paneCommandPreviousLocationLabel,
     peekPreviousLocationForPaneCommand,
     resolvePreviousLocationForPaneCommand,

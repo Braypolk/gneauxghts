@@ -57,6 +57,15 @@
 </script>
 
 {#if !hasChanges}
+  {#if snapshot.error}
+    <div
+      class="mx-4 mb-1 rounded-[1.1rem] bg-destructive/10 px-3 py-2.5 text-xs text-destructive sm:mx-6"
+      role="alert"
+      data-proposal-strip="error"
+    >
+      {snapshot.error}
+    </div>
+  {/if}
   {#if onLoadFixture}
     <div
       class="px-4 py-2 sm:px-6"

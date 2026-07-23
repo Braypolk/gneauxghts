@@ -126,4 +126,26 @@ describe('createNavigationCoordinator', () => {
     await coordinator.request('/map');
     expect(navigate).not.toHaveBeenCalled();
   });
+
+  it('navigates when the live route changed outside the coordinator', async () => {
+    let currentPath = '/map';
+    const navigate = vi.fn(async (href: string) => {
+      currentPath = href;
+    });
+    const coordinator = createNavigationCoordinator({
+      getCurrentPathname: () => currentPath,
+      normalizePathname: normalize,
+      flushPendingWork: async () => undefined,
+      navigate
+    });
+
+    // Opening a note from the map routes directly to the editor, so the
+    // coordinator still considers `/map` its last settled destination.
+    currentPath = '/';
+    await coordinator.request('/map');
+
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith('/map');
+    expect(currentPath).toBe('/map');
+  });
 });

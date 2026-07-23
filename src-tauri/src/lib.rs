@@ -7,6 +7,7 @@ mod note;
 mod path_utils;
 mod proposals;
 mod search;
+mod secrets;
 mod semantic;
 mod services;
 mod state;
@@ -22,9 +23,17 @@ use semantic::SemanticState;
 use state::{initialize_app_data_dir, initialize_documents_dir, notes_root};
 use std::{path::PathBuf, thread};
 use tauri::{Manager, RunEvent};
+#[cfg(target_os = "ios")]
+use tauri_plugin_keyring_store::WriteAccessibility;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let keyring_plugin =
+        tauri_plugin_keyring_store::Builder::new().service(secrets::KEYRING_SERVICE);
+    #[cfg(target_os = "ios")]
+    let keyring_plugin =
+        keyring_plugin.ios_write_accessibility(WriteAccessibility::WhenUnlockedThisDeviceOnly);
+
     let app = tauri::Builder::default()
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
@@ -116,6 +125,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(keyring_plugin.build())
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap_app,
             commands::get_settings_view,
@@ -123,6 +133,8 @@ pub fn run() {
             commands::open_note,
             commands::read_note,
             commands::get_vault_info,
+            commands::list_vault_folders,
+            commands::create_vault_folder,
             commands::asset_commands::read_image_asset_data_url,
             commands::asset_commands::store_pasted_image,
             commands::set_vault_directory,

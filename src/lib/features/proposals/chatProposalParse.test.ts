@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { extractProposalFence, parseChatProposalEdits } from './chatProposalParse';
+import {
+  extractProposalFence,
+  parseChatProposalEdits,
+  withoutProposalFence
+} from './chatProposalParse';
 
 describe('chatProposalParse', () => {
   it('extracts a gneauxghts-proposal fence', () => {
     const content = `Here is a draft.\n\n\`\`\`gneauxghts-proposal\n{"newMarkdown":"Hi"}\n\`\`\`\n`;
     expect(extractProposalFence(content)).toBe('{"newMarkdown":"Hi"}');
+  });
+
+  it('removes proposal control data from user-facing assistant text', () => {
+    const content = `I prepared the update.\n\n\`\`\`gneauxghts-proposal
+{"version":1,"edits":[{"kind":"insert","newText":"Hi","contextAfter":"Body"}]}
+\`\`\``;
+    expect(withoutProposalFence(content)).toBe('I prepared the update.');
   });
 
   it('parses the live edits protocol', () => {
@@ -23,6 +34,18 @@ describe('chatProposalParse', () => {
       { kind: 'replace', oldText: 'Hello', newText: 'Hi' },
       { kind: 'insert', newText: '\nWorld', contextAfter: 'Hi' }
     ]);
+  });
+
+  it('keeps an appended Markdown list on a new line when the model omits the separator', () => {
+    const edits = parseChatProposalEdits(
+      '```gneauxghts-proposal\n{"version":1,"edits":[{"kind":"insert","newText":"- pizza\\n- caprese salad","contextBefore":"- salami"}]}\n```',
+      '- basil\n- salami'
+    );
+    expect(edits).toEqual([{
+      kind: 'insert',
+      newText: '\n- pizza\n- caprese salad',
+      contextBefore: '- salami'
+    }]);
   });
 
   it('parses edits nested under a changes entry', () => {

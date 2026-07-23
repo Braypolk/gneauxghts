@@ -596,6 +596,10 @@ export function getZoomTier(zoom: number): AtlasZoomTier {
   return 'close';
 }
 
+export function getNodeRadiusZoomMultiplier(zoom: number): number {
+  return Math.max(0.08, Math.min(1, zoom));
+}
+
 export function isHighConfidenceLink(link: AtlasLink, minimumStrength: number): boolean {
   return link.kind === 'wikilink' || link.strength >= minimumStrength;
 }

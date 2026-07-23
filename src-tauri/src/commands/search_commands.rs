@@ -713,11 +713,8 @@ pub(crate) async fn retrieve_note_context(
             } else {
                 Vec::new()
             };
-            let note_lookup = note_access_lookup_for_candidates(
-                &state,
-                &lexical_candidates,
-                &semantic_matches,
-            );
+            let note_lookup =
+                note_access_lookup_for_candidates(&state, &lexical_candidates, &semantic_matches);
             let merged = merge_hybrid_candidates(
                 lexical_candidates,
                 semantic_matches,
@@ -1307,15 +1304,11 @@ mod note_access_lookup_tests {
             block_anchor: None,
         }];
 
-        let lookup: NoteAccessLookup =
-            note_access_lookup_from_index(&index, &lexical, &semantic);
+        let lookup: NoteAccessLookup = note_access_lookup_from_index(&index, &lexical, &semantic);
 
         assert_eq!(lookup.modified_by_note_id.len(), 1);
         assert_eq!(lookup.note_id_by_path.len(), 1);
         assert!(lookup.modified_by_note_id.contains_key(&keep_id));
-        assert!(!lookup
-            .note_id_by_path
-            .values()
-            .any(|id| id != &keep_id));
+        assert!(!lookup.note_id_by_path.values().any(|id| id != &keep_id));
     }
 }
