@@ -7,7 +7,7 @@ import { obsidianMarkdownExtensions } from '$lib/features/notepad/markdown/obsid
 // editor relied on from draftly:
 //  - `base: markdownLanguage` selects the GFM-enabled dialect (strikethrough,
 //    task lists, tables, autolinks) rather than plain CommonMark.
-//  - `extensions` adds Obsidian-style `==highlight==` and `%%comment%%` parsing.
+//  - `extensions` adds Obsidian-style wikilink, highlight, and comment parsing.
 //  - `codeLanguages` drives fenced-code-block syntax highlighting via lazily
 //    loaded language parsers (see codemirrorLanguageData for the curated list).
 //  - `pasteURLAsLink` keeps the "paste a URL over a selection → link" affordance.

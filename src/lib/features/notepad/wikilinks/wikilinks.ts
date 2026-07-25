@@ -1,7 +1,8 @@
-import { RangeSetBuilder } from '@codemirror/state';
-import { Decoration, EditorView, ViewPlugin } from '@codemirror/view';
+import { syntaxTree } from '@codemirror/language';
+import type { EditorState } from '@codemirror/state';
+import { EditorView, ViewPlugin, keymap } from '@codemirror/view';
+import type { SyntaxNode } from '@lezer/common';
 
-const WIKILINK_PATTERN = /(?<!!)\[\[([^\[\]\n]+?)\]\]/g;
 const FENCE_PATTERN = /^\s*(```+|~~~+)/;
 
 interface WikilinkConfig {
@@ -55,40 +56,32 @@ function isOffsetInsideCodeFence(text: string, offset: number, starts = lineStar
   return insideFence;
 }
 
-function buildWikilinkDecorations(view: EditorView) {
-  const builder = new RangeSetBuilder<Decoration>();
-  const text = view.state.doc.toString();
-  const starts = lineStarts(text);
-
-  for (const match of text.matchAll(WIKILINK_PATTERN)) {
-    const index = match.index ?? -1;
-    const rawTarget = match[1]?.trim();
-    if (index < 0 || !rawTarget || isOffsetInsideCodeFence(text, index, starts)) {
-      continue;
-    }
-
-    builder.add(
-      index,
-      index + match[0].length,
-      Decoration.mark({
-        class: 'gn-wikilink',
-        attributes: {
-          'data-wikilink-target': rawTarget
-        }
-      })
-    );
-  }
-
-  return builder.finish();
+export interface WikilinkRange {
+  from: number;
+  to: number;
+  rawTarget: string;
 }
 
-function findWikilinkElement(target: EventTarget | null) {
-  if (target instanceof HTMLElement) {
-    return target.closest<HTMLElement>('.gn-wikilink');
-  }
+export function getWikilinkAtPosition(state: EditorState, position: number): WikilinkRange | null {
+  const tree = syntaxTree(state);
 
-  if (target instanceof Text) {
-    return target.parentElement?.closest<HTMLElement>('.gn-wikilink') ?? null;
+  for (const bias of [-1, 1] as const) {
+    let node: SyntaxNode | null = tree.resolveInner(position, bias);
+    while (node && node.name !== 'Wikilink') {
+      node = node.parent;
+    }
+
+    if (
+      node?.name === 'Wikilink' &&
+      position >= node.from &&
+      position < node.to
+    ) {
+      return {
+        from: node.from,
+        to: node.to,
+        rawTarget: state.sliceDoc(node.from + 2, node.to - 2)
+      };
+    }
   }
 
   return null;
@@ -100,38 +93,24 @@ function getActiveWikilink(view: EditorView): ActiveWikilink | null {
     return null;
   }
 
-  const text = view.state.doc.toString();
-  if (isOffsetInsideCodeFence(text, selection.head)) {
+  const wikilink = getWikilinkAtPosition(view.state, selection.head);
+  if (
+    !wikilink ||
+    selection.head < wikilink.from + 2 ||
+    selection.head > wikilink.to - 2
+  ) {
     return null;
   }
 
-  const line = view.state.doc.lineAt(selection.head);
-  const lineText = line.text;
-  const cursorOffset = selection.head - line.from;
-  const start = lineText.lastIndexOf('[[', cursorOffset);
-  if (start < 0 || cursorOffset < start + 2) {
-    return null;
-  }
-
-  // Image embeds use `![[file.png]]` — don't treat them as wikilinks.
-  if (start > 0 && lineText[start - 1] === '!') {
-    return null;
-  }
-
-  const end = lineText.indexOf(']]', start + 2);
-  if (end < 0 || cursorOffset > end) {
-    return null;
-  }
-
-  const targetFrom = line.from + start + 2;
-  const targetTo = line.from + end;
+  const targetFrom = wikilink.from + 2;
+  const targetTo = wikilink.to - 2;
   const cursorCoords = view.coordsAtPos(selection.head);
   if (!cursorCoords) {
     return null;
   }
 
   return {
-    rawTarget: lineText.slice(start + 2, end),
+    rawTarget: wikilink.rawTarget,
     targetFrom,
     targetTo,
     left: cursorCoords.left,
@@ -147,23 +126,28 @@ function resolveCallbacks(view: EditorView, config: WikilinkConfig): WikilinkCal
   };
 }
 
+function openWikilinkAtPosition(view: EditorView, position: number, config: WikilinkConfig) {
+  const wikilink = getWikilinkAtPosition(view.state, position);
+  const rawTarget = wikilink?.rawTarget.trim();
+  if (!rawTarget) {
+    return false;
+  }
+
+  resolveCallbacks(view, config).onOpenLink(rawTarget);
+  return true;
+}
+
 export function createWikilinksExtension(config: WikilinkConfig) {
   return [
     ViewPlugin.fromClass(
       class {
-        decorations;
         #destroyed = false;
 
         constructor(readonly view: EditorView) {
-          this.decorations = buildWikilinkDecorations(view);
           this.scheduleActiveWikilinkUpdate(view);
         }
 
         update(update: import('@codemirror/view').ViewUpdate) {
-          if (update.docChanged) {
-            this.decorations = buildWikilinkDecorations(update.view);
-          }
-
           if (update.docChanged || update.selectionSet) {
             this.scheduleActiveWikilinkUpdate(update.view);
           }
@@ -187,9 +171,32 @@ export function createWikilinksExtension(config: WikilinkConfig) {
         }
       },
       {
-        decorations: (value) => value.decorations
+        eventHandlers: {
+          dblclick: (event, view) => {
+            const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (position === null) {
+              return false;
+            }
+
+            if (!openWikilinkAtPosition(view, position, config)) {
+              return false;
+            }
+
+            event.preventDefault();
+            return true;
+          }
+        }
       }
     ),
+    keymap.of([
+      {
+        key: 'Mod-Enter',
+        run: (view) => {
+          const selection = view.state.selection.main;
+          return selection.empty && openWikilinkAtPosition(view, selection.head, config);
+        }
+      }
+    ]),
     EditorView.inputHandler.of((view, from, to, text, insert) => {
       if (text !== '[' || from !== to) {
         return false;
@@ -217,19 +224,6 @@ export function createWikilinksExtension(config: WikilinkConfig) {
         })
       );
       return true;
-    }),
-    EditorView.domEventHandlers({
-      click: (event, view) => {
-        const wikilinkElement = findWikilinkElement(event.target);
-        const rawTarget = wikilinkElement?.dataset.wikilinkTarget?.trim();
-        if (!rawTarget) {
-          return false;
-        }
-
-        event.preventDefault();
-        resolveCallbacks(view, config).onOpenLink(rawTarget);
-        return true;
-      }
     })
   ];
 }

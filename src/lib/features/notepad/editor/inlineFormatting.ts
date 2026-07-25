@@ -230,6 +230,30 @@ function findEnclosingLinkNode(
     from,
     to,
     enter(node) {
+      if (node.name === 'Wikilink') {
+        if (kind !== 'wikilink') {
+          return;
+        }
+
+        const inner = unwrapLinkText(state.sliceDoc(node.from, node.to));
+        const labelFrom = node.from + 2;
+        const labelTo = node.to - 2;
+        if (inner === null || from < labelFrom || to > labelTo) {
+          return;
+        }
+
+        const size = node.to - node.from;
+        if (size < bestSize) {
+          bestSize = size;
+          best = {
+            nodeFrom: node.from,
+            nodeTo: node.to,
+            inner
+          };
+        }
+        return;
+      }
+
       if (node.name !== 'Link') {
         return;
       }

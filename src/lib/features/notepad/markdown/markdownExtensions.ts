@@ -14,6 +14,7 @@ import { decorateHorizontalRule } from './decorations/horizontalRule';
 import { decorateInlineFormatting } from './decorations/inlineFormatting';
 import { decorateLink } from './decorations/links';
 import { decorateList } from './decorations/lists';
+import { decorateWikilink } from './decorations/wikilinks';
 import type { MarkdownDecorationContext, MarkdownNodeDecorator } from './decorations/types';
 
 // Ordered list of per-concern decorators. The view plugin walks the syntax tree
@@ -28,12 +29,13 @@ const DECORATORS: readonly MarkdownNodeDecorator[] = [
   decorateList,
   decorateBlockquote,
   decorateHorizontalRule,
-  decorateLink
+  decorateLink,
+  decorateWikilink
 ];
 
 interface BuiltMarkdownDecorations {
   decorations: DecorationSet;
-  atomicIndents: DecorationSet;
+  atomicRanges: DecorationSet;
 }
 
 function buildDecorations(view: EditorView): BuiltMarkdownDecorations {
@@ -66,8 +68,11 @@ function buildDecorations(view: EditorView): BuiltMarkdownDecorations {
   }
   return {
     decorations: builder.finish(),
-    atomicIndents: Decoration.set(
-      decorations.filter((range) => range.value.spec.gnAtomicIndent === true),
+    atomicRanges: Decoration.set(
+      decorations.filter(
+        (range) =>
+          range.value.spec.gnAtomicIndent === true || range.value.spec.gnAtomic === true
+      ),
       true
     )
   };
@@ -76,19 +81,19 @@ function buildDecorations(view: EditorView): BuiltMarkdownDecorations {
 const markdownDecorationPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
-    atomicIndents: DecorationSet;
+    atomicRanges: DecorationSet;
 
     constructor(view: EditorView) {
       const built = buildDecorations(view);
       this.decorations = built.decorations;
-      this.atomicIndents = built.atomicIndents;
+      this.atomicRanges = built.atomicRanges;
     }
 
     update(update: ViewUpdate) {
       if (update.docChanged || update.selectionSet || update.viewportChanged) {
         const built = buildDecorations(update.view);
         this.decorations = built.decorations;
-        this.atomicIndents = built.atomicIndents;
+        this.atomicRanges = built.atomicRanges;
       }
     }
   },
@@ -111,7 +116,7 @@ export function createMarkdownExtensions(): Extension[] {
     createMarkdownHighlight(),
     markdownDecorationPlugin,
     EditorView.atomicRanges.of(
-      (view) => view.plugin(markdownDecorationPlugin)?.atomicIndents ?? Decoration.none
+      (view) => view.plugin(markdownDecorationPlugin)?.atomicRanges ?? Decoration.none
     )
   ];
 }

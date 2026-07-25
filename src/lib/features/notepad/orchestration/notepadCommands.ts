@@ -139,6 +139,34 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     };
   }
 
+  function blurFocusedPaneTitle(paneId: TPaneId) {
+    const titleInput = getPaneTitleInput(paneId);
+    if (titleInput && document.activeElement === titleInput) {
+      titleInput.blur();
+    }
+  }
+
+  async function captureRestorablePaneLocation(paneId: TPaneId): Promise<NavLocation | null> {
+    const current = capturePaneLocation(paneId);
+    if (current || getPaneKind(paneId) !== 'editor') {
+      return current;
+    }
+
+    const note = getPaneDocument(paneId);
+    if (!hasContent(note)) {
+      return null;
+    }
+
+    if (hasPendingDocumentSync(note)) {
+      flushDocumentEditorSync(note);
+    }
+    documents.saveCursorPositionForDocument(note);
+    documents.saveSharedEditorStateForDocument(note);
+    cancelPendingAutosave(note);
+    await enqueueSave(note);
+    return capturePaneLocation(paneId);
+  }
+
   function touchCurrentLocation(paneId: TPaneId = getActivePaneId()) {
     if (suppressLocationTouch) {
       return;
@@ -237,7 +265,8 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
 
   async function goToPreviousLocation(paneId: TPaneId = getActivePaneId()) {
     activatePaneSession(paneId);
-    const current = capturePaneLocation(paneId);
+    blurFocusedPaneTitle(paneId);
+    const current = await captureRestorablePaneLocation(paneId);
     await ensureLocationMruSeeded(paneId);
     const previous = locationMru.previousExcluding(paneId, current);
     if (!previous) {
@@ -405,6 +434,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   async function clearNotepad(options: { canRestore?: boolean } = {}) {
     const canRestore = options.canRestore ?? true;
     const paneId = getNavigationPaneId();
+    blurFocusedPaneTitle(paneId);
     const note = getNavigationDocument();
     const notePathToClear = note.currentNotePath;
 
@@ -586,13 +616,26 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
   }
 
   async function startNewNoteFlow() {
-    let paneId = getNavigationPaneId();
-    let note = getNavigationDocument();
+    let paneId = getActivePaneId();
+    const startedInChat = getPaneKind(paneId) === 'chat';
+    if (startedInChat) {
+      // Preserve the visible chat before its backing context document is
+      // replaced with the new draft.
+      touchCurrentLocation(paneId);
+    }
+    blurFocusedPaneTitle(paneId);
+    let note = getPaneDocument(paneId);
 
     if (hasContent(note)) {
       await rememberCurrentNoteForPane(paneId);
-      paneId = getNavigationPaneId();
-      note = getNavigationDocument();
+      paneId = getActivePaneId();
+      note = getPaneDocument(paneId);
+    }
+
+    if (startedInChat) {
+      // The fresh draft is ready now, so revealing the editor cannot flash
+      // the chat's previous context note.
+      await setPaneKind(paneId, 'editor', { recordCurrentLocation: false });
     }
 
     await openStartPaneCommand(paneId, note.key);
@@ -609,6 +652,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     } = {}
   ) {
     const paneId = getActivePaneId();
+    blurFocusedPaneTitle(paneId);
     const previousDocument = getPaneDocument(paneId);
     if (!options.noteId && !notePath) {
       return;
@@ -818,7 +862,11 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     focusPaneAfterShortcut(remainingPaneId);
   }
 
-  async function setPaneKind(paneId: TPaneId, kind: PaneKind) {
+  async function setPaneKind(
+    paneId: TPaneId,
+    kind: PaneKind,
+    { recordCurrentLocation = true }: { recordCurrentLocation?: boolean } = {}
+  ) {
     if (kind === getPaneKind(paneId)) {
       return;
     }
@@ -839,7 +887,9 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     if (kind === 'chat') {
       deps.onDocumentLeaving?.(document);
     }
-    touchCurrentLocation(paneId);
+    if (recordCurrentLocation) {
+      touchCurrentLocation(paneId);
+    }
     setStoredPaneKind(state, paneId, kind);
     if (kind === 'chat') {
       // Persist the chat slot as soon as we enter thought partner, not only
@@ -982,7 +1032,7 @@ export function createNotepadCommands<TPaneId extends string>(deps: NotepadComma
     if (choice === 'previous') {
       if (!previousLocation) return;
 
-      // Same-pane previous (start picker / Cmd+L) shares goToPreviousLocation.
+      // Same-pane previous from the start picker shares goToPreviousLocation.
       // Split fills this pane with the reference pane's previous without touching
       // that pane's MRU order beyond what restore needs.
       if (referencePaneId === paneId) {

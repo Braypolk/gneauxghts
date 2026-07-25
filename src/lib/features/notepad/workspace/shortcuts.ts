@@ -7,7 +7,10 @@ export interface WorkspaceShortcutDeps<TPaneId extends string> {
   getPaneOrder: () => TPaneId[];
   getActivePaneId: () => TPaneId;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
-  splitWorkspace: () => Promise<void>;
+  openThoughtPartner: () => Promise<void>;
+  openSplitPaneOptions: () => Promise<void>;
+  openNewChatInSplit: () => Promise<void>;
+  openPreviousNoteInSplit: () => Promise<void>;
   closePane: (paneId: TPaneId) => Promise<void>;
   switchActivePane: () => Promise<void>;
   startNewNoteFlow: () => Promise<void>;
@@ -87,16 +90,32 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
       return;
     }
 
-    if (keyboardShortcutMatchesEvent(event, 'splitWorkspace')) {
+    if (keyboardShortcutMatchesEvent(event, 'openThoughtPartner')) {
+      event.preventDefault();
+      if (event.repeat) {
+        return;
+      }
+
+      await deps.openThoughtPartner();
+      return;
+    }
+
+    const splitShortcuts = [
+      ['openSplitPaneOptions', deps.openSplitPaneOptions],
+      ['openNewChatInSplit', deps.openNewChatInSplit],
+      ['openPreviousNoteInSplit', deps.openPreviousNoteInSplit]
+    ] as const;
+
+    for (const [shortcutId, openInSplit] of splitShortcuts) {
+      if (!keyboardShortcutMatchesEvent(event, shortcutId)) {
+        continue;
+      }
+      event.preventDefault();
       if (event.repeat || deps.getPaneOrder().length > 1) {
         return;
       }
 
-      const activePaneId = deps.getActivePaneId();
-      const preferTitle = document.activeElement === deps.getPaneTitleInput(activePaneId);
-      event.preventDefault();
-      await deps.splitWorkspace();
-      deps.focusPaneAfterShortcut(deps.getActivePaneId(), { preferTitle });
+      await openInSplit();
       return;
     }
 
@@ -139,6 +158,13 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
 
     if (keyboardShortcutMatchesEvent(event, 'goToPreviousNote')) {
       event.preventDefault();
+      const titleInput = deps.getPaneTitleInput(deps.getActivePaneId());
+      if (titleInput && document.activeElement === titleInput) {
+        // A wikilink can focus the destination note's title. Commit that
+        // title draft before navigation changes the pane's document; otherwise
+        // the later blur would write the destination title into the restored note.
+        titleInput.blur();
+      }
       void deps.goToPreviousLocation();
       return;
     }

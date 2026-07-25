@@ -58,6 +58,11 @@ whole vault (notes + index + state) travels as one folder.
 - `Cmd+,` opens Settings
 - `Cmd+F` focuses search in the current note
 - `Cmd+Shift+F` switches search to all notes
+- `Cmd+T` opens the thought partner in the current pane
+- `Cmd+Shift+N` opens the split pane options
+- `Cmd+Shift+T` opens a new thought partner chat in a split pane
+- `Cmd+L` opens the previous note or chat location in the current pane
+- `Cmd+Shift+L` opens the previous note or chat location in a split pane
 - `Enter` in the title field jumps into the editor body
 
 ## Stack

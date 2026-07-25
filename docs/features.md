@@ -121,7 +121,9 @@ Wikilinks support note/section lookup and autocomplete.
 
 Frontend:
 
-- `wikilinks/wikilinks.ts`: editor decorations;
+- `markdown/wikilinkExtension.ts`: wikilink syntax nodes;
+- `markdown/decorations/wikilinks.ts`: alias concealment and visual styling;
+- `wikilinks/wikilinks.ts`: editor interaction and active-link tracking;
 - `wikilinks/state.ts`: state and draft-aware lookup request shaping;
 - `wikilinks/runtime.ts`: interaction controller;
 - `WikilinkAutocomplete.svelte`: UI.

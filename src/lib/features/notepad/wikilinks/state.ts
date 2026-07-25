@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 import type { NoteLinkSuggestion, ResolvedNoteLink } from '$lib/features/notepad/model/types';
+import { parseWikilink } from '$lib/features/notepad/wikilinks/parse';
 import { callWithDraft, computeDraftHash } from '$lib/features/notepad/search/draftRef';
 
 export interface WikilinkAutocompleteState {
@@ -105,7 +106,7 @@ export function getSelectedWikilinkSuggestion(state: WikilinkAutocompleteState) 
 }
 
 export function hasWikilinkAlias(activeWikilink: ActiveWikilink | null) {
-  return activeWikilink?.rawTarget.includes('|') ?? false;
+  return activeWikilink ? parseWikilink(activeWikilink.rawTarget).alias !== null : false;
 }
 
 function wikilinkNeedsCurrentMarkdown(rawTarget: string) {

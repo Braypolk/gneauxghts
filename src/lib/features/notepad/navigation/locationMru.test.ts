@@ -45,18 +45,18 @@ describe('locationMru', () => {
     expect(mru.list('p1')).toEqual([noteA, noteB]);
   });
 
-  it('supports note↔note Cmd+L toggle semantics', () => {
+  it('supports note↔note previous-location toggle semantics', () => {
     const mru = createLocationMruStore<'p1'>();
     mru.seedIfEmpty('p1', [noteB]);
 
-    // On note A, Cmd+L → previous B, touch A, restore B
+    // On note A, previous → B, touch A, restore B
     let current: NavLocation = noteA;
     let previous = mru.previousExcluding('p1', current);
     expect(previous).toEqual(noteB);
     mru.touch('p1', current);
     current = previous!;
 
-    // On note B, Cmd+L → previous A, touch B, restore A
+    // On note B, previous → A, touch B, restore A
     previous = mru.previousExcluding('p1', current);
     expect(previous).toEqual(noteA);
     mru.touch('p1', current);
@@ -67,21 +67,21 @@ describe('locationMru', () => {
     expect(previous).toEqual(noteB);
   });
 
-  it('supports note↔chat Cmd+L toggle semantics', () => {
+  it('supports note↔chat previous-location toggle semantics', () => {
     const mru = createLocationMruStore<'p1'>();
 
     // Leave note A for chat
     mru.touch('p1', noteA);
     let current: NavLocation = chatA;
 
-    // Cmd+L from chat → note A
+    // Previous from chat → note A
     let previous = mru.previousExcluding('p1', current);
     expect(previous).toEqual(noteA);
     mru.touch('p1', current);
     current = previous!;
     expect(current).toEqual(noteA);
 
-    // Cmd+L from note A → same chat
+    // Previous from note A → same chat
     previous = mru.previousExcluding('p1', current);
     expect(previous).toEqual(chatA);
     mru.touch('p1', current);

@@ -11,6 +11,7 @@ import type {
   PendingProposalChange,
   ProposalReviewSessionSnapshot
 } from '$lib/features/proposals/types';
+import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 
 type PaneKind = 'editor' | 'chat';
 
@@ -30,6 +31,7 @@ export interface PaneViewModel {
   showCloseButton: boolean;
   titleClass: string;
   titlePlaceholder: string;
+  titleDocument: NoteDraftState;
   titleValue: string;
   titleReadonly: boolean;
   chatController: ChatController | null;

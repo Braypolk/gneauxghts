@@ -76,7 +76,7 @@ export interface NotepadDerivedViewCommands<TPaneId extends string> {
   scheduleRelatedIfNeeded: (options?: { immediate?: boolean }) => void;
   clearSelectedRelatedText: () => void;
   loadRecentNotes: () => Promise<unknown> | unknown;
-  /** Recent notes used to bootstrap the Cmd+L location MRU when empty. */
+  /** Recent notes used to bootstrap the previous-location MRU when empty. */
   getRecentNotesForSeed: () => SearchItem[];
   setRecentlyForgotten: (value: ForgottenNote | null) => void;
   closeWikilinkAutocomplete: (paneId?: TPaneId) => void;

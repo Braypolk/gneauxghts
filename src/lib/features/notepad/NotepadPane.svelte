@@ -26,7 +26,13 @@
   }: Props = $props();
 
   let titleDraft = $state<string | null>(null);
-  const displayedTitle = $derived(titleDraft ?? viewModel.titleValue);
+  let titleDraftDocument = $state<PaneViewModel['titleDocument'] | null>(null);
+  const titleDraftBelongsToCurrentDocument = $derived(
+    titleDraftDocument === viewModel.titleDocument
+  );
+  const displayedTitle = $derived(
+    titleDraftBelongsToCurrentDocument ? titleDraft ?? viewModel.titleValue : viewModel.titleValue
+  );
 </script>
 
 {#snippet closePaneButton()}
@@ -78,16 +84,21 @@
                 readonly={viewModel.titleReadonly}
                 onfocus={() => {
                   titleDraft = viewModel.titleValue;
+                  titleDraftDocument = viewModel.titleDocument;
                   actions.onTitleFocus(viewModel.paneId);
                 }}
                 oninput={(event) => {
                   titleDraft = (event.currentTarget as HTMLInputElement).value;
+                  titleDraftDocument = viewModel.titleDocument;
                   actions.onTitleInput(viewModel.paneId);
                 }}
                 onblur={() => {
+                  const shouldCommit = titleDraftDocument === viewModel.titleDocument;
                   const rawTitle = titleDraft ?? viewModel.titleValue;
                   titleDraft = null;
-                  actions.onTitleBlur(viewModel.paneId, rawTitle);
+                  if (shouldCommit) {
+                    actions.onTitleBlur(viewModel.paneId, rawTitle);
+                  }
                 }}
                 onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
               />

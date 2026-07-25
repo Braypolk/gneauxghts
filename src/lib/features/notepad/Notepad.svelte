@@ -1558,7 +1558,10 @@
     getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
     getPaneTitleInput,
-    splitWorkspace: () => splitWorkspaceIfAllowed(),
+    openThoughtPartner: () => openPaneChoiceInCurrent('thoughtPartner'),
+    openSplitPaneOptions: () => splitWorkspaceIfAllowed(),
+    openNewChatInSplit: () => splitWorkspaceIfAllowed('thoughtPartner'),
+    openPreviousNoteInSplit: () => splitWorkspaceIfAllowed('previous'),
     closePane: commands.closePane,
     switchActivePane: commands.switchActivePane,
     startNewNoteFlow: commands.startNewNoteFlow,
@@ -1593,6 +1596,7 @@
       showCloseButton: paneOrder.length > 1,
       titleClass: paneTitleInputClass,
       titlePlaceholder: paneKind === 'editor' ? 'Title' : 'Chat title',
+      titleDocument: paneDocument,
       titleValue: paneKind === 'editor' ? paneDocument.title : 'Thought partner',
       titleReadonly:
         paneKind === 'chat' || proposalOrchestration.isReviewingDocument(paneDocument),
@@ -1667,7 +1671,7 @@
     onClose: commands.closePane,
     onSplit: splitWorkspaceIfAllowed,
     onOpenPaneChoice: openPaneChoiceInCurrent,
-    // Same path as Cmd+L: restore the previous location from the pane MRU.
+    // Restore the previous location from the pane MRU.
     onSwitchToEditor: (paneId) => commands.goToPreviousLocation(paneId),
     onTitleFocus: handleTitleFocus,
     onTitleInput: handleTitleInput,

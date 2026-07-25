@@ -8,7 +8,10 @@ export type KeyboardShortcutId =
   | 'navList'
   | 'navAtlas'
   | 'navSettings'
-  | 'splitWorkspace'
+  | 'openThoughtPartner'
+  | 'openSplitPaneOptions'
+  | 'openNewChatInSplit'
+  | 'openPreviousNoteInSplit'
   | 'closePane'
   | 'switchPane'
   | 'goToPreviousNote'
@@ -140,11 +143,32 @@ const shortcutDefinitionsBase = [
     defaultBinding: 'Meta+,'
   },
   {
-    id: 'splitWorkspace',
-    label: 'Split Workspace',
-    description: 'Open second pane picker.',
+    id: 'openThoughtPartner',
+    label: 'Open Thought Partner',
+    description: 'Open the thought partner in the current pane.',
     group: 'workspace',
-    defaultBinding: 'Meta+/'
+    defaultBinding: 'Meta+t'
+  },
+  {
+    id: 'openSplitPaneOptions',
+    label: 'Open Split Pane Options',
+    description: 'Open a new split pane and choose its contents.',
+    group: 'workspace',
+    defaultBinding: 'Meta+Shift+n'
+  },
+  {
+    id: 'openNewChatInSplit',
+    label: 'Open New Chat in Split',
+    description: 'Open a new thought partner chat in a split pane.',
+    group: 'workspace',
+    defaultBinding: 'Meta+Shift+t'
+  },
+  {
+    id: 'openPreviousNoteInSplit',
+    label: 'Open Previous Note in Split',
+    description: 'Open the previous note or chat location in a split pane.',
+    group: 'workspace',
+    defaultBinding: 'Meta+Shift+l'
   },
   {
     id: 'closePane',
@@ -163,7 +187,7 @@ const shortcutDefinitionsBase = [
   {
     id: 'goToPreviousNote',
     label: 'Go to Previous Note',
-    description: 'Open the previous note or chat location (toggles with Cmd+L).',
+    description: 'Open the previous note or chat location in the current pane.',
     group: 'workspace',
     defaultBinding: 'Meta+l'
   },
