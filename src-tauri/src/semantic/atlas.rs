@@ -49,7 +49,6 @@ const WIKILINK_STRENGTH: f32 = 0.82;
 const FOLDER_BOOST: f32 = 0.035;
 const NOTE_RADIUS_MIN: f32 = 4.0;
 const NOTE_RADIUS_MAX: f32 = 9.0;
-const STALE_DRIFT_DISTANCE: f32 = 420.0;
 const TOP_LEVEL_CLOUD_GAP: f32 = 96.0;
 const CHILD_CLOUD_GAP: f32 = 10.0;
 const DEFAULT_LAYOUT_PULL: f32 = 1.4;
@@ -180,15 +179,6 @@ fn navigation_only_embedding(path: &str, dimensions: usize) -> Vec<f32> {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct VaultAtlasStats {
-    pub(crate) note_count: usize,
-    pub(crate) cloud_count: usize,
-    pub(crate) link_count: usize,
-    pub(crate) isolated_count: usize,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct VaultAtlasResponse {
     pub(crate) status: String,
     pub(crate) reason: Option<String>,
@@ -199,7 +189,6 @@ pub(crate) struct VaultAtlasResponse {
     pub(crate) published_at_millis: u64,
     pub(crate) stale: bool,
     pub(crate) publish_in_progress: bool,
-    pub(crate) stats: VaultAtlasStats,
     pub(crate) nodes: Vec<AtlasNode>,
     pub(crate) links: Vec<AtlasLink>,
     pub(crate) clouds: Vec<AtlasCloud>,
@@ -224,7 +213,6 @@ pub(crate) struct AtlasSearchMatch {
     pub(crate) semantic_score: f32,
     pub(crate) lexical_score: f32,
     pub(crate) structural_score: f32,
-    pub(crate) recency_score: f32,
     pub(crate) reason_labels: Vec<String>,
 }
 
@@ -239,8 +227,6 @@ pub(crate) struct AtlasNode {
     pub(crate) document_kind: DocumentKind,
     pub(crate) x: f32,
     pub(crate) y: f32,
-    pub(crate) drift_x: f32,
-    pub(crate) drift_y: f32,
     pub(crate) radius: f32,
     pub(crate) cloud_id: Option<String>,
     pub(crate) parent_cloud_id: Option<String>,
@@ -248,13 +234,10 @@ pub(crate) struct AtlasNode {
     pub(crate) cluster_id: Option<String>,
     pub(crate) subcluster_id: Option<String>,
     pub(crate) centrality: f32,
-    pub(crate) degree: usize,
     pub(crate) importance: f32,
-    pub(crate) modified_at_millis: u64,
     pub(crate) last_viewed_at_millis: Option<u64>,
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
-    pub(crate) stale_score: f32,
     pub(crate) preview: String,
     pub(crate) tags: Vec<String>,
     pub(crate) isolated: bool,
@@ -278,7 +261,6 @@ pub(crate) struct AtlasCloud {
     pub(crate) parent_id: Option<String>,
     pub(crate) level: usize,
     pub(crate) label: Option<String>,
-    pub(crate) label_confidence: f32,
     /// `pending` while waiting for KeyBERT, `keybert` for content labels,
     /// `medoid` when falling back to a representative note title/filename.
     #[serde(default = "default_pending_label_source")]
@@ -287,7 +269,6 @@ pub(crate) struct AtlasCloud {
     pub(crate) density: f32,
     pub(crate) color: [u8; 4],
     pub(crate) centroid: [f32; 2],
-    pub(crate) label_anchor: [f32; 2],
     pub(crate) radius: f32,
     pub(crate) hull: Vec<[f32; 2]>,
     pub(crate) member_node_ids: Vec<String>,
@@ -310,13 +291,10 @@ struct WorkingNode {
     file_name: String,
     preview: String,
     tags: Vec<String>,
-    modified_at_millis: u64,
     created_at_millis: u64,
     updated_at_millis: u64,
     last_viewed_at_millis: Option<u64>,
-    stale_score: f32,
     centrality: f32,
-    degree: usize,
     importance: f32,
     embedding: Vec<f32>,
     x: f32,
@@ -852,11 +830,6 @@ impl AtlasWorkerContext {
         let has_all_cached_positions = indexed_notes
             .iter()
             .all(|note| positions.contains_key(&note.note_path));
-        let max_modified = indexed_notes
-            .iter()
-            .map(|note| note.modified_millis)
-            .max()
-            .unwrap_or(0);
         record_atlas_phase(&self.debug, "load", load_started);
 
         let mut nodes = indexed_notes
@@ -890,16 +863,10 @@ impl AtlasWorkerContext {
                         .unwrap_or_else(|| file_name_for_path(&note.note_path)),
                     preview: meta.map(|item| item.preview.clone()).unwrap_or_default(),
                     tags: meta.map(|item| item.tags.clone()).unwrap_or_default(),
-                    modified_at_millis: note.modified_millis,
                     created_at_millis,
                     updated_at_millis,
                     last_viewed_at_millis: last_viewed,
-                    stale_score: stale_score(
-                        last_viewed.unwrap_or(note.modified_millis),
-                        max_modified,
-                    ),
                     centrality: 0.0,
-                    degree: 0,
                     importance: 0.0,
                     embedding: normalized_embedding(note.embedding.clone()),
                     x,
@@ -967,7 +934,6 @@ impl AtlasWorkerContext {
         let response_nodes = nodes
             .iter()
             .map(|node| {
-                let drift = drift_position(node.x, node.y, node.stale_score);
                 AtlasNode {
                     id: node.id.clone(),
                     note_id: node.note_id.clone(),
@@ -980,8 +946,6 @@ impl AtlasWorkerContext {
                         .unwrap_or_default(),
                     x: node.x,
                     y: node.y,
-                    drift_x: drift.0,
-                    drift_y: drift.1,
                     radius: NOTE_RADIUS_MIN
                         + (NOTE_RADIUS_MAX - NOTE_RADIUS_MIN) * node.centrality.clamp(0.0, 1.0),
                     cloud_id: node.cloud_id.clone(),
@@ -990,13 +954,10 @@ impl AtlasWorkerContext {
                     cluster_id: node.cloud_id.clone(),
                     subcluster_id: node.child_cloud_id.clone(),
                     centrality: node.centrality,
-                    degree: node.degree,
                     importance: node.importance,
-                    modified_at_millis: node.modified_at_millis,
                     last_viewed_at_millis: node.last_viewed_at_millis,
                     created_at_millis: node.created_at_millis,
                     updated_at_millis: node.updated_at_millis,
-                    stale_score: node.stale_score,
                     preview: node.preview.clone(),
                     tags: node.tags.clone(),
                     isolated: node.isolated,
@@ -1041,12 +1002,6 @@ impl AtlasWorkerContext {
             published_at_millis,
             stale: false,
             publish_in_progress: false,
-            stats: VaultAtlasStats {
-                note_count: response_nodes.len(),
-                cloud_count: clouds.len(),
-                link_count: response_links.len(),
-                isolated_count: response_nodes.iter().filter(|node| node.isolated).count(),
-            },
             nodes: response_nodes,
             links: response_links,
             clouds,
@@ -1328,7 +1283,6 @@ impl ActiveSemanticState {
                             for cloud in &mut response.clouds {
                                 if let Some(published) = labels.labels.get(&cloud.id) {
                                     cloud.label = Some(published.label.clone());
-                                    cloud.label_confidence = published.confidence;
                                     cloud.label_source = published.source.clone();
                                 }
                             }
@@ -1373,12 +1327,6 @@ impl ActiveSemanticState {
             self.request_wake()?;
         }
         if let Some(mut response) = published.take() {
-            let max_modified = response
-                .nodes
-                .iter()
-                .map(|node| node.modified_at_millis)
-                .max()
-                .unwrap_or(0);
             for node in &mut response.nodes {
                 let last_viewed = node
                     .note_id
@@ -1386,9 +1334,6 @@ impl ActiveSemanticState {
                     .and_then(|id| activity_by_note_id.get(id))
                     .map(|activity| activity.last_viewed_at_millis);
                 node.last_viewed_at_millis = last_viewed;
-                node.stale_score =
-                    stale_score(last_viewed.unwrap_or(node.modified_at_millis), max_modified);
-                (node.drift_x, node.drift_y) = drift_position(node.x, node.y, node.stale_score);
             }
             response.status = "ready".to_string();
             response.stale = !compatible;
@@ -1514,7 +1459,6 @@ impl ActiveSemanticState {
                     semantic_score,
                     lexical_score,
                     structural_score,
-                    recency_score: access_score,
                     reason_labels: reason_labels(
                         semantic_score,
                         lexical_score,
@@ -1617,12 +1561,6 @@ fn empty_atlas(status: &str, reason: &str, revision: u64) -> Result<VaultAtlasRe
         published_at_millis: 0,
         stale: false,
         publish_in_progress: false,
-        stats: VaultAtlasStats {
-            note_count: 0,
-            cloud_count: 0,
-            link_count: 0,
-            isolated_count: 0,
-        },
         nodes: Vec::new(),
         links: Vec::new(),
         clouds: Vec::new(),
@@ -1885,9 +1823,9 @@ fn apply_centrality(nodes: &mut [WorkingNode], links: &[WorkingLink]) {
     let max_total = totals.values().copied().fold(0.0_f32, f32::max).max(1.0);
     for node in nodes {
         node.centrality = totals.get(&node.id).copied().unwrap_or(0.0) / max_total;
-        node.degree = degrees.get(&node.id).copied().unwrap_or(0);
+        let degree = degrees.get(&node.id).copied().unwrap_or(0);
         node.importance = (node.centrality * 0.72
-            + (node.degree as f32 / KNN_GRAPH_K as f32) * 0.28)
+            + (degree as f32 / KNN_GRAPH_K as f32) * 0.28)
             .clamp(0.0, 1.0);
     }
 }
@@ -4043,13 +3981,11 @@ fn build_cloud(spec: &CloudSpec, nodes: &[WorkingNode], links: &[WorkingLink]) -
         parent_id: spec.parent_id.clone(),
         level: spec.level,
         label,
-        label_confidence: 0.0,
         label_source: "pending".to_string(),
         note_count,
         density,
         color: cloud_color(&spec.id, spec.level),
         centroid: spec.centroid,
-        label_anchor: cloud_label_anchor(spec, &members),
         radius: spec.radius,
         hull: blob_hull(&spec.id, &label_members, spec.centroid, spec.radius),
         member_node_ids: spec.member_node_ids.clone(),
@@ -4074,22 +4010,6 @@ fn cloud_color(id: &str, level: usize) -> [u8; 4] {
     let color = PALETTE[(stable_hash(id) as usize) % PALETTE.len()];
     let alpha = if level == 0 { 118 } else { 72 };
     [color[0], color[1], color[2], alpha]
-}
-
-fn cloud_label_anchor(spec: &CloudSpec, members: &[&WorkingNode]) -> [f32; 2] {
-    if members.is_empty() {
-        return spec.centroid;
-    }
-    let angle = stable_angle(&spec.id);
-    let offset = if spec.level == 0 {
-        spec.radius * 0.42
-    } else {
-        spec.radius * 0.34
-    };
-    [
-        spec.centroid[0] + angle.cos() * offset,
-        spec.centroid[1] + angle.sin() * offset,
-    ]
 }
 
 fn cloud_affinity(
@@ -4326,20 +4246,6 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let doy = (153 * month + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
-}
-
-fn stale_score(last_activity: u64, max_modified: u64) -> f32 {
-    if max_modified == 0 || last_activity >= max_modified {
-        return 0.0;
-    }
-    let month = 1000.0 * 60.0 * 60.0 * 24.0 * 30.0;
-    ((max_modified - last_activity) as f32 / month).clamp(0.0, 1.0)
-}
-
-fn drift_position(x: f32, y: f32, stale_score: f32) -> (f32, f32) {
-    let length = (x * x + y * y).sqrt().max(1.0);
-    let drift = STALE_DRIFT_DISTANCE * stale_score * stale_score;
-    (x + x / length * drift, y + y / length * drift)
 }
 
 fn normalize_edge_strength(score: f32) -> f32 {
@@ -4999,13 +4905,10 @@ mod tests {
             file_name: format!("{id}.md"),
             preview: String::new(),
             tags: Vec::new(),
-            modified_at_millis: 100,
             created_at_millis: 100,
             updated_at_millis: 100,
             last_viewed_at_millis: None,
-            stale_score: 0.0,
             centrality: 0.5,
-            degree: 0,
             importance: 0.0,
             embedding: vec![x, y, 1.0],
             x,
@@ -5070,21 +4973,15 @@ mod tests {
     }
 
     #[test]
-    fn stale_score_uses_recent_activity_as_zero_and_old_activity_as_outer_pull() {
-        assert_eq!(stale_score(100, 100), 0.0);
-        assert!(stale_score(0, 1000 * 60 * 60 * 24 * 45) > 0.9);
-    }
-
-    #[test]
     fn activity_does_not_change_structural_link_strength() {
         let mut recent_nodes = [test_node("a", "A", 0.0, 0.0), test_node("b", "B", 1.0, 0.0)];
         recent_nodes[0].note_path = "folder/a.md".to_string();
         recent_nodes[1].note_path = "folder/b.md".to_string();
-        recent_nodes[0].stale_score = 0.0;
-        recent_nodes[1].stale_score = 0.0;
+        recent_nodes[0].last_viewed_at_millis = Some(100);
+        recent_nodes[1].last_viewed_at_millis = Some(100);
         let mut stale_nodes = recent_nodes.clone();
-        stale_nodes[0].stale_score = 1.0;
-        stale_nodes[1].stale_score = 1.0;
+        stale_nodes[0].last_viewed_at_millis = Some(1);
+        stale_nodes[1].last_viewed_at_millis = Some(1);
         let mut recent_links = vec![test_working_link("a", "b", 0.5)];
         let mut stale_links = recent_links.clone();
 

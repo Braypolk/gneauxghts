@@ -2,7 +2,6 @@
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import {
-    ArrowDownLeftFromCircle,
     ChevronDown,
     ExternalLink,
     Focus,
@@ -113,28 +112,12 @@
     return mixColor(color, atlasIsDark() ? DARK_CLOUD_NEUTRAL : LIGHT_CLOUD_NEUTRAL, 0.48);
   }
 
-  function getCloudDriftOffset(cloud: AtlasCloud): [number, number] {
-    if (!atlas.driftStaleNotes) return [0, 0];
-    let totalX = 0;
-    let totalY = 0;
-    let count = 0;
-    for (const id of cloud.memberNodeIds) {
-      const node = nodeById.get(id);
-      if (!node) continue;
-      totalX += node.driftX - node.x;
-      totalY += node.driftY - node.y;
-      count += 1;
-    }
-    return count > 0 ? [totalX / count, totalY / count] : [0, 0];
-  }
-
   function getCloudHull(cloud: AtlasCloud): [number, number][] {
     return buildVisibleCloudHull(cloud);
   }
 
   function getCloudCentroid(cloud: AtlasCloud): [number, number] {
-    const [dx, dy] = getCloudDriftOffset(cloud);
-    return [cloud.centroid[0] + dx, cloud.centroid[1] + dy];
+    return cloud.centroid;
   }
 
   function getVisibleCloudNodes(cloud: AtlasCloud): AtlasNode[] {
@@ -153,7 +136,7 @@
       const minY = Math.min(...hull.map(([, y]) => y));
       return [(minX + maxX) / 2, minY + labelInsetWorldUnits(cloud)];
     }
-    const positions = nodes.map((node) => getNodePosition(node, atlas.driftStaleNotes));
+    const positions = nodes.map((node) => getNodePosition(node));
     const minX = Math.min(...positions.map(([x]) => x));
     const maxX = Math.max(...positions.map(([x]) => x));
     const minY = Math.min(...positions.map(([, y]) => y));
@@ -185,7 +168,7 @@
   function buildVisibleCloudHull(cloud: AtlasCloud): [number, number][] {
     const nodes = getVisibleCloudNodes(cloud);
     if (nodes.length === 0) return cloud.hull;
-    const positions = nodes.map((node) => getNodePosition(node, atlas.driftStaleNotes));
+    const positions = nodes.map((node) => getNodePosition(node));
     const maxNodeRadius = Math.max(...nodes.map((node) => node.radius));
     const reservedLabelSpace = maxNodeRadius + getCloudLabelSize(cloud) + 18;
     const padding = Math.max(cloud.level === 0 ? 42 : 26, reservedLabelSpace) / Math.max(0.7, atlas.zoom);
@@ -338,7 +321,7 @@
     const links = atlas.visibleLinks
       .map((link) => ({
         ...link,
-        path: linkEndpoints(link, nodeById, atlas.driftStaleNotes)
+        path: linkEndpoints(link, nodeById)
       }))
       .filter((link) => link.path.length === 2);
 
@@ -357,7 +340,7 @@
         data: clouds,
         getPolygon: getCloudHull,
         updateTriggers: {
-          getPolygon: [atlas.driftStaleNotes, atlas.searchResponse, atlas.zoom],
+          getPolygon: [atlas.searchResponse, atlas.zoom],
           getFillColor: [atlas.searchResponse, selectedCloudId, hoveredCloudId]
         },
         getFillColor: (cloud: AtlasCloud) => {
@@ -382,7 +365,7 @@
         data: clouds,
         getPath: getCloudHull,
         updateTriggers: {
-          getPath: [atlas.driftStaleNotes, atlas.searchResponse, atlas.zoom],
+          getPath: [atlas.searchResponse, atlas.zoom],
           getColor: [atlas.searchResponse, selectedCloudId, hoveredCloudId]
         },
         getColor: (cloud: AtlasCloud) => {
@@ -433,9 +416,8 @@
       new ScatterplotLayer({
         id: 'atlas-notes',
         data: nodes,
-        getPosition: (node: AtlasNode) => getNodePosition(node, atlas.driftStaleNotes),
+        getPosition: (node: AtlasNode) => getNodePosition(node),
         updateTriggers: {
-          getPosition: [atlas.driftStaleNotes],
           getRadius: [atlas.searchResponse, selectedNodeId, isCompactViewport, atlas.zoom],
           getFillColor: [atlas.searchResponse, selectedNodeId],
           getLineWidth: [selectedNodeId]
@@ -464,7 +446,7 @@
         data: clouds,
         getPosition: getCloudLabelPosition,
         updateTriggers: {
-          getPosition: [atlas.driftStaleNotes, atlas.searchResponse, atlas.zoom],
+          getPosition: [atlas.searchResponse, atlas.zoom],
           getColor: [atlas.searchResponse, selectedCloudId, hoveredCloudId],
           getText: [labelRenderKey],
           getSize: [labelRenderKey]
@@ -495,12 +477,11 @@
         id: 'atlas-note-labels',
         data: labelNodes,
         getPosition: (node: AtlasNode) => {
-          const [x, y] = getNodePosition(node, atlas.driftStaleNotes);
+          const [x, y] = getNodePosition(node);
           return [x, y - getNoteLabelOffsetWorldUnits(node)];
         },
         updateTriggers: {
           getPosition: [
-            atlas.driftStaleNotes,
             atlas.searchResponse,
             selectedNodeId,
             isCompactViewport,
@@ -545,7 +526,7 @@
   function fittedViewState(): { target: [number, number, number]; zoom: number } | null {
     const nodes = atlas.visibleNodes;
     if (nodes.length === 0) return null;
-    const positions = nodes.map((node) => getNodePosition(node, atlas.driftStaleNotes));
+    const positions = nodes.map((node) => getNodePosition(node));
     const minX = Math.min(...positions.map(([x]) => x));
     const maxX = Math.max(...positions.map(([x]) => x));
     const minY = Math.min(...positions.map(([, y]) => y));
@@ -606,11 +587,6 @@
   function handleNodeClick(node: AtlasNode | null) {
     if (!node) return;
     atlas.selectNode(node);
-    renderDeck();
-  }
-
-  function handleToggleDrift() {
-    atlas.toggleDrift();
     renderDeck();
   }
 
@@ -782,18 +758,6 @@
           </select>
           <ChevronDown class="pointer-events-none absolute top-1/2 right-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground sm:right-2 sm:h-3 sm:w-3" aria-hidden="true" />
         </div>
-        <button
-          type="button"
-          class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${
-            atlas.driftStaleNotes ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-          }`}
-          aria-label="Drift stale notes"
-          aria-pressed={atlas.driftStaleNotes}
-          title="Drift stale notes"
-          onclick={handleToggleDrift}
-        >
-          <ArrowDownLeftFromCircle class="h-4 w-4" />
-        </button>
         <button
           type="button"
           class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${

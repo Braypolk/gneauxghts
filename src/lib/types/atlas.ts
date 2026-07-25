@@ -11,12 +11,6 @@ export interface VaultAtlasResponse {
   publishedAtMillis: number;
   stale: boolean;
   publishInProgress: boolean;
-  stats: {
-    noteCount: number;
-    cloudCount: number;
-    linkCount: number;
-    isolatedCount: number;
-  };
   nodes: AtlasNode[];
   links: AtlasLink[];
   clouds: AtlasCloud[];
@@ -31,8 +25,6 @@ export interface AtlasNode {
   documentKind: 'note' | 'chatIndex' | 'chatTranscript';
   x: number;
   y: number;
-  driftX: number;
-  driftY: number;
   radius: number;
   cloudId: string | null;
   parentCloudId: string | null;
@@ -40,13 +32,10 @@ export interface AtlasNode {
   clusterId: string | null;
   subclusterId: string | null;
   centrality: number;
-  degree: number;
   importance: number;
-  modifiedAtMillis: number;
   lastViewedAtMillis: number | null;
   createdAtMillis: number;
   updatedAtMillis: number;
-  staleScore: number;
   preview: string;
   tags: string[];
   isolated: boolean;
@@ -66,14 +55,12 @@ export interface AtlasCloud {
   parentId: string | null;
   level: number;
   label: string | null;
-  labelConfidence: number;
   /** pending = structural placeholder, keybert = content label, medoid = title/filename fallback */
   labelSource: 'pending' | 'keybert' | 'medoid';
   noteCount: number;
   density: number;
   color: [number, number, number, number];
   centroid: [number, number];
-  labelAnchor: [number, number];
   radius: number;
   hull: [number, number][];
   memberNodeIds: string[];
@@ -98,6 +85,5 @@ export interface AtlasSearchMatch {
   semanticScore: number;
   lexicalScore: number;
   structuralScore: number;
-  recencyScore: number;
   reasonLabels: string[];
 }

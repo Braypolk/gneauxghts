@@ -52,7 +52,6 @@ export class AtlasStore {
   searchQuery = $state('');
   matchCase = $state(false);
   matchWholeWord = $state(false);
-  driftStaleNotes = $state(false);
   showLinks = $state(true);
   chatVisibility = $state<AtlasChatVisibility>('hidden');
   zoom = $state(1);
@@ -563,10 +562,6 @@ export class AtlasStore {
     return clouds;
   }
 
-  toggleDrift() {
-    this.driftStaleNotes = !this.driftStaleNotes;
-  }
-
   toggleLinks() {
     this.showLinks = !this.showLinks;
   }
@@ -637,17 +632,16 @@ export function strongestLinksPerNode(links: AtlasLink[], maxPerNode: number): A
     });
 }
 
-export function getNodePosition(node: AtlasNode, driftStaleNotes: boolean): [number, number] {
-  return driftStaleNotes ? [node.driftX, node.driftY] : [node.x, node.y];
+export function getNodePosition(node: AtlasNode): [number, number] {
+  return [node.x, node.y];
 }
 
 export function linkEndpoints(
   link: AtlasLink,
-  nodeById: Map<string, AtlasNode>,
-  driftStaleNotes: boolean
+  nodeById: Map<string, AtlasNode>
 ): [number, number][] {
   const source = nodeById.get(link.sourceId);
   const target = nodeById.get(link.targetId);
   if (!source || !target) return [];
-  return [getNodePosition(source, driftStaleNotes), getNodePosition(target, driftStaleNotes)];
+  return [getNodePosition(source), getNodePosition(target)];
 }

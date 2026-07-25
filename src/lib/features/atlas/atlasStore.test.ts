@@ -30,7 +30,7 @@ const appStoreMock = vi.hoisted(() => ({
 
 vi.mock('$lib/app/appStore.svelte', () => ({ appStore: appStoreMock }));
 
-function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10): AtlasNode {
+function node(id: string, x: number, y: number): AtlasNode {
   return {
     id,
     noteId: id,
@@ -40,8 +40,6 @@ function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10
     documentKind: 'note',
     x,
     y,
-    driftX,
-    driftY,
     radius: 5,
     cloudId: null,
     parentCloudId: null,
@@ -49,13 +47,10 @@ function node(id: string, x: number, y: number, driftX = x + 10, driftY = y + 10
     clusterId: null,
     subclusterId: null,
     centrality: 0,
-    degree: 0,
     importance: 0,
-    modifiedAtMillis: 1,
     lastViewedAtMillis: null,
     createdAtMillis: 1,
     updatedAtMillis: 1,
-    staleScore: 0,
     preview: '',
     tags: [],
     isolated: true
@@ -76,12 +71,6 @@ function atlasResponse(
     publishedAtMillis: revision,
     stale: false,
     publishInProgress: false,
-    stats: {
-      noteCount: 1,
-      cloudCount: 0,
-      linkCount: 0,
-      isolatedCount: 1
-    },
     nodes: [node(`note-${revision}`, revision, revision)],
     links: [],
     clouds: [],
@@ -106,7 +95,6 @@ describe('atlas view helpers', () => {
       semanticScore: 0,
       lexicalScore: 0,
       structuralScore: 0,
-      recencyScore: 0,
       reasonLabels: [],
       ...overrides
     };
@@ -129,24 +117,22 @@ describe('atlas view helpers', () => {
 
   it('does not treat weak recency-only atlas matches as colored search hits', () => {
     expect(isAtlasSearchHit(null)).toBe(false);
-    expect(isAtlasSearchHit(searchMatch({ score: 0.1, recencyScore: 1 }))).toBe(false);
+    expect(isAtlasSearchHit(searchMatch({ score: 0.1 }))).toBe(false);
     expect(isAtlasSearchHit(searchMatch({ score: 0.34 }))).toBe(true);
     expect(isAtlasSearchHit(searchMatch({ semanticScore: 0.52 }))).toBe(true);
     expect(isAtlasSearchHit(searchMatch({ lexicalScore: 0.7 }))).toBe(true);
   });
 
-  it('switches between stable and stale-drift positions without mutating nodes', () => {
-    const item = node('a', 1, 2, 30, 40);
+  it('uses stable atlas positions without mutating nodes', () => {
+    const item = node('a', 1, 2);
 
-    expect(getNodePosition(item, false)).toEqual([1, 2]);
-    expect(getNodePosition(item, true)).toEqual([30, 40]);
+    expect(getNodePosition(item)).toEqual([1, 2]);
     expect(item.x).toBe(1);
-    expect(item.driftX).toBe(30);
   });
 
   it('resolves link endpoints from visible nodes', () => {
     const first = node('a', 1, 2);
-    const second = node('b', 3, 4, 9, 10);
+    const second = node('b', 3, 4);
     const byId = new Map([
       [first.id, first],
       [second.id, second]
@@ -155,22 +141,11 @@ describe('atlas view helpers', () => {
     expect(
       linkEndpoints(
         { id: 'a:b', sourceId: 'a', targetId: 'b', kind: 'semantic', score: 0.5, strength: 0.5 },
-        byId,
-        false
+        byId
       )
     ).toEqual([
       [1, 2],
       [3, 4]
-    ]);
-    expect(
-      linkEndpoints(
-        { id: 'a:b', sourceId: 'a', targetId: 'b', kind: 'semantic', score: 0.5, strength: 0.5 },
-        byId,
-        true
-      )
-    ).toEqual([
-      [11, 12],
-      [9, 10]
     ]);
   });
 
@@ -277,13 +252,11 @@ describe('AtlasStore stale-while-revalidate', () => {
           parentId: null,
           level: 0,
           label: null,
-          labelConfidence: 0,
           labelSource: 'pending',
           noteCount: 1,
           density: 1,
           color: [1, 2, 3, 255],
           centroid: [0, 0],
-          labelAnchor: [0, 0],
           radius: 10,
           hull: [],
           memberNodeIds: ['note-1'],
@@ -307,13 +280,11 @@ describe('AtlasStore stale-while-revalidate', () => {
           parentId: null,
           level: 0,
           label: null,
-          labelConfidence: 0,
           labelSource: 'pending',
           noteCount: 1,
           density: 1,
           color: [1, 2, 3, 255],
           centroid: [0, 0],
-          labelAnchor: [0, 0],
           radius: 10,
           hull: [],
           memberNodeIds: ['note-1'],

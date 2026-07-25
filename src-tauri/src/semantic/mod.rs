@@ -913,12 +913,6 @@ impl SemanticState {
                 published_at_millis: 0,
                 stale: false,
                 publish_in_progress: false,
-                stats: atlas::VaultAtlasStats {
-                    note_count: 0,
-                    cloud_count: 0,
-                    link_count: 0,
-                    isolated_count: 0,
-                },
                 nodes: Vec::new(),
                 links: Vec::new(),
                 clouds: Vec::new(),
