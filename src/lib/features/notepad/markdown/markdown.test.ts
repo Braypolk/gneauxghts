@@ -1,5 +1,5 @@
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { ensureSyntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
 import { EditorState, type Range } from '@codemirror/state';
 import type { Decoration } from '@codemirror/view';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ import { decorateInlineFormatting } from './decorations/inlineFormatting';
 import { decorateLink } from './decorations/links';
 import { decorateList } from './decorations/lists';
 import type { MarkdownNodeDecorator } from './decorations/types';
+import { markdownDecorationsNeedRebuild } from './markdownExtensions';
 import { obsidianMarkdownExtensions } from './obsidianMarkdownExtensions';
 
 // These tests exercise the decoration builders directly against a real Lezer
@@ -79,6 +80,39 @@ function collect(
 function classes(specs: DecorationSpec[]): (string | undefined)[] {
   return specs.map((s) => s.class);
 }
+
+describe('markdown decoration lifecycle', () => {
+  it('rebuilds when background parsing publishes a more complete syntax tree', () => {
+    const doc = Array.from(
+      { length: 2_000 },
+      (_, index) => `## Heading ${index} with **bold** text`
+    ).join('\n\n');
+    const startState = EditorState.create({
+      doc,
+      extensions: [
+        markdown({ base: markdownLanguage, extensions: obsidianMarkdownExtensions })
+      ]
+    });
+    const initialTree = syntaxTree(startState);
+
+    // CodeMirror's initial synchronous parse is viewport-sized. Its background
+    // worker later advances the mutable parse context and publishes it through
+    // a transaction that changes neither the document nor the selection.
+    expect(initialTree.length).toBeLessThan(doc.length);
+    expect(ensureSyntaxTree(startState, doc.length, 5_000)?.length).toBe(doc.length);
+    const state = startState.update({}).state;
+
+    expect(
+      markdownDecorationsNeedRebuild({
+        docChanged: false,
+        selectionSet: false,
+        viewportChanged: false,
+        startState,
+        state
+      })
+    ).toBe(true);
+  });
+});
 
 describe('heading decorator', () => {
   it('adds a level line class and conceals the marker when not editing', () => {

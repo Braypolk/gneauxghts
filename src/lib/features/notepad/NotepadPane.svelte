@@ -199,6 +199,7 @@
             conversationId={viewModel.chatConversationId}
             draftSeed={viewModel.chatDraftSeed}
             contextNote={viewModel.chatContextNote}
+            getActiveNoteSnapshot={viewModel.getChatActiveNoteSnapshot}
             targetAnchor={viewModel.chatTargetAnchor}
             variant="pane"
             selectionActions={viewModel.chatSelectionActions}
@@ -215,8 +216,7 @@
             onProposalRetry={viewModel.onProposalRetry}
             onProposalCopyCurrent={viewModel.onProposalCopyCurrent}
             onProposalReloadDisk={viewModel.onProposalReloadDisk}
-            onProposalLoadFixture={viewModel.onProposalLoadFixture}
-            onProposalLoadMessage={viewModel.onProposalLoadMessage}
+            onReviewAgentProposal={viewModel.onReviewAgentProposal}
           />
         {/if}
       </div>

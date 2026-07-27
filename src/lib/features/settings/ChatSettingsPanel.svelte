@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Eye, EyeOff, KeyRound, LoaderCircle } from '@lucide/svelte';
+  import { Eye, EyeOff, KeyRound, LoaderCircle, RefreshCw } from '@lucide/svelte';
   import SettingsField from './SettingsField.svelte';
+  import ExcludedNotesSettings from './ExcludedNotesSettings.svelte';
   import { onMount } from 'svelte';
   import { TauriChatApi } from '$lib/features/chat/api';
-  import type { ChatSettings } from '$lib/features/chat/types';
+  import type { ChatSettings, LocalModel } from '$lib/features/chat/types';
 
   const api = new TauriChatApi();
 
@@ -16,6 +17,8 @@
   let isSavingSettings = $state(false);
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
+  let localModels = $state<LocalModel[]>([]);
+  let isDiscoveringLocal = $state(false);
 
   async function load() {
     isLoading = true;
@@ -78,12 +81,34 @@
     error = null;
     message = null;
     try {
+      settings.model = settings.provider === 'local' ? settings.localModel : settings.openaiModel;
       settings = await api.setSettings(settings);
       message = 'Chat defaults saved in this vault.';
     } catch (saveError) {
       error = String(saveError);
     } finally {
       isSavingSettings = false;
+    }
+  }
+
+  async function discoverLocalModels() {
+    if (!settings) return;
+    isDiscoveringLocal = true;
+    error = null;
+    try {
+      localModels = await api.listLocalModels(settings.localBaseUrl);
+      if (!localModels.length) {
+        message = 'The local endpoint is reachable, but it returned no models.';
+      } else {
+        if (!localModels.some((model) => model.id === settings?.localModel)) {
+          settings.localModel = localModels[0].id;
+        }
+        message = `Found ${localModels.length} local model${localModels.length === 1 ? '' : 's'}.`;
+      }
+    } catch (discoverError) {
+      error = String(discoverError);
+    } finally {
+      isDiscoveringLocal = false;
     }
   }
 
@@ -165,27 +190,52 @@
 
         <div class="mt-5 grid gap-4 sm:grid-cols-2">
           <SettingsField label="Provider">
-            <input class="settings-control bg-muted/40! text-muted-foreground" value="OpenAI Responses API" disabled />
-          </SettingsField>
-          <SettingsField label="Model">
-            <input class="settings-control" bind:value={settings.model} spellcheck="false" />
-          </SettingsField>
-          <SettingsField label="Processing">
-            <select class="settings-control" bind:value={settings.serviceTier}>
-              <option value="standard">Standard</option>
-              <option value="flex">Flex — lower cost, slower</option>
+            <select class="settings-control" bind:value={settings.provider}>
+              <option value="openai">OpenAI Responses API</option>
+              <option value="local">Local OpenAI-compatible</option>
             </select>
           </SettingsField>
-          <SettingsField label="Web access">
-            <select class="settings-control" bind:value={settings.webAccess}>
-              <option value="auto">Auto — search when useful</option>
-              <option value="off">Off by default</option>
-            </select>
-          </SettingsField>
+          {#if settings.provider === 'openai'}
+            <SettingsField label="OpenAI model">
+              <input class="settings-control" bind:value={settings.openaiModel} spellcheck="false" />
+            </SettingsField>
+            <SettingsField label="Processing">
+              <select class="settings-control" bind:value={settings.serviceTier}>
+                <option value="standard">Standard</option>
+                <option value="flex">Flex — lower cost, slower</option>
+              </select>
+            </SettingsField>
+            <SettingsField label="OpenAI web access">
+              <select class="settings-control" bind:value={settings.webAccess}>
+                <option value="auto">Auto — search when useful</option>
+                <option value="off">Off by default</option>
+              </select>
+            </SettingsField>
+          {:else}
+            <SettingsField label="Local endpoint">
+              <input class="settings-control" bind:value={settings.localBaseUrl} spellcheck="false" placeholder="http://localhost:1234/v1" />
+            </SettingsField>
+            <SettingsField label="Local model">
+              <div class="flex gap-2">
+                {#if localModels.length}
+                  <select class="settings-control min-w-0" bind:value={settings.localModel}>
+                    {#each localModels as model (model.id)}
+                      <option value={model.id}>{model.id}</option>
+                    {/each}
+                  </select>
+                {:else}
+                  <input class="settings-control min-w-0" bind:value={settings.localModel} placeholder="Load a model in LM Studio, then discover" spellcheck="false" />
+                {/if}
+                <button type="button" class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border" disabled={isDiscoveringLocal} onclick={() => void discoverLocalModels()} aria-label="Discover local models" title="Discover models from the OpenAI-compatible endpoint">
+                  {#if isDiscoveringLocal}<LoaderCircle class="h-4 w-4 animate-spin" />{:else}<RefreshCw class="h-4 w-4" />{/if}
+                </button>
+              </div>
+            </SettingsField>
+          {/if}
           <SettingsField label="Default vault access">
             <select class="settings-control" bind:value={settings.defaultVaultAccess}>
               <option value="none">None</option>
-              <option value="limited">Limited</option>
+              <option value="approved">Approved only</option>
               <option value="full">Full</option>
             </select>
           </SettingsField>
@@ -199,10 +249,10 @@
         </div>
 
         <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
-          Auto lets the thought partner search when current information is needed. Off prevents automatic searches; the Web button in the composer can still require a search for one message.
+          LM Studio defaults to http://localhost:1234/v1. Local models must support OpenAI-compatible tool calling for vault search and reviewed note changes. Hosted OpenAI alone can use web search and Flex processing.
         </p>
 
-        {#if settings.serviceTier === 'flex'}
+        {#if settings.provider === 'openai' && settings.serviceTier === 'flex'}
           <p class="mt-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
             Flex uses lower-cost capacity and may respond more slowly or be temporarily unavailable. Gneauxghts will not silently retry at Standard pricing.
           </p>
@@ -212,12 +262,14 @@
           <button
             type="button"
             class="h-10 rounded-xl bg-foreground px-4 text-sm font-medium text-background disabled:opacity-50"
-            disabled={isSavingSettings || !settings.model.trim()}
+            disabled={isSavingSettings || !(settings.provider === 'local' ? settings.localModel : settings.openaiModel).trim()}
             onclick={() => void saveDefaults()}
           >{isSavingSettings ? 'Saving…' : 'Save defaults'}</button>
         </div>
       </section>
     {/if}
+
+    <ExcludedNotesSettings />
 
     {#if error}
       <p class="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">{error}</p>

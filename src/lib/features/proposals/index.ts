@@ -56,13 +56,6 @@ export {
   type ProposalOrchestration,
   type ProposalOrchestrationDeps
 } from './proposalOrchestration';
-export {
-  extractProposalFence,
-  parseChatProposalEdits,
-  withoutProposalFence,
-  type ChatProposalContext
-} from './chatProposalParse';
-
 export type {
   PendingProposalChange,
   ProposalChangeStatus,

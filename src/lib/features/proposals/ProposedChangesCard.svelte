@@ -14,7 +14,6 @@
     onRetry?: () => void | Promise<void>;
     onCopyCurrent?: () => void | Promise<void>;
     onReloadDisk?: () => void | Promise<void>;
-    onLoadFixture?: () => void | Promise<void>;
   }
 
   let {
@@ -28,8 +27,7 @@
     onReview,
     onRetry,
     onCopyCurrent,
-    onReloadDisk,
-    onLoadFixture
+    onReloadDisk
   }: Props = $props();
 
   let expanded = $state(true);
@@ -41,8 +39,8 @@
   const batchDisabled = $derived(pendingCount === 0 || snapshot.isApplying);
   const filesLabel = $derived(
     snapshot.reviewHunks
-      ? `${snapshot.reviewHunks.unresolved} of ${snapshot.reviewHunks.total} hunks remaining`
-      : `${pendingCount} ${pendingCount === 1 ? 'File' : 'Files'}`
+      ? `${snapshot.reviewHunks.unresolved} of ${snapshot.reviewHunks.total} ${snapshot.reviewHunks.total === 1 ? 'change' : 'changes'} left`
+      : `${pendingCount} ${pendingCount === 1 ? 'note' : 'notes'}`
   );
 
   function kindLabel(change: PendingProposalChange): string {
@@ -66,42 +64,39 @@
       {snapshot.error}
     </div>
   {/if}
-  {#if onLoadFixture}
-    <div
-      class="px-4 py-2 sm:px-6"
-      data-proposal-strip="fixture"
-    >
-      <button
-        type="button"
-        class="text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-        onclick={() => void onLoadFixture()}
-      >
-        Load fixture proposal
-      </button>
-    </div>
-  {/if}
 {:else}
   <div
     class="mx-4 mb-1 rounded-[1.1rem] border border-border/70 bg-background/70 px-3 py-2.5 sm:mx-6"
     data-proposal-strip="active"
   >
-    <div class="flex items-center gap-2">
+    <div class="flex items-start gap-2">
       <button
         type="button"
-        class="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm font-medium text-foreground"
+        class="flex min-w-0 flex-1 items-start gap-1.5 text-left"
         onclick={() => (expanded = !expanded)}
         aria-expanded={expanded}
       >
         {#if expanded}
-          <ChevronDown class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <ChevronDown class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {:else}
-          <ChevronRight class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <ChevronRight class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {/if}
-        <FileDiff class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span class="truncate">{filesLabel}</span>
+        <FileDiff class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span class="min-w-0">
+          <span class="block truncate text-sm font-medium text-foreground">Review changes</span>
+          <span class="mt-0.5 block truncate text-xs font-normal text-muted-foreground">{filesLabel}</span>
+        </span>
       </button>
 
       <div class="flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          class="rounded-xl bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+          disabled={batchDisabled}
+          onclick={() => void onReview()}
+        >
+          Review next
+        </button>
         <button
           type="button"
           class="rounded-xl border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-default disabled:opacity-40"
@@ -112,28 +107,14 @@
         </button>
         <button
           type="button"
-          class="rounded-xl bg-foreground px-2.5 py-1 text-xs font-medium text-background hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+          class="rounded-xl px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40"
           disabled={batchDisabled}
           onclick={() => void onKeepAll()}
         >
           {snapshot.reviewHunks?.unresolved === snapshot.reviewHunks?.total || pendingCount === snapshot.changes.length ? 'Keep All' : 'Keep Remaining'}
         </button>
-        <button
-          type="button"
-          class="rounded-xl px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40"
-          disabled={batchDisabled}
-          onclick={() => void onReview()}
-        >
-          Review
-        </button>
       </div>
     </div>
-
-    {#if pendingCount > 0}
-      <p class="mt-1.5 text-xs text-muted-foreground">
-        Review focuses the next unresolved hunk.
-      </p>
-    {/if}
 
     {#if expanded}
       <ul class="mt-2 space-y-1">

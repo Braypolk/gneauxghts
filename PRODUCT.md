@@ -28,6 +28,12 @@ Do not make Gneauxghts feel like Notion's broad do-everything workspace. It shou
 - Make organization emergent; users should not need to maintain elaborate structures before the app becomes useful.
 - Let intelligence stay quiet; semantic and AI features should improve flow without becoming the product's visible identity.
 - Preserve local trust; plain Markdown files, system conventions, and predictable behavior should reinforce user ownership.
+- Let the thought partner find relevant context without prompt rituals, while
+  keeping vault scope, per-note exclusions, citations, and reviewed writes
+  explicit and inspectable.
+- Never trade provider convenience for privacy: local-model conversations stay
+  local to the configured OpenAI-compatible server, and no provider fallback
+  crosses that boundary.
 - Optimize for keyboard-first speed; common note, search, task, and navigation flows should feel immediate.
 
 ## Accessibility & Inclusion

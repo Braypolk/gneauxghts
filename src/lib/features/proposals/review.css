@@ -1,43 +1,192 @@
-/* Proposal review inline diff (CodeMirror). Uses design tokens only. */
+/* Proposal review inline diff (CodeMirror). */
 
-.cm-gn-proposal-removed {
-  background: color-mix(in oklab, var(--destructive) 14%, transparent);
+.cm-editor[data-proposal-review='true'] {
+  --gn-proposal-added: oklch(0.45 0.14 145);
+  --gn-proposal-removed: var(--destructive);
 }
 
-.cm-gn-proposal-removed::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: color-mix(in oklab, var(--destructive) 70%, transparent);
+.dark .cm-editor[data-proposal-review='true'] {
+  --gn-proposal-added: oklch(0.78 0.16 145);
 }
 
-.cm-gn-proposal-added {
-  background: color-mix(in oklab, var(--foreground) 8%, transparent);
+.cm-gn-proposal-change-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  padding: 0;
+  border-radius: 999px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1;
+  vertical-align: 0.12em;
+  user-select: none;
 }
 
-.cm-gn-proposal-deleted-anchor {
-  display: inline-block;
-  margin: 0 0.35rem;
-  color: var(--destructive);
-  font-weight: 700;
-}
-
-.cm-gn-proposal-added::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: color-mix(in oklab, var(--foreground) 45%, transparent);
-}
-
-.cm-editor .cm-line.cm-gn-proposal-removed,
-.cm-editor .cm-line.cm-gn-proposal-added {
+.cm-editor[data-proposal-review='true'] .cm-line.cm-gn-proposal-added-line {
   position: relative;
+  width: 100%;
+  background: color-mix(in oklab, var(--gn-proposal-added) 14%, var(--background));
+  box-shadow:
+    inset 3px 0 var(--gn-proposal-added),
+    inset -1px 0 color-mix(in oklab, var(--gn-proposal-added) 42%, transparent);
+}
+
+.cm-editor[data-proposal-review='true']
+  .cm-line.cm-gn-proposal-added-line-start {
+  box-shadow:
+    inset 3px 0 var(--gn-proposal-added),
+    inset -1px 0 color-mix(in oklab, var(--gn-proposal-added) 42%, transparent),
+    inset 0 1px color-mix(in oklab, var(--gn-proposal-added) 42%, transparent);
+  border-top-left-radius: 0.28rem;
+  border-top-right-radius: 0.28rem;
+}
+
+.cm-editor[data-proposal-review='true']
+  .cm-line.cm-gn-proposal-added-line-end {
+  box-shadow:
+    inset 3px 0 var(--gn-proposal-added),
+    inset -1px 0 color-mix(in oklab, var(--gn-proposal-added) 42%, transparent),
+    inset 0 -1px color-mix(in oklab, var(--gn-proposal-added) 42%, transparent);
+  border-bottom-left-radius: 0.28rem;
+  border-bottom-right-radius: 0.28rem;
+}
+
+.cm-editor[data-proposal-review='true']
+  .cm-line.cm-gn-proposal-added-line-single {
+  box-shadow:
+    inset 3px 0 var(--gn-proposal-added),
+    inset -1px 0 color-mix(in oklab, var(--gn-proposal-added) 42%, transparent),
+    inset 0 1px color-mix(in oklab, var(--gn-proposal-added) 42%, transparent),
+    inset 0 -1px color-mix(in oklab, var(--gn-proposal-added) 42%, transparent);
+  border-radius: 0.28rem;
+}
+
+.cm-editor[data-proposal-review='true']
+  .cm-line:is(.cm-gn-proposal-added-line-start, .cm-gn-proposal-added-line-single)::before {
+  content: '+';
+  position: absolute;
+  z-index: 1;
+  top: 0.42rem;
+  left: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border: 1px solid color-mix(in oklab, var(--gn-proposal-added) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--gn-proposal-added) 20%, var(--background));
+  color: var(--gn-proposal-added);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.cm-gn-proposal-removed-block {
+  box-sizing: border-box;
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 0.18rem 0 0.28rem;
+  padding:
+    0.42rem var(--gn-editor-side-inset-right, 1rem)
+    0.42rem var(--gn-editor-side-inset-left, 3rem);
+  border-radius: 0.28rem;
+  background: color-mix(in oklab, var(--gn-proposal-removed) 14%, var(--background));
+  box-shadow:
+    inset 3px 0 var(--gn-proposal-removed),
+    inset -1px 0 color-mix(in oklab, var(--gn-proposal-removed) 42%, transparent),
+    inset 0 1px color-mix(in oklab, var(--gn-proposal-removed) 42%, transparent),
+    inset 0 -1px color-mix(in oklab, var(--gn-proposal-removed) 42%, transparent);
+}
+
+.cm-gn-proposal-removed-label {
+  position: absolute;
+  top: 0.42rem;
+  left: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--gn-proposal-removed) 55%, transparent);
+  background: color-mix(in oklab, var(--gn-proposal-removed) 20%, var(--background));
+  color: var(--gn-proposal-removed);
+}
+
+.cm-gn-proposal-removed-text {
+  min-width: 0;
+  color: color-mix(in oklab, var(--gn-proposal-removed) 72%, var(--foreground));
+  overflow-wrap: anywhere;
+}
+
+.cm-gn-proposal-removed-text > :first-child {
+  margin-top: 0;
+}
+
+.cm-gn-proposal-removed-text > :last-child {
+  margin-bottom: 0;
+}
+
+.cm-gn-proposal-removed-text p {
+  margin: 0 0 0.45rem;
+}
+
+.cm-gn-proposal-removed-text h1,
+.cm-gn-proposal-removed-text h2,
+.cm-gn-proposal-removed-text h3,
+.cm-gn-proposal-removed-text h4,
+.cm-gn-proposal-removed-text h5,
+.cm-gn-proposal-removed-text h6 {
+  margin: 0 0 0.4rem;
+  color: inherit;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.cm-gn-proposal-removed-text h1 {
+  font-size: 1.5rem;
+}
+
+.cm-gn-proposal-removed-text h2 {
+  font-size: 1.25rem;
+}
+
+.cm-gn-proposal-removed-text h3 {
+  font-size: 1.08rem;
+}
+
+.cm-gn-proposal-removed-text ul,
+.cm-gn-proposal-removed-text ol {
+  margin: 0.2rem 0 0.45rem;
+  padding-left: 1.45rem;
+}
+
+.cm-gn-proposal-removed-text li {
+  margin: 0.12rem 0;
+  padding-left: 0.1rem;
+}
+
+.cm-gn-proposal-removed-text code {
+  padding: 0.08rem 0.28rem;
+  border-radius: 0.3rem;
+  background: color-mix(in oklab, var(--gn-proposal-removed) 12%, var(--background));
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.cm-gn-proposal-removed-text pre {
+  margin: 0.25rem 0 0.45rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.35rem;
+  background: color-mix(in oklab, var(--gn-proposal-removed) 10%, var(--background));
+  overflow-x: auto;
+}
+
+.cm-gn-proposal-removed-text pre code {
+  padding: 0;
+  background: transparent;
 }
 
 .cm-gn-proposal-actions {

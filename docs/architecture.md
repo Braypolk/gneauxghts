@@ -28,6 +28,7 @@ flowchart LR
   Vault["Markdown vault"]
   Lexical["Lexical index"]
   Semantic["Semantic index"]
+  Agent["Rig AgentRuntime"]
   Proposals["Proposal core"]
 
   UI --> Notepad
@@ -37,6 +38,10 @@ flowchart LR
   AppState --> Vault
   AppState --> Lexical
   AppState --> Semantic
+  Commands --> Agent
+  Agent --> Lexical
+  Agent --> Semantic
+  Agent --> Proposals
   Commands --> Proposals
   Proposals --> Vault
 ```
@@ -173,6 +178,35 @@ Important command groups:
 Existing command names for search and related notes are stable and should stay
 stable unless a feature intentionally changes the IPC contract.
 
+### Vault Agent Runtime
+
+`src-tauri/src/agent_runtime.rs` is the application-owned boundary around
+`rig-core`. Rig provider and agent types do not cross into Tauri commands or
+frontend contracts. It dispatches hosted OpenAI Responses and local
+OpenAI-compatible Chat Completions through the same bounded multi-turn run,
+normalized message history, typed tools, and usage accounting.
+
+`src-tauri/src/agent_tools.rs` owns the run-scoped tool context. It records
+which stable note IDs were surfaced, applies vault policy before every read,
+serializes proposal staging, and emits only compact activity/proposal events.
+`src-tauri/src/services/retrieval.rs` is the shared hybrid retrieval service
+used by both agent search and the existing retrieval command.
+
+`src-tauri/src/chat.rs` owns portable chat state in `ai.sqlite3`: normalized
+messages, conversation and per-run provider/model metadata, approved/excluded
+note policy, run status/usage, and durable proposals. Provider-specific
+reasoning and historical tool payloads are intentionally not replayed or
+persisted, so a conversation can switch between hosted OpenAI and a local
+OpenAI-compatible model.
+
+Attachments are first-class children of user messages in
+`chat_message_attachments`. The frontend sends bounded base64 payloads; the
+backend validates type, declared/decoded size, and UTF-8 text before
+persistence. `chat_commands.rs` resolves model capabilities and enforces them
+again at send/retry time. `chat.rs` then converts stored attachments into Rig
+`UserContent::Image` or `UserContent::Document`, keeping provider wire formats
+out of chat persistence and UI code.
+
 ### Semantic Indexing
 
 `src-tauri/src/semantic` is the local semantic subsystem:
@@ -271,17 +305,16 @@ Backend Rust remains authoritative for validation and file mutation.
 
 ### Proposal Apply
 
-1. A make-mode `gneauxghts-proposal` fence supplies pathless edit intents for
-   the active note.
-2. `preview_note_change_proposal` validates those edits in Rust, derives
-   UTF-16 CodeMirror ranges, and returns a no-write preview.
-3. The editor applies the proposed text as one non-history transaction and
-   layers mapped hunk metadata and Keep/Undo controls over the editable body.
-4. Final resolution calls `commit_note_review` with the current editor body;
-   Rust OCC-checks the full on-disk note before its single write.
+1. The Rig agent calls `propose_note_edits` or `propose_create_note`.
+2. Rust validates current policy, run-scoped target provenance, hashes, and
+   exact anchors or explicit append/prepend boundaries, then persists a
+   no-write preview in `ai.sqlite3`.
+3. Chat receives `chat://proposal` immediately and opens the durable review.
+4. Keep calls `commit_agent_proposal`; Rust rechecks policy and OCC before one
+   write. Undo resolves the proposal without writing.
 5. The ordinary save-side index/event paths refresh derived views after a
-   successful commit. External watcher changes leave the review buffer intact
-   and place the session into conflict state.
+   successful commit. Conflicts remain unresolved and reload with the
+   conversation.
 
 ## Extension Rules
 

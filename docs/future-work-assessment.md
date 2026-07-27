@@ -53,16 +53,16 @@ related notes and returns source/reason/score metadata.
 Recommended next step: use `retrieve_note_context` for the first future
 chat/inbox context flow instead of adapting search UI results.
 
-### 5. Proposal Review UX Is Live; Producer Still Missing
+### 5. Vault-Agent Proposal Production Is Live
 
-The backend proposal core validates and applies changes. Frontend review UX now
-covers the chat file list, inline CodeMirror diffs, and Keep/Undo wiring to
-`apply_note_change_proposal`. Make-mode completions that include a
-`gneauxghts-proposal` fence load into the shared review session; fixtures remain
-for QA.
+The Rig vault agent now produces typed update/create proposals through the
+backend tool boundary. Rust validates access, surfaced targets, exact anchors,
+and hashes before persisting a durable no-write preview. Chat opens pending
+reviews automatically; Keep rechecks policy/OCC and Undo writes nothing. The
+legacy fenced payload and fixture loader have been removed.
 
-Recommended next step: harden make-mode structured output (schema validation,
-multi-file base reads) and hide the fixture loader outside development.
+Recommended next step: extend the same reviewed-tool contract to deferred
+rename/move operations rather than adding another proposal protocol.
 
 ### 6. `Notepad.svelte` Remains A Large Composition Root
 

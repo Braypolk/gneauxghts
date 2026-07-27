@@ -1,4 +1,5 @@
-export type VaultAccess = 'none' | 'limited' | 'full';
+export type VaultAccess = 'none' | 'approved' | 'full';
+export type ChatProvider = 'openai' | 'local';
 export type WebAccess = 'off' | 'auto';
 export type ChatStatus = 'active' | 'archived' | 'projectionConflict';
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'cancelled' | 'error';
@@ -8,8 +9,11 @@ export type AtlasChatVisibility = 'hidden' | 'remembered' | 'all';
 export type ChatServiceTier = 'standard' | 'flex';
 
 export interface ChatSettings {
-  provider: string;
+  provider: ChatProvider;
   model: string;
+  openaiModel: string;
+  localModel: string;
+  localBaseUrl: string;
   serviceTier: ChatServiceTier;
   webAccess: WebAccess;
   defaultVaultAccess: VaultAccess;
@@ -31,6 +35,73 @@ export interface ChatConversationSummary {
   updatedAtMillis: number;
   messageCount: number;
   lastMessagePreview: string | null;
+  provider: ChatProvider;
+  model: string;
+}
+
+export interface ChatActiveNoteSnapshot {
+  noteId: string | null;
+  title: string;
+  path: string | null;
+  body: string;
+  bodyHash: string;
+  selection: string | null;
+}
+
+export interface LocalModel {
+  id: string;
+  ownedBy: string | null;
+}
+
+export type ChatAttachmentKind = 'image' | 'file';
+
+export interface ChatAttachmentInput {
+  kind: ChatAttachmentKind;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataBase64: string;
+}
+
+export interface ChatAttachment extends ChatAttachmentInput {
+  id: string;
+}
+
+export interface ChatModelCapabilities {
+  images: boolean;
+  files: boolean;
+  acceptedMimeTypes: string[];
+}
+
+export interface ChatAgentProposal {
+  id: string;
+  runId: string;
+  conversationId: string;
+  assistantMessageId: string;
+  kind: 'update' | 'create';
+  noteId: string | null;
+  suggestedPath: string | null;
+  title: string;
+  baseHash: string | null;
+  payload: Record<string, unknown>;
+  preview: Record<string, unknown>;
+  status: 'pending' | 'committed' | 'dismissed' | 'conflict' | 'superseded';
+  createdAtMillis: number;
+  updatedAtMillis: number;
+}
+
+export interface ChatNotePolicy {
+  noteId: string;
+  notePath: string | null;
+  title: string;
+  disposition: 'approved' | 'excluded';
+  updatedAtMillis: number;
+}
+
+export interface ChatNoteCandidate {
+  noteId: string;
+  notePath: string;
+  title: string;
 }
 
 export type ChatCitation =
@@ -68,6 +139,7 @@ export interface ChatMessage {
   requestId: string | null;
   errorMessage: string | null;
   citations: ChatCitation[];
+  attachments: ChatAttachment[];
   linkTarget: string | null;
 }
 
@@ -149,6 +221,11 @@ export interface ChatProjectionConflictEvent {
   deleted: boolean;
 }
 
+export interface ChatActivityEvent extends ChatStreamIdentity {
+  runId: string;
+  status: string;
+}
+
 export interface ChatSelection {
   conversationId: string;
   messageId: string;
@@ -171,5 +248,7 @@ export interface ChatEventMap {
   'chat://completed': ChatCompletedEvent;
   'chat://cancelled': ChatCancelledEvent;
   'chat://failed': ChatFailedEvent;
+  'chat://activity': ChatActivityEvent;
+  'chat://proposal': ChatAgentProposal;
   'chat://projection-conflict': ChatProjectionConflictEvent;
 }

@@ -3,7 +3,12 @@
   import { onMount, tick, untrack } from 'svelte';
   import { chatApi } from '$lib/features/chat/api';
   import { createChatController, type ChatController } from '$lib/features/chat/controller.svelte';
-  import type { ChatSelection, ChatSelectionActions } from '$lib/features/chat/types';
+  import type {
+    ChatAgentProposal,
+    ChatSelection,
+    ChatSelectionActions
+  } from '$lib/features/chat/types';
+  import type { ProposalPreview } from '$lib/types/proposals';
   import {
     formatDiscussionDraft,
     type ChatDraftSeed
@@ -31,6 +36,7 @@
     type OpenContext
   } from '$lib/features/notepad/navigation/openFlow';
   import { type SearchMode } from '$lib/features/notepad/search/search';
+  import { computeDraftHash } from '$lib/features/notepad/search/draftRef';
   import {
     createEmptySessionSnapshot,
     loadCurrentVaultInfo,
@@ -167,12 +173,19 @@
 
   // Pane runtimes own pane-local state (refs, editor controller, readiness, slash menu, wikilink)
   const initialPaneId = notepadRuntimeState.activePaneId;
-  const paneRuntimes = $state<Record<PaneId, PaneRuntime>>({
-    [initialPaneId]: new PaneRuntime(initialPaneId)
-  });
+  const initialPaneIds = Array.from(
+    new Set<PaneId>([...workspaceStore.paneOrder, initialPaneId])
+  );
+  const paneRuntimes = $state<Record<PaneId, PaneRuntime>>(
+    Object.fromEntries(
+      initialPaneIds.map((paneId) => [paneId, new PaneRuntime(paneId)])
+    ) as Record<PaneId, PaneRuntime>
+  );
   const paneControllers = {} as Record<PaneId, ReturnType<typeof createPaneControllersFn<PaneId>>>;
   const editorCapabilities = new Map<PaneId, ReturnType<typeof createEditorCapabilityAdapter>>();
-  const chatControllers = new Map<PaneId, ChatController>();
+  const chatControllers: Map<PaneId, ChatController> = new Map(
+    initialPaneIds.map((paneId) => [paneId, createPaneChatController(paneId)])
+  );
   let chatDraftSeeds = $state<Partial<Record<PaneId, ChatDraftSeed>>>({});
   let chatTargetAnchors = $state<Partial<Record<PaneId, string | null>>>({});
   let discussionSeedCounter = 0;
@@ -231,24 +244,26 @@
   }
 
   function getPaneRuntime(paneId: PaneId) {
-    return ensurePaneRuntime(paneId);
+    const runtime = paneRuntimes[paneId];
+    if (!runtime) {
+      throw new Error(`Pane runtime ${paneId} was accessed before initialization.`);
+    }
+    return runtime;
   }
 
-  function getChatController(paneId: PaneId) {
+  function ensureChatController(paneId: PaneId) {
     let controller = chatControllers.get(paneId);
     if (!controller) {
-      controller = createChatController(chatApi, {
-        onAssistantCompleted: async ({ message }) => {
-          // proposalOrchestration is initialized later in this module; by the
-          // time chat completions fire, the composition root is fully set up.
-          const orchestration = getProposalOrchestration();
-          await orchestration.loadFromChatMessage(
-            message.content,
-            getChatContextNoteForPane(paneId)
-          );
-        }
-      });
+      controller = createPaneChatController(paneId);
       chatControllers.set(paneId, controller);
+    }
+    return controller;
+  }
+
+  function getChatController(paneId: PaneId): ChatController {
+    const controller: ChatController | undefined = chatControllers.get(paneId);
+    if (!controller) {
+      throw new Error(`Chat controller ${paneId} was accessed before initialization.`);
     }
     return controller;
   }
@@ -260,6 +275,69 @@
       throw new Error('Proposal orchestration is not ready yet.');
     }
     return proposalOrchestrationInstance;
+  }
+
+  function removeResolvedProposalAcrossPanes(proposalId: string) {
+    for (const controller of chatControllers.values()) {
+      controller.removeResolvedProposal(proposalId);
+    }
+  }
+
+  function createPaneChatController(paneId: PaneId): ChatController {
+    return createChatController(chatApi, {
+      onProposal: async (proposal: ChatAgentProposal): Promise<void> => {
+        await reviewAgentProposalInEditor(paneId, proposal);
+      },
+      onProposalResolved: removeResolvedProposalAcrossPanes
+    });
+  }
+
+  function storedUpdatePreview(proposal: ChatAgentProposal): ProposalPreview | null {
+    if (proposal.kind !== 'update') return null;
+    const preview = proposal.preview as Partial<ProposalPreview>;
+    if (
+      typeof preview.reviewId !== 'string' ||
+      typeof preview.notePath !== 'string' ||
+      typeof preview.title !== 'string' ||
+      typeof preview.baseContentHash !== 'string' ||
+      typeof preview.baseEditorMarkdown !== 'string' ||
+      typeof preview.proposedEditorMarkdown !== 'string' ||
+      !Array.isArray(preview.hunks)
+    ) {
+      return null;
+    }
+    return preview as ProposalPreview;
+  }
+
+  async function reviewAgentProposalInEditor(
+    paneId: PaneId,
+    proposal: ChatAgentProposal
+  ): Promise<boolean> {
+    let pendingProposal = proposal;
+    try {
+      const pending = await chatApi.listPendingProposals(proposal.conversationId);
+      const persisted = pending.find((candidate) => candidate.id === proposal.id);
+      if (!persisted) {
+        removeResolvedProposalAcrossPanes(proposal.id);
+        return false;
+      }
+      pendingProposal = persisted;
+    } catch {
+      // The event payload still contains a complete durable preview. A
+      // transient refresh failure should not prevent immediate review.
+    }
+
+    const preview = storedUpdatePreview(pendingProposal);
+    if (!preview) return false;
+    const controller: ChatController = getChatController(paneId);
+    return getProposalOrchestration().loadDurableProposal({
+      proposalId: pendingProposal.id,
+      noteId: pendingProposal.noteId,
+      preview,
+      commit: (markdown: string) =>
+        controller.keepProposal(pendingProposal.id, markdown),
+      dismiss: () => controller.dismissProposal(pendingProposal.id)
+    });
   }
 
   function formatChatInsertion(selection: ChatSelection) {
@@ -424,6 +502,7 @@
   function createPaneRuntime(): PaneId {
     const paneId = createNotepadPaneId();
     ensurePaneRuntime(paneId);
+    ensureChatController(paneId);
     ensurePaneControllers(paneId);
     return paneId;
   }
@@ -1179,6 +1258,27 @@
     );
   }
 
+  async function createEditorPaneForReview(): Promise<PaneId | null> {
+    if (!canUseSplitWorkspace() || paneOrder.length >= MAX_VISIBLE_PANES) {
+      return null;
+    }
+    const previousPaneIds = new Set(paneOrder);
+    await commands.splitWorkspace();
+    const editorPaneId =
+      paneOrder.find((paneId) => !previousPaneIds.has(paneId)) ?? null;
+    if (!editorPaneId) return null;
+
+    // A review needs an editor regardless of the source pane's kind. Resolving
+    // the split as "current" would clone a chat when the source is a chat.
+    if (workspaceStore.paneCommand.paneId === editorPaneId) {
+      await commands.resolvePaneCommandChoice(editorPaneId, 'typing');
+    }
+    if (getPaneKind(editorPaneId) !== 'editor') {
+      await commands.setPaneKind(editorPaneId, 'editor');
+    }
+    return editorPaneId;
+  }
+
   function getChatContextDocumentForPane(paneId: PaneId) {
     const paneIndex = paneOrder.indexOf(paneId);
     const nearestEditorPaneId = paneOrder
@@ -1191,16 +1291,6 @@
     return nearestEditorPaneId
       ? getPaneDocumentSession(nearestEditorPaneId)
       : getPaneDocumentSession(paneId);
-  }
-
-  function getChatContextNoteForPane(paneId: PaneId) {
-    const document = getChatContextDocumentForPane(paneId);
-    if (!document.currentNotePath) return null;
-    return {
-      path: document.currentNotePath,
-      title: document.title,
-      lastSavedMarkdown: document.lastSavedMarkdown
-    };
   }
 
   /** Prefer an editor that already has a saved note; skip pathless split placeholders. */
@@ -1224,25 +1314,6 @@
 
   const proposalOrchestration = createProposalOrchestration({
     getEditorPaneDocument: (path) => getEditorPaneDocumentForReview(path),
-    getChatContextNote: () => {
-      const chatPaneId =
-        (activePaneId && getPaneKind(activePaneId) === 'chat' ? activePaneId : null) ??
-        paneOrder.find((id) => getPaneKind(id) === 'chat') ??
-        getNearestEditorPaneId();
-      if (!chatPaneId) return null;
-      const context = getChatContextNoteForPane(chatPaneId);
-      if (!context) {
-        // Fall back to any open note when chat isn't bound yet.
-        const fallback = getEditorPaneDocumentForReview();
-        if (!fallback?.currentNotePath) return null;
-        return {
-          path: fallback.currentNotePath,
-          title: fallback.title,
-          lastSavedMarkdown: fallback.lastSavedMarkdown
-        };
-      }
-      return context;
-    },
     getEditorForDocument: (document) => {
       const paneId = getPaneIdsForDocument(document).find(
         (id) => getPaneKind(id) === 'editor'
@@ -1272,8 +1343,7 @@
       if (!editorPaneId) {
         // Chat-only (or no editor pane). Prefer chat | editor with the bound note.
         if (paneOrder.length === 1 && canUseSplitWorkspace()) {
-          await splitWorkspaceIfAllowed('current');
-          editorPaneId = getNearestEditorPaneId();
+          editorPaneId = await createEditorPaneForReview();
         } else {
           const chatPaneId =
             (activePaneId && getPaneKind(activePaneId) === 'chat' ? activePaneId : null) ??
@@ -1314,6 +1384,18 @@
       await tick();
       await paneLifecycle.ensurePaneEditors();
     },
+    openNoteForReview: async (noteId, path) => {
+      const editorPaneId = getNearestEditorPaneId();
+      if (!editorPaneId) return null;
+      workspaceStore.setActivePaneId(editorPaneId);
+      await commands.openNotePath(path, {
+        noteId,
+        focusEditorAfterOpen: false
+      });
+      await tick();
+      await paneLifecycle.ensurePaneEditors();
+      return getEditorPaneDocumentForReview(path);
+    },
     activateEditorPane: async (document) => {
       // Prefer the editor that already hosts a saved note.
       const withDocument = document
@@ -1341,8 +1423,7 @@
     reopenReviewEditor: async (document) => {
       let paneId = getPaneIdsForDocument(document).find((id) => getPaneKind(id) === 'editor') ?? null;
       if (!paneId && paneOrder.length < MAX_VISIBLE_PANES) {
-        await splitWorkspaceIfAllowed('current');
-        paneId = getNearestEditorPaneId();
+        paneId = await createEditorPaneForReview();
       }
       if (!paneId) {
         // A compact/chat-only workspace has no spare pane; reuse the active
@@ -1612,6 +1693,26 @@
               || 'Untitled note'
           }
         : null,
+      getChatActiveNoteSnapshot: async () => {
+        const document = getChatContextDocumentForPane(paneId);
+        if (!document.currentNotePath || !document.currentNoteId) return null;
+        flushDocumentEditorSync(document);
+        flushPendingAutosave(document);
+        await getNoteSaveQueue(document.key);
+        if (document.status === 'error') {
+          throw new Error('The active note could not be saved before sending.');
+        }
+        return {
+          noteId: document.currentNoteId,
+          title: document.title.trim()
+            || document.currentNotePath.split('/').at(-1)?.replace(/\.md$/i, '')
+            || 'Untitled note',
+          path: document.currentNotePath,
+          body: document.bodyMarkdown,
+          bodyHash: computeDraftHash(document.bodyMarkdown),
+          selection: relatedState.selectedText
+        };
+      },
       chatTargetAnchor: chatTargetAnchors[paneId] ?? null,
       chatSelectionActions: chatSelectionActions(),
       onChatConversationChange: (conversationId) => {
@@ -1648,11 +1749,8 @@
       onProposalRetry: () => void proposalOrchestration.retryCommit(),
       onProposalCopyCurrent: () => void proposalOrchestration.copyCurrent(),
       onProposalReloadDisk: () => void proposalOrchestration.reloadDisk(),
-      onProposalLoadFixture: () => void proposalOrchestration.loadFixture(),
-      onProposalLoadMessage: (content) => void proposalOrchestration.loadFromChatMessage(
-        content,
-        getChatContextNoteForPane(paneId)
-      ),
+      onReviewAgentProposal: (proposal) =>
+        void reviewAgentProposalInEditor(paneId, proposal),
       paneCommandHighlightedIndex,
       paneCommandMode,
       paneCommandCurrentNoteLabel,

@@ -10,6 +10,48 @@ use tauri_plugin_keyring_store::KeyringExt;
 pub(crate) const KEYRING_SERVICE: &str = "com.braypolkinghorne.gneauxghts.credentials";
 const OPENAI_API_KEY_ACCOUNT: &str = "provider.openai.api-key";
 
+/// Reports whether an OpenAI credential is configured without returning its
+/// secret value. On macOS this performs a metadata-only Keychain query, so
+/// opening Settings does not request permission to decrypt the credential.
+pub(crate) fn has_openai_api_key(_app: &AppHandle) -> Result<bool, String> {
+    if development_api_key_override().is_some() {
+        return Ok(true);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return has_openai_api_key_macos();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    _app
+        .keyring()
+        .store
+        .exists_nonempty(OPENAI_API_KEY_ACCOUNT)
+        .map_err(|error| format!("Unable to inspect secure credential storage: {error}"))
+}
+
+#[cfg(target_os = "macos")]
+fn has_openai_api_key_macos() -> Result<bool, String> {
+    use security_framework::item::{ItemClass, ItemSearchOptions};
+    use security_framework_sys::base::errSecItemNotFound;
+
+    let mut query = ItemSearchOptions::new();
+    query
+        .class(ItemClass::generic_password())
+        .service(KEYRING_SERVICE)
+        .account(OPENAI_API_KEY_ACCOUNT)
+        .limit(1_i64);
+
+    match query.search() {
+        Ok(_) => Ok(true),
+        Err(error) if error.code() == errSecItemNotFound => Ok(false),
+        Err(error) => Err(format!(
+            "Unable to inspect secure credential storage: {error}"
+        )),
+    }
+}
+
 pub(crate) fn read_openai_api_key(app: &AppHandle) -> Result<Option<String>, String> {
     if let Some(key) = development_api_key_override() {
         return Ok(Some(key));

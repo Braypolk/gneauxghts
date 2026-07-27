@@ -12,6 +12,9 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 - Toggle task completion from the list view and jump back to the source note.
 - Hide or reorder task groups by note.
 - Blend semantic matches into keyword search.
+- Chat with a vault-aware note agent using hosted OpenAI or a local model
+  served through an OpenAI-compatible endpoint such as LM Studio.
+- Review every AI-prepared note update or creation before it is written.
 - Inspect semantic indexing status, model state, and diagnostics from Settings.
 
 ## How Notes Are Stored
@@ -42,6 +45,9 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
   They live in a machine-global secret store (`secrets.sqlite3`) under the OS
   app-data directory, so moving or sharing a vault cannot leak credentials.
 - Large, device-specific model files stay global under app data as well.
+- Chat history, provider/model metadata, note access policies, and unresolved
+  proposals live in the vault-local `ai.sqlite3`. Provider reasoning and
+  historical tool payloads are not stored.
 - Each vault starts fresh: opening a vault scaffolds a new `.gneauxghts`
   layout in place. There is no import from older global app-data databases.
 - Switching the vault directory takes effect on the next launch; the newly
@@ -49,6 +55,29 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 
 This means your notes stay easy to back up or edit outside the app, and the
 whole vault (notes + index + state) travels as one folder.
+
+## Thought Partner and Vault Privacy
+
+New vaults allow the thought partner to search all ordinary notes by default.
+You can switch a conversation to approved-notes-only or no-vault access, and
+exclude individual notes by stable note ID. Exclusions override every
+conversation scope and survive note renames.
+
+Before each message, Gneauxghts saves the adjacent active note and gives the
+agent its current snapshot when policy permits. Explicit wikilinks are resolved
+locally. Search, note reads, citations, and proposed changes all pass through
+the same backend policy checks.
+
+The agent may search and read allowed notes, but it cannot write them directly.
+Updates and new notes are durable proposals that require Keep; Undo dismisses
+them. Hosted OpenAI requests go only to OpenAI. Local requests go only to the
+configured OpenAI-compatible endpoint, and local conversations never fall back
+to hosted OpenAI. LM Studio's default endpoint is
+`http://localhost:1234/v1`.
+When the selected model supports it, the composer also accepts files from the
+paperclip button and images pasted from the clipboard. Attachments are stored
+with the local chat record so they remain available after reopening or retrying
+a conversation.
 
 ## Keyboard Shortcuts
 

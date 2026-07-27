@@ -7,30 +7,45 @@ import type {
   ChatExcerpt,
   ChatMessage,
   ChatNoteGrant,
+  ChatNotePolicy,
+  ChatAgentProposal,
+  ChatActiveNoteSnapshot,
+  ChatAttachmentInput,
+  ChatModelCapabilities,
+  ChatProvider,
   VaultAccess,
   ChatSettings
 } from './types';
+import type { CommitNoteReviewResult } from '$lib/types/proposals';
 
 export interface ChatControllerState {
   settings: ChatSettings | null;
   conversations: ChatConversationSummary[];
   grants: ChatNoteGrant[];
+  policies: ChatNotePolicy[];
   conversation: ChatConversation | null;
   isInitializing: boolean;
   isLoadingConversation: boolean;
   isSending: boolean;
   error: string | null;
+  activity: string | null;
+  proposals: ChatAgentProposal[];
+  modelCapabilities: ChatModelCapabilities | null;
 }
 
 const initialState: ChatControllerState = {
   settings: null,
   conversations: [],
   grants: [],
+  policies: [],
   conversation: null,
   isInitializing: false,
   isLoadingConversation: false,
   isSending: false,
-  error: null
+  error: null,
+  activity: null,
+  proposals: [],
+  modelCapabilities: null
 };
 
 export interface ChatController extends Readable<ChatControllerState> {
@@ -43,10 +58,23 @@ export interface ChatController extends Readable<ChatControllerState> {
     vaultAccess?: VaultAccess;
   }): Promise<ChatConversation | null>;
   openConversation(conversationId: string): Promise<ChatConversation | null>;
-  send(content: string, forceWebSearch?: boolean): Promise<boolean>;
+  send(
+    content: string,
+    attachments?: ChatAttachmentInput[],
+    forceWebSearch?: boolean,
+    activeNote?: ChatActiveNoteSnapshot | null
+  ): Promise<boolean>;
   cancel(): Promise<void>;
   retry(messageId: string): Promise<void>;
   setVaultAccess(vaultAccess: VaultAccess): Promise<void>;
+  setProvider(provider: ChatProvider, model: string): Promise<void>;
+  keepProposal(
+    proposalId: string,
+    markdown?: string
+  ): Promise<CommitNoteReviewResult>;
+  dismissProposal(proposalId: string): Promise<void>;
+  removeResolvedProposal(proposalId: string): void;
+  setNoteExcluded(noteId: string, title: string, excluded: boolean): Promise<void>;
   grantNote(noteId: string): Promise<void>;
   revokeNote(noteId: string): Promise<void>;
   createExcerpt(messageId: string, text: string): Promise<ChatExcerpt>;
@@ -89,7 +117,9 @@ function mergeSummary(list: ChatConversationSummary[], summary: ChatConversation
     createdAtMillis: summary.createdAtMillis,
     updatedAtMillis: summary.updatedAtMillis,
     messageCount: summary.messageCount,
-    lastMessagePreview: summary.lastMessagePreview
+    lastMessagePreview: summary.lastMessagePreview,
+    provider: summary.provider,
+    model: summary.model
   };
   return [compact, ...list.filter((item) => item.id !== compact.id)].sort(
     (a, b) => b.updatedAtMillis - a.updatedAtMillis
@@ -105,6 +135,8 @@ export interface ChatControllerOptions {
     conversation: ChatConversation;
     message: ChatMessage;
   }) => void | Promise<void>;
+  onProposal?: (proposal: ChatAgentProposal) => void | Promise<void>;
+  onProposalResolved?: (proposalId: string) => void;
 }
 
 /**
@@ -115,11 +147,15 @@ export class ChatControllerStore implements ChatController {
   settings = $state<ChatSettings | null>(initialState.settings);
   conversations = $state<ChatConversationSummary[]>(initialState.conversations);
   grants = $state<ChatNoteGrant[]>(initialState.grants);
+  policies = $state<ChatNotePolicy[]>(initialState.policies);
   conversation = $state<ChatConversation | null>(initialState.conversation);
   isInitializing = $state(initialState.isInitializing);
   isLoadingConversation = $state(initialState.isLoadingConversation);
   isSending = $state(initialState.isSending);
   error = $state<string | null>(initialState.error);
+  activity = $state<string | null>(initialState.activity);
+  proposals = $state<ChatAgentProposal[]>(initialState.proposals);
+  modelCapabilities = $state<ChatModelCapabilities | null>(initialState.modelCapabilities);
 
   #api: ChatApi;
   #options: ChatControllerOptions;
@@ -139,11 +175,15 @@ export class ChatControllerStore implements ChatController {
       settings: this.settings,
       conversations: this.conversations,
       grants: this.grants,
+      policies: this.policies,
       conversation: this.conversation,
       isInitializing: this.isInitializing,
       isLoadingConversation: this.isLoadingConversation,
       isSending: this.isSending,
-      error: this.error
+      error: this.error,
+      activity: this.activity,
+      proposals: this.proposals,
+      modelCapabilities: this.modelCapabilities
     };
   }
 
@@ -168,6 +208,7 @@ export class ChatControllerStore implements ChatController {
     if (partial.settings !== undefined) this.settings = partial.settings;
     if (partial.conversations !== undefined) this.conversations = partial.conversations;
     if (partial.grants !== undefined) this.grants = partial.grants;
+    if (partial.policies !== undefined) this.policies = partial.policies;
     if (partial.conversation !== undefined) this.conversation = partial.conversation;
     if (partial.isInitializing !== undefined) this.isInitializing = partial.isInitializing;
     if (partial.isLoadingConversation !== undefined) {
@@ -175,6 +216,11 @@ export class ChatControllerStore implements ChatController {
     }
     if (partial.isSending !== undefined) this.isSending = partial.isSending;
     if (partial.error !== undefined) this.error = partial.error;
+    if (partial.activity !== undefined) this.activity = partial.activity;
+    if (partial.proposals !== undefined) this.proposals = partial.proposals;
+    if (partial.modelCapabilities !== undefined) {
+      this.modelCapabilities = partial.modelCapabilities;
+    }
     this.#notify();
   }
 
@@ -241,7 +287,7 @@ export class ChatControllerStore implements ChatController {
           activeRequestId: null,
           messages: upsertTerminalMessage(conversation.messages, event.message)
         }));
-        this.#patch({ isSending: false });
+        this.#patch({ isSending: false, activity: null });
         const conversation = this.conversation;
         if (
           conversation &&
@@ -261,7 +307,7 @@ export class ChatControllerStore implements ChatController {
           activeRequestId: null,
           messages: upsertTerminalMessage(conversation.messages, event.message)
         }));
-        this.#patch({ isSending: false });
+        this.#patch({ isSending: false, activity: null });
       }),
     'chat://failed': (event) =>
       this.#ifCurrent(event, () => {
@@ -270,7 +316,29 @@ export class ChatControllerStore implements ChatController {
           activeRequestId: null,
           messages: upsertTerminalMessage(conversation.messages, event.message)
         }));
-        this.#patch({ isSending: false, error: event.error });
+        this.#patch({ isSending: false, error: event.error, activity: null });
+      }),
+    'chat://activity': (event) =>
+      this.#ifCurrent(event, () => {
+        this.#patch({ activity: event.status });
+      }),
+    'chat://proposal': (event) =>
+      this.#ifCurrent(event, () => {
+        this.#patch({
+          proposals: [
+            ...this.proposals.filter(
+              (item) =>
+                item.id !== event.id &&
+                !(
+                  item.kind === event.kind &&
+                  (item.noteId ?? item.suggestedPath) ===
+                    (event.noteId ?? event.suggestedPath)
+                )
+            ),
+            event
+          ]
+        });
+        void this.#options.onProposal?.(event);
       }),
     'chat://projection-conflict': (event) =>
       this.#ifCurrent(event, () => {
@@ -306,7 +374,17 @@ export class ChatControllerStore implements ChatController {
     this.#patch({ isLoadingConversation: true, error: null });
     try {
       const conversation = await this.#api.getConversation(conversationId);
-      this.#patch({ conversation, isSending: Boolean(conversation.activeRequestId) });
+      const [proposals, modelCapabilities] = await Promise.all([
+        this.#api.listPendingProposals(conversationId),
+        this.#api.getModelCapabilities(conversation.provider, conversation.model)
+      ]);
+      this.#patch({
+        conversation,
+        proposals,
+        modelCapabilities,
+        isSending: Boolean(conversation.activeRequestId),
+        activity: null
+      });
       return conversation;
     } catch (error) {
       this.#patch({ error: errorText(error, 'Unable to open this conversation.') });
@@ -322,9 +400,14 @@ export class ChatControllerStore implements ChatController {
     this.#patch({ isLoadingConversation: true, error: null });
     try {
       const conversation = await this.#api.createConversation(input);
+      const modelCapabilities = await this.#api.getModelCapabilities(
+        conversation.provider,
+        conversation.model
+      );
       this.#patch({
         conversation,
         conversations: mergeSummary(this.conversations, conversation),
+        modelCapabilities,
         isSending: false
       });
       return conversation;
@@ -341,13 +424,14 @@ export class ChatControllerStore implements ChatController {
     this.#patch({ isInitializing: true, error: null });
     try {
       await this.#ensureListeners();
-      const [settings, conversations, grants] = await Promise.all([
+      const [settings, conversations, grants, policies] = await Promise.all([
         this.#api.getSettings(),
         this.#api.listConversations(false),
-        this.#api.listGrants()
+        this.#api.listGrants(),
+        this.#api.listNotePolicies()
       ]);
       if (this.#disposed || sequence !== this.#initializeSequence) return;
-      this.#patch({ settings, conversations, grants });
+      this.#patch({ settings, conversations, grants, policies });
       const targetId = conversationId ?? conversations[0]?.id ?? null;
       if (targetId) await this.openConversation(targetId);
     } catch (error) {
@@ -357,15 +441,24 @@ export class ChatControllerStore implements ChatController {
     }
   }
 
-  async send(content: string, forceWebSearch = false) {
+  async send(
+    content: string,
+    attachments: ChatAttachmentInput[] = [],
+    forceWebSearch = false,
+    activeNote?: ChatActiveNoteSnapshot | null
+  ) {
     const trimmed = content.trim();
-    if (!trimmed || this.isSending || !this.conversation) return false;
-    this.#patch({ isSending: true, error: null });
+    if ((!trimmed && attachments.length === 0) || this.isSending || !this.conversation) {
+      return false;
+    }
+    this.#patch({ isSending: true, error: null, activity: 'Starting' });
     try {
       const receipt = await this.#api.sendMessage({
         conversationId: this.conversation.id,
         content: trimmed,
-        forceWebSearch
+        attachments,
+        forceWebSearch,
+        activeNote
       });
       this.#updateConversation((conversation) => ({
         ...conversation,
@@ -424,11 +517,80 @@ export class ChatControllerStore implements ChatController {
     }
   }
 
+  async setProvider(provider: ChatProvider, model: string) {
+    const conversation = this.conversation;
+    if (!conversation || (conversation.provider === provider && conversation.model === model)) return;
+    try {
+      const summary = await this.#api.setConversationProvider(conversation.id, provider, model);
+      const modelCapabilities = await this.#api.getModelCapabilities(provider, model);
+      this.#updateConversation((current) => ({ ...current, ...summary }));
+      this.#patch({ modelCapabilities });
+    } catch (error) {
+      this.#patch({ error: errorText(error, 'Unable to change the chat model.') });
+    }
+  }
+
+  async keepProposal(proposalId: string, markdown?: string) {
+    try {
+      const result = await this.#api.commitAgentProposal(proposalId, markdown);
+      if (result.status === 'conflict') {
+        this.#patch({
+          error: result.message ?? 'The note changed before this proposal was kept.',
+          proposals: this.proposals.map((item) =>
+            item.id === proposalId ? { ...item, status: 'conflict' } : item
+          )
+        });
+        return result;
+      }
+      this.#patch({
+        proposals: this.proposals.filter((item) => item.id !== proposalId),
+        error: null
+      });
+      this.#options.onProposalResolved?.(proposalId);
+      return result;
+    } catch (error) {
+      this.#patch({ error: errorText(error, 'Unable to keep this proposal.') });
+      throw error;
+    }
+  }
+
+  async dismissProposal(proposalId: string) {
+    try {
+      await this.#api.dismissAgentProposal(proposalId);
+      this.#patch({
+        proposals: this.proposals.filter((item) => item.id !== proposalId),
+        error: null
+      });
+      this.#options.onProposalResolved?.(proposalId);
+    } catch (error) {
+      this.#patch({ error: errorText(error, 'Unable to dismiss this proposal.') });
+      throw error;
+    }
+  }
+
+  removeResolvedProposal(proposalId: string) {
+    if (!this.proposals.some((proposal) => proposal.id === proposalId)) return;
+    this.#patch({
+      proposals: this.proposals.filter((proposal) => proposal.id !== proposalId),
+      error: null
+    });
+  }
+
   async grantNote(noteId: string) {
     try {
       const grant = await this.#api.grantNote(noteId);
       this.#patch({
         grants: [...this.grants.filter((item) => item.noteId !== noteId), grant],
+        policies: [
+          ...this.policies.filter((item) => item.noteId !== noteId),
+          {
+            noteId,
+            notePath: grant.notePath,
+            title: grant.noteTitle,
+            disposition: 'approved',
+            updatedAtMillis: grant.grantedAtMillis
+          }
+        ],
         error: null
       });
     } catch (error) {
@@ -443,12 +605,44 @@ export class ChatControllerStore implements ChatController {
       await this.#api.revokeNote(noteId);
       this.#patch({
         grants: this.grants.filter((item) => item.noteId !== noteId),
+        policies: this.policies.filter(
+          (item) => item.noteId !== noteId || item.disposition !== 'approved'
+        ),
         error: null
       });
     } catch (error) {
       const message = errorText(error, 'Unable to remove access to this note.');
       this.#patch({ error: message });
       throw new Error(message);
+    }
+  }
+
+  async setNoteExcluded(noteId: string, title: string, excluded: boolean) {
+    try {
+      await this.#api.setNoteExcluded(noteId, title, excluded);
+      this.#patch({
+        grants: excluded
+          ? this.grants.filter((item) => item.noteId !== noteId)
+          : this.grants,
+        policies: excluded
+          ? [
+              ...this.policies.filter((item) => item.noteId !== noteId),
+              {
+                noteId,
+                notePath: null,
+                title,
+                disposition: 'excluded',
+                updatedAtMillis: Date.now()
+              }
+            ]
+          : this.policies.filter(
+              (item) => item.noteId !== noteId || item.disposition !== 'excluded'
+            ),
+        error: null
+      });
+    } catch (error) {
+      this.#patch({ error: errorText(error, 'Unable to change the note exclusion.') });
+      throw error;
     }
   }
 

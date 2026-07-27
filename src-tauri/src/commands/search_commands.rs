@@ -681,57 +681,46 @@ pub(crate) async fn retrieve_note_context(
                     items: Vec::new(),
                 });
             };
-            let normalized_query = normalize_search_text(&query);
-            let query_terms = normalized_query
-                .split_whitespace()
-                .filter(|term| !term.is_empty())
-                .collect::<Vec<_>>();
-            let lexical_candidates = collect_lexical_candidates(
+            let merged = crate::services::retrieval::retrieve_vault_notes(
                 &state,
                 &query,
-                &notes_dir,
-                current_path.as_deref(),
-                &current_title,
-                &resolved_body,
-                resolved_current.draft.hash.as_deref(),
-                &normalized_query,
-                &query_terms,
-            )?;
-            let settings = state.semantic.get_settings()?;
-            let semantic_matches = if settings.semantic_search_enabled {
-                let semantic = state.semantic.clone();
-                let semantic_query = query.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    semantic.semantic_matches_for_text(
-                        &semantic_query,
-                        current_path_raw.as_deref(),
-                        effective_limit.saturating_mul(3),
-                    )
-                })
-                .await
-                .map_err(|err| err.to_string())??
-            } else {
-                Vec::new()
-            };
-            let note_lookup =
-                note_access_lookup_for_candidates(&state, &lexical_candidates, &semantic_matches);
-            let merged = merge_hybrid_candidates(
-                lexical_candidates,
-                semantic_matches,
-                &normalized_query,
-                current_path.as_deref(),
                 effective_limit,
-                settings.lexical_weight.max(0.0),
-                settings.semantic_weight.max(0.0),
-                &db_load_note_activity().unwrap_or_default(),
-                &note_lookup,
-                current_time_millis().unwrap_or(0),
-            );
+                None,
+                &HashSet::new(),
+                None,
+                None,
+            )?;
             return Ok(RetrievalContextResponse {
                 status: "ready".to_string(),
                 scope: "query".to_string(),
                 reason: None,
-                items: merged.into_iter().map(context_item_from_search).collect(),
+                items: merged
+                    .into_iter()
+                    .map(|item| RetrievalContextItem {
+                        document_kind: crate::note::DocumentKind::Note,
+                        note_id: Some(item.note_id),
+                        note_path: Some(item.note_path.to_string_lossy().into_owned()),
+                        note_title: item.title,
+                        section_label: item.section_label,
+                        excerpt: item.excerpt.clone(),
+                        match_text: item.excerpt,
+                        source: if item.lexical_score.is_some() && item.semantic_score.is_some() {
+                            "hybrid"
+                        } else if item.semantic_score.is_some() {
+                            "semantic"
+                        } else {
+                            "lexical"
+                        }
+                        .to_string(),
+                        reason: "retrieval".to_string(),
+                        score: item.score,
+                        lexical_score: item.lexical_score,
+                        semantic_score: item.semantic_score,
+                        start_line: item.start_line,
+                        end_line: item.end_line,
+                        block_anchor: item.block_anchor,
+                    })
+                    .collect(),
             });
         }
         RetrievalContextScope::Note | RetrievalContextScope::Selection => {
@@ -777,38 +766,6 @@ pub(crate) async fn retrieve_note_context(
                     .collect(),
             })
         }
-    }
-}
-
-fn context_item_from_search(result: NoteSearchResult) -> RetrievalContextItem {
-    let source = if result.reason_labels.iter().any(|label| label == "keyword")
-        && result.reason_labels.iter().any(|label| label == "semantic")
-    {
-        "hybrid"
-    } else if result.reason_labels.iter().any(|label| label == "semantic") {
-        "semantic"
-    } else {
-        "lexical"
-    };
-    RetrievalContextItem {
-        document_kind: result.document_kind,
-        note_id: result.note_id,
-        note_path: result.note_path,
-        note_title: result.file_name,
-        section_label: result.section_label,
-        excerpt: result.excerpt,
-        match_text: result.match_text,
-        source: source.to_string(),
-        reason: result.reason_labels.join(","),
-        score: result
-            .semantic_score
-            .or(result.lexical_score)
-            .unwrap_or_default(),
-        lexical_score: result.lexical_score,
-        semantic_score: result.semantic_score,
-        start_line: result.start_line,
-        end_line: result.end_line,
-        block_anchor: result.block_anchor,
     }
 }
 

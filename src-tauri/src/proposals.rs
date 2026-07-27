@@ -7,10 +7,11 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppliedNoteChange {
     pub(crate) kind: String,
@@ -28,7 +29,7 @@ pub(crate) struct AppliedNoteChange {
 )]
 pub(crate) enum ProposedTextEdit {
     Replace {
-        old_text: String,
+        old_text: Option<String>,
         new_text: String,
         context_before: Option<String>,
         context_after: Option<String>,
@@ -38,9 +39,15 @@ pub(crate) enum ProposedTextEdit {
         context_before: Option<String>,
         context_after: Option<String>,
     },
+    Append {
+        new_text: String,
+    },
+    Prepend {
+        new_text: String,
+    },
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProposalPreviewHunk {
     pub(crate) id: String,
@@ -53,7 +60,7 @@ pub(crate) struct ProposalPreviewHunk {
     pub(crate) new_text: String,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProposalPreview {
     pub(crate) review_id: String,
@@ -63,6 +70,15 @@ pub(crate) struct ProposalPreview {
     pub(crate) base_editor_markdown: String,
     pub(crate) proposed_editor_markdown: String,
     pub(crate) hunks: Vec<ProposalPreviewHunk>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreationProposalPreview {
+    pub(crate) review_id: String,
+    pub(crate) suggested_path: String,
+    pub(crate) title: String,
+    pub(crate) proposed_editor_markdown: String,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -86,6 +102,18 @@ pub(crate) fn preview_note_change(
     path: &str,
     edits: &[ProposedTextEdit],
 ) -> Result<ProposalPreview, String> {
+    preview_note_change_from_working(notes_dir, path, None, edits)
+}
+
+/// Apply new edits to an uncommitted working body, then rebuild one combined
+/// preview against the authoritative note on disk. This lets later agent runs
+/// fold into an unresolved proposal without treating the proposal as saved.
+pub(crate) fn preview_note_change_from_working(
+    notes_dir: &Path,
+    path: &str,
+    working_body: Option<&str>,
+    edits: &[ProposedTextEdit],
+) -> Result<ProposalPreview, String> {
     let note_path = validate_existing_note_path(notes_dir, path)?;
     reject_chat_projection_path(&note_path)?;
     let raw = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
@@ -95,34 +123,42 @@ pub(crate) fn preview_note_change(
         .to_string_lossy()
         .into_owned();
     let (title, base) = note::extract_file_name_title_and_body(&raw, &fallback_title);
-    let resolved = resolve_text_edits(&base, edits)?;
+    let working = working_body.unwrap_or(&base);
+    let resolved = resolve_text_edits(working, edits)?;
 
-    let mut proposed = base.clone();
+    let mut proposed = working.to_string();
     for edit in resolved.iter().rev() {
         proposed.replace_range(edit.from..edit.to, &edit.new_text);
     }
 
-    let mut delta_utf16: isize = 0;
-    let hunks = resolved
-        .iter()
-        .enumerate()
-        .map(|(index, edit)| {
-            let base_from = utf16_len(&base[..edit.from]);
-            let base_to = utf16_len(&base[..edit.to]);
-            let proposed_from = (base_from as isize + delta_utf16) as usize;
-            let proposed_to = proposed_from + utf16_len(&edit.new_text);
-            delta_utf16 += utf16_len(&edit.new_text) as isize - (base_to - base_from) as isize;
-            ProposalPreviewHunk {
-                id: format!("hunk-{}", index + 1),
-                base_from,
-                base_to,
-                proposed_from,
-                proposed_to,
-                old_text: edit.old_text.clone(),
-                new_text: edit.new_text.clone(),
-            }
-        })
-        .collect::<Vec<_>>();
+    let hunks = if working_body.is_some() {
+        diff_preview_hunks(&base, &proposed)
+    } else {
+        let mut delta_utf16: isize = 0;
+        resolved
+            .iter()
+            .enumerate()
+            .map(|(index, edit)| {
+                let base_from = utf16_len(&base[..edit.from]);
+                let base_to = utf16_len(&base[..edit.to]);
+                let proposed_from = (base_from as isize + delta_utf16) as usize;
+                let proposed_to = proposed_from + utf16_len(&edit.new_text);
+                delta_utf16 += utf16_len(&edit.new_text) as isize - (base_to - base_from) as isize;
+                ProposalPreviewHunk {
+                    id: format!("hunk-{}", index + 1),
+                    base_from,
+                    base_to,
+                    proposed_from,
+                    proposed_to,
+                    old_text: edit.old_text.clone(),
+                    new_text: edit.new_text.clone(),
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    if hunks.is_empty() {
+        return Err("The combined proposal does not change the note.".to_string());
+    }
 
     let base_hash = content_hash(&raw);
     Ok(ProposalPreview {
@@ -134,6 +170,154 @@ pub(crate) fn preview_note_change(
         proposed_editor_markdown: proposed,
         hunks,
     })
+}
+
+/// Produce stable, line-oriented review hunks for a combined working copy.
+/// Small changed regions use LCS so independent edits remain independent
+/// review hunks. Very large regions degrade to one bounded hunk rather than
+/// allocating an unbounded matrix.
+fn diff_preview_hunks(base: &str, proposed: &str) -> Vec<ProposalPreviewHunk> {
+    if base == proposed {
+        return Vec::new();
+    }
+    let base_lines = line_ranges(base);
+    let proposed_lines = line_ranges(proposed);
+    let matrix_cells = (base_lines.len() + 1).saturating_mul(proposed_lines.len() + 1);
+    if matrix_cells > 2_000_000 {
+        return vec![preview_hunk_from_ranges(
+            1,
+            base,
+            proposed,
+            0,
+            base.len(),
+            0,
+            proposed.len(),
+        )];
+    }
+
+    let width = proposed_lines.len() + 1;
+    let mut lcs = vec![0u32; (base_lines.len() + 1) * width];
+    for left in (0..base_lines.len()).rev() {
+        for right in (0..proposed_lines.len()).rev() {
+            let index = left * width + right;
+            lcs[index] = if base_lines[left].2 == proposed_lines[right].2 {
+                lcs[(left + 1) * width + right + 1] + 1
+            } else {
+                lcs[(left + 1) * width + right].max(lcs[left * width + right + 1])
+            };
+        }
+    }
+
+    let mut matches = Vec::new();
+    let (mut left, mut right) = (0usize, 0usize);
+    while left < base_lines.len() && right < proposed_lines.len() {
+        if base_lines[left].2 == proposed_lines[right].2 {
+            matches.push((left, right));
+            left += 1;
+            right += 1;
+        } else if lcs[(left + 1) * width + right] >= lcs[left * width + right + 1] {
+            left += 1;
+        } else {
+            right += 1;
+        }
+    }
+
+    let mut hunks = Vec::new();
+    let (mut base_cursor, mut proposed_cursor) = (0usize, 0usize);
+    for (match_base, match_proposed) in matches
+        .into_iter()
+        .chain(std::iter::once((base_lines.len(), proposed_lines.len())))
+    {
+        if base_cursor < match_base || proposed_cursor < match_proposed {
+            let base_from = line_start(&base_lines, base_cursor, base.len());
+            let base_to = line_start(&base_lines, match_base, base.len());
+            let proposed_from = line_start(&proposed_lines, proposed_cursor, proposed.len());
+            let proposed_to = line_start(&proposed_lines, match_proposed, proposed.len());
+            hunks.push(preview_hunk_from_ranges(
+                hunks.len() + 1,
+                base,
+                proposed,
+                base_from,
+                base_to,
+                proposed_from,
+                proposed_to,
+            ));
+        }
+        base_cursor = match_base.saturating_add(1);
+        proposed_cursor = match_proposed.saturating_add(1);
+    }
+    hunks
+}
+
+fn line_ranges(value: &str) -> Vec<(usize, usize, &str)> {
+    let mut lines = Vec::new();
+    let mut start = 0usize;
+    for (offset, character) in value.char_indices() {
+        if character == '\n' {
+            let end = offset + character.len_utf8();
+            lines.push((start, end, &value[start..end]));
+            start = end;
+        }
+    }
+    if start < value.len() {
+        lines.push((start, value.len(), &value[start..]));
+    }
+    lines
+}
+
+fn line_start(lines: &[(usize, usize, &str)], index: usize, fallback: usize) -> usize {
+    lines.get(index).map(|line| line.0).unwrap_or(fallback)
+}
+
+fn preview_hunk_from_ranges(
+    index: usize,
+    base: &str,
+    proposed: &str,
+    mut base_from: usize,
+    mut base_to: usize,
+    mut proposed_from: usize,
+    mut proposed_to: usize,
+) -> ProposalPreviewHunk {
+    let prefix = common_prefix_bytes(
+        &base[base_from..base_to],
+        &proposed[proposed_from..proposed_to],
+    );
+    base_from += prefix;
+    proposed_from += prefix;
+    let suffix = common_suffix_bytes(
+        &base[base_from..base_to],
+        &proposed[proposed_from..proposed_to],
+    );
+    base_to -= suffix;
+    proposed_to -= suffix;
+    ProposalPreviewHunk {
+        id: format!("hunk-{index}"),
+        base_from: utf16_len(&base[..base_from]),
+        base_to: utf16_len(&base[..base_to]),
+        proposed_from: utf16_len(&proposed[..proposed_from]),
+        proposed_to: utf16_len(&proposed[..proposed_to]),
+        old_text: base[base_from..base_to].to_string(),
+        new_text: proposed[proposed_from..proposed_to].to_string(),
+    }
+}
+
+fn common_prefix_bytes(left: &str, right: &str) -> usize {
+    left.char_indices()
+        .zip(right.chars())
+        .take_while(|((_, left), right)| *left == *right)
+        .map(|((offset, character), _)| offset + character.len_utf8())
+        .last()
+        .unwrap_or(0)
+}
+
+fn common_suffix_bytes(left: &str, right: &str) -> usize {
+    left.char_indices()
+        .rev()
+        .zip(right.chars().rev())
+        .take_while(|((_, left), right)| *left == *right)
+        .map(|((offset, _), _)| left.len() - offset)
+        .last()
+        .unwrap_or(0)
 }
 
 pub(crate) fn commit_note_review(
@@ -170,6 +354,87 @@ pub(crate) fn commit_note_review(
     })
 }
 
+pub(crate) fn preview_note_creation(
+    notes_dir: &Path,
+    title: &str,
+    markdown: &str,
+) -> Result<CreationProposalPreview, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("A title is required for a new note.".to_string());
+    }
+    let normalized = note::normalize_wikilink_markdown(markdown);
+    note::reject_chat_projection_write(&normalized)?;
+    let stem = crate::state::derive_file_stem_from_title_and_markdown(title, &normalized);
+    let path = unique_creation_path(notes_dir, &stem);
+    Ok(CreationProposalPreview {
+        review_id: content_hash(&format!("create\0{}\0{}", path.display(), normalized)),
+        suggested_path: path.to_string_lossy().into_owned(),
+        title: title.to_string(),
+        proposed_editor_markdown: normalized,
+    })
+}
+
+pub(crate) fn commit_note_creation(
+    notes_dir: &Path,
+    title: String,
+    markdown: String,
+) -> Result<CommitNoteReviewResult, String> {
+    let preview = preview_note_creation(notes_dir, &title, &markdown)?;
+    let stem = crate::state::derive_file_stem_from_title_and_markdown(
+        &title,
+        &preview.proposed_editor_markdown,
+    );
+    let prepared =
+        note::prepare_note_markdown(&preview.proposed_editor_markdown, None, Some(None))?.0;
+    let path = loop {
+        let candidate = unique_creation_path(notes_dir, &stem);
+        vault_watcher::record_self_save_with_hash(&candidate, content_hash(&prepared));
+        match create_note_without_overwrite(&candidate, prepared.as_bytes()) {
+            Ok(()) => break candidate,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    };
+    Ok(CommitNoteReviewResult {
+        status: "committed".to_string(),
+        applied: Some(AppliedNoteChange {
+            kind: "createNote".to_string(),
+            path: Some(path.to_string_lossy().into_owned()),
+            previous_path: None,
+        }),
+        message: None,
+    })
+}
+
+fn create_note_without_overwrite(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    if let Err(error) = file.write_all(contents).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn unique_creation_path(notes_dir: &Path, stem: &str) -> PathBuf {
+    let base = if stem.trim().is_empty() {
+        "Untitled"
+    } else {
+        stem
+    };
+    let mut candidate = notes_dir.join(format!("{base}.md"));
+    let mut suffix = 2usize;
+    while candidate.exists() {
+        candidate = notes_dir.join(format!("{base} {suffix}.md"));
+        suffix += 1;
+    }
+    candidate
+}
+
 fn resolve_text_edits(
     base: &str,
     edits: &[ProposedTextEdit],
@@ -186,11 +451,12 @@ fn resolve_text_edits(
                 context_before,
                 context_after,
             } => {
-                if old_text.is_empty() {
-                    return Err("Replace edits must include non-empty oldText.".to_string());
-                }
+                let old_text = old_text
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "Replace edits must include non-empty oldText.".to_string())?;
                 (
-                    old_text.as_str(),
+                    old_text,
                     new_text.as_str(),
                     context_before.as_deref(),
                     context_after.as_deref(),
@@ -214,6 +480,40 @@ fn resolve_text_edits(
                     context_after.as_deref(),
                     true,
                 )
+            }
+            ProposedTextEdit::Append { new_text } => {
+                if new_text.is_empty() {
+                    return Err("Append edits must include non-empty newText.".to_string());
+                }
+                if base.ends_with(new_text) {
+                    return Err(
+                        "Could not apply safely: appended text is already present.".to_string()
+                    );
+                }
+                resolved.push(ResolvedTextEdit {
+                    from: base.len(),
+                    to: base.len(),
+                    old_text: String::new(),
+                    new_text: new_text.clone(),
+                });
+                continue;
+            }
+            ProposedTextEdit::Prepend { new_text } => {
+                if new_text.is_empty() {
+                    return Err("Prepend edits must include non-empty newText.".to_string());
+                }
+                if base.starts_with(new_text) {
+                    return Err(
+                        "Could not apply safely: prepended text is already present.".to_string()
+                    );
+                }
+                resolved.push(ResolvedTextEdit {
+                    from: 0,
+                    to: 0,
+                    old_text: String::new(),
+                    new_text: new_text.clone(),
+                });
+                continue;
             }
         };
         let candidates = if insertion {
@@ -319,7 +619,10 @@ fn reject_chat_projection_path(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{commit_note_review, preview_note_change, ProposedTextEdit};
+    use super::{
+        commit_note_creation, commit_note_review, preview_note_change,
+        preview_note_change_from_working, preview_note_creation, ProposedTextEdit,
+    };
     use crate::{
         semantic::db::content_hash,
         state::initialize_app_data_dir,
@@ -349,7 +652,7 @@ mod tests {
             dir.path(),
             &path,
             &[ProposedTextEdit::Replace {
-                old_text: "old".to_string(),
+                old_text: Some("old".to_string()),
                 new_text: "new".to_string(),
                 context_before: None,
                 context_after: None,
@@ -364,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn previews_fixture_style_append_at_the_end_of_a_note() {
+    fn previews_anchor_based_insert_at_the_end_of_a_note() {
         let _guard = lock_test_env();
         let app_data = TestDir::new("proposal-append-app-data");
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
@@ -397,6 +700,51 @@ mod tests {
     }
 
     #[test]
+    fn previews_append_and_prepend_without_boundary_anchors() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("proposal-boundary-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
+        let dir = setup("proposal-boundary");
+        let (path, _) = write_note(&dir, "Fixture.md", "# Fixture\n\nBody\n");
+
+        let appended = preview_note_change(
+            dir.path(),
+            &path,
+            &[ProposedTextEdit::Append {
+                new_text: "\n\n## Summary\n- Point".to_string(),
+            }],
+        )
+        .expect("append preview");
+        assert_eq!(
+            appended.proposed_editor_markdown,
+            "Body\n\n## Summary\n- Point"
+        );
+
+        let prepended = preview_note_change(
+            dir.path(),
+            &path,
+            &[ProposedTextEdit::Prepend {
+                new_text: "Context\n\n".to_string(),
+            }],
+        )
+        .expect("prepend preview");
+        assert_eq!(prepended.proposed_editor_markdown, "Context\n\nBody");
+    }
+
+    #[test]
+    fn null_replace_old_text_deserializes_then_returns_actionable_validation() {
+        let edit: ProposedTextEdit = serde_json::from_value(serde_json::json!({
+            "kind": "replace",
+            "oldText": null,
+            "newText": "Replacement"
+        }))
+        .expect("schema-permitted null should deserialize");
+
+        let error = super::resolve_text_edits("Original", &[edit]).expect_err("invalid replace");
+        assert_eq!(error, "Replace edits must include non-empty oldText.");
+    }
+
+    #[test]
     fn repeated_insert_proposals_do_not_duplicate_existing_text() {
         let _guard = lock_test_env();
         let app_data = TestDir::new("proposal-repeat-insert-app-data");
@@ -418,6 +766,81 @@ mod tests {
         assert_eq!(
             error,
             "Could not apply safely: inserted text is already present."
+        );
+    }
+
+    #[test]
+    fn later_edits_fold_into_one_preview_against_the_saved_note() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("proposal-fold-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
+        let dir = setup("proposal-fold");
+        let (path, _) = write_note(
+            &dir,
+            "Plan.md",
+            "# Plan\n\n## Summary\nOld summary\n\nTags: alpha beta\n",
+        );
+        let first = preview_note_change(
+            dir.path(),
+            &path,
+            &[ProposedTextEdit::Replace {
+                old_text: Some("Old summary".to_string()),
+                new_text: "New summary".to_string(),
+                context_before: None,
+                context_after: None,
+            }],
+        )
+        .expect("first preview");
+
+        let folded = preview_note_change_from_working(
+            dir.path(),
+            &path,
+            Some(&first.proposed_editor_markdown),
+            &[ProposedTextEdit::Replace {
+                old_text: Some(" beta".to_string()),
+                new_text: String::new(),
+                context_before: Some("Tags: alpha".to_string()),
+                context_after: None,
+            }],
+        )
+        .expect("folded preview");
+
+        assert!(folded.proposed_editor_markdown.contains("New summary"));
+        assert!(folded.proposed_editor_markdown.contains("Tags: alpha"));
+        assert!(!folded.proposed_editor_markdown.contains("beta"));
+        assert_eq!(folded.base_editor_markdown, first.base_editor_markdown);
+        assert_eq!(folded.base_content_hash, first.base_content_hash);
+        assert_eq!(folded.hunks.len(), 2);
+        assert_eq!(folded.hunks[0].old_text, "Old");
+        assert_eq!(folded.hunks[0].new_text, "New");
+        assert_eq!(folded.hunks[1].old_text, " beta");
+        assert_eq!(folded.hunks[1].new_text, "");
+    }
+
+    #[test]
+    fn creation_commit_recalculates_a_unique_path_and_never_overwrites() {
+        let root = TestDir::new("proposal-create-unique");
+        fs::write(root.path().join("Checklist.md"), "existing").unwrap();
+        let preview = preview_note_creation(root.path(), "Checklist", "- [ ] First").unwrap();
+        assert!(preview.suggested_path.ends_with("Checklist 2.md"));
+
+        // A file can appear after preview; commit must calculate uniqueness again.
+        fs::write(root.path().join("Checklist 2.md"), "appeared later").unwrap();
+        let committed = commit_note_creation(
+            root.path(),
+            "Checklist".to_string(),
+            "- [ ] First".to_string(),
+        )
+        .unwrap();
+        let path = committed.applied.unwrap().path.unwrap();
+        assert!(path.ends_with("Checklist 3.md"));
+        assert_eq!(
+            fs::read_to_string(root.path().join("Checklist.md")).unwrap(),
+            "existing"
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join("Checklist 2.md")).unwrap(),
+            "appeared later"
         );
     }
 

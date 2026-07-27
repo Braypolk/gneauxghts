@@ -5,6 +5,7 @@
 
 pub(crate) mod background_index_queue;
 pub(crate) mod current_document;
+pub(crate) mod retrieval;
 
 pub(crate) use background_index_queue::BackgroundIndexQueue;
 pub(crate) use current_document::{resolve_current_document, CurrentDocumentRequest};

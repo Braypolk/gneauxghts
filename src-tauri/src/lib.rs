@@ -1,3 +1,5 @@
+mod agent_runtime;
+mod agent_tools;
 mod app;
 mod chat;
 mod commands;
@@ -175,6 +177,13 @@ pub fn run() {
             commands::chat_commands::chat_rename_conversation,
             commands::chat_commands::chat_archive_conversation,
             commands::chat_commands::chat_update_conversation_policy,
+            commands::chat_commands::chat_update_conversation_provider,
+            commands::chat_commands::chat_list_local_models,
+            commands::chat_commands::chat_get_model_capabilities,
+            commands::chat_commands::chat_set_note_excluded,
+            commands::chat_commands::chat_list_note_policies,
+            commands::chat_commands::chat_search_notes,
+            commands::chat_commands::chat_list_pending_proposals,
             commands::chat_commands::chat_send_message,
             commands::chat_commands::chat_cancel_request,
             commands::chat_commands::chat_retry_message,
@@ -186,7 +195,10 @@ pub fn run() {
             commands::chat_commands::chat_revoke_note,
             commands::chat_commands::chat_resolve_projection_conflict,
             commands::proposal_commands::preview_note_change_proposal,
+            commands::proposal_commands::preview_note_creation_proposal,
             commands::proposal_commands::commit_note_review,
+            commands::proposal_commands::commit_agent_proposal,
+            commands::proposal_commands::dismiss_agent_proposal,
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,

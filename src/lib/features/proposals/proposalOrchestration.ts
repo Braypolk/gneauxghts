@@ -1,12 +1,10 @@
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
-import type { ProposalPreview } from '$lib/types/proposals';
-import { commitNoteReview, previewNoteChangeProposal, proposalErrorMessage } from './api';
-import {
-  extractProposalFence,
-  parseChatProposalEdits,
-  type ChatProposalContext
-} from './chatProposalParse';
+import type {
+  CommitNoteReviewResult,
+  ProposalPreview
+} from '$lib/types/proposals';
+import { commitNoteReview, proposalErrorMessage } from './api';
 import { enterProposalReviewView, exitProposalReviewView, resolveProposalHunk } from './reviewDisplay';
 import { proposalTransaction, type ReviewHunkState } from './reviewExtension';
 import { reviewHoldStore, type ReviewHoldStore } from './reviewHold.svelte';
@@ -14,10 +12,13 @@ import { proposalReviewSession, type ProposalReviewSession } from './reviewSessi
 
 export interface ProposalOrchestrationDeps {
   getEditorPaneDocument: (path?: string | null) => NoteDraftState | null;
-  getChatContextNote?: () => ChatProposalContext | null;
   getEditorForDocument: (document: NoteDraftState) => EditorCapabilityAdapter | null;
   getEditorsForDocument?: (document: NoteDraftState) => EditorCapabilityAdapter[];
   ensureEditorPaneForReview: (document?: NoteDraftState) => Promise<void>;
+  openNoteForReview?: (
+    noteId: string | null,
+    path: string
+  ) => Promise<NoteDraftState | null>;
   activateEditorPane?: (document?: NoteDraftState) => void | Promise<void>;
   cancelPendingAutosave?: (document: NoteDraftState) => void;
   scheduleAutosave?: (document: NoteDraftState) => void;
@@ -29,8 +30,17 @@ export interface ProposalOrchestrationDeps {
   holds?: ReviewHoldStore;
 }
 
+export interface DurableProposalReviewRequest {
+  proposalId: string;
+  noteId: string | null;
+  preview: ProposalPreview;
+  commit: (markdown: string) => Promise<CommitNoteReviewResult>;
+  dismiss: () => Promise<void>;
+}
+
 type ActiveReview = {
   preview: ProposalPreview;
+  durable: DurableProposalReviewRequest | null;
   document: NoteDraftState;
   editor: EditorCapabilityAdapter;
   committing: boolean;
@@ -44,6 +54,30 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   const session = deps.session ?? proposalReviewSession;
   const holds = deps.holds ?? reviewHoldStore;
   let active: ActiveReview | null = null;
+  let durableLoadQueue: Promise<void> = Promise.resolve();
+
+  function closeReview(review: ActiveReview) {
+    for (const editor of editors(review)) exitProposalReviewView(editor);
+    holds.end(review.document.key);
+    if (active === review) active = null;
+    session.clear();
+  }
+
+  function replaceActiveReview(review: ActiveReview) {
+    for (const editor of editors(review)) {
+      exitProposalReviewView(editor);
+      if (editor.getDocumentText?.() !== review.preview.baseEditorMarkdown) {
+        editor.replaceDocument(review.preview.baseEditorMarkdown, { focus: false });
+      }
+    }
+    if (review.document.bodyMarkdown !== review.preview.baseEditorMarkdown) {
+      review.document.bodyMarkdown = review.preview.baseEditorMarkdown;
+      review.document.operationRevision += 1;
+    }
+    holds.end(review.document.key);
+    if (active === review) active = null;
+    session.clear();
+  }
 
   function editors(review: ActiveReview) {
     return deps.getEditorsForDocument?.(review.document).filter((editor) => editor.isReady()) ?? [review.editor];
@@ -118,33 +152,41 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     const review = active;
     const kept = hunks(review).some((hunk) => hunk.status === 'kept');
     if (!kept) {
-      for (const editor of editors(review)) exitProposalReviewView(editor);
-      holds.end(review.document.key);
-      active = null;
-      session.clear();
-      deps.scheduleAutosave?.(review.document);
+      review.committing = true;
+      session.setApplying(true);
+      try {
+        await review.durable?.dismiss();
+        closeReview(review);
+        deps.scheduleAutosave?.(review.document);
+      } catch (error) {
+        session.setError(proposalErrorMessage(error, 'Unable to dismiss this proposal.'));
+      } finally {
+        if (active === review) review.committing = false;
+        session.setApplying(false);
+      }
       return;
     }
     review.committing = true;
     session.setApplying(true);
     try {
-      const markdown = review.editor.getDocumentText?.() ?? null;
-      if (markdown === null) throw new Error('Editor is no longer available.');
-      const result = await commitNoteReview(
-        review.preview.notePath,
-        review.preview.baseContentHash,
-        markdown
-      );
+      // The editor can be remounted while Keep All resolves its final hunk.
+      // `workingMarkdown` is continuously captured from the live review and
+      // remains authoritative when that narrow teardown race occurs.
+      const markdown = review.editor.getDocumentText?.() ?? review.workingMarkdown;
+      const result = review.durable
+        ? await review.durable.commit(markdown)
+        : await commitNoteReview(
+            review.preview.notePath,
+            review.preview.baseContentHash,
+            markdown
+          );
       if (result.status === 'conflict') {
         review.conflicted = true;
         session.setConflicted(true);
         session.setError(result.message ?? 'Note changed on disk.');
         return;
       }
-      for (const editor of editors(review)) exitProposalReviewView(editor);
-      holds.end(review.document.key);
-      active = null;
-      session.clear();
+      closeReview(review);
       await deps.refreshDocumentAfterKeep(result.applied?.path ?? review.preview.notePath);
     } catch (error) {
       session.setError(proposalErrorMessage(error, 'Unable to commit reviewed note.'));
@@ -181,7 +223,12 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     void finishIfResolved();
   }
 
-  async function start(preview: ProposalPreview, document: NoteDraftState, editor: EditorCapabilityAdapter) {
+  async function start(
+    preview: ProposalPreview,
+    document: NoteDraftState,
+    editor: EditorCapabilityAdapter,
+    durable: DurableProposalReviewRequest | null = null
+  ) {
     if (active) {
       session.setError('Resolve the current proposed change first.');
       return false;
@@ -194,6 +241,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     try {
       active = {
         preview,
+        durable,
         document,
         editor,
         committing: false,
@@ -228,7 +276,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
           newMarkdown: preview.proposedEditorMarkdown
         }],
         { [preview.notePath]: preview.baseEditorMarkdown },
-        'chat'
+        durable ? `chat:${durable.proposalId}` : 'chat'
       );
       syncHunkSummary();
       return true;
@@ -240,66 +288,63 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
   }
 
-  async function loadFromChatMessage(
-    content: string,
-    suppliedContext?: ChatProposalContext | null
+  async function loadDurableProposalNow(
+    request: DurableProposalReviewRequest
   ): Promise<boolean> {
-    if (!extractProposalFence(content)) return false;
-    const initialContext = suppliedContext ?? deps.getChatContextNote?.() ?? null;
-    const document = deps.getEditorPaneDocument(initialContext?.path);
-    const context = initialContext ?? (document?.currentNotePath ? {
-      path: document.currentNotePath,
-      title: document.title,
-      lastSavedMarkdown: document.lastSavedMarkdown
-    } : null);
-    if (!document || !context?.path) {
-      session.setError('Open a saved note before applying a proposal.');
-      return false;
+    if (active?.durable?.proposalId === request.proposalId) {
+      await deps.activateEditorPane?.(active.document);
+      await reviewNext();
+      return true;
     }
     if (active) {
-      session.setError('Resolve the current proposed change first.');
-      return false;
+      if (active.preview.notePath !== request.preview.notePath) {
+        session.setError('Resolve the current proposed change before reviewing another note.');
+        return false;
+      }
+      replaceActiveReview(active);
     }
+
     try {
-      await deps.flushBeforePreview?.(document);
-      const refreshedContext = suppliedContext
-        ? {
-            path: document.currentNotePath,
-            title: document.title,
-            lastSavedMarkdown: document.lastSavedMarkdown
-          }
-        : deps.getChatContextNote?.() ?? {
-            path: document.currentNotePath,
-            title: document.title,
-            lastSavedMarkdown: document.lastSavedMarkdown
-          };
-      if (!refreshedContext.path || refreshedContext.path !== context.path) {
-        session.setError('The note associated with this chat changed before the proposal was ready.');
+      let document = deps.getEditorPaneDocument(request.preview.notePath);
+      await deps.ensureEditorPaneForReview(document ?? undefined);
+      if (!document) {
+        document =
+          (await deps.openNoteForReview?.(
+            request.noteId,
+            request.preview.notePath
+          )) ?? deps.getEditorPaneDocument(request.preview.notePath);
+      }
+      if (!document?.currentNotePath || document.currentNotePath !== request.preview.notePath) {
+        session.setError('The target note could not be opened for proposal review.');
         return false;
       }
-      const edits = parseChatProposalEdits(content, refreshedContext.lastSavedMarkdown);
-      if (!edits) {
-        session.setError('The assistant returned a proposal that could not be read.');
-        return false;
-      }
-      await deps.ensureEditorPaneForReview(document);
       await deps.activateEditorPane?.(document);
-      const current = deps.getEditorPaneDocument(context.path);
-      if (!current?.currentNotePath || current.currentNotePath !== refreshedContext.path) {
-        session.setError('The active note changed before the proposal was ready.');
-        return false;
-      }
-      const editor = deps.getEditorForDocument(current);
+      const editor = deps.getEditorForDocument(document);
       if (!editor) {
         session.setError('Editor is not ready for proposal review.');
         return false;
       }
-      const preview = await previewNoteChangeProposal(refreshedContext.path, edits);
-      return await start(preview, current, editor);
+      const started = await start(request.preview, document, editor, request);
+      if (started) await reviewNext();
+      return started;
     } catch (error) {
-      session.setError(proposalErrorMessage(error, 'Could not apply proposal safely.'));
+      session.setError(proposalErrorMessage(error, 'Could not open the proposal in the editor.'));
       return false;
     }
+  }
+
+  function loadDurableProposal(
+    request: DurableProposalReviewRequest
+  ): Promise<boolean> {
+    const task = durableLoadQueue.then(
+      () => loadDurableProposalNow(request),
+      () => loadDurableProposalNow(request)
+    );
+    durableLoadQueue = task.then(
+      () => undefined,
+      () => undefined
+    );
+    return task;
   }
 
   function keepAll() {
@@ -324,49 +369,54 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     void finishIfResolved();
   }
 
+  async function liveReviewEditor(review: ActiveReview) {
+    await deps.activateEditorPane?.(review.document);
+    if (active !== review) return null;
+
+    let editor = deps.getEditorForDocument(review.document);
+    if (!editor?.isReady()) {
+      editor = await deps.reopenReviewEditor?.(review.document) ?? null;
+    }
+    if (!editor?.isReady() || active !== review) {
+      session.setError('The editor could not be opened for review.');
+      return null;
+    }
+
+    const editorReview = editor.readProposalReviewState?.();
+    if (editor !== review.editor || editorReview?.reviewId !== review.preview.reviewId) {
+      captureReview(review.editor, review);
+      review.editor = editor;
+      installReviewInEditor(review, editor);
+    }
+    return editor;
+  }
+
   async function reviewNext() {
-    if (!active) return;
-    const next = hunks(active).find((hunk) => hunk.status === 'pending' || hunk.status === 'modified');
-    if (next) active.editor.focusProposalHunk?.(next.id);
+    const review = active;
+    if (!review) return;
+    try {
+      const editor = await liveReviewEditor(review);
+      if (!editor || active !== review) return;
+
+      const next = hunks(review).find((hunk) => hunk.status === 'pending' || hunk.status === 'modified');
+      if (next && !editor.focusProposalHunk?.(next.id)) {
+        session.setError('The next change could not be focused in the editor.');
+      }
+    } catch (error) {
+      session.setError(proposalErrorMessage(error, 'The editor could not be opened for review.'));
+    }
   }
 
   return {
     session,
     holds,
+    loadDurableProposal,
     keep: (_changeId?: string) => keepAll(),
     keepAll,
     undo: (_changeId?: string) => undoAll(),
     undoAll,
-    showChange: async (_change?: unknown) => {
-      if (!active) return;
-      const editor = await deps.reopenReviewEditor?.(active.document);
-      if (!editor) return;
-      active.editor = editor;
-      installReviewInEditor(active, editor);
-      await reviewNext();
-    },
+    showChange: async (_change?: unknown) => reviewNext(),
     reviewNext,
-    loadFixture: async () => {
-      const document = deps.getEditorPaneDocument();
-      if (!document?.currentNotePath || !document.lastSavedMarkdown) {
-        session.setError('Open a saved note with text before loading a fixture proposal.');
-        return;
-      }
-      const firstWord = document.lastSavedMarkdown.match(/[\p{L}\p{N}]+/u)?.[0];
-      if (!firstWord) {
-        session.setError('Unable to build a fixture proposal for this note.');
-        return;
-      }
-      const fixture = `\`\`\`gneauxghts-proposal\n${JSON.stringify({
-        version: 1,
-        edits: [
-          { kind: 'replace', oldText: firstWord, newText: `${firstWord} (revised)` },
-          { kind: 'insert', newText: '\n\nFixture insertion.', contextBefore: document.lastSavedMarkdown }
-        ]
-      })}\n\`\`\``;
-      await loadFromChatMessage(fixture);
-    },
-    loadFromChatMessage,
     markConflict: (path: string) => {
       if (active?.preview.notePath === path) {
         active.conflicted = true;
@@ -400,16 +450,19 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       }
       const review = active;
       try {
+        await review.durable?.dismiss();
         await deps.reloadReviewFromDisk?.(review.preview.notePath);
-        for (const editor of editors(review)) exitProposalReviewView(editor);
-        holds.end(review.document.key);
-        active = null;
-        session.clear();
+        closeReview(review);
       } catch (error) {
         session.setError(proposalErrorMessage(error, 'Unable to reload the note from disk.'));
       }
     },
     isReviewingPath: (path: string) => active?.preview.notePath === path,
+    isReviewingProposal: (proposalId: string) =>
+      active?.durable?.proposalId === proposalId,
+    get activeProposalId() {
+      return active?.durable?.proposalId ?? null;
+    },
     attachEditor: (document: NoteDraftState, editor: EditorCapabilityAdapter) => {
       if (!active || active.document.key !== document.key || !editor.isReady()) return;
       active.editor = editor;

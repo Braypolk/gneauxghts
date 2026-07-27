@@ -169,42 +169,90 @@ Backend:
 
 ## Proposals
 
-Note-change proposals are reviewed as editable pending changes in the normal
-CodeMirror note pane, then committed through the Rust proposal core.
+Note-change proposals are backend-authored, durable review records. The vault
+agent can prepare updates and creations, but it cannot write either kind
+directly.
 
 Current capabilities:
 
-- represent update/create/delete note changes;
+- represent update and create note changes from Chat;
 - validate content hashes before writes (OCC);
-- apply one change or an accepted subset via `apply_note_change_proposal`;
+- validate exact update anchors or explicit append/prepend boundaries, and
+  require the target to have been surfaced by a read tool in the current run;
+- persist unresolved proposals in `ai.sqlite3` and reload them with a
+  conversation;
+- treat an unresolved proposal as the note's unapproved working copy, so later
+  runs read it, fold new edits into it, and replace the review with one combined
+  diff against the saved note;
+- apply reviewed Markdown through `commit_agent_proposal`;
 - update indexes after apply;
-- chat strip: proposed file list with Keep / Undo / Review batch actions;
-- notepad: real proposed text with mapped inline hunk Keep / Undo controls;
-- make-mode chat emits pathless `replace` / `insert` edits in a
-  `gneauxghts-proposal` JSON fence; Rust validates them against the active note;
-- fixture loader for QA when you need a canned multi-file proposal.
+- recalculate a unique filename when a creation is kept, never overwriting an
+  existing note;
+- show pending proposals automatically with Keep / Undo controls.
 
-Preview never writes a file. Hunk decisions remain in memory until the final
-resolution, when the current editable body is OCC-checked and committed in one
-note write. Undo preserves edits outside untouched AI hunks; modified hunks
-require an explicit Keep Current or Restore Original decision.
+Preview never writes a file. Keep performs a final policy/OCC check and one
+atomic note write. Undo resolves the durable proposal without touching disk.
 
 Key files:
 
 - backend: `src-tauri/src/proposals.rs`;
 - commands: `src-tauri/src/commands/proposal_commands.rs`
-  (`apply_note_change_proposal`, `hash_markdown_content`);
+  (`commit_agent_proposal`, `dismiss_agent_proposal`);
+- agent tools: `src-tauri/src/agent_tools.rs`;
 - frontend types: `src/lib/types/proposals.ts`;
 - review feature: `src/lib/features/proposals/` (session, diff model, chat card,
   CodeMirror review extension, orchestration).
 
-Future AI / make-mode chat should keep emitting `NoteChange` drafts via the
-`gneauxghts-proposal` fence (or a future structured event) into the shared
-review session instead of writing notes directly.
+The legacy fenced-proposal protocol is removed. AI proposal producers must use
+the typed backend tools so policy, target provenance, hashes, and persistence
+remain authoritative.
+
+## Vault Agent
+
+Chat runs through the Gneauxghts-owned `AgentRuntime` boundary over
+`rig-core`. Hosted OpenAI and local OpenAI-compatible models share one
+normalized conversation history and one typed tool surface:
+
+- `get_active_note`
+- `search_notes`
+- `read_note`
+- `propose_note_edits`
+- `propose_create_note`
+
+Runs permit at most six model calls and two invalid-tool-call retries. Read
+tools may execute concurrently; proposal staging is serialized. The frontend
+receives text deltas, compact activity events, citations, and durable proposal
+events, never reasoning traces.
+
+Chat attachments are capability-gated per provider/model. Hosted OpenAI uses a
+conservative multimodal model allowlist. The standard OpenAI-compatible model
+listing does not advertise vision capability, so local models conservatively
+accept text files but not images or PDFs. Supported text files are decoded
+locally, while hosted-model images and PDFs are passed through Rig's typed
+multimodal message content. Attachments are limited to 10 items, 10 MB each,
+and 25 MB total per message.
+
+Clicking a pending or sent attachment opens a local in-app preview. Images
+expand to fit the viewer, PDFs use the embedded document viewer, and text/code
+is rendered as escaped plain text. Opening a preview does not make another
+provider request.
+
+Durable update proposals open their target note in the editor immediately and
+install editable CodeMirror review hunks over the proposed body. The review
+survives switching between Chat and the note; Keep commits through the durable
+proposal record, while Undo restores the saved body and dismisses the proposal.
+
+New settings rows default to full-vault access. Existing access settings are
+preserved, with legacy `limited` values migrated to `approved`. Stable-ID note
+exclusions override full and approved access for active context, retrieval,
+reads, citations, and proposals.
+AI Settings includes a searchable Excluded Notes manager for adding entries,
+reviewing the complete list, and restoring notes to their selected vault scope.
 
 ## Retrieval Context
 
 `retrieve_note_context` returns context packs for `note`, `selection`, and
 `query` scopes. It preserves current-draft handling and returns source labels,
-reasons, scores, and line metadata. Future chat/inbox features should use this
-instead of depending on search or related-note UI result shapes.
+reasons, scores, and line metadata. Chat's `search_notes` tool and the Tauri
+retrieval command use the same policy-aware hybrid backend service, with
+lexical fallback when semantic retrieval is unavailable.

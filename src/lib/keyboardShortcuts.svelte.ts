@@ -119,21 +119,21 @@ const shortcutDefinitionsBase = [
     label: 'Go to Note',
     description: 'Open note view.',
     group: 'navigation',
-    defaultBinding: 'Meta+1'
+    defaultBinding: 'Meta+2'
   },
   {
     id: 'navList',
     label: 'Go to List',
     description: 'Open list view.',
     group: 'navigation',
-    defaultBinding: 'Meta+2'
+    defaultBinding: 'Meta+3'
   },
   {
     id: 'navAtlas',
     label: 'Go to Map',
     description: 'Open vault map.',
     group: 'navigation',
-    defaultBinding: 'Meta+3'
+    defaultBinding: 'Meta+1'
   },
   {
     id: 'navSettings',

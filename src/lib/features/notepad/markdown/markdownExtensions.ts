@@ -38,6 +38,20 @@ interface BuiltMarkdownDecorations {
   atomicRanges: DecorationSet;
 }
 
+export function markdownDecorationsNeedRebuild(
+  update: Pick<
+    ViewUpdate,
+    'docChanged' | 'selectionSet' | 'viewportChanged' | 'startState' | 'state'
+  >
+) {
+  return (
+    update.docChanged ||
+    update.selectionSet ||
+    update.viewportChanged ||
+    syntaxTree(update.startState) !== syntaxTree(update.state)
+  );
+}
+
 function buildDecorations(view: EditorView): BuiltMarkdownDecorations {
   const decorations: Range<Decoration>[] = [];
   const ctx: MarkdownDecorationContext = {
@@ -90,7 +104,7 @@ const markdownDecorationPlugin = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      if (markdownDecorationsNeedRebuild(update)) {
         const built = buildDecorations(update.view);
         this.decorations = built.decorations;
         this.atomicRanges = built.atomicRanges;

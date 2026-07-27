@@ -56,6 +56,35 @@ spctl -a -vvv -t install src-tauri/target/release/bundle/dmg/Gneauxghts_*.dmg
 
 Only distribute the DMG if those checks pass.
 
+## Keychain Identity
+
+Gneauxghts stores user-provided API keys in macOS Keychain under the service
+`com.braypolkinghorne.gneauxghts.credentials`. Opening AI Settings checks only
+Keychain item metadata; it does not decrypt the saved key. macOS can still ask
+for permission when chat actually uses the key.
+
+Use a consistently signed app bundle when testing Keychain access. Rebuilding
+and running the unsigned `target/debug/gneauxghts` executable gives macOS an
+unstable code identity, so a prior **Always Allow** decision may not carry over.
+With an Apple Development identity installed, build a signed debug app:
+
+```sh
+export APPLE_SIGNING_IDENTITY="Apple Development: Your Name (TEAMID)"
+pnpm tauri build --debug --bundles app
+open src-tauri/target/debug/bundle/macos/Gneauxghts.app
+```
+
+Release builds must continue to use the Developer ID flow above. Keep the bundle
+identifier and signing team stable between releases so existing Keychain access
+decisions remain valid.
+
+The current macOS backend uses the Login Keychain for compatibility with direct
+Developer ID distribution. Moving existing credentials to the Data Protection
+Keychain is a separate migration: it requires an appropriately provisioned app,
+entitlements/access-group decisions, and a tested copy-then-delete migration.
+Do not change backends without that migration or existing users can appear to
+lose their saved key.
+
 ## Developer-Only Bypass
 
 For a one-off test of an unsigned build on another Mac:

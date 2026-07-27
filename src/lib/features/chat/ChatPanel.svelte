@@ -13,6 +13,7 @@
     History,
     Link,
     LoaderCircle,
+    Paperclip,
     Plus,
     RotateCcw,
     Send,
@@ -23,21 +24,29 @@
   import { mergeDiscussionDraft, type ChatDraftSeed } from './discussionContext';
   import type {
     ChatCitation,
+    ChatActiveNoteSnapshot,
+    ChatAttachmentInput,
     ChatContextNote,
     ChatExcerpt,
     ChatSelection,
     ChatSelectionActions,
-    VaultAccess
+    VaultAccess,
+    ChatAgentProposal,
+    ChatProvider
   } from './types';
   import ProposedChangesCard from '$lib/features/proposals/ProposedChangesCard.svelte';
+  import AttachmentPreview from './AttachmentPreview.svelte';
   import type {
     PendingProposalChange,
     ProposalReviewSessionSnapshot
   } from '$lib/features/proposals/types';
+  import { reviewBelongsToConversation } from './proposalVisibility';
   import {
-    extractProposalFence,
-    withoutProposalFence
-  } from '$lib/features/proposals/chatProposalParse';
+    attachmentAccept,
+    attachmentDataUrl,
+    filesToAttachments,
+    validateAttachmentBatch
+  } from './attachments';
 
   interface Props {
     controller: ChatController;
@@ -51,6 +60,7 @@
     placeholder?: string;
     draftSeed?: ChatDraftSeed | null;
     contextNote?: ChatContextNote | null;
+    getActiveNoteSnapshot?: () => Promise<ChatActiveNoteSnapshot | null>;
     targetAnchor?: string | null;
     proposalSnapshot?: ProposalReviewSessionSnapshot | null;
     proposalPendingCount?: number;
@@ -63,8 +73,7 @@
     onProposalRetry?: () => void | Promise<void>;
     onProposalCopyCurrent?: () => void | Promise<void>;
     onProposalReloadDisk?: () => void | Promise<void>;
-    onProposalLoadFixture?: () => void | Promise<void>;
-    onProposalLoadMessage?: (content: string) => void | Promise<void>;
+    onReviewAgentProposal?: (proposal: ChatAgentProposal) => void | Promise<void>;
   }
 
   let {
@@ -79,6 +88,7 @@
     placeholder = 'What are you thinking about?',
     draftSeed = null,
     contextNote = null,
+    getActiveNoteSnapshot,
     targetAnchor = null,
     proposalSnapshot = null,
     proposalPendingCount = 0,
@@ -91,56 +101,139 @@
     onProposalRetry,
     onProposalCopyCurrent,
     onProposalReloadDisk,
-    onProposalLoadFixture,
-    onProposalLoadMessage
+    onReviewAgentProposal
   }: Props = $props();
 
   const ACCESS_OPTIONS: { value: VaultAccess; label: string; hint: string }[] = [
     { value: 'none', label: 'No vault', hint: 'Chat only' },
-    { value: 'limited', label: 'Limited', hint: 'Granted notes only' },
+    { value: 'approved', label: 'Approved only', hint: 'Approved notes only' },
     { value: 'full', label: 'Full vault', hint: 'All notes available' }
   ];
+  const PROVIDERS: ChatProvider[] = ['openai', 'local'];
 
   const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
   let snapshot = $state<ChatControllerState>({
     settings: null,
     conversations: [],
     grants: [],
+    policies: [],
     conversation: null,
     isInitializing: false,
     isLoadingConversation: false,
     isSending: false,
-    error: null
+    error: null,
+    activity: null,
+    proposals: [],
+    modelCapabilities: null
   });
   let draft = $state('');
+  let attachments = $state<ChatAttachmentInput[]>([]);
   let forceWebSearch = $state(false);
   let selected = $state<ChatSelection | null>(null);
   let selectedExcerpt = $state<ChatExcerpt | null>(null);
   let actionError = $state<string | null>(null);
   let messagesElement = $state<HTMLElement | null>(null);
   let composerElement = $state<HTMLTextAreaElement | null>(null);
+  let attachmentInput = $state<HTMLInputElement | null>(null);
+  let previewAttachment = $state<ChatAttachmentInput | null>(null);
   let previousLastMessageId = $state<string | null>(null);
   // One-shot apply guards — not UI state; plain lets avoid effect↔state loops.
   let appliedDraftSeedId: string | null = null;
   let contextAccessBusy = $state(false);
   let appliedTargetAnchor: string | null = null;
-  let openMenu = $state<'history' | 'vault' | null>(null);
+  let openMenu = $state<'history' | 'vault' | 'provider' | null>(null);
+  let proposalDrafts = $state<Record<string, string>>({});
 
   const conversation = $derived(snapshot.conversation);
-  const canSend = $derived(Boolean(draft.trim()) && !snapshot.isSending && conversation?.status === 'active');
+  const visibleProposalSnapshot = $derived(
+    reviewBelongsToConversation(
+      proposalSnapshot,
+      snapshot.proposals,
+      conversation?.id
+    )
+      ? proposalSnapshot
+      : null
+  );
+  const canSend = $derived(
+    Boolean(draft.trim() || attachments.length > 0) &&
+      !snapshot.isSending &&
+      conversation?.status === 'active'
+  );
+  const canAttach = $derived(
+    Boolean(snapshot.modelCapabilities?.images || snapshot.modelCapabilities?.files)
+  );
+  const acceptedAttachmentTypes = $derived(attachmentAccept(snapshot.modelCapabilities));
   const isEmpty = $derived(!conversation || conversation.messages.length === 0);
+  const proposalsAwaitingReview = $derived.by(() =>
+    snapshot.proposals.filter((proposal) => !proposalIsOpenInEditor(proposal))
+  );
   const contextGrant = $derived(
     contextNote?.noteId
       ? snapshot.grants.find((grant) => grant.noteId === contextNote.noteId) ?? null
       : null
   );
+  const contextExcluded = $derived(
+    Boolean(
+      contextNote?.noteId &&
+        snapshot.policies.some(
+          (policy) =>
+            policy.noteId === contextNote?.noteId &&
+            policy.disposition === 'excluded'
+        )
+    )
+  );
   const vaultLabel = $derived.by(() => {
     if (!conversation) return 'No vault';
+    if (contextExcluded) return 'Note excluded';
     if (conversation.vaultAccess === 'full') return 'Full vault';
     if (conversation.vaultAccess === 'none') return 'No vault';
     if (contextNote && contextGrant) return contextNote.noteTitle;
-    return 'Limited';
+    return 'Approved only';
   });
+
+  function proposalMarkdown(proposal: ChatAgentProposal) {
+    const preview = proposal.preview as { proposedEditorMarkdown?: unknown };
+    const initial = typeof preview.proposedEditorMarkdown === 'string' ? preview.proposedEditorMarkdown : '';
+    return proposalDrafts[proposal.id] ?? initial;
+  }
+
+  function proposalIsOpenInEditor(proposal: ChatAgentProposal) {
+    if (proposal.kind !== 'update') return false;
+    const notePath = (proposal.preview as { notePath?: unknown }).notePath;
+    return (
+      typeof notePath === 'string' &&
+      visibleProposalSnapshot?.source === `chat:${proposal.id}` &&
+      Boolean(
+        visibleProposalSnapshot?.changes.some(
+          (change) => change.path === notePath && change.status === 'pending'
+        )
+      )
+    );
+  }
+
+  async function keepAgentProposal(proposal: ChatAgentProposal) {
+    await controller.keepProposal(proposal.id, proposalMarkdown(proposal));
+  }
+
+  async function dismissAgentProposal(proposal: ChatAgentProposal) {
+    await controller.dismissProposal(proposal.id);
+  }
+
+  function providerModel(provider: ChatProvider) {
+    if (provider === 'local') return snapshot.settings?.localModel ?? '';
+    return snapshot.settings?.openaiModel ?? snapshot.settings?.model ?? 'gpt-5.6-terra';
+  }
+
+  async function updateProvider(provider: ChatProvider) {
+    openMenu = null;
+    const model = providerModel(provider);
+    if (!model) {
+      actionError = 'Choose a tool-capable local model in Settings first.';
+      return;
+    }
+    await controller.setProvider(provider, model);
+    if (provider === 'local') forceWebSearch = false;
+  }
 
   $effect(() => {
     const anchor = targetAnchor?.replace(/^\^/, '') ?? null;
@@ -203,9 +296,7 @@
   });
 
   function rendered(content: string) {
-    if (!extractProposalFence(content)) return markdown.render(content);
-    const explanation = withoutProposalFence(content);
-    return markdown.render(explanation || 'Proposed note changes are ready for review.');
+    return markdown.render(content);
   }
 
   /** Absolute http(s) href for web citations — not an app route, so no resolve(). */
@@ -219,28 +310,76 @@
     }
   }
 
-  function toggleMenu(menu: 'history' | 'vault') {
+  function toggleMenu(menu: 'history' | 'vault' | 'provider') {
     openMenu = openMenu === menu ? null : menu;
   }
 
   async function submit() {
     const content = draft.trim();
-    if (!content || snapshot.isSending) return;
+    if ((!content && attachments.length === 0) || snapshot.isSending) return;
     if (!controller.getSnapshot().conversation) {
       const created = await controller.createConversation();
       if (!created) return;
     }
-    const sent = await controller.send(content, forceWebSearch);
+    let activeNote: ChatActiveNoteSnapshot | null = null;
+    try {
+      activeNote = await getActiveNoteSnapshot?.() ?? null;
+    } catch (error) {
+      actionError = error instanceof Error ? error.message : 'Save the active note before sending.';
+      return;
+    }
+    const sent = await controller.send(content, attachments, forceWebSearch, activeNote);
     if (sent) {
       draft = '';
+      attachments = [];
       forceWebSearch = false;
     }
+  }
+
+  async function addAttachments(files: File[]) {
+    const capabilities = snapshot.modelCapabilities;
+    if (!capabilities || files.length === 0) return;
+    const validationError = validateAttachmentBatch(files, attachments, capabilities);
+    if (validationError) {
+      actionError = validationError;
+      return;
+    }
+    try {
+      attachments = [...attachments, ...await filesToAttachments(files)];
+      actionError = null;
+    } catch (error) {
+      actionError = error instanceof Error ? error.message : 'Unable to read the attachment.';
+    }
+  }
+
+  function onAttachmentChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    void addAttachments(Array.from(input.files ?? []));
+    input.value = '';
+  }
+
+  function onComposerPaste(event: ClipboardEvent) {
+    const images = Array.from(event.clipboardData?.items ?? [])
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (images.length === 0) return;
+    if (!snapshot.modelCapabilities?.images) {
+      actionError = 'The selected model does not accept image input.';
+      return;
+    }
+    if (!event.clipboardData?.getData('text/plain')) event.preventDefault();
+    void addAttachments(images);
   }
 
   function onComposerKeydown(event: KeyboardEvent) {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
     event.preventDefault();
     void submit();
+  }
+
+  function openAttachmentPreview(attachment: ChatAttachmentInput) {
+    previewAttachment = attachment;
   }
 
   function captureSelection(event: Event) {
@@ -347,6 +486,26 @@
       contextAccessBusy = false;
     }
   }
+
+  async function toggleContextExclusion() {
+    const noteId = contextNote?.noteId;
+    if (!noteId || !contextNote || contextAccessBusy) return;
+    openMenu = null;
+    contextAccessBusy = true;
+    actionError = null;
+    try {
+      await controller.setNoteExcluded(
+        noteId,
+        contextNote.noteTitle,
+        !contextExcluded
+      );
+    } catch (error) {
+      actionError =
+        error instanceof Error ? error.message : 'Unable to change note exclusion.';
+    } finally {
+      contextAccessBusy = false;
+    }
+  }
 </script>
 
 <section class={`chat-panel chat-panel--${variant} flex h-full min-h-0 w-full flex-col overflow-hidden`} aria-label="Thought partner chat">
@@ -429,22 +588,43 @@
           >
             <div class="mb-1.5 flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
               <span>{message.role === 'assistant' ? 'Thought partner' : 'You'}</span>
-              {#if message.status === 'streaming'}<span class="opacity-70">thinking…</span>{/if}
+              {#if message.status === 'streaming'}<span class="opacity-70">{snapshot.activity ?? 'Working…'}</span>{/if}
               {#if message.status === 'cancelled'}<span class="opacity-70">stopped</span>{/if}
             </div>
             <div class="chat-message-content text-[0.94rem] leading-7 text-foreground" class:opacity-70={message.status === 'cancelled'}>
               <!-- markdown-it is configured with html:false, which escapes raw HTML -->
               {@html rendered(message.content)}
             </div>
-
-            {#if message.role === 'assistant' && extractProposalFence(message.content) && proposalSnapshot?.changes.length === 0 && onProposalLoadMessage}
-              <button
-                type="button"
-                class="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-accent"
-                onclick={() => void onProposalLoadMessage?.(message.content)}
-              >
-                <FileInput class="h-3.5 w-3.5" /> Review proposed changes
-              </button>
+            {#if message.attachments.length > 0}
+              <div class="mt-2 flex flex-wrap gap-2" aria-label="Attachments">
+                {#each message.attachments as attachment (attachment.id)}
+                  {#if attachment.kind === 'image'}
+                    <button
+                      type="button"
+                      class="chat-attachment-image"
+                      aria-label={`Preview ${attachment.name}`}
+                      title={`Preview ${attachment.name}`}
+                      onclick={() => openAttachmentPreview(attachment)}
+                    >
+                      <img
+                        src={attachmentDataUrl(attachment)}
+                        alt={attachment.name}
+                      />
+                    </button>
+                  {:else}
+                    <button
+                      type="button"
+                      class="chat-attachment-file"
+                      aria-label={`Preview ${attachment.name}`}
+                      title={`Preview ${attachment.name}`}
+                      onclick={() => openAttachmentPreview(attachment)}
+                    >
+                      <FileInput class="h-3.5 w-3.5" />
+                      <span class="max-w-52 truncate">{attachment.name}</span>
+                    </button>
+                  {/if}
+                {/each}
+              </div>
             {/if}
 
             {#if message.citations.length > 0}
@@ -495,9 +675,50 @@
   </div>
 
   <div class="chat-panel-bottom shrink-0">
-    {#if proposalSnapshot != null || onProposalLoadFixture}
+    {#if proposalsAwaitingReview.length > 0}
+      <div class="mx-auto max-h-[45vh] max-w-3xl space-y-2 overflow-y-auto px-4 pt-2 sm:px-6" aria-label="Pending note proposals">
+        {#each proposalsAwaitingReview as proposal (proposal.id)}
+          <section class="rounded-2xl border border-border bg-background/95 p-3 shadow-sm">
+            <div class="mb-2 flex items-center gap-2">
+              <FileInput class="h-4 w-4 text-muted-foreground" />
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-medium">{proposal.kind === 'create' ? 'Create' : 'Update'} “{proposal.title}”</p>
+                <p class="text-[11px] text-muted-foreground">Review required before writing</p>
+              </div>
+            </div>
+            {#if proposal.kind === 'create'}
+              <textarea
+                class="block max-h-52 min-h-28 w-full resize-y rounded-xl border border-border bg-muted/20 p-2 font-mono text-xs leading-5 outline-none focus:border-foreground/25"
+                value={proposalMarkdown(proposal)}
+                oninput={(event) => {
+                  proposalDrafts = {
+                    ...proposalDrafts,
+                    [proposal.id]: (event.currentTarget as HTMLTextAreaElement).value
+                  };
+                }}
+                aria-label={`Proposed Markdown for ${proposal.title}`}
+              ></textarea>
+              <div class="mt-2 flex justify-end gap-2">
+                <button type="button" class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent" onclick={() => void dismissAgentProposal(proposal)}>Undo</button>
+                <button type="button" class="rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background" onclick={() => void keepAgentProposal(proposal)}>Keep</button>
+              </div>
+            {:else}
+              <p class="rounded-xl bg-muted/35 px-3 py-2.5 text-xs leading-5 text-muted-foreground">
+                Open this update in the note editor to review its highlighted changes before applying it.
+              </p>
+              <div class="mt-2 flex justify-end gap-2">
+                <button type="button" class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent" onclick={() => void dismissAgentProposal(proposal)}>Undo</button>
+                <button type="button" class="rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50" disabled={!onReviewAgentProposal} onclick={() => void onReviewAgentProposal?.(proposal)}>Review in editor</button>
+              </div>
+            {/if}
+          </section>
+        {/each}
+      </div>
+    {/if}
+
+    {#if visibleProposalSnapshot != null}
       <ProposedChangesCard
-        snapshot={proposalSnapshot ?? { source: '', changes: [], activeChangeId: null, isApplying: false, isConflicted: false, error: null, reviewHunks: null }}
+        snapshot={visibleProposalSnapshot}
         pendingCount={proposalPendingCount}
         onOpenChange={onProposalOpenChange ?? (() => {})}
         onKeep={onProposalKeep ?? (() => {})}
@@ -508,7 +729,6 @@
         onRetry={onProposalRetry}
         onCopyCurrent={onProposalCopyCurrent}
         onReloadDisk={onProposalReloadDisk}
-        onLoadFixture={onProposalLoadFixture}
       />
     {/if}
 
@@ -522,6 +742,37 @@
       {/if}
 
       <div class="mx-auto max-w-3xl rounded-[1.1rem] border border-border/80 bg-background/80 p-2 shadow-sm focus-within:border-foreground/25 focus-within:ring-2 focus-within:ring-ring/10">
+        {#if attachments.length > 0}
+          <div class="flex flex-wrap gap-2 px-2 pb-2" aria-label="Pending attachments">
+            {#each attachments as attachment, index (`${attachment.name}-${index}`)}
+              <div class="chat-pending-attachment">
+                <button
+                  type="button"
+                  class="chat-pending-attachment-preview"
+                  aria-label={`Preview ${attachment.name}`}
+                  title={`Preview ${attachment.name}`}
+                  onclick={() => openAttachmentPreview(attachment)}
+                >
+                  {#if attachment.kind === 'image'}
+                    <img src={attachmentDataUrl(attachment)} alt="" />
+                  {:else}
+                    <FileInput class="h-4 w-4 shrink-0 text-muted-foreground" />
+                  {/if}
+                  <span class="max-w-36 truncate">{attachment.name}</span>
+                </button>
+                <button
+                  type="button"
+                  class="chat-pending-attachment-remove"
+                  aria-label={`Remove ${attachment.name}`}
+                  title="Remove attachment"
+                  onclick={() => attachments = attachments.filter((_, itemIndex) => itemIndex !== index)}
+                >
+                  <X class="h-3 w-3" />
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
         <textarea
           bind:this={composerElement}
           bind:value={draft}
@@ -530,15 +781,71 @@
           {placeholder}
           disabled={snapshot.isInitializing || conversation?.status === 'projectionConflict'}
           onkeydown={onComposerKeydown}
+          onpaste={onComposerPaste}
         ></textarea>
 
         <div class="flex flex-wrap items-center gap-1.5 px-1 pt-1">
           {#if conversation}
+            {#if canAttach}
+              <input
+                bind:this={attachmentInput}
+                class="sr-only"
+                type="file"
+                multiple
+                accept={acceptedAttachmentTypes}
+                onchange={onAttachmentChange}
+                aria-label="Choose attachments"
+              />
+              <button
+                type="button"
+                class="chat-composer-chip"
+                onclick={() => attachmentInput?.click()}
+                aria-label="Add files or images"
+                title={snapshot.modelCapabilities?.images
+                  ? 'Add files or images; you can also paste images'
+                  : 'Add files'}
+              >
+                <Paperclip class="h-3.5 w-3.5" />
+              </button>
+            {/if}
             <div class="relative" data-chat-menu>
               <button
                 type="button"
                 class="chat-composer-chip"
-                class:chat-composer-chip--emphasis={conversation.vaultAccess === 'limited' && contextNote && !contextGrant}
+                aria-label="AI provider"
+                aria-expanded={openMenu === 'provider'}
+                aria-haspopup="menu"
+                onclick={() => toggleMenu('provider')}
+              >
+                <span>{conversation.provider === 'local' ? 'Local' : 'OpenAI'}</span>
+                <ChevronDown class="h-3 w-3 opacity-60" />
+              </button>
+              {#if openMenu === 'provider'}
+                <div class="chat-menu chat-menu--up" role="menu" aria-label="AI provider">
+                  {#each PROVIDERS as provider}
+                    <button
+                      type="button"
+                      class="chat-menu-item"
+                      class:chat-menu-item--active={provider === conversation.provider}
+                      role="menuitem"
+                      onclick={() => void updateProvider(provider)}
+                    >
+                      <span class="min-w-0 flex-1">
+                        <span class="block font-medium">{provider === 'local' ? 'Local' : 'OpenAI'}</span>
+                        <span class="block max-w-48 truncate text-[11px] font-normal text-muted-foreground">{providerModel(provider) || 'Configure in Settings'}</span>
+                      </span>
+                      {#if provider === conversation.provider}<Check class="h-3.5 w-3.5 shrink-0" />{/if}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="relative" data-chat-menu>
+              <button
+                type="button"
+                class="chat-composer-chip"
+                class:chat-composer-chip--emphasis={conversation.vaultAccess === 'approved' && contextNote && !contextGrant}
                 aria-label="Vault access"
                 aria-expanded={openMenu === 'vault'}
                 aria-haspopup="menu"
@@ -566,15 +873,56 @@
                       {/if}
                     </button>
                   {/each}
+                  {#if contextNote?.noteId}
+                    <div class="my-1 border-t border-border/70"></div>
+                    <button
+                      type="button"
+                      class="chat-menu-item"
+                      class:chat-menu-item--active={contextExcluded}
+                      role="menuitem"
+                      onclick={() => void toggleContextExclusion()}
+                    >
+                      <span class="min-w-0 flex-1">
+                        <span class="block font-medium">
+                          {contextExcluded ? 'Allow this note' : 'Exclude this note'}
+                        </span>
+                        <span class="block max-w-52 truncate text-[11px] font-normal text-muted-foreground">
+                          {contextExcluded
+                            ? 'Restore eligibility under the selected scope'
+                            : `Never send “${contextNote.noteTitle}” to AI`}
+                        </span>
+                      </span>
+                      {#if contextExcluded}
+                        <Check class="h-3.5 w-3.5 shrink-0" />
+                      {/if}
+                    </button>
+                  {/if}
                 </div>
               {/if}
             </div>
 
-            {#if conversation.vaultAccess === 'limited' && contextNote?.noteId}
+            {#if contextExcluded && contextNote?.noteId}
+              <div
+                class="chat-composer-chip"
+                title="This note is excluded from every AI vault scope"
+              >
+                <span>{contextAccessBusy ? '…' : 'Note excluded'}</span>
+                <button
+                  type="button"
+                  class="chat-grant-dismiss"
+                  disabled={contextAccessBusy}
+                  aria-label="Allow note for AI"
+                  title="Remove note exclusion"
+                  onclick={() => void toggleContextExclusion()}
+                >
+                  <X class="h-3 w-3" />
+                </button>
+              </div>
+            {:else if conversation.vaultAccess === 'approved' && contextNote?.noteId}
               {#if contextGrant}
                 <div
                   class="chat-composer-chip chat-composer-chip--granted group"
-                  title="This note is available to Limited chats"
+                  title="This note is available to approved-only chats"
                 >
                   <span>{contextAccessBusy ? '…' : 'Note allowed'}</span>
                   <button
@@ -593,29 +941,31 @@
                   type="button"
                   class="chat-composer-chip chat-composer-chip--action"
                   disabled={contextAccessBusy}
-                  title="Allow Limited chats to use this note"
+                  title="Allow approved-only chats to use this note"
                   onclick={() => void toggleContextAccess()}
                 >
                   {contextAccessBusy ? '…' : 'Allow note'}
                 </button>
               {/if}
-            {:else if conversation.vaultAccess === 'limited' && contextNote && !contextNote.noteId}
+            {:else if conversation.vaultAccess === 'approved' && contextNote && !contextNote.noteId}
               <span class="px-1 text-[11px] text-muted-foreground">Save the note to grant access</span>
             {/if}
 
-            <button
-              type="button"
-              class="chat-composer-chip"
-              class:chat-composer-chip--on={forceWebSearch}
-              aria-pressed={forceWebSearch}
-              title={forceWebSearch
-                ? 'Web search required for this message'
-                : 'Require web search for this message; otherwise it is used automatically when allowed'}
-              onclick={() => (forceWebSearch = !forceWebSearch)}
-            >
-              <Globe class="h-3.5 w-3.5" />
-              <span class="hidden sm:inline">Web</span>
-            </button>
+            {#if conversation.provider === 'openai'}
+              <button
+                type="button"
+                class="chat-composer-chip"
+                class:chat-composer-chip--on={forceWebSearch}
+                aria-pressed={forceWebSearch}
+                title={forceWebSearch
+                  ? 'Web search required for this message'
+                  : 'Require web search for this message; otherwise it is used automatically when allowed'}
+                onclick={() => (forceWebSearch = !forceWebSearch)}
+              >
+                <Globe class="h-3.5 w-3.5" />
+                <span class="hidden sm:inline">Web</span>
+              </button>
+            {/if}
           {/if}
 
           <div class="ml-auto flex items-center">
@@ -628,7 +978,7 @@
                 type="button"
                 class="chat-send-button"
                 class:opacity-40={!canSend && Boolean(conversation)}
-                disabled={!draft.trim()}
+                disabled={!canSend}
                 onclick={() => void submit()}
                 aria-label="Send message"
                 title="Send message"
@@ -642,6 +992,15 @@
     </footer>
   </div>
 </section>
+
+{#if previewAttachment}
+  {#key previewAttachment}
+    <AttachmentPreview
+      attachment={previewAttachment}
+      onClose={() => (previewAttachment = null)}
+    />
+  {/key}
+{/if}
 
 <style>
   .chat-panel-header {
@@ -689,6 +1048,85 @@
     font-weight: 500;
     color: var(--muted-foreground);
     transition: background-color 160ms ease, color 160ms ease;
+  }
+  .chat-attachment-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: color-mix(in oklab, var(--muted) 65%, transparent);
+    padding: 0.4rem 0.55rem;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    transition: background-color 160ms ease, color 160ms ease;
+  }
+  .chat-attachment-file:hover,
+  .chat-attachment-file:focus-visible {
+    background: var(--accent);
+    color: var(--accent-foreground);
+    outline: none;
+  }
+  .chat-attachment-image {
+    display: block;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+    border-radius: 0.75rem;
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+  }
+  .chat-attachment-image:hover,
+  .chat-attachment-image:focus-visible {
+    border-color: color-mix(in oklab, var(--foreground) 35%, var(--border));
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 20%, transparent);
+    outline: none;
+  }
+  .chat-attachment-image img {
+    display: block;
+    max-height: 13rem;
+    max-width: 100%;
+    object-fit: contain;
+  }
+  .chat-pending-attachment {
+    display: inline-flex;
+    max-width: 14rem;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: color-mix(in oklab, var(--muted) 65%, transparent);
+    padding: 0.3rem 0.4rem;
+    font-size: 0.72rem;
+  }
+  .chat-pending-attachment img {
+    height: 2rem;
+    width: 2rem;
+    border-radius: 0.4rem;
+    object-fit: cover;
+  }
+  .chat-pending-attachment-preview {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 0.5rem;
+  }
+  .chat-pending-attachment-preview:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring) 45%, transparent);
+    outline-offset: 2px;
+  }
+  .chat-pending-attachment .chat-pending-attachment-remove {
+    display: inline-flex;
+    height: 1.25rem;
+    width: 1.25rem;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    color: var(--muted-foreground);
+  }
+  .chat-pending-attachment .chat-pending-attachment-remove:hover {
+    background: var(--accent);
+    color: var(--accent-foreground);
   }
   .chat-composer-chip:hover:not(:disabled) {
     background: var(--accent);

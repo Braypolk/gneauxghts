@@ -5,9 +5,11 @@ import {
   StateField,
   Transaction,
   type Extension,
-  type Range
+  type Range,
+  type Text
 } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
+import MarkdownIt from 'markdown-it';
 import type { ProposalPreviewHunk } from '$lib/types/proposals';
 
 export type ReviewHunkStatus = 'pending' | 'kept' | 'undone' | 'modified';
@@ -25,19 +27,76 @@ export interface ProposalReviewState {
 
 export const proposalTransaction = Annotation.define<boolean>();
 export const resolveReviewHunk = StateEffect.define<{ id: string; status: ReviewHunkStatus }>();
+const removedMarkdown = new MarkdownIt({ html: false, linkify: false, breaks: true });
 
-class DeletedAnchorWidget extends WidgetType {
+class ChangeLabelWidget extends WidgetType {
+  constructor(readonly kind: 'added' | 'removed') {
+    super();
+  }
+
+  eq(other: ChangeLabelWidget) {
+    return other.kind === this.kind;
+  }
+
   toDOM(): HTMLElement {
-    const marker = document.createElement('span');
-    marker.className = 'cm-gn-proposal-deleted-anchor';
-    marker.textContent = '−';
-    marker.setAttribute('aria-label', 'Proposed deletion');
-    return marker;
+    const label = document.createElement('span');
+    label.className = `cm-gn-proposal-change-label cm-gn-proposal-${this.kind}-label`;
+    label.textContent = this.kind === 'added' ? '+' : '−';
+    label.setAttribute('aria-label', this.kind === 'added' ? 'Added' : 'Removed');
+    label.contentEditable = 'false';
+    return label;
+  }
+
+  ignoreEvent() {
+    return true;
   }
 }
 
-const added = Decoration.mark({ class: 'cm-gn-proposal-added' });
-const anchor = Decoration.widget({ widget: new DeletedAnchorWidget(), side: 1 });
+class RemovedTextWidget extends WidgetType {
+  constructor(readonly text: string) {
+    super();
+  }
+
+  eq(other: RemovedTextWidget) {
+    return other.text === this.text;
+  }
+
+  toDOM(): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-gn-proposal-removed-block';
+    wrap.contentEditable = 'false';
+
+    const label = new ChangeLabelWidget('removed').toDOM();
+    const content = document.createElement('div');
+    content.className = 'cm-gn-proposal-removed-text';
+    // Raw HTML is disabled above, so note text cannot inject arbitrary DOM.
+    // Rendering here lets rejected headings, lists, emphasis, and indentation
+    // remain legible even though that text is no longer in the editor state.
+    content.innerHTML = removedMarkdown.render(this.text);
+
+    wrap.append(label, content);
+    return wrap;
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
+const addedLine = {
+  single: Decoration.line({
+    class: 'cm-gn-proposal-added-line cm-gn-proposal-added-line-single'
+  }),
+  start: Decoration.line({
+    class: 'cm-gn-proposal-added-line cm-gn-proposal-added-line-start'
+  }),
+  middle: Decoration.line({
+    class: 'cm-gn-proposal-added-line cm-gn-proposal-added-line-middle'
+  }),
+  end: Decoration.line({
+    class: 'cm-gn-proposal-added-line cm-gn-proposal-added-line-end'
+  })
+};
 
 class HunkActionsWidget extends WidgetType {
   constructor(
@@ -102,12 +161,47 @@ function intersects(change: { fromA: number; toA: number }, hunk: ReviewHunkStat
   return change.fromA < hunk.to && change.toA > hunk.from;
 }
 
-function decorations(state: ProposalReviewState, onKeep: ProposalReviewOptions['onKeep'], onUndo: ProposalReviewOptions['onUndo']): DecorationSet {
+function addedLineRanges(doc: Text, hunk: ReviewHunkState): Range<Decoration>[] {
+  if (hunk.from >= hunk.to || doc.length === 0) return [];
+  const first = doc.lineAt(Math.min(hunk.from, doc.length));
+  const last = doc.lineAt(Math.min(Math.max(hunk.from, hunk.to - 1), doc.length));
+  const ranges: Range<Decoration>[] = [];
+  for (let number = first.number; number <= last.number; number += 1) {
+    const line = doc.line(number);
+    const decoration =
+      first.number === last.number
+        ? addedLine.single
+        : number === first.number
+          ? addedLine.start
+          : number === last.number
+            ? addedLine.end
+            : addedLine.middle;
+    ranges.push(decoration.range(line.from));
+  }
+  return ranges;
+}
+
+function decorations(
+  doc: Text,
+  state: ProposalReviewState,
+  onKeep: ProposalReviewOptions['onKeep'],
+  onUndo: ProposalReviewOptions['onUndo']
+): DecorationSet {
   const ranges: Range<Decoration>[] = [];
   for (const hunk of state.hunks) {
     if (hunk.status === 'kept' || hunk.status === 'undone') continue;
-    if (hunk.from < hunk.to) ranges.push(added.range(hunk.from, hunk.to));
-    else ranges.push(anchor.range(hunk.from));
+    if (hunk.oldText.length > 0) {
+      ranges.push(
+        Decoration.widget({
+          widget: new RemovedTextWidget(hunk.oldText),
+          block: true,
+          side: -2
+        }).range(hunk.from)
+      );
+    }
+    if (hunk.from < hunk.to) {
+      ranges.push(...addedLineRanges(doc, hunk));
+    }
     ranges.push(
       Decoration.widget({
         widget: new HunkActionsWidget(hunk, onKeep, onUndo),
@@ -115,7 +209,7 @@ function decorations(state: ProposalReviewState, onKeep: ProposalReviewOptions['
       }).range(hunk.to)
     );
   }
-  return Decoration.set(ranges.sort((a, b) => a.from - b.from));
+  return Decoration.set(ranges, true);
 }
 
 export interface ProposalReviewOptions {
@@ -204,7 +298,7 @@ export function createProposalReviewExtension(options: ProposalReviewOptions): P
       return { ...value, hunks: changed };
     },
     provide: (field) => EditorView.decorations.compute([field], (state) =>
-      decorations(state.field(field), options.onKeep, options.onUndo)
+      decorations(state.doc, state.field(field), options.onKeep, options.onUndo)
     )
   });
   return {

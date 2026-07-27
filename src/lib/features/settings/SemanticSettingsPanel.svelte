@@ -385,7 +385,7 @@
             {#if semanticDebug.recentEvents.length === 0}
               <p class="text-sm text-muted-foreground">No events captured yet.</p>
             {:else}
-              {#each semanticDebug.recentEvents as event (event.timestampMillis + event.category + event.action + (event.detail ?? ''))}
+              {#each semanticDebug.recentEvents as event, eventIndex (`${event.timestampMillis}:${event.category}:${event.action}:${event.detail ?? ''}:${event.durationMillis ?? ''}:${eventIndex}`)}
                 <div class="rounded-xl border border-border/70 bg-background/80 px-3 py-2">
                   <div class="flex items-center justify-between gap-3">
                     <p class="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">

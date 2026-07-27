@@ -7,14 +7,30 @@ import type {
   ChatExcerpt,
   ChatKeyStatus,
   ChatMessage,
+  ChatNoteCandidate,
   ChatNoteGrant,
+  ChatNotePolicy,
   ChatSendReceipt,
+  ChatActiveNoteSnapshot,
+  ChatAttachment,
+  ChatAttachmentInput,
+  ChatAgentProposal,
+  ChatModelCapabilities,
+  ChatProvider,
+  ChatSettings,
+  LocalModel,
   ProjectionConflictResolution,
-  VaultAccess, ChatSettings
+  VaultAccess
 } from './types';
+import type { CommitNoteReviewResult } from '$lib/types/proposals';
 
 interface RawChatSettings {
-  provider: string; model: string; defaultAccess: VaultAccess;
+  provider: ChatProvider | 'ollama';
+  model: string;
+  defaultAccess: VaultAccess;
+  openaiModel?: string;
+  localModel?: string;
+  localBaseUrl?: string;
   serviceTier?: ChatSettings['serviceTier'];
   webAccess?: ChatSettings['webAccess'];
   atlasVisibility?: ChatSettings['atlasVisibility'];
@@ -22,6 +38,7 @@ interface RawChatSettings {
 interface RawSummary {
   id: string; title: string; access: VaultAccess; status: string;
   createdAtMillis: number; updatedAtMillis: number; messageCount: number; detached: boolean;
+  provider?: ChatProvider | 'ollama'; model?: string;
 }
 interface RawSource {
   kind: string; noteId?: string | null; notePath?: string | null; title: string; excerpt: string;
@@ -30,6 +47,7 @@ interface RawSource {
 interface RawMessage {
   id: string; conversationId: string; ordinal: number; role: string; status: string; content: string;
   error?: string | null; part: number; createdAtMillis: number; sources: RawSource[];
+  attachments?: ChatAttachment[];
 }
 interface RawExcerpt {
   id: string; conversationId: string; messageId: string; startOffset: number; endOffset: number;
@@ -48,9 +66,13 @@ interface RawProjectionConflictEvent {
 }
 
 function normalizeSettings(raw: RawChatSettings): ChatSettings {
+  const provider = raw.provider === 'ollama' ? 'local' : raw.provider;
   return {
-    provider: raw.provider,
+    provider,
     model: raw.model,
+    openaiModel: raw.openaiModel ?? (provider === 'openai' ? raw.model : 'gpt-5.6-terra'),
+    localModel: raw.localModel ?? (provider === 'local' ? raw.model : ''),
+    localBaseUrl: raw.localBaseUrl ?? 'http://localhost:1234/v1',
     serviceTier: raw.serviceTier ?? 'standard',
     webAccess: raw.webAccess ?? 'auto',
     defaultVaultAccess: raw.defaultAccess,
@@ -67,7 +89,9 @@ function normalizeSummary(raw: RawSummary): ChatConversationSummary {
     createdAtMillis: raw.createdAtMillis,
     updatedAtMillis: raw.updatedAtMillis,
     messageCount: raw.messageCount,
-    lastMessagePreview: null
+    lastMessagePreview: null,
+    provider: raw.provider === 'ollama' ? 'local' : (raw.provider ?? 'openai'),
+    model: raw.model ?? 'gpt-5.6-terra'
   };
 }
 
@@ -100,6 +124,7 @@ function normalizeMessage(raw: RawMessage) {
     requestId: null,
     errorMessage: raw.error ?? null,
     citations: (raw.sources ?? []).map(normalizeSource),
+    attachments: raw.attachments ?? [],
     linkTarget: null
   };
 }
@@ -134,7 +159,16 @@ export interface ChatApi {
   renameConversation(conversationId: string, title: string): Promise<ChatConversationSummary>;
   archiveConversation(conversationId: string, archived: boolean): Promise<ChatConversationSummary>;
   setConversationVaultAccess(conversationId: string, vaultAccess: VaultAccess): Promise<ChatConversationSummary>;
-  sendMessage(input: { conversationId: string; content: string; forceWebSearch?: boolean }): Promise<ChatSendReceipt>;
+  setConversationProvider(conversationId: string, provider: ChatProvider, model: string): Promise<ChatConversationSummary>;
+  listLocalModels(baseUrl: string): Promise<LocalModel[]>;
+  getModelCapabilities(provider: ChatProvider, model: string): Promise<ChatModelCapabilities>;
+  sendMessage(input: {
+    conversationId: string;
+    content: string;
+    attachments?: ChatAttachmentInput[];
+    forceWebSearch?: boolean;
+    activeNote?: ChatActiveNoteSnapshot | null;
+  }): Promise<ChatSendReceipt>;
   cancelRequest(requestId: string): Promise<void>;
   retryMessage(messageId: string): Promise<ChatSendReceipt>;
   createExcerpt(messageId: string, text: string): Promise<ChatExcerpt>;
@@ -143,6 +177,15 @@ export interface ChatApi {
   listGrants(): Promise<ChatNoteGrant[]>;
   grantNote(noteId: string): Promise<ChatNoteGrant>;
   revokeNote(noteId: string): Promise<void>;
+  setNoteExcluded(noteId: string, title: string, excluded: boolean): Promise<void>;
+  listNotePolicies(): Promise<ChatNotePolicy[]>;
+  searchNotesForPolicy(query: string, limit?: number): Promise<ChatNoteCandidate[]>;
+  listPendingProposals(conversationId: string): Promise<ChatAgentProposal[]>;
+  commitAgentProposal(
+    proposalId: string,
+    markdown?: string
+  ): Promise<CommitNoteReviewResult>;
+  dismissAgentProposal(proposalId: string): Promise<ChatAgentProposal>;
   resolveProjectionConflict(conversationId: string, resolution: ProjectionConflictResolution): Promise<ChatConversation>;
   on<K extends keyof ChatEventMap>(event: K, handler: (payload: ChatEventMap[K]) => void): Promise<UnlistenFn>;
 }
@@ -158,6 +201,9 @@ export const CHAT_COMMANDS = {
   renameConversation: 'chat_rename_conversation',
   archiveConversation: 'chat_archive_conversation',
   setConversationVaultAccess: 'chat_update_conversation_policy',
+  setConversationProvider: 'chat_update_conversation_provider',
+  listLocalModels: 'chat_list_local_models',
+  getModelCapabilities: 'chat_get_model_capabilities',
   sendMessage: 'chat_send_message',
   cancelRequest: 'chat_cancel_request',
   retryMessage: 'chat_retry_message',
@@ -167,6 +213,12 @@ export const CHAT_COMMANDS = {
   listGrants: 'chat_list_grants',
   grantNote: 'chat_grant_note',
   revokeNote: 'chat_revoke_note',
+  setNoteExcluded: 'chat_set_note_excluded',
+  listNotePolicies: 'chat_list_note_policies',
+  searchNotesForPolicy: 'chat_search_notes',
+  listPendingProposals: 'chat_list_pending_proposals',
+  commitAgentProposal: 'commit_agent_proposal',
+  dismissAgentProposal: 'dismiss_agent_proposal',
   resolveProjectionConflict: 'chat_resolve_projection_conflict'
 } as const;
 
@@ -181,6 +233,9 @@ export class TauriChatApi implements ChatApi {
       settings: {
         provider: settings.provider,
         model: settings.model,
+        openaiModel: settings.openaiModel,
+        localModel: settings.localModel,
+        localBaseUrl: settings.localBaseUrl,
         serviceTier: settings.serviceTier,
         webAccess: settings.webAccess,
         defaultAccess: settings.defaultVaultAccess,
@@ -222,9 +277,32 @@ export class TauriChatApi implements ChatApi {
       conversationId, access: vaultAccess
     }));
   }
-  async sendMessage(input: { conversationId: string; content: string; forceWebSearch?: boolean }) {
+  async setConversationProvider(conversationId: string, provider: ChatProvider, model: string) {
+    return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.setConversationProvider, {
+      conversationId, request: { provider, model }
+    }));
+  }
+  listLocalModels(baseUrl: string) {
+    return invoke<LocalModel[]>(CHAT_COMMANDS.listLocalModels, { baseUrl });
+  }
+  getModelCapabilities(provider: ChatProvider, model: string) {
+    return invoke<ChatModelCapabilities>(CHAT_COMMANDS.getModelCapabilities, { provider, model });
+  }
+  async sendMessage(input: {
+    conversationId: string;
+    content: string;
+    attachments?: ChatAttachmentInput[];
+    forceWebSearch?: boolean;
+    activeNote?: ChatActiveNoteSnapshot | null;
+  }) {
     const raw = await invoke<RawReceipt>(CHAT_COMMANDS.sendMessage, {
-      request: { conversationId: input.conversationId, content: input.content, forceWebSearch: input.forceWebSearch }
+      request: {
+        conversationId: input.conversationId,
+        content: input.content,
+        attachments: input.attachments ?? [],
+        forceWebSearch: input.forceWebSearch,
+        activeNote: input.activeNote ?? null
+      }
     });
     this.#messageConversations.set(raw.userMessageId, raw.conversationId);
     this.#messageConversations.set(raw.assistantMessageId, raw.conversationId);
@@ -233,7 +311,18 @@ export class TauriChatApi implements ChatApi {
     return {
       requestId: raw.requestId,
       conversationId: raw.conversationId,
-      userMessage: this.#placeholderMessage(raw.userMessageId, raw.conversationId, 'user', input.content, 'completed', now),
+      userMessage: this.#placeholderMessage(
+        raw.userMessageId,
+        raw.conversationId,
+        'user',
+        input.content,
+        'completed',
+        now,
+        (input.attachments ?? []).map((attachment, index) => ({
+          ...attachment,
+          id: `pending-${raw.userMessageId}-${index}`
+        }))
+      ),
       assistantMessage: this.#placeholderMessage(raw.assistantMessageId, raw.conversationId, 'assistant', '', 'streaming', now + 1)
     };
   }
@@ -288,14 +377,42 @@ export class TauriChatApi implements ChatApi {
     return grant;
   }
   async revokeNote(noteId: string) { await invoke(CHAT_COMMANDS.revokeNote, { noteId }); }
+  async setNoteExcluded(noteId: string, title: string, excluded: boolean) {
+    await invoke(CHAT_COMMANDS.setNoteExcluded, { noteId, title, excluded });
+  }
+  listNotePolicies() {
+    return invoke<ChatNotePolicy[]>(CHAT_COMMANDS.listNotePolicies);
+  }
+  searchNotesForPolicy(query: string, limit = 12) {
+    return invoke<ChatNoteCandidate[]>(CHAT_COMMANDS.searchNotesForPolicy, {
+      query,
+      limit
+    });
+  }
+  listPendingProposals(conversationId: string) {
+    return invoke<ChatAgentProposal[]>(CHAT_COMMANDS.listPendingProposals, { conversationId });
+  }
+  commitAgentProposal(proposalId: string, markdown?: string) {
+    return invoke<CommitNoteReviewResult>(CHAT_COMMANDS.commitAgentProposal, {
+      proposalId,
+      markdown
+    });
+  }
+  dismissAgentProposal(proposalId: string) {
+    return invoke<ChatAgentProposal>(CHAT_COMMANDS.dismissAgentProposal, { proposalId });
+  }
   async resolveProjectionConflict(conversationId: string, resolution: ProjectionConflictResolution) {
     const action = resolution === 'convertToNote' ? 'convert' : 'restore';
     await invoke<string | null>(CHAT_COMMANDS.resolveProjectionConflict, { conversationId, action });
     return this.getConversation(conversationId);
   }
   on<K extends keyof ChatEventMap>(event: K, handler: (payload: ChatEventMap[K]) => void) {
-    return listen<RawStreamEvent | RawProjectionConflictEvent>(event, ({ payload }) => {
+    return listen<RawStreamEvent | RawProjectionConflictEvent | ChatAgentProposal>(event, ({ payload }) => {
       if (event === 'chat://projection-conflict') {
+        handler(payload as ChatEventMap[K]);
+        return;
+      }
+      if (event === 'chat://proposal' || event === 'chat://activity') {
         handler(payload as ChatEventMap[K]);
         return;
       }
@@ -347,12 +464,13 @@ export class TauriChatApi implements ChatApi {
     role: 'user' | 'assistant',
     content: string,
     status: ChatMessage['status'],
-    createdAtMillis: number
+    createdAtMillis: number,
+    attachments: ChatAttachment[] = []
   ): ChatMessage {
     this.#messageConversations.set(id, conversationId);
     return {
       id, conversationId, role, content, status, createdAtMillis, updatedAtMillis: createdAtMillis,
-      requestId: null, errorMessage: null, citations: [], linkTarget: null
+      requestId: null, errorMessage: null, citations: [], attachments, linkTarget: null
     };
   }
 }
