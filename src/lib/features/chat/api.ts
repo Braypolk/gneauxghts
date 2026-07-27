@@ -59,7 +59,11 @@ interface RawConversation extends RawSummary {
 interface RawReceipt { requestId: string; conversationId: string; userMessageId: string; assistantMessageId: string }
 interface RawStreamEvent {
   requestId: string; conversationId: string; messageId: string; delta?: string; content?: string;
-  source?: RawSource; error?: string;
+  source?: RawSource; error?: string; conversation?: RawSummary | null;
+}
+interface RawTitleUpdatedEvent {
+  conversationId: string;
+  conversation: RawSummary;
 }
 interface RawProjectionConflictEvent {
   conversationId: string; notePath: string; deleted: boolean;
@@ -407,7 +411,7 @@ export class TauriChatApi implements ChatApi {
     return this.getConversation(conversationId);
   }
   on<K extends keyof ChatEventMap>(event: K, handler: (payload: ChatEventMap[K]) => void) {
-    return listen<RawStreamEvent | RawProjectionConflictEvent | ChatAgentProposal>(event, ({ payload }) => {
+    return listen<RawStreamEvent | RawTitleUpdatedEvent | RawProjectionConflictEvent | ChatAgentProposal>(event, ({ payload }) => {
       if (event === 'chat://projection-conflict') {
         handler(payload as ChatEventMap[K]);
         return;
@@ -416,9 +420,21 @@ export class TauriChatApi implements ChatApi {
         handler(payload as ChatEventMap[K]);
         return;
       }
+      if (event === 'chat://title-updated') {
+        const titleUpdate = payload as RawTitleUpdatedEvent;
+        handler({
+          conversationId: titleUpdate.conversationId,
+          conversation: normalizeSummary(titleUpdate.conversation)
+        } as ChatEventMap[K]);
+        return;
+      }
       const stream = payload as RawStreamEvent;
       if (event === 'chat://started') {
-        handler({ ...stream, message: this.#placeholderMessage(stream.messageId, stream.conversationId, 'assistant', '', 'streaming', Date.now()) } as ChatEventMap[K]);
+        handler({
+          ...stream,
+          conversation: stream.conversation ? normalizeSummary(stream.conversation) : null,
+          message: this.#placeholderMessage(stream.messageId, stream.conversationId, 'assistant', '', 'streaming', Date.now())
+        } as ChatEventMap[K]);
       } else if (event === 'chat://text-delta') {
         handler({ ...stream, delta: stream.delta ?? '' } as ChatEventMap[K]);
       } else if (event === 'chat://source') {
@@ -431,7 +447,11 @@ export class TauriChatApi implements ChatApi {
         if (event === 'chat://failed') {
           handler({ ...stream, message, error: stream.error ?? 'The response failed.', retryable: true } as ChatEventMap[K]);
         } else {
-          handler({ ...stream, message } as ChatEventMap[K]);
+          handler({
+            ...stream,
+            conversation: stream.conversation ? normalizeSummary(stream.conversation) : null,
+            message
+          } as ChatEventMap[K]);
         }
       }
     });

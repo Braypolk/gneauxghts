@@ -241,6 +241,7 @@ export class ChatControllerStore implements ChatController {
       this.#ifCurrent(event, () => {
         this.#updateConversation((conversation) => ({
           ...conversation,
+          ...(event.conversation ?? {}),
           activeRequestId: event.requestId,
           messages: upsertTerminalMessage(conversation.messages, event.message)
         }));
@@ -300,6 +301,14 @@ export class ChatControllerStore implements ChatController {
           });
         }
       }),
+    'chat://title-updated': (event) => {
+      if (this.#disposed) return;
+      this.conversations = mergeSummary(this.conversations, event.conversation);
+      if (this.conversation?.id === event.conversationId) {
+        this.conversation = { ...this.conversation, ...event.conversation };
+      }
+      this.#notify();
+    },
     'chat://cancelled': (event) =>
       this.#ifCurrent(event, () => {
         this.#updateConversation((conversation) => ({

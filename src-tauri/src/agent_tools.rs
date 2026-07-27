@@ -4,7 +4,7 @@ use crate::{
     note::{self, DocumentKind},
     proposals::{
         preview_note_change, preview_note_change_from_working, preview_note_creation,
-        ProposalPreview, ProposedTextEdit,
+        preview_note_rewrite, preview_note_rewrite_from_working, ProposalPreview, ProposedTextEdit,
     },
     semantic::db::content_hash,
 };
@@ -12,7 +12,7 @@ use rig_core::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -50,6 +50,54 @@ struct WorkingNote {
     disk_hash: String,
 }
 
+#[derive(Default)]
+struct ReadCoverage {
+    content_hash: String,
+    total_lines: usize,
+    ranges: Vec<(usize, usize)>,
+}
+
+impl ReadCoverage {
+    fn record(
+        &mut self,
+        content_hash: &str,
+        start_line: usize,
+        end_line: usize,
+        total_lines: usize,
+    ) {
+        if self.content_hash != content_hash {
+            self.content_hash = content_hash.to_string();
+            self.ranges.clear();
+        }
+        self.total_lines = total_lines;
+        if start_line <= end_line {
+            self.ranges.push((start_line, end_line));
+        }
+    }
+
+    fn complete_for(&self, content_hash: &str) -> bool {
+        if self.content_hash != content_hash {
+            return false;
+        }
+        if self.total_lines == 0 {
+            return true;
+        }
+        let mut ranges = self.ranges.clone();
+        ranges.sort_unstable();
+        let mut covered_through = 0usize;
+        for (start, end) in ranges {
+            if start > covered_through.saturating_add(1) {
+                return false;
+            }
+            covered_through = covered_through.max(end);
+            if covered_through >= self.total_lines {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentToolContext {
     app: AppHandle,
@@ -61,6 +109,7 @@ pub(crate) struct AgentToolContext {
     access: VaultAccess,
     active_note: Option<ActiveNoteSnapshot>,
     surfaced: Arc<Mutex<HashSet<String>>>,
+    read_coverage: Arc<Mutex<HashMap<String, ReadCoverage>>>,
     sources: Arc<Mutex<Vec<ChatSource>>>,
     proposal_lock: Arc<Mutex<()>>,
     local_model: bool,
@@ -90,6 +139,7 @@ impl AgentToolContext {
             access,
             active_note,
             surfaced: Arc::new(Mutex::new(HashSet::new())),
+            read_coverage: Arc::new(Mutex::new(HashMap::new())),
             sources: Arc::new(Mutex::new(Vec::new())),
             proposal_lock: Arc::new(Mutex::new(())),
             local_model,
@@ -103,6 +153,7 @@ impl AgentToolContext {
             Box::new(SearchNotesTool(self.clone())),
             Box::new(ReadNoteTool(self.clone())),
             Box::new(ProposeNoteEditsTool(self.clone())),
+            Box::new(ProposeNoteRewriteTool(self.clone())),
             Box::new(ProposeCreateNoteTool(self.clone())),
         ]
     }
@@ -148,6 +199,15 @@ impl AgentToolContext {
                 .map_err(|error| error.to_string())?;
             let excerpt = working.body.chars().take(12_000).collect::<String>();
             self.surface(&indexed.note_id);
+            if excerpt == working.body {
+                self.record_read(
+                    &indexed.note_id,
+                    &working.content_hash,
+                    1,
+                    working.body.lines().count(),
+                    working.body.lines().count(),
+                );
+            }
             self.add_source(&indexed.note_id, path, &indexed.title, &excerpt, None);
             attached.push(format!(
                 "[[{}]] (noteId: {}, contentHash: {}, pendingChanges: {})\n{}",
@@ -203,6 +263,16 @@ impl AgentToolContext {
         };
         let (body, truncated) = truncate_active_body(&authoritative);
         self.surface(note_id);
+        if !truncated {
+            let total_lines = authoritative.body.lines().count();
+            self.record_read(
+                note_id,
+                &authoritative.body_hash,
+                1,
+                total_lines,
+                total_lines,
+            );
+        }
         self.add_source(note_id, &path, &authoritative.title, &body, None);
         Ok(json!({
             "status":"ready",
@@ -246,6 +316,36 @@ impl AgentToolContext {
         self.surfaced
             .lock()
             .map(|surfaced| surfaced.contains(note_id))
+            .unwrap_or(false)
+    }
+
+    fn record_read(
+        &self,
+        note_id: &str,
+        content_hash: &str,
+        start_line: usize,
+        end_line: usize,
+        total_lines: usize,
+    ) {
+        if let Ok(mut coverage) = self.read_coverage.lock() {
+            coverage.entry(note_id.to_string()).or_default().record(
+                content_hash,
+                start_line,
+                end_line,
+                total_lines,
+            );
+        }
+    }
+
+    fn was_fully_read(&self, note_id: &str, content_hash: &str) -> bool {
+        self.read_coverage
+            .lock()
+            .ok()
+            .and_then(|coverage| {
+                coverage
+                    .get(note_id)
+                    .map(|read| read.complete_for(content_hash))
+            })
             .unwrap_or(false)
     }
 
@@ -350,6 +450,36 @@ impl AgentToolContext {
 
     fn emit_proposal(&self, proposal: &ChatAgentProposal) {
         let _ = self.app.emit("chat://proposal", proposal);
+    }
+
+    fn update_target_error(
+        &self,
+        note_id: &str,
+        expected_content_hash: &str,
+        working: &WorkingNote,
+    ) -> Result<Option<Value>, AgentToolError> {
+        if working.content_hash != expected_content_hash {
+            return Ok(Some(
+                json!({"status":"error","retryable":true,"code":"content_changed","message":"The note or its pending changes changed. Read it again and retry with the new contentHash.","contentHash":working.content_hash}),
+            ));
+        }
+        if !working.pending_changes {
+            return Ok(None);
+        }
+        let pending = self
+            .service
+            .pending_agent_proposal_for_note(note_id)
+            .map_err(AgentToolError)?
+            .ok_or_else(|| AgentToolError("Pending proposal disappeared".to_string()))?;
+        let expected_disk_hash = pending
+            .base_hash
+            .unwrap_or_else(|| working.disk_hash.clone());
+        if expected_disk_hash != working.disk_hash {
+            return Ok(Some(
+                json!({"status":"error","retryable":true,"code":"content_changed","message":"The saved note changed underneath its pending proposal. Resolve the conflict before preparing more changes.","contentHash":working.disk_hash}),
+            ));
+        }
+        Ok(None)
     }
 }
 
@@ -568,6 +698,13 @@ impl Tool for ReadNoteTool {
             end_line = index + 1;
         }
         self.0.surface(&args.note_id);
+        self.0.record_read(
+            &args.note_id,
+            &working.content_hash,
+            start_line,
+            end_line,
+            lines.len(),
+        );
         self.0.add_source(
             &args.note_id,
             &path,
@@ -668,26 +805,11 @@ impl Tool for ProposeNoteEditsTool {
         let raw = fs::read_to_string(&path)
             .map_err(|error| AgentToolError(format!("Unable to read note: {error}")))?;
         let working = self.0.working_note(&args.note_id, &raw)?;
-        if working.content_hash != args.expected_content_hash {
-            return Ok(
-                json!({"status":"error","retryable":true,"code":"content_changed","message":"The note or its pending changes changed. Read it again and retry with the new contentHash.","contentHash":working.content_hash}),
-            );
-        }
-        if working.pending_changes {
-            let pending = self
-                .0
-                .service
-                .pending_agent_proposal_for_note(&args.note_id)
-                .map_err(AgentToolError)?
-                .ok_or_else(|| AgentToolError("Pending proposal disappeared".to_string()))?;
-            let expected_disk_hash = pending
-                .base_hash
-                .unwrap_or_else(|| working.disk_hash.clone());
-            if expected_disk_hash != working.disk_hash {
-                return Ok(
-                    json!({"status":"error","retryable":true,"code":"content_changed","message":"The saved note changed underneath its pending proposal. Resolve the conflict before preparing more changes.","contentHash":working.disk_hash}),
-                );
-            }
+        if let Some(error) =
+            self.0
+                .update_target_error(&args.note_id, &args.expected_content_hash, &working)?
+        {
+            return Ok(error);
         }
         let preview_result = if working.pending_changes {
             preview_note_change_from_working(
@@ -721,6 +843,117 @@ impl Tool for ProposeNoteEditsTool {
             }
         };
         self.0.proposal_failures.store(0, Ordering::Relaxed);
+        let payload = serde_json::to_value(&args)
+            .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
+        let preview_value = serde_json::to_value(&preview)
+            .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
+        let proposal = self
+            .0
+            .service
+            .stage_agent_proposal(
+                &self.0.run_id,
+                &self.0.conversation_id,
+                &self.0.assistant_message_id,
+                "update",
+                Some(&args.note_id),
+                None,
+                &title,
+                Some(&working.disk_hash),
+                &payload,
+                &preview_value,
+            )
+            .map_err(AgentToolError)?;
+        self.0.emit_proposal(&proposal);
+        Ok(json!({"status":"pending_review","proposalId":proposal.id,"title":title}))
+    }
+}
+
+#[derive(Clone)]
+struct ProposeNoteRewriteTool(AgentToolContext);
+
+#[derive(Deserialize, Serialize)]
+struct RewriteArgs {
+    note_id: String,
+    expected_content_hash: String,
+    markdown: String,
+}
+
+impl Tool for ProposeNoteRewriteTool {
+    const NAME: &'static str = "propose_note_rewrite";
+    type Error = AgentToolError;
+    type Args = RewriteArgs;
+    type Output = Value;
+
+    fn description(&self) -> String {
+        "Prepare a reviewed, no-write complete rewrite of a note fully read during this run. Use this for whole-note cleanup, restructuring, translation, or tone changes; use propose_note_edits for localized changes. Read every page of the current note first. markdown must contain the complete replacement body, including every part that should be retained, and must omit managed frontmatter. If pendingChanges is true, rewrite the complete current unapproved working copy. The user must explicitly Keep the preview before disk is changed.".to_string()
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type":"object",
+            "properties":{
+                "note_id":{"type":"string"},
+                "expected_content_hash":{"type":"string"},
+                "markdown":{
+                    "type":"string",
+                    "minLength":1,
+                    "description":"Complete replacement Markdown body. Include all content to retain; omit managed frontmatter."
+                }
+            },
+            "required":["note_id","expected_content_hash","markdown"],
+            "additionalProperties":false
+        })
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        self.0.activity("Preparing rewrite");
+        if !self.0.allowed(&args.note_id)? || !self.0.was_surfaced(&args.note_id) {
+            return Ok(
+                json!({"status":"error","retryable":false,"code":"target_not_surfaced","message":"Read or search this note during the current run before proposing a rewrite."}),
+            );
+        }
+        let _guard = self
+            .0
+            .proposal_lock
+            .lock()
+            .map_err(|_| AgentToolError("Proposal lock poisoned".to_string()))?;
+        let (path, title, _) = self.0.resolve_note(&args.note_id)?;
+        let raw = fs::read_to_string(&path)
+            .map_err(|error| AgentToolError(format!("Unable to read note: {error}")))?;
+        let working = self.0.working_note(&args.note_id, &raw)?;
+        if !self.0.was_fully_read(&args.note_id, &working.content_hash) {
+            return Ok(
+                json!({"status":"error","retryable":true,"code":"note_not_fully_read","message":"Read the complete current note with read_note, paging from line 1 until hasMore is false, before proposing a complete rewrite."}),
+            );
+        }
+        if let Some(error) =
+            self.0
+                .update_target_error(&args.note_id, &args.expected_content_hash, &working)?
+        {
+            return Ok(error);
+        }
+        let preview_result = if working.pending_changes {
+            preview_note_rewrite_from_working(
+                self.0.service.notes_root(),
+                &path.to_string_lossy(),
+                Some(&working.body),
+                &args.markdown,
+            )
+        } else {
+            preview_note_rewrite(
+                self.0.service.notes_root(),
+                &path.to_string_lossy(),
+                &args.markdown,
+            )
+        };
+        let preview = match preview_result {
+            Ok(preview) => preview,
+            Err(message) => {
+                return Ok(
+                    json!({"status":"error","retryable":false,"code":"invalid_rewrite","message":message}),
+                );
+            }
+        };
         let payload = serde_json::to_value(&args)
             .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
         let preview_value = serde_json::to_value(&preview)
@@ -854,6 +1087,21 @@ fn wikilink_titles(message: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_coverage_requires_contiguous_pages_from_the_current_content() {
+        let mut coverage = ReadCoverage::default();
+        coverage.record("hash-1", 1, 3, 8);
+        coverage.record("hash-1", 6, 8, 8);
+        assert!(!coverage.complete_for("hash-1"));
+
+        coverage.record("hash-1", 4, 5, 8);
+        assert!(coverage.complete_for("hash-1"));
+
+        coverage.record("hash-2", 7, 8, 8);
+        assert!(!coverage.complete_for("hash-1"));
+        assert!(!coverage.complete_for("hash-2"));
+    }
 
     #[test]
     fn active_note_context_is_bounded_but_keeps_selection() {

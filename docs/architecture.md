@@ -305,10 +305,13 @@ Backend Rust remains authoritative for validation and file mutation.
 
 ### Proposal Apply
 
-1. The Rig agent calls `propose_note_edits` or `propose_create_note`.
+1. The Rig agent calls `propose_note_edits`, `propose_note_rewrite`, or
+   `propose_create_note`. Targeted edits use exact anchors; complete rewrites
+   provide one replacement Markdown body.
 2. Rust validates current policy, run-scoped target provenance, hashes, and
-   exact anchors or explicit append/prepend boundaries, then persists a
-   no-write preview in `ai.sqlite3`.
+   either exact anchors, explicit append/prepend boundaries, or complete
+   current-note read coverage for a rewrite, then persists a no-write preview
+   in `ai.sqlite3`.
 3. Chat receives `chat://proposal` immediately and opens the durable review.
 4. Keep calls `commit_agent_proposal`; Rust rechecks policy and OCC before one
    write. Undo resolves the proposal without writing.

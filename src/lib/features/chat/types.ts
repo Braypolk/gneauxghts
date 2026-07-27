@@ -190,6 +190,7 @@ export interface ChatStreamIdentity {
 
 export interface ChatStartedEvent extends ChatStreamIdentity {
   message: ChatMessage;
+  conversation?: ChatConversationSummary | null;
 }
 
 export interface ChatTextDeltaEvent extends ChatStreamIdentity {
@@ -203,6 +204,11 @@ export interface ChatSourceEvent extends ChatStreamIdentity {
 export interface ChatCompletedEvent extends ChatStreamIdentity {
   message: ChatMessage;
   conversation?: ChatConversationSummary | null;
+}
+
+export interface ChatTitleUpdatedEvent {
+  conversationId: string;
+  conversation: ChatConversationSummary;
 }
 
 export interface ChatCancelledEvent extends ChatStreamIdentity {
@@ -246,6 +252,7 @@ export interface ChatEventMap {
   'chat://text-delta': ChatTextDeltaEvent;
   'chat://source': ChatSourceEvent;
   'chat://completed': ChatCompletedEvent;
+  'chat://title-updated': ChatTitleUpdatedEvent;
   'chat://cancelled': ChatCancelledEvent;
   'chat://failed': ChatFailedEvent;
   'chat://activity': ChatActivityEvent;

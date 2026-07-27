@@ -105,6 +105,59 @@ pub(crate) fn preview_note_change(
     preview_note_change_from_working(notes_dir, path, None, edits)
 }
 
+pub(crate) fn preview_note_rewrite(
+    notes_dir: &Path,
+    path: &str,
+    markdown: &str,
+) -> Result<ProposalPreview, String> {
+    preview_note_rewrite_from_working(notes_dir, path, None, markdown)
+}
+
+/// Replace the complete editor body of a note, then build the same review
+/// preview used by targeted edits. When a pending proposal exists, `working_body`
+/// is its current unapproved body; the resulting diff still compares against
+/// the authoritative note on disk.
+pub(crate) fn preview_note_rewrite_from_working(
+    notes_dir: &Path,
+    path: &str,
+    working_body: Option<&str>,
+    markdown: &str,
+) -> Result<ProposalPreview, String> {
+    if markdown.trim().is_empty() {
+        return Err("A complete rewrite cannot be empty.".to_string());
+    }
+
+    let note_path = validate_existing_note_path(notes_dir, path)?;
+    reject_chat_projection_path(&note_path)?;
+    let raw = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
+    let fallback_title = note_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let (title, base) = note::extract_file_name_title_and_body(&raw, &fallback_title);
+    let working = working_body.unwrap_or(&base);
+    if markdown == working {
+        return Err("The proposed rewrite does not change the current note.".to_string());
+    }
+
+    let hunks = diff_preview_hunks(&base, markdown);
+    if hunks.is_empty() {
+        return Err("The combined proposal does not change the note.".to_string());
+    }
+
+    let base_hash = content_hash(&raw);
+    Ok(ProposalPreview {
+        review_id: content_hash(&format!("{}\0{}\0{}", path, base_hash, markdown)),
+        note_path: note_path.to_string_lossy().into_owned(),
+        title,
+        base_content_hash: base_hash,
+        base_editor_markdown: base,
+        proposed_editor_markdown: markdown.to_string(),
+        hunks,
+    })
+}
+
 /// Apply new edits to an uncommitted working body, then rebuild one combined
 /// preview against the authoritative note on disk. This lets later agent runs
 /// fold into an unresolved proposal without treating the proposal as saved.
@@ -621,7 +674,8 @@ fn reject_chat_projection_path(path: &Path) -> Result<(), String> {
 mod tests {
     use super::{
         commit_note_creation, commit_note_review, preview_note_change,
-        preview_note_change_from_working, preview_note_creation, ProposedTextEdit,
+        preview_note_change_from_working, preview_note_creation, preview_note_rewrite,
+        preview_note_rewrite_from_working, ProposedTextEdit,
     };
     use crate::{
         semantic::db::content_hash,
@@ -815,6 +869,61 @@ mod tests {
         assert_eq!(folded.hunks[0].new_text, "New");
         assert_eq!(folded.hunks[1].old_text, " beta");
         assert_eq!(folded.hunks[1].new_text, "");
+    }
+
+    #[test]
+    fn complete_rewrite_builds_a_review_without_writing() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("proposal-rewrite-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
+        let dir = setup("proposal-rewrite");
+        let (path, hash) = write_note(
+            &dir,
+            "Call Notes.md",
+            "# Call Notes\n\nrough intro\n\n- first point\n- second point\n",
+        );
+
+        let markdown = "Clear introduction.\n\n## Key points\n\n- First point\n- Second point";
+        let preview = preview_note_rewrite(dir.path(), &path, markdown).expect("rewrite preview");
+
+        assert_eq!(preview.base_content_hash, hash);
+        assert_eq!(
+            preview.base_editor_markdown,
+            "rough intro\n\n- first point\n- second point"
+        );
+        assert_eq!(preview.proposed_editor_markdown, markdown);
+        assert!(!preview.hunks.is_empty());
+        assert!(fs::read_to_string(&path)
+            .expect("read")
+            .contains("rough intro"));
+    }
+
+    #[test]
+    fn complete_rewrite_folds_over_pending_work_and_rejects_noops() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("proposal-rewrite-fold-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
+        let dir = setup("proposal-rewrite-fold");
+        let (path, _) = write_note(&dir, "Plan.md", "# Plan\n\nOriginal body\n");
+        let working = "Pending summary\n\nOriginal body";
+        let markdown = "## Summary\n\nPending summary\n\n## Details\n\nOriginal body";
+
+        let preview = preview_note_rewrite_from_working(dir.path(), &path, Some(working), markdown)
+            .expect("folded rewrite");
+
+        assert_eq!(preview.base_editor_markdown, "Original body");
+        assert_eq!(preview.proposed_editor_markdown, markdown);
+        assert!(!preview.hunks.is_empty());
+        assert!(preview.proposed_editor_markdown.contains("Pending summary"));
+        assert_eq!(
+            preview_note_rewrite_from_working(dir.path(), &path, Some(markdown), markdown)
+                .expect_err("unchanged rewrite"),
+            "The proposed rewrite does not change the current note."
+        );
+        assert_eq!(
+            preview_note_rewrite(dir.path(), &path, " \n ").expect_err("empty rewrite"),
+            "A complete rewrite cannot be empty."
+        );
     }
 
     #[test]

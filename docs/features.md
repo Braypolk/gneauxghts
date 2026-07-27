@@ -217,12 +217,15 @@ normalized conversation history and one typed tool surface:
 - `search_notes`
 - `read_note`
 - `propose_note_edits`
+- `propose_note_rewrite`
 - `propose_create_note`
 
 Runs permit at most six model calls and two invalid-tool-call retries. Read
-tools may execute concurrently; proposal staging is serialized. The frontend
-receives text deltas, compact activity events, citations, and durable proposal
-events, never reasoning traces.
+tools may execute concurrently; proposal staging is serialized. Complete
+rewrites require the current content hash and contiguous read coverage for the
+whole note, while targeted edits may operate on exact surfaced excerpts. The
+frontend receives text deltas, compact activity events, citations, and durable
+proposal events, never reasoning traces.
 
 Chat attachments are capability-gated per provider/model. Hosted OpenAI uses a
 conservative multimodal model allowlist. The standard OpenAI-compatible model

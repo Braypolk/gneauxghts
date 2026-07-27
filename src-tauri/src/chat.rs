@@ -25,6 +25,8 @@ const MAX_RECENT_MESSAGES: usize = 16;
 const MAX_ATTACHMENTS: usize = 10;
 const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_ATTACHMENT_TOTAL_BYTES: usize = 25 * 1024 * 1024;
+const DEFAULT_CONVERSATION_TITLE: &str = "New conversation";
+const MAX_CONVERSATION_TITLE_CHARS: usize = 56;
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -273,6 +275,8 @@ pub(crate) struct ChatRequestAccepted {
     pub(crate) conversation_id: String,
     pub(crate) user_message_id: String,
     pub(crate) assistant_message_id: String,
+    #[serde(skip_serializing)]
+    automatic_title_fallback: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -301,6 +305,8 @@ struct ChatStreamEvent {
     conversation_id: String,
     message_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    conversation: Option<ChatConversationSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     delta: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
@@ -308,6 +314,13 @@ struct ChatStreamEvent {
     source: Option<ChatSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatTitleUpdatedEvent {
+    conversation_id: String,
+    conversation: ChatConversationSummary,
 }
 
 #[derive(Clone)]
@@ -629,6 +642,60 @@ impl ChatService {
                  SELECT note_id, 'approved', title, granted_at_millis FROM chat_limited_grants;",
             )
             .map_err(|error| error.to_string())?;
+        drop(connection);
+        self.backfill_default_conversation_titles()?;
+        Ok(())
+    }
+
+    fn backfill_default_conversation_titles(&self) -> Result<(), String> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT c.id, m.content
+                 FROM chat_conversations c
+                 JOIN chat_messages m ON m.id = (
+                   SELECT first_user.id
+                   FROM chat_messages first_user
+                   WHERE first_user.conversation_id = c.id
+                     AND first_user.role = 'user'
+                   ORDER BY first_user.ordinal ASC
+                   LIMIT 1
+                 )
+                 WHERE LOWER(TRIM(c.title)) = 'new conversation'",
+            )
+            .map_err(|error| error.to_string())?;
+        let conversations = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        drop(statement);
+
+        let mut renamed = Vec::new();
+        for (conversation_id, content) in conversations {
+            let attachment_names = first_user_attachment_names(&connection, &conversation_id)?;
+            let title = automatic_conversation_title(&content, &attachment_names);
+            let changed = connection
+                .execute(
+                    "UPDATE chat_conversations
+                     SET title = ?2
+                     WHERE id = ?1 AND LOWER(TRIM(title)) = 'new conversation'",
+                    params![conversation_id, title],
+                )
+                .map_err(|error| error.to_string())?;
+            if changed > 0 {
+                renamed.push(conversation_id);
+            }
+        }
+        drop(connection);
+
+        for conversation_id in renamed {
+            // A title backfill should never prevent a vault from opening. The
+            // next ordinary projection write will also bring the heading up to date.
+            let _ = self.write_projection(&conversation_id, false);
+        }
         Ok(())
     }
 
@@ -699,7 +766,7 @@ impl ChatService {
         let title = title
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "New conversation".to_string());
+            .unwrap_or_else(|| DEFAULT_CONVERSATION_TITLE.to_string());
         let access = access.unwrap_or(settings.default_access);
         self.connection()?
             .execute(
@@ -926,6 +993,30 @@ impl ChatService {
             }
             next_ordinal + 1
         };
+        let automatic_title_fallback = if retry_of_message_id.is_none()
+            && conversation
+                .summary
+                .title
+                .trim()
+                .eq_ignore_ascii_case(DEFAULT_CONVERSATION_TITLE)
+        {
+            let attachment_names = attachments
+                .iter()
+                .map(|attachment| attachment.name.clone())
+                .collect::<Vec<_>>();
+            let title = automatic_conversation_title(content, &attachment_names);
+            connection
+                .execute(
+                    "UPDATE chat_conversations
+                     SET title = ?2
+                     WHERE id = ?1 AND LOWER(TRIM(title)) = 'new conversation'",
+                    params![conversation_id, title],
+                )
+                .map_err(|error| error.to_string())?;
+            Some(title)
+        } else {
+            None
+        };
         connection
             .execute(
                 "INSERT INTO chat_messages
@@ -963,6 +1054,7 @@ impl ChatService {
             conversation_id: conversation_id.to_string(),
             user_message_id,
             assistant_message_id: assistant_message_id.clone(),
+            automatic_title_fallback,
         };
         let run_id = self.create_agent_run(
             conversation_id,
@@ -975,6 +1067,10 @@ impl ChatService {
         let service = self.clone();
         let conversation_id = conversation_id.to_string();
         let run_user_message_id = accepted.user_message_id.clone();
+        let automatic_title_fallback = accepted
+            .automatic_title_fallback
+            .clone()
+            .filter(|_| supports_background_title_refinement(&conversation.summary.provider));
         tauri::async_runtime::spawn(async move {
             service
                 .run_request(
@@ -987,6 +1083,7 @@ impl ChatService {
                     force_web_search,
                     active_note,
                     cancelled,
+                    automatic_title_fallback,
                 )
                 .await;
         });
@@ -1004,14 +1101,17 @@ impl ChatService {
         force_web_search: bool,
         active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
         cancelled: Arc<AtomicBool>,
+        automatic_title_fallback: Option<String>,
     ) {
         let event = |name: &str, payload: ChatStreamEvent| {
             let _ = app.emit(name, payload);
         };
-        event(
-            "chat://started",
-            stream_payload(&request_id, &conversation_id, &message_id),
-        );
+        let mut started_payload = stream_payload(&request_id, &conversation_id, &message_id);
+        started_payload.conversation = self
+            .get_conversation(&conversation_id)
+            .ok()
+            .map(|conversation| conversation.summary);
+        event("chat://started", started_payload);
 
         let result = self
             .run_agent_response(
@@ -1026,7 +1126,7 @@ impl ChatService {
                 &app,
             )
             .await;
-        match result {
+        let completed = match result {
             Ok((content, _, usage)) if cancelled.load(Ordering::Acquire) => {
                 let _ = self.finish_message(&message_id, "cancelled", &content, None, &[]);
                 let _ = self.finish_agent_run(
@@ -1037,7 +1137,12 @@ impl ChatService {
                 );
                 let mut payload = stream_payload(&request_id, &conversation_id, &message_id);
                 payload.content = Some(content);
+                payload.conversation = self
+                    .get_conversation(&conversation_id)
+                    .ok()
+                    .map(|conversation| conversation.summary);
                 event("chat://cancelled", payload);
+                false
             }
             Ok((content, all_sources, usage)) => {
                 let _ = self.finish_message(&message_id, "complete", &content, None, &all_sources);
@@ -1057,7 +1162,12 @@ impl ChatService {
                 }
                 let mut payload = stream_payload(&request_id, &conversation_id, &message_id);
                 payload.content = Some(content);
+                payload.conversation = self
+                    .get_conversation(&conversation_id)
+                    .ok()
+                    .map(|conversation| conversation.summary);
                 event("chat://completed", payload);
+                true
             }
             Err(error) => {
                 let partial = self
@@ -1083,6 +1193,10 @@ impl ChatService {
                 let mut payload = stream_payload(&request_id, &conversation_id, &message_id);
                 payload.content = Some(partial);
                 payload.error = Some(error);
+                payload.conversation = self
+                    .get_conversation(&conversation_id)
+                    .ok()
+                    .map(|conversation| conversation.summary);
                 event(
                     if status == "cancelled" {
                         "chat://cancelled"
@@ -1091,6 +1205,27 @@ impl ChatService {
                     },
                     payload,
                 );
+                false
+            }
+        };
+        if completed {
+            if let Some(fallback) = automatic_title_fallback {
+                let service = self.clone();
+                let title_app = app.clone();
+                let title_conversation_id = conversation_id.clone();
+                let title_user_message_id = user_message_id.clone();
+                let title_cancelled = Arc::clone(&cancelled);
+                tauri::async_runtime::spawn(async move {
+                    let _ = service
+                        .generate_model_conversation_title(
+                            &title_app,
+                            &title_conversation_id,
+                            &title_user_message_id,
+                            &fallback,
+                            title_cancelled,
+                        )
+                        .await;
+                });
             }
         }
         if let Ok(mut requests) = self.inner.active_requests.lock() {
@@ -1201,6 +1336,81 @@ impl ChatService {
         let mut sources = tools.sources();
         sources.extend(web_sources_from_text(&response.output));
         Ok((response.output, sources, response.usage))
+    }
+
+    async fn generate_model_conversation_title(
+        &self,
+        app: &AppHandle,
+        conversation_id: &str,
+        user_message_id: &str,
+        fallback: &str,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        let conversation = self.get_conversation(conversation_id)?;
+        let provider = crate::agent_runtime::AgentProvider::parse(&conversation.summary.provider)?;
+        let settings = self.get_settings()?;
+        let opening_message = conversation
+            .messages
+            .iter()
+            .find(|message| message.id == user_message_id && message.role == "user")
+            .map(|message| compact_text(&message.content, 1_000))
+            .unwrap_or_default();
+        if opening_message.is_empty() {
+            return Ok(());
+        }
+        let response = crate::agent_runtime::AgentRuntime::run(
+            crate::agent_runtime::AgentRuntimeRequest {
+                provider: provider.clone(),
+                model: conversation.summary.model,
+                api_key: if provider == crate::agent_runtime::AgentProvider::Openai {
+                    secrets::read_openai_api_key(app)?
+                } else {
+                    None
+                },
+                local_base_url: settings.local_base_url,
+                preamble: "Create concise, descriptive conversation titles. Return only the title, without quotes, Markdown, or ending punctuation.".to_string(),
+                prompt: rig_core::completion::Message::user(format!(
+                    "Name this conversation in 3 to 7 words:\n\n{opening_message}"
+                )),
+                history: Vec::new(),
+                enable_web: false,
+                require_web: false,
+                flex: provider == crate::agent_runtime::AgentProvider::Openai
+                    && settings.service_tier == ChatServiceTier::Flex,
+            },
+            Vec::new(),
+            crate::agent_runtime::AgentRuntimeObserver {
+                cancelled,
+                on_text: Arc::new(|_| {}),
+            },
+        )
+        .await?;
+        let Some(title) = normalize_generated_conversation_title(&response.output) else {
+            return Ok(());
+        };
+        if title.eq_ignore_ascii_case(fallback) {
+            return Ok(());
+        }
+        let updated = self
+            .connection()?
+            .execute(
+                "UPDATE chat_conversations SET title = ?3
+                 WHERE id = ?1 AND title = ?2",
+                params![conversation_id, fallback, title],
+            )
+            .map_err(|error| error.to_string())?;
+        if updated == 0 {
+            return Ok(());
+        }
+        let conversation = self.get_conversation(conversation_id)?.summary;
+        let _ = app.emit(
+            "chat://title-updated",
+            ChatTitleUpdatedEvent {
+                conversation_id: conversation_id.to_string(),
+                conversation,
+            },
+        );
+        Ok(())
     }
 
     fn update_streaming_content(&self, message_id: &str, content: &str) -> Result<(), String> {
@@ -2488,7 +2698,11 @@ recall or a note change would make the answer more useful; do not wait for the \
 user to name a tool or use special wording. Search semantically, read enough of \
 the target note to act safely, and cite note material with its supplied wikilink. \
 When the user asks to update a note or create one, call the appropriate proposal \
-tool. Proposals never write directly and the user will review them. Do not encode \
+tool. Use propose_note_rewrite when most or all of a note should be cleaned up, \
+restructured, translated, or rewritten, and include the complete replacement body. \
+Read the complete current note before rewriting it. Use propose_note_edits for \
+localized changes. Proposals never write directly and \
+the user will review them. Do not encode \
 proposals in Markdown fences. A note tool may return pendingChanges=true; in that \
 case its body is the current unapproved working copy, and new changes should be \
 folded into it normally. Never invent note IDs, paths, hashes, or content. \
@@ -2683,6 +2897,174 @@ fn slugify(value: &str) -> String {
     slug.chars().take(60).collect()
 }
 
+fn first_user_attachment_names(
+    connection: &Connection,
+    conversation_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT attachment.name
+             FROM chat_message_attachments attachment
+             JOIN chat_messages message ON message.id = attachment.message_id
+             WHERE message.conversation_id = ?1
+               AND message.role = 'user'
+               AND message.ordinal = (
+                 SELECT MIN(first_user.ordinal)
+                 FROM chat_messages first_user
+                 WHERE first_user.conversation_id = ?1
+                   AND first_user.role = 'user'
+               )
+             ORDER BY attachment.created_at_millis ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let names = statement
+        .query_map([conversation_id], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(names)
+}
+
+fn automatic_conversation_title(content: &str, attachment_names: &[String]) -> String {
+    let mut title = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    title = title
+        .trim_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '"' | '\'' | '`' | '#' | '*' | '_' | '-' | ':' | ',' | '.' | '?' | '!'
+                )
+        })
+        .to_string();
+
+    // Remove conversational scaffolding while leaving the meaningful request.
+    // Run repeatedly so "Hey, could you please help me …" is cleaned in layers.
+    const LEADING_PHRASES: &[&str] = &[
+        "hey, ",
+        "hey ",
+        "hi, ",
+        "hi ",
+        "hello, ",
+        "hello ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "will you ",
+        "please ",
+        "help me ",
+        "i want you to ",
+        "i need you to ",
+        "i'd like you to ",
+        "i would like you to ",
+    ];
+    loop {
+        let lowered = title.to_lowercase();
+        let Some(prefix) = LEADING_PHRASES
+            .iter()
+            .find(|prefix| lowered.starts_with(**prefix))
+        else {
+            break;
+        };
+        title = title[prefix.len()..]
+            .trim_start_matches(|character: char| {
+                character.is_whitespace() || matches!(character, ',' | ':' | '-' | '—')
+            })
+            .to_string();
+    }
+
+    if title.is_empty() {
+        title = attachment_names
+            .first()
+            .map(|name| {
+                let stem = Path::new(name)
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or(name);
+                format!("Discuss {stem}")
+            })
+            .unwrap_or_else(|| DEFAULT_CONVERSATION_TITLE.to_string());
+    }
+
+    let mut compact = String::new();
+    for word in title.split_whitespace().take(9) {
+        let separator = usize::from(!compact.is_empty());
+        if compact.chars().count() + separator + word.chars().count() > MAX_CONVERSATION_TITLE_CHARS
+        {
+            break;
+        }
+        if !compact.is_empty() {
+            compact.push(' ');
+        }
+        compact.push_str(word);
+    }
+    if compact.is_empty() {
+        compact = title.chars().take(MAX_CONVERSATION_TITLE_CHARS).collect();
+    }
+    compact = compact
+        .trim_end_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(character, ',' | ';' | ':' | '.' | '?' | '!' | '-')
+        })
+        .to_string();
+    if let Some(first) = compact.chars().next() {
+        if first.is_lowercase() {
+            let first_len = first.len_utf8();
+            compact.replace_range(..first_len, &first.to_uppercase().collect::<String>());
+        }
+    }
+    compact
+}
+
+fn supports_background_title_refinement(provider: &str) -> bool {
+    matches!(
+        crate::agent_runtime::AgentProvider::parse(provider),
+        Ok(crate::agent_runtime::AgentProvider::Openai)
+    )
+}
+
+fn normalize_generated_conversation_title(output: &str) -> Option<String> {
+    let mut title = output
+        .lines()
+        .find(|line| !line.trim().is_empty())?
+        .trim()
+        .to_string();
+    title = title
+        .trim_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '"' | '\'' | '`' | '#' | '*' | '_' | ':' | ',' | '.' | '?' | '!'
+                )
+        })
+        .to_string();
+    if title.to_lowercase().starts_with("title:") {
+        title = title["title:".len()..].trim().to_string();
+    }
+    title = title
+        .trim_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(character, '*' | '_' | ':' | ',' | '.' | '?' | '!')
+        })
+        .to_string();
+    if title.is_empty() || title.eq_ignore_ascii_case(DEFAULT_CONVERSATION_TITLE) {
+        return None;
+    }
+
+    let mut compact = String::new();
+    for word in title.split_whitespace().take(9) {
+        let separator = usize::from(!compact.is_empty());
+        if compact.chars().count() + separator + word.chars().count() > MAX_CONVERSATION_TITLE_CHARS
+        {
+            break;
+        }
+        if !compact.is_empty() {
+            compact.push(' ');
+        }
+        compact.push_str(word);
+    }
+    (!compact.is_empty()).then_some(compact)
+}
+
 fn compact_text(value: &str, max: usize) -> String {
     let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
     compact.chars().take(max).collect()
@@ -2714,6 +3096,7 @@ fn stream_payload(request_id: &str, conversation_id: &str, message_id: &str) -> 
         request_id: request_id.to_string(),
         conversation_id: conversation_id.to_string(),
         message_id: message_id.to_string(),
+        conversation: None,
         delta: None,
         content: None,
         source: None,
@@ -2861,6 +3244,90 @@ mod tests {
     }
 
     #[test]
+    fn automatic_titles_remove_request_scaffolding_and_support_attachments() {
+        assert_eq!(
+            automatic_conversation_title(
+                "Hey, could you please help me plan a trip to Tokyo?",
+                &[]
+            ),
+            "Plan a trip to Tokyo"
+        );
+        assert_eq!(
+            automatic_conversation_title("", &["quarterly-plan.pdf".to_string()]),
+            "Discuss quarterly-plan"
+        );
+        assert!(
+            automatic_conversation_title(
+                "Compare the authentication architecture of these two applications and recommend improvements",
+                &[]
+            )
+            .chars()
+            .count()
+                <= MAX_CONVERSATION_TITLE_CHARS
+        );
+        assert_eq!(
+            normalize_generated_conversation_title("**Title: Tokyo Trip Planning**\n"),
+            Some("Tokyo Trip Planning".to_string())
+        );
+    }
+
+    #[test]
+    fn model_title_refinement_is_hosted_only() {
+        assert!(supports_background_title_refinement("openai"));
+        assert!(!supports_background_title_refinement("local"));
+        assert!(!supports_background_title_refinement("ollama"));
+    }
+
+    #[test]
+    fn startup_backfills_default_titles_without_replacing_named_conversations() {
+        let (root, service) = service("chat-title-backfill");
+        let unnamed = service.create_conversation(None, None).unwrap();
+        let named = service
+            .create_conversation(Some("Release planning".to_string()), None)
+            .unwrap();
+        let connection = service.connection().unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_messages
+                 (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+                 VALUES ('unnamed-user', ?1, 1, 'user', 'complete',
+                         'Could you investigate the login redirect bug?', 1, 1)",
+                [&unnamed.summary.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_messages
+                 (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+                 VALUES ('named-user', ?1, 1, 'user', 'complete',
+                         'This text should not become the title', 1, 1)",
+                [&named.summary.id],
+            )
+            .unwrap();
+        drop(connection);
+        drop(service);
+
+        let reopened =
+            ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
+        assert_eq!(
+            reopened
+                .get_conversation(&unnamed.summary.id)
+                .unwrap()
+                .summary
+                .title,
+            "Investigate the login redirect bug"
+        );
+        assert_eq!(
+            reopened
+                .get_conversation(&named.summary.id)
+                .unwrap()
+                .summary
+                .title,
+            "Release planning"
+        );
+    }
+
+    #[test]
     fn exclusion_overrides_full_and_approved_access_by_stable_id() {
         let (_root, service) = service("chat-exclusion-precedence");
         service.grant_note("stable-note", "Original title").unwrap();
@@ -2884,6 +3351,8 @@ mod tests {
         let instructions = agent_preamble(&crate::agent_runtime::AgentProvider::Openai);
         assert!(instructions.contains("Use the vault tools"));
         assert!(instructions.contains("appropriate proposal tool"));
+        assert!(instructions.contains("Use propose_note_rewrite"));
+        assert!(instructions.contains("Use propose_note_edits for localized changes"));
         assert!(instructions.contains("current unapproved working copy"));
         assert!(instructions.contains("never write directly"));
         assert!(!instructions.contains("Local-model rules"));

@@ -133,7 +133,6 @@ where
         .name("gneauxghts-vault-agent")
         .description("Searches and reads the local vault and prepares reviewed note changes")
         .preamble(&request.preamble)
-        .max_tokens(8192)
         .default_max_turns(MAX_MODEL_CALLS)
         .tools(tools);
     if let Some(params) = additional_params {

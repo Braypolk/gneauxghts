@@ -177,6 +177,44 @@ describe('TauriChatApi', () => {
     }));
   });
 
+  it('normalizes background title updates for the shared controller', async () => {
+    let listener: ((event: { payload: unknown }) => void) | undefined;
+    listenMock.mockImplementation(async (_name, handler) => {
+      listener = handler;
+      return () => undefined;
+    });
+    const { TauriChatApi } = await import('./api');
+    const titleUpdated = vi.fn();
+    await new TauriChatApi().on('chat://title-updated', titleUpdated);
+
+    listener?.({
+      payload: {
+        conversationId: 'chat-1',
+        conversation: {
+          id: 'chat-1',
+          title: 'Refined conversation title',
+          access: 'approved',
+          status: 'active',
+          createdAtMillis: 1,
+          updatedAtMillis: 2,
+          messageCount: 2,
+          detached: false,
+          provider: 'openai',
+          model: 'gpt-5.6-terra'
+        }
+      }
+    });
+
+    expect(titleUpdated).toHaveBeenCalledWith({
+      conversationId: 'chat-1',
+      conversation: expect.objectContaining({
+        id: 'chat-1',
+        title: 'Refined conversation title',
+        vaultAccess: 'approved'
+      })
+    });
+  });
+
   it('stores and removes provider keys without requesting the key back', async () => {
     invokeMock.mockResolvedValueOnce({ configured: true }).mockResolvedValueOnce({ configured: false });
     const { TauriChatApi } = await import('./api');

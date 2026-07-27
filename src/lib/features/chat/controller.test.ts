@@ -150,7 +150,7 @@ describe('createChatController', () => {
     expect(fake.api.getConversation).toHaveBeenCalledWith('conversation-1');
     expect(controller.getSnapshot().settings).toEqual(settings);
     expect(controller.getSnapshot().conversation?.id).toBe('conversation-1');
-    expect(fake.handlers.size).toBe(9);
+    expect(fake.handlers.size).toBe(10);
   });
 
   it('reconciles streaming deltas, citations, and completion', async () => {
@@ -158,9 +158,17 @@ describe('createChatController', () => {
     const controller = createChatController(fake.api);
     await controller.initialize('conversation-1');
     const streamingMessage = message();
+    const {
+      messages: _messages,
+      activeRequestId: _activeRequestId,
+      projectionPath: _projectionPath,
+      excerptMessageIds: _excerptMessageIds,
+      ...generatedSummary
+    } = conversation({ title: 'Login redirect bug', messageCount: 2 });
 
     fake.emit('chat://started', {
-      requestId: 'request-1', conversationId: 'conversation-1', messageId: streamingMessage.id, message: streamingMessage
+      requestId: 'request-1', conversationId: 'conversation-1', messageId: streamingMessage.id,
+      conversation: generatedSummary, message: streamingMessage
     });
     fake.emit('chat://text-delta', {
       requestId: 'request-1', conversationId: 'conversation-1', messageId: streamingMessage.id, delta: 'Hello'
@@ -171,6 +179,8 @@ describe('createChatController', () => {
     });
 
     expect(controller.getSnapshot().conversation?.messages[0].content).toBe('Hello');
+    expect(controller.getSnapshot().conversation?.title).toBe('Login redirect bug');
+    expect(controller.getSnapshot().conversations[0].title).toBe('Login redirect bug');
     expect(controller.getSnapshot().conversation?.messages[0].citations).toHaveLength(1);
     expect(controller.getSnapshot().isSending).toBe(true);
 
@@ -181,6 +191,24 @@ describe('createChatController', () => {
 
     expect(controller.getSnapshot().conversation?.messages[0].content).toBe('Hello there');
     expect(controller.getSnapshot().conversation?.activeRequestId).toBeNull();
+    expect(controller.getSnapshot().isSending).toBe(false);
+  });
+
+  it('applies a background conversation title without changing response state', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    fake.emit('chat://title-updated', {
+      conversationId: 'conversation-1',
+      conversation: {
+        ...controller.getSnapshot().conversations[0],
+        title: 'Refined conversation title'
+      }
+    });
+
+    expect(controller.getSnapshot().conversation?.title).toBe('Refined conversation title');
+    expect(controller.getSnapshot().conversations[0].title).toBe('Refined conversation title');
     expect(controller.getSnapshot().isSending).toBe(false);
   });
 
