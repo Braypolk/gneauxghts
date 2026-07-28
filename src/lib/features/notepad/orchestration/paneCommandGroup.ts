@@ -1,13 +1,9 @@
-import { EditorView } from '@codemirror/view';
-import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
 import { focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
 
 export interface PaneCommandGroupDeps<TPaneId extends string, TDocument> {
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
-  getPaneEditorRoot: (paneId: TPaneId) => HTMLElement | null;
-  getPaneChatComposer: (paneId: TPaneId) => HTMLTextAreaElement | null;
-  getPaneDocument: (paneId: TPaneId) => TDocument;
-  flushDocumentEditorSync: (document: TDocument) => void;
+  focusPaneEditor: (paneId: TPaneId) => boolean;
+  focusPaneChat: (paneId: TPaneId) => boolean;
   activatePaneSession: (paneId: TPaneId) => unknown;
   updateSelectedRelatedText: (paneId?: TPaneId) => void;
   scheduleSearchIfNeeded: () => void;
@@ -24,33 +20,14 @@ export function createPaneCommandGroup<TPaneId extends string, TDocument>(
       return;
     }
 
-    const editorRoot = deps.getPaneEditorRoot(paneId);
-    if (editorRoot) {
-      const cmContent = findCmContentElement(editorRoot);
-      if (cmContent instanceof HTMLElement) {
-        const view = EditorView.findFromDOM(cmContent);
-        if (view) {
-          view.focus();
-          return;
-        }
+    if (deps.focusPaneEditor(paneId)) return;
 
-        cmContent.focus({ preventScroll: true });
-        return;
-      }
-    }
-
-    const chatComposer = deps.getPaneChatComposer(paneId);
-    if (chatComposer) {
-      // Preserve caret/selection left in the composer when leaving the pane.
-      chatComposer.focus({ preventScroll: true });
-      return;
-    }
+    if (deps.focusPaneChat(paneId)) return;
 
     titleInput?.focus();
   }
 
   function activatePane(paneId: TPaneId) {
-    deps.flushDocumentEditorSync(deps.getPaneDocument(paneId));
     deps.activatePaneSession(paneId);
     deps.updateSelectedRelatedText(paneId);
     deps.scheduleSearchIfNeeded();

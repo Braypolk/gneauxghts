@@ -1,11 +1,8 @@
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { DocumentPaneCoordinator } from '$lib/features/notepad/document/documentPaneCoordinator';
+import type { DocumentEditingService } from '$lib/features/notepad/document/documentEditingService';
 import type { PaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-import type {
-  NavigationContext,
-  OpenContext
-} from '$lib/features/notepad/navigation/openFlow';
 import type { ForgottenNote } from '$lib/features/notepad/session/session';
 import type {
   NoteDraftState,
@@ -48,13 +45,13 @@ export interface NotepadPaneCommands<TPaneId extends string> {
   getNextPaneId: (paneId?: TPaneId, direction?: 1 | -1) => TPaneId | null;
   getPaneRuntime: (paneId: TPaneId) => PaneRuntime;
   getNoteByKey: (noteKey: NoteKey) => NoteDraftState | null;
-  getOpenContext: () => OpenContext;
-  getNavigationContext: (paneId?: TPaneId) => NavigationContext;
   activatePaneSession: (paneId: TPaneId) => unknown;
   setPaneDocumentSession: (paneId: TPaneId, document: NoteDraftState) => unknown;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   getPaneEditorRoot: (paneId: TPaneId) => HTMLElement | null;
-  getPaneChatComposer: (paneId: TPaneId) => HTMLTextAreaElement | null;
+  focusPaneEditor: (paneId: TPaneId) => boolean;
+  focusPaneEditorAtEnd: (paneId: TPaneId) => boolean;
+  focusPaneChat: (paneId: TPaneId) => boolean;
   createPane: () => TPaneId;
   closePaneRuntime: (paneId: TPaneId) => Promise<void>;
   updateSelectedRelatedText: (paneId?: TPaneId) => void;
@@ -75,17 +72,9 @@ export interface NotepadDerivedViewCommands<TPaneId extends string> {
   scheduleSearchIfNeeded: () => void;
   scheduleRelatedIfNeeded: (options?: { immediate?: boolean }) => void;
   clearSelectedRelatedText: () => void;
-  loadRecentNotes: () => Promise<unknown> | unknown;
-  /** Recent notes used to bootstrap the previous-location MRU when empty. */
-  getRecentNotesForSeed: () => SearchItem[];
+  loadRecentNotes: () => Promise<SearchItem[]> | SearchItem[];
   setRecentlyForgotten: (value: ForgottenNote | null) => void;
   closeWikilinkAutocomplete: (paneId?: TPaneId) => void;
-}
-
-export interface NotepadDocumentSyncCommands {
-  flushDocumentEditorSync: (document: NoteDraftState) => void;
-  flushAllPendingDocumentSyncs: () => void;
-  hasPendingSync: (document: NoteDraftState) => boolean;
 }
 
 export interface NotepadRefreshCommands {
@@ -100,8 +89,8 @@ export interface NotepadCommandsDeps<TPaneId extends string> {
   panes: NotepadPaneCommands<TPaneId>;
   persistence: NotepadPersistenceCommands;
   derivedViews: NotepadDerivedViewCommands<TPaneId>;
-  documentSync: NotepadDocumentSyncCommands;
   documents: DocumentPaneCoordinator<TPaneId>;
+  documentEditing: DocumentEditingService<TPaneId>;
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
   refresh: NotepadRefreshCommands;
   forgottenNoteRetentionPreference: () => ForgottenNoteRetentionPreference;

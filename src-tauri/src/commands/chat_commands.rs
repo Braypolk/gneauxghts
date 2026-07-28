@@ -14,6 +14,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use tauri::{AppHandle, State};
 
 #[derive(Debug, Serialize)]
@@ -632,6 +633,20 @@ pub(crate) fn chat_revoke_note(
     note_id: String,
 ) -> Result<(), String> {
     service.revoke_note(&note_id)
+}
+
+#[tauri::command]
+pub(crate) fn chat_find_conversation_by_projection_path(
+    service: State<'_, ChatService>,
+    note_path: String,
+) -> Result<Option<String>, String> {
+    let path = PathBuf::from(note_path);
+    let absolute_path = if path.is_absolute() {
+        path
+    } else {
+        service.notes_root().join(path)
+    };
+    service.projection_owner_for_path(&absolute_path)
 }
 
 #[tauri::command]

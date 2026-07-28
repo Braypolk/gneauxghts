@@ -153,6 +153,7 @@ export async function persistChatLocation(location: ChatNavLocation): Promise<vo
 
 export function createLocationMruStore<TPaneId extends string>() {
   const lists = new Map<TPaneId, NavLocation[]>();
+  const seededPanes = new Set<TPaneId>();
   /** Survives MRU reordering quirks: once visited, chat stays available for Recent. */
   const lastChatByPane = new Map<TPaneId, ChatNavLocation>();
 
@@ -234,12 +235,23 @@ export function createLocationMruStore<TPaneId extends string>() {
     }));
   }
 
-  function seedIfEmpty(paneId: TPaneId, locations: NavLocation[]): void {
-    const list = listFor(paneId);
-    if (list.length > 0) {
-      return;
+  function isSeeded(paneId: TPaneId): boolean {
+    return seededPanes.has(paneId);
+  }
+
+  /**
+   * Merge persisted fallback locations behind any live pane history.
+   *
+   * A newly-created split pane can already contain its source note before its
+   * persisted recents are loaded. Treating "has one live entry" as "seeded"
+   * would leave a chat pane showing only that previous note.
+   */
+  function seedMissing(paneId: TPaneId, locations: NavLocation[]): boolean {
+    if (seededPanes.has(paneId)) {
+      return false;
     }
-    const seeded: NavLocation[] = [];
+    const list = listFor(paneId);
+    const seeded = [...list];
     for (const location of locations) {
       if (!isRestorableLocation(location)) {
         continue;
@@ -257,6 +269,8 @@ export function createLocationMruStore<TPaneId extends string>() {
       }
     }
     lists.set(paneId, seeded);
+    seededPanes.add(paneId);
+    return seeded.length !== list.length;
   }
 
   function list(paneId: TPaneId): readonly NavLocation[] {
@@ -279,6 +293,7 @@ export function createLocationMruStore<TPaneId extends string>() {
 
   function clear(paneId: TPaneId): void {
     lists.delete(paneId);
+    seededPanes.delete(paneId);
     lastChatByPane.delete(paneId);
   }
 
@@ -298,6 +313,7 @@ export function createLocationMruStore<TPaneId extends string>() {
 
   function clearAll(): void {
     lists.clear();
+    seededPanes.clear();
     lastChatByPane.clear();
   }
 
@@ -306,7 +322,8 @@ export function createLocationMruStore<TPaneId extends string>() {
     rememberChat,
     previousExcluding,
     historyExcluding,
-    seedIfEmpty,
+    isSeeded,
+    seedMissing,
     list,
     remove,
     clear,

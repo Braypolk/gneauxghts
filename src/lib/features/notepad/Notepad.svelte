@@ -1,122 +1,75 @@
 <script lang="ts">
-  import { type UnlistenFn } from '@tauri-apps/api/event';
-  import { onMount, tick, untrack } from 'svelte';
-  import { chatApi } from '$lib/features/chat/api';
-  import { createChatController, type ChatController } from '$lib/features/chat/controller.svelte';
-  import type {
-    ChatAgentProposal,
-    ChatSelection,
-    ChatSelectionActions
-  } from '$lib/features/chat/types';
-  import type { ProposalPreview } from '$lib/types/proposals';
-  import {
-    formatDiscussionDraft,
-    type ChatDraftSeed
-  } from '$lib/features/chat/discussionContext';
-  import { appSettings } from '$lib/appSettings.svelte';
-  import {
-    focusEditorSearchRange,
-    setEditorCurrentSearchHighlightQuery
-  } from '$lib/features/notepad/editor/editor';
-  import { createEditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
+  import { onMount, tick, untrack } from "svelte";
+  import type { createProposalOrchestration } from "$lib/features/proposals/proposalOrchestration";
+  import { appSettings } from "$lib/appSettings.svelte";
+  import { createEditorCapabilityAdapter } from "$lib/features/notepad/editor/editorCapabilities";
   import {
     createNotepadFeatureHost,
-    type NotepadFeatureHost
-  } from '$lib/features/notepad/host';
-  import { createProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
-  import { shouldSuppressAutosaveForDocument } from '$lib/features/proposals/reviewHold.svelte';
-  import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
-  import { focusEditorAtEnd, focusInputAtEnd } from '$lib/features/notepad/navigation/navigation';
-  import { registerPendingNoteSaveHandler } from '$lib/features/notepad/navigation/pendingNoteSave';
+    type NotepadFeatureHost,
+  } from "$lib/features/notepad/host";
+  import { shouldSuppressAutosaveForDocument } from "$lib/features/proposals/reviewHold.svelte";
+  import type { ActiveWikilink } from "$lib/features/notepad/wikilinks/wikilinks";
+  import { focusInputAtEnd } from "$lib/features/notepad/navigation/navigation";
+  import { registerPendingNoteSaveHandler } from "$lib/features/notepad/navigation/pendingNoteSave";
   import {
     navigateToPendingTaskTarget,
     openRecentTask,
     openSearchResult,
     type NavigationContext,
-    type OpenContext
-  } from '$lib/features/notepad/navigation/openFlow';
-  import { type SearchMode } from '$lib/features/notepad/search/search';
-  import { computeDraftHash } from '$lib/features/notepad/search/draftRef';
+    type OpenContext,
+  } from "$lib/features/notepad/navigation/openFlow";
+  import { type SearchMode } from "$lib/features/notepad/search/search";
   import {
-    createEmptySessionSnapshot,
-    loadCurrentVaultInfo,
-    loadSavedNoteSession,
-    resolveAssetRootPath,
-    restoreForgottenNotes,
     saveNoteSession,
-    storePastedImageAsset,
     type ForgottenNote,
-    type SessionSnapshot
-  } from '$lib/features/notepad/session/session';
-  import { appStore } from '$lib/app/appStore.svelte';
-  import { type WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
-  import type {
-    RelatedNoteItem,
-    SearchItem
-  } from '$lib/types/semantic';
-  import type { RecentTaskItem } from '$lib/features/notepad/model/types';
-  import NotepadCommandBar from '$lib/features/notepad/ui/NotepadCommandBar.svelte';
-  import NotepadPane from '$lib/features/notepad/NotepadPane.svelte';
-  import type {
-    PaneViewModel,
-    PaneWorkspaceActions
-  } from '$lib/features/notepad/notepadPane.types';
-  import SlashMenu from '$lib/features/notepad/editor/SlashMenu.svelte';
-  import SelectionMenu from '$lib/features/notepad/editor/SelectionMenu.svelte';
-  import WikilinkAutocomplete from '$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte';
-  import RelatedPanelHost from '$lib/features/notepad/related/RelatedPanelHost.svelte';
+    type SessionSnapshot,
+  } from "$lib/features/notepad/session/session";
+  import { type WikilinkAutocompleteState } from "$lib/features/notepad/wikilinks/state";
+  import type { RelatedNoteItem, SearchItem } from "$lib/types/semantic";
+  import type { RecentTaskItem } from "$lib/features/notepad/model/types";
+  import NotepadCommandBar from "$lib/features/notepad/ui/NotepadCommandBar.svelte";
+  import NotepadPane from "$lib/features/notepad/NotepadPane.svelte";
+  import type { PaneWorkspaceActions } from "$lib/features/notepad/notepadPane.types";
+  import SlashMenu from "$lib/features/notepad/editor/SlashMenu.svelte";
+  import SelectionMenu from "$lib/features/notepad/editor/SelectionMenu.svelte";
+  import WikilinkAutocomplete from "$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte";
+  import RelatedPanelHost from "$lib/features/notepad/related/RelatedPanelHost.svelte";
   import {
     getCardStyle,
-    getRelatedGroupStyle
-  } from '$lib/features/notepad/related/layout';
-  import {
-    createNotepadRefreshController
-  } from '$lib/features/notepad/orchestration/notepadRefreshController';
+    getRelatedGroupStyle,
+  } from "$lib/features/notepad/related/layout";
+  import { createNotepadRefreshController } from "$lib/features/notepad/orchestration/notepadRefreshController";
+  import { createNotepadSessionLifecycle } from "$lib/features/notepad/orchestration/notepadSessionLifecycle";
+  import { createNotepadProposalAdapter } from "$lib/features/notepad/orchestration/notepadProposalAdapter";
+  import { NotepadChatCoordinator } from "$lib/features/notepad/orchestration/notepadChatCoordinator.svelte";
+  import { createNotepadChatPaneAdapter } from "$lib/features/notepad/orchestration/notepadChatPaneAdapter";
   import {
     createPaneSessionController,
     getSplitSourceNote,
-    paneCommandNoteLabel
-  } from '$lib/features/notepad/orchestration/paneSessionController';
-  import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
+    paneCommandNoteLabel,
+  } from "$lib/features/notepad/orchestration/paneSessionController";
+  import { createNotepadPersistenceController } from "$lib/features/notepad/orchestration/persistenceController";
   import {
     createNotepadCommands,
-    type LocationHistoryEntry
-  } from '$lib/features/notepad/orchestration/notepadCommands';
+    type LocationHistoryEntry,
+  } from "$lib/features/notepad/orchestration/notepadCommands";
   import {
     createNotepadWorkspaceCommands,
     type NotepadDerivedViewCommands,
-    type NotepadPaneCommands
-  } from '$lib/features/notepad/orchestration/notepadCommandFacades';
-  import { createRelatedNotesStore } from '$lib/features/notepad/related/store.svelte';
-  import { createNotepadSearchStore } from '$lib/features/notepad/search/store.svelte';
-  import { attachPaneSelectionTracking } from '$lib/features/notepad/editor/paneSelectionTracking';
-  import type { PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
+    type NotepadPaneCommands,
+  } from "$lib/features/notepad/orchestration/notepadCommandFacades";
+  import { createRelatedNotesStore } from "$lib/features/notepad/related/store.svelte";
+  import { createNotepadSearchStore } from "$lib/features/notepad/search/store.svelte";
+  import { attachPaneSelectionTracking } from "$lib/features/notepad/editor/paneSelectionTracking";
+  import type { PaneCommandChoice } from "$lib/features/notepad/paneCommandPicker";
   import {
     createPaneControllers as createPaneControllersFn,
-    type PaneControllerSetupDeps
-  } from '$lib/features/notepad/pane/paneControllers';
-  import {
-    getPaneIdForSlashMenuView,
-    setSlashMenuListener
-  } from '$lib/features/notepad/editor/slashMenuBridge';
-  import {
-    getPaneIdForSelectionMenuView,
-    setSelectionMenuListener
-  } from '$lib/features/notepad/editor/selectionMenuBridge';
-  import {
-    slashMenuHideFromUi,
-    type SlashMenuSnapshot
-  } from '$lib/features/notepad/editor/slashMenu';
-  import {
-    selectionMenuHideFromUi,
-    type SelectionMenuSnapshot
-  } from '$lib/features/notepad/editor/selectionMenu';
+    type PaneControllerSetupDeps,
+  } from "$lib/features/notepad/pane/paneControllers";
   import {
     adoptSnapshotForPane,
-    applySnapshotToNote,
     getPaneNote,
     getPaneState,
-    listReferencedNoteKeys,
     noteKeyFromPath,
     rekeyNote,
     replaceReferencedNoteWithFreshDraft,
@@ -125,54 +78,47 @@
     setPaneKind as setStoredPaneKind,
     setPaneNoteKey as setStoredPaneNoteKey,
     type NoteDraftState,
-    type NoteKey
-  } from '$lib/features/notepad/state/noteStore';
+    type NoteKey,
+  } from "$lib/features/notepad/state/noteStore";
   import {
     createNotepadPaneId,
     notepadState,
     notepadRuntimeState,
     updateSharedEditorResourceConfig,
-    type NotepadPaneId
-  } from '$lib/features/notepad/session/runtimeStore.svelte';
+    type NotepadPaneId,
+  } from "$lib/features/notepad/session/runtimeStore.svelte";
   import {
-    bumpSharedEditorStateGeneration,
     cleanupNoteRuntime,
-    setSharedEditorState,
-    transferNoteRuntime
-  } from '$lib/features/notepad/session/noteRuntime';
-  import { createDocumentSyncController } from '$lib/features/notepad/document/documentSyncController';
-  import { createDocumentPaneCoordinator } from '$lib/features/notepad/document/documentPaneCoordinator';
-  import { workspaceStore } from '$lib/features/notepad/workspace/workspaceStore.svelte';
-  import { createWorkspacePersistenceService } from '$lib/features/notepad/workspace/workspacePersistenceService';
+    transferNoteRuntime,
+  } from "$lib/features/notepad/session/noteRuntime";
+  import { createDocumentPaneCoordinator } from "$lib/features/notepad/document/documentPaneCoordinator";
+  import { createDocumentEditingService } from "$lib/features/notepad/document/documentEditingService";
+  import { workspaceStore } from "$lib/features/notepad/workspace/workspaceStore.svelte";
+  import { createWorkspacePersistenceService } from "$lib/features/notepad/workspace/workspacePersistenceService";
   import {
     createWorkspaceShortcutHandler,
-    registerWorkspaceWindowCloseHandler
-  } from '$lib/features/notepad/workspace/shortcuts';
-  import { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-  import { createPaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
-  import { consumePendingNoteTarget } from '$lib/noteNavigation';
-  import { consumePendingTaskTarget } from '$lib/taskNavigation';
-  import { formatNoteTitle } from '$lib/features/notepad/model/document';
-  import { formatShortcutBinding, keyboardShortcuts } from '$lib/keyboardShortcuts.svelte';
-  import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
-  import '$lib/features/notepad/editor/editor.css';
-  import '$lib/features/notepad/editor/editorTypography.css';
-  import '$lib/features/notepad/markdown/inlineFormatting.css';
+    registerWorkspaceWindowCloseHandler,
+  } from "$lib/features/notepad/workspace/shortcuts";
+  import { PaneRuntime } from "$lib/features/notepad/pane/paneRuntime.svelte";
+  import { PaneTransientUiController } from "$lib/features/notepad/pane/paneTransientUiController.svelte";
+  import { createPaneViewModelFactory } from "$lib/features/notepad/pane/paneViewModelFactory";
+  import { createPaneEditorLifecycle } from "$lib/features/notepad/pane/paneEditorLifecycle";
+  import { formatNoteTitle } from "$lib/features/notepad/model/document";
+  import {
+    formatShortcutBinding,
+    keyboardShortcuts,
+  } from "$lib/keyboardShortcuts.svelte";
+  import "$lib/features/notepad/editor/editor.css";
+  import "$lib/features/notepad/editor/editorTypography.css";
+  import "$lib/features/notepad/markdown/inlineFormatting.css";
 
   type PaneId = NotepadPaneId;
-  interface RecentlyForgottenChat {
-    paneId: PaneId;
-    conversationId: string;
-    title: string;
-    forgottenPath: string;
-  }
   const MAX_VISIBLE_PANES = 2;
 
   const paneTitleInputClass =
-    'w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl';
+    "w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl";
 
   let workspaceShell = $state<HTMLDivElement | null>(null);
-  let vaultNoteChangeUnlisten: UnlistenFn | null = null;
 
   // workspaceStore owns pane order, active pane, and pane command chrome.
   let paneOrder = $derived(workspaceStore.paneOrder);
@@ -181,50 +127,27 @@
   // Pane runtimes own pane-local state (refs, editor controller, readiness, slash menu, wikilink)
   const initialPaneId = notepadRuntimeState.activePaneId;
   const initialPaneIds = Array.from(
-    new Set<PaneId>([...workspaceStore.paneOrder, initialPaneId])
+    new Set<PaneId>([...workspaceStore.paneOrder, initialPaneId]),
   );
   const paneRuntimes = $state<Record<PaneId, PaneRuntime>>(
     Object.fromEntries(
-      initialPaneIds.map((paneId) => [paneId, new PaneRuntime(paneId)])
-    ) as Record<PaneId, PaneRuntime>
+      initialPaneIds.map((paneId) => [paneId, new PaneRuntime(paneId)]),
+    ) as Record<PaneId, PaneRuntime>,
   );
-  const paneControllers = {} as Record<PaneId, ReturnType<typeof createPaneControllersFn<PaneId>>>;
-  const editorCapabilities = new Map<PaneId, ReturnType<typeof createEditorCapabilityAdapter>>();
-  const chatControllers: Map<PaneId, ChatController> = new Map(
-    initialPaneIds.map((paneId) => [paneId, createPaneChatController(paneId)])
-  );
-  let chatDraftSeeds = $state<Partial<Record<PaneId, ChatDraftSeed>>>({});
-  let chatTargetAnchors = $state<Partial<Record<PaneId, string | null>>>({});
-  let recentlyForgottenChat = $state<RecentlyForgottenChat | null>(null);
-  let discussionSeedCounter = 0;
-  let discussionInProgress = false;
-  let activeSlashMenuPaneId = $state<PaneId | null>(null);
-  let activeSelectionMenuPaneId = $state<PaneId | null>(null);
-  let activeWikilinkPaneId = $state<PaneId | null>(null);
+  const paneControllers = {} as Record<
+    PaneId,
+    ReturnType<typeof createPaneControllersFn<PaneId>>
+  >;
+  const editorCapabilities = new Map<
+    PaneId,
+    ReturnType<typeof createEditorCapabilityAdapter>
+  >();
   let featureHost: NotepadFeatureHost;
   /** Assigned after `commands` is created; used by early chat open helpers. */
   let touchPaneLocationForHistory: (paneId: PaneId) => void = () => {};
 
-  let isActivePaneChat = $derived(getPaneKind(activePaneId) === 'chat');
-  let canUnforget = $derived(
-    isActivePaneChat
-      ? recentlyForgottenChat?.paneId === activePaneId
-      : notepadState.recentlyForgotten !== null
-  );
-  let activeChatCommandState = $derived(
-    isActivePaneChat ? getChatController(activePaneId).getSnapshot() : null
-  );
-  let canForgetActiveItem = $derived(
-    !isActivePaneChat ||
-      Boolean(
-        activeChatCommandState?.conversation &&
-          !activeChatCommandState.isInitializing &&
-          !activeChatCommandState.isLoadingConversation &&
-          !activeChatCommandState.isSending
-      )
-  );
-  let currentSearchHighlightMode: SearchMode = 'all';
-  let currentSearchHighlightQuery = '';
+  let currentSearchHighlightMode: SearchMode = "all";
+  let currentSearchHighlightQuery = "";
 
   const searchState = createNotepadSearchStore({
     getCurrentTitle: () => getDocumentSession().title,
@@ -232,24 +155,39 @@
     getCurrentPath: () => getDocumentSession().currentNotePath,
     openSearchResult: handleSearchResultSelect,
     openRecentTask: handleRecentTaskSelect,
-    openNote: async (noteId, notePath) => commands.openNotePath(notePath, { noteId }),
-    onSearchHighlightsChange: ({ searchMode, searchQuery, matchCase, matchWholeWord }) => {
+    openNote: async (noteId, notePath) =>
+      commands.openNotePath(notePath, { noteId }),
+    onSearchHighlightsChange: ({
+      searchMode,
+      searchQuery,
+      matchCase,
+      matchWholeWord,
+    }) => {
       currentSearchHighlightMode = searchMode;
       currentSearchHighlightQuery = searchQuery;
-      syncCurrentFileSearchHighlights(searchQuery, searchMode, { matchCase, matchWholeWord });
-    }
+      syncCurrentFileSearchHighlights(searchQuery, searchMode, {
+        matchCase,
+        matchWholeWord,
+      });
+    },
   });
 
   const relatedState = createRelatedNotesStore({
     getCurrentTitle: () => featureHost.getActiveDocumentSnapshot().title,
-    getCurrentMarkdown: () => featureHost.getActiveDocumentSnapshot().bodyMarkdown,
-    getCurrentPath: () => featureHost.getActiveDocumentSnapshot().currentNotePath
+    getCurrentMarkdown: () =>
+      featureHost.getActiveDocumentSnapshot().bodyMarkdown,
+    getCurrentPath: () =>
+      featureHost.getActiveDocumentSnapshot().currentNotePath,
   });
 
   let paneCommandPaneId = $derived(workspaceStore.paneCommand.paneId);
-  let paneCommandSourceNoteKey = $derived(workspaceStore.paneCommand.sourceNoteKey);
+  let paneCommandSourceNoteKey = $derived(
+    workspaceStore.paneCommand.sourceNoteKey,
+  );
   let paneCommandMode = $derived(workspaceStore.paneCommand.mode);
-  let paneCommandHighlightedIndex = $derived(workspaceStore.paneCommand.highlightedIndex);
+  let paneCommandHighlightedIndex = $derived(
+    workspaceStore.paneCommand.highlightedIndex,
+  );
   let paneCommandFocusEl = $state<HTMLElement | null>(null);
   $effect(() => {
     workspaceStore.setPaneCommandFocusEl(paneCommandFocusEl);
@@ -271,251 +209,73 @@
   function getPaneRuntime(paneId: PaneId) {
     const runtime = paneRuntimes[paneId];
     if (!runtime) {
-      throw new Error(`Pane runtime ${paneId} was accessed before initialization.`);
+      throw new Error(
+        `Pane runtime ${paneId} was accessed before initialization.`,
+      );
     }
     return runtime;
   }
 
-  function ensureChatController(paneId: PaneId) {
-    let controller = chatControllers.get(paneId);
-    if (!controller) {
-      controller = createPaneChatController(paneId);
-      chatControllers.set(paneId, controller);
-    }
-    return controller;
-  }
-
-  function getChatController(paneId: PaneId): ChatController {
-    const controller: ChatController | undefined = chatControllers.get(paneId);
-    if (!controller) {
-      throw new Error(`Chat controller ${paneId} was accessed before initialization.`);
-    }
-    return controller;
-  }
-
-  let proposalOrchestrationInstance: ReturnType<typeof createProposalOrchestration> | null =
-    null;
+  let proposalOrchestrationInstance: ReturnType<
+    typeof createProposalOrchestration
+  > | null = null;
   function getProposalOrchestration() {
     if (!proposalOrchestrationInstance) {
-      throw new Error('Proposal orchestration is not ready yet.');
+      throw new Error("Proposal orchestration is not ready yet.");
     }
     return proposalOrchestrationInstance;
   }
 
-  function removeResolvedProposalAcrossPanes(proposalId: string) {
-    for (const controller of chatControllers.values()) {
-      controller.removeResolvedProposal(proposalId);
-    }
-  }
-
-  function createPaneChatController(paneId: PaneId): ChatController {
-    return createChatController(chatApi, {
-      onProposal: async (proposal: ChatAgentProposal): Promise<void> => {
-        await reviewAgentProposalInEditor(paneId, proposal);
-      },
-      onProposalResolved: removeResolvedProposalAcrossPanes
-    });
-  }
-
-  function storedUpdatePreview(proposal: ChatAgentProposal): ProposalPreview | null {
-    if (proposal.kind !== 'update') return null;
-    const preview = proposal.preview as Partial<ProposalPreview>;
-    if (
-      typeof preview.reviewId !== 'string' ||
-      typeof preview.notePath !== 'string' ||
-      typeof preview.title !== 'string' ||
-      typeof preview.baseContentHash !== 'string' ||
-      typeof preview.baseEditorMarkdown !== 'string' ||
-      typeof preview.proposedEditorMarkdown !== 'string' ||
-      !Array.isArray(preview.hunks)
-    ) {
-      return null;
-    }
-    return preview as ProposalPreview;
-  }
-
-  async function reviewAgentProposalInEditor(
-    paneId: PaneId,
-    proposal: ChatAgentProposal
-  ): Promise<boolean> {
-    let pendingProposal = proposal;
-    try {
-      const pending = await chatApi.listPendingProposals(proposal.conversationId);
-      const persisted = pending.find((candidate) => candidate.id === proposal.id);
-      if (!persisted) {
-        removeResolvedProposalAcrossPanes(proposal.id);
-        return false;
-      }
-      pendingProposal = persisted;
-    } catch {
-      // The event payload still contains a complete durable preview. A
-      // transient refresh failure should not prevent immediate review.
-    }
-
-    const preview = storedUpdatePreview(pendingProposal);
-    if (!preview) return false;
-    const controller: ChatController = getChatController(paneId);
-    return getProposalOrchestration().loadDurableProposal({
-      proposalId: pendingProposal.id,
-      noteId: pendingProposal.noteId,
-      preview,
-      commit: (markdown: string) =>
-        controller.keepProposal(pendingProposal.id, markdown),
-      dismiss: () => controller.dismissProposal(pendingProposal.id)
-    });
-  }
-
-  function formatChatInsertion(selection: ChatSelection) {
-    const quote = selection.text
-      .trim()
-      .split('\n')
-      .map((line) => `> ${line}`)
-      .join('\n');
-    const backlink = selection.linkTarget ? `[[${selection.linkTarget}|Open in chat]]` : '';
-    return `${quote}${backlink ? `\n> — ${backlink}` : ''}\n\n`;
-  }
-
-  function chatSelectionActions(): ChatSelectionActions {
-    return {
-      onInsertIntoNote: async (selection) => {
-        const destinationPaneId = getEditorPaneIds()[0];
-        if (!destinationPaneId) {
-          throw new Error('Open a note beside the conversation before inserting.');
-        }
-        const document = getPaneDocumentSession(destinationPaneId);
-        const result = featureHost.insertMarkdown({
-          noteKey: document.key,
-          expectedDocumentRevision: document.operationRevision,
-          markdown: formatChatInsertion(selection),
-          target: 'selection',
-          focus: true,
-          scrollIntoView: true
-        });
-        if (result.status === 'target-changed') {
-          throw new Error('The destination note changed. Choose the note and try again.');
-        }
-        if (result.status === 'editor-unavailable') {
-          throw new Error('The destination note is not ready for insertion.');
-        }
-      }
-    };
-  }
-
-  async function conversationIdForProjection(notePath: string | null) {
-    if (!notePath) return null;
-    const normalized = notePath.replaceAll('\\', '/');
-    const conversations = await chatApi.listConversations(true);
-    for (const summary of conversations) {
-      const conversation = await chatApi.getConversation(summary.id);
-      const projection = conversation.projectionPath?.replaceAll('\\', '/');
-      if (!projection) continue;
-      const directory = projection.replace(/\/Conversation\.md$/i, '');
-      if (normalized === projection || normalized.endsWith(`/${projection}`) || normalized.includes(`/${directory}/`)) {
-        return conversation.id;
-      }
-    }
-    return null;
-  }
-
-  async function openChatProjection(
-    paneId: PaneId,
-    notePath: string | null,
-    targetAnchor: string | null = null
-  ) {
-    const conversationId = await conversationIdForProjection(notePath);
-    if (!conversationId) return false;
-    touchPaneLocationForHistory(paneId);
-    setStoredPaneKind(notepadState, paneId, 'chat');
-    setPaneChatConversationId(notepadState, paneId, conversationId);
-    // Record chat into the session MRU after kind flips so Recent keeps the slot.
-    touchPaneLocationForHistory(paneId);
-    chatTargetAnchors[paneId] = targetAnchor;
-    workspaceStore.setActivePaneId(paneId);
-    await getChatController(paneId).initialize(conversationId);
-    await tick();
-    commands.focusPaneAfterShortcut(paneId);
-    return true;
-  }
-
-  async function discussSelection(sourcePaneId: PaneId, selectedText: string) {
-    const text = selectedText.trim();
-    if (!text || discussionInProgress) return;
-    discussionInProgress = true;
-
-    try {
-      const order = [...workspaceStore.paneOrder];
-      let chatPaneId = order.find((paneId) => getPaneKind(paneId) === 'chat') ?? null;
-      let openedNewChatSurface = false;
-      let createdSplitPane = false;
-
-      if (!chatPaneId && order.length < MAX_VISIBLE_PANES) {
-        const previousPaneIds = new Set(order);
-        await commands.splitWorkspace();
-        chatPaneId = workspaceStore.paneOrder.find((paneId) => !previousPaneIds.has(paneId)) ?? null;
-        openedNewChatSurface = Boolean(chatPaneId);
-        createdSplitPane = Boolean(chatPaneId);
-      }
-
-      if (!chatPaneId) {
-        chatPaneId = order.find((paneId) => paneId !== sourcePaneId) ?? null;
-        openedNewChatSurface = Boolean(chatPaneId && getPaneKind(chatPaneId) !== 'chat');
-      }
-
-      if (!chatPaneId) return;
-
-      const controller = getChatController(chatPaneId);
-      let conversation = controller.getSnapshot().conversation;
-
-      if (openedNewChatSurface) {
-        await controller.initialize();
-        const label = text.replace(/\s+/g, ' ').slice(0, 48);
-        controller.startNewConversation({
-          title: label ? `About: ${label}` : 'Selection discussion'
-        });
-        conversation = null;
-      } else {
-        const conversationId = getPaneState(notepadState, chatPaneId).chatConversationId;
-        if (!conversation || (conversationId && conversation.id !== conversationId)) {
-          await controller.initialize(conversationId);
-          conversation = controller.getSnapshot().conversation;
-        }
-        if (!conversation) {
-          controller.startNewConversation({ title: 'Selection discussion' });
-        }
-      }
-
-      if (conversation) {
-        setPaneChatConversationId(notepadState, chatPaneId, conversation.id);
-      }
-
-      const sourceDocument = getPaneDocumentSession(sourcePaneId);
-      discussionSeedCounter += 1;
-      chatDraftSeeds[chatPaneId] = {
-        id: `${Date.now()}-${discussionSeedCounter}`,
-        text: formatDiscussionDraft(text, sourceDocument.title)
-      };
-
-      if (createdSplitPane) {
-        await commands.resolvePaneCommandChoice(chatPaneId, 'thoughtPartner');
-      } else if (getPaneKind(chatPaneId) !== 'chat') {
-        await commands.setPaneKind(chatPaneId, 'chat');
-      } else {
-        workspaceStore.setActivePaneId(chatPaneId);
-      }
-      await tick();
-    } finally {
-      discussionInProgress = false;
-    }
-  }
+  const chatCoordinator = new NotepadChatCoordinator<PaneId>(initialPaneIds, {
+    maxVisiblePanes: MAX_VISIBLE_PANES,
+    getPaneOrder: () => paneOrder,
+    getActivePaneId: () => activePaneId,
+    getPaneKind,
+    getPaneDocument: getPaneDocumentSession,
+    getEditorPaneIds: () => getEditorPaneIds(),
+    getPaneConversationId: (paneId) =>
+      getPaneState(notepadState, paneId).chatConversationId,
+    setPaneConversationId: (paneId, conversationId) =>
+      setPaneChatConversationId(notepadState, paneId, conversationId),
+    setStoredPaneKind: (paneId, kind) =>
+      setStoredPaneKind(notepadState, paneId, kind),
+    setActivePane: workspaceStore.setActivePaneId,
+    touchPaneLocation: (paneId) => touchPaneLocationForHistory(paneId),
+    splitWorkspace: () => commands.splitWorkspace(),
+    resolvePaneCommandChoice: (paneId, choice) =>
+      commands.resolvePaneCommandChoice(paneId, choice),
+    setPaneKind: (paneId, kind) => commands.setPaneKind(paneId, kind),
+    focusPane: (paneId) => commands.focusPaneAfterShortcut(paneId),
+    insertMarkdown: (request) => featureHost.insertMarkdown(request),
+    getProposalOrchestration,
+    clearRecentlyForgottenNote: () => setRecentlyForgotten(null),
+    forgottenNoteRetentionPreference: () =>
+      appSettings.forgottenNoteRetentionPreference,
+    startNewNote: () => commands.startNewNoteFlow(),
+    forgetNote: () => commands.clearNotepad(),
+    unforgetNote: () => commands.unforgetNotepad(),
+  });
+  let isActivePaneChat = $derived(getPaneKind(activePaneId) === "chat");
+  let canUnforget = $derived(
+    isActivePaneChat
+      ? chatCoordinator.canUnforget(activePaneId)
+      : notepadState.recentlyForgotten !== null,
+  );
+  let canForgetActiveItem = $derived(
+    !isActivePaneChat || chatCoordinator.canForget(activePaneId),
+  );
 
   function ensurePaneControllers(paneId: PaneId) {
     if (!paneControllers[paneId]) {
-      paneControllers[paneId] = createPaneControllersFn(paneId, paneControllerSetupDeps);
+      paneControllers[paneId] = createPaneControllersFn(
+        paneId,
+        paneControllerSetupDeps,
+      );
     }
     if (!editorCapabilities.has(paneId)) {
       editorCapabilities.set(
         paneId,
-        createEditorCapabilityAdapter(() => getPaneRuntime(paneId).controller)
+        createEditorCapabilityAdapter(() => getPaneRuntime(paneId).controller),
       );
     }
     return paneControllers[paneId];
@@ -525,10 +285,24 @@
     return ensurePaneControllers(paneId);
   }
 
+  const transientUi = new PaneTransientUiController<PaneId>({
+    getActivePaneId: () => activePaneId,
+    getVisiblePaneIds: () => getVisiblePaneIds(),
+    getPaneRuntime,
+    getEditorCapabilities: (paneId) => editorCapabilities.get(paneId) ?? null,
+    getWikilinkController: (paneId) =>
+      getPaneControllers(paneId).wikilinkController,
+  });
+  let activeSlashMenuPaneId = $derived(transientUi.activeSlashMenuPaneId);
+  let activeSelectionMenuPaneId = $derived(
+    transientUi.activeSelectionMenuPaneId,
+  );
+  let activeWikilinkPaneId = $derived(transientUi.activeWikilinkPaneId);
+
   function createPaneRuntime(): PaneId {
     const paneId = createNotepadPaneId();
     ensurePaneRuntime(paneId);
-    ensureChatController(paneId);
+    chatCoordinator.ensureController(paneId);
     ensurePaneControllers(paneId);
     return paneId;
   }
@@ -541,12 +315,16 @@
     return getPaneRuntime(paneId).refs.editorRoot;
   }
 
-  function getPaneChatComposer(paneId: PaneId) {
-    return (
-      getPaneRuntime(paneId).refs.paneCard?.querySelector<HTMLTextAreaElement>(
-        '.chat-pane-shell textarea'
-      ) ?? null
-    );
+  function focusPaneEditor(paneId: PaneId) {
+    return editorCapabilities.get(paneId)?.focus() ?? false;
+  }
+
+  function focusPaneEditorAtEnd(paneId: PaneId) {
+    return editorCapabilities.get(paneId)?.focusAtEnd() ?? false;
+  }
+
+  function focusPaneChat(paneId: PaneId) {
+    return chatCoordinator.focusComposer(paneId);
   }
 
   function getPaneTitleInput(paneId: PaneId) {
@@ -587,84 +365,13 @@
     return getDocumentSession().bodyMarkdown;
   }
 
-  function applySlashMenuSnapshotForPane(
-    paneId: PaneId,
-    snapshot: SlashMenuSnapshot,
-    view: import('@codemirror/view').EditorView
-  ) {
-    if (!snapshot.open) {
-      getPaneRuntime(paneId).setSlashMenu({ open: false });
-      if (activeSlashMenuPaneId === paneId) {
-        activeSlashMenuPaneId = null;
-      }
-      return;
-    }
-    if (paneId !== workspaceStore.activePaneId) {
-      slashMenuHideFromUi(view);
-      getPaneRuntime(paneId).setSlashMenu({ open: false });
-      return;
-    }
-    for (const visiblePaneId of getVisiblePaneIds()) {
-      if (visiblePaneId !== paneId) {
-        closeSlashMenu(visiblePaneId);
-      }
-    }
-    closeWikilinkAutocomplete();
-    activeSlashMenuPaneId = paneId;
-    getPaneRuntime(paneId).setSlashMenu({
-      open: true,
-      view,
-      anchorPos: snapshot.anchorPos,
-      groups: snapshot.groups,
-      hoverIndex: snapshot.hoverIndex
-    });
-    closeSelectionMenu(paneId);
-  }
-
-  function applySelectionMenuSnapshotForPane(
-    paneId: PaneId,
-    snapshot: SelectionMenuSnapshot,
-    view: import('@codemirror/view').EditorView
-  ) {
-    if (!snapshot.open) {
-      getPaneRuntime(paneId).setSelectionMenu({ open: false });
-      if (activeSelectionMenuPaneId === paneId) {
-        activeSelectionMenuPaneId = null;
-      }
-      return;
-    }
-    if (paneId !== workspaceStore.activePaneId) {
-      selectionMenuHideFromUi(view);
-      getPaneRuntime(paneId).setSelectionMenu({ open: false });
-      return;
-    }
-    for (const visiblePaneId of getVisiblePaneIds()) {
-      if (visiblePaneId !== paneId) {
-        closeSelectionMenu(visiblePaneId);
-      }
-    }
-    closeWikilinkAutocomplete();
-    closeSlashMenu(paneId);
-    activeSelectionMenuPaneId = paneId;
-    getPaneRuntime(paneId).setSelectionMenu({
-      open: true,
-      view,
-      selectionFrom: snapshot.selectionFrom,
-      selectionTo: snapshot.selectionTo,
-      groups: snapshot.groups,
-      hoverIndex: snapshot.hoverIndex,
-      blockPanelOpen: snapshot.blockPanelOpen,
-      activeInlineFormats: snapshot.activeInlineFormats
-    });
-  }
-
   const paneSessionController = createPaneSessionController<PaneId>({
     getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
     getPaneKind,
     getPaneDocumentSession,
     activatePaneSession,
-    setPaneDocumentSession
+    setPaneDocumentSession,
   });
 
   const {
@@ -672,21 +379,23 @@
     getNavigationPaneId,
     getNextPaneId,
     getPaneIdsForDocument,
-    getVisiblePaneIds
+    getVisiblePaneIds,
   } = paneSessionController;
 
   function focusTitleAtEnd(paneId: PaneId = getNavigationPaneId()) {
     focusInputAtEnd(getPaneTitleInput(paneId));
   }
 
-  function getNavigationContext(paneId: PaneId = getNavigationPaneId()): NavigationContext {
+  function getNavigationContext(
+    paneId: PaneId = getNavigationPaneId(),
+  ): NavigationContext {
     const paneDocument = getPaneDocumentSession(paneId);
     return {
       editorRoot: getPaneEditorRoot(paneId),
       titleShell: getPaneRuntime(paneId).refs.titleShell,
       currentNoteId: paneDocument.currentNoteId,
       currentNotePath: paneDocument.currentNotePath,
-      focusTitleAtEnd: () => focusTitleAtEnd(paneId)
+      focusTitleAtEnd: () => focusTitleAtEnd(paneId),
     };
   }
 
@@ -698,7 +407,7 @@
       stopPendingAutosave: cancelPendingAutosave,
       clearSearch,
       openNotePath: async (noteId, notePath, options) =>
-        commands.openNotePath(notePath, { noteId, ...options })
+        commands.openNotePath(notePath, { noteId, ...options }),
     };
   }
 
@@ -709,45 +418,9 @@
     paneId: string,
     document: NoteDraftState,
     nextMarkdown: string,
-    editorState: EditorSnapshot | null
   ) {
     const resolvedPaneId = paneId as PaneId;
-    if (editorState) {
-      setSharedEditorState(document, editorState);
-      bumpSharedEditorStateGeneration(document);
-      documents.markPaneDocumentGeneration(resolvedPaneId, document);
-    }
-
-    if (document.bodyMarkdown !== nextMarkdown) {
-      document.bodyMarkdown = nextMarkdown;
-      document.operationRevision += 1;
-      if (
-        paneCommandPaneId === resolvedPaneId &&
-        paneCommandMode !== null &&
-        nextMarkdown.trim() !== ''
-      ) {
-        workspaceStore.resetPaneCommand();
-      }
-    }
-    if (
-      getPaneIdsForDocument(document).some(
-        (pid) => getPaneRuntime(pid).ui.isApplyingExternalContent
-      )
-    ) {
-      return;
-    }
-
-    const suppressAutosave = shouldSuppressAutosaveForDocument(document);
-    if (!suppressAutosave && nextMarkdown.trim() !== '') {
-      setRecentlyForgotten(null);
-    }
-
-    if (!suppressAutosave) {
-      scheduleAutosave(document);
-    }
-    scheduleDocumentEditorSync(document);
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded();
+    documentEditing.recordUserEdit(resolvedPaneId, document, nextMarkdown);
   }
 
   // ---------------------------------------------------------------------------
@@ -765,13 +438,17 @@
     },
     handleEditorMarkdownChange,
     getNavigationContext,
-    openNotePath: (notePath, options) => commands.openNotePath(notePath, options),
+    openNotePath: (notePath, options) =>
+      commands.openNotePath(notePath, options),
     openWikilink,
     handleActiveWikilinkChange,
-    setWikilinkAutocomplete: updatePaneWikilinkState
+    setWikilinkAutocomplete: updatePaneWikilinkState,
   };
 
-  function rekeyNoteWithRuntime(note: NoteDraftState, snapshot: SessionSnapshot) {
+  async function rekeyNoteWithRuntime(
+    note: NoteDraftState,
+    snapshot: SessionSnapshot,
+  ) {
     const nextKey = noteKeyFromPath(snapshot.currentNotePath);
     if (!nextKey || nextKey === note.key) {
       return note;
@@ -779,6 +456,13 @@
 
     const previousKey = note.key;
     const nextNote = rekeyNote(notepadState, previousKey, nextKey) ?? note;
+    if (nextNote !== note) {
+      // A pane already owns the saved path. Rebind every affected pane to
+      // that canonical runtime before discarding the draft-key resources.
+      await documents.replaceNoteAcrossPanes(note, nextNote, {
+        cleanupPrevious: false,
+      });
+    }
     transferNoteRuntime(previousKey, nextKey);
     if (!getNoteByKey(previousKey)) {
       cleanupNoteRuntime(previousKey);
@@ -800,8 +484,28 @@
     getDocumentSession,
     saveNoteSession,
     rekeyNoteWithRuntime,
+    applySavedSnapshot: async (
+      document,
+      snapshot,
+      { preserveDraft }
+    ) => {
+      await documentEditing.applySnapshot(
+        document,
+        snapshot,
+        () =>
+          documents.replaceNoteAcrossPanes(
+            document,
+            document
+          ),
+        {
+          preserveDraft,
+          scheduleDerived: false
+        }
+      );
+    },
     isTitleEditing: isTitleInputFocusedForNote,
-    shouldSuppressPersistence: (note) => shouldSuppressAutosaveForDocument(note)
+    shouldSuppressPersistence: (note) =>
+      shouldSuppressAutosaveForDocument(note),
   });
 
   const {
@@ -811,59 +515,41 @@
     getNoteSaveQueue,
     hasCleanBuffer,
     invalidatePendingSaveResults,
-    scheduleAutosave
+    scheduleAutosave,
   } = persistence;
+
+  const documentEditing = createDocumentEditingService<PaneId>({
+    isApplyingExternalContent: (document) =>
+      getPaneIdsForDocument(document).some(
+        (paneId) => getPaneRuntime(paneId).ui.isApplyingExternalContent,
+      ),
+    shouldSuppressAutosave: shouldSuppressAutosaveForDocument,
+    resetPaneCommandAfterBodyInput: (paneId, nextMarkdown) => {
+      if (
+        paneCommandPaneId === paneId &&
+        paneCommandMode !== null &&
+        nextMarkdown.trim() !== ""
+      ) {
+        workspaceStore.resetPaneCommand();
+      }
+    },
+    clearRecentlyForgotten: () => setRecentlyForgotten(null),
+    scheduleAutosave,
+    scheduleSearch: searchState.scheduleSearch,
+    scheduleRelated: relatedState.scheduleRelated,
+  });
 
   ensurePaneControllers(initialPaneId);
 
   // ---------------------------------------------------------------------------
-  // Cross-pane document fanout (replace, save, register, mark generation).
-  // ---------------------------------------------------------------------------
-  const documents = createDocumentPaneCoordinator<PaneId>({
-    getPaneRuntime,
-    getEditorLifecycleController: (paneId) =>
-      getPaneControllers(paneId).editorLifecycleController,
-    getVisiblePaneIds,
-    getPaneIdsForDocument,
-    getPaneKind,
-    getNavigationDocument: getDocumentSession,
-    getNavigationPaneId,
-    getPaneDocument: getPaneDocumentSession,
-    getNoteByKey
-  });
-
-  // ---------------------------------------------------------------------------
-  // Document-sync controller (rAF-batched fanout of editor state).
-  // ---------------------------------------------------------------------------
-  const documentSync = createDocumentSyncController<PaneId>({
-    getPaneIdsForDocument,
-    getPaneEditorGeneration: (paneId) => getPaneRuntime(paneId).ui.editorGeneration,
-    setPaneEditorGeneration: (paneId, value) => {
-      getPaneRuntime(paneId).ui.editorGeneration = value;
-    },
-    hasController: (paneId) => getPaneRuntime(paneId).controller !== null,
-    applySharedEditorState: (paneId, document) =>
-      getPaneControllers(paneId).editorLifecycleController.applySharedEditorStateForDocument(
-        document
-      ),
-    listReferencedNoteKeys: () => listReferencedNoteKeys(notepadState),
-    getNoteByKey
-  });
-
-  const flushDocumentEditorSync = documentSync.flushDocumentEditorSync;
-  const scheduleDocumentEditorSync = documentSync.scheduleDocumentEditorSync;
-  const flushAllPendingDocumentSyncs = documentSync.flushAllPendingDocumentSyncs;
-  const hasPendingDocumentSync = documentSync.hasPendingSync;
-
-  // ---------------------------------------------------------------------------
-  // Pane editor lifecycle (queued mount/destroy + ensurePaneEditors barrier).
+  // Pane editor sessions serialize mount, swap, replacement and destruction.
   // ---------------------------------------------------------------------------
   function paneShouldMountEditor(paneId: PaneId): boolean {
     return (
       notepadRuntimeState.hasLoadedInitialSession &&
       paneOrder.includes(paneId) &&
       !!notepadState.panesById[paneId] &&
-      getPaneKind(paneId) === 'editor'
+      getPaneKind(paneId) === "editor"
     );
   }
 
@@ -882,24 +568,31 @@
       getPaneControllers(paneId).editorLifecycleController,
     getPaneDocument: getPaneDocumentSession,
     paneShouldMountEditor,
-    registerPaneEditorForDocument: (paneId, document) => {
-      documents.registerPaneEditorForDocument(paneId, document);
+    onEditorMounted: (_paneId, document) => {
       presentProposalReview(document);
     },
-    unregisterPaneEditorForDocument: documents.unregisterPaneEditorForDocument,
-    markPaneDocumentGeneration: documents.markPaneDocumentGeneration,
-    saveSharedEditorStateForDocument: documents.saveSharedEditorStateForDocument,
-    closeWikilinkAutocomplete: (paneId) => closeWikilinkAutocomplete(paneId)
+    closeWikilinkAutocomplete: (paneId) => closeWikilinkAutocomplete(paneId),
+  });
+
+  // ---------------------------------------------------------------------------
+  // Cross-pane document binding and cursor coordination.
+  // ---------------------------------------------------------------------------
+  const documents = createDocumentPaneCoordinator<PaneId>({
+    paneLifecycle,
+    getPaneRuntime,
+    getVisiblePaneIds,
+    getPaneIdsForDocument,
+    getPaneKind,
+    getNavigationDocument: getDocumentSession,
+    getNavigationPaneId,
+    getPaneDocument: getPaneDocumentSession,
+    getNoteByKey,
   });
 
   const workspacePersistence = createWorkspacePersistenceService({
-    listReferencedNoteKeys: () => listReferencedNoteKeys(notepadState),
-    getNoteByKey,
-    flushDocumentEditorSync,
     flushAllPaneCursorSaves: () => documents.flushAllPendingCursorSaves(),
-    flushPendingAutosave,
     cancelPendingAutosave,
-    enqueueSave
+    enqueueSave,
   });
 
   // ---------------------------------------------------------------------------
@@ -913,7 +606,7 @@
     openRecentTaskByIndex,
     handleSearchInput,
     handleSearchModeChange,
-    handleSearchOpen
+    handleSearchOpen,
   } = searchState;
 
   const {
@@ -923,39 +616,34 @@
     handleRelatedScopeChange,
     toggleRelatedPanel: toggleRelatedPanelController,
     collapseRelatedPanel: collapseRelatedPanelController,
-    updateSelectedRelatedText: updateSelectedRelatedTextController
+    updateSelectedRelatedText: updateSelectedRelatedTextController,
   } = relatedState;
-
-  function scheduleSearchIfNeeded() {
-    if (searchState.searchQuery.trim() !== '') {
-      scheduleSearch();
-    }
-  }
-
-  function scheduleRelatedIfNeeded(options: { immediate?: boolean } = { immediate: false }) {
-    if (!relatedState.isPanelCollapsed) {
-      scheduleRelated(options);
-    }
-  }
 
   function syncCurrentFileSearchHighlights(
     query: string = currentSearchHighlightQuery,
     mode: SearchMode = currentSearchHighlightMode,
-    options = { matchCase: searchState.matchCase, matchWholeWord: searchState.matchWholeWord }
+    options = {
+      matchCase: searchState.matchCase,
+      matchWholeWord: searchState.matchWholeWord,
+    },
   ) {
     for (const paneId of getEditorPaneIds()) {
-      setEditorCurrentSearchHighlightQuery(getPaneRuntime(paneId).controller, null);
+      editorCapabilities.get(paneId)?.setSearchHighlight(null);
     }
 
     const trimmedQuery = query.trim();
-    if (mode !== 'current' || trimmedQuery === '' || trimmedQuery.startsWith('/')) {
+    if (
+      mode !== "current" ||
+      trimmedQuery === "" ||
+      trimmedQuery.startsWith("/")
+    ) {
       return;
     }
 
     for (const paneId of getPaneIdsForDocument(getDocumentSession())) {
-      setEditorCurrentSearchHighlightQuery(getPaneRuntime(paneId).controller, {
+      editorCapabilities.get(paneId)?.setSearchHighlight({
         query: trimmedQuery,
-        ...options
+        ...options,
       });
     }
   }
@@ -967,100 +655,71 @@
     });
   });
 
-  function updatePaneWikilinkState(paneId: PaneId, nextState: WikilinkAutocompleteState) {
-    if (nextState.active) {
-      closeSlashMenu();
-      closeSelectionMenu();
-      for (const visiblePaneId of getVisiblePaneIds()) {
-        if (visiblePaneId !== paneId) {
-          getPaneControllers(visiblePaneId).wikilinkController.closeWikilinkAutocomplete();
-        }
-      }
-    }
-    getPaneRuntime(paneId).setWikilinkAutocomplete(nextState);
-    activeWikilinkPaneId = nextState.active ? paneId : activeWikilinkPaneId === paneId ? null : activeWikilinkPaneId;
+  function updatePaneWikilinkState(
+    paneId: PaneId,
+    nextState: WikilinkAutocompleteState,
+  ) {
+    transientUi.updateWikilinkState(paneId, nextState);
   }
 
   function closeSelectionMenu(paneId: PaneId | null = null) {
-    const paneIds = paneId ? [paneId] : getVisiblePaneIds();
-    for (const visiblePaneId of paneIds) {
-      const controller = getPaneRuntime(visiblePaneId).controller;
-      if (controller) {
-        selectionMenuHideFromUi(controller.view);
-      }
-      getPaneRuntime(visiblePaneId).setSelectionMenu({ open: false });
-    }
-    if (paneId === null || activeSelectionMenuPaneId === paneId) {
-      activeSelectionMenuPaneId = null;
-    }
+    transientUi.closeSelectionMenu(paneId);
   }
 
   function closeSlashMenu(paneId: PaneId | null = null) {
-    const paneIds = paneId ? [paneId] : getVisiblePaneIds();
-    for (const visiblePaneId of paneIds) {
-      const controller = getPaneRuntime(visiblePaneId).controller;
-      if (controller) {
-        slashMenuHideFromUi(controller.view);
-      }
-      getPaneRuntime(visiblePaneId).setSlashMenu({ open: false });
-    }
-    if (paneId === null || activeSlashMenuPaneId === paneId) {
-      activeSlashMenuPaneId = null;
-    }
+    transientUi.closeSlashMenu(paneId);
   }
 
   function closeTransientUiExcept(paneId: PaneId) {
-    for (const visiblePaneId of getVisiblePaneIds()) {
-      if (visiblePaneId === paneId) {
-        continue;
-      }
-      closeSlashMenu(visiblePaneId);
-      closeSelectionMenu(visiblePaneId);
-      closeWikilinkAutocomplete(visiblePaneId);
-    }
+    transientUi.closeExcept(paneId);
   }
 
   function closeWikilinkAutocomplete(paneId: PaneId | null = null) {
-    if (paneId) {
-      getPaneControllers(paneId).wikilinkController.closeWikilinkAutocomplete();
-      if (activeWikilinkPaneId === paneId) {
-        activeWikilinkPaneId = null;
-      }
-      return;
-    }
-    for (const visiblePaneId of getVisiblePaneIds()) {
-      getPaneControllers(visiblePaneId).wikilinkController.closeWikilinkAutocomplete();
-    }
-    activeWikilinkPaneId = null;
+    transientUi.closeWikilinkAutocomplete(paneId);
   }
 
-  function handleActiveWikilinkChange(paneId: PaneId, nextActiveWikilink: ActiveWikilink | null) {
-    getPaneControllers(paneId).wikilinkController.handleActiveWikilinkChange(nextActiveWikilink);
+  function handleActiveWikilinkChange(
+    paneId: PaneId,
+    nextActiveWikilink: ActiveWikilink | null,
+  ) {
+    transientUi.handleActiveWikilinkChange(paneId, nextActiveWikilink);
   }
 
   function handleWikilinkKeydown(event: KeyboardEvent) {
     if (paneCommandPaneId !== null) {
       return false;
     }
-    return getPaneControllers(getNavigationPaneId()).wikilinkController.handleAutocompleteKeydown(event);
+    return getPaneControllers(
+      getNavigationPaneId(),
+    ).wikilinkController.handleAutocompleteKeydown(event);
   }
 
   async function openWikilink(paneId: PaneId, rawTarget: string) {
     workspaceStore.setActivePaneId(paneId);
-    if (rawTarget.replaceAll('\\', '/').startsWith('Chats/')) {
-      const path = rawTarget.split('#', 1)[0];
-      if (await openChatProjection(paneId, path.endsWith('.md') ? path : `${path}.md`)) return;
+    if (rawTarget.replaceAll("\\", "/").startsWith("Chats/")) {
+      const path = rawTarget.split("#", 1)[0];
+      if (
+        await chatCoordinator.openProjection(
+          paneId,
+          path.endsWith(".md") ? path : `${path}.md`,
+        )
+      )
+        return;
     }
     await getPaneControllers(paneId).wikilinkController.openWikilink(rawTarget);
   }
 
   function handleWikilinkSuggestionSelect(paneId: PaneId, value: string) {
     const state = getPaneRuntime(paneId).ui.wikilinkAutocomplete;
-    const nextIndex = state.suggestions.findIndex((suggestion) => suggestion.value === value);
+    const nextIndex = state.suggestions.findIndex(
+      (suggestion) => suggestion.value === value,
+    );
     if (nextIndex === -1) return;
 
     updatePaneWikilinkState(paneId, { ...state, selectedIndex: nextIndex });
-    getPaneControllers(paneId).wikilinkController.selectWikilinkSuggestion(value);
+    getPaneControllers(paneId).wikilinkController.selectWikilinkSuggestion(
+      value,
+    );
   }
 
   function updateRelatedDrawerLayout() {
@@ -1076,7 +735,7 @@
       clearSelectedRelatedText();
       return;
     }
-    if (getPaneKind(paneId) !== 'editor') {
+    if (getPaneKind(paneId) !== "editor") {
       clearSelectedRelatedText();
       return;
     }
@@ -1096,37 +755,19 @@
     const document = getPaneDocumentSession(paneId);
     proposalOrchestrationInstance?.suspendDocument(
       document,
-      editorCapabilities.get(paneId) ?? null
+      editorCapabilities.get(paneId) ?? null,
     );
-    if (hasPendingDocumentSync(document)) {
-      flushDocumentEditorSync(document);
-    }
     documents.flushPaneCursorSave(paneId);
-    documents.saveSharedEditorStateForDocument(document, null, paneId);
     flushPendingAutosave(document);
     await getNoteSaveQueue(document.key);
     closeWikilinkAutocomplete(paneId);
-    getPaneRuntime(paneId).setSlashMenu({ open: false });
-    getPaneRuntime(paneId).setSelectionMenu({ open: false });
-    if (activeSlashMenuPaneId === paneId) {
-      activeSlashMenuPaneId = null;
-    }
-    if (activeSelectionMenuPaneId === paneId) {
-      activeSelectionMenuPaneId = null;
-    }
-    documents.unregisterPaneEditorForDocument(paneId, document);
-    getPaneControllers(paneId).editorLifecycleController.dispose();
-    await paneLifecycle.destroyPaneEditor(paneId);
+    closeSlashMenu(paneId);
+    closeSelectionMenu(paneId);
+    await paneLifecycle.disposePane(paneId);
     runtime.dispose();
     delete paneControllers[paneId];
     editorCapabilities.delete(paneId);
-    chatControllers.get(paneId)?.dispose();
-    chatControllers.delete(paneId);
-    if (recentlyForgottenChat?.paneId === paneId) {
-      recentlyForgottenChat = null;
-    }
-    delete chatDraftSeeds[paneId];
-    delete chatTargetAnchors[paneId];
+    chatCoordinator.disposePane(paneId);
     delete paneRuntimes[paneId];
   }
 
@@ -1135,9 +776,12 @@
   // setKind / pane-command / switch-pane). Encapsulated in notepadCommands so
   // the component does not own every flow body.
   // ---------------------------------------------------------------------------
-  const notepadWorkspaceCommands = createNotepadWorkspaceCommands<PaneId>(workspaceStore, {
-    getFocusEl: () => paneCommandFocusEl
-  });
+  const notepadWorkspaceCommands = createNotepadWorkspaceCommands<PaneId>(
+    workspaceStore,
+    {
+      getFocusEl: () => paneCommandFocusEl,
+    },
+  );
 
   const notepadPaneCommands: NotepadPaneCommands<PaneId> = {
     getPaneKind,
@@ -1147,28 +791,27 @@
     getNextPaneId,
     getPaneRuntime,
     getNoteByKey,
-    getOpenContext,
-    getNavigationContext,
     activatePaneSession,
     setPaneDocumentSession,
     getPaneTitleInput,
     getPaneEditorRoot,
-    getPaneChatComposer,
+    focusPaneEditor,
+    focusPaneEditorAtEnd,
+    focusPaneChat,
     createPane: createPaneRuntime,
     closePaneRuntime,
     updateSelectedRelatedText,
-    closeWikilinkAutocomplete
+    closeWikilinkAutocomplete,
   };
 
   const notepadDerivedViewCommands: NotepadDerivedViewCommands<PaneId> = {
     clearSearch,
-    scheduleSearchIfNeeded,
-    scheduleRelatedIfNeeded,
+    scheduleSearchIfNeeded: scheduleSearch,
+    scheduleRelatedIfNeeded: scheduleRelated,
     clearSelectedRelatedText,
     loadRecentNotes,
-    getRecentNotesForSeed: () => searchState.recentNotes,
     setRecentlyForgotten,
-    closeWikilinkAutocomplete
+    closeWikilinkAutocomplete,
   };
 
   const commands = createNotepadCommands<PaneId>({
@@ -1178,21 +821,22 @@
     panes: notepadPaneCommands,
     persistence,
     derivedViews: notepadDerivedViewCommands,
-    documentSync,
     documents,
+    documentEditing,
     paneLifecycle,
     refresh: {
       isRefreshingFromDisk: () => notepadState.isRefreshingFromDisk,
       setRefreshingFromDisk: (value) => {
         notepadState.isRefreshingFromDisk = value;
-      }
+      },
     },
-    forgottenNoteRetentionPreference: () => appSettings.forgottenNoteRetentionPreference,
+    forgottenNoteRetentionPreference: () =>
+      appSettings.forgottenNoteRetentionPreference,
     canLeaveDocument: () => true,
     onDocumentLeaving: (document) => {
       proposalOrchestrationInstance?.suspendDocument(
         document,
-        editorCapabilities.get(getNavigationPaneId()) ?? null
+        editorCapabilities.get(getNavigationPaneId()) ?? null,
       );
     },
     onDocumentOpened: (document) => {
@@ -1200,7 +844,7 @@
     },
     onDocumentPresented: (document) => {
       presentProposalReview(document);
-    }
+    },
   });
   touchPaneLocationForHistory = commands.touchCurrentLocation;
   commands.setLocationHistoryEpochListener((epoch) => {
@@ -1210,7 +854,9 @@
   let paneCommandCurrentNoteLabel = $derived.by(() => {
     void locationHistoryEpoch;
     if (paneCommandPaneId === null) {
-      return paneCommandNoteLabel(getSplitSourceNote(notepadState, paneCommandSourceNoteKey));
+      return paneCommandNoteLabel(
+        getSplitSourceNote(notepadState, paneCommandSourceNoteKey),
+      );
     }
     return commands.paneCommandCurrentLocationLabel(paneCommandPaneId);
   });
@@ -1222,7 +868,7 @@
     return commands.paneCommandPreviousLocationLabel(paneCommandPaneId);
   });
   let paneCommandPreviousNoteShortcutLabel = $derived(
-    formatShortcutBinding(keyboardShortcuts.bindings.goToPreviousNote)
+    formatShortcutBinding(keyboardShortcuts.bindings.goToPreviousNote),
   );
 
   let locationHistoryRequestId = 0;
@@ -1248,7 +894,8 @@
 
   featureHost = createNotepadFeatureHost({
     getActiveDocument: getDocumentSession,
-    getActiveEditor: () => editorCapabilities.get(getNavigationPaneId()) ?? null,
+    getActiveEditor: () =>
+      editorCapabilities.get(getNavigationPaneId()) ?? null,
     focusActiveEditor: async (options = {}) => {
       if (options.preferTitle) {
         focusTitleAtEnd();
@@ -1268,211 +915,61 @@
     },
     replaceActiveDocumentMarkdown: async (markdown) => {
       const document = getDocumentSession();
-      if (document.bodyMarkdown !== markdown) {
-        document.bodyMarkdown = markdown;
-        document.operationRevision += 1;
-      }
-      await documents.replaceEditorContentInPlace(markdown);
-      scheduleAutosave(document);
-      scheduleSearchIfNeeded();
-      scheduleRelatedIfNeeded({ immediate: true });
-    }
+      await documentEditing.replaceMarkdown(document, markdown, () =>
+        documents.replaceEditorContentInPlace(markdown),
+      );
+    },
   });
 
-  function getNearestEditorPaneId(fromPaneId: PaneId | null = activePaneId): PaneId | null {
-    const order = paneOrder;
-    if (fromPaneId && getPaneKind(fromPaneId) === 'editor') return fromPaneId;
-    return (
-      order.find((paneId) => getPaneKind(paneId) === 'editor') ?? null
-    );
-  }
-
-  async function createEditorPaneForReview(): Promise<PaneId | null> {
-    if (!canUseSplitWorkspace() || paneOrder.length >= MAX_VISIBLE_PANES) {
-      return null;
-    }
-    const previousPaneIds = new Set(paneOrder);
-    await commands.splitWorkspace();
-    const editorPaneId =
-      paneOrder.find((paneId) => !previousPaneIds.has(paneId)) ?? null;
-    if (!editorPaneId) return null;
-
-    // A review needs an editor regardless of the source pane's kind. Resolving
-    // the split as "current" would clone a chat when the source is a chat.
-    if (workspaceStore.paneCommand.paneId === editorPaneId) {
-      await commands.resolvePaneCommandChoice(editorPaneId, 'typing');
-    }
-    if (getPaneKind(editorPaneId) !== 'editor') {
-      await commands.setPaneKind(editorPaneId, 'editor');
-    }
-    return editorPaneId;
-  }
-
-  function getChatContextDocumentForPane(paneId: PaneId) {
-    const paneIndex = paneOrder.indexOf(paneId);
-    const nearestEditorPaneId = paneOrder
-      .filter((candidate) => getPaneKind(candidate) === 'editor')
-      .sort(
-        (left, right) =>
-          Math.abs(paneOrder.indexOf(left) - paneIndex) -
-          Math.abs(paneOrder.indexOf(right) - paneIndex)
-      )[0];
-    return nearestEditorPaneId
-      ? getPaneDocumentSession(nearestEditorPaneId)
-      : getPaneDocumentSession(paneId);
-  }
-
-  /** Prefer an editor that already has a saved note; skip pathless split placeholders. */
-  function getEditorPaneDocumentForReview(path: string | null = null) {
-    if (path) {
-      const matchingPaneId = paneOrder.find(
-        (paneId) => getPaneDocumentSession(paneId).currentNotePath === path
-      );
-      if (matchingPaneId) return getPaneDocumentSession(matchingPaneId);
-      return null;
-    }
-    const editorPaneIds = paneOrder.filter((paneId) => getPaneKind(paneId) === 'editor');
-    for (const paneId of editorPaneIds) {
-      const document = getPaneDocumentSession(paneId);
-      if (document.currentNotePath) return document;
-    }
-    if (editorPaneIds[0]) return getPaneDocumentSession(editorPaneIds[0]);
-    const chatPaneId = paneOrder.find((id) => getPaneKind(id) === 'chat');
-    return chatPaneId ? getPaneDocumentSession(chatPaneId) : null;
-  }
-
-  const proposalOrchestration = createProposalOrchestration({
-    getEditorPaneDocument: (path) => getEditorPaneDocumentForReview(path),
-    getEditorForDocument: (document) => {
-      const paneId = getPaneIdsForDocument(document).find(
-        (id) => getPaneKind(id) === 'editor'
-      );
-      if (!paneId) return null;
-      const editor = editorCapabilities.get(paneId) ?? null;
-      // Adapter exists before the CM controller mounts — treat as missing until live.
-      if (!editor?.isReady()) return null;
-      return editor;
-    },
-    getEditorsForDocument: (document) =>
-      getPaneIdsForDocument(document)
-        .filter((id) => getPaneKind(id) === 'editor')
-        .map((id) => editorCapabilities.get(id) ?? null)
-        .filter((editor): editor is NonNullable<typeof editor> => Boolean(editor?.isReady())),
-    flushBeforePreview: async (document) => {
-      flushDocumentEditorSync(document);
-      cancelPendingAutosave(document);
-      await enqueueSave(document);
-      await getNoteSaveQueue(document.key);
-    },
-    ensureEditorPaneForReview: async (document) => {
-      let editorPaneId = document
-        ? getPaneIdsForDocument(document).find((id) => getPaneKind(id) === 'editor') ?? null
-        : getNearestEditorPaneId();
-
-      if (!editorPaneId) {
-        // Chat-only (or no editor pane). Prefer chat | editor with the bound note.
-        if (paneOrder.length === 1 && canUseSplitWorkspace()) {
-          editorPaneId = await createEditorPaneForReview();
-        } else {
-          const chatPaneId =
-            (activePaneId && getPaneKind(activePaneId) === 'chat' ? activePaneId : null) ??
-            paneOrder.find((id) => getPaneKind(id) === 'chat') ??
-            null;
-          if (chatPaneId) {
-            await commands.setPaneKind(chatPaneId, 'editor');
-            editorPaneId = chatPaneId;
-          }
-        }
-      }
-
-      // Keep the proposal list visible: if we only have an editor, open chat beside it.
-      if (
-        paneOrder.length === 1 &&
-        editorPaneId &&
-        getPaneKind(editorPaneId) === 'editor' &&
-        canUseSplitWorkspace()
-      ) {
-        await splitWorkspaceIfAllowed('thoughtPartner');
-        editorPaneId = getNearestEditorPaneId() ?? editorPaneId;
-      }
-
-      // Split can leave a pathless placeholder editor — bind the chat/context note.
-      if (editorPaneId && !getPaneDocumentSession(editorPaneId).currentNotePath) {
-        const source =
-          document?.currentNotePath
-            ? document
-            : paneOrder
-                .map((id) => getPaneDocumentSession(id))
-                .find((doc) => doc.currentNotePath) ?? null;
-        if (source) {
-          setPaneDocumentSession(editorPaneId, source);
-          flushDocumentEditorSync(source);
-        }
-      }
-
-      await tick();
-      await paneLifecycle.ensurePaneEditors();
-    },
-    openNoteForReview: async (noteId, path) => {
-      const editorPaneId = getNearestEditorPaneId();
-      if (!editorPaneId) return null;
-      workspaceStore.setActivePaneId(editorPaneId);
-      await commands.openNotePath(path, {
-        noteId,
-        focusEditorAfterOpen: false
-      });
-      await tick();
-      await paneLifecycle.ensurePaneEditors();
-      return getEditorPaneDocumentForReview(path);
-    },
-    activateEditorPane: async (document) => {
-      // Prefer the editor that already hosts a saved note.
-      const withDocument = document
-        ? getPaneIdsForDocument(document).find((id) => getPaneKind(id) === 'editor') ?? null
-        : null;
-      const withPath = withDocument ?? paneOrder.find(
-        (id) =>
-          getPaneKind(id) === 'editor' &&
-          Boolean(getPaneDocumentSession(id).currentNotePath)
-      );
-      const editorPaneId = withPath ?? getNearestEditorPaneId();
-      if (editorPaneId) {
-        commands.activatePane(editorPaneId);
-        await tick();
-        await paneLifecycle.ensurePaneEditors();
-      }
-    },
-    cancelPendingAutosave: (document) => {
-      cancelPendingAutosave(document);
-    },
-    scheduleAutosave: (document) => scheduleAutosave(document),
-    reloadReviewFromDisk: async () => {
-      await commands.refreshCurrentNoteIfChanged();
-    },
-    reopenReviewEditor: async (document) => {
-      let paneId = getPaneIdsForDocument(document).find((id) => getPaneKind(id) === 'editor') ?? null;
-      if (!paneId && paneOrder.length < MAX_VISIBLE_PANES) {
-        paneId = await createEditorPaneForReview();
-      }
-      if (!paneId) {
-        // A compact/chat-only workspace has no spare pane; reuse the active
-        // pane only when the user explicitly asks to reopen the review.
-        paneId = activePaneId;
-        await commands.setPaneKind(paneId, 'editor');
-      }
-      setPaneDocumentSession(paneId, document);
-      await tick();
-      await paneLifecycle.ensurePaneEditors();
-      const editor = editorCapabilities.get(paneId) ?? null;
-      return editor?.isReady() ? editor : null;
-    },
-    refreshDocumentAfterKeep: async () => {
-      // The reviewed editor already holds the committed body. Refresh it in
-      // place so the adjacent chat pane remains a chat pane.
-      await commands.refreshCurrentNoteIfChanged();
-    }
+  const proposalAdapter = createNotepadProposalAdapter<PaneId>({
+    maxVisiblePanes: MAX_VISIBLE_PANES,
+    getPaneOrder: () => paneOrder,
+    getActivePaneId: () => activePaneId,
+    getPaneKind,
+    getPaneDocument: getPaneDocumentSession,
+    setPaneDocument: setPaneDocumentSession,
+    getPaneIdsForDocument,
+    getEditor: (paneId) => editorCapabilities.get(paneId) ?? null,
+    canSplitWorkspace: canUseSplitWorkspace,
+    splitWorkspace: splitWorkspaceIfAllowed,
+    createSplitPane: commands.splitWorkspace,
+    getPendingPaneCommandId: () => workspaceStore.paneCommand.paneId,
+    resolvePaneCommandChoice: commands.resolvePaneCommandChoice,
+    setPaneKind: commands.setPaneKind,
+    setActivePane: workspaceStore.setActivePaneId,
+    activatePane: commands.activatePane,
+    openNote: commands.openNotePath,
+    paneLifecycle,
+    cancelPendingAutosave,
+    enqueueSave,
+    getSaveQueue: (document) => getNoteSaveQueue(document.key),
+    scheduleAutosave,
+    refreshCurrentNote: commands.refreshCurrentNoteIfChanged,
   });
+  const {
+    orchestration: proposalOrchestration,
+    getNearestEditorPaneId,
+  } = proposalAdapter;
   proposalOrchestrationInstance = proposalOrchestration;
+
+  const chatPaneAdapter = createNotepadChatPaneAdapter<PaneId>({
+    coordinator: chatCoordinator,
+    proposal: proposalOrchestration,
+    getPaneOrder: () => paneOrder,
+    getPaneKind,
+    getPaneDocument: getPaneDocumentSession,
+    getPaneConversationId: (paneId) =>
+      getPaneState(notepadState, paneId).chatConversationId,
+    setPaneConversationId: (paneId, conversationId) =>
+      setPaneChatConversationId(notepadState, paneId, conversationId),
+    touchPaneLocation: (paneId) => touchPaneLocationForHistory(paneId),
+    getSelectedRelatedText: () => relatedState.selectedText,
+    getEditorPaneIds,
+    setActivePane: workspaceStore.setActivePaneId,
+    openNote: commands.openNotePath,
+    flushPendingAutosave,
+    getNoteSaveQueue: (document) => getNoteSaveQueue(document.key),
+  });
 
   // ---------------------------------------------------------------------------
   // Refresh controller (window focus / vault changes / visibility).
@@ -1480,8 +977,8 @@
   function refreshDerivedViews() {
     void loadRecentNotes();
     void loadRecentTasks();
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded({ immediate: true });
+    scheduleSearch();
+    scheduleRelated({ immediate: true });
   }
 
   const refreshController = createNotepadRefreshController({
@@ -1489,7 +986,8 @@
     refreshDerivedViews,
     updateRelatedDrawerLayout,
     refreshCurrentNoteIfChanged: commands.refreshCurrentNoteIfChanged,
-    refreshCurrentNoteFromTaskMutation: commands.refreshCurrentNoteFromTaskMutation,
+    refreshCurrentNoteFromTaskMutation:
+      commands.refreshCurrentNoteFromTaskMutation,
     getNoteByKey,
     getPaneIdsForDocument,
     replaceNoteAcrossPanes: documents.replaceNoteAcrossPanes,
@@ -1500,14 +998,14 @@
       if (!proposalOrchestration.isReviewingPath(notePath)) return false;
       proposalOrchestration.markConflict(notePath);
       return true;
-    }
+    },
   });
 
   const {
     handleWindowFocus,
     handleWindowResize,
     handleVisibilityChange,
-    handleVaultNoteChanged
+    handleVaultNoteChanged,
   } = refreshController;
 
   // ---------------------------------------------------------------------------
@@ -1528,16 +1026,13 @@
     const paneDocument = getPaneDocumentSession(paneId);
     const formattedTitle = formatNoteTitle(rawTitle);
 
-    if (paneDocument.title !== formattedTitle) {
-      paneDocument.title = formattedTitle;
-      paneDocument.operationRevision += 1;
-    }
-    if (formattedTitle !== '' || paneDocument.bodyMarkdown.trim() !== '') {
+    documentEditing.updateTitle(paneDocument, formattedTitle);
+    if (formattedTitle !== "" || paneDocument.bodyMarkdown.trim() !== "") {
       setRecentlyForgotten(null);
     }
     scheduleAutosave(paneDocument);
-    scheduleSearchIfNeeded();
-    scheduleRelatedIfNeeded();
+    scheduleSearch();
+    scheduleRelated();
   }
 
   function handleTitleBlur(paneId: PaneId, rawTitle: string) {
@@ -1546,30 +1041,44 @@
   }
 
   function handleTitleKeydown(paneId: PaneId, event: KeyboardEvent) {
-    if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    ) {
       return;
     }
 
     event.preventDefault();
     const titleInput = event.currentTarget as HTMLInputElement;
     titleInput.blur();
-    void focusEditorAtEnd(getPaneEditorRoot(paneId));
+    focusPaneEditorAtEnd(paneId);
   }
 
   async function handleSearchResultSelect(result: SearchItem) {
-    if (result.documentKind && result.documentKind !== 'note') {
-      if (await openChatProjection(getNavigationPaneId(), result.notePath, result.blockAnchor ?? null)) {
+    if (result.documentKind && result.documentKind !== "note") {
+      if (
+        await chatCoordinator.openProjection(
+          getNavigationPaneId(),
+          result.notePath,
+          result.blockAnchor ?? null,
+        )
+      ) {
         clearSearch();
         return;
       }
     }
     workspaceStore.resetPaneCommand();
-    if (searchState.searchMode === 'current' && result.currentMatchRange) {
+    if (searchState.searchMode === "current" && result.currentMatchRange) {
       searchState.clearSearch();
       const paneId = getNavigationPaneId();
       activatePaneSession(paneId);
       await tick();
-      focusEditorSearchRange(getPaneRuntime(paneId).controller, result.currentMatchRange);
+      editorCapabilities
+        .get(paneId)
+        ?.focusSearchRange(result.currentMatchRange);
       documents.saveCursorPositionForDocument();
       return;
     }
@@ -1579,7 +1088,7 @@
   }
 
   async function handleSearchResultNavigate(result: SearchItem) {
-    if (searchState.searchMode !== 'current' || !result.currentMatchRange) {
+    if (searchState.searchMode !== "current" || !result.currentMatchRange) {
       return;
     }
 
@@ -1587,7 +1096,7 @@
     const paneId = getNavigationPaneId();
     activatePaneSession(paneId);
     await tick();
-    focusEditorSearchRange(getPaneRuntime(paneId).controller, result.currentMatchRange);
+    editorCapabilities.get(paneId)?.focusSearchRange(result.currentMatchRange);
     documents.saveCursorPositionForDocument();
   }
 
@@ -1598,8 +1107,15 @@
   }
 
   async function handleRelatedItemSelect(item: RelatedNoteItem) {
-    if (item.documentKind && item.documentKind !== 'note') {
-      if (await openChatProjection(getNavigationPaneId(), item.notePath, item.blockAnchor ?? null)) return;
+    if (item.documentKind && item.documentKind !== "note") {
+      if (
+        await chatCoordinator.openProjection(
+          getNavigationPaneId(),
+          item.notePath,
+          item.blockAnchor ?? null,
+        )
+      )
+        return;
     }
     workspaceStore.resetPaneCommand();
     await openSearchResult(getOpenContext(), getNavigationContext(), {
@@ -1610,12 +1126,12 @@
       excerpt: item.excerpt,
       highlightRanges: [],
       matchText: item.matchText,
-      reasonLabels: ['related'],
+      reasonLabels: ["related"],
       lexicalScore: null,
       semanticScore: item.score,
       startLine: item.startLine,
       endLine: item.endLine,
-      blockAnchor: item.blockAnchor ?? null
+      blockAnchor: item.blockAnchor ?? null,
     });
     documents.saveCursorPositionForDocument();
   }
@@ -1624,7 +1140,9 @@
     return window.innerWidth >= 640 && window.innerHeight >= 560;
   }
 
-  async function splitWorkspaceIfAllowed(choice: PaneCommandChoice | undefined = undefined) {
+  async function splitWorkspaceIfAllowed(
+    choice: PaneCommandChoice | undefined = undefined,
+  ) {
     // A phone in landscape can cross the width breakpoint while still having
     // far too little vertical room for a useful two-pane editor.
     if (!canUseSplitWorkspace()) {
@@ -1639,24 +1157,26 @@
       // unavailable option instead of silently resolving to a blank pane.
       const hasPrevious =
         targetPaneId !== null &&
-        (await commands.resolvePreviousLocationForPaneCommand(targetPaneId as PaneId)) !== null;
-      if (targetPaneId && (choice !== 'previous' || hasPrevious)) {
+        (await commands.resolvePreviousLocationForPaneCommand(
+          targetPaneId as PaneId,
+        )) !== null;
+      if (targetPaneId && (choice !== "previous" || hasPrevious)) {
         await commands.resolvePaneCommandChoice(targetPaneId as PaneId, choice);
       }
     }
   }
 
   async function openPaneChoiceInCurrent(choice: PaneCommandChoice) {
-    if (choice === 'current') {
-      await commands.setPaneKind(activePaneId, 'editor');
+    if (choice === "current") {
+      await commands.setPaneKind(activePaneId, "editor");
       return;
     }
-    if (choice === 'thoughtPartner') {
-      await commands.setPaneKind(activePaneId, 'chat');
+    if (choice === "thoughtPartner") {
+      await commands.setPaneKind(activePaneId, "chat");
       return;
     }
 
-    if (choice === 'previous') {
+    if (choice === "previous") {
       await commands.goToPreviousLocation();
     }
   }
@@ -1668,199 +1188,43 @@
     getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
     getPaneTitleInput,
-    openThoughtPartner: () => openPaneChoiceInCurrent('thoughtPartner'),
+    openThoughtPartner: () => openPaneChoiceInCurrent("thoughtPartner"),
     openSplitPaneOptions: () => splitWorkspaceIfAllowed(),
-    openNewChatInSplit: () => splitWorkspaceIfAllowed('thoughtPartner'),
-    openPreviousNoteInSplit: () => splitWorkspaceIfAllowed('previous'),
+    openNewChatInSplit: () => splitWorkspaceIfAllowed("thoughtPartner"),
+    openPreviousNoteInSplit: () => splitWorkspaceIfAllowed("previous"),
     closePane: commands.closePane,
     switchActivePane: commands.switchActivePane,
-    startNewNoteFlow: startNewActivePaneItem,
+    startNewNoteFlow: () => chatCoordinator.startNewActiveItem(),
     toggleRelatedPanel,
     goToPreviousLocation: commands.goToPreviousLocation,
     focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
     handlePaneCommandGlobalKeydown: commands.handlePaneCommandGlobalKeydown,
-    handleWikilinkKeydown
+    handleWikilinkKeydown,
   });
-
-  async function startNewActivePaneItem() {
-    const paneId = activePaneId;
-    if (getPaneKind(paneId) === 'chat') {
-      if (recentlyForgottenChat?.paneId === paneId) {
-        recentlyForgottenChat = null;
-      }
-      getChatController(paneId).startNewConversation();
-      return;
-    }
-    await commands.startNewNoteFlow();
-  }
-
-  async function forgetActivePaneItem() {
-    const paneId = activePaneId;
-    if (getPaneKind(paneId) === 'chat') {
-      const controller = getChatController(paneId);
-      const conversation = controller.getSnapshot().conversation;
-      if (!conversation) return;
-      const forgottenItem = await controller.archiveConversation(
-        undefined,
-        appSettings.forgottenNoteRetentionPreference
-      );
-      if (forgottenItem?.forgottenPath) {
-        setRecentlyForgotten(null);
-        recentlyForgottenChat = {
-          paneId,
-          conversationId: conversation.id,
-          title: conversation.title,
-          forgottenPath: forgottenItem.forgottenPath
-        };
-      }
-      return;
-    }
-    recentlyForgottenChat = null;
-    await commands.clearNotepad();
-  }
-
-  async function unforgetActivePaneItem() {
-    const paneId = activePaneId;
-    if (getPaneKind(paneId) !== 'chat') {
-      await commands.unforgetNotepad();
-      return;
-    }
-
-    const forgottenChat = recentlyForgottenChat;
-    if (!forgottenChat || forgottenChat.paneId !== paneId) return;
-
-    try {
-      const restoredItems = await restoreForgottenNotes([forgottenChat.forgottenPath]);
-      const restoredItem = restoredItems[0];
-      if (!restoredItem) return;
-
-      recentlyForgottenChat = null;
-      const conversationId = restoredItem.conversationId ?? forgottenChat.conversationId;
-      const controller = getChatController(paneId);
-      await controller.refreshList();
-      const conversation = await controller.openConversation(conversationId);
-      if (!conversation) return;
-
-      setPaneChatConversationId(notepadState, paneId, conversation.id);
-      chatTargetAnchors[paneId] = null;
-      touchPaneLocationForHistory(paneId);
-      await tick();
-      commands.focusPaneAfterShortcut(paneId);
-    } catch (error) {
-      console.error('Failed to restore forgotten chat:', error);
-    }
-  }
 
   // ---------------------------------------------------------------------------
   // Pane view-model + actions wired into NotepadPane.svelte.
   // ---------------------------------------------------------------------------
-  function getPaneViewModel(paneId: PaneId): PaneViewModel {
-    const paneKind = getPaneKind(paneId);
-    const paneDocument = getPaneDocumentSession(paneId);
-    const paneIndex = paneOrder.indexOf(paneId);
-    const stackClass = activePaneId === paneId ? 'z-10' : 'z-0';
-    const chatContextDocument = paneKind === 'chat'
-      ? getChatContextDocumentForPane(paneId)
-      : paneDocument;
-
-    return {
-      paneId,
-      ariaLabel: `Pane ${paneIndex + 1}`,
-      bodyClass: `relative flex min-h-0 min-w-0 flex-1 flex-col ${stackClass}`,
-      frameClass: `relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${stackClass}`,
-      paneKind,
-      isEditorReady: getPaneRuntime(paneId).ui.isEditorReady,
-      isSlashMenuOpen: activeSlashMenuPaneId === paneId,
-      isPaneCommandOpen: paneCommandPaneId === paneId,
-      showCloseButton: paneOrder.length > 1,
-      titleClass: paneTitleInputClass,
-      titlePlaceholder: paneKind === 'editor' ? 'Title' : 'Chat title',
-      titleDocument: paneDocument,
-      titleValue: paneKind === 'editor' ? paneDocument.title : 'Thought partner',
-      titleReadonly:
-        paneKind === 'chat' || proposalOrchestration.isReviewingDocument(paneDocument),
-      chatController: paneKind === 'chat' ? getChatController(paneId) : null,
-      chatConversationId: getPaneState(notepadState, paneId).chatConversationId,
-      chatDraftSeed: chatDraftSeeds[paneId] ?? null,
-      chatContextNote: paneKind === 'chat' && (chatContextDocument.currentNotePath || chatContextDocument.title.trim())
-        ? {
-            noteId: chatContextDocument.currentNoteId,
-            notePath: chatContextDocument.currentNotePath,
-            noteTitle: chatContextDocument.title.trim()
-              || chatContextDocument.currentNotePath?.split('/').at(-1)?.replace(/\.md$/i, '')
-              || 'Untitled note'
-          }
-        : null,
-      getChatActiveNoteSnapshot: async () => {
-        const document = getChatContextDocumentForPane(paneId);
-        if (!document.currentNotePath || !document.currentNoteId) return null;
-        flushDocumentEditorSync(document);
-        flushPendingAutosave(document);
-        await getNoteSaveQueue(document.key);
-        if (document.status === 'error') {
-          throw new Error('The active note could not be saved before sending.');
-        }
-        return {
-          noteId: document.currentNoteId,
-          title: document.title.trim()
-            || document.currentNotePath.split('/').at(-1)?.replace(/\.md$/i, '')
-            || 'Untitled note',
-          path: document.currentNotePath,
-          body: document.bodyMarkdown,
-          bodyHash: computeDraftHash(document.bodyMarkdown),
-          selection: relatedState.selectedText
-        };
-      },
-      chatTargetAnchor: chatTargetAnchors[paneId] ?? null,
-      chatSelectionActions: chatSelectionActions(),
-      onChatConversationChange: (conversationId) => {
-        setPaneChatConversationId(notepadState, paneId, conversationId);
-        if (getPaneKind(paneId) === 'chat') {
-          touchPaneLocationForHistory(paneId);
-        }
-      },
-      onOpenCitation: async (citation) => {
-        const editorPaneId = getEditorPaneIds()[0];
-        if (editorPaneId) {
-          workspaceStore.setActivePaneId(editorPaneId);
-          await commands.openNotePath(citation.notePath, {
-            noteId: citation.noteId,
-            focusEditorAfterOpen: true
-          });
-          return;
-        }
-        workspaceStore.setActivePaneId(paneId);
-        await commands.openNotePath(citation.notePath, {
-          noteId: citation.noteId,
-          revealEditorAfterOpen: true,
-          focusEditorAfterOpen: true
-        });
-      },
-      proposalSnapshot: proposalOrchestration.session.snapshot,
-      proposalPendingCount: proposalOrchestration.session.pendingCount,
-      onProposalOpenChange: (change) => void proposalOrchestration.showChange(change),
-      onProposalKeep: (changeId) => void proposalOrchestration.keep(changeId),
-      onProposalUndo: (changeId) => void proposalOrchestration.undo(changeId),
-      onProposalKeepAll: () => void proposalOrchestration.keepAll(),
-      onProposalUndoAll: () => void proposalOrchestration.undoAll(),
-      onProposalReview: () => void proposalOrchestration.reviewNext(),
-      onProposalRetry: () => void proposalOrchestration.retryCommit(),
-      onProposalCopyCurrent: () => void proposalOrchestration.copyCurrent(),
-      onProposalReloadDisk: () => void proposalOrchestration.reloadDisk(),
-      onReviewAgentProposal: (proposal) =>
-        void reviewAgentProposalInEditor(paneId, proposal),
-      paneCommandHighlightedIndex,
-      paneCommandMode,
-      paneCommandCurrentNoteLabel,
-      paneCommandPreviousNoteLabel,
+  const getPaneViewModel = createPaneViewModelFactory({
+    getPaneOrder: () => paneOrder,
+    getActivePaneId: () => activePaneId,
+    getPaneKind,
+    getPaneDocument: getPaneDocumentSession,
+    getPaneRuntime,
+    getChatBindings: chatPaneAdapter.getBindings,
+    isReviewingDocument: proposalOrchestration.isReviewingDocument,
+    paneTitleInputClass,
+    getActiveSlashMenuPaneId: () => activeSlashMenuPaneId,
+    getPaneCommandPaneId: () => paneCommandPaneId,
+    getPaneCommandHighlightedIndex: () => paneCommandHighlightedIndex,
+    getPaneCommandMode: () => paneCommandMode,
+    getPaneCommandCurrentNoteLabel: () => paneCommandCurrentNoteLabel,
+    getPaneCommandPreviousNoteLabel: () => paneCommandPreviousNoteLabel,
+    getPaneCommandPreviousNoteShortcutLabel: () =>
       paneCommandPreviousNoteShortcutLabel,
-      editorLifecycle: {
-        shouldMount: paneShouldMountEditor(paneId),
-        mount: () => paneLifecycle.mountPaneEditor(paneId),
-        destroy: () => paneLifecycle.destroyPaneEditor(paneId)
-      }
-    };
-  }
+    paneShouldMountEditor,
+    paneLifecycle,
+  });
 
   const paneActions: PaneWorkspaceActions = {
     onActivate: commands.activatePane,
@@ -1876,187 +1240,67 @@
     onPaneCommandHighlightChange: (index: number) => {
       workspaceStore.setPaneCommandHighlight(index);
     },
-    onPaneCommandChoose: commands.resolvePaneCommandChoice
+    onPaneCommandChoose: commands.resolvePaneCommandChoice,
   };
 
-  // ---------------------------------------------------------------------------
-  // Bootstrap / asset root / saved-note fallbacks.
-  // ---------------------------------------------------------------------------
-  async function loadSavedNote() {
-    try {
-      const snapshot = await loadSavedNoteSession();
+  const sessionLifecycle = createNotepadSessionLifecycle({
+    hasLoadedInitialSession: () => notepadRuntimeState.hasLoadedInitialSession,
+    markInitialSessionLoaded: () => {
+      notepadRuntimeState.hasLoadedInitialSession = true;
+    },
+    isInitialEditorRootReady: () =>
+      Boolean(getPaneRuntime(initialPaneId).refs.editorRoot),
+    applySession: (snapshot) => {
       adoptSnapshotForPane(notepadState, initialPaneId, snapshot);
       setStoreActivePane(notepadState, initialPaneId);
-    } catch (error) {
-      console.error('Failed to load saved note:', error);
-      applySnapshotToNote(getPaneDocumentSession(initialPaneId), createEmptySessionSnapshot());
-    }
-  }
-
-  async function loadAssetRoot() {
-    try {
-      const vaultInfo = await loadCurrentVaultInfo();
-      updateSharedEditorResourceConfig(
-        resolveAssetRootPath(vaultInfo.currentPath),
-        storePastedImageAsset
-      );
-    } catch (error) {
-      console.error('Failed to load vault info for image assets:', error);
-      updateSharedEditorResourceConfig(null, storePastedImageAsset);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Mount / unmount lifecycle.
-  // ---------------------------------------------------------------------------
-  onMount(() => {
-    let mounted = true;
-    const unregisterWindowCloseHandler = registerWorkspaceWindowCloseHandler({
-      getPaneOrder: () => paneOrder,
-      getActivePaneId: () => activePaneId,
-      getPaneTitleInput,
-      closePane: commands.closePane,
-      focusPaneAfterShortcut: commands.focusPaneAfterShortcut
-    });
-    const unregisterPendingNoteSaveHandler = registerPendingNoteSaveHandler(
-      workspacePersistence.flushAllForNavigation
-    );
-    const shellResizeObserver =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(() => {
-            updateRelatedDrawerLayout();
-          });
-
-    setSlashMenuListener((view, snapshot) => {
-      const paneKey = getPaneIdForSlashMenuView(view);
-      if (paneKey && paneKey in paneRuntimes) {
-        applySlashMenuSnapshotForPane(paneKey as PaneId, snapshot, view);
+    },
+    applyAssetRoot: updateSharedEditorResourceConfig,
+    registerWindowCloseHandler: () =>
+      registerWorkspaceWindowCloseHandler({
+        getPaneOrder: () => paneOrder,
+        getActivePaneId: () => activePaneId,
+        getPaneTitleInput,
+        closePane: commands.closePane,
+        focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
+      }),
+    registerPendingSaveHandler: () =>
+      registerPendingNoteSaveHandler(
+        workspacePersistence.flushAllForNavigation,
+      ),
+    registerTransientMenuListeners: () =>
+      transientUi.registerBridgeListeners((paneKey) =>
+        paneKey in paneRuntimes ? (paneKey as PaneId) : null,
+      ),
+    getWorkspaceShell: () => workspaceShell,
+    ensurePaneEditors: paneLifecycle.ensurePaneEditors,
+    refreshCurrentNote: commands.refreshCurrentNoteFromTaskMutation,
+    updateRelatedLayout: updateRelatedDrawerLayout,
+    scheduleRelated,
+    openNote: commands.openNotePath,
+    navigateToTaskTarget: async (target) => {
+      if (target) {
+        await navigateToPendingTaskTarget(getNavigationContext(), target);
       }
-    });
-
-    setSelectionMenuListener((view, snapshot) => {
-      const paneKey = getPaneIdForSelectionMenuView(view);
-      if (paneKey && paneKey in paneRuntimes) {
-        applySelectionMenuSnapshotForPane(paneKey as PaneId, snapshot, view);
-      }
-    });
-
-    (async () => {
-      await tick();
-      if (!mounted || !getPaneRuntime(initialPaneId).refs.editorRoot) return;
-      if (notepadRuntimeState.hasLoadedInitialSession) {
-        await loadAssetRoot();
-      } else {
-        try {
-          // Reuse the AppStore-owned bootstrap so we make a single
-          // `bootstrap_app` round trip per app launch. The +layout.svelte
-          // mount kicks this off; here we await the cached promise so the
-          // initial note session, asset root, and semantic status are all
-          // populated from one backend call.
-          const bootstrap = await appStore.bootstrap();
-          adoptSnapshotForPane(notepadState, initialPaneId, bootstrap.session);
-          setStoreActivePane(notepadState, initialPaneId);
-          updateSharedEditorResourceConfig(
-            resolveAssetRootPath(bootstrap.vault.currentPath),
-            storePastedImageAsset
-          );
-        } catch (error) {
-          console.error('appStore.bootstrap failed, falling back to individual invokes:', error);
-          await Promise.all([loadSavedNote(), loadAssetRoot()]);
-        }
-        notepadRuntimeState.hasLoadedInitialSession = true;
-      }
-      if (!mounted || !getPaneRuntime(initialPaneId).refs.editorRoot) return;
-      try {
-        await paneLifecycle.ensurePaneEditors();
-        await commands.refreshCurrentNoteFromTaskMutation();
-        updateRelatedDrawerLayout();
-        scheduleRelatedIfNeeded({ immediate: true });
-        let skipDefaultFocus = false;
-        const pendingTaskTarget = consumePendingTaskTarget();
-        if (pendingTaskTarget) {
-          skipDefaultFocus = true;
-          await commands.openNotePath(pendingTaskTarget.notePath, {
-            noteId: pendingTaskTarget.noteId,
-            focusEditorAfterOpen: false
-          });
-          await navigateToPendingTaskTarget(getNavigationContext(), pendingTaskTarget);
-        }
-        const pendingNoteTarget = consumePendingNoteTarget();
-        if (pendingNoteTarget) {
-          skipDefaultFocus = true;
-          if (
-            pendingNoteTarget.documentKind &&
-            pendingNoteTarget.documentKind !== 'note'
-          ) {
-            await openChatProjection(getNavigationPaneId(), pendingNoteTarget.notePath);
-          } else {
-            await commands.openNotePath(pendingNoteTarget.notePath, {
-              noteId: pendingNoteTarget.noteId,
-              focusEditorAfterOpen: true
-            });
-          }
-        }
-        // Remounts (e.g. returning from List/Map/Settings) restore the caret
-        // but SvelteKit focuses <body> after navigation — put typing focus back
-        // after a paint so we win that reset.
-        if (!skipDefaultFocus) {
-          await tick();
-          await new Promise<void>((resolve) => {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => resolve());
-            });
-          });
-          if (mounted) {
-            commands.focusPaneAfterShortcut(getNavigationPaneId());
-          }
-        }
-        // Subscribe to vault note + semantic status changes through the
-        // unified AppStore so the page no longer opens raw IPC listeners.
-        const appVaultListen = appStore.subscribeVaultNoteChanged((payload) => {
-          void handleVaultNoteChanged(payload);
-        });
-        vaultNoteChangeUnlisten = () => appVaultListen();
-        // Semantic status is now a $derived(appStore.semanticStatus); no
-        // local mirroring is required.
-      } catch (err) {
-        console.error('Notepad init failed:', err);
-      }
-    })();
-
-    if (workspaceShell && shellResizeObserver) {
-      shellResizeObserver.observe(workspaceShell);
-    }
-
-    return () => {
-      unregisterWindowCloseHandler();
-      setSlashMenuListener(null);
-      setSelectionMenuListener(null);
-      mounted = false;
-      flushAllPendingDocumentSyncs();
+    },
+    openChatProjection: (notePath) =>
+      chatCoordinator.openProjection(getNavigationPaneId(), notePath),
+    focusNavigationPane: () =>
+      commands.focusPaneAfterShortcut(getNavigationPaneId()),
+    onVaultNoteChanged: (payload) => {
+      void handleVaultNoteChanged(payload);
+    },
+    dispose: () => {
       documents.flushAllPendingCursorSaves();
       documents.saveCursorPositionForDocument();
-      documents.saveSharedEditorStateForDocument();
       flushPendingAutosave();
-      for (const paneId of getVisiblePaneIds()) {
-        getPaneControllers(paneId).editorLifecycleController.dispose();
-      }
-      for (const controller of chatControllers.values()) controller.dispose();
-      chatControllers.clear();
-      syncCurrentFileSearchHighlights('', 'all');
+      chatCoordinator.dispose();
+      syncCurrentFileSearchHighlights("", "all");
       searchState.dispose();
       relatedState.dispose();
-      unregisterPendingNoteSaveHandler();
-      vaultNoteChangeUnlisten?.();
-      vaultNoteChangeUnlisten = null;
-      shellResizeObserver?.disconnect();
-      for (const paneId of getVisiblePaneIds()) {
-        documents.unregisterPaneEditorForDocument(paneId);
-        void getPaneControllers(paneId).editorLifecycleController.destroyEditor();
-      }
-    };
+      void paneLifecycle.disposeAll();
+    },
   });
+  onMount(sessionLifecycle.mount);
 
   // Selection tracking per pane (cursor save scheduling + related text update).
   function trackPaneSelection(paneId: PaneId) {
@@ -2064,17 +1308,20 @@
       paneId,
       isEditorReady: getPaneRuntime(paneId).ui.isEditorReady,
       editorRoot: getPaneRuntime(paneId).refs.editorRoot,
-      isActivePaneInEditorMode: () => activePaneId === paneId && getPaneKind(paneId) === 'editor',
+      isActivePaneInEditorMode: () =>
+        activePaneId === paneId && getPaneKind(paneId) === "editor",
       persistCursorPosition: () => documents.schedulePaneCursorSave(paneId),
       updateSelectedRelatedText: () => updateSelectedRelatedText(paneId),
-      flushPendingCursorSave: () => documents.flushPaneCursorSave(paneId)
+      flushPendingCursorSave: () => documents.flushPaneCursorSave(paneId),
     });
   }
 
   $effect(() => {
     const cleanups = getVisiblePaneIds()
       .map((paneId) => trackPaneSelection(paneId))
-      .filter((cleanup): cleanup is () => void => typeof cleanup === 'function');
+      .filter(
+        (cleanup): cleanup is () => void => typeof cleanup === "function",
+      );
 
     return () => {
       for (const cleanup of cleanups) {
@@ -2084,103 +1331,198 @@
   });
 </script>
 
-<svelte:window onkeydowncapture={handleGlobalKeydown} onfocus={handleWindowFocus} onresize={handleWindowResize} />
+<svelte:window
+  onkeydowncapture={handleGlobalKeydown}
+  onfocus={handleWindowFocus}
+  onresize={handleWindowResize}
+/>
 <svelte:document onvisibilitychange={handleVisibilityChange} />
 
-<div bind:this={workspaceShell} class="notepad-shell relative h-full w-full min-h-0 overflow-visible">
+<div
+  bind:this={workspaceShell}
+  class="notepad-shell relative h-full w-full min-h-0 overflow-visible"
+>
   <div
     class="relative h-full min-h-0 w-full [--related-reserved-width:0px] [--related-balance-width:0px]"
-    style={getRelatedGroupStyle(relatedState.panelPlacement, relatedState.reservedWidth)}
+    style={getRelatedGroupStyle(
+      relatedState.panelPlacement,
+      relatedState.reservedWidth,
+    )}
   >
-  <div
-    class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-[margin-left,margin-right,width] duration-300 ease-out will-change-[margin-left,margin-right,width] sm:rounded-4xl sm:border"
-    style={getCardStyle(relatedState.panelPlacement)}
-  >
-    <div class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"></div>
-
-    {#if paneOrder.length === 2}
+    <div
+      class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-[margin-left,margin-right,width] duration-300 ease-out will-change-[margin-left,margin-right,width] sm:rounded-4xl sm:border"
+      style={getCardStyle(relatedState.panelPlacement)}
+    >
       <div
-        class={`pointer-events-none absolute top-0 bottom-0 z-20 hidden w-1/2 border-2 border-border rounded-t-4xl sm:block ${
-          paneOrder.indexOf(activePaneId) === 0
-            ? 'left-0'
-            : 'right-0'
-        }`}
+        class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"
       ></div>
-    {/if}
 
-    <div class="relative z-10 flex min-h-0 min-w-0 flex-1 gap-0 px-0 pt-0">
-      {#each paneOrder as paneId (paneId)}
-        <NotepadPane
-          pane={getPaneRuntime(paneId)}
-          viewModel={getPaneViewModel(paneId)}
-          actions={paneActions}
-          bind:paneCommandFocusRoot={paneCommandFocusEl}
+      {#if paneOrder.length === 2}
+        <div
+          class={`pointer-events-none absolute top-0 bottom-0 z-20 hidden w-1/2 border-2 border-border rounded-t-4xl sm:block ${
+            paneOrder.indexOf(activePaneId) === 0 ? "left-0" : "right-0"
+          }`}
+        ></div>
+      {/if}
+
+      <div class="relative z-10 flex min-h-0 min-w-0 flex-1 gap-0 px-0 pt-0">
+        {#each paneOrder as paneId (paneId)}
+          <NotepadPane
+            pane={getPaneRuntime(paneId)}
+            viewModel={getPaneViewModel(paneId)}
+            actions={paneActions}
+            bind:paneCommandFocusRoot={paneCommandFocusEl}
+          />
+        {/each}
+      </div>
+
+      <div
+        class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height) transition-[bottom] duration-180 ease-in-out"
+      >
+        <NotepadCommandBar
+          forget={{
+            canUnforget,
+            canForget: canForgetActiveItem,
+            itemLabel: isActivePaneChat ? "chat" : "note",
+            onForget: () => void chatCoordinator.forgetActiveItem(),
+            onUnforget: () => void chatCoordinator.unforgetActiveItem(),
+          }}
+          remember={{
+            label: isActivePaneChat ? "New Chat" : "New Idea",
+            ariaLabel: isActivePaneChat
+              ? "New Chat. Start a blank chat in this pane."
+              : "New Idea. Start a blank note in this pane.",
+            onRemember: () => void chatCoordinator.startNewActiveItem(),
+          }}
+          search={{
+            searchMode: searchState.searchMode,
+            searchQuery: searchState.searchQuery,
+            matchCase: searchState.matchCase,
+            matchWholeWord: searchState.matchWholeWord,
+            searchResults: searchState.searchResults,
+            recentLocations: locationHistoryItems,
+            recentTasks: searchState.recentTasks,
+            isSearching: searchState.isSearching,
+            onSearchInput: handleSearchInput,
+            onSearchModeChange: handleSearchModeChange,
+            onMatchCaseChange: searchState.handleMatchCaseChange,
+            onMatchWholeWordChange: searchState.handleMatchWholeWordChange,
+            onSearchSelect: (result) =>
+              void handleSearchResultSelect(result).catch((error) => {
+                console.error("Failed to open searched note:", error);
+              }),
+            onSearchNavigate: (result) =>
+              void handleSearchResultNavigate(result).catch((error) => {
+                console.error("Failed to navigate search result:", error);
+              }),
+            onRecentLocationSelect: (entry) =>
+              void commands
+                .openLocationFromHistory(entry.location)
+                .catch((error) => {
+                  console.error("Failed to open recent location:", error);
+                }),
+            onRecentTaskSelect: (task) =>
+              void handleRecentTaskSelect(task).catch((error) => {
+                console.error("Failed to open recent task:", error);
+              }),
+            onRecentLocationShortcut: (index) => {
+              const entry = locationHistoryItems[index];
+              if (entry) {
+                void commands
+                  .openLocationFromHistory(entry.location)
+                  .catch((error) => {
+                    console.error("Failed to open recent location:", error);
+                  });
+              }
+            },
+            onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
+            onSearchOpen: () => {
+              handleSearchOpen();
+              void refreshLocationHistory();
+            },
+            onCommand: (command) =>
+              commands.handleNotepadCommandBarCommand(command),
+          }}
         />
-      {/each}
+      </div>
     </div>
 
-    <div class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height) transition-[bottom] duration-180 ease-in-out">
-      <NotepadCommandBar
-        forget={{
-          canUnforget,
-          canForget: canForgetActiveItem,
-          itemLabel: isActivePaneChat ? 'chat' : 'note',
-          onForget: () => void forgetActivePaneItem(),
-          onUnforget: () => void unforgetActivePaneItem()
-        }}
-        remember={{
-          label: isActivePaneChat ? 'New Chat' : 'New Idea',
-          ariaLabel: isActivePaneChat
-            ? 'New Chat. Start a blank chat in this pane.'
-            : 'New Idea. Start a blank note in this pane.',
-          onRemember: () => void startNewActivePaneItem()
-        }}
-        search={{
-          searchMode: searchState.searchMode,
-          searchQuery: searchState.searchQuery,
-          matchCase: searchState.matchCase,
-          matchWholeWord: searchState.matchWholeWord,
-          searchResults: searchState.searchResults,
-          recentLocations: locationHistoryItems,
-          recentTasks: searchState.recentTasks,
-          isSearching: searchState.isSearching,
-          onSearchInput: handleSearchInput,
-          onSearchModeChange: handleSearchModeChange,
-          onMatchCaseChange: searchState.handleMatchCaseChange,
-          onMatchWholeWordChange: searchState.handleMatchWholeWordChange,
-          onSearchSelect: (result) =>
-            void handleSearchResultSelect(result).catch((error) => {
-              console.error('Failed to open searched note:', error);
-            }),
-          onSearchNavigate: (result) =>
-            void handleSearchResultNavigate(result).catch((error) => {
-              console.error('Failed to navigate search result:', error);
-            }),
-          onRecentLocationSelect: (entry) =>
-            void commands.openLocationFromHistory(entry.location).catch((error) => {
-              console.error('Failed to open recent location:', error);
-            }),
-          onRecentTaskSelect: (task) =>
-            void handleRecentTaskSelect(task).catch((error) => {
-              console.error('Failed to open recent task:', error);
-            }),
-          onRecentLocationShortcut: (index) => {
-            const entry = locationHistoryItems[index];
-            if (entry) {
-              void commands.openLocationFromHistory(entry.location).catch((error) => {
-                console.error('Failed to open recent location:', error);
-              });
-            }
-          },
-          onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
-          onSearchOpen: () => {
-            handleSearchOpen();
-            void refreshLocationHistory();
-          },
-          onCommand: (command) => commands.handleNotepadCommandBarCommand(command)
-        }}
+    {#if relatedState.panelPlacement === "side"}
+      <RelatedPanelHost
+        placement={relatedState.panelPlacement}
+        reservedWidth={relatedState.reservedWidth}
+        collapsed={relatedState.isPanelCollapsed}
+        items={relatedState.items}
+        scope={relatedState.scope}
+        status={relatedState.status}
+        reason={relatedState.reason}
+        loading={relatedState.isLoading}
+        hasSelection={!!relatedState.selectedText}
+        onToggle={toggleRelatedPanel}
+        onClose={closeRelatedPanel}
+        onScopeChange={handleRelatedScopeChange}
+        onSelect={(item) =>
+          void handleRelatedItemSelect(item).catch((error) => {
+            console.error("Failed to open related note:", error);
+          })}
       />
+    {/if}
   </div>
+
+  {#if relatedState.panelPlacement !== "side"}
+    <RelatedPanelHost
+      placement={relatedState.panelPlacement}
+      reservedWidth={relatedState.reservedWidth}
+      collapsed={relatedState.isPanelCollapsed}
+      items={relatedState.items}
+      scope={relatedState.scope}
+      status={relatedState.status}
+      reason={relatedState.reason}
+      loading={relatedState.isLoading}
+      hasSelection={!!relatedState.selectedText}
+      onToggle={toggleRelatedPanel}
+      onClose={closeRelatedPanel}
+      onScopeChange={handleRelatedScopeChange}
+      onSelect={(item) =>
+        void handleRelatedItemSelect(item).catch((error) => {
+          console.error("Failed to open related note:", error);
+        })}
+    />
+  {/if}
+
+  {#if activeSlashMenuPaneId}
+    <SlashMenu
+      menu={getPaneRuntime(activeSlashMenuPaneId).ui.slashMenu}
+      boundsElement={getPaneRuntime(activeSlashMenuPaneId).refs.paneCard}
+    />
+  {/if}
+
+  {#if activeSelectionMenuPaneId}
+    {@const selectionPaneId = activeSelectionMenuPaneId}
+    <SelectionMenu
+      menu={getPaneRuntime(activeSelectionMenuPaneId).ui.selectionMenu}
+      boundsElement={getPaneRuntime(activeSelectionMenuPaneId).refs.paneCard}
+      onThoughtPartner={({ text }) => {
+        void chatCoordinator.discussSelection(selectionPaneId, text).catch((error) => {
+          console.error("Failed to discuss selection:", error);
+        });
+      }}
+    />
+  {/if}
+
+  {#if activeWikilinkPaneId}
+    {@const wikilinkPaneId = activeWikilinkPaneId}
+    {@const wikilinkState =
+      getPaneRuntime(activeWikilinkPaneId).ui.wikilinkAutocomplete}
+    <WikilinkAutocomplete
+      active={wikilinkState.active}
+      activeWikilink={wikilinkState.activeWikilink}
+      suggestions={wikilinkState.suggestions}
+      selectedIndex={wikilinkState.selectedIndex}
+      onSelect={(suggestion) =>
+        handleWikilinkSuggestionSelect(wikilinkPaneId, suggestion.value)}
+    />
+  {/if}
 </div>
 
 <style>
@@ -2190,17 +1532,35 @@
     --editor-right-padding: 1rem;
     --editor-readable-width: 100%;
     --editor-top-padding: 4.1rem;
-    --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
+    --editor-bottom-padding: calc(
+      7rem + env(safe-area-inset-bottom, 0px) +
+        var(--keyboard-inset-height, 0px)
+    );
     --related-drawer-gap: 0.5rem;
     --related-drawer-peek-width: 1.75rem;
-    --related-bottom-offset: calc(6.1rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
+    --related-bottom-offset: calc(
+      6.1rem + env(safe-area-inset-bottom, 0px) +
+        var(--keyboard-inset-height, 0px)
+    );
     --crepe-color-background: var(--card);
     --crepe-color-on-background: var(--foreground);
-    --crepe-color-surface: color-mix(in oklab, var(--card) 92%, var(--background));
-    --crepe-color-surface-low: color-mix(in oklab, var(--muted) 74%, var(--card));
+    --crepe-color-surface: color-mix(
+      in oklab,
+      var(--card) 92%,
+      var(--background)
+    );
+    --crepe-color-surface-low: color-mix(
+      in oklab,
+      var(--muted) 74%,
+      var(--card)
+    );
     --crepe-color-on-surface: var(--card-foreground);
     --crepe-color-on-surface-variant: var(--muted-foreground);
-    --crepe-color-outline: color-mix(in oklab, var(--border) 82%, var(--foreground));
+    --crepe-color-outline: color-mix(
+      in oklab,
+      var(--border) 82%,
+      var(--foreground)
+    );
     --crepe-color-primary: var(--foreground);
     --crepe-color-secondary: var(--accent);
     --crepe-color-on-secondary: var(--accent-foreground);
@@ -2209,23 +1569,75 @@
     --crepe-color-inline-code: var(--destructive);
     --crepe-color-error: var(--destructive);
     --crepe-color-hover: color-mix(in oklab, var(--accent) 82%, transparent);
-    --crepe-color-selected: color-mix(in oklab, var(--accent) 92%, var(--background));
-    --crepe-color-inline-area: color-mix(in oklab, var(--muted) 80%, var(--background));
-    --gn-editor-selection-background: color-mix(in oklab, var(--foreground) 42%, var(--background));
+    --crepe-color-selected: color-mix(
+      in oklab,
+      var(--accent) 92%,
+      var(--background)
+    );
+    --crepe-color-inline-area: color-mix(
+      in oklab,
+      var(--muted) 80%,
+      var(--background)
+    );
+    --gn-editor-selection-background: color-mix(
+      in oklab,
+      var(--foreground) 42%,
+      var(--background)
+    );
     --gn-editor-selection-color: var(--background);
-    --gn-task-checkbox-border: color-mix(in oklab, var(--foreground) 20%, var(--card) 80%);
-    --gn-task-checkbox-bg: color-mix(in oklab, var(--card) 92%, var(--muted) 8%);
-    --gn-task-checkbox-checked-border: color-mix(in oklab, var(--foreground) 28%, var(--card) 72%);
-    --gn-task-checkbox-checked-bg: color-mix(in oklab, var(--foreground) 18%, var(--card) 82%);
-    --gn-task-checkbox-check: color-mix(in oklab, var(--foreground) 88%, white 12%);
-    --gn-code-keyword: color-mix(in oklab, var(--accent) 70%, var(--foreground) 30%);
+    --gn-task-checkbox-border: color-mix(
+      in oklab,
+      var(--foreground) 20%,
+      var(--card) 80%
+    );
+    --gn-task-checkbox-bg: color-mix(
+      in oklab,
+      var(--card) 92%,
+      var(--muted) 8%
+    );
+    --gn-task-checkbox-checked-border: color-mix(
+      in oklab,
+      var(--foreground) 28%,
+      var(--card) 72%
+    );
+    --gn-task-checkbox-checked-bg: color-mix(
+      in oklab,
+      var(--foreground) 18%,
+      var(--card) 82%
+    );
+    --gn-task-checkbox-check: color-mix(
+      in oklab,
+      var(--foreground) 88%,
+      white 12%
+    );
+    --gn-code-keyword: color-mix(
+      in oklab,
+      var(--accent) 70%,
+      var(--foreground) 30%
+    );
     --gn-code-name: var(--foreground);
-    --gn-code-property: color-mix(in oklab, var(--accent) 60%, var(--foreground) 40%);
+    --gn-code-property: color-mix(
+      in oklab,
+      var(--accent) 60%,
+      var(--foreground) 40%
+    );
     --gn-code-variable: var(--foreground);
-    --gn-code-function: color-mix(in oklab, var(--accent) 80%, var(--foreground) 20%);
+    --gn-code-function: color-mix(
+      in oklab,
+      var(--accent) 80%,
+      var(--foreground) 20%
+    );
     --gn-code-constant: var(--destructive);
-    --gn-code-type: color-mix(in oklab, var(--accent) 50%, var(--foreground) 50%);
-    --gn-code-operator: color-mix(in oklab, var(--foreground) 60%, var(--accent) 40%);
+    --gn-code-type: color-mix(
+      in oklab,
+      var(--accent) 50%,
+      var(--foreground) 50%
+    );
+    --gn-code-operator: color-mix(
+      in oklab,
+      var(--foreground) 60%,
+      var(--accent) 40%
+    );
     --gn-code-string: color-mix(in oklab, var(--foreground) 55%, green 45%);
     --gn-code-comment: var(--muted-foreground);
     --gn-code-invalid: var(--destructive);
@@ -2258,83 +1670,10 @@
   @media (max-height: 559px) {
     .notepad-shell {
       --editor-top-padding: 4.1rem;
-      --editor-bottom-padding: calc(7rem + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset-height, 0px));
+      --editor-bottom-padding: calc(
+        7rem + env(safe-area-inset-bottom, 0px) +
+          var(--keyboard-inset-height, 0px)
+      );
     }
   }
 </style>
-
-  {#if relatedState.panelPlacement === 'side'}
-    <RelatedPanelHost
-      placement={relatedState.panelPlacement}
-      reservedWidth={relatedState.reservedWidth}
-      collapsed={relatedState.isPanelCollapsed}
-      items={relatedState.items}
-      scope={relatedState.scope}
-      status={relatedState.status}
-      reason={relatedState.reason}
-      loading={relatedState.isLoading}
-      hasSelection={!!relatedState.selectedText}
-      onToggle={toggleRelatedPanel}
-      onClose={closeRelatedPanel}
-      onScopeChange={handleRelatedScopeChange}
-      onSelect={(item) =>
-        void handleRelatedItemSelect(item).catch((error) => {
-          console.error('Failed to open related note:', error);
-        })}
-    />
-  {/if}
-  </div>
-
-  {#if relatedState.panelPlacement !== 'side'}
-    <RelatedPanelHost
-      placement={relatedState.panelPlacement}
-      reservedWidth={relatedState.reservedWidth}
-      collapsed={relatedState.isPanelCollapsed}
-      items={relatedState.items}
-      scope={relatedState.scope}
-      status={relatedState.status}
-      reason={relatedState.reason}
-      loading={relatedState.isLoading}
-      hasSelection={!!relatedState.selectedText}
-      onToggle={toggleRelatedPanel}
-      onClose={closeRelatedPanel}
-      onScopeChange={handleRelatedScopeChange}
-      onSelect={(item) =>
-        void handleRelatedItemSelect(item).catch((error) => {
-          console.error('Failed to open related note:', error);
-        })}
-    />
-  {/if}
-
-  {#if activeSlashMenuPaneId}
-    <SlashMenu
-      menu={getPaneRuntime(activeSlashMenuPaneId).ui.slashMenu}
-      boundsElement={getPaneRuntime(activeSlashMenuPaneId).refs.paneCard}
-    />
-  {/if}
-
-  {#if activeSelectionMenuPaneId}
-    {@const selectionPaneId = activeSelectionMenuPaneId}
-    <SelectionMenu
-      menu={getPaneRuntime(activeSelectionMenuPaneId).ui.selectionMenu}
-      boundsElement={getPaneRuntime(activeSelectionMenuPaneId).refs.paneCard}
-      onThoughtPartner={({ text }) => {
-        void discussSelection(selectionPaneId, text).catch((error) => {
-          console.error('Failed to discuss selection:', error);
-        });
-      }}
-    />
-  {/if}
-
-  {#if activeWikilinkPaneId}
-    {@const wikilinkPaneId = activeWikilinkPaneId}
-    {@const wikilinkState = getPaneRuntime(activeWikilinkPaneId).ui.wikilinkAutocomplete}
-    <WikilinkAutocomplete
-      active={wikilinkState.active}
-      activeWikilink={wikilinkState.activeWikilink}
-      suggestions={wikilinkState.suggestions}
-      selectedIndex={wikilinkState.selectedIndex}
-      onSelect={(suggestion) => handleWikilinkSuggestionSelect(wikilinkPaneId, suggestion.value)}
-    />
-  {/if}
-</div>

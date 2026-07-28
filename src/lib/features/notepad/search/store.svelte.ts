@@ -202,6 +202,7 @@ export class NotepadSearchStore {
       'Failed to load recent notes:'
     );
     result.applyIfLatest();
+    return result.items;
   };
 
   #refreshRecentNotesNow = async () => {

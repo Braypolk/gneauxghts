@@ -93,6 +93,21 @@ describe('TauriChatApi', () => {
     expect(summary.vaultAccess).toBe('full');
   });
 
+  it('resolves a projection owner with one direct IPC lookup', async () => {
+    invokeMock.mockResolvedValue('chat-1');
+    const { TauriChatApi } = await import('./api');
+
+    const owner = await new TauriChatApi().findConversationByProjectionPath(
+      'Chats/2026-07-28-chat/Part 001.md'
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'chat_find_conversation_by_projection_path',
+      { notePath: 'Chats/2026-07-28-chat/Part 001.md' }
+    );
+    expect(owner).toBe('chat-1');
+  });
+
   it('passes the forgotten-note retention window when archiving a conversation', async () => {
     invokeMock.mockResolvedValueOnce({
       forgottenPath: '/vault/.forgotten/2026-07-28-chat',

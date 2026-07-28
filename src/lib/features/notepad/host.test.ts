@@ -61,6 +61,8 @@ describe('createNotepadFeatureHost', () => {
       getActiveDocument: () => document,
       getActiveEditor: () => ({
         isReady: () => true,
+        focus: () => true,
+        focusAtEnd: () => true,
         readSnapshot: () => ({
           markdown: document.bodyMarkdown,
           selection: { anchor: 0, head: 5 },
@@ -73,6 +75,10 @@ describe('createNotepadFeatureHost', () => {
           inserted = markdown;
           return { from: 0, to: 5, cursor: markdown.length };
         },
+        setSearchHighlight: () => false,
+        focusSearchRange: () => false,
+        closeSlashMenu: () => {},
+        closeSelectionMenu: () => {},
         addReadOnlyOverlay: () => ({ dispose: () => {} }),
         setProposalReviewExtensions: () => false
       }),
@@ -129,6 +135,8 @@ describe('createNotepadFeatureHost', () => {
       getActiveDocument: () => document,
       getActiveEditor: () => ({
         isReady: () => true,
+        focus: () => true,
+        focusAtEnd: () => true,
         readSnapshot: () => null,
         readSelection: () => null,
         readCurrentBlock: () => null,
@@ -137,6 +145,10 @@ describe('createNotepadFeatureHost', () => {
           insertionCount += 1;
           return { from: 0, to: 0, cursor: 1 };
         },
+        setSearchHighlight: () => false,
+        focusSearchRange: () => false,
+        closeSlashMenu: () => {},
+        closeSelectionMenu: () => {},
         addReadOnlyOverlay: () => ({ dispose: () => {} }),
         setProposalReviewExtensions: () => false
       }),

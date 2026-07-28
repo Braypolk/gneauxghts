@@ -6,14 +6,11 @@ import {
   destroyEditor as destroyEditorInstance,
   prepareEditor,
   readCursorPosition,
-  readEditorState,
   replaceEditorContent as replaceEditorBuffer,
-  replaceEditorDocument,
   alignEditorScrollToSelection,
   restoreCursorPosition,
   swapEditorRuntime,
   type EditorController,
-  type EditorSnapshot,
   type EditorViewCallbacks,
   type SharedEditorResources
 } from '$lib/features/notepad/editor/editor';
@@ -41,19 +38,15 @@ interface EditorLifecycleControllerDeps {
   getController: () => EditorController | null;
   getPaneId: () => string;
   setController: (value: EditorController | null) => void;
-  getShellElement: () => HTMLDivElement | null;
   getEditorShell: () => HTMLDivElement | null;
   getEditorRoot: () => HTMLDivElement | null;
   getDocumentSession: () => NoteDraftState;
-  getSharedEditorState: (document: NoteDraftState) => EditorSnapshot | null;
-  setSharedEditorState: (document: NoteDraftState, editorState: EditorSnapshot | null) => void;
   setIsEditorReady: (value: boolean) => void;
   setIsApplyingExternalContent: (value: boolean) => void;
   handleEditorMarkdownChange: (
     paneId: string,
     document: NoteDraftState,
-    nextMarkdown: string,
-    editorState: EditorSnapshot | null
+    nextMarkdown: string
   ) => void;
   getSharedEditorResources: (document: NoteDraftState) => SharedEditorResources;
   getViewCallbacks: () => EditorViewCallbacks;
@@ -64,12 +57,9 @@ export function createEditorLifecycleController({
   getController,
   getPaneId,
   setController,
-  getShellElement,
   getEditorShell,
   getEditorRoot,
   getDocumentSession,
-  getSharedEditorState,
-  setSharedEditorState,
   setIsEditorReady,
   setIsApplyingExternalContent,
   handleEditorMarkdownChange,
@@ -105,9 +95,7 @@ export function createEditorLifecycleController({
         // note object after the editor is created, and a stale capture would
         // route body edits to an orphaned note (splitting one note into two).
         const liveDocument = getDocumentSession();
-        const editorState = readEditorState(getController());
-        handleEditorMarkdownChange(getPaneId(), liveDocument, nextMarkdown, editorState);
-        saveSharedEditorStateForDocument(liveDocument, editorState);
+        handleEditorMarkdownChange(getPaneId(), liveDocument, nextMarkdown);
       }
     });
     bindSlashMenuViewToPane(controller.view, getPaneId());
@@ -140,9 +128,7 @@ export function createEditorLifecycleController({
       viewCallbacks: getViewCallbacks(),
       onMarkdownChange: (nextMarkdown) => {
         const liveDocument = getDocumentSession();
-        const editorState = readEditorState(getController());
-        handleEditorMarkdownChange(getPaneId(), liveDocument, nextMarkdown, editorState);
-        saveSharedEditorStateForDocument(liveDocument, editorState);
+        handleEditorMarkdownChange(getPaneId(), liveDocument, nextMarkdown);
       }
     });
     if (!ok) {
@@ -163,21 +149,6 @@ export function createEditorLifecycleController({
     }
 
     saveCursorPosition(document.currentNotePath, position, getPaneId(), document.currentNoteId);
-  }
-
-  function saveSharedEditorStateForDocument(
-    document: NoteDraftState = getDocumentSession(),
-    editorState: EditorSnapshot | null = readEditorState(getController())
-  ) {
-    setSharedEditorState(document, editorState);
-  }
-
-  function getSharedEditorStateForDocument(document: NoteDraftState) {
-    return getSharedEditorState(document);
-  }
-
-  function discardSharedEditorStateForDocument(document: NoteDraftState) {
-    setSharedEditorState(document, null);
   }
 
   function restoreEditorScrollTop(scrollTop: number) {
@@ -246,7 +217,7 @@ export function createEditorLifecycleController({
               document.currentNotePath,
               getPaneId(),
               document.currentNoteId
-            ) ?? getSharedEditorStateForDocument(document)?.selection ?? null);
+            ) ?? null);
 
       const shell = getEditorShell();
       const hideForCursorScroll = Boolean(
@@ -268,13 +239,13 @@ export function createEditorLifecycleController({
         if (positionToRestore) {
           restoreCursorPosition(getController(), positionToRestore, { scrollIntoView: false });
           if (!preserveScroll) {
-            let aligned = alignEditorScrollToSelection(getController(), shell, 0.25);
+            let aligned = alignEditorScrollToSelection(getController(), 0.25);
             for (let attempt = 0; !aligned && attempt < 8; attempt++) {
               await new Promise<void>((resolve) => {
                 requestAnimationFrame(() => resolve());
               });
               getController()?.view.requestMeasure();
-              aligned = alignEditorScrollToSelection(getController(), shell, 0.25);
+              aligned = alignEditorScrollToSelection(getController(), 0.25);
             }
           }
         }
@@ -305,158 +276,110 @@ export function createEditorLifecycleController({
     }
   }
 
-  async function replaceEditorContentInPlace(nextMarkdown: string) {
+  async function replaceEditorContentInPlaceInternal(
+    nextMarkdown: string,
+    {
+      expectedDocument = null,
+      flushHistory = false,
+      cursorPosition = readCursorPosition(getController()),
+      preserveScroll = false,
+      scrollSelectionIntoView = false
+    }: {
+      expectedDocument?: NoteDraftState | null;
+      flushHistory?: boolean;
+      cursorPosition?: CursorPosition | null;
+      preserveScroll?: boolean;
+      scrollSelectionIntoView?: boolean;
+    } = {}
+  ) {
+    if (
+      expectedDocument &&
+      getDocumentSession() !== expectedDocument
+    ) {
+      return;
+    }
+
     const controller = getController();
-    const cursorPosition = readCursorPosition(controller);
-    const scrollTop = controller?.view.scrollDOM.scrollTop ?? 0;
+    const scrollTop = preserveScroll
+      ? (controller?.view.scrollDOM.scrollTop ?? 0)
+      : 0;
 
     setIsApplyingExternalContent(true);
     try {
-      if (!replaceEditorBuffer(controller, nextMarkdown)) {
+      if (
+        !replaceEditorBuffer(controller, nextMarkdown, {
+          flushHistory
+        })
+      ) {
+        if (
+          expectedDocument &&
+          getDocumentSession() !== expectedDocument
+        ) {
+          return;
+        }
+
         setIsApplyingExternalContent(false);
         await replaceEditorContent(nextMarkdown, {
-          preserveScroll: true,
-          restoreCursor: !!cursorPosition,
-          cursorPosition
+          preserveScroll,
+          restoreCursor: Boolean(cursorPosition),
+          cursorPosition,
+          expectedDocument
         });
         return;
       }
 
-      saveSharedEditorStateForDocument();
-      closeTransientUi();
-      restoreCursorPosition(controller, cursorPosition, { scrollIntoView: false });
-      await tick();
+      if (
+        expectedDocument &&
+        getDocumentSession() !== expectedDocument
+      ) {
+        return;
+      }
 
-      restoreEditorScrollTop(scrollTop);
+      closeTransientUi();
+      restoreCursorPosition(controller, cursorPosition, {
+        scrollIntoView: scrollSelectionIntoView
+      });
+      await tick();
+      if (preserveScroll) restoreEditorScrollTop(scrollTop);
     } finally {
       setIsApplyingExternalContent(false);
     }
+  }
+
+  async function replaceEditorContentInPlace(
+    nextMarkdown: string
+  ) {
+    await replaceEditorContentInPlaceInternal(nextMarkdown, {
+      preserveScroll: true
+    });
   }
 
   async function replaceEditorContentInPlaceForDocument(
     nextMarkdown: string,
     document: NoteDraftState
   ) {
-    if (getDocumentSession() !== document) {
-      return;
-    }
-
-    const controller = getController();
     const cursorPosition =
-      loadCursorPosition(document.currentNotePath, getPaneId(), document.currentNoteId) ??
-      getSharedEditorStateForDocument(document)?.selection ?? { anchor: 0, head: 0 };
-
-    setIsApplyingExternalContent(true);
-    try {
-      if (!replaceEditorBuffer(controller, nextMarkdown, { flushHistory: true })) {
-        if (getDocumentSession() !== document) {
-          return;
-        }
-
-        setIsApplyingExternalContent(false);
-        await replaceEditorContent(nextMarkdown, {
-          restoreCursor: true,
-          cursorPosition,
-          expectedDocument: document
-        });
-        return;
-      }
-
-      if (getDocumentSession() !== document) {
-        return;
-      }
-
-      saveSharedEditorStateForDocument(document);
-      closeTransientUi();
-      restoreCursorPosition(controller, cursorPosition);
-      await tick();
-    } finally {
-      setIsApplyingExternalContent(false);
-    }
+      loadCursorPosition(
+        document.currentNotePath,
+        getPaneId(),
+        document.currentNoteId
+      ) ?? { anchor: 0, head: 0 };
+    await replaceEditorContentInPlaceInternal(nextMarkdown, {
+      expectedDocument: document,
+      flushHistory: true,
+      cursorPosition,
+      scrollSelectionIntoView: true
+    });
   }
-
-  async function restoreSharedEditorStateForDocument(document: NoteDraftState) {
-    if (getDocumentSession() !== document) {
-      return false;
-    }
-
-    const sharedEditorState = getSharedEditorStateForDocument(document);
-    const persistedCursor = loadCursorPosition(
-      document.currentNotePath,
-      getPaneId(),
-      document.currentNoteId
-    );
-    const selectionToRestore = persistedCursor ?? sharedEditorState?.selection ?? null;
-    if (
-      !replaceEditorDocument(getController(), sharedEditorState?.markdown ?? null, {
-        anchor: selectionToRestore?.anchor ?? null,
-        head: selectionToRestore?.head ?? null,
-        focus: false,
-        scrollSelectionIntoView: false
-      })
-    ) {
-      return false;
-    }
-
-    if (getDocumentSession() !== document) {
-      return false;
-    }
-
-    restoreCursorPosition(getController(), selectionToRestore);
-    await tick();
-    return getDocumentSession() === document;
-  }
-
-  function applySharedEditorStateForDocument(document: NoteDraftState) {
-    if (getDocumentSession() !== document) {
-      return false;
-    }
-
-    const sharedEditorState = getSharedEditorStateForDocument(document);
-    if (!sharedEditorState) {
-      return false;
-    }
-
-    const controller = getController();
-    const scrollTop = controller?.view.scrollDOM.scrollTop ?? 0;
-    const cursorPosition = readCursorPosition(controller);
-
-    setIsApplyingExternalContent(true);
-    try {
-      if (
-        !replaceEditorDocument(controller, sharedEditorState.markdown, {
-          anchor: cursorPosition?.anchor ?? null,
-          head: cursorPosition?.head ?? null,
-          focus: false,
-          scrollSelectionIntoView: false
-        })
-      ) {
-        return false;
-      }
-
-      closeTransientUi();
-      restoreEditorScrollTop(scrollTop);
-      return true;
-    } finally {
-      setIsApplyingExternalContent(false);
-    }
-  }
-
-  function dispose() {}
 
   return {
     destroyEditor,
     createEditor,
     swapEditorBuffer,
     saveCursorPositionForDocument,
-    saveSharedEditorStateForDocument,
-    discardSharedEditorStateForDocument,
     restoreCursorPositionForDocument,
     replaceEditorContent,
     replaceEditorContentInPlace,
-    replaceEditorContentInPlaceForDocument,
-    restoreSharedEditorStateForDocument,
-    applySharedEditorStateForDocument,
-    dispose
+    replaceEditorContentInPlaceForDocument
   };
 }

@@ -247,6 +247,13 @@ export interface ChatSelectionActions {
   onUnremember?: (selection: ChatSelection, excerpt: ChatExcerpt) => void | Promise<void>;
 }
 
+/**
+ * Imperative capability exposed by a mounted ChatPanel without leaking its DOM.
+ */
+export interface ChatSurfaceHandle {
+  focusComposer(): boolean;
+}
+
 export interface ChatEventMap {
   'chat://started': ChatStartedEvent;
   'chat://text-delta': ChatTextDeltaEvent;

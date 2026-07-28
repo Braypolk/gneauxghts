@@ -32,27 +32,17 @@ export interface EditorActionParams {
  *   - shouldMount true → false: invoke destroy().
  *   - Host node destroyed while mounted: invoke destroy().
  *
- * Mount/destroy transitions are serialized so rapid toggles don't race.
+ * Serialization belongs to PaneEditorSession. This action only reports DOM
+ * attachment and desired mounted state.
  */
 export const editor: Action<HTMLDivElement, EditorActionParams> = (node, params) => {
   let current: EditorActionParams = params;
-  let mounted = false;
-  let pending: Promise<void> = Promise.resolve();
+  let desiredMounted = false;
 
   function transition(next: EditorActionParams) {
-    pending = pending
-      .then(async () => {
-        if (next.shouldMount && !mounted) {
-          await next.mount(node);
-          mounted = true;
-        } else if (!next.shouldMount && mounted) {
-          await next.destroy();
-          mounted = false;
-        }
-      })
-      .catch((error) => {
-        console.error('use:editor lifecycle transition failed:', error);
-      });
+    if (next.shouldMount === desiredMounted) return;
+    desiredMounted = next.shouldMount;
+    void (desiredMounted ? next.mount(node) : next.destroy());
   }
 
   transition(current);
@@ -63,12 +53,9 @@ export const editor: Action<HTMLDivElement, EditorActionParams> = (node, params)
       transition(next);
     },
     destroy() {
-      pending = pending.then(async () => {
-        if (mounted) {
-          await current.destroy();
-          mounted = false;
-        }
-      });
+      if (!desiredMounted) return;
+      desiredMounted = false;
+      void current.destroy();
     }
   };
 };

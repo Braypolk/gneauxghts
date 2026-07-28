@@ -22,6 +22,7 @@ function createController(markdown: string, anchor: number, head = anchor) {
   } as unknown as EditorView;
   const controller = {
     view,
+    runtime: null as unknown as EditorController['runtime'],
     sharedResources: null,
     paneKey: Symbol('test-pane'),
     onMarkdownChange: () => {},

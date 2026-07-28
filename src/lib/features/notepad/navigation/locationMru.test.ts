@@ -47,7 +47,7 @@ describe('locationMru', () => {
 
   it('supports note↔note previous-location toggle semantics', () => {
     const mru = createLocationMruStore<'p1'>();
-    mru.seedIfEmpty('p1', [noteB]);
+    mru.seedMissing('p1', [noteB]);
 
     // On note A, previous → B, touch A, restore B
     let current: NavLocation = noteA;
@@ -106,15 +106,27 @@ describe('locationMru', () => {
     expect(mru.list('p1')).toEqual([chatA]);
   });
 
-  it('seeds only when empty and skips non-restorable editor rows', () => {
+  it('seeds once and skips non-restorable editor rows', () => {
     const mru = createLocationMruStore<'p1'>();
     const empty = editorLocationFromRecent({ noteId: null, notePath: null });
     expect(empty).toBeNull();
-    mru.seedIfEmpty('p1', [noteB, noteA]);
+    mru.seedMissing('p1', [noteB, noteA]);
     expect(mru.list('p1')).toEqual([noteB, noteA]);
 
-    mru.seedIfEmpty('p1', [noteA]);
+    mru.seedMissing('p1', [noteA]);
     expect(mru.list('p1')).toEqual([noteB, noteA]);
+  });
+
+  it('appends persisted recents behind live history in a new chat pane', () => {
+    const mru = createLocationMruStore<'chat'>();
+    mru.touch('chat', noteA);
+
+    mru.seedMissing('chat', [chatA, noteB, noteA]);
+
+    expect(mru.historyExcluding('chat', chatA)).toEqual([
+      { location: noteA, label: 'A' },
+      { location: noteB, label: 'B' }
+    ]);
   });
 
   it('keeps location lists per pane', () => {

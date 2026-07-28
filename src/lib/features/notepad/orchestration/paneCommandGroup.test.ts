@@ -3,18 +3,14 @@ import { createPaneCommandGroup } from './paneCommandGroup';
 
 describe('createPaneCommandGroup', () => {
   it('activates a pane and refreshes derived views through the grouped seam', () => {
-    const document = { id: 'doc' };
-    const flushDocumentEditorSync = vi.fn();
     const activatePaneSession = vi.fn();
     const updateSelectedRelatedText = vi.fn();
     const scheduleSearchIfNeeded = vi.fn();
     const scheduleRelatedIfNeeded = vi.fn();
     const group = createPaneCommandGroup({
       getPaneTitleInput: () => null,
-      getPaneEditorRoot: () => null,
-      getPaneChatComposer: () => null,
-      getPaneDocument: () => document,
-      flushDocumentEditorSync,
+      focusPaneEditor: () => false,
+      focusPaneChat: () => false,
       activatePaneSession,
       updateSelectedRelatedText,
       scheduleSearchIfNeeded,
@@ -23,7 +19,6 @@ describe('createPaneCommandGroup', () => {
 
     group.activatePane('primary');
 
-    expect(flushDocumentEditorSync).toHaveBeenCalledWith(document);
     expect(activatePaneSession).toHaveBeenCalledWith('primary');
     expect(updateSelectedRelatedText).toHaveBeenCalledWith('primary');
     expect(scheduleSearchIfNeeded).toHaveBeenCalledTimes(1);
@@ -31,15 +26,11 @@ describe('createPaneCommandGroup', () => {
   });
 
   it('focuses the chat composer when switching into a chat pane', () => {
-    const chatComposer = {
-      focus: vi.fn()
-    } as unknown as HTMLTextAreaElement;
+    const focusPaneChat = vi.fn(() => true);
     const group = createPaneCommandGroup({
       getPaneTitleInput: () => null,
-      getPaneEditorRoot: () => null,
-      getPaneChatComposer: () => chatComposer,
-      getPaneDocument: () => ({ id: 'doc' }),
-      flushDocumentEditorSync: vi.fn(),
+      focusPaneEditor: () => false,
+      focusPaneChat,
       activatePaneSession: vi.fn(),
       updateSelectedRelatedText: vi.fn(),
       scheduleSearchIfNeeded: vi.fn(),
@@ -48,6 +39,6 @@ describe('createPaneCommandGroup', () => {
 
     group.focusPaneAfterShortcut('chat-pane');
 
-    expect(chatComposer.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(focusPaneChat).toHaveBeenCalledWith('chat-pane');
   });
 });

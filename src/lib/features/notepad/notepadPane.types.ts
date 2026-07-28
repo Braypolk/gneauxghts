@@ -1,80 +1,49 @@
 import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
 import type { PaneCommandChoice, PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
-import type {
-  ChatCitation,
-  ChatActiveNoteSnapshot,
-  ChatAgentProposal,
-  ChatContextNote,
-  ChatController,
-  ChatDraftSeed,
-  ChatSelectionActions
-} from '$lib/features/chat';
-import type {
-  PendingProposalChange,
-  ProposalReviewSessionSnapshot
-} from '$lib/features/proposals/types';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
-
-type PaneKind = 'editor' | 'chat';
+import type { ChatPaneBindings } from '$lib/features/notepad/pane/chatPaneBindings';
 
 /**
- * View model describing everything NotepadPane.svelte needs to render.
- * Derived from the pane runtime + workspace-level chrome state.
+ * Stable fields shared by both pane kinds. Kind-specific capabilities live on
+ * the discriminated branches below, so an editor pane never receives nullable
+ * chat/proposal props.
  */
-export interface PaneViewModel {
+interface PaneViewModelBase {
   paneId: NotepadPaneId;
-  paneKind: PaneKind;
   ariaLabel: string;
   bodyClass: string;
   frameClass: string;
-  isEditorReady: boolean;
-  isSlashMenuOpen: boolean;
-  isPaneCommandOpen: boolean;
   showCloseButton: boolean;
   titleClass: string;
   titlePlaceholder: string;
   titleDocument: NoteDraftState;
   titleValue: string;
   titleReadonly: boolean;
-  chatController: ChatController | null;
-  chatConversationId: string | null;
-  chatDraftSeed: ChatDraftSeed | null;
-  chatContextNote: ChatContextNote | null;
-  getChatActiveNoteSnapshot: () => Promise<ChatActiveNoteSnapshot | null>;
-  chatTargetAnchor: string | null;
-  chatSelectionActions: ChatSelectionActions;
-  onChatConversationChange: (conversationId: string | null) => void;
-  onOpenCitation: (citation: Extract<ChatCitation, { kind: 'note' }>) => void | Promise<void>;
-  proposalSnapshot: ProposalReviewSessionSnapshot | null;
-  proposalPendingCount: number;
-  onProposalOpenChange: (change: PendingProposalChange) => void | Promise<void>;
-  onProposalKeep: (changeId: string) => void | Promise<void>;
-  onProposalUndo: (changeId: string) => void | Promise<void>;
-  onProposalKeepAll: () => void | Promise<void>;
-  onProposalUndoAll: () => void | Promise<void>;
-  onProposalReview: () => void | Promise<void>;
-  onProposalRetry: () => void | Promise<void>;
-  onProposalCopyCurrent: () => void | Promise<void>;
-  onProposalReloadDisk: () => void | Promise<void>;
-  onReviewAgentProposal: (proposal: ChatAgentProposal) => void | Promise<void>;
+}
+
+export interface EditorPaneViewModel extends PaneViewModelBase {
+  paneKind: 'editor';
+  isEditorReady: boolean;
+  isSlashMenuOpen: boolean;
+  isPaneCommandOpen: boolean;
   paneCommandHighlightedIndex: number;
   paneCommandMode: PaneCommandMode;
   paneCommandCurrentNoteLabel: string;
   paneCommandPreviousNoteLabel: string | null;
   paneCommandPreviousNoteShortcutLabel: string;
-  /**
-   * Editor lifecycle hooks for the use:editor action wired on the editor
-   * root. When shouldMount is true, the action invokes mount() once the
-   * root node is in the DOM; when shouldMount drops to false, it calls
-   * destroy(). The action also calls destroy() if the host node is
-   * unmounted while the editor is still mounted.
-   */
   editorLifecycle: {
     shouldMount: boolean;
     mount: (node: HTMLDivElement) => Promise<void> | void;
     destroy: () => Promise<void> | void;
   };
 }
+
+export interface ChatPaneViewModel extends PaneViewModelBase {
+  paneKind: 'chat';
+  chat: ChatPaneBindings;
+}
+
+export type PaneViewModel = EditorPaneViewModel | ChatPaneViewModel;
 
 /**
  * Small workspace action surface the pane can call into.

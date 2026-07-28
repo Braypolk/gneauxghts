@@ -3,16 +3,9 @@ import {
   createEditorLifecycleController
 } from '$lib/features/notepad/editor/editorLifecycleController';
 import { createWikilinkRuntime } from '$lib/features/notepad/wikilinks/runtime';
-import {
-  getSharedEditorResources,
-  getSharedEditorState,
-  setSharedEditorState
-} from '$lib/features/notepad/session/noteRuntime';
+import { getSharedEditorResources } from '$lib/features/notepad/session/noteRuntime';
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-import type {
-  EditorSnapshot,
-  SharedEditorResources
-} from '$lib/features/notepad/editor/editor';
+import type { SharedEditorResources } from '$lib/features/notepad/editor/editor';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import type { NavigationContext } from '$lib/features/notepad/navigation/openFlow';
 import type { WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
@@ -26,8 +19,7 @@ export interface PaneControllerSetupDeps<TPaneId extends string> {
   handleEditorMarkdownChange: (
     paneId: string,
     document: NoteDraftState,
-    nextMarkdown: string,
-    editorState: EditorSnapshot | null
+    nextMarkdown: string
   ) => void;
   getNavigationContext: (paneId?: TPaneId) => NavigationContext;
   openNotePath: (
@@ -62,12 +54,9 @@ export function createPaneControllers<TPaneId extends string>(
     setController: (value) => {
       deps.getPaneRuntime(paneId).setController(value);
     },
-    getShellElement: () => deps.getPaneRuntime(paneId).refs.paneCard,
     getEditorShell: () => deps.getPaneRuntime(paneId).refs.editorShell,
     getEditorRoot: () => deps.getPaneRuntime(paneId).refs.editorRoot,
     getDocumentSession: () => deps.getPaneDocument(paneId),
-    getSharedEditorState,
-    setSharedEditorState,
     setIsEditorReady: (value) => deps.getPaneRuntime(paneId).setIsEditorReady(value),
     setIsApplyingExternalContent: (value) =>
       deps.getPaneRuntime(paneId).setIsApplyingExternalContent(value),

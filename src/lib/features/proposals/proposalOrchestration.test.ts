@@ -58,6 +58,8 @@ function fakeEditor(initialMarkdown = 'Before') {
 
   const adapter: EditorCapabilityAdapter = {
     isReady: () => true,
+    focus: () => true,
+    focusAtEnd: () => true,
     readSnapshot: () => null,
     readSelection: () => null,
     readCurrentBlock: () => null,
@@ -66,6 +68,10 @@ function fakeEditor(initialMarkdown = 'Before') {
       return true;
     },
     insertMarkdown: () => null,
+    setSearchHighlight: () => false,
+    focusSearchRange: () => false,
+    closeSlashMenu: () => {},
+    closeSelectionMenu: () => {},
     addReadOnlyOverlay: () => ({ dispose: () => undefined }),
     setProposalReviewExtensions: (extension) => {
       installed = extension !== null;

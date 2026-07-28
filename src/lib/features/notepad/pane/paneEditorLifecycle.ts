@@ -1,128 +1,336 @@
-import { readEditorState } from '$lib/features/notepad/editor/editor';
+import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
 import type { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-import { getSharedEditorStateGeneration } from '$lib/features/notepad/session/noteRuntime';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 
-type EditorLifecycleController = ReturnType<typeof createEditorLifecycleController>;
+type EditorLifecycleController = ReturnType<
+  typeof createEditorLifecycleController
+>;
 
-export interface PaneEditorLifecycleDeps<TPaneId extends string> {
+export type PaneEditorOperationResult =
+  | 'applied'
+  | 'unavailable'
+  | 'stale'
+  | 'disposed';
+
+export interface PaneEditorLifecycleDeps<
+  TPaneId extends string
+> {
   getPaneIds: () => readonly TPaneId[];
   getPaneRuntime: (paneId: TPaneId) => PaneRuntime;
-  getEditorLifecycleController: (paneId: TPaneId) => EditorLifecycleController;
-  getPaneDocument: (paneId: TPaneId) => NoteDraftState;
-  /** Whether the pane should currently have an editor mounted. */
-  paneShouldMountEditor: (paneId: TPaneId) => boolean;
-  registerPaneEditorForDocument: (paneId: TPaneId, document: NoteDraftState) => void;
-  unregisterPaneEditorForDocument: (paneId: TPaneId, document: NoteDraftState) => void;
-  markPaneDocumentGeneration: (paneId: TPaneId, document: NoteDraftState) => void;
-  saveSharedEditorStateForDocument: (
-    document: NoteDraftState,
-    editorState: ReturnType<typeof readEditorState>,
+  getEditorLifecycleController: (
     paneId: TPaneId
+  ) => EditorLifecycleController;
+  getPaneDocument: (paneId: TPaneId) => NoteDraftState;
+  paneShouldMountEditor: (paneId: TPaneId) => boolean;
+  onEditorMounted?: (
+    paneId: TPaneId,
+    document: NoteDraftState
   ) => void;
   closeWikilinkAutocomplete: (paneId: TPaneId) => void;
 }
 
+export interface PaneEditorReplaceOptions {
+  preserveScroll?: boolean;
+  restoreCursor?: boolean;
+  cursorPosition?: CursorPosition | null;
+  expectedDocument?: NoteDraftState | null;
+  suppressReadyReset?: boolean;
+}
+
 /**
- * PaneEditorLifecycle owns per-pane editor mount/destroy and the
- * serialization queue that prevents the use:editor action from racing
- * with explicit ensurePaneEditors() barriers.
- *
- * Notepad.svelte previously held paneEditorQueues + mountPaneEditor +
- * destroyPaneEditor + ensurePaneEditors inline. Centralising them here
- * makes the component's responsibilities thinner and keeps the lifecycle
- * fixes (initial editor content, Svelte effect loop) in one place.
+ * The only serialized owner of a pane's EditorView lifecycle and document
+ * transitions. Every mount, swap, replacement and teardown passes through
+ * this queue, preventing a late transition from reviving a disposed pane.
  */
-export function createPaneEditorLifecycle<TPaneId extends string>(
-  deps: PaneEditorLifecycleDeps<TPaneId>
-) {
-  /**
-   * Per-pane mount/destroy queue. Serializes lifecycle transitions so that
-   * the use:editor action and any explicit ensurePaneEditors() barrier do
-   * not race when both attempt to mount/destroy the same pane in the same
-   * microtask.
-   */
-  const paneEditorQueues = new Map<TPaneId, Promise<void>>();
+class PaneEditorSession<TPaneId extends string> {
+  #queue: Promise<unknown> = Promise.resolve();
+  #disposed = false;
 
-  function enqueuePaneEditorOp(paneId: TPaneId, op: () => Promise<void>): Promise<void> {
-    const previous = paneEditorQueues.get(paneId) ?? Promise.resolve();
-    const queue = previous.then(op).catch((error) => {
-      console.error(`Pane editor lifecycle (${paneId}) failed:`, error);
+  constructor(
+    readonly paneId: TPaneId,
+    private readonly deps: PaneEditorLifecycleDeps<TPaneId>
+  ) {}
+
+  #enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#queue.then(operation);
+    // Keep the queue usable after a failed operation while still propagating
+    // the original failure to its caller.
+    this.#queue = result.catch((error) => {
+      console.error(
+        `Pane editor session (${this.paneId}) failed:`,
+        error
+      );
     });
-    paneEditorQueues.set(paneId, queue);
-    return queue;
+    return result;
   }
 
-  /**
-   * Mount the editor for a single pane. Idempotent: if already mounted,
-   * returns immediately. Serialized per-pane so concurrent callers (the
-   * use:editor action and ensurePaneEditors) do not race.
-   */
-  function mountPaneEditor(paneId: TPaneId): Promise<void> {
-    return enqueuePaneEditorOp(paneId, async () => {
-      const runtime = deps.getPaneRuntime(paneId);
-      if (runtime.controller) return;
-      const editorRoot = runtime.refs.editorRoot;
-      if (!editorRoot) return;
-      const paneDocument = deps.getPaneDocument(paneId);
-
-      const lifecycle = deps.getEditorLifecycleController(paneId);
-      await lifecycle.createEditor(paneDocument.bodyMarkdown);
-      if (runtime.controller) {
-        deps.registerPaneEditorForDocument(paneId, paneDocument);
+  mount(): Promise<PaneEditorOperationResult> {
+    return this.#enqueue(async () => {
+      if (this.#disposed) return 'disposed';
+      if (!this.deps.paneShouldMountEditor(this.paneId)) {
+        return 'unavailable';
       }
-      lifecycle.restoreCursorPositionForDocument(paneDocument);
-      deps.markPaneDocumentGeneration(paneId, paneDocument);
+
+      const runtime = this.deps.getPaneRuntime(this.paneId);
+      if (runtime.controller) return 'applied';
+      if (!runtime.refs.editorRoot) return 'unavailable';
+
+      const document = this.deps.getPaneDocument(this.paneId);
+      const lifecycle =
+        this.deps.getEditorLifecycleController(this.paneId);
+      await lifecycle.createEditor(document.bodyMarkdown);
+      if (!runtime.controller || this.#disposed) {
+        if (runtime.controller) await lifecycle.destroyEditor();
+        return this.#disposed ? 'disposed' : 'unavailable';
+      }
+
+      lifecycle.restoreCursorPositionForDocument(document);
+      this.deps.onEditorMounted?.(this.paneId, document);
+      return 'applied';
     });
   }
 
-  /**
-   * Destroy the editor for a single pane. Idempotent: if not mounted,
-   * returns immediately. Serialized per-pane.
-   */
-  function destroyPaneEditor(paneId: TPaneId): Promise<void> {
-    return enqueuePaneEditorOp(paneId, async () => {
-      const runtime = deps.getPaneRuntime(paneId);
-      const controller = runtime.controller;
-      if (!controller) return;
-      const paneDocument = deps.getPaneDocument(paneId);
+  destroy(): Promise<PaneEditorOperationResult> {
+    return this.#enqueue(async () => {
+      const runtime = this.deps.getPaneRuntime(this.paneId);
+      if (!runtime.controller) return 'unavailable';
 
-      deps.unregisterPaneEditorForDocument(paneId, paneDocument);
-      const lifecycle = deps.getEditorLifecycleController(paneId);
-      lifecycle.saveCursorPositionForDocument(paneDocument);
-      if (runtime.ui.editorGeneration >= getSharedEditorStateGeneration(paneDocument)) {
-        deps.saveSharedEditorStateForDocument(paneDocument, readEditorState(controller), paneId);
-      }
+      const document = this.deps.getPaneDocument(this.paneId);
+      const lifecycle =
+        this.deps.getEditorLifecycleController(this.paneId);
+      lifecycle.saveCursorPositionForDocument(document);
       await lifecycle.destroyEditor();
-      runtime.ui.isEditorReady = false;
-      deps.closeWikilinkAutocomplete(paneId);
+      runtime.setIsEditorReady(false);
+      this.deps.closeWikilinkAutocomplete(this.paneId);
+      return 'applied';
     });
   }
 
-  /**
-   * Reconcile every pane's editor mount state with the workspace. Used as
-   * an explicit barrier in async flows that need to wait for editors to be
-   * ready (split/close/setKind/onMount). Reactively, the use:editor action
-   * also drives the same mount/destroy transitions.
-   */
-  async function ensurePaneEditors(): Promise<void> {
-    for (const paneId of deps.getPaneIds()) {
-      if (deps.paneShouldMountEditor(paneId)) {
-        await mountPaneEditor(paneId);
-      } else {
-        await destroyPaneEditor(paneId);
+  saveCursorPosition(
+    document: NoteDraftState
+  ): Promise<PaneEditorOperationResult> {
+    return this.#enqueue(async () => {
+      if (this.#disposed) return 'disposed';
+      const runtime = this.deps.getPaneRuntime(this.paneId);
+      if (!runtime.controller) return 'unavailable';
+      this.deps
+        .getEditorLifecycleController(this.paneId)
+        .saveCursorPositionForDocument(document);
+      return 'applied';
+    });
+  }
+
+  replaceContent(
+    markdown: string,
+    options: PaneEditorReplaceOptions = {}
+  ): Promise<PaneEditorOperationResult> {
+    return this.#enqueue(async () => {
+      if (this.#disposed) return 'disposed';
+      const runtime = this.deps.getPaneRuntime(this.paneId);
+      if (!runtime.controller) return 'unavailable';
+      if (
+        options.expectedDocument &&
+        this.deps.getPaneDocument(this.paneId) !==
+          options.expectedDocument
+      ) {
+        return 'stale';
       }
+
+      await this.deps
+        .getEditorLifecycleController(this.paneId)
+        .replaceEditorContent(markdown, options);
+      if (
+        options.expectedDocument &&
+        this.deps.getPaneDocument(this.paneId) !==
+          options.expectedDocument
+      ) {
+        return 'stale';
+      }
+      return this.deps.getPaneRuntime(this.paneId).controller
+        ? 'applied'
+        : 'unavailable';
+    });
+  }
+
+  replaceContentInPlace(
+    markdown: string,
+    expectedDocument: NoteDraftState | null = null,
+    flushHistory = false
+  ): Promise<PaneEditorOperationResult> {
+    return this.#enqueue(async () => {
+      if (this.#disposed) return 'disposed';
+      if (
+        expectedDocument &&
+        this.deps.getPaneDocument(this.paneId) !==
+          expectedDocument
+      ) {
+        return 'stale';
+      }
+      const runtime = this.deps.getPaneRuntime(this.paneId);
+      if (!runtime.controller) return 'unavailable';
+
+      const lifecycle =
+        this.deps.getEditorLifecycleController(this.paneId);
+      if (flushHistory && expectedDocument) {
+        await lifecycle.replaceEditorContentInPlaceForDocument(
+          markdown,
+          expectedDocument
+        );
+      } else {
+        await lifecycle.replaceEditorContentInPlace(markdown);
+      }
+      return expectedDocument &&
+        this.deps.getPaneDocument(this.paneId) !== expectedDocument
+        ? 'stale'
+        : 'applied';
+    });
+  }
+
+  bindDocument(
+    document: NoteDraftState,
+    { restoreCursor = false }: { restoreCursor?: boolean } = {}
+  ): Promise<PaneEditorOperationResult> {
+    return this.#enqueue(async () => {
+      if (this.#disposed) return 'disposed';
+      if (this.deps.getPaneDocument(this.paneId) !== document) {
+        return 'stale';
+      }
+      const runtime = this.deps.getPaneRuntime(this.paneId);
+      if (!runtime.controller) return 'unavailable';
+
+      const lifecycle =
+        this.deps.getEditorLifecycleController(this.paneId);
+      const swapped = await lifecycle.swapEditorBuffer(document);
+      if (this.deps.getPaneDocument(this.paneId) !== document) {
+        return 'stale';
+      }
+      if (!swapped) {
+        await lifecycle.replaceEditorContent(
+          document.bodyMarkdown,
+          {
+            restoreCursor,
+            expectedDocument: document,
+            suppressReadyReset: true
+          }
+        );
+      } else if (restoreCursor) {
+        lifecycle.restoreCursorPositionForDocument(document);
+      }
+      return this.deps.getPaneRuntime(this.paneId).controller
+        ? 'applied'
+        : 'unavailable';
+    });
+  }
+
+  reconcile(): Promise<PaneEditorOperationResult> {
+    return this.deps.paneShouldMountEditor(this.paneId)
+      ? this.mount()
+      : this.destroy();
+  }
+
+  dispose(): Promise<PaneEditorOperationResult> {
+    this.#disposed = true;
+    return this.destroy();
+  }
+}
+
+export function createPaneEditorLifecycle<
+  TPaneId extends string
+>(deps: PaneEditorLifecycleDeps<TPaneId>) {
+  const sessions = new Map<
+    TPaneId,
+    PaneEditorSession<TPaneId>
+  >();
+
+  function getSession(paneId: TPaneId) {
+    let session = sessions.get(paneId);
+    if (!session) {
+      session = new PaneEditorSession(paneId, deps);
+      sessions.set(paneId, session);
     }
+    return session;
+  }
+
+  function mountPaneEditor(paneId: TPaneId) {
+    return getSession(paneId).mount();
+  }
+
+  function destroyPaneEditor(paneId: TPaneId) {
+    return getSession(paneId).destroy();
+  }
+
+  function saveCursorPosition(
+    paneId: TPaneId,
+    document: NoteDraftState
+  ) {
+    return getSession(paneId).saveCursorPosition(document);
+  }
+
+  function replaceContent(
+    paneId: TPaneId,
+    markdown: string,
+    options: PaneEditorReplaceOptions = {}
+  ) {
+    return getSession(paneId).replaceContent(markdown, options);
+  }
+
+  function replaceContentInPlace(
+    paneId: TPaneId,
+    markdown: string,
+    expectedDocument: NoteDraftState | null = null,
+    flushHistory = false
+  ) {
+    return getSession(paneId).replaceContentInPlace(
+      markdown,
+      expectedDocument,
+      flushHistory
+    );
+  }
+
+  function bindDocument(
+    paneId: TPaneId,
+    document: NoteDraftState,
+    options: { restoreCursor?: boolean } = {}
+  ) {
+    return getSession(paneId).bindDocument(document, options);
+  }
+
+  async function ensurePaneEditors(): Promise<void> {
+    await Promise.all(
+      deps
+        .getPaneIds()
+        .map((paneId) => getSession(paneId).reconcile())
+    );
+  }
+
+  async function disposePane(paneId: TPaneId): Promise<void> {
+    const session = sessions.get(paneId);
+    if (!session) return;
+    await session.dispose();
+    sessions.delete(paneId);
+  }
+
+  async function disposeAll(): Promise<void> {
+    await Promise.all(
+      [...sessions.values()].map((session) => session.dispose())
+    );
+    sessions.clear();
   }
 
   return {
     mountPaneEditor,
     destroyPaneEditor,
-    ensurePaneEditors
+    saveCursorPosition,
+    replaceContent,
+    replaceContentInPlace,
+    bindDocument,
+    ensurePaneEditors,
+    disposePane,
+    disposeAll
   };
 }
 
-export type PaneEditorLifecycle<TPaneId extends string> = ReturnType<
-  typeof createPaneEditorLifecycle<TPaneId>
->;
+export type PaneEditorLifecycle<
+  TPaneId extends string
+> = ReturnType<typeof createPaneEditorLifecycle<TPaneId>>;

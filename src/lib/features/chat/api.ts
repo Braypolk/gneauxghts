@@ -162,6 +162,7 @@ export interface ChatApi {
   createConversation(input?: { title?: string; vaultAccess?: VaultAccess }): Promise<ChatConversation>;
   listConversations(includeArchived?: boolean): Promise<ChatConversationSummary[]>;
   getConversation(conversationId: string): Promise<ChatConversation>;
+  findConversationByProjectionPath(notePath: string): Promise<string | null>;
   renameConversation(conversationId: string, title: string): Promise<ChatConversationSummary>;
   archiveConversation(
     conversationId: string,
@@ -208,6 +209,7 @@ export const CHAT_COMMANDS = {
   createConversation: 'chat_create_conversation',
   listConversations: 'chat_list_conversations',
   getConversation: 'chat_get_conversation',
+  findConversationByProjectionPath: 'chat_find_conversation_by_projection_path',
   renameConversation: 'chat_rename_conversation',
   archiveConversation: 'chat_archive_conversation',
   setConversationVaultAccess: 'chat_update_conversation_policy',
@@ -274,6 +276,12 @@ export class TauriChatApi implements ChatApi {
   getConversation(conversationId: string) {
     return invoke<RawConversation>(CHAT_COMMANDS.getConversation, { conversationId })
       .then((raw) => this.#normalizeConversation(raw));
+  }
+  findConversationByProjectionPath(notePath: string) {
+    return invoke<string | null>(
+      CHAT_COMMANDS.findConversationByProjectionPath,
+      { notePath }
+    );
   }
   async renameConversation(conversationId: string, title: string) {
     return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.renameConversation, { conversationId, title }));

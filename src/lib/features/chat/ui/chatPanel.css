@@ -1,0 +1,336 @@
+.chat-panel-header {
+  /* History on the left + reserved split fan and close/split chrome on the right. */
+  padding-right: 15.5rem;
+}
+
+.chat-panel-bottom {
+  background: linear-gradient(
+    to top,
+    color-mix(in oklab, var(--card) 72%, transparent) 55%,
+    transparent
+  );
+}
+
+.chat-icon-button {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--muted-foreground);
+  transition: background-color 160ms ease, color 160ms ease;
+}
+.chat-icon-button:hover:not(:disabled),
+.chat-icon-button--active {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.chat-icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.chat-composer-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--muted) 72%, transparent);
+  padding: 0.3rem 0.55rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  transition: background-color 160ms ease, color 160ms ease;
+}
+.chat-attachment-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--muted) 65%, transparent);
+  padding: 0.4rem 0.55rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  transition: background-color 160ms ease, color 160ms ease;
+}
+.chat-attachment-file:hover,
+.chat-attachment-file:focus-visible {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  outline: none;
+}
+.chat-attachment-image {
+  display: block;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  border-radius: 0.75rem;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.chat-attachment-image:hover,
+.chat-attachment-image:focus-visible {
+  border-color: color-mix(in oklab, var(--foreground) 35%, var(--border));
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 20%, transparent);
+  outline: none;
+}
+.chat-attachment-image img {
+  display: block;
+  max-height: 13rem;
+  max-width: 100%;
+  object-fit: contain;
+}
+.chat-pending-attachment {
+  display: inline-flex;
+  max-width: 14rem;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--muted) 65%, transparent);
+  padding: 0.3rem 0.4rem;
+  font-size: 0.72rem;
+}
+.chat-pending-attachment img {
+  height: 2rem;
+  width: 2rem;
+  border-radius: 0.4rem;
+  object-fit: cover;
+}
+.chat-pending-attachment-preview {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 0.5rem;
+}
+.chat-pending-attachment-preview:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--ring) 45%, transparent);
+  outline-offset: 2px;
+}
+.chat-pending-attachment .chat-pending-attachment-remove {
+  display: inline-flex;
+  height: 1.25rem;
+  width: 1.25rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--muted-foreground);
+}
+.chat-pending-attachment .chat-pending-attachment-remove:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.chat-composer-chip:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.chat-composer-chip--on,
+.chat-composer-chip--emphasis {
+  background: var(--foreground);
+  color: var(--background);
+}
+.chat-composer-chip--emphasis:hover:not(:disabled) {
+  background: var(--foreground);
+  color: var(--background);
+  opacity: 0.9;
+}
+.chat-composer-chip--action {
+  background: transparent;
+  color: var(--foreground);
+}
+.chat-composer-chip--action:hover:not(:disabled) {
+  background: var(--accent);
+}
+.chat-composer-chip--granted {
+  gap: 0.15rem;
+  padding-right: 0.3rem;
+}
+.chat-grant-dismiss {
+  display: inline-flex;
+  height: 1.1rem;
+  width: 1.1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: var(--muted-foreground);
+  opacity: 0;
+  transition: opacity 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+.chat-composer-chip--granted:hover .chat-grant-dismiss,
+.chat-composer-chip--granted:focus-within .chat-grant-dismiss,
+.chat-grant-dismiss:focus-visible {
+  opacity: 1;
+}
+.chat-grant-dismiss:hover:not(:disabled),
+.chat-grant-dismiss:focus-visible {
+  background: color-mix(in oklab, var(--foreground) 12%, transparent);
+  color: var(--foreground);
+}
+.chat-grant-dismiss:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.chat-composer-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+@media (hover: none) {
+  .chat-grant-dismiss {
+    opacity: 0.7;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-grant-dismiss {
+    transition: none;
+  }
+}
+
+.chat-menu {
+  position: absolute;
+  z-index: 40;
+  display: flex;
+  min-width: 11.5rem;
+  max-width: min(18rem, 70vw);
+  max-height: 16rem;
+  flex-direction: column;
+  gap: 0.15rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 1.1rem;
+  background: color-mix(in oklab, var(--popover, var(--card)) 96%, transparent);
+  padding: 0.35rem;
+  box-shadow:
+    0px 1px 2px 0px hsl(0 0% 0% / 0.18),
+    0px 8px 10px -1px hsl(0 0% 0% / 0.18);
+  backdrop-filter: blur(10px);
+}
+.chat-menu--down {
+  top: calc(100% + 0.35rem);
+  left: 0;
+}
+.chat-menu--up {
+  bottom: calc(100% + 0.35rem);
+  left: 0;
+}
+
+.chat-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  font-size: 0.78rem;
+  color: var(--foreground);
+}
+.chat-menu-item:hover {
+  background: var(--accent);
+}
+.chat-menu-item--active {
+  background: color-mix(in oklab, var(--accent) 80%, transparent);
+}
+
+.chat-message {
+  max-width: min(94%, 44rem);
+  padding: 0.15rem 0;
+}
+.chat-message--user {
+  align-self: flex-end;
+  border-radius: 1.1rem;
+  background: color-mix(in oklab, var(--muted) 78%, transparent);
+  padding: 0.7rem 1rem;
+}
+.chat-message-content p {
+  margin: 0 0 0.65rem;
+}
+.chat-message-content p:last-child {
+  margin-bottom: 0;
+}
+.chat-message-content ul,
+.chat-message-content ol {
+  margin: 0.45rem 0;
+  padding-left: 1.35rem;
+}
+.chat-message-content pre {
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: var(--muted);
+  padding: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.chat-message-content code:not(pre code) {
+  border-radius: 0.4rem;
+  background: var(--muted);
+  padding: 0.1rem 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.chat-message-content a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-citation {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  padding: 0.2rem 0.55rem;
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+}
+.chat-citation:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.chat-selection-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 9999px;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.chat-selection-action:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.chat-send-button {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--foreground);
+  color: var(--background);
+  transition: opacity 160ms ease;
+}
+.chat-send-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.chat-panel--inline {
+  border-radius: 1.1rem;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-icon-button,
+  .chat-composer-chip,
+  .chat-send-button {
+    transition: none;
+  }
+}

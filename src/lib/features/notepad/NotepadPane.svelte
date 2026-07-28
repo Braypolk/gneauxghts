@@ -193,30 +193,31 @@
       </div>
     {:else}
       <div class="chat-pane-shell flex min-h-0 flex-1 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] sm:pb-24">
-        {#if viewModel.chatController}
+        {#if viewModel.chat.session.controller}
           <ChatPanel
-            controller={viewModel.chatController}
-            conversationId={viewModel.chatConversationId}
-            draftSeed={viewModel.chatDraftSeed}
-            contextNote={viewModel.chatContextNote}
-            getActiveNoteSnapshot={viewModel.getChatActiveNoteSnapshot}
-            targetAnchor={viewModel.chatTargetAnchor}
+            controller={viewModel.chat.session.controller}
+            conversationId={viewModel.chat.session.conversationId}
+            draftSeed={viewModel.chat.session.draftSeed}
+            contextNote={viewModel.chat.context.note}
+            getActiveNoteSnapshot={viewModel.chat.context.getActiveNoteSnapshot}
+            targetAnchor={viewModel.chat.session.targetAnchor}
             variant="pane"
-            selectionActions={viewModel.chatSelectionActions}
-            onConversationChange={viewModel.onChatConversationChange}
-            onOpenCitation={viewModel.onOpenCitation}
-            proposalSnapshot={viewModel.proposalSnapshot}
-            proposalPendingCount={viewModel.proposalPendingCount}
-            onProposalOpenChange={viewModel.onProposalOpenChange}
-            onProposalKeep={viewModel.onProposalKeep}
-            onProposalUndo={viewModel.onProposalUndo}
-            onProposalKeepAll={viewModel.onProposalKeepAll}
-            onProposalUndoAll={viewModel.onProposalUndoAll}
-            onProposalReview={viewModel.onProposalReview}
-            onProposalRetry={viewModel.onProposalRetry}
-            onProposalCopyCurrent={viewModel.onProposalCopyCurrent}
-            onProposalReloadDisk={viewModel.onProposalReloadDisk}
-            onReviewAgentProposal={viewModel.onReviewAgentProposal}
+            selectionActions={viewModel.chat.context.selectionActions}
+            onConversationChange={viewModel.chat.session.onConversationChange}
+            onOpenCitation={viewModel.chat.context.onOpenCitation}
+            onSurfaceHandleChange={viewModel.chat.session.onSurfaceHandleChange}
+            proposalSnapshot={viewModel.chat.proposalReview.snapshot}
+            proposalPendingCount={viewModel.chat.proposalReview.pendingCount}
+            onProposalOpenChange={viewModel.chat.proposalReview.onOpenChange}
+            onProposalKeep={viewModel.chat.proposalReview.onKeep}
+            onProposalUndo={viewModel.chat.proposalReview.onUndo}
+            onProposalKeepAll={viewModel.chat.proposalReview.onKeepAll}
+            onProposalUndoAll={viewModel.chat.proposalReview.onUndoAll}
+            onProposalReview={viewModel.chat.proposalReview.onReview}
+            onProposalRetry={viewModel.chat.proposalReview.onRetry}
+            onProposalCopyCurrent={viewModel.chat.proposalReview.onCopyCurrent}
+            onProposalReloadDisk={viewModel.chat.proposalReview.onReloadDisk}
+            onReviewAgentProposal={viewModel.chat.proposalReview.onReviewAgentProposal}
           />
         {/if}
       </div>

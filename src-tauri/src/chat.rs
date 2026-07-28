@@ -3897,6 +3897,34 @@ mod tests {
     }
 
     #[test]
+    fn projection_owner_lookup_returns_the_conversation_for_a_managed_path() {
+        let (_root, service) = service("chat-projection-owner");
+        let conversation = service
+            .create_conversation(Some("Owner".into()), None)
+            .unwrap();
+        let projection_path = PathBuf::from(
+            service
+                .get_conversation(&conversation.summary.id)
+                .unwrap()
+                .projection_path,
+        );
+
+        assert_eq!(
+            service
+                .projection_owner_for_path(&projection_path)
+                .unwrap()
+                .as_deref(),
+            Some(conversation.summary.id.as_str())
+        );
+        assert_eq!(
+            service
+                .projection_owner_for_path(&service.notes_root().join("missing.md"))
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn excerpt_requires_valid_utf8_boundaries_and_remember_is_explicit() {
         let (_root, service) = service("chat-excerpt");
         let conversation = service.create_conversation(None, None).unwrap();

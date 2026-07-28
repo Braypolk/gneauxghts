@@ -3,14 +3,11 @@ import { DocumentRuntime } from '$lib/features/notepad/document/documentRuntime'
 
 /**
  * DocumentRegistry is a single per-note runtime map. It replaces the
- * collection of parallel maps that previously lived in runtimeStore
- * (sharedEditorResourcesByNoteKey, sharedEditorStateByNoteKey,
- * sharedEditorStateGenerationByNoteKey, noteSaveTimers, noteSaveQueues,
- * documentSyncFrameIds, editorPaneControllersByNoteKey).
+ * collection of parallel maps that previously lived in runtimeStore.
  *
  * One DocumentRuntime is created lazily per NoteKey and owns all of its
- * runtime state (CodeMirror resources, save timers/queues, sync frames,
- * attached panes). The registry coordinates lookup, transfer (when a draft
+ * runtime state (CodeMirror resources and save timers/queues). The registry
+ * coordinates lookup, transfer (when a draft
  * is rekeyed to a saved path), and cleanup.
  */
 export class DocumentRegistry {

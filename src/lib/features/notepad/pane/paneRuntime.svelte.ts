@@ -14,7 +14,6 @@ export interface PaneUiState {
   isEditorReady: boolean;
   isApplyingExternalContent: boolean;
   wikilinkAutocomplete: WikilinkAutocompleteState;
-  editorGeneration: number;
   slashMenu: PaneSlashMenuModel;
   selectionMenu: PaneSelectionMenuModel;
 }
@@ -40,7 +39,6 @@ export class PaneRuntime {
     isEditorReady: false,
     isApplyingExternalContent: false,
     wikilinkAutocomplete: createWikilinkAutocompleteState(),
-    editorGeneration: 0,
     slashMenu: { open: false },
     selectionMenu: { open: false }
   });

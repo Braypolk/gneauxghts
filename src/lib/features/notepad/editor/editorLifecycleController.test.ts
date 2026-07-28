@@ -66,13 +66,10 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       getController: () => ({ view: {} }) as never,
       getPaneId: () => 'primary',
       setController: () => {},
-      getShellElement: () => null,
       getEditorShell: () => null,
       getEditorRoot: () => ({}) as never,
       // The pane-scoped accessor always returns the *current* note object.
       getDocumentSession: () => liveDocument,
-      getSharedEditorState: () => null,
-      setSharedEditorState: () => {},
       setIsEditorReady: () => {},
       setIsApplyingExternalContent: () => {},
       handleEditorMarkdownChange: (_paneId, document, nextMarkdown) => {

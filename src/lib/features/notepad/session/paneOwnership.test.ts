@@ -15,29 +15,6 @@ import {
   type NoteDraftState,
   type NoteKey
 } from '$lib/features/notepad/state/noteStore';
-import {
-  cleanupNoteRuntime,
-  getEditorPaneCountForNote,
-  getSharedEditorState,
-  getSharedEditorStateGeneration,
-  registerEditorPaneForNote,
-  setSharedEditorState,
-  setSharedEditorStateGeneration,
-  transferNoteRuntime,
-  unregisterEditorPaneForNote
-} from '$lib/features/notepad/session/noteRuntime';
-import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
-
-// ---------------------------------------------------------------------------
-// Helper: create a minimal editor snapshot for tests
-// ---------------------------------------------------------------------------
-function editorSnapshot(markdown: string = 'test content'): EditorSnapshot {
-  return {
-    markdown,
-    selection: { anchor: 0, head: 0 },
-    revision: 0
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Shared note identity
@@ -124,100 +101,6 @@ describe('rekey transfer', () => {
     expect(state.notesByKey[nextKey]).toBe(sharedNote);
   });
 
-  it('transferNoteRuntime moves shared editor state to the new key', () => {
-    const oldKey = `path:/vault/Old.md` as NoteKey;
-    const nextKey = `path:/vault/New.md` as NoteKey;
-
-    setSharedEditorState(
-      { key: oldKey } as NoteDraftState,
-      editorSnapshot('before transfer')
-    );
-    setSharedEditorStateGeneration(
-      { key: oldKey } as NoteDraftState,
-      42
-    );
-
-    transferNoteRuntime(oldKey, nextKey);
-
-    expect(getSharedEditorState({ key: oldKey } as NoteDraftState)).toBeNull();
-    expect(getSharedEditorStateGeneration({ key: oldKey } as NoteDraftState)).toBe(0);
-    expect(getSharedEditorState({ key: nextKey } as NoteDraftState)?.markdown).toBe('before transfer');
-    expect(getSharedEditorStateGeneration({ key: nextKey } as NoteDraftState)).toBe(42);
-  });
-
-  it('transferNoteRuntime moves editor pane tracking to the new key', () => {
-    const oldKey = `path:/vault/TrackedOld.md` as NoteKey;
-    const nextKey = `path:/vault/TrackedNew.md` as NoteKey;
-
-    registerEditorPaneForNote(oldKey, 'pane-a');
-    registerEditorPaneForNote(oldKey, 'pane-b');
-
-    transferNoteRuntime(oldKey, nextKey);
-
-    expect(getEditorPaneCountForNote(oldKey)).toBe(0);
-    expect(getEditorPaneCountForNote(nextKey)).toBe(2);
-
-    cleanupNoteRuntime(nextKey);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Editor pane tracking (note-keyed)
-// ---------------------------------------------------------------------------
-describe('editor pane tracking', () => {
-  it('tracks pane registrations per note key', () => {
-    const noteKey = `path:/vault/Tracked.md` as NoteKey;
-
-    expect(getEditorPaneCountForNote(noteKey)).toBe(0);
-
-    registerEditorPaneForNote(noteKey, 'pane-a');
-    expect(getEditorPaneCountForNote(noteKey)).toBe(1);
-
-    registerEditorPaneForNote(noteKey, 'pane-b');
-    expect(getEditorPaneCountForNote(noteKey)).toBe(2);
-
-    unregisterEditorPaneForNote(noteKey, 'pane-a');
-    expect(getEditorPaneCountForNote(noteKey)).toBe(1);
-
-    unregisterEditorPaneForNote(noteKey, 'pane-b');
-    expect(getEditorPaneCountForNote(noteKey)).toBe(0);
-  });
-
-  it('cleanupNoteRuntime clears note-keyed data and editor pane tracking', () => {
-    const noteKey = `path:/vault/ToClean.md` as NoteKey;
-
-    setSharedEditorState(
-      { key: noteKey } as NoteDraftState,
-      editorSnapshot('will be cleaned')
-    );
-    setSharedEditorStateGeneration(
-      { key: noteKey } as NoteDraftState,
-      7
-    );
-    registerEditorPaneForNote(noteKey, 'some-pane');
-
-    cleanupNoteRuntime(noteKey);
-
-    expect(getSharedEditorState({ key: noteKey } as NoteDraftState)).toBeNull();
-    expect(getSharedEditorStateGeneration({ key: noteKey } as NoteDraftState)).toBe(0);
-    expect(getEditorPaneCountForNote(noteKey)).toBe(0);
-  });
-
-  it('tracks pane registration across note switches', () => {
-    const oldKey = `path:/vault/SwitchOld.md` as NoteKey;
-    const nextKey = `path:/vault/SwitchNew.md` as NoteKey;
-
-    registerEditorPaneForNote(oldKey, 'pane-a');
-    expect(getEditorPaneCountForNote(oldKey)).toBe(1);
-
-    unregisterEditorPaneForNote(oldKey, 'pane-a');
-    registerEditorPaneForNote(nextKey, 'pane-a');
-
-    expect(getEditorPaneCountForNote(oldKey)).toBe(0);
-    expect(getEditorPaneCountForNote(nextKey)).toBe(1);
-
-    cleanupNoteRuntime(nextKey);
-  });
 });
 
 // ---------------------------------------------------------------------------

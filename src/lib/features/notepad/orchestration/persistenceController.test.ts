@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNotepadPersistenceController } from "./persistenceController";
 import {
+  applySnapshotToNote,
   createNoteDraftState,
   type NoteDraftState,
 } from "$lib/features/notepad/state/noteStore";
@@ -26,6 +27,14 @@ function dirtyNote(): NoteDraftState {
     title: "Draft",
     bodyMarkdown: "draft body",
   });
+}
+
+function applySavedSnapshot(
+  note: NoteDraftState,
+  saved: SessionSnapshot,
+  { preserveDraft }: { preserveDraft: boolean },
+) {
+  applySnapshotToNote(note, saved, { preserveDraft });
 }
 
 describe("persistenceController", () => {
@@ -54,10 +63,9 @@ describe("persistenceController", () => {
     );
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
-      timers: new Map(),
-      queues: new Map(),
       saveNoteSession,
       rekeyNoteWithRuntime: (currentNote) => currentNote,
+      applySavedSnapshot,
     });
 
     controller.scheduleAutosave(note);
@@ -81,10 +89,9 @@ describe("persistenceController", () => {
     });
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
-      timers: new Map(),
-      queues: new Map(),
       saveNoteSession: vi.fn().mockReturnValue(savePromise),
       rekeyNoteWithRuntime: (currentNote) => currentNote,
+      applySavedSnapshot,
     });
 
     const save = controller.enqueueSave(note);
@@ -120,10 +127,9 @@ describe("persistenceController", () => {
     });
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
-      timers: new Map(),
-      queues: new Map(),
       saveNoteSession: vi.fn().mockReturnValue(savePromise),
       rekeyNoteWithRuntime: (currentNote) => currentNote,
+      applySavedSnapshot,
     });
 
     const save = controller.enqueueSave(note);

@@ -2,10 +2,15 @@ import { describeBlockAt, type BlockDescriptor } from '$lib/features/notepad/edi
 import {
   readEditorState,
   replaceEditorDocument,
+  focusEditorSearchRange,
+  setEditorCurrentSearchHighlightQuery,
   setProposalReviewExtensions,
   type EditorController,
-  type EditorSnapshot
+  type EditorSnapshot,
+  type SearchHighlightOptions
 } from '$lib/features/notepad/editor/editor';
+import { slashMenuHideFromUi } from './slashMenu';
+import { selectionMenuHideFromUi } from './selectionMenu';
 import {
   Transaction,
   type Annotation,
@@ -48,6 +53,8 @@ export interface EditorMarkdownInsertResult {
 export interface EditorCapabilityAdapter {
   /** True when the live CodeMirror controller (and review compartment) exist. */
   isReady: () => boolean;
+  focus: () => boolean;
+  focusAtEnd: () => boolean;
   readSnapshot: () => EditorSnapshot | null;
   readSelection: () => EditorSelectionCapabilitySnapshot | null;
   readCurrentBlock: () => EditorCurrentBlockSnapshot | null;
@@ -64,6 +71,14 @@ export interface EditorCapabilityAdapter {
     markdown: string,
     options?: EditorMarkdownInsertOptions
   ) => EditorMarkdownInsertResult | null;
+  setSearchHighlight: (
+    query: SearchHighlightOptions | string | null
+  ) => boolean;
+  focusSearchRange: (
+    range: { from: number; to: number } | null | undefined
+  ) => boolean;
+  closeSlashMenu: () => void;
+  closeSelectionMenu: () => void;
   addReadOnlyOverlay: (className: string) => ReadOnlyOverlayHandle;
   setProposalReviewExtensions: (
     extension: Extension | readonly Extension[] | null
@@ -127,6 +142,25 @@ export function createEditorCapabilityAdapter(
       const controller = getController();
       return Boolean(controller?.view && controller.proposalReviewCompartment);
     },
+    focus: () => {
+      const controller = getController();
+      if (!controller) return false;
+      controller.view.focus();
+      return true;
+    },
+    focusAtEnd: () => {
+      const controller = getController();
+      if (!controller) return false;
+      const anchor = controller.view.state.doc.length;
+      controller.view.dispatch(
+        controller.view.state.update({
+          selection: { anchor },
+          scrollIntoView: true
+        })
+      );
+      controller.view.focus();
+      return true;
+    },
     readSnapshot: () => readEditorState(getController()),
     readSelection: () => {
       const controller = getController();
@@ -159,6 +193,18 @@ export function createEditorCapabilityAdapter(
       replaceEditorDocument(getController(), markdown, options),
     insertMarkdown: (markdown, options = {}) =>
       insertEditorMarkdown(getController(), markdown, options),
+    setSearchHighlight: (query) =>
+      setEditorCurrentSearchHighlightQuery(getController(), query),
+    focusSearchRange: (range) =>
+      focusEditorSearchRange(getController(), range),
+    closeSlashMenu: () => {
+      const controller = getController();
+      if (controller) slashMenuHideFromUi(controller.view);
+    },
+    closeSelectionMenu: () => {
+      const controller = getController();
+      if (controller) selectionMenuHideFromUi(controller.view);
+    },
     addReadOnlyOverlay: (className) => {
       const controller = getController();
       if (!controller) {

@@ -4,7 +4,6 @@ import {
   type SessionSnapshot,
 } from "$lib/features/notepad/session/session";
 import {
-  applySnapshotToNote,
   setNoteStatus,
   type NoteDraftState,
   type NoteKey,
@@ -20,14 +19,15 @@ export interface PersistenceControllerParams {
   rekeyNoteWithRuntime: (
     note: NoteDraftState,
     snapshot: SessionSnapshot,
-  ) => NoteDraftState;
+  ) => NoteDraftState | Promise<NoteDraftState>;
+  applySavedSnapshot: (
+    note: NoteDraftState,
+    snapshot: SessionSnapshot,
+    options: { preserveDraft: boolean },
+  ) => void | Promise<void>;
   isTitleEditing?: (note: NoteDraftState) => boolean;
   /** Prevent generic save paths from persisting an editable proposal review. */
   shouldSuppressPersistence?: (note: NoteDraftState) => boolean;
-  /** @deprecated retained for backward compatibility; per-note timers now live in DocumentRegistry. */
-  timers?: Map<NoteKey, number>;
-  /** @deprecated retained for backward compatibility; per-note queues now live in DocumentRegistry. */
-  queues?: Map<NoteKey, Promise<void>>;
 }
 
 export function createNotepadPersistenceController(
@@ -102,8 +102,15 @@ export function createNotepadPersistenceController(
       note.currentNotePath !== currentNotePath ||
       (params.isTitleEditing?.(note) ?? false);
 
-    const savedNote = params.rekeyNoteWithRuntime(note, savedSession);
-    applySnapshotToNote(savedNote, savedSession, { preserveDraft });
+    const savedNote = await params.rekeyNoteWithRuntime(
+      note,
+      savedSession,
+    );
+    await params.applySavedSnapshot(
+      savedNote,
+      savedSession,
+      { preserveDraft },
+    );
     setNoteStatus(savedNote, "idle");
   }
 
