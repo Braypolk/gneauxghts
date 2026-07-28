@@ -125,9 +125,11 @@ describe("persistenceController", () => {
     const savePromise = new Promise<SessionSnapshot>((resolve) => {
       resolveSave = resolve;
     });
+    const markNoteOpened = vi.fn().mockResolvedValue(undefined);
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
       saveNoteSession: vi.fn().mockReturnValue(savePromise),
+      markNoteOpened,
       rekeyNoteWithRuntime: (currentNote) => currentNote,
       applySavedSnapshot,
     });
@@ -158,6 +160,45 @@ describe("persistenceController", () => {
     expect(note.lastSavedPath).toBe("/vault/first line.md");
     // The newer draft body the user typed is preserved.
     expect(note.bodyMarkdown).toBe("first line\nsecond line");
+    expect(markNoteOpened).toHaveBeenCalledWith("note-id");
     expect(note.status).toBe("idle");
+  });
+
+  it("does not let an inactive draft replace the session restore note", async () => {
+    const note = createNoteDraftState({
+      title: "Background draft",
+      bodyMarkdown: "body",
+      currentNoteId: null,
+      currentNotePath: null,
+      lastSavedTitle: "",
+      lastSavedMarkdown: "",
+      lastSavedNoteId: null,
+      lastSavedPath: null,
+    });
+    const saveNoteSession = vi.fn().mockResolvedValue(
+      snapshot({
+        title: "Background draft",
+        bodyMarkdown: "body",
+        currentNotePath: "/vault/Background draft.md",
+      }),
+    );
+    const markNoteOpened = vi.fn().mockResolvedValue(undefined);
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note,
+      saveNoteSession,
+      markNoteOpened,
+      isActiveNote: () => false,
+      rekeyNoteWithRuntime: (currentNote) => currentNote,
+      applySavedSnapshot,
+    });
+
+    await controller.enqueueSave(note);
+
+    expect(saveNoteSession).toHaveBeenCalledWith(
+      "Background draft",
+      "body",
+      null,
+    );
+    expect(markNoteOpened).not.toHaveBeenCalled();
   });
 });

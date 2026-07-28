@@ -3,8 +3,9 @@ import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 
 export interface WorkspacePersistenceServiceDeps {
   flushAllPaneCursorSaves: () => void;
-  cancelPendingAutosave: (document?: NoteDraftState) => void;
-  enqueueSave: (document?: NoteDraftState) => Promise<void>;
+  getDocuments: () => Iterable<NoteDraftState>;
+  cancelPendingAutosave: (document: NoteDraftState) => void;
+  enqueueSave: (document: NoteDraftState) => Promise<void>;
 }
 
 /**
@@ -22,8 +23,11 @@ export function createWorkspacePersistenceService(
 
   async function flushAllForNavigation(): Promise<void> {
     deps.flushAllPaneCursorSaves();
-    deps.cancelPendingAutosave();
-    await deps.enqueueSave();
+    const documents = [...deps.getDocuments()];
+    for (const document of documents) {
+      deps.cancelPendingAutosave(document);
+    }
+    await Promise.all(documents.map((document) => deps.enqueueSave(document)));
     await awaitAllSaveQueues();
   }
 

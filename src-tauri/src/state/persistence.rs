@@ -76,6 +76,7 @@ pub(super) const MAX_FILE_STEM_LENGTH: usize = 80;
 pub(super) const MAX_RECENT_NOTES: usize = 20;
 pub(super) const APP_STATE_SINGLETON_ID: i64 = 1;
 const APP_STATE_DB_FILE_NAME: &str = "app-state.sqlite3";
+static NOTE_FILE_MUTATION: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -178,33 +179,63 @@ pub(crate) fn write_state_with_lookup(
 /// Used by `mark_note_opened` so rapid note switching does not contend on
 /// SQLite for state that did not change.
 pub(crate) fn write_last_opened_and_recents(state: &PersistedState) -> Result<(), String> {
-    with_state_database(|connection| {
-        let transaction = connection.transaction().map_err(|err| err.to_string())?;
+    with_state_database(|connection| write_last_opened_and_recents_to_connection(connection, state))
+}
 
+fn write_last_opened_and_recents_to_connection(
+    connection: &mut Connection,
+    state: &PersistedState,
+) -> Result<(), String> {
+    let transaction = connection.transaction().map_err(|err| err.to_string())?;
+
+    transaction
+        .execute(
+            "INSERT INTO app_state (id, last_opened_note_id)
+             VALUES (?1, ?2)
+             ON CONFLICT(id) DO UPDATE
+             SET last_opened_note_id = excluded.last_opened_note_id",
+            params![APP_STATE_SINGLETON_ID, state.last_opened_note_id.as_deref()],
+        )
+        .map_err(|err| err.to_string())?;
+
+    transaction
+        .execute("DELETE FROM app_state_recent_note_ids", [])
+        .map_err(|err| err.to_string())?;
+    for (index, note_id) in state.recent_note_ids.iter().enumerate() {
         transaction
             .execute(
-                "INSERT INTO app_state (id, last_opened_note_id)
-                 VALUES (?1, ?2)
-                 ON CONFLICT(id) DO UPDATE
-                 SET last_opened_note_id = excluded.last_opened_note_id",
-                params![APP_STATE_SINGLETON_ID, state.last_opened_note_id.as_deref()],
+                "INSERT INTO app_state_recent_note_ids (position, note_id) VALUES (?1, ?2)",
+                params![to_i64(index)?, note_id],
             )
             .map_err(|err| err.to_string())?;
+    }
 
-        transaction
-            .execute("DELETE FROM app_state_recent_note_ids", [])
-            .map_err(|err| err.to_string())?;
-        for (index, note_id) in state.recent_note_ids.iter().enumerate() {
-            transaction
-                .execute(
-                    "INSERT INTO app_state_recent_note_ids (position, note_id) VALUES (?1, ?2)",
-                    params![to_i64(index)?, note_id],
-                )
-                .map_err(|err| err.to_string())?;
-        }
+    transaction.commit().map_err(|err| err.to_string())
+}
 
-        transaction.commit().map_err(|err| err.to_string())?;
-        Ok(())
+/// Atomically establish the note used for session restore and move it to the
+/// front of recents. The read and write share the same database lock so an
+/// eventual asynchronous save path cannot lose a concurrent open-note update.
+pub(crate) fn db_mark_note_opened(note_id: &str) -> Result<(), String> {
+    with_state_database(|connection| {
+        let mut state = read_state_from_database(connection)?;
+        state.last_opened_note_id = Some(note_id.to_string());
+        touch_recent_note_id(&mut state, note_id.to_string());
+        write_last_opened_and_recents_to_connection(connection, &state)
+    })
+}
+
+pub(crate) fn db_clear_last_opened_note() -> Result<(), String> {
+    with_state_database(|connection| {
+        connection
+            .execute(
+                "INSERT INTO app_state (id, last_opened_note_id)
+                 VALUES (?1, NULL)
+                 ON CONFLICT(id) DO UPDATE SET last_opened_note_id = NULL",
+                params![APP_STATE_SINGLETON_ID],
+            )
+            .map(|_| ())
+            .map_err(|err| err.to_string())
     })
 }
 
@@ -322,6 +353,18 @@ pub(crate) fn persist_note(
     markdown: &str,
     current_path: Option<&Path>,
 ) -> Result<Option<String>, String> {
+    let _file_mutation_guard = NOTE_FILE_MUTATION
+        .lock()
+        .map_err(|_| "Note file mutation lock poisoned".to_string())?;
+    persist_note_locked(notes_dir, title, markdown, current_path)
+}
+
+fn persist_note_locked(
+    notes_dir: &Path,
+    title: &str,
+    markdown: &str,
+    current_path: Option<&Path>,
+) -> Result<Option<String>, String> {
     let normalized_markdown = note::normalize_wikilink_markdown(markdown);
     note::reject_chat_projection_write(&normalized_markdown)?;
     let existing_markdown = current_path
@@ -342,13 +385,15 @@ pub(crate) fn persist_note(
 
         if let Some(existing_path) = current_path {
             if existing_path != target_path && existing_path.exists() {
-                crate::vault_watcher::record_self_save(existing_path);
+                let expected_removal = crate::vault_watcher::record_expected_removal(existing_path);
                 fs::rename(existing_path, &target_path).map_err(|err| err.to_string())?;
+                expected_removal.commit();
             }
         }
 
-        crate::vault_watcher::record_self_save(&target_path);
+        let expected_write = crate::vault_watcher::record_expected_write(&target_path, "");
         fs::write(&target_path, "").map_err(|err| err.to_string())?;
+        expected_write.commit();
         return Ok(Some(target_path.to_string_lossy().into_owned()));
     }
 
@@ -365,13 +410,16 @@ pub(crate) fn persist_note(
 
     if let Some(existing_path) = current_path {
         if existing_path != target_path && existing_path.exists() {
-            crate::vault_watcher::record_self_save(existing_path);
+            let expected_removal = crate::vault_watcher::record_expected_removal(existing_path);
             fs::rename(existing_path, &target_path).map_err(|err| err.to_string())?;
+            expected_removal.commit();
         }
     }
 
-    crate::vault_watcher::record_self_save(&target_path);
+    let expected_write =
+        crate::vault_watcher::record_expected_write(&target_path, &prepared_markdown);
     atomic_write_note(&target_path, prepared_markdown.as_bytes())?;
+    expected_write.commit();
     Ok(Some(target_path.to_string_lossy().into_owned()))
 }
 

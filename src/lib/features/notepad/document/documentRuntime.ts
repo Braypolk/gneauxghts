@@ -11,13 +11,22 @@ import type { NoteKey } from '$lib/features/notepad/state/noteStore';
  * owns resource lookup and persistence scheduling.
  */
 export class DocumentRuntime {
-  readonly noteKey: NoteKey;
+  private _noteKey: NoteKey;
   private _resources: SharedEditorResources | null = null;
   private _saveTimerId: number | null = null;
   private _saveQueue: Promise<void> | null = null;
+  private _pendingSaveOperation: (() => Promise<void>) | null = null;
 
   constructor(noteKey: NoteKey) {
-    this.noteKey = noteKey;
+    this._noteKey = noteKey;
+  }
+
+  get noteKey(): NoteKey {
+    return this._noteKey;
+  }
+
+  rekey(noteKey: NoteKey): void {
+    this._noteKey = noteKey;
   }
 
   ensureResources(initial: {
@@ -69,7 +78,45 @@ export class DocumentRuntime {
   }
 
   setSaveQueue(queue: Promise<void> | null): void {
-    this._saveQueue = queue;
+    if (!queue) {
+      this._saveQueue = null;
+      if (this._pendingSaveOperation) {
+        this._saveQueue = this.drainSaveOperations();
+      }
+      return;
+    }
+
+    const upstream = this._saveQueue
+      ? Promise.all([this._saveQueue, queue]).then(() => {})
+      : queue;
+    this._saveQueue = this.joinExternalQueue(upstream);
+  }
+
+  /**
+   * Keep at most one running and one latest pending operation. Repeated save
+   * requests while a write is in flight all join the same drain promise, and
+   * only the newest pending request is executed afterward.
+   */
+  requestSave(operation: () => Promise<void>): Promise<void> {
+    this._pendingSaveOperation = operation;
+    if (!this._saveQueue) {
+      this._saveQueue = this.drainSaveOperations();
+    }
+    return this._saveQueue;
+  }
+
+  private async drainSaveOperations(): Promise<void> {
+    while (this._pendingSaveOperation) {
+      const operation = this._pendingSaveOperation;
+      this._pendingSaveOperation = null;
+      await operation();
+    }
+    this._saveQueue = null;
+  }
+
+  private async joinExternalQueue(queue: Promise<void>): Promise<void> {
+    await queue;
+    await this.drainSaveOperations();
   }
 
   attachedPaneCount(): number {
@@ -100,13 +147,12 @@ export class DocumentRuntime {
       source.clearSaveTimer();
     }
     if (source._saveQueue) {
-      this._saveQueue = this._saveQueue
-        ? Promise.all([
-            this._saveQueue,
-            source._saveQueue
-          ]).then(() => {})
-        : source._saveQueue;
+      this.setSaveQueue(source._saveQueue);
       source._saveQueue = null;
+    }
+    if (source._pendingSaveOperation) {
+      this._pendingSaveOperation = source._pendingSaveOperation;
+      source._pendingSaveOperation = null;
     }
     if (!adoptedResources && source._resources) {
       // Collision rekeys first move every source pane to the target runtime.
@@ -121,5 +167,6 @@ export class DocumentRuntime {
     this._resources?.destroy();
     this._resources = null;
     this._saveQueue = null;
+    this._pendingSaveOperation = null;
   }
 }

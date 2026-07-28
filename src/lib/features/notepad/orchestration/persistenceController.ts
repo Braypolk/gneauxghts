@@ -16,6 +16,8 @@ export interface PersistenceControllerParams {
     markdown: string,
     currentPath: string | null,
   ) => Promise<SessionSnapshot>;
+  markNoteOpened?: (noteId: string) => Promise<void>;
+  isActiveNote?: (note: NoteDraftState) => boolean;
   rekeyNoteWithRuntime: (
     note: NoteDraftState,
     snapshot: SessionSnapshot,
@@ -58,15 +60,14 @@ export function createNotepadPersistenceController(
     operation: () => Promise<void>,
   ) {
     const runtime = documentRegistry.ensure(note.key);
-    const queue = runtime
-      .getSaveQueue()
-      .then(operation)
-      .catch((error) => {
+    return runtime.requestSave(async () => {
+      try {
+        await operation();
+      } catch (error) {
         console.error("Notepad note operation failed:", error);
         setNoteStatus(note, "error");
-      });
-    runtime.setSaveQueue(queue);
-    return queue;
+      }
+    });
   }
 
   async function persistNote(note: NoteDraftState) {
@@ -111,6 +112,19 @@ export function createNotepadPersistenceController(
       savedSession,
       { preserveDraft },
     );
+    if (
+      currentNotePath === null &&
+      savedSession.currentNoteId &&
+      (params.isActiveNote?.(savedNote) ?? true)
+    ) {
+      try {
+        await params.markNoteOpened?.(savedSession.currentNoteId);
+      } catch (error) {
+        // The note is already safely on disk. Session-restore bookkeeping is
+        // secondary and must not turn a completed save into a save failure.
+        console.error("Failed to mark newly saved note as opened:", error);
+      }
+    }
     setNoteStatus(savedNote, "idle");
   }
 

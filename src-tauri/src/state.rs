@@ -13,14 +13,15 @@ pub(crate) use config::{
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{
-    atomic_write_note, db_load_note_activity, db_set_last_chat_location, db_set_note_collapsed,
-    db_set_note_hidden, db_set_note_order, db_touch_note_activity, derive_file_stem,
-    derive_file_stem_from_title_and_markdown, effective_open_count, is_forgotten_note_path,
-    is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
-    read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
-    touch_recent_note_id, validate_current_path, write_last_opened_and_recents, write_state,
-    write_state_with_lookup, ForgottenItemKind, NoteActivity, NoteIdLookup, PersistedForgottenNote,
-    PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
+    atomic_write_note, db_clear_last_opened_note, db_load_note_activity, db_mark_note_opened,
+    db_set_last_chat_location, db_set_note_collapsed, db_set_note_hidden, db_set_note_order,
+    db_touch_note_activity, derive_file_stem, derive_file_stem_from_title_and_markdown,
+    effective_open_count, is_forgotten_note_path, is_valid_note_path, persist_note,
+    prune_recent_note_ids, prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup,
+    resolve_note_id_from_path, resolve_note_path_by_id, touch_recent_note_id,
+    validate_current_path, write_last_opened_and_recents, write_state, write_state_with_lookup,
+    ForgottenItemKind, NoteActivity, NoteIdLookup, PersistedForgottenNote, PersistedState,
+    OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 
 #[cfg(test)]
@@ -31,7 +32,11 @@ mod tests {
         ForgottenItemKind, PersistedForgottenNote, PersistedState,
     };
     use crate::test_support::{lock_test_env, TestDir};
-    use std::fs;
+    use std::{
+        fs,
+        sync::{Arc, Barrier},
+        thread,
+    };
 
     #[test]
     fn derive_file_stem_sanitizes_invalid_characters_and_truncates() {
@@ -75,6 +80,39 @@ mod tests {
         let saved_markdown = fs::read_to_string(&renamed_path).expect("read renamed note");
         assert!(saved_markdown.contains("gneauxghts:"));
         assert!(saved_markdown.ends_with("Fresh content"));
+    }
+
+    #[test]
+    fn concurrent_new_notes_reserve_distinct_paths() {
+        let temp = TestDir::new("state-persist-concurrent-new-notes");
+        let notes_dir = temp.path().to_path_buf();
+        let start = Arc::new(Barrier::new(2));
+
+        let paths = thread::scope(|scope| {
+            let handles = ["Left body", "Right body"].map(|body| {
+                let start = Arc::clone(&start);
+                let notes_dir = notes_dir.clone();
+                scope.spawn(move || {
+                    start.wait();
+                    persist_note(&notes_dir, "Shared title", body, None)
+                        .expect("persist note")
+                        .expect("saved path")
+                })
+            });
+
+            handles.map(|handle| handle.join().expect("join save"))
+        });
+
+        assert_ne!(paths[0], paths[1]);
+        let saved = paths
+            .iter()
+            .map(fs::read_to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read saved notes");
+        assert!(saved.iter().any(|markdown| markdown.ends_with("Left body")));
+        assert!(saved
+            .iter()
+            .any(|markdown| markdown.ends_with("Right body")));
     }
 
     #[test]

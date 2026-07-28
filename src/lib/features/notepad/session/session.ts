@@ -147,12 +147,22 @@ export async function saveNoteSession(
   return createSessionSnapshot(saved);
 }
 
+export async function markNoteOpened(noteId: string) {
+  await invoke("mark_note_opened", { noteId });
+}
+
 export async function rememberNoteSession(
   title: string,
   markdown: string,
   currentPath: string | null,
+  { clearLastOpened = true }: { clearLastOpened?: boolean } = {},
 ) {
-  await invoke("remember_note", { title, markdown, currentPath });
+  await invoke("remember_note", {
+    title,
+    markdown,
+    currentPath,
+    clearLastOpened,
+  });
 }
 
 function formatPastedImageTimestamp(date: Date) {

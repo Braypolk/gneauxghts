@@ -295,7 +295,8 @@ export function createNoteCommandController<
     await rememberNoteSession(
       note.title,
       note.bodyMarkdown,
-      note.currentNotePath
+      note.currentNotePath,
+      { clearLastOpened: true }
     );
     if (note.operationRevision !== operationRevision) return;
 
@@ -328,7 +329,8 @@ export function createNoteCommandController<
     await rememberNoteSession(
       note.title,
       note.bodyMarkdown,
-      note.currentNotePath
+      note.currentNotePath,
+      { clearLastOpened: panes.getNavigationDocument() === note }
     );
     if (note.operationRevision !== operationRevision) return note;
 

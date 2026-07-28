@@ -52,9 +52,11 @@ export class DocumentRegistry {
       return;
     }
 
-    const movedRuntime = new DocumentRuntime(nextKey);
-    movedRuntime.adoptFrom(oldRuntime);
-    this._runtimes.set(nextKey, movedRuntime);
+    // Preserve the runtime object itself. Timer callbacks and an active save
+    // drain close over this instance, so replacing it during a draft-to-path
+    // rekey would leave timer/queue bookkeeping attached to the old wrapper.
+    oldRuntime.rekey(nextKey);
+    this._runtimes.set(nextKey, oldRuntime);
     this._runtimes.delete(oldKey);
   }
 

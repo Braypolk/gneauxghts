@@ -13,7 +13,10 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::{Condvar, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Condvar, Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -48,42 +51,128 @@ const SELF_SAVE_DEDUPE_WINDOW: Duration = Duration::from_millis(2_500);
 
 #[derive(Clone, Debug)]
 struct ExpectedSelfSave {
+    operation_id: u64,
     recorded_at: Instant,
-    /// Managed writers register the exact bytes they intend to publish. A
-    /// later external edit to the same path must never be hidden merely
-    /// because it happened inside the de-duplication window.
-    content_hash: Option<String>,
+    outcome: ExpectedFilesystemOutcome,
+}
+
+#[derive(Clone, Debug)]
+enum ExpectedFilesystemOutcome {
+    /// The path must contain the exact markdown published by the app.
+    ContentHash(String),
+    /// The path must no longer exist after an app-owned delete or move.
+    Missing,
 }
 
 static RECENT_SELF_SAVES: Mutex<Option<HashMap<PathBuf, ExpectedSelfSave>>> = Mutex::new(None);
+static NEXT_EXPECTED_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Mark `path` as recently written by the app itself. Subsequent watcher
-/// events that arrive within [`SELF_SAVE_DEDUPE_WINDOW`] for the same path
-/// are skipped.
-pub(crate) fn record_self_save(path: &Path) {
-    record_expected_self_save(path, None);
+/// A pending app-owned filesystem mutation.
+///
+/// Call [`Self::commit`] only after the filesystem operation succeeds. Dropping
+/// an uncommitted mutation removes its expectations, ensuring a failed app
+/// write cannot hide a later external change.
+#[must_use = "expected filesystem mutations must be committed after the operation succeeds"]
+pub(crate) struct ExpectedFilesystemMutation {
+    operation_id: u64,
+    paths: Vec<PathBuf>,
+    committed: bool,
 }
 
-/// Register a managed write before it reaches the filesystem. Watcher events
-/// are suppressed only while the file still has this exact content hash.
-pub(crate) fn record_self_save_with_hash(path: &Path, content_hash: String) {
-    record_expected_self_save(path, Some(content_hash));
+impl ExpectedFilesystemMutation {
+    pub(crate) fn commit(mut self) {
+        self.committed = true;
+    }
 }
 
-fn record_expected_self_save(path: &Path, content_hash: Option<String>) {
-    let now = Instant::now();
-    let Ok(mut guard) = RECENT_SELF_SAVES.lock() else {
-        return;
-    };
-    let entry = guard.get_or_insert_with(HashMap::new);
-    prune_self_save_map(entry, now);
-    entry.insert(
+impl Drop for ExpectedFilesystemMutation {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let Ok(mut guard) = RECENT_SELF_SAVES.lock() else {
+            return;
+        };
+        let Some(entry) = guard.as_mut() else {
+            return;
+        };
+        for path in &self.paths {
+            if entry
+                .get(path)
+                .is_some_and(|expected| expected.operation_id == self.operation_id)
+            {
+                entry.remove(path);
+            }
+        }
+    }
+}
+
+/// Register the exact markdown an app-owned write intends to publish.
+///
+/// Watcher events are suppressed only while the file still has this content.
+/// An external edit to the same path is processed immediately, even when it
+/// races inside [`SELF_SAVE_DEDUPE_WINDOW`].
+pub(crate) fn record_expected_write(path: &Path, markdown: &str) -> ExpectedFilesystemMutation {
+    record_expected_self_saves(vec![(
         path.to_path_buf(),
-        ExpectedSelfSave {
-            recorded_at: now,
-            content_hash,
-        },
-    );
+        ExpectedFilesystemOutcome::ContentHash(content_hash(markdown)),
+    )])
+}
+
+/// Register the final absence expected from an app-owned delete or move.
+///
+/// Recreating or modifying the path inside the de-duplication window does not
+/// match this outcome and is therefore processed as an external change.
+pub(crate) fn record_expected_removal(path: &Path) -> ExpectedFilesystemMutation {
+    record_expected_self_saves(vec![(
+        path.to_path_buf(),
+        ExpectedFilesystemOutcome::Missing,
+    )])
+}
+
+/// Register both final outcomes of an app-owned move.
+pub(crate) fn record_expected_move(
+    previous: &Path,
+    current: &Path,
+    markdown: &str,
+) -> ExpectedFilesystemMutation {
+    record_expected_self_saves(vec![
+        (previous.to_path_buf(), ExpectedFilesystemOutcome::Missing),
+        (
+            current.to_path_buf(),
+            ExpectedFilesystemOutcome::ContentHash(content_hash(markdown)),
+        ),
+    ])
+}
+
+fn record_expected_self_saves(
+    expectations: Vec<(PathBuf, ExpectedFilesystemOutcome)>,
+) -> ExpectedFilesystemMutation {
+    let operation_id = NEXT_EXPECTED_OPERATION_ID.fetch_add(1, Ordering::Relaxed);
+    let now = Instant::now();
+    let paths = expectations
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    if let Ok(mut guard) = RECENT_SELF_SAVES.lock() {
+        let entry = guard.get_or_insert_with(HashMap::new);
+        prune_self_save_map(entry, now);
+        for (path, outcome) in expectations {
+            entry.insert(
+                path,
+                ExpectedSelfSave {
+                    operation_id,
+                    recorded_at: now,
+                    outcome,
+                },
+            );
+        }
+    }
+    ExpectedFilesystemMutation {
+        operation_id,
+        paths,
+        committed: false,
+    }
 }
 
 fn consume_self_save(path: &Path) -> bool {
@@ -97,16 +186,18 @@ fn consume_self_save(path: &Path) -> bool {
     prune_self_save_map(entry, now);
     if let Some(expected) = entry.get(path) {
         if now.duration_since(expected.recorded_at) <= SELF_SAVE_DEDUPE_WINDOW {
-            if let Some(expected_hash) = expected.content_hash.as_deref() {
-                let matches = fs::read_to_string(path)
+            let matches = match &expected.outcome {
+                ExpectedFilesystemOutcome::ContentHash(expected_hash) => fs::read_to_string(path)
                     .ok()
-                    .is_some_and(|markdown| content_hash(&markdown) == expected_hash);
-                if !matches {
-                    // A different hash is an external change, even when it
-                    // races immediately behind our own write.
-                    entry.remove(path);
-                    return false;
-                }
+                    .is_some_and(|markdown| content_hash(&markdown) == *expected_hash),
+                ExpectedFilesystemOutcome::Missing => !path.exists(),
+            };
+            if !matches {
+                // The filesystem no longer matches the app-owned operation.
+                // Treat this as an external change even when it races
+                // immediately behind our own write, move, or delete.
+                entry.remove(path);
+                return false;
             }
             // Leave the entry in place: a single save on disk often produces
             // multiple `notify` events (Create + Modify(Data) + Modify(Any))
@@ -548,8 +639,8 @@ fn is_watchable_markdown_path(path: &Path, notes_dir: &Path) -> bool {
 mod tests {
     use super::{
         consume_self_save, is_watchable_markdown_path, next_reconcile_interval,
-        record_self_save_with_hash, should_process_watch_event, RECONCILE_INTERVAL_MAX,
-        RECONCILE_INTERVAL_MIN,
+        record_expected_move, record_expected_removal, record_expected_write,
+        should_process_watch_event, RECONCILE_INTERVAL_MAX, RECONCILE_INTERVAL_MIN,
     };
     use notify::{
         event::{CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode},
@@ -620,16 +711,79 @@ mod tests {
     }
 
     #[test]
-    fn managed_self_save_suppression_requires_the_registered_hash() {
+    fn expected_write_suppression_requires_the_registered_content() {
         let path =
             std::env::temp_dir().join(format!("gneauxghts-self-save-{}.md", std::process::id()));
         let managed = "managed bytes";
+        let expected = record_expected_write(&path, managed);
         std::fs::write(&path, managed).expect("write managed content");
-        record_self_save_with_hash(&path, crate::semantic::db::content_hash(managed));
+        expected.commit();
         assert!(consume_self_save(&path));
         assert!(consume_self_save(&path));
         std::fs::write(&path, "external edit").expect("write external edit");
         assert!(!consume_self_save(&path));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn expected_removal_suppression_rejects_an_external_recreation() {
+        let path =
+            std::env::temp_dir().join(format!("gneauxghts-self-remove-{}.md", std::process::id()));
+        std::fs::write(&path, "before removal").expect("seed removed note");
+        let expected = record_expected_removal(&path);
+        std::fs::remove_file(&path).expect("remove managed note");
+        expected.commit();
+        assert!(consume_self_save(&path));
+        assert!(consume_self_save(&path));
+
+        std::fs::write(&path, "external recreation").expect("recreate removed note");
+        assert!(!consume_self_save(&path));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn expected_move_validates_both_final_paths() {
+        let base = std::env::temp_dir();
+        let source = base.join(format!(
+            "gneauxghts-self-move-source-{}.md",
+            std::process::id()
+        ));
+        let target = base.join(format!(
+            "gneauxghts-self-move-target-{}.md",
+            std::process::id()
+        ));
+        let managed = "moved bytes";
+        let _ = std::fs::remove_file(&source);
+        let _ = std::fs::remove_file(&target);
+        std::fs::write(&source, managed).expect("seed moved note");
+
+        let expected = record_expected_move(&source, &target, managed);
+        std::fs::rename(&source, &target).expect("move managed note");
+        expected.commit();
+        assert!(consume_self_save(&source));
+        assert!(consume_self_save(&target));
+
+        std::fs::write(&source, "external source recreation").expect("recreate source");
+        std::fs::write(&target, "external target edit").expect("edit target");
+        assert!(!consume_self_save(&source));
+        assert!(!consume_self_save(&target));
+
+        let _ = std::fs::remove_file(source);
+        let _ = std::fs::remove_file(target);
+    }
+
+    #[test]
+    fn failed_app_mutation_does_not_leave_a_suppression_entry() {
+        let path =
+            std::env::temp_dir().join(format!("gneauxghts-self-failed-{}.md", std::process::id()));
+        let managed = "same bytes an external writer later publishes";
+        let _ = std::fs::remove_file(&path);
+
+        let expected = record_expected_write(&path, managed);
+        drop(expected);
+        std::fs::write(&path, managed).expect("external writer publishes matching content");
+        assert!(!consume_self_save(&path));
+
         let _ = std::fs::remove_file(path);
     }
 }

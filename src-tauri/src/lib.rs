@@ -143,6 +143,7 @@ pub fn run() {
             commands::wikilink_commands::resolve_note_link,
             commands::wikilink_commands::autocomplete_note_links,
             commands::save_note,
+            commands::mark_note_opened,
             commands::remember_note,
             commands::forgotten_note_commands::forget_note,
             commands::forgotten_note_commands::list_forgotten_notes,

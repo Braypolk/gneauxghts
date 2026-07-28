@@ -3,7 +3,7 @@ use super::{current_time_millis, prepare_notes_dir, NoteSession};
 use crate::{
     index::{build_indexed_note, AppState},
     note,
-    state::{persist_note, read_state, touch_recent_note_id, validate_current_path, write_state},
+    state::{db_clear_last_opened_note, persist_note, validate_current_path},
 };
 use std::path::{Path, PathBuf};
 use tauri::State;
@@ -98,6 +98,7 @@ pub(crate) fn persist_note_session_with_outcome(
     markdown: String,
     current_path: Option<String>,
     mode: NotePersistenceMode,
+    clear_last_opened: bool,
 ) -> Result<PersistNoteOutcome, String> {
     // Save is a hot path; the throttled forgotten-note cleanup runs from
     // explicit forgotten-note commands and at startup instead.
@@ -126,15 +127,9 @@ pub(crate) fn persist_note_session_with_outcome(
     );
 
     let saved_note_id = next_note.as_ref().map(|note| note.note_id.clone());
-    let mut persisted_state = read_state(&notes_dir)?;
-    persisted_state.last_opened_note_id = match mode {
-        NotePersistenceMode::Save => saved_note_id.clone(),
-        NotePersistenceMode::Remember => None,
-    };
-    if let Some(note_id) = saved_note_id.as_ref() {
-        touch_recent_note_id(&mut persisted_state, note_id.clone());
+    if matches!(mode, NotePersistenceMode::Remember) && clear_last_opened {
+        db_clear_last_opened_note()?;
     }
-    write_state(&notes_dir, &persisted_state)?;
 
     let removed_previous_path = current_path
         .as_deref()

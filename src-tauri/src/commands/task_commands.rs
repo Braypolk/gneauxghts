@@ -311,8 +311,9 @@ pub(crate) fn toggle_task_with_view(
         .ok_or_else(|| "Missing note path".to_string())?;
     let markdown = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
     let updated_markdown = toggle_task_in_markdown(&markdown, task.line_number, &task.text)?;
-    crate::vault_watcher::record_self_save(&note_path);
+    let expected_write = crate::vault_watcher::record_expected_write(&note_path, &updated_markdown);
     fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
+    expected_write.commit();
     let timestamp_millis = current_time_millis()?;
     let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
     // Reconciles the projection synchronously. The upsert below is also
@@ -349,8 +350,9 @@ pub(crate) fn delete_task_with_view(
         .ok_or_else(|| "Missing note path".to_string())?;
     let markdown = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
     let updated_markdown = delete_task_in_markdown(&markdown, task.line_number, &task.text)?;
-    crate::vault_watcher::record_self_save(&note_path);
+    let expected_write = crate::vault_watcher::record_expected_write(&note_path, &updated_markdown);
     fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
+    expected_write.commit();
     let timestamp_millis = current_time_millis()?;
     let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
     upsert_notes_index_entry(&state, note_path.clone(), updated_note.clone())?;

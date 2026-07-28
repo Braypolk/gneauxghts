@@ -52,10 +52,14 @@ pub(crate) fn forget_note(
         .0;
 
         if note_path.exists() {
-            crate::vault_watcher::record_self_save(note_path);
-            crate::vault_watcher::record_self_save(&forgotten_path);
+            let expected_move = crate::vault_watcher::record_expected_move(
+                note_path,
+                &forgotten_path,
+                &forgotten_markdown,
+            );
             fs::rename(note_path, &forgotten_path).map_err(|err| err.to_string())?;
             fs::write(&forgotten_path, &forgotten_markdown).map_err(|err| err.to_string())?;
+            expected_move.commit();
         }
 
         let raw_path = note_path.to_string_lossy().into_owned();
@@ -223,10 +227,14 @@ pub(crate) fn restore_forgotten_notes(
                 let restored_markdown =
                     note::prepare_note_markdown(&markdown, Some(&markdown), Some(None))?.0;
                 let timestamp_millis = current_time_millis()?;
-                crate::vault_watcher::record_self_save(&forgotten_path);
-                crate::vault_watcher::record_self_save(&restored_path);
+                let expected_move = crate::vault_watcher::record_expected_move(
+                    &forgotten_path,
+                    &restored_path,
+                    &restored_markdown,
+                );
                 fs::rename(&forgotten_path, &restored_path).map_err(|err| err.to_string())?;
                 fs::write(&restored_path, &restored_markdown).map_err(|err| err.to_string())?;
+                expected_move.commit();
 
                 let note = build_indexed_note(&restored_path, &restored_markdown, timestamp_millis);
                 upsert_notes_index_entry(&state, restored_path.clone(), note)?;

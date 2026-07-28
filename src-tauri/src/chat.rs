@@ -363,11 +363,14 @@ impl ChatProjectionSink for FilesystemChatProjectionSink {
             return Ok(false);
         }
 
-        let hash = content_hash(markdown);
-        if self.app_handle.is_some() {
-            crate::vault_watcher::record_self_save_with_hash(path, hash);
-        }
+        let expected_write = self
+            .app_handle
+            .is_some()
+            .then(|| crate::vault_watcher::record_expected_write(path, markdown));
         fs::write(path, markdown).map_err(|error| error.to_string())?;
+        if let Some(expected_write) = expected_write {
+            expected_write.commit();
+        }
 
         if let Some(app_handle) = self.app_handle.as_ref() {
             if let Some(state) = app_handle.try_state::<crate::index::AppState>() {
@@ -979,11 +982,17 @@ impl ChatService {
             })
             .collect::<Result<Vec<_>, String>>()?;
 
+        let mut expected_moves = Vec::with_capacity(previous_paths.len());
         for (previous, current) in previous_paths.iter().zip(&current_paths) {
-            crate::vault_watcher::record_self_save(previous);
-            crate::vault_watcher::record_self_save(current);
+            let markdown = fs::read_to_string(previous).map_err(|error| error.to_string())?;
+            expected_moves.push(crate::vault_watcher::record_expected_move(
+                previous, current, &markdown,
+            ));
         }
         fs::rename(source_directory, target_directory).map_err(|error| error.to_string())?;
+        for expected_move in expected_moves {
+            expected_move.commit();
+        }
 
         let database_result = (|| -> Result<(), String> {
             let mut connection = self.connection()?;

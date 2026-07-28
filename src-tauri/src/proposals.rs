@@ -394,8 +394,9 @@ pub(crate) fn commit_note_review(
     let normalized = note::normalize_wikilink_markdown(&markdown);
     note::reject_chat_projection_write(&normalized)?;
     let prepared = note::prepare_note_markdown(&normalized, Some(&raw), Some(None))?.0;
-    vault_watcher::record_self_save(&note_path);
+    let expected_write = vault_watcher::record_expected_write(&note_path, &prepared);
     atomic_write_note(&note_path, prepared.as_bytes())?;
+    expected_write.commit();
     Ok(CommitNoteReviewResult {
         status: "committed".to_string(),
         applied: Some(AppliedNoteChange {
@@ -442,9 +443,12 @@ pub(crate) fn commit_note_creation(
         note::prepare_note_markdown(&preview.proposed_editor_markdown, None, Some(None))?.0;
     let path = loop {
         let candidate = unique_creation_path(notes_dir, &stem);
-        vault_watcher::record_self_save_with_hash(&candidate, content_hash(&prepared));
+        let expected_write = vault_watcher::record_expected_write(&candidate, &prepared);
         match create_note_without_overwrite(&candidate, prepared.as_bytes()) {
-            Ok(()) => break candidate,
+            Ok(()) => {
+                expected_write.commit();
+                break candidate;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.to_string()),
         }

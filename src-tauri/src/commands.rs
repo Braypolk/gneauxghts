@@ -25,7 +25,7 @@ use crate::{
         SemanticStatus,
     },
     state::{
-        create_vault_folder as create_vault_folder_state, current_vault_info,
+        create_vault_folder as create_vault_folder_state, current_vault_info, db_mark_note_opened,
         ensure_vault_scaffold, list_vault_folders as list_vault_folders_state, notes_root,
         set_notes_root, vault_root, CreateVaultFolderResult, VaultFolderInfo, VaultInfo,
     },
@@ -338,6 +338,7 @@ pub(crate) fn save_note(
         markdown,
         current_path,
         NotePersistenceMode::Save,
+        false,
     )?;
     let session = outcome
         .session
@@ -348,11 +349,17 @@ pub(crate) fn save_note(
 }
 
 #[tauri::command]
+pub(crate) fn mark_note_opened(note_id: String) -> Result<(), String> {
+    db_mark_note_opened(&note_id)
+}
+
+#[tauri::command]
 pub(crate) fn remember_note(
     state: State<'_, AppState>,
     title: String,
     markdown: String,
     current_path: Option<String>,
+    clear_last_opened: bool,
 ) -> Result<(), String> {
     let outcome = persist_note_session_with_outcome(
         &state,
@@ -360,6 +367,7 @@ pub(crate) fn remember_note(
         markdown,
         current_path,
         NotePersistenceMode::Remember,
+        clear_last_opened,
     )?;
     if outcome.persisted_path.is_some() {
         emit_note_saved(&state, &outcome, &title);

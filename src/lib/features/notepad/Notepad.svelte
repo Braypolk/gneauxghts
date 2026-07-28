@@ -20,6 +20,7 @@
   } from "$lib/features/notepad/navigation/openFlow";
   import { type SearchMode } from "$lib/features/notepad/search/search";
   import {
+    markNoteOpened,
     saveNoteSession,
     type ForgottenNote,
     type SessionSnapshot,
@@ -483,6 +484,7 @@
   const persistence = createNotepadPersistenceController({
     getDocumentSession,
     saveNoteSession,
+    markNoteOpened,
     rekeyNoteWithRuntime,
     applySavedSnapshot: async (
       document,
@@ -504,6 +506,7 @@
       );
     },
     isTitleEditing: isTitleInputFocusedForNote,
+    isActiveNote: (note) => getDocumentSession() === note,
     shouldSuppressPersistence: (note) =>
       shouldSuppressAutosaveForDocument(note),
   });
@@ -591,6 +594,7 @@
 
   const workspacePersistence = createWorkspacePersistenceService({
     flushAllPaneCursorSaves: () => documents.flushAllPendingCursorSaves(),
+    getDocuments: () => Object.values(notepadState.notesByKey),
     cancelPendingAutosave,
     enqueueSave,
   });
@@ -1290,9 +1294,8 @@
       void handleVaultNoteChanged(payload);
     },
     dispose: () => {
-      documents.flushAllPendingCursorSaves();
       documents.saveCursorPositionForDocument();
-      flushPendingAutosave();
+      void workspacePersistence.flushAllForNavigation();
       chatCoordinator.dispose();
       syncCurrentFileSearchHighlights("", "all");
       searchState.dispose();
