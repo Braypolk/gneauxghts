@@ -133,6 +133,14 @@ describe('createNotepadCommandBarState', () => {
     expect(onSearchSelect).toHaveBeenCalledWith(selected);
   });
 
+  it('describes the focused chat in the forget action', () => {
+    const state = createState({
+      getForgetItemLabel: () => 'chat'
+    });
+
+    expect(state.getForgetButtonAriaLabel()).toContain('Forget this chat.');
+  });
+
   describe('forget shortcut', () => {
     function forgetShortcutEvent(
       type: 'keydown' | 'keyup',

@@ -19,8 +19,8 @@ pub(crate) use persistence::{
     is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
     read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
     touch_recent_note_id, validate_current_path, write_last_opened_and_recents, write_state,
-    write_state_with_lookup, NoteActivity, NoteIdLookup, PersistedForgottenNote, PersistedState,
-    OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
+    write_state_with_lookup, ForgottenItemKind, NoteActivity, NoteIdLookup, PersistedForgottenNote,
+    PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 
 #[cfg(test)]
@@ -28,7 +28,7 @@ mod tests {
     use super::{
         derive_file_stem, derive_file_stem_from_title_and_markdown, forgotten_notes_root,
         initialize_app_data_dir, persist_note, read_state, resolve_note_id_from_path, write_state,
-        PersistedForgottenNote, PersistedState,
+        ForgottenItemKind, PersistedForgottenNote, PersistedState,
     };
     use crate::test_support::{lock_test_env, TestDir};
     use std::fs;
@@ -196,6 +196,8 @@ mod tests {
                         forgotten_at_millis: 10,
                         purge_after_days: 7,
                         purge_at_millis: 20,
+                        kind: ForgottenItemKind::Note,
+                        conversation_id: None,
                     },
                     PersistedForgottenNote {
                         forgotten_path: live_forgotten_note.to_string_lossy().into_owned(),
@@ -204,6 +206,8 @@ mod tests {
                         forgotten_at_millis: 30,
                         purge_after_days: 7,
                         purge_at_millis: 40,
+                        kind: ForgottenItemKind::Note,
+                        conversation_id: None,
                     },
                     PersistedForgottenNote {
                         forgotten_path: live_forgotten_note.to_string_lossy().into_owned(),
@@ -212,6 +216,8 @@ mod tests {
                         forgotten_at_millis: 50,
                         purge_after_days: 7,
                         purge_at_millis: 60,
+                        kind: ForgottenItemKind::Note,
+                        conversation_id: None,
                     },
                 ],
                 ..PersistedState::default()

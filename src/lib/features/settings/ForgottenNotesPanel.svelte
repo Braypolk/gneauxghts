@@ -34,9 +34,9 @@
 <div class="border-t border-border/70 px-6 py-5">
   <div class="flex items-start justify-between gap-4">
     <div>
-      <p class="text-sm font-medium">Forgotten Notes</p>
+      <p class="text-sm font-medium">Forgotten Items</p>
       <p class="mt-0.5 text-xs text-muted-foreground">
-        Review notes in `.forgotten`, then restore or permanently delete them.
+        Review notes and chats in `.forgotten`, then restore or permanently delete them.
       </p>
     </div>
 
@@ -79,9 +79,9 @@
     </div>
 
     {#if isLoadingForgottenNotes}
-      <p class="mt-4 text-sm text-muted-foreground">Loading forgotten notes…</p>
+      <p class="mt-4 text-sm text-muted-foreground">Loading forgotten items…</p>
     {:else if forgottenNotes.length === 0}
-      <p class="mt-4 text-sm text-muted-foreground">No forgotten notes right now.</p>
+      <p class="mt-4 text-sm text-muted-foreground">No forgotten items right now.</p>
     {:else}
       <div class="mt-4 space-y-3">
         {#each forgottenNotes as note}
@@ -100,7 +100,12 @@
                 />
 
                 <div>
-                  <p class="text-sm font-medium">{note.title}</p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <p class="text-sm font-medium">{note.title}</p>
+                    <span class="rounded-full border border-border/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {note.kind}
+                    </span>
+                  </div>
                   <p class="mt-1 text-xs text-muted-foreground">
                     {note.fileName} · forgotten {formatTimestamp(note.forgottenAtMillis)}
                   </p>

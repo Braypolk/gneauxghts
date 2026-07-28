@@ -174,6 +174,9 @@ pub(crate) struct ForgottenNoteSummary {
     forgotten_at_millis: u64,
     purge_after_days: u32,
     purge_at_millis: u64,
+    kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -182,6 +185,9 @@ pub(crate) struct RestoredForgottenNote {
     forgotten_path: String,
     restored_path: String,
     title: String,
+    kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conversation_id: Option<String>,
 }
 
 /// Minimum interval between background passes of `cleanup_expired_forgotten_notes`.

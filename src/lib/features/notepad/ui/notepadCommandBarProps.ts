@@ -8,6 +8,8 @@ import type { SearchMode } from '$lib/features/notepad/search/search';
  */
 export interface NotepadCommandBarForgetProps {
   canUnforget: boolean;
+  canForget?: boolean;
+  itemLabel?: 'note' | 'chat';
   onForget: () => void;
   onUnforget: () => void;
 }
@@ -16,6 +18,8 @@ export interface NotepadCommandBarForgetProps {
  * Remember bundle: the action menu on the right of the command bar.
  */
 export interface NotepadCommandBarRememberProps {
+  label?: string;
+  ariaLabel?: string;
   onRemember: () => void;
 }
 

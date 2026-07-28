@@ -128,7 +128,7 @@
               void settings.loadForgottenNotes();
             }}
           >
-            Forgotten Notes
+            Forgotten Items
           </button>
         </div>
       </div>
@@ -262,7 +262,7 @@
                     <div>
                       <p class="text-sm font-medium">Forgotten note retention</p>
                       <p class="mt-0.5 text-xs text-muted-foreground">
-                        Forgotten notes move into `.forgotten` before they are permanently deleted.
+                        Forgotten notes and chats move into `.forgotten` before they are permanently deleted.
                       </p>
                     </div>
 
@@ -296,7 +296,7 @@
                 </div>
 
                 <p class="text-center text-sm text-muted-foreground">
-                  To restore or permanently delete notes in
+                  To restore or permanently delete items in
                   <code class="rounded bg-muted/50 px-1 py-0.5 text-xs">.forgotten</code>
                   , open the
                   <button
@@ -307,7 +307,7 @@
                       void settings.loadForgottenNotes();
                     }}
                   >
-                    Forgotten Notes
+                    Forgotten Items
                   </button>
                   tab.
                 </p>
@@ -505,7 +505,7 @@
                 <p class="mt-2 text-sm font-medium break-all">{settings.activeVaultPath}</p>
               </SettingsCard>
               <SettingsCard>
-                <SettingsLabel text="Forgotten notes" />
+                <SettingsLabel text="Forgotten items" />
                 <p class="mt-2 text-sm font-medium break-all">{settings.vaultInfo.forgottenPath}</p>
               </SettingsCard>
               <SettingsCard>

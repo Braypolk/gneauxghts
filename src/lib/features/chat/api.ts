@@ -23,6 +23,8 @@ import type {
   VaultAccess
 } from './types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
+import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
+import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 
 interface RawChatSettings {
   provider: ChatProvider | 'ollama';
@@ -161,7 +163,11 @@ export interface ChatApi {
   listConversations(includeArchived?: boolean): Promise<ChatConversationSummary[]>;
   getConversation(conversationId: string): Promise<ChatConversation>;
   renameConversation(conversationId: string, title: string): Promise<ChatConversationSummary>;
-  archiveConversation(conversationId: string, archived: boolean): Promise<ChatConversationSummary>;
+  archiveConversation(
+    conversationId: string,
+    archived: boolean,
+    retentionDays: ForgottenNoteRetentionPreference
+  ): Promise<ForgottenNoteSummary | null>;
   setConversationVaultAccess(conversationId: string, vaultAccess: VaultAccess): Promise<ChatConversationSummary>;
   setConversationProvider(conversationId: string, provider: ChatProvider, model: string): Promise<ChatConversationSummary>;
   listLocalModels(baseUrl: string): Promise<LocalModel[]>;
@@ -272,9 +278,16 @@ export class TauriChatApi implements ChatApi {
   async renameConversation(conversationId: string, title: string) {
     return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.renameConversation, { conversationId, title }));
   }
-  async archiveConversation(conversationId: string, archived: boolean) {
-    await invoke(CHAT_COMMANDS.archiveConversation, { conversationId, archived });
-    return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.getConversation, { conversationId }));
+  async archiveConversation(
+    conversationId: string,
+    archived: boolean,
+    retentionDays: ForgottenNoteRetentionPreference
+  ) {
+    return invoke<ForgottenNoteSummary | null>(CHAT_COMMANDS.archiveConversation, {
+      conversationId,
+      archived,
+      retentionDays
+    });
   }
   async setConversationVaultAccess(conversationId: string, vaultAccess: VaultAccess) {
     return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.setConversationVaultAccess, {

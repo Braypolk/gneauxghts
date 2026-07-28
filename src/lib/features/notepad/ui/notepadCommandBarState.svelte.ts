@@ -42,6 +42,7 @@ interface NotepadCommandBarStateDeps {
   getForgetHoldDurationMs: () => number;
   isForgetHoldEnabled: () => boolean;
   isForgetActionAvailable: () => boolean;
+  getForgetItemLabel?: () => string;
   onSearchInput: (value: string) => void;
   onSearchSelect: (result: SearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
@@ -456,10 +457,11 @@ class NotepadCommandBarController {
   getForgetButtonAriaLabel = () => {
     const binding = getKeyboardShortcutBinding('forgetCurrentNote');
     const shortcutSuffix = binding ? ` (${formatShortcutBinding(binding)})` : '';
+    const itemLabel = this.#deps.getForgetItemLabel?.() ?? 'note';
 
     return this.#deps.isForgetHoldEnabled()
-      ? `Forget this note. Hold the button or press to confirm.${shortcutSuffix}`
-      : `Forget this note.${shortcutSuffix}`;
+      ? `Forget this ${itemLabel}. Hold the button or press to confirm.${shortcutSuffix}`
+      : `Forget this ${itemLabel}.${shortcutSuffix}`;
   };
 
   dispose = () => {

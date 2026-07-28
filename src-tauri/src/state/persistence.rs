@@ -79,6 +79,35 @@ const APP_STATE_DB_FILE_NAME: &str = "app-state.sqlite3";
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub(crate) enum ForgottenItemKind {
+    Note,
+    Chat,
+}
+
+impl Default for ForgottenItemKind {
+    fn default() -> Self {
+        Self::Note
+    }
+}
+
+impl ForgottenItemKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Note => "note",
+            Self::Chat => "chat",
+        }
+    }
+
+    fn parse(value: &str) -> Self {
+        match value {
+            "chat" => Self::Chat,
+            _ => Self::Note,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedForgottenNote {
     pub(crate) forgotten_path: String,
     pub(crate) original_path: String,
@@ -86,6 +115,10 @@ pub(crate) struct PersistedForgottenNote {
     pub(crate) forgotten_at_millis: u64,
     pub(crate) purge_after_days: u32,
     pub(crate) purge_at_millis: u64,
+    #[serde(default)]
+    pub(crate) kind: ForgottenItemKind,
+    #[serde(default)]
+    pub(crate) conversation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -469,10 +502,20 @@ fn prune_forgotten_notes(state: &mut PersistedState, notes_dir: &Path) {
     state.forgotten_notes.retain(|forgotten_note| {
         let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
         let original_path = PathBuf::from(&forgotten_note.original_path);
+        let valid_stored_item = match forgotten_note.kind {
+            ForgottenItemKind::Note => forgotten_path.is_file(),
+            ForgottenItemKind::Chat => {
+                forgotten_path.is_dir()
+                    && forgotten_note
+                        .conversation_id
+                        .as_deref()
+                        .is_some_and(|id| !id.trim().is_empty())
+            }
+        };
         !forgotten_note.title.trim().is_empty()
             && forgotten_note.purge_after_days > 0
             && forgotten_note.purge_at_millis >= forgotten_note.forgotten_at_millis
-            && forgotten_path.is_file()
+            && valid_stored_item
             && is_forgotten_note_path(&forgotten_path, notes_dir)
             && is_path_in_notes_dir(&original_path, notes_dir)
             && !is_forgotten_note_path(&original_path, notes_dir)
@@ -613,7 +656,9 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
                 title TEXT NOT NULL,
                 forgotten_at_millis INTEGER NOT NULL,
                 purge_after_days INTEGER NOT NULL,
-                purge_at_millis INTEGER NOT NULL
+                purge_at_millis INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'note',
+                conversation_id TEXT
             );
             CREATE TABLE IF NOT EXISTS app_state_note_activity (
                 note_id TEXT PRIMARY KEY,
@@ -625,6 +670,28 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
     migrate_note_activity_columns(connection)?;
     migrate_last_chat_columns(connection)?;
+    migrate_forgotten_item_columns(connection)?;
+    Ok(())
+}
+
+fn migrate_forgotten_item_columns(connection: &Connection) -> Result<(), String> {
+    if !has_column(connection, "app_state_forgotten_notes", "kind")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state_forgotten_notes
+                 ADD COLUMN kind TEXT NOT NULL DEFAULT 'note'",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    if !has_column(connection, "app_state_forgotten_notes", "conversation_id")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state_forgotten_notes ADD COLUMN conversation_id TEXT",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
     Ok(())
 }
 
@@ -800,7 +867,8 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
     let mut forgotten_notes = Vec::new();
     let mut statement = connection
         .prepare(
-            "SELECT forgotten_path, original_path, title, forgotten_at_millis, purge_after_days, purge_at_millis
+            "SELECT forgotten_path, original_path, title, forgotten_at_millis,
+                    purge_after_days, purge_at_millis, kind, conversation_id
              FROM app_state_forgotten_notes",
         )
         .map_err(|err| err.to_string())?;
@@ -813,6 +881,8 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
                 forgotten_at_millis: read_u64_column(row, 3)?,
                 purge_after_days: read_u32_column(row, 4)?,
                 purge_at_millis: read_u64_column(row, 5)?,
+                kind: ForgottenItemKind::parse(&row.get::<_, String>(6)?),
+                conversation_id: row.get(7)?,
             })
         })
         .map_err(|err| err.to_string())?;
@@ -941,15 +1011,19 @@ fn write_state_to_connection(
                     title,
                     forgotten_at_millis,
                     purge_after_days,
-                    purge_at_millis
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    purge_at_millis,
+                    kind,
+                    conversation_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     forgotten_note.forgotten_path.as_str(),
                     forgotten_note.original_path.as_str(),
                     forgotten_note.title.as_str(),
                     to_i64(forgotten_note.forgotten_at_millis)?,
                     i64::from(forgotten_note.purge_after_days),
-                    to_i64(forgotten_note.purge_at_millis)?
+                    to_i64(forgotten_note.purge_at_millis)?,
+                    forgotten_note.kind.as_str(),
+                    forgotten_note.conversation_id.as_deref()
                 ],
             )
             .map_err(|err| err.to_string())?;

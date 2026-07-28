@@ -42,6 +42,7 @@
     loadCurrentVaultInfo,
     loadSavedNoteSession,
     resolveAssetRootPath,
+    restoreForgottenNotes,
     saveNoteSession,
     storePastedImageAsset,
     type ForgottenNote,
@@ -159,6 +160,12 @@
   import '$lib/features/notepad/markdown/inlineFormatting.css';
 
   type PaneId = NotepadPaneId;
+  interface RecentlyForgottenChat {
+    paneId: PaneId;
+    conversationId: string;
+    title: string;
+    forgottenPath: string;
+  }
   const MAX_VISIBLE_PANES = 2;
 
   const paneTitleInputClass =
@@ -188,6 +195,7 @@
   );
   let chatDraftSeeds = $state<Partial<Record<PaneId, ChatDraftSeed>>>({});
   let chatTargetAnchors = $state<Partial<Record<PaneId, string | null>>>({});
+  let recentlyForgottenChat = $state<RecentlyForgottenChat | null>(null);
   let discussionSeedCounter = 0;
   let discussionInProgress = false;
   let activeSlashMenuPaneId = $state<PaneId | null>(null);
@@ -197,7 +205,24 @@
   /** Assigned after `commands` is created; used by early chat open helpers. */
   let touchPaneLocationForHistory: (paneId: PaneId) => void = () => {};
 
-  let canUnforget = $derived(notepadState.recentlyForgotten !== null);
+  let isActivePaneChat = $derived(getPaneKind(activePaneId) === 'chat');
+  let canUnforget = $derived(
+    isActivePaneChat
+      ? recentlyForgottenChat?.paneId === activePaneId
+      : notepadState.recentlyForgotten !== null
+  );
+  let activeChatCommandState = $derived(
+    isActivePaneChat ? getChatController(activePaneId).getSnapshot() : null
+  );
+  let canForgetActiveItem = $derived(
+    !isActivePaneChat ||
+      Boolean(
+        activeChatCommandState?.conversation &&
+          !activeChatCommandState.isInitializing &&
+          !activeChatCommandState.isLoadingConversation &&
+          !activeChatCommandState.isSending
+      )
+  );
   let currentSearchHighlightMode: SearchMode = 'all';
   let currentSearchHighlightQuery = '';
 
@@ -444,9 +469,10 @@
       if (openedNewChatSurface) {
         await controller.initialize();
         const label = text.replace(/\s+/g, ' ').slice(0, 48);
-        conversation = await controller.createConversation({
+        controller.startNewConversation({
           title: label ? `About: ${label}` : 'Selection discussion'
         });
+        conversation = null;
       } else {
         const conversationId = getPaneState(notepadState, chatPaneId).chatConversationId;
         if (!conversation || (conversationId && conversation.id !== conversationId)) {
@@ -454,7 +480,7 @@
           conversation = controller.getSnapshot().conversation;
         }
         if (!conversation) {
-          conversation = await controller.createConversation({ title: 'Selection discussion' });
+          controller.startNewConversation({ title: 'Selection discussion' });
         }
       }
 
@@ -1096,6 +1122,9 @@
     editorCapabilities.delete(paneId);
     chatControllers.get(paneId)?.dispose();
     chatControllers.delete(paneId);
+    if (recentlyForgottenChat?.paneId === paneId) {
+      recentlyForgottenChat = null;
+    }
     delete chatDraftSeeds[paneId];
     delete chatTargetAnchors[paneId];
     delete paneRuntimes[paneId];
@@ -1645,13 +1674,82 @@
     openPreviousNoteInSplit: () => splitWorkspaceIfAllowed('previous'),
     closePane: commands.closePane,
     switchActivePane: commands.switchActivePane,
-    startNewNoteFlow: commands.startNewNoteFlow,
+    startNewNoteFlow: startNewActivePaneItem,
     toggleRelatedPanel,
     goToPreviousLocation: commands.goToPreviousLocation,
     focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
     handlePaneCommandGlobalKeydown: commands.handlePaneCommandGlobalKeydown,
     handleWikilinkKeydown
   });
+
+  async function startNewActivePaneItem() {
+    const paneId = activePaneId;
+    if (getPaneKind(paneId) === 'chat') {
+      if (recentlyForgottenChat?.paneId === paneId) {
+        recentlyForgottenChat = null;
+      }
+      getChatController(paneId).startNewConversation();
+      return;
+    }
+    await commands.startNewNoteFlow();
+  }
+
+  async function forgetActivePaneItem() {
+    const paneId = activePaneId;
+    if (getPaneKind(paneId) === 'chat') {
+      const controller = getChatController(paneId);
+      const conversation = controller.getSnapshot().conversation;
+      if (!conversation) return;
+      const forgottenItem = await controller.archiveConversation(
+        undefined,
+        appSettings.forgottenNoteRetentionPreference
+      );
+      if (forgottenItem?.forgottenPath) {
+        setRecentlyForgotten(null);
+        recentlyForgottenChat = {
+          paneId,
+          conversationId: conversation.id,
+          title: conversation.title,
+          forgottenPath: forgottenItem.forgottenPath
+        };
+      }
+      return;
+    }
+    recentlyForgottenChat = null;
+    await commands.clearNotepad();
+  }
+
+  async function unforgetActivePaneItem() {
+    const paneId = activePaneId;
+    if (getPaneKind(paneId) !== 'chat') {
+      await commands.unforgetNotepad();
+      return;
+    }
+
+    const forgottenChat = recentlyForgottenChat;
+    if (!forgottenChat || forgottenChat.paneId !== paneId) return;
+
+    try {
+      const restoredItems = await restoreForgottenNotes([forgottenChat.forgottenPath]);
+      const restoredItem = restoredItems[0];
+      if (!restoredItem) return;
+
+      recentlyForgottenChat = null;
+      const conversationId = restoredItem.conversationId ?? forgottenChat.conversationId;
+      const controller = getChatController(paneId);
+      await controller.refreshList();
+      const conversation = await controller.openConversation(conversationId);
+      if (!conversation) return;
+
+      setPaneChatConversationId(notepadState, paneId, conversation.id);
+      chatTargetAnchors[paneId] = null;
+      touchPaneLocationForHistory(paneId);
+      await tick();
+      commands.focusPaneAfterShortcut(paneId);
+    } catch (error) {
+      console.error('Failed to restore forgotten chat:', error);
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Pane view-model + actions wired into NotepadPane.svelte.
@@ -2025,11 +2123,17 @@
       <NotepadCommandBar
         forget={{
           canUnforget,
-          onForget: () => void commands.clearNotepad(),
-          onUnforget: () => void commands.unforgetNotepad()
+          canForget: canForgetActiveItem,
+          itemLabel: isActivePaneChat ? 'chat' : 'note',
+          onForget: () => void forgetActivePaneItem(),
+          onUnforget: () => void unforgetActivePaneItem()
         }}
         remember={{
-          onRemember: () => void commands.startNewNoteFlow()
+          label: isActivePaneChat ? 'New Chat' : 'New Idea',
+          ariaLabel: isActivePaneChat
+            ? 'New Chat. Start a blank chat in this pane.'
+            : 'New Idea. Start a blank note in this pane.',
+          onRemember: () => void startNewActivePaneItem()
         }}
         search={{
           searchMode: searchState.searchMode,

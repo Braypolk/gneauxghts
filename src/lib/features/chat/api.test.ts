@@ -93,6 +93,33 @@ describe('TauriChatApi', () => {
     expect(summary.vaultAccess).toBe('full');
   });
 
+  it('passes the forgotten-note retention window when archiving a conversation', async () => {
+    invokeMock.mockResolvedValueOnce({
+      forgottenPath: '/vault/.forgotten/2026-07-28-chat',
+      originalPath: '/vault/Chats/2026-07-28-chat',
+      title: 'Test',
+      fileName: '2026-07-28-chat',
+      forgottenAtMillis: 1,
+      purgeAfterDays: 30,
+      purgeAtMillis: 2,
+      kind: 'chat',
+      conversationId: 'chat-1'
+    });
+    const { TauriChatApi } = await import('./api');
+
+    const forgottenItem = await new TauriChatApi().archiveConversation('chat-1', true, 30);
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'chat_archive_conversation', {
+      conversationId: 'chat-1',
+      archived: true,
+      retentionDays: 30
+    });
+    expect(forgottenItem).toMatchObject({
+      kind: 'chat',
+      conversationId: 'chat-1'
+    });
+  });
+
   it('wraps create and send payloads and returns optimistic messages', async () => {
     invokeMock
       .mockResolvedValueOnce({

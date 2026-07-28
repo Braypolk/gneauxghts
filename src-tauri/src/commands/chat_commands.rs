@@ -1,4 +1,8 @@
-use super::{prepare_notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE};
+use super::{
+    forgotten_note_commands::{register_forgotten_chat_folder, resolve_forgotten_target_path},
+    index_bridge::remove_notes_index_entry,
+    prepare_notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+};
 use crate::{
     agent_tools::ActiveNoteSnapshot,
     chat::{
@@ -224,10 +228,57 @@ pub(crate) fn chat_rename_conversation(
 #[tauri::command]
 pub(crate) fn chat_archive_conversation(
     service: State<'_, ChatService>,
+    state: State<'_, AppState>,
     conversation_id: String,
     archived: bool,
-) -> Result<(), String> {
-    service.archive_conversation(&conversation_id, archived)
+    retention_days: u32,
+) -> Result<Option<super::ForgottenNoteSummary>, String> {
+    if !archived {
+        return Err("Restore forgotten chats from Settings → Forgotten Items".to_string());
+    }
+
+    let notes_dir = prepare_notes_dir(true)?;
+    let snapshot = service.forgotten_folder_snapshot(&conversation_id)?;
+    if snapshot.archived {
+        return Ok(None);
+    }
+    let forgotten_root = crate::state::forgotten_notes_root(&notes_dir);
+    std::fs::create_dir_all(&forgotten_root).map_err(|error| error.to_string())?;
+    let forgotten_path = resolve_forgotten_target_path(&notes_dir, &snapshot.original_path);
+    let relocation = service.archive_conversation_folder(&conversation_id, &forgotten_path)?;
+    let forgotten_summary = match register_forgotten_chat_folder(
+        &notes_dir,
+        &snapshot.original_path,
+        &forgotten_path,
+        &snapshot.title,
+        &conversation_id,
+        retention_days,
+    ) {
+        Ok(summary) => summary,
+        Err(error) => {
+            let _ = service.restore_conversation_folder(
+                &conversation_id,
+                &forgotten_path,
+                &snapshot.original_path,
+            );
+            return Err(error);
+        }
+    };
+    for path in relocation.previous_paths {
+        if let Err(error) = state.semantic.queue_delete_note(&path) {
+            eprintln!(
+                "chat projection semantic-index removal failed for {}: {error}",
+                path.display()
+            );
+        }
+        if let Err(error) = remove_notes_index_entry(&state, &path) {
+            eprintln!(
+                "chat projection derived-index removal failed for {}: {error}",
+                path.display()
+            );
+        }
+    }
+    Ok(Some(forgotten_summary))
 }
 
 #[tauri::command]
@@ -525,7 +576,7 @@ pub(crate) fn chat_unremember_excerpt(
     Ok(excerpt)
 }
 
-fn sync_chat_recall(
+pub(super) fn sync_chat_recall(
     service: &ChatService,
     state: &AppState,
     conversation_id: &str,

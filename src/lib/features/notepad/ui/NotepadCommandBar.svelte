@@ -43,10 +43,16 @@
   }: Props = $props();
 
   const canUnforget = $derived(forget.canUnforget);
+  const canForget = $derived(forget.canForget ?? true);
+  const forgetItemLabel = $derived(forget.itemLabel ?? 'note');
   const onForget = $derived(forget.onForget);
   const onUnforget = $derived(forget.onUnforget);
 
   const onRemember = $derived(remember.onRemember);
+  const rememberLabel = $derived(remember.label ?? 'New Idea');
+  const rememberAriaLabel = $derived(
+    remember.ariaLabel ?? `${rememberLabel}. Start a blank note.`
+  );
 
   const searchMode = $derived(search.searchMode);
   const searchQuery = $derived(search.searchQuery);
@@ -128,7 +134,8 @@
     getVisibleItems: () => visibleItems,
     getForgetHoldDurationMs: () => forgetHoldDurationMs,
     isForgetHoldEnabled: () => isForgetHoldEnabled,
-    isForgetActionAvailable: () => !canUnforget,
+    isForgetActionAvailable: () => canForget && !canUnforget,
+    getForgetItemLabel: () => forgetItemLabel,
     onSearchInput: (value) => onSearchInput(value),
     onSearchSelect: (result) => onSearchSelect(result),
     onSearchNavigate: (result) => onSearchNavigate?.(result),
@@ -166,6 +173,13 @@
     if (canUnforget) {
       commandBarState.resetForgetHold();
     }
+  });
+
+  $effect(() => {
+    canForget;
+    forgetItemLabel;
+    commandBarState.closeForgetConfirm();
+    commandBarState.resetForgetHold();
   });
 
   $effect(() => {
@@ -447,8 +461,8 @@
         type="button"
         class="mobile-touch-target inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent sm:h-11 sm:w-[134px] sm:px-6"
         onclick={() => onUnforget()}
-        aria-label="Restore the last forgotten note"
-        title="Restore forgotten note"
+        aria-label={`Restore the last forgotten ${forgetItemLabel}`}
+        title={`Restore forgotten ${forgetItemLabel}`}
       >
         <span class="hidden sm:inline">unForget</span>
         <Undo2 class="h-5 w-5 sm:hidden" />
@@ -475,9 +489,9 @@
                 <Eraser class="h-4 w-4" />
               </div>
               <div class="min-w-0 flex-1">
-                <p id="forget-confirm-title" class="text-sm font-semibold">Forget this note?</p>
+                <p id="forget-confirm-title" class="text-sm font-semibold">Forget this {forgetItemLabel}?</p>
                 <p id="forget-confirm-description" class="mt-1 text-xs leading-5 text-muted-foreground">
-                  You can also hold Forget (or its shortcut) to skip this confirmation
+                  You can also hold Forget (or its shortcut) to skip this confirmation.
                 </p>
               </div>
             </div>
@@ -495,7 +509,7 @@
                 type="button"
                 class="inline-flex h-8 items-center rounded-full bg-destructive px-3 text-xs font-semibold text-destructive-foreground transition-colors hover:bg-destructive/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive"
                 onclick={commandBarState.confirmForget}
-                title="Move note to Forgotten Notes"
+                title={`Forget this ${forgetItemLabel}`}
               >
                 Forget
               </button>
@@ -505,9 +519,10 @@
         <button
           bind:this={forgetButton}
           type="button"
+          disabled={!canForget}
           aria-expanded={commandBarState.isForgetConfirmOpen}
           aria-controls={commandBarState.isForgetConfirmOpen ? 'forget-confirm-popover' : undefined}
-          class={`mobile-touch-target relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5 ${
+          class={`mobile-touch-target relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-inherit sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5 ${
             commandBarState.isHoldingForget
               ? 'forget-hold-animation text-destructive'
               : ''
@@ -741,10 +756,10 @@
         class="mobile-touch-target inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5"
         type="button"
         onclick={handleRemember}
-        aria-label="New Idea. Start a blank note."
-        title="New Idea"
+        aria-label={rememberAriaLabel}
+        title={rememberLabel}
       >
-        <span class="hidden sm:inline">New Idea</span>
+        <span class="hidden sm:inline">{rememberLabel}</span>
         <SquarePen class="h-5 w-5 sm:hidden" />
       </button>
     </div>

@@ -307,7 +307,7 @@ export class SettingsStore {
     return this.#semanticStateRequest;
   }
 
-  async loadForgottenNotes() {
+  loadForgottenNotes = async () => {
     if (this.#forgottenNotesRequest) {
       return this.#forgottenNotesRequest;
     }
@@ -330,9 +330,9 @@ export class SettingsStore {
     })();
 
     return this.#forgottenNotesRequest;
-  }
+  };
 
-  async runForgottenAction(command: ForgottenAction, forgottenPaths: string[]) {
+  runForgottenAction = async (command: ForgottenAction, forgottenPaths: string[]) => {
     if (forgottenPaths.length === 0) return;
 
     this.isUpdatingForgottenNotes = true;
@@ -347,21 +347,21 @@ export class SettingsStore {
     } finally {
       this.isUpdatingForgottenNotes = false;
     }
-  }
+  };
 
-  toggleForgottenSelection(forgottenPath: string, checked: boolean) {
+  toggleForgottenSelection = (forgottenPath: string, checked: boolean) => {
     this.setSelectedForgottenPaths((current) =>
       checked
         ? Array.from(new Set([...current, forgottenPath]))
         : current.filter((path) => path !== forgottenPath)
     );
-  }
+  };
 
-  toggleAllForgottenSelections(checked: boolean) {
+  toggleAllForgottenSelections = (checked: boolean) => {
     this.setSelectedForgottenPaths(
       checked ? this.forgottenNotes.map((note) => note.forgottenPath) : []
     );
-  }
+  };
 
   async saveSettings() {
     if (!this.semanticSettings) return;

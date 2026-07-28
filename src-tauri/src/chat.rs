@@ -249,6 +249,19 @@ pub(crate) struct ChatRecallDocument {
     pub(crate) excerpts: Vec<crate::semantic::indexer::ChatRecallExcerpt>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ChatForgottenFolderSnapshot {
+    pub(crate) title: String,
+    pub(crate) original_path: PathBuf,
+    pub(crate) archived: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ChatProjectionRelocation {
+    pub(crate) previous_paths: Vec<PathBuf>,
+    pub(crate) current_paths: Vec<PathBuf>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatGrant {
@@ -854,15 +867,162 @@ impl ChatService {
         self.get_conversation(id)
     }
 
-    pub(crate) fn archive_conversation(&self, id: &str, archived: bool) -> Result<(), String> {
-        let status = if archived { "archived" } else { "active" };
-        self.connection()?
-            .execute(
-                "UPDATE chat_conversations SET status = ?2, updated_at_millis = ?3 WHERE id = ?1",
-                params![id, status, to_i64(now_millis())?],
-            )
+    pub(crate) fn forgotten_folder_snapshot(
+        &self,
+        id: &str,
+    ) -> Result<ChatForgottenFolderSnapshot, String> {
+        let conversation = self.get_conversation(id)?;
+        Ok(ChatForgottenFolderSnapshot {
+            original_path: conversation_directory(&self.inner.notes_root, &conversation.summary),
+            title: conversation.summary.title,
+            archived: conversation.summary.status == "archived",
+        })
+    }
+
+    pub(crate) fn archive_conversation_folder(
+        &self,
+        id: &str,
+        forgotten_directory: &Path,
+    ) -> Result<ChatProjectionRelocation, String> {
+        if self.mark_projection_detached_if_needed(id)? {
+            return Err(
+                "Chat transcript was edited outside Gneauxghts; resolve that edit before forgetting it"
+                    .to_string(),
+            );
+        }
+        let snapshot = self.forgotten_folder_snapshot(id)?;
+        if snapshot.archived {
+            return Ok(ChatProjectionRelocation {
+                previous_paths: Vec::new(),
+                current_paths: Vec::new(),
+            });
+        }
+        self.relocate_conversation_folder(
+            id,
+            &snapshot.original_path,
+            forgotten_directory,
+            "archived",
+        )
+    }
+
+    pub(crate) fn restore_conversation_folder(
+        &self,
+        id: &str,
+        forgotten_directory: &Path,
+        original_directory: &Path,
+    ) -> Result<ChatProjectionRelocation, String> {
+        self.relocate_conversation_folder(id, forgotten_directory, original_directory, "active")
+    }
+
+    pub(crate) fn delete_archived_conversation(&self, id: &str) -> Result<(), String> {
+        delete_archived_conversation_from_database(&self.inner.db_path, id)
+    }
+
+    pub(crate) fn delete_persisted_conversation(
+        vault_data_dir: &Path,
+        id: &str,
+    ) -> Result<(), String> {
+        let database_path = vault_data_dir.join("ai.sqlite3");
+        if !database_path.is_file() {
+            return Ok(());
+        }
+        delete_archived_conversation_from_database(&database_path, id)
+    }
+
+    fn relocate_conversation_folder(
+        &self,
+        id: &str,
+        source_directory: &Path,
+        target_directory: &Path,
+        status: &str,
+    ) -> Result<ChatProjectionRelocation, String> {
+        if !source_directory.is_dir() {
+            return Err(format!(
+                "Chat transcript folder is missing: {}",
+                source_directory.display()
+            ));
+        }
+        if target_directory.exists() {
+            return Err(format!(
+                "Chat transcript restore location already exists: {}",
+                target_directory.display()
+            ));
+        }
+        let target_parent = target_directory
+            .parent()
+            .ok_or_else(|| "Chat transcript target has no parent directory".to_string())?;
+        fs::create_dir_all(target_parent).map_err(|error| error.to_string())?;
+
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT path FROM chat_projection_files WHERE conversation_id = ?1")
             .map_err(|error| error.to_string())?;
-        Ok(())
+        let previous_paths = statement
+            .query_map([id], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        drop(statement);
+        let current_paths = previous_paths
+            .iter()
+            .map(|path| {
+                let relative = path.strip_prefix(source_directory).map_err(|_| {
+                    format!(
+                        "Chat projection is outside its transcript folder: {}",
+                        path.display()
+                    )
+                })?;
+                Ok(target_directory.join(relative))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        for (previous, current) in previous_paths.iter().zip(&current_paths) {
+            crate::vault_watcher::record_self_save(previous);
+            crate::vault_watcher::record_self_save(current);
+        }
+        fs::rename(source_directory, target_directory).map_err(|error| error.to_string())?;
+
+        let database_result = (|| -> Result<(), String> {
+            let mut connection = self.connection()?;
+            let transaction = connection
+                .transaction()
+                .map_err(|error| error.to_string())?;
+            for (previous, current) in previous_paths.iter().zip(&current_paths) {
+                transaction
+                    .execute(
+                        "UPDATE chat_projection_files
+                         SET path = ?3
+                         WHERE conversation_id = ?1 AND path = ?2",
+                        params![
+                            id,
+                            previous.to_string_lossy().as_ref(),
+                            current.to_string_lossy().as_ref()
+                        ],
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            transaction
+                .execute(
+                    "UPDATE chat_conversations
+                     SET status = ?2, detached = 0, updated_at_millis = ?3
+                     WHERE id = ?1",
+                    params![id, status, to_i64(now_millis())?],
+                )
+                .map_err(|error| error.to_string())?;
+            transaction.commit().map_err(|error| error.to_string())
+        })();
+        if let Err(error) = database_result {
+            let _ = fs::rename(target_directory, source_directory);
+            return Err(error);
+        }
+
+        Ok(ChatProjectionRelocation {
+            previous_paths,
+            current_paths,
+        })
     }
 
     pub(crate) fn update_conversation_policy(
@@ -2166,6 +2326,9 @@ impl ChatService {
     ) -> Result<(), String> {
         let mut known_paths = HashSet::new();
         for summary in self.list_conversations()? {
+            if summary.status == "archived" {
+                continue;
+            }
             let recall = self.recall_document(&summary.id)?;
             known_paths.insert(recall.path.clone());
             semantic.queue_chat_recall_for_startup(
@@ -2312,6 +2475,32 @@ impl ChatService {
             )?;
         }
         Ok(())
+    }
+}
+
+fn delete_archived_conversation_from_database(
+    database_path: &Path,
+    id: &str,
+) -> Result<(), String> {
+    let connection = Connection::open(database_path).map_err(|error| error.to_string())?;
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON;")
+        .map_err(|error| error.to_string())?;
+    let status = connection
+        .query_row(
+            "SELECT status FROM chat_conversations WHERE id = ?1",
+            [id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    match status.as_deref() {
+        None => Ok(()),
+        Some("archived") => connection
+            .execute("DELETE FROM chat_conversations WHERE id = ?1", [id])
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+        Some(_) => Err("Only archived conversations can be permanently deleted".to_string()),
     }
 }
 
@@ -3761,6 +3950,113 @@ mod tests {
         assert_eq!(
             choose_part(&connection, &conversation.summary.id).unwrap(),
             2
+        );
+    }
+
+    #[test]
+    fn archiving_moves_the_complete_projection_folder_and_restoring_reactivates_it() {
+        let (_root, service) = service("chat-forgotten-note");
+        let conversation = service
+            .create_conversation(Some("Release planning".into()), None)
+            .unwrap();
+        let connection = service.connection().unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_messages
+                 (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+                 VALUES ('user-1', ?1, 1, 'user', 'complete', 'Can we ship Friday?', 1, 1)",
+                [&conversation.summary.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_messages
+                 (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+                 VALUES ('assistant-1', ?1, 2, 'assistant', 'complete', 'Yes, after QA.', 1, 2)",
+                [&conversation.summary.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_sources
+                 (message_id, kind, title, excerpt, url)
+                 VALUES ('assistant-1', 'web', 'Release guide', '', 'https://example.com/release')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        service
+            .write_projection(&conversation.summary.id, false)
+            .unwrap();
+
+        let snapshot = service
+            .forgotten_folder_snapshot(&conversation.summary.id)
+            .unwrap();
+        assert_eq!(snapshot.title, "Release planning");
+        assert!(snapshot
+            .original_path
+            .starts_with(_root.path().join("Chats")));
+        let forgotten_path = _root.path().join(".forgotten").join(
+            snapshot
+                .original_path
+                .file_name()
+                .expect("conversation folder name"),
+        );
+        fs::create_dir_all(_root.path().join(".forgotten")).unwrap();
+
+        let archived = service
+            .archive_conversation_folder(&conversation.summary.id, &forgotten_path)
+            .unwrap();
+        assert!(archived.previous_paths.len() >= 2);
+        assert!(archived.previous_paths.iter().all(|path| !path.exists()));
+        assert!(archived
+            .current_paths
+            .iter()
+            .all(|path| path.is_file() && path.starts_with(&forgotten_path)));
+        assert!(!snapshot.original_path.exists());
+        assert!(forgotten_path.is_dir());
+        let transcript = fs::read_to_string(forgotten_path.join("Part 001.md")).unwrap();
+        assert!(transcript.contains("Can we ship Friday?"));
+        assert!(transcript.contains("Yes, after QA."));
+        assert!(transcript.contains("[Release guide](https://example.com/release)"));
+        assert_eq!(
+            service
+                .get_conversation(&conversation.summary.id)
+                .unwrap()
+                .summary
+                .status,
+            "archived"
+        );
+        let projection_count: i64 = service
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM chat_projection_files WHERE conversation_id = ?1",
+                [&conversation.summary.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(projection_count as usize, archived.current_paths.len());
+
+        let restored = service
+            .restore_conversation_folder(
+                &conversation.summary.id,
+                &forgotten_path,
+                &snapshot.original_path,
+            )
+            .unwrap();
+        assert!(restored
+            .current_paths
+            .iter()
+            .all(|path| path.is_file() && path.starts_with(&snapshot.original_path)));
+        assert!(!forgotten_path.exists());
+        assert_eq!(
+            service
+                .get_conversation(&conversation.summary.id)
+                .unwrap()
+                .summary
+                .status,
+            "active"
         );
     }
 

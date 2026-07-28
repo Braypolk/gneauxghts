@@ -17,10 +17,16 @@ import type {
   ChatSettings
 } from './types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
+import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
+import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 
 export interface ChatControllerState {
   settings: ChatSettings | null;
   conversations: ChatConversationSummary[];
+  conversationDraft: {
+    revision: number;
+    title: string;
+  };
   grants: ChatNoteGrant[];
   policies: ChatNotePolicy[];
   conversation: ChatConversation | null;
@@ -36,6 +42,10 @@ export interface ChatControllerState {
 const initialState: ChatControllerState = {
   settings: null,
   conversations: [],
+  conversationDraft: {
+    revision: 0,
+    title: ''
+  },
   grants: [],
   policies: [],
   conversation: null,
@@ -57,6 +67,13 @@ export interface ChatController extends Readable<ChatControllerState> {
     title?: string;
     vaultAccess?: VaultAccess;
   }): Promise<ChatConversation | null>;
+  startNewConversation(input?: { title?: string }): void;
+  setConversationDraftTitle(title: string): void;
+  renameConversation(title: string): Promise<boolean>;
+  archiveConversation(
+    conversationId?: string,
+    retentionDays?: ForgottenNoteRetentionPreference
+  ): Promise<ForgottenNoteSummary | null>;
   openConversation(conversationId: string): Promise<ChatConversation | null>;
   send(
     content: string,
@@ -146,6 +163,7 @@ export interface ChatControllerOptions {
 export class ChatControllerStore implements ChatController {
   settings = $state<ChatSettings | null>(initialState.settings);
   conversations = $state<ChatConversationSummary[]>(initialState.conversations);
+  conversationDraft = $state(initialState.conversationDraft);
   grants = $state<ChatNoteGrant[]>(initialState.grants);
   policies = $state<ChatNotePolicy[]>(initialState.policies);
   conversation = $state<ChatConversation | null>(initialState.conversation);
@@ -174,6 +192,7 @@ export class ChatControllerStore implements ChatController {
     return {
       settings: this.settings,
       conversations: this.conversations,
+      conversationDraft: this.conversationDraft,
       grants: this.grants,
       policies: this.policies,
       conversation: this.conversation,
@@ -207,6 +226,9 @@ export class ChatControllerStore implements ChatController {
     if (this.#disposed) return;
     if (partial.settings !== undefined) this.settings = partial.settings;
     if (partial.conversations !== undefined) this.conversations = partial.conversations;
+    if (partial.conversationDraft !== undefined) {
+      this.conversationDraft = partial.conversationDraft;
+    }
     if (partial.grants !== undefined) this.grants = partial.grants;
     if (partial.policies !== undefined) this.policies = partial.policies;
     if (partial.conversation !== undefined) this.conversation = partial.conversation;
@@ -408,7 +430,8 @@ export class ChatControllerStore implements ChatController {
   ) {
     this.#patch({ isLoadingConversation: true, error: null });
     try {
-      const conversation = await this.#api.createConversation(input);
+      const title = input.title?.trim() || this.conversationDraft.title.trim() || undefined;
+      const conversation = await this.#api.createConversation({ ...input, title });
       const modelCapabilities = await this.#api.getModelCapabilities(
         conversation.provider,
         conversation.model
@@ -422,6 +445,103 @@ export class ChatControllerStore implements ChatController {
       return conversation;
     } catch (error) {
       this.#patch({ error: errorText(error, 'Unable to start a conversation.') });
+      return null;
+    } finally {
+      this.#patch({ isLoadingConversation: false });
+    }
+  }
+
+  startNewConversation(input: { title?: string } = {}) {
+    this.#patch({
+      conversation: null,
+      conversationDraft: {
+        revision: this.conversationDraft.revision + 1,
+        title: input.title?.trim() ?? ''
+      },
+      proposals: [],
+      isSending: false,
+      activity: null,
+      error: null
+    });
+  }
+
+  setConversationDraftTitle(title: string) {
+    if (this.conversation) return;
+    const nextTitle = title.trim();
+    if (this.conversationDraft.title === nextTitle) return;
+    this.#patch({
+      conversationDraft: {
+        ...this.conversationDraft,
+        title: nextTitle
+      }
+    });
+  }
+
+  async renameConversation(title: string) {
+    const conversationId = this.conversation?.id;
+    const nextTitle = title.trim();
+    if (!conversationId || !nextTitle) return false;
+    if (this.conversation?.title === nextTitle) return true;
+
+    try {
+      const summary = await this.#api.renameConversation(conversationId, nextTitle);
+      this.conversations = mergeSummary(this.conversations, summary);
+      if (this.conversation?.id === conversationId) {
+        this.conversation = { ...this.conversation, ...summary };
+      }
+      this.error = null;
+      this.#notify();
+      return true;
+    } catch (error) {
+      this.#patch({ error: errorText(error, 'Unable to rename this conversation.') });
+      return false;
+    }
+  }
+
+  async archiveConversation(
+    conversationId = this.conversation?.id,
+    retentionDays: ForgottenNoteRetentionPreference = 7
+  ) {
+    if (!conversationId || this.isSending) return null;
+
+    this.#patch({ isLoadingConversation: true, error: null });
+    try {
+      const forgottenItem = await this.#api.archiveConversation(
+        conversationId,
+        true,
+        retentionDays
+      );
+      const conversations = this.conversations.filter(
+        (conversation) => conversation.id !== conversationId
+      );
+      const archivedCurrentConversation = this.conversation?.id === conversationId;
+      const conversationDraft = archivedCurrentConversation
+        ? {
+            revision: this.conversationDraft.revision + 1,
+            title: ''
+          }
+        : this.conversationDraft;
+
+      this.#patch({
+        conversations,
+        conversationDraft,
+        ...(archivedCurrentConversation
+          ? {
+              conversation: null,
+              proposals: [],
+              modelCapabilities: null,
+              isSending: false,
+              activity: null
+            }
+          : {})
+      });
+
+      if (archivedCurrentConversation && conversations[0]) {
+        await this.openConversation(conversations[0].id);
+      }
+      return forgottenItem;
+    } catch (error) {
+      this.#patch({ error: errorText(error, 'Unable to forget this conversation.') });
       return null;
     } finally {
       this.#patch({ isLoadingConversation: false });

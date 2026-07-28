@@ -59,6 +59,18 @@ function conversation(overrides: Partial<ChatConversation> = {}): ChatConversati
   };
 }
 
+const forgottenChat = {
+  forgottenPath: '/vault/.forgotten/2026-07-28-chat',
+  originalPath: '/vault/Chats/2026-07-28-chat',
+  title: 'Test conversation',
+  fileName: '2026-07-28-chat',
+  forgottenAtMillis: 1,
+  purgeAfterDays: 7 as const,
+  purgeAtMillis: 2,
+  kind: 'chat' as const,
+  conversationId: 'conversation-1'
+};
+
 function proposal(overrides: Partial<ChatAgentProposal> = {}): ChatAgentProposal {
   return {
     id: 'proposal-1',
@@ -90,7 +102,7 @@ function fakeApi() {
     listConversations: vi.fn(async () => [conversation()]),
     getConversation: vi.fn(async () => conversation()),
     renameConversation: vi.fn(),
-    archiveConversation: vi.fn(),
+    archiveConversation: vi.fn(async () => forgottenChat),
     setConversationVaultAccess: vi.fn(async (_id, vaultAccess) => {
       const { messages, activeRequestId, projectionPath, excerptMessageIds, ...summary } =
         conversation({ vaultAccess });
@@ -210,6 +222,89 @@ describe('createChatController', () => {
     expect(controller.getSnapshot().conversation?.title).toBe('Refined conversation title');
     expect(controller.getSnapshot().conversations[0].title).toBe('Refined conversation title');
     expect(controller.getSnapshot().isSending).toBe(false);
+  });
+
+  it('starts repeated new-chat drafts without creating persisted conversations', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    controller.startNewConversation();
+    controller.startNewConversation({ title: 'A local draft title' });
+
+    expect(fake.api.createConversation).not.toHaveBeenCalled();
+    expect(controller.getSnapshot().conversation).toBeNull();
+    expect(controller.getSnapshot().conversationDraft).toEqual({
+      revision: 2,
+      title: 'A local draft title'
+    });
+  });
+
+  it('uses the local draft title when the first message creates the conversation', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    controller.startNewConversation({ title: 'Draft title' });
+
+    await controller.createConversation();
+
+    expect(fake.api.createConversation).toHaveBeenCalledWith({
+      title: 'Draft title'
+    });
+  });
+
+  it('renames the current conversation and refreshes its summary', async () => {
+    const fake = fakeApi();
+    const renamed = {
+      ...conversation(),
+      title: 'A title I chose',
+      updatedAtMillis: 2
+    };
+    vi.mocked(fake.api.renameConversation).mockResolvedValue(renamed);
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await expect(controller.renameConversation('  A title I chose  ')).resolves.toBe(true);
+
+    expect(fake.api.renameConversation).toHaveBeenCalledWith(
+      'conversation-1',
+      'A title I chose'
+    );
+    expect(controller.getSnapshot().conversation?.title).toBe('A title I chose');
+    expect(controller.getSnapshot().conversations[0].title).toBe('A title I chose');
+  });
+
+  it('forgets the current conversation and opens the next active conversation', async () => {
+    const fake = fakeApi();
+    const nextConversation = conversation({
+      id: 'conversation-2',
+      title: 'Next conversation'
+    });
+    vi.mocked(fake.api.listConversations)
+      .mockResolvedValueOnce([conversation(), nextConversation]);
+    vi.mocked(fake.api.getConversation).mockImplementation(async (id) =>
+      id === nextConversation.id ? nextConversation : conversation()
+    );
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await expect(controller.archiveConversation()).resolves.toEqual(forgottenChat);
+
+    expect(fake.api.archiveConversation).toHaveBeenCalledWith('conversation-1', true, 7);
+    expect(controller.getSnapshot().conversations).toEqual([nextConversation]);
+    expect(controller.getSnapshot().conversation?.id).toBe('conversation-2');
+  });
+
+  it('leaves a blank chat pane after forgetting the last conversation', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await expect(controller.archiveConversation()).resolves.toEqual(forgottenChat);
+
+    expect(controller.getSnapshot().conversations).toEqual([]);
+    expect(controller.getSnapshot().conversation).toBeNull();
+    expect(controller.getSnapshot().proposals).toEqual([]);
   });
 
   it('notifies onAssistantCompleted for finished assistant messages', async () => {

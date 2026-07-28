@@ -14,7 +14,6 @@
     Link,
     LoaderCircle,
     Paperclip,
-    Plus,
     RotateCcw,
     Send,
     Square,
@@ -115,6 +114,10 @@
   let snapshot = $state<ChatControllerState>({
     settings: null,
     conversations: [],
+    conversationDraft: {
+      revision: 0,
+      title: ''
+    },
     grants: [],
     policies: [],
     conversation: null,
@@ -127,6 +130,12 @@
     modelCapabilities: null
   });
   let draft = $state('');
+  let titleDraft = $state('');
+  let titleInput = $state<HTMLInputElement | null>(null);
+  let titleFocused = $state(false);
+  let titleCommitPending = false;
+  let creatingConversationFromDraft = false;
+  let titleContextKey: string | null = null;
   let attachments = $state<ChatAttachmentInput[]>([]);
   let forceWebSearch = $state(false);
   let selected = $state<ChatSelection | null>(null);
@@ -141,6 +150,7 @@
   let appliedDraftSeedId: string | null = null;
   let contextAccessBusy = $state(false);
   let appliedTargetAnchor: string | null = null;
+  let reportedConversationId: string | null | undefined;
   let openMenu = $state<'history' | 'vault' | 'provider' | null>(null);
   let proposalDrafts = $state<Record<string, string>>({});
 
@@ -157,7 +167,9 @@
   const canSend = $derived(
     Boolean(draft.trim() || attachments.length > 0) &&
       !snapshot.isSending &&
-      conversation?.status === 'active'
+      !snapshot.isInitializing &&
+      !snapshot.isLoadingConversation &&
+      (!conversation || conversation.status === 'active')
   );
   const canAttach = $derived(
     Boolean(snapshot.modelCapabilities?.images || snapshot.modelCapabilities?.files)
@@ -224,6 +236,68 @@
     return snapshot.settings?.openaiModel ?? snapshot.settings?.model ?? 'gpt-5.6-terra';
   }
 
+  function syncConversationTitle(next: ChatControllerState) {
+    const nextContextKey = next.conversation
+      ? `conversation:${next.conversation.id}`
+      : `draft:${next.conversationDraft.revision}`;
+    if (nextContextKey !== titleContextKey) {
+      titleContextKey = nextContextKey;
+      titleDraft = next.conversation?.title ?? next.conversationDraft.title;
+      if (!creatingConversationFromDraft) {
+        draft = '';
+        attachments = [];
+        forceWebSearch = false;
+      }
+      return;
+    }
+    if (!titleFocused && !titleCommitPending && next.conversation) {
+      titleDraft = next.conversation.title;
+    }
+  }
+
+  async function commitConversationTitle() {
+    titleFocused = false;
+    const current = controller.getSnapshot().conversation;
+    const nextTitle = titleDraft.trim();
+
+    if (!current) {
+      titleDraft = nextTitle;
+      controller.setConversationDraftTitle(nextTitle);
+      return;
+    }
+    if (!nextTitle) {
+      titleDraft = current.title;
+      return;
+    }
+    if (nextTitle === current.title) {
+      titleDraft = nextTitle;
+      return;
+    }
+
+    titleCommitPending = true;
+    const renamed = await controller.renameConversation(nextTitle);
+    titleCommitPending = false;
+    titleDraft = renamed
+      ? controller.getSnapshot().conversation?.title ?? nextTitle
+      : controller.getSnapshot().conversation?.title ?? current.title;
+  }
+
+  function onTitleKeydown(event: KeyboardEvent) {
+    if (
+      event.key !== 'Enter' ||
+      event.shiftKey ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    titleInput?.blur();
+    composerElement?.focus();
+  }
+
   async function updateProvider(provider: ChatProvider) {
     openMenu = null;
     const model = providerModel(provider);
@@ -265,16 +339,34 @@
 
   onMount(() => {
     snapshot = controller.getSnapshot();
+    syncConversationTitle(snapshot);
     const unsubscribe = controller.subscribe((next) => {
       snapshot = next;
-      onConversationChange?.(next.conversation?.id ?? null);
+      syncConversationTitle(next);
+      const nextConversationId = next.conversation?.id ?? null;
+      if (nextConversationId !== reportedConversationId) {
+        reportedConversationId = nextConversationId;
+        onConversationChange?.(nextConversationId);
+      }
       const lastMessageId = next.conversation?.messages.at(-1)?.id ?? null;
       if (lastMessageId !== previousLastMessageId || next.isSending) {
         previousLastMessageId = lastMessageId;
         requestAnimationFrame(() => messagesElement?.scrollTo({ top: messagesElement.scrollHeight, behavior: 'smooth' }));
       }
     });
-    if (autoInitialize) void controller.initialize(conversationId);
+    if (
+      autoInitialize &&
+      !controller.getSnapshot().settings &&
+      !controller.getSnapshot().isInitializing
+    ) {
+      void controller.initialize(conversationId);
+    } else if (
+      autoInitialize &&
+      conversationId &&
+      controller.getSnapshot().conversation?.id !== conversationId
+    ) {
+      void controller.openConversation(conversationId);
+    }
 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
@@ -317,16 +409,20 @@
   async function submit() {
     const content = draft.trim();
     if ((!content && attachments.length === 0) || snapshot.isSending) return;
-    if (!controller.getSnapshot().conversation) {
-      const created = await controller.createConversation();
-      if (!created) return;
-    }
     let activeNote: ChatActiveNoteSnapshot | null = null;
     try {
       activeNote = await getActiveNoteSnapshot?.() ?? null;
     } catch (error) {
       actionError = error instanceof Error ? error.message : 'Save the active note before sending.';
       return;
+    }
+    if (!controller.getSnapshot().conversation) {
+      creatingConversationFromDraft = true;
+      const created = await controller.createConversation({
+        title: titleDraft.trim() || undefined
+      });
+      creatingConversationFromDraft = false;
+      if (!created) return;
     }
     const sent = await controller.send(content, attachments, forceWebSearch, activeNote);
     if (sent) {
@@ -509,7 +605,7 @@
 </script>
 
 <section class={`chat-panel chat-panel--${variant} flex h-full min-h-0 w-full flex-col overflow-hidden`} aria-label="Thought partner chat">
-  <header class="chat-panel-header flex shrink-0 items-center gap-1 px-4 pt-4 pb-1 sm:px-5">
+  <header class="chat-panel-header relative flex min-h-[3.25rem] shrink-0 items-center gap-1 px-4 pt-4 pb-1 sm:px-5">
     <div class="flex min-w-0 items-center gap-0.5">
       {#if showConversationPicker}
         <div class="relative" data-chat-menu>
@@ -546,15 +642,21 @@
           {/if}
         </div>
       {/if}
-      <button
-        type="button"
-        class="chat-icon-button"
-        onclick={() => void controller.createConversation()}
-        aria-label="New conversation"
-        title="New conversation"
-      >
-        <Plus class="h-4 w-4" />
-      </button>
+    </div>
+    <div class="pointer-events-none absolute inset-x-14 top-3 flex justify-center sm:inset-x-16 sm:top-4">
+      <div class="pointer-events-auto w-full max-w-[24rem] min-w-0">
+        <input
+          bind:this={titleInput}
+          bind:value={titleDraft}
+          type="text"
+          class="w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl"
+          placeholder="New chat"
+          aria-label="Chat title"
+          onfocus={() => (titleFocused = true)}
+          onblur={() => void commitConversationTitle()}
+          onkeydown={onTitleKeydown}
+        />
+      </div>
     </div>
   </header>
 
@@ -1004,7 +1106,7 @@
 
 <style>
   .chat-panel-header {
-    /* Back + reserved split fan slot + close/split chrome on the right. */
+    /* History on the left + reserved split fan and close/split chrome on the right. */
     padding-right: 15.5rem;
   }
 

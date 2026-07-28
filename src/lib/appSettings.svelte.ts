@@ -42,17 +42,17 @@ export const forgottenNoteRetentionOptions = [
   {
     id: 1,
     label: '1 day',
-    description: 'Delete forgotten notes after one day.'
+    description: 'Delete forgotten notes and chats after one day.'
   },
   {
     id: 7,
     label: '7 days',
-    description: 'Keep forgotten notes for one week.'
+    description: 'Keep forgotten notes and chats for one week.'
   },
   {
     id: 30,
     label: '30 days',
-    description: 'Keep forgotten notes for one month.'
+    description: 'Keep forgotten notes and chats for one month.'
   }
 ] as const satisfies ReadonlyArray<{
   id: ForgottenNoteRetentionPreference;
