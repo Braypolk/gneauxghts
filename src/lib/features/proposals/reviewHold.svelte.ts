@@ -33,8 +33,8 @@ export function createReviewHoldStore() {
   function begin(document: NoteDraftState, change?: PendingProposalChange) {
     if (!holds.has(document.key)) {
       holds.set(document.key, {
-        title: document.title,
-        bodyMarkdown: document.bodyMarkdown,
+        title: document.working.title,
+        bodyMarkdown: document.working.markdown,
         changeId: change?.id ?? null
       });
     } else {
@@ -78,4 +78,3 @@ export function shouldSuppressAutosaveForDocument(
 ): boolean {
   return holds.isHolding(document.key);
 }
-

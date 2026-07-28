@@ -3,9 +3,11 @@
   import SettingsCard from './SettingsCard.svelte';
   import SettingsLabel from './SettingsLabel.svelte';
   import SettingsRefreshButton from './SettingsRefreshButton.svelte';
+  import { semanticStatusLabel, shouldShowSemanticRetry } from './semanticStatus';
 
   type SemanticAction =
     | 'rebuild_semantic_index'
+    | 'retry_semantic_index'
     | 'pause_semantic_indexing'
     | 'resume_semantic_indexing'
     | 'prepare_semantic_model';
@@ -172,22 +174,13 @@
 
       <SettingsCard>
         <SettingsLabel text="Status" />
-        <p class="mt-2 text-sm font-medium">
-          {#if semanticStatus.indexingPaused}
-            Paused
-          {:else if semanticStatus.recoveryState === 'catchingUp'}
-            Applying{semanticStatus.progressTotal > 0 ? ` ${semanticStatus.progressTotal} changes` : ' changes'}
-          {:else if semanticStatus.recoveryState === 'rebuilding'}
-            Rebuilding {semanticStatus.progressTotal > 0 ? `${semanticStatus.progressCurrent}/${semanticStatus.progressTotal}` : ''}
-          {:else if semanticStatus.recoveryState === 'stale'}
-            Updating in background
-          {:else if semanticStatus.indexingInProgress}
-            {semanticStatus.currentJobLabel ?? 'Indexing'}
-          {:else}
-            Ready
-          {/if}
-        </p>
+        <p class="mt-2 text-sm font-medium">{semanticStatusLabel(semanticStatus)}</p>
         <p class="mt-1 text-xs text-muted-foreground">Model available: {semanticStatus.modelAvailable ? 'yes' : 'no'}</p>
+        {#if semanticStatus.retryAttempt > 0}
+          <p class="mt-1 text-xs text-muted-foreground">
+            Retry {semanticStatus.retryAttempt}/{semanticStatus.retryMaxAttempts}{semanticStatus.retryExhausted ? ' · exhausted' : ''}
+          </p>
+        {/if}
         {#if semanticStatus.rebuildReason}
           <p class="mt-1 text-xs text-muted-foreground">{semanticStatus.rebuildReason}</p>
         {/if}
@@ -199,6 +192,9 @@
         {@render semanticAction('Download embedding model', () => void downloadEmbeddingModel())}
         {@render semanticAction('Prepare local model', () => void runAction('prepare_semantic_model'))}
         {@render semanticAction('Rebuild semantic index', () => void runAction('rebuild_semantic_index'))}
+        {#if shouldShowSemanticRetry(semanticStatus)}
+          {@render semanticAction('Retry now', () => void runAction('retry_semantic_index'))}
+        {/if}
         {@render semanticAction(
           semanticStatus.indexingPaused ? 'Resume indexing' : 'Pause indexing',
           () => void runAction(semanticStatus.indexingPaused ? 'resume_semantic_indexing' : 'pause_semantic_indexing')

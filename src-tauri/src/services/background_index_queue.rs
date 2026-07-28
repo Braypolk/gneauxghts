@@ -6,12 +6,14 @@
 //! different note is not blocked behind lexical index and SQLite task
 //! projection writes.
 //!
-//! This queue moves those two pieces of work onto a single dedicated worker
-//! thread:
+//! This queue moves whichever derived projections the catalog policy marks as
+//! deferred onto a single dedicated worker thread:
 //!
 //! * Lexical (`Arc<LexicalIndex>`) updates apply via `upsert_note` /
 //!   `remove_note`.
-//! * SQLite task projection updates apply via `task_projection::*`.
+//! * SQLite task projection updates apply via `task_projection::*`. Ordinary
+//!   saves currently reconcile tasks synchronously, so their queued job only
+//!   carries lexical work; startup prewarm defers both.
 //!
 //! The in-memory `notes_index` (search/recents/wikilinks) is still updated
 //! synchronously on the save path because it is fast and is consulted by
@@ -23,6 +25,9 @@
 //!   that is still queued. This prevents pile-up under rapid saves to the
 //!   same note while still giving callers eventual consistency.
 
+use super::note_catalog::{
+    apply_lexical_projection, apply_task_projection, CatalogMutation, DeferredCatalogProjection,
+};
 use crate::index::{ForegroundActivity, IndexedNote};
 use crate::lexical::LexicalIndex;
 use std::collections::{HashMap, VecDeque};
@@ -38,8 +43,7 @@ use std::time::Duration;
 const FOREGROUND_BACKOFF: Duration = Duration::from_millis(25);
 
 enum BackgroundJob {
-    Upsert { path: PathBuf, note: IndexedNote },
-    Remove { path: PathBuf },
+    Apply(DeferredCatalogProjection),
     Shutdown,
 }
 
@@ -78,18 +82,19 @@ impl BackgroundIndexQueue {
     }
 
     pub(crate) fn enqueue_upsert(&self, path: PathBuf, note: IndexedNote) {
-        self.push(BackgroundJob::Upsert { path, note });
+        self.enqueue(DeferredCatalogProjection::all(CatalogMutation::Upsert {
+            path,
+            note,
+        }));
     }
 
-    pub(crate) fn enqueue_remove(&self, path: PathBuf) {
-        self.push(BackgroundJob::Remove { path });
+    pub(crate) fn enqueue(&self, projection: DeferredCatalogProjection) {
+        self.push(BackgroundJob::Apply(projection));
     }
 
     fn push(&self, job: BackgroundJob) {
         let path = match &job {
-            BackgroundJob::Upsert { path, .. } | BackgroundJob::Remove { path } => {
-                Some(path.clone())
-            }
+            BackgroundJob::Apply(projection) => Some(projection.path().to_path_buf()),
             BackgroundJob::Shutdown => None,
         };
         let (lock, cvar) = &*self.inner;
@@ -145,7 +150,8 @@ fn run_worker(
             // pop, the worst case is an extra coalesced entry (which is
             // still correct).
             match &job {
-                BackgroundJob::Upsert { path, .. } | BackgroundJob::Remove { path } => {
+                BackgroundJob::Apply(projection) => {
+                    let path = projection.path();
                     if state.pending_by_path.get(path) == Some(&0) {
                         state.pending_by_path.remove(path);
                     }
@@ -162,34 +168,23 @@ fn run_worker(
         };
 
         match job {
-            BackgroundJob::Upsert { path, note } => {
-                if let Err(error) = lexical.upsert_note(&path, &note) {
-                    eprintln!("background lexical upsert failed for {path:?}: {error}");
+            BackgroundJob::Apply(projection) => {
+                if projection.lexical {
+                    if let Err(error) = apply_lexical_projection(&lexical, &projection.mutation) {
+                        eprintln!(
+                            "background lexical projection failed for {:?}: {error}",
+                            projection.path()
+                        );
+                    }
                 }
-                let timestamp = if note.modified_millis == 0 {
-                    crate::time::current_time_millis().unwrap_or(0)
-                } else {
-                    note.modified_millis
-                };
-                let note_id = note.note_id.clone();
-                if note.document_kind == crate::note::DocumentKind::Note {
-                    let _ = crate::state::task_projection::reconcile_note_tasks(
-                        &path,
-                        Some(&note),
-                        &note_id,
-                        timestamp,
-                    );
-                } else {
-                    let _ =
-                        crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
+                if projection.tasks {
+                    if let Err(error) = apply_task_projection(&projection.mutation) {
+                        eprintln!(
+                            "background task projection failed for {:?}: {error}",
+                            projection.path()
+                        );
+                    }
                 }
-            }
-            BackgroundJob::Remove { path } => {
-                if let Err(error) = lexical.remove_note(&path) {
-                    eprintln!("background lexical remove failed for {path:?}: {error}");
-                }
-                let timestamp = crate::time::current_time_millis().unwrap_or(0);
-                let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
             }
             BackgroundJob::Shutdown => return,
         }

@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNotepadPersistenceController } from "./persistenceController";
 import {
-  applySnapshotToNote,
   createNoteDraftState,
   type NoteDraftState,
 } from "$lib/features/notepad/state/noteStore";
 import type { SessionSnapshot } from "$lib/features/notepad/session/session";
+import {
+  applySessionSnapshotToDocument,
+  captureExternalSnapshotConflict,
+  getDocumentNoteId,
+  getDocumentPath,
+  updateDocumentMarkdown,
+} from "$lib/features/notepad/document/documentState";
 
 function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
   return {
@@ -34,7 +40,9 @@ function applySavedSnapshot(
   saved: SessionSnapshot,
   { preserveDraft }: { preserveDraft: boolean },
 ) {
-  applySnapshotToNote(note, saved, { preserveDraft });
+  applySessionSnapshotToDocument(note, saved, {
+    preserveWorking: preserveDraft,
+  });
 }
 
 describe("persistenceController", () => {
@@ -77,7 +85,7 @@ describe("persistenceController", () => {
       "draft body",
       "/vault/Saved.md",
     );
-    expect(note.status).toBe("idle");
+    expect(note.operation.kind).toBe("idle");
     expect(controller.hasCleanBuffer(note)).toBe(true);
   });
 
@@ -95,7 +103,7 @@ describe("persistenceController", () => {
     });
 
     const save = controller.enqueueSave(note);
-    await vi.waitFor(() => expect(note.status).toBe("saving"));
+    await vi.waitFor(() => expect(note.operation.kind).toBe("saving"));
     controller.invalidatePendingSaveResults(note);
     resolveSave(
       snapshot({
@@ -107,7 +115,8 @@ describe("persistenceController", () => {
     );
     await save;
 
-    expect(note.status).toBe("saving");
+    expect(note.operation.kind).toBe("idle");
+    expect(note.savedBaseline?.content.markdown).toBe("saved body");
   });
 
   it("adopts the persisted path while keeping a newer draft typed during the save", async () => {
@@ -135,10 +144,9 @@ describe("persistenceController", () => {
     });
 
     const save = controller.enqueueSave(note);
-    await vi.waitFor(() => expect(note.status).toBe("saving"));
+    await vi.waitFor(() => expect(note.operation.kind).toBe("saving"));
     // User keeps typing while the disk write is in flight.
-    note.bodyMarkdown = "first line\nsecond line";
-    note.operationRevision += 1;
+    updateDocumentMarkdown(note, "first line\nsecond line");
     resolveSave(
       snapshot({
         title: "first line",
@@ -155,13 +163,68 @@ describe("persistenceController", () => {
 
     // The persisted identity is adopted so the next autosave updates the
     // same file instead of creating a duplicate.
-    expect(note.currentNotePath).toBe("/vault/first line.md");
-    expect(note.currentNoteId).toBe("note-id");
-    expect(note.lastSavedPath).toBe("/vault/first line.md");
+    expect(getDocumentPath(note)).toBe("/vault/first line.md");
+    expect(getDocumentNoteId(note)).toBe("note-id");
+    expect(note.savedBaseline?.identity).toEqual({
+      kind: "persisted",
+      noteId: "note-id",
+      path: "/vault/first line.md",
+    });
     // The newer draft body the user typed is preserved.
-    expect(note.bodyMarkdown).toBe("first line\nsecond line");
+    expect(note.working.markdown).toBe("first line\nsecond line");
     expect(markNoteOpened).toHaveBeenCalledWith("note-id");
-    expect(note.status).toBe("idle");
+    expect(note.operation.kind).toBe("idle");
+  });
+
+  it("adopts a new note path when required projections fail after commit", async () => {
+    const note = createNoteDraftState({
+      title: "New note",
+      bodyMarkdown: "body",
+      currentNoteId: null,
+      currentNotePath: null,
+      lastSavedTitle: "",
+      lastSavedMarkdown: "",
+      lastSavedNoteId: null,
+      lastSavedPath: null,
+    });
+    const warning = {
+      message: "Canonical note file was saved; task projection is pending",
+      issues: [
+        {
+          stage: "taskProjectionUpsert",
+          message: "task database unavailable",
+        },
+      ],
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note,
+      saveNoteSession: vi.fn().mockResolvedValue(
+        snapshot({
+          title: "New note",
+          bodyMarkdown: "body",
+          currentNoteId: "note-new",
+          currentNotePath: "/vault/New note.md",
+          lastSavedTitle: "New note",
+          lastSavedMarkdown: "body",
+          lastSavedNoteId: "note-new",
+          lastSavedPath: "/vault/New note.md",
+          commitWarning: warning,
+        }),
+      ),
+      rekeyNoteWithRuntime: (currentNote) => currentNote,
+      applySavedSnapshot,
+    });
+
+    await expect(controller.enqueueSave(note)).resolves.toBeUndefined();
+
+    expect(getDocumentPath(note)).toBe("/vault/New note.md");
+    expect(getDocumentNoteId(note)).toBe("note-new");
+    expect(note.operation.kind).toBe("idle");
+    expect(warn).toHaveBeenCalledWith(
+      "Note was saved, but required projections need repair:",
+      warning,
+    );
   });
 
   it("does not let an inactive draft replace the session restore note", async () => {
@@ -200,5 +263,51 @@ describe("persistenceController", () => {
       null,
     );
     expect(markNoteOpened).not.toHaveBeenCalled();
+  });
+
+  it("does not persist across an unresolved external conflict", async () => {
+    const note = dirtyNote();
+    captureExternalSnapshotConflict(
+      note,
+      snapshot({
+        bodyMarkdown: "external body",
+        lastSavedMarkdown: "external body",
+      }),
+      "watcher",
+    );
+    const saveNoteSession = vi.fn();
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note,
+      saveNoteSession,
+      rekeyNoteWithRuntime: (currentNote) => currentNote,
+      applySavedSnapshot,
+    });
+
+    await controller.enqueueSave(note);
+
+    expect(saveNoteSession).not.toHaveBeenCalled();
+    expect(note.externalSync.kind).toBe("conflict");
+  });
+
+  it("rejects an explicit save barrier while retaining a retryable failed document", async () => {
+    const note = dirtyNote();
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note,
+      saveNoteSession: vi
+        .fn()
+        .mockRejectedValue(new Error("disk unavailable")),
+      rekeyNoteWithRuntime: (currentNote) => currentNote,
+      applySavedSnapshot,
+    });
+
+    await expect(controller.enqueueSave(note)).rejects.toThrow(
+      "disk unavailable",
+    );
+    expect(note.operation).toMatchObject({
+      kind: "failed",
+      failedOperation: "saving",
+      message: "disk unavailable",
+    });
+    expect(controller.hasCleanBuffer(note)).toBe(false);
   });
 });

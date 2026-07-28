@@ -540,7 +540,7 @@ pub(crate) async fn search_notes_hybrid(
 
     let semantic = state.semantic.clone();
     let semantic_query = query.clone();
-    let semantic_matches = tauri::async_runtime::spawn_blocking(move || {
+    let semantic_result = tauri::async_runtime::spawn_blocking(move || {
         semantic.semantic_matches_for_text(
             &semantic_query,
             current_path_raw.as_deref(),
@@ -548,7 +548,13 @@ pub(crate) async fn search_notes_hybrid(
         )
     })
     .await
-    .map_err(|err| err.to_string())??;
+    .map_err(|err| err.to_string())
+    .and_then(|result| result);
+    let (semantic_matches, semantic_error) = semantic_query_or_empty(semantic_result);
+    if let Some(error) = semantic_error.as_deref() {
+        state.semantic.record_query_failure(error);
+        super::emit_semantic_status_changed(&state);
+    }
 
     let activity_by_note_id = db_load_note_activity().unwrap_or_default();
     let note_lookup =
@@ -570,20 +576,42 @@ pub(crate) async fn search_notes_hybrid(
         effective_limit,
     );
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let semantic_failed = semantic_error.is_some();
+    let debug_detail = if let Some(error) = semantic_error.as_deref() {
+        format!(
+            "semantic_degraded_fallback results={} error={error}",
+            ranked.len()
+        )
+    } else {
+        format!("semantic_used results={}", ranked.len())
+    };
     state.semantic.debug_state().record_timing(
         "search",
         "search_completed",
-        Some(format!("semantic_used results={}", ranked.len())),
+        Some(debug_detail),
         elapsed,
         |metrics| {
             metrics.search_request_count += 1;
-            metrics.search_semantic_used_count += 1;
+            if semantic_failed {
+                metrics.search_semantic_skipped_count += 1;
+            } else {
+                metrics.search_semantic_used_count += 1;
+            }
             metrics.search_duration_total_millis += elapsed;
             metrics.search_duration_max_millis = metrics.search_duration_max_millis.max(elapsed);
         },
     );
     search_cache_put(cache_fingerprint, ranked.clone());
     Ok(ranked)
+}
+
+fn semantic_query_or_empty(
+    result: Result<Vec<SemanticChunkMatch>, String>,
+) -> (Vec<SemanticChunkMatch>, Option<String>) {
+    match result {
+        Ok(matches) => (matches, None),
+        Err(error) => (Vec::new(), Some(error)),
+    }
 }
 
 #[tauri::command]
@@ -1201,6 +1229,20 @@ fn structural_boost_from_semantic(
         boost -= 0.2;
     }
     boost
+}
+
+#[cfg(test)]
+mod semantic_fallback_tests {
+    use super::semantic_query_or_empty;
+
+    #[test]
+    fn semantic_query_failure_becomes_an_empty_semantic_side_not_a_search_error() {
+        let (matches, error) =
+            semantic_query_or_empty(Err("embedding runtime unavailable".to_string()));
+
+        assert!(matches.is_empty());
+        assert_eq!(error.as_deref(), Some("embedding runtime unavailable"));
+    }
 }
 
 #[cfg(test)]

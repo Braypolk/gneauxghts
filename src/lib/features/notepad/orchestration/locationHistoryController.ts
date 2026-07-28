@@ -8,25 +8,41 @@ import {
   type LocationHistoryEntry,
   type NavLocation
 } from '$lib/features/notepad/navigation/locationMru';
-import { setPaneChatConversationId } from '$lib/features/notepad/state/noteStore';
 import type {
-  NoteDraftState,
-  NotepadState
+  NoteDraftState
 } from '$lib/features/notepad/state/noteStore';
 import type { PaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
 import type { SearchItem } from '$lib/types/semantic';
+import type {
+  PaneKind,
+  WorkspacePaneState
+} from '$lib/features/notepad/workspace/paneTypes';
+import {
+  getDocumentNoteId,
+  getDocumentPath
+} from '$lib/features/notepad/document/documentState';
+import type {
+  PaneNavigationTransitionPipeline
+} from './paneNavigationTransitionPipeline';
+import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
 
 export interface LocationHistoryControllerDeps<TPaneId extends string> {
-  state: NotepadState<TPaneId>;
   getActivePaneId: () => TPaneId;
   getPaneOrder: () => TPaneId[];
-  getPaneKind: (paneId: TPaneId) => 'editor' | 'chat';
+  getPaneState: (
+    paneId: TPaneId
+  ) => WorkspacePaneState<TPaneId>;
+  getPaneKind: (paneId: TPaneId) => PaneKind;
+  setPaneConversationId: (
+    paneId: TPaneId,
+    conversationId: string | null
+  ) => void;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   getPaneCommandMode: () => 'start' | 'split' | null;
   getPaneCommandSourcePaneId: () => TPaneId | null;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   activatePaneSession: (paneId: TPaneId) => unknown;
-  setPaneKind: (paneId: TPaneId, kind: 'editor' | 'chat') => void;
+  setPaneKind: (paneId: TPaneId, kind: PaneKind) => boolean;
   saveCursorPosition: (document: NoteDraftState) => void;
   cancelPendingAutosave: (document: NoteDraftState) => void;
   enqueueSave: (document: NoteDraftState) => Promise<void>;
@@ -42,6 +58,7 @@ export interface LocationHistoryControllerDeps<TPaneId extends string> {
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
   updateSelectedRelatedText: (paneId?: TPaneId) => void;
   focusPaneAfterShortcut: (paneId: TPaneId) => void | Promise<void>;
+  transitions: PaneNavigationTransitionPipeline<TPaneId>;
 }
 
 export function createLocationHistoryController<TPaneId extends string>(
@@ -65,21 +82,23 @@ export function createLocationHistoryController<TPaneId extends string>(
   }
 
   function capturePaneLocation(paneId: TPaneId): NavLocation | null {
-    const pane = deps.state.panesById[paneId];
+    const pane = deps.getPaneState(paneId);
     const document = deps.getPaneDocument(paneId);
+    const noteId = getDocumentNoteId(document);
+    const notePath = getDocumentPath(document);
     if (pane.kind === 'chat') {
       return {
         kind: 'chat',
         conversationId: pane.chatConversationId,
-        contextNoteId: document.currentNoteId,
-        contextNotePath: document.currentNotePath
+        contextNoteId: noteId,
+        contextNotePath: notePath
       };
     }
-    if (!document.currentNoteId && !document.currentNotePath) return null;
+    if (!noteId && !notePath) return null;
     return {
       kind: 'editor',
-      noteId: document.currentNoteId,
-      notePath: document.currentNotePath
+      noteId,
+      notePath
     };
   }
 
@@ -92,9 +111,20 @@ export function createLocationHistoryController<TPaneId extends string>(
     paneId: TPaneId
   ): Promise<NavLocation | null> {
     const current = capturePaneLocation(paneId);
-    if (current || deps.getPaneKind(paneId) !== 'editor') return current;
+    if (
+      current ||
+      !paneHasCapability(
+        deps.getPaneKind(paneId),
+        'edit-document'
+      )
+    ) {
+      return current;
+    }
     const note = deps.getPaneDocument(paneId);
-    if (note.title.trim() === '' && note.bodyMarkdown.trim() === '') return null;
+    if (
+      note.working.title.trim() === '' &&
+      note.working.markdown.trim() === ''
+    ) return null;
     deps.saveCursorPosition(note);
     deps.cancelPendingAutosave(note);
     await deps.enqueueSave(note);
@@ -137,42 +167,87 @@ export function createLocationHistoryController<TPaneId extends string>(
   async function restoreLocation(paneId: TPaneId, location: NavLocation) {
     suppressLocationTouch = true;
     try {
-      deps.activatePaneSession(paneId);
-      if (location.kind === 'editor') {
-        await deps.openNotePath(location.notePath, {
-          noteId: location.noteId,
-          focusEditorAfterOpen: true,
-          revealEditorAfterOpen: true
-        });
-        return;
-      }
+      const result = await deps.transitions.execute({
+        kind: 'restore-location',
+        resolvePane: () =>
+          deps.getPaneOrder().includes(paneId)
+            ? paneId
+            : null,
+        captureHistory:
+          location.kind === 'chat'
+            ? () => {
+                locationMru.rememberChat(
+                  paneId,
+                  location
+                );
+              }
+            : undefined,
+        mutateWorkspace: async () => {
+          deps.activatePaneSession(paneId);
+          if (location.kind === 'editor') {
+            await deps.openNotePath(location.notePath, {
+              noteId: location.noteId,
+              focusEditorAfterOpen: true,
+              revealEditorAfterOpen: true
+            });
+            return;
+          }
 
-      locationMru.rememberChat(paneId, location);
-      const document = deps.getPaneDocument(paneId);
-      const needsContextNote =
-        (location.contextNoteId || location.contextNotePath) &&
-        (document.currentNoteId !== location.contextNoteId ||
-          document.currentNotePath !== location.contextNotePath);
-      if (needsContextNote) {
-        await deps.openNotePath(location.contextNotePath, {
-          noteId: location.contextNoteId,
-          focusEditorAfterOpen: false
-        });
-      }
+          const document = deps.getPaneDocument(paneId);
+          const noteId = getDocumentNoteId(document);
+          const notePath = getDocumentPath(document);
+          const needsContextNote =
+            (location.contextNoteId ||
+              location.contextNotePath) &&
+            (noteId !== location.contextNoteId ||
+              notePath !== location.contextNotePath);
+          if (needsContextNote) {
+            await deps.openNotePath(
+              location.contextNotePath,
+              {
+                noteId: location.contextNoteId,
+                focusEditorAfterOpen: false
+              }
+            );
+          }
 
-      setPaneChatConversationId(
-        deps.state,
-        paneId,
-        location.conversationId
-      );
-      if (deps.getPaneKind(paneId) !== 'chat') {
-        deps.setPaneKind(paneId, 'chat');
-        await tick();
-        await deps.paneLifecycle.ensurePaneEditors();
-        deps.updateSelectedRelatedText();
+          deps.setPaneConversationId(
+            paneId,
+            location.conversationId
+          );
+          if (
+            !paneHasCapability(
+              deps.getPaneKind(paneId),
+              'host-chat'
+            ) &&
+            !deps.setPaneKind(paneId, 'chat')
+          ) {
+            throw new Error(
+              'Restoring chat would remove the last editor.'
+            );
+          }
+        },
+        ensureEditors: location.kind === 'chat',
+        complete:
+          location.kind === 'chat'
+            ? () => {
+                deps.updateSelectedRelatedText();
+              }
+            : undefined,
+        isCurrent: () =>
+          deps.getActivePaneId() === paneId,
+        focus:
+          location.kind === 'chat'
+            ? async () => {
+                await tick();
+                await deps.focusPaneAfterShortcut(paneId);
+              }
+            : undefined,
+        trackLatestForPane: false
+      });
+      if (result.status === 'failed') {
+        throw result.error;
       }
-      await tick();
-      await deps.focusPaneAfterShortcut(paneId);
     } finally {
       suppressLocationTouch = false;
       bumpEpoch();
@@ -180,20 +255,42 @@ export function createLocationHistoryController<TPaneId extends string>(
   }
 
   async function goToPreviousLocation(paneId = deps.getActivePaneId()) {
-    deps.activatePaneSession(paneId);
     blurFocusedPaneTitle(paneId);
     const current = await captureRestorablePaneLocation(paneId);
     await ensureLocationMruSeeded(paneId);
     const previous = locationMru.previousExcluding(paneId, current);
     if (!previous) {
-      if (deps.getPaneKind(paneId) === 'chat') {
-        deps.setPaneKind(paneId, 'editor');
-        await tick();
-        await deps.paneLifecycle.ensurePaneEditors();
-        deps.updateSelectedRelatedText();
-        bumpEpoch();
-        await tick();
-        await deps.focusPaneAfterShortcut(paneId);
+      if (
+        paneHasCapability(
+          deps.getPaneKind(paneId),
+          'host-chat'
+        )
+      ) {
+        const result = await deps.transitions.execute({
+          kind: 'change-pane-kind',
+          resolvePane: () => paneId,
+          mutateWorkspace: () => {
+            if (!deps.setPaneKind(paneId, 'editor')) {
+              throw new Error(
+                'Workspace rejected restoring the retained editor.'
+              );
+            }
+          },
+          ensureEditors: true,
+          isCurrent: () =>
+            deps.getActivePaneId() === paneId,
+          complete: () => {
+            deps.updateSelectedRelatedText();
+            bumpEpoch();
+          },
+          focus: async () => {
+            await tick();
+            await deps.focusPaneAfterShortcut(paneId);
+          }
+        });
+        if (result.status === 'failed') {
+          throw result.error;
+        }
       }
       return;
     }

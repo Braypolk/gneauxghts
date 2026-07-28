@@ -1,68 +1,22 @@
-use super::index_bridge::{remove_notes_index_entry_for_save, upsert_notes_index_entry_for_save};
-use super::{current_time_millis, prepare_notes_dir, NoteSession};
+use super::{prepare_notes_dir, NoteSession};
 use crate::{
-    index::{build_indexed_note, AppState},
+    index::AppState,
     note,
+    services::{note_mutation::PostCommitStage, PostCommitNoteMutationService},
     state::{db_clear_last_opened_note, persist_note, validate_current_path},
 };
 use std::path::{Path, PathBuf};
-use tauri::State;
 
 #[derive(Clone, Debug)]
 pub(crate) struct PersistNoteOutcome {
     pub(crate) session: Option<NoteSession>,
-    pub(crate) persisted_path: Option<String>,
+    pub(crate) commit_warning: Option<crate::services::note_mutation::CommittedMutationWarning>,
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum NotePersistenceMode {
     Save,
     Remember,
-}
-
-fn read_saved_markdown(persisted_path: Option<&str>) -> Result<Option<String>, String> {
-    persisted_path
-        .map(|path| std::fs::read_to_string(path).map_err(|err| err.to_string()))
-        .transpose()
-}
-
-fn build_next_note(
-    mode: NotePersistenceMode,
-    persisted_path: Option<&str>,
-    persisted_markdown: Option<&str>,
-    original_markdown: &str,
-    timestamp_millis: u64,
-) -> Option<crate::index::IndexedNote> {
-    match mode {
-        NotePersistenceMode::Save => {
-            persisted_path
-                .zip(persisted_markdown)
-                .map(|(path, markdown)| {
-                    build_indexed_note(Path::new(path), markdown, timestamp_millis)
-                })
-        }
-        NotePersistenceMode::Remember => persisted_path.map(|path| {
-            build_indexed_note(
-                Path::new(path),
-                persisted_markdown.unwrap_or(original_markdown),
-                timestamp_millis,
-            )
-        }),
-    }
-}
-
-fn compute_sync_markdown(
-    mode: NotePersistenceMode,
-    persisted_markdown: Option<&str>,
-    persisted_path: Option<&str>,
-) -> Result<Option<String>, String> {
-    match (mode, persisted_markdown, persisted_path) {
-        (NotePersistenceMode::Save, markdown, _) => Ok(markdown.map(ToOwned::to_owned)),
-        (NotePersistenceMode::Remember, _, Some(path)) => Ok(Some(
-            std::fs::read_to_string(path).map_err(|err| err.to_string())?,
-        )),
-        (NotePersistenceMode::Remember, _, None) => Ok(None),
-    }
 }
 
 fn file_stem_title(path: Option<&str>) -> Option<String> {
@@ -75,7 +29,8 @@ fn build_saved_note_session(
     title: &str,
     markdown: &str,
     persisted_path: Option<String>,
-    persisted_markdown: Option<&str>,
+    persisted_markdown: &str,
+    commit_warning: Option<crate::services::note_mutation::CommittedMutationWarning>,
 ) -> NoteSession {
     let fallback_title = file_stem_title(persisted_path.as_deref()).unwrap_or_default();
     NoteSession {
@@ -85,15 +40,18 @@ fn build_saved_note_session(
         } else {
             fallback_title.clone()
         },
-        markdown: persisted_markdown
-            .map(|saved| note::extract_file_name_title_and_body(saved, &fallback_title).1)
-            .unwrap_or_else(|| note::normalize_wikilink_markdown(markdown)),
+        markdown: if persisted_markdown.is_empty() {
+            note::normalize_wikilink_markdown(markdown)
+        } else {
+            note::extract_file_name_title_and_body(persisted_markdown, &fallback_title).1
+        },
         path: persisted_path,
+        commit_warning,
     }
 }
 
 pub(crate) fn persist_note_session_with_outcome(
-    state: &State<'_, AppState>,
+    state: &AppState,
     title: String,
     markdown: String,
     current_path: Option<String>,
@@ -116,51 +74,30 @@ pub(crate) fn persist_note_session_with_outcome(
             }
         }
     };
-    let timestamp_millis = current_time_millis()?;
-    let persisted_markdown = read_saved_markdown(persisted_path.as_deref())?;
-    let next_note = build_next_note(
-        mode,
-        persisted_path.as_deref(),
-        persisted_markdown.as_deref(),
-        &markdown,
-        timestamp_millis,
-    );
+    let mut mutation_outcome = persisted_path.as_ref().map(|path| {
+        PostCommitNoteMutationService::new(state).apply_canonical_file(
+            PathBuf::from(path),
+            current_path.clone(),
+            markdown.clone(),
+        )
+    });
 
-    let saved_note_id = next_note.as_ref().map(|note| note.note_id.clone());
     if matches!(mode, NotePersistenceMode::Remember) && clear_last_opened {
-        db_clear_last_opened_note()?;
+        if let Err(error) = db_clear_last_opened_note() {
+            if let Some(outcome) = mutation_outcome.as_mut() {
+                outcome.record_issue(PostCommitStage::SessionState, error);
+            } else {
+                return Err(error);
+            }
+        }
     }
 
-    let removed_previous_path = current_path
-        .as_deref()
-        .filter(|previous_path| note_path_changed(previous_path, persisted_path.as_deref()));
-
-    // Move ownership into the save-path indexer (one clone inside for the
-    // background queue) instead of cloning here and again before the mutex.
-    if let (Some(path), Some(note)) = (persisted_path.as_deref(), next_note) {
-        upsert_notes_index_entry_for_save(state, PathBuf::from(path), note)?;
-    }
-    if let Some(previous_path) = removed_previous_path {
-        remove_notes_index_entry_for_save(state, previous_path)?;
-    }
-
-    let sync_markdown = compute_sync_markdown(
-        mode,
-        persisted_markdown.as_deref(),
-        persisted_path.as_deref(),
-    )?;
-
-    if let (Some(path), Some(sync_markdown)) = (persisted_path.as_deref(), sync_markdown.as_deref())
-    {
-        state.semantic.queue_note_update(
-            Path::new(path),
-            sync_markdown.to_string(),
-            timestamp_millis,
-        )?;
-    }
-    if let Some(previous_path) = removed_previous_path {
-        state.semantic.queue_delete_note(previous_path)?;
-    }
+    let saved_note_id = mutation_outcome
+        .as_ref()
+        .map(|outcome| outcome.note_id.clone());
+    let commit_warning = mutation_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.required_consistency_warning());
 
     let session = match mode {
         NotePersistenceMode::Save => Some(build_saved_note_session(
@@ -168,18 +105,69 @@ pub(crate) fn persist_note_session_with_outcome(
             &title,
             &markdown,
             persisted_path.clone(),
-            persisted_markdown.as_deref(),
+            mutation_outcome
+                .as_ref()
+                .map(|outcome| outcome.canonical_markdown.as_str())
+                .unwrap_or(""),
+            commit_warning.clone(),
         )),
         NotePersistenceMode::Remember => None,
     };
 
+    if let Some(outcome) = mutation_outcome.as_ref() {
+        outcome.report_degraded("note persistence");
+    }
+
     Ok(PersistNoteOutcome {
         session,
-        persisted_path,
+        commit_warning,
     })
 }
 
-fn note_path_changed(previous_path: &Path, next_path: Option<&str>) -> bool {
-    let previous_raw_path = previous_path.to_string_lossy();
-    next_path != Some(previous_raw_path.as_ref())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app::EventBus, semantic::SemanticState, services::note_mutation::PostCommitStage};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[test]
+    fn committed_projection_failure_still_returns_authoritative_new_note_path() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("save-warning-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("save-warning-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _index = state.notes_index.lock().unwrap();
+            panic!("poison notes index to force a post-commit catalog failure");
+        }));
+
+        let outcome = persist_note_session_with_outcome(
+            &state,
+            "Draft title".to_string(),
+            "Draft body".to_string(),
+            None,
+            NotePersistenceMode::Save,
+            false,
+        )
+        .expect("canonical commit returns an outcome");
+        let session = outcome.session.expect("saved session");
+        let expected_path = notes.path().join("Draft title.md");
+
+        assert_eq!(
+            session.path.as_deref(),
+            Some(expected_path.to_string_lossy().as_ref())
+        );
+        assert!(Path::new(session.path.as_deref().unwrap()).exists());
+        let warning = session.commit_warning.expect("committed warning");
+        assert!(warning
+            .issues
+            .iter()
+            .any(|issue| issue.stage == PostCommitStage::CatalogUpsert));
+    }
 }

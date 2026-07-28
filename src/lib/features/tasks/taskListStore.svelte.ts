@@ -2,6 +2,10 @@ import { goto } from '$app/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { storePendingTaskTarget } from '$lib/taskNavigation';
 import { appStore } from '$lib/app/appStore.svelte';
+import {
+  routeTaskDocumentMutation
+} from './taskMutationGateway';
+import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
 
 export interface TaskItem {
   noteId: string;
@@ -42,6 +46,7 @@ interface TaskListGroupPatch {
   noteId: string;
   notePath?: string | null;
   group?: TaskGroup | null;
+  commitWarning?: CommittedMutationWarning;
 }
 
 const TASK_FILTER_STORAGE_KEY = 'gneauxghts.master-task-filter';
@@ -224,12 +229,28 @@ export class TaskListStore {
     };
 
     try {
+      const routed = await routeTaskDocumentMutation({
+        kind: 'toggle',
+        taskId: task.taskId,
+        noteId: task.noteId,
+        notePath: task.notePath
+      });
+      if (routed.status === 'applied-to-open-document') {
+        await this.refreshGroup(task.noteId);
+        return;
+      }
       const groupPatch = await invoke<TaskListGroupPatch>('toggle_task', {
         taskId: task.taskId,
         ...this.#currentViewParams()
       });
-      this.#applyGroupPatch(groupPatch);
-      this.errorMessage = '';
+      if (groupPatch.commitWarning) {
+        console.warn('Task was toggled with incomplete projections:', groupPatch.commitWarning);
+        void this.load({ background: true });
+        this.errorMessage = 'Task saved; the task list is waiting for synchronization.';
+      } else {
+        this.#applyGroupPatch(groupPatch);
+        this.errorMessage = '';
+      }
     } catch (error) {
       console.error('Failed to toggle task:', error);
       this.errorMessage = 'Unable to update task completion.';
@@ -318,12 +339,28 @@ export class TaskListStore {
     };
 
     try {
+      const routed = await routeTaskDocumentMutation({
+        kind: 'delete',
+        taskId: task.taskId,
+        noteId: task.noteId,
+        notePath: task.notePath
+      });
+      if (routed.status === 'applied-to-open-document') {
+        await this.refreshGroup(task.noteId);
+        return;
+      }
       const groupPatch = await invoke<TaskListGroupPatch>('delete_task', {
         taskId: task.taskId,
         ...this.#currentViewParams()
       });
-      this.#applyGroupPatch(groupPatch);
-      this.errorMessage = '';
+      if (groupPatch.commitWarning) {
+        console.warn('Task was deleted with incomplete projections:', groupPatch.commitWarning);
+        void this.load({ background: true });
+        this.errorMessage = 'Task deleted; the task list is waiting for synchronization.';
+      } else {
+        this.#applyGroupPatch(groupPatch);
+        this.errorMessage = '';
+      }
     } catch (error) {
       console.error('Failed to delete task:', error);
       this.errorMessage = 'Unable to delete task.';

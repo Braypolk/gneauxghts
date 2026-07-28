@@ -3,31 +3,34 @@ import {
   type ForgottenNote,
   type SessionSnapshot
 } from '$lib/features/notepad/session/session';
+import {
+  applySessionSnapshotToDocument,
+  createDocumentState,
+  getDocumentPath,
+  type NoteDraftState,
+  type NoteKey
+} from '$lib/features/notepad/document/documentState';
 
-export type NoteKey = `path:${string}` | `draft:${string}`;
-export type NoteStatus = 'idle' | 'saving' | 'remembering' | 'forgetting' | 'opening' | 'error';
+export type {
+  NoteDraftState,
+  NoteKey
+} from '$lib/features/notepad/document/documentState';
 
-export interface NoteDraftState extends SessionSnapshot {
-  key: NoteKey;
-  status: NoteStatus;
-  operationRevision: number;
-  saveInvalidation: number;
+export interface PaneNoteReferences<TPaneId extends string> {
+  getPaneState: (paneId: TPaneId) => { noteKey: NoteKey };
+  setPaneNoteKey: (paneId: TPaneId, noteKey: NoteKey) => void;
+  replaceNoteKeyReferences: (
+    previousKey: NoteKey,
+    nextKey: NoteKey
+  ) => void;
+  isNoteReferenced: (noteKey: NoteKey) => boolean;
+  listReferencedNoteKeys: () => NoteKey[];
 }
 
-export interface PaneState<TPaneId extends string = string> {
-  paneId: TPaneId;
-  kind: 'editor' | 'chat';
-  noteKey: NoteKey;
-  /** Chat identity is intentionally independent from the note draft/autosave lifecycle. */
-  chatConversationId: string | null;
-}
-
+/** Document lifecycle state. Pane structure and references live in WorkspaceStore. */
 export interface NotepadState<TPaneId extends string = string> {
-  activePaneId: TPaneId;
-  panesById: Record<TPaneId, PaneState<TPaneId>>;
   notesByKey: Record<string, NoteDraftState>;
   recentlyForgotten: ForgottenNote | null;
-  isRefreshingFromDisk: boolean;
 }
 
 let draftCounter = 0;
@@ -45,116 +48,28 @@ export function createNoteDraftState(
   snapshot: SessionSnapshot = createEmptySessionSnapshot(),
   key: NoteKey = noteKeyFromPath(snapshot.currentNotePath) ?? createDraftNoteKey()
 ): NoteDraftState {
-  return {
-    key,
-    ...snapshot,
-    status: 'idle',
-    operationRevision: 0,
-    saveInvalidation: 0
-  };
+  return createDocumentState(snapshot, key);
 }
 
-export function createNotepadState<TPaneId extends string>(
-  primaryPaneId: TPaneId,
-  allPaneIds: readonly TPaneId[]
+export function createNotepadState<TPaneId extends string = string>(
+  initialNote: NoteDraftState = createNoteDraftState()
 ): NotepadState<TPaneId> {
-  const initialNote = createNoteDraftState();
-  const panesById = Object.fromEntries(
-    allPaneIds.map((paneId) => [
-      paneId,
-      {
-        paneId,
-        kind: 'editor',
-        noteKey: initialNote.key,
-        chatConversationId: null
-      }
-    ])
-  ) as Record<TPaneId, PaneState<TPaneId>>;
-
   return {
-    activePaneId: primaryPaneId,
-    panesById,
     notesByKey: {
       [initialNote.key]: initialNote
     },
-    recentlyForgotten: null,
-    isRefreshingFromDisk: false
+    recentlyForgotten: null
   };
-}
-
-export function getPaneState<TPaneId extends string>(
-  state: NotepadState<TPaneId>,
-  paneId: TPaneId
-): PaneState<TPaneId> {
-  return state.panesById[paneId];
-}
-
-export function addPane<TPaneId extends string>(
-  state: NotepadState<TPaneId>,
-  paneId: TPaneId,
-  noteKey: NoteKey,
-  kind: PaneState<TPaneId>['kind'] = 'editor'
-): PaneState<TPaneId> {
-  const pane = {
-    paneId,
-    kind,
-    noteKey,
-    chatConversationId: null
-  };
-  state.panesById[paneId] = pane;
-  return pane;
-}
-
-export function removePane<TPaneId extends string>(
-  state: NotepadState<TPaneId>,
-  paneId: TPaneId
-) {
-  delete state.panesById[paneId];
 }
 
 export function getPaneNote<TPaneId extends string>(
   state: NotepadState<TPaneId>,
+  references: PaneNoteReferences<TPaneId>,
   paneId: TPaneId
 ): NoteDraftState {
-  return state.notesByKey[state.panesById[paneId].noteKey];
-}
-
-export function getActiveNote<TPaneId extends string>(state: NotepadState<TPaneId>) {
-  return getPaneNote(state, state.activePaneId);
-}
-
-export function setActivePane<TPaneId extends string>(
-  state: NotepadState<TPaneId>,
-  paneId: TPaneId
-) {
-  state.activePaneId = paneId;
-}
-
-export function setPaneKind<TPaneId extends string>(
-  state: NotepadState<TPaneId>,
-  paneId: TPaneId,
-  kind: PaneState<TPaneId>['kind']
-) {
-  state.panesById[paneId].kind = kind;
-  if (kind === 'editor') {
-    state.panesById[paneId].chatConversationId = null;
-  }
-}
-
-export function setPaneChatConversationId<TPaneId extends string>(
-  state: NotepadState<TPaneId>,
-  paneId: TPaneId,
-  conversationId: string | null
-) {
-  state.panesById[paneId].chatConversationId = conversationId;
-}
-
-export function setPaneNoteKey<TPaneId extends string>(
-  state: NotepadState<TPaneId>,
-  paneId: TPaneId,
-  noteKey: NoteKey
-) {
-  state.panesById[paneId].noteKey = noteKey;
+  return state.notesByKey[
+    references.getPaneState(paneId).noteKey
+  ];
 }
 
 export function upsertNote<TPaneId extends string>(
@@ -171,69 +86,35 @@ export function createFreshDraftNote<TPaneId extends string>(state: NotepadState
   return note;
 }
 
+export function replacePaneReferenceWithFreshDraft<
+  TPaneId extends string
+>(
+  state: NotepadState<TPaneId>,
+  references: PaneNoteReferences<TPaneId>,
+  paneId: TPaneId
+) {
+  const freshDraft = createFreshDraftNote(state);
+  references.setPaneNoteKey(paneId, freshDraft.key);
+  return freshDraft;
+}
+
 export function replaceReferencedNoteWithFreshDraft<TPaneId extends string>(
   state: NotepadState<TPaneId>,
+  references: PaneNoteReferences<TPaneId>,
   noteKey: NoteKey
 ) {
   const freshDraft = createFreshDraftNote(state);
-  for (const pane of Object.values(state.panesById) as PaneState<TPaneId>[]) {
-    if (pane.noteKey === noteKey) {
-      pane.noteKey = freshDraft.key;
-    }
-  }
+  references.replaceNoteKeyReferences(
+    noteKey,
+    freshDraft.key
+  );
   delete state.notesByKey[noteKey];
   return freshDraft;
 }
 
-export function updateNoteDraftTitle(note: NoteDraftState, title: string) {
-  if (note.title === title) {
-    return;
-  }
-
-  note.title = title;
-  note.operationRevision += 1;
-}
-
-export function updateNoteDraftMarkdown(note: NoteDraftState, markdown: string) {
-  if (note.bodyMarkdown === markdown) {
-    return;
-  }
-
-  note.bodyMarkdown = markdown;
-  note.operationRevision += 1;
-}
-
-export function setNoteStatus(note: NoteDraftState, status: NoteStatus) {
-  note.status = status;
-}
-
-export function applySnapshotToNote(
-  note: NoteDraftState,
-  snapshot: SessionSnapshot,
-  { preserveDraft = false }: { preserveDraft?: boolean } = {}
-) {
-  if (preserveDraft) {
-    note.currentNoteId = snapshot.currentNoteId;
-    note.currentNotePath = snapshot.currentNotePath;
-    note.lastSavedTitle = snapshot.lastSavedTitle;
-    note.lastSavedMarkdown = snapshot.lastSavedMarkdown;
-    note.lastSavedNoteId = snapshot.lastSavedNoteId;
-    note.lastSavedPath = snapshot.lastSavedPath;
-    return;
-  }
-
-  note.title = snapshot.title;
-  note.bodyMarkdown = snapshot.bodyMarkdown;
-  note.currentNoteId = snapshot.currentNoteId;
-  note.currentNotePath = snapshot.currentNotePath;
-  note.lastSavedTitle = snapshot.lastSavedTitle;
-  note.lastSavedMarkdown = snapshot.lastSavedMarkdown;
-  note.lastSavedNoteId = snapshot.lastSavedNoteId;
-  note.lastSavedPath = snapshot.lastSavedPath;
-}
-
 export function rekeyNote<TPaneId extends string>(
   state: NotepadState<TPaneId>,
+  references: PaneNoteReferences<TPaneId>,
   oldKey: NoteKey,
   nextKey: NoteKey
 ) {
@@ -248,11 +129,7 @@ export function rekeyNote<TPaneId extends string>(
 
   const existing = state.notesByKey[nextKey];
   if (existing && existing !== note) {
-    for (const pane of Object.values(state.panesById) as PaneState<TPaneId>[]) {
-      if (pane.noteKey === oldKey) {
-        pane.noteKey = nextKey;
-      }
-    }
+    references.replaceNoteKeyReferences(oldKey, nextKey);
     delete state.notesByKey[oldKey];
     return existing;
   }
@@ -260,19 +137,16 @@ export function rekeyNote<TPaneId extends string>(
   delete state.notesByKey[oldKey];
   note.key = nextKey;
   state.notesByKey[nextKey] = note;
-  for (const pane of Object.values(state.panesById) as PaneState<TPaneId>[]) {
-    if (pane.noteKey === oldKey) {
-      pane.noteKey = nextKey;
-    }
-  }
+  references.replaceNoteKeyReferences(oldKey, nextKey);
   return note;
 }
 
 export function removeNoteIfUnreferenced<TPaneId extends string>(
   state: NotepadState<TPaneId>,
+  references: PaneNoteReferences<TPaneId>,
   noteKey: NoteKey
 ) {
-  if ((Object.values(state.panesById) as PaneState<TPaneId>[]).some((pane) => pane.noteKey === noteKey)) {
+  if (references.isNoteReferenced(noteKey)) {
     return;
   }
   delete state.notesByKey[noteKey];
@@ -280,50 +154,64 @@ export function removeNoteIfUnreferenced<TPaneId extends string>(
 
 function removeTransientNoteIfUnreferenced<TPaneId extends string>(
   state: NotepadState<TPaneId>,
+  references: PaneNoteReferences<TPaneId>,
   noteKey: NoteKey
 ) {
   const note = state.notesByKey[noteKey];
-  if (!note || note.currentNotePath) {
+  if (!note || getDocumentPath(note)) {
     return;
   }
 
-  removeNoteIfUnreferenced(state, noteKey);
+  removeNoteIfUnreferenced(state, references, noteKey);
 }
 
-export function listReferencedNoteKeys<TPaneId extends string>(state: NotepadState<TPaneId>) {
-  return [
-    ...new Set((Object.values(state.panesById) as PaneState<TPaneId>[]).map((pane) => pane.noteKey))
-  ];
+export function listReferencedNoteKeys<TPaneId extends string>(
+  references: PaneNoteReferences<TPaneId>
+) {
+  return references.listReferencedNoteKeys();
 }
 
 export function adoptSnapshotForPane<TPaneId extends string>(
   state: NotepadState<TPaneId>,
+  references: PaneNoteReferences<TPaneId>,
   paneId: TPaneId,
   snapshot: SessionSnapshot
 ) {
   const nextPersistedKey = noteKeyFromPath(snapshot.currentNotePath);
-  const currentNote = getPaneNote(state, paneId);
+  const currentNote = getPaneNote(
+    state,
+    references,
+    paneId
+  );
 
   if (nextPersistedKey) {
     const existing = state.notesByKey[nextPersistedKey];
     const note =
       existing ??
       createNoteDraftState(snapshot, nextPersistedKey);
-    applySnapshotToNote(note, snapshot);
+    applySessionSnapshotToDocument(note, snapshot);
     state.notesByKey[note.key] = note;
-    state.panesById[paneId].noteKey = note.key;
-    removeTransientNoteIfUnreferenced(state, currentNote.key);
+    references.setPaneNoteKey(paneId, note.key);
+    removeTransientNoteIfUnreferenced(
+      state,
+      references,
+      currentNote.key
+    );
     return note;
   }
 
   if (currentNote.key.startsWith('draft:')) {
-    applySnapshotToNote(currentNote, snapshot);
+    applySessionSnapshotToDocument(currentNote, snapshot);
     return currentNote;
   }
 
   const freshDraft = createNoteDraftState(snapshot);
   state.notesByKey[freshDraft.key] = freshDraft;
-  state.panesById[paneId].noteKey = freshDraft.key;
-  removeTransientNoteIfUnreferenced(state, currentNote.key);
+  references.setPaneNoteKey(paneId, freshDraft.key);
+  removeTransientNoteIfUnreferenced(
+    state,
+    references,
+    currentNote.key
+  );
   return freshDraft;
 }

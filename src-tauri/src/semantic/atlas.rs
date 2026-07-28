@@ -933,35 +933,33 @@ impl AtlasWorkerContext {
 
         let response_nodes = nodes
             .iter()
-            .map(|node| {
-                AtlasNode {
-                    id: node.id.clone(),
-                    note_id: node.note_id.clone(),
-                    note_path: node.note_path.clone(),
-                    title: node.title.clone(),
-                    file_name: node.file_name.clone(),
-                    document_kind: metadata
-                        .get(&node.note_path)
-                        .map(|meta| meta.document_kind)
-                        .unwrap_or_default(),
-                    x: node.x,
-                    y: node.y,
-                    radius: NOTE_RADIUS_MIN
-                        + (NOTE_RADIUS_MAX - NOTE_RADIUS_MIN) * node.centrality.clamp(0.0, 1.0),
-                    cloud_id: node.cloud_id.clone(),
-                    parent_cloud_id: node.parent_cloud_id.clone(),
-                    child_cloud_id: node.child_cloud_id.clone(),
-                    cluster_id: node.cloud_id.clone(),
-                    subcluster_id: node.child_cloud_id.clone(),
-                    centrality: node.centrality,
-                    importance: node.importance,
-                    last_viewed_at_millis: node.last_viewed_at_millis,
-                    created_at_millis: node.created_at_millis,
-                    updated_at_millis: node.updated_at_millis,
-                    preview: node.preview.clone(),
-                    tags: node.tags.clone(),
-                    isolated: node.isolated,
-                }
+            .map(|node| AtlasNode {
+                id: node.id.clone(),
+                note_id: node.note_id.clone(),
+                note_path: node.note_path.clone(),
+                title: node.title.clone(),
+                file_name: node.file_name.clone(),
+                document_kind: metadata
+                    .get(&node.note_path)
+                    .map(|meta| meta.document_kind)
+                    .unwrap_or_default(),
+                x: node.x,
+                y: node.y,
+                radius: NOTE_RADIUS_MIN
+                    + (NOTE_RADIUS_MAX - NOTE_RADIUS_MIN) * node.centrality.clamp(0.0, 1.0),
+                cloud_id: node.cloud_id.clone(),
+                parent_cloud_id: node.parent_cloud_id.clone(),
+                child_cloud_id: node.child_cloud_id.clone(),
+                cluster_id: node.cloud_id.clone(),
+                subcluster_id: node.child_cloud_id.clone(),
+                centrality: node.centrality,
+                importance: node.importance,
+                last_viewed_at_millis: node.last_viewed_at_millis,
+                created_at_millis: node.created_at_millis,
+                updated_at_millis: node.updated_at_millis,
+                preview: node.preview.clone(),
+                tags: node.tags.clone(),
+                isolated: node.isolated,
             })
             .collect::<Vec<_>>();
         let response_links = links
@@ -1824,9 +1822,8 @@ fn apply_centrality(nodes: &mut [WorkingNode], links: &[WorkingLink]) {
     for node in nodes {
         node.centrality = totals.get(&node.id).copied().unwrap_or(0.0) / max_total;
         let degree = degrees.get(&node.id).copied().unwrap_or(0);
-        node.importance = (node.centrality * 0.72
-            + (degree as f32 / KNN_GRAPH_K as f32) * 0.28)
-            .clamp(0.0, 1.0);
+        node.importance =
+            (node.centrality * 0.72 + (degree as f32 / KNN_GRAPH_K as f32) * 0.28).clamp(0.0, 1.0);
     }
 }
 

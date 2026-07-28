@@ -65,6 +65,8 @@ pub(crate) struct NoteSession {
     pub(crate) title: String,
     pub(crate) markdown: String,
     pub(crate) path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) commit_warning: Option<crate::services::note_mutation::CommittedMutationWarning>,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,6 +152,8 @@ pub(crate) struct TaskListGroupPatch {
     pub(crate) note_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) group: Option<TaskListGroup>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) commit_warning: Option<crate::services::note_mutation::CommittedMutationWarning>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -344,7 +348,6 @@ pub(crate) fn save_note(
         .session
         .clone()
         .ok_or_else(|| "Saved note session is missing".to_string())?;
-    emit_note_saved(&state, &outcome, &title);
     Ok(session)
 }
 
@@ -360,7 +363,7 @@ pub(crate) fn remember_note(
     markdown: String,
     current_path: Option<String>,
     clear_last_opened: bool,
-) -> Result<(), String> {
+) -> Result<Option<crate::services::note_mutation::CommittedMutationWarning>, String> {
     let outcome = persist_note_session_with_outcome(
         &state,
         title.clone(),
@@ -369,27 +372,7 @@ pub(crate) fn remember_note(
         NotePersistenceMode::Remember,
         clear_last_opened,
     )?;
-    if outcome.persisted_path.is_some() {
-        emit_note_saved(&state, &outcome, &title);
-    }
-    Ok(())
-}
-
-fn emit_note_saved(state: &AppState, outcome: &note_persistence::PersistNoteOutcome, title: &str) {
-    let path = outcome.persisted_path.clone();
-    let note_id = outcome
-        .session
-        .as_ref()
-        .and_then(|session| session.note_id.clone());
-    let revision = state
-        .notes_index
-        .lock()
-        .ok()
-        .map(|index| index.revision())
-        .unwrap_or(0);
-    state
-        .events
-        .note_saved(note_id, path, title.to_string(), revision);
+    Ok(outcome.commit_warning)
 }
 
 #[tauri::command]
@@ -522,6 +505,13 @@ pub(crate) fn report_user_activity(state: State<'_, AppState>) {
 #[tauri::command]
 pub(crate) fn rebuild_semantic_index(state: State<'_, AppState>) -> Result<(), String> {
     state.semantic.rebuild_index()?;
+    emit_semantic_status_changed(&state);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn retry_semantic_index(state: State<'_, AppState>) -> Result<(), String> {
+    state.semantic.retry_indexing_now()?;
     emit_semantic_status_changed(&state);
     Ok(())
 }
@@ -1322,6 +1312,7 @@ mod tests {
             title: "Title".to_string(),
             markdown: "Body".to_string(),
             path: Some("/notes/title.md".to_string()),
+            commit_warning: None,
         };
         let resolved_note_link = ResolvedNoteLink {
             note_id: "note-1".to_string(),

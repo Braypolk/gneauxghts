@@ -35,6 +35,8 @@ export function createNavigationCoordinator(dependencies: NavigationCoordinatorD
         await dependencies.flushPendingWork();
       } catch (error) {
         dependencies.onFlushError?.(error);
+        requestedHref = null;
+        return;
       }
 
       // A newer click arrived while pending editor work was flushing. Skip

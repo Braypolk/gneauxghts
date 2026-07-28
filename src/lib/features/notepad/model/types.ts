@@ -1,8 +1,11 @@
+import type { CommittedMutationWarning } from "$lib/contracts/committedMutation";
+
 export interface NoteSession {
   noteId: string | null;
   title: string;
   markdown: string;
   path: string | null;
+  commitWarning?: CommittedMutationWarning;
 }
 
 export interface StoredImageAsset {

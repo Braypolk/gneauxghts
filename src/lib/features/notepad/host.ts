@@ -5,6 +5,9 @@ import type {
   EditorMarkdownInsertResult
 } from '$lib/features/notepad/editor/editorCapabilities';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import {
+  documentToSessionSnapshot
+} from '$lib/features/notepad/document/documentState';
 
 export interface NotepadDocumentSnapshot {
   key: string;
@@ -57,17 +60,11 @@ export interface NotepadFeatureHost {
 }
 
 export function snapshotDocument(document: NoteDraftState): NotepadDocumentSnapshot {
+  const snapshot = documentToSessionSnapshot(document);
   return {
     key: document.key,
-    title: document.title,
-    bodyMarkdown: document.bodyMarkdown,
-    currentNoteId: document.currentNoteId,
-    currentNotePath: document.currentNotePath,
-    lastSavedTitle: document.lastSavedTitle,
-    lastSavedMarkdown: document.lastSavedMarkdown,
-    lastSavedNoteId: document.lastSavedNoteId,
-    lastSavedPath: document.lastSavedPath,
-    operationRevision: document.operationRevision
+    ...snapshot,
+    operationRevision: document.operation.revision
   };
 }
 
@@ -78,11 +75,14 @@ export function createNotepadFeatureHost(deps: NotepadFeatureHostDeps): NotepadF
     getActiveSelectionSnapshot: () => deps.getActiveEditor()?.readSelection() ?? null,
     insertMarkdown: ({ noteKey, expectedDocumentRevision, markdown, ...options }) => {
       const document = deps.getActiveDocument();
-      if (document.key !== noteKey || document.operationRevision !== expectedDocumentRevision) {
+      if (
+        document.key !== noteKey ||
+        document.operation.revision !== expectedDocumentRevision
+      ) {
         return {
           status: 'target-changed',
           currentNoteKey: document.key,
-          currentDocumentRevision: document.operationRevision
+          currentDocumentRevision: document.operation.revision
         };
       }
 

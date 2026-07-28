@@ -3,12 +3,21 @@ import { createProposalOrchestration } from '$lib/features/proposals/proposalOrc
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import type { PaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import {
+  getNearestEditorPaneId as selectNearestEditorPaneId
+} from '$lib/features/notepad/workspace/paneRoles';
+import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+import {
+  getPaneIdsWithCapability,
+  paneHasCapability
+} from '$lib/features/notepad/workspace/paneCapabilities';
+import { getDocumentPath } from '$lib/features/notepad/document/documentState';
 
 export interface NotepadProposalAdapterDeps<TPaneId extends string> {
   maxVisiblePanes: number;
   getPaneOrder: () => TPaneId[];
   getActivePaneId: () => TPaneId;
-  getPaneKind: (paneId: TPaneId) => 'editor' | 'chat';
+  getPaneKind: (paneId: TPaneId) => PaneKind;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   setPaneDocument: (paneId: TPaneId, document: NoteDraftState) => void;
   getPaneIdsForDocument: (document: NoteDraftState) => TPaneId[];
@@ -23,7 +32,7 @@ export interface NotepadProposalAdapterDeps<TPaneId extends string> {
   ) => Promise<void>;
   setPaneKind: (
     paneId: TPaneId,
-    kind: 'editor' | 'chat'
+    kind: PaneKind
   ) => Promise<void>;
   setActivePane: (paneId: TPaneId) => void;
   activatePane: (paneId: TPaneId) => void;
@@ -43,16 +52,24 @@ export interface NotepadProposalAdapterDeps<TPaneId extends string> {
 export function createNotepadProposalAdapter<TPaneId extends string>(
   deps: NotepadProposalAdapterDeps<TPaneId>
 ) {
+  const paneCanEditDocument = (paneId: TPaneId) =>
+    paneHasCapability(
+      deps.getPaneKind(paneId),
+      'edit-document'
+    );
+  const paneHostsChat = (paneId: TPaneId) =>
+    paneHasCapability(
+      deps.getPaneKind(paneId),
+      'host-chat'
+    );
+
   function getNearestEditorPaneId(
     fromPaneId: TPaneId | null = deps.getActivePaneId()
   ): TPaneId | null {
-    if (fromPaneId && deps.getPaneKind(fromPaneId) === 'editor') {
-      return fromPaneId;
-    }
-    return (
-      deps
-        .getPaneOrder()
-        .find((paneId) => deps.getPaneKind(paneId) === 'editor') ?? null
+    return selectNearestEditorPaneId(
+      deps.getPaneOrder(),
+      deps.getPaneKind,
+      fromPaneId ?? deps.getActivePaneId()
     );
   }
 
@@ -60,21 +77,21 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
     const order = deps.getPaneOrder();
     if (path) {
       const paneId = order.find(
-        (id) => deps.getPaneDocument(id).currentNotePath === path
+        (id) => getDocumentPath(deps.getPaneDocument(id)) === path
       );
       return paneId ? deps.getPaneDocument(paneId) : null;
     }
-    const editors = order.filter(
-      (id) => deps.getPaneKind(id) === 'editor'
+    const editors = getPaneIdsWithCapability(
+      order,
+      deps.getPaneKind,
+      'edit-document'
     );
     for (const paneId of editors) {
       const document = deps.getPaneDocument(paneId);
-      if (document.currentNotePath) return document;
+      if (getDocumentPath(document)) return document;
     }
     if (editors[0]) return deps.getPaneDocument(editors[0]);
-    const chatPane = order.find(
-      (id) => deps.getPaneKind(id) === 'chat'
-    );
+    const chatPane = order.find(paneHostsChat);
     return chatPane ? deps.getPaneDocument(chatPane) : null;
   }
 
@@ -93,7 +110,7 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
     if (deps.getPendingPaneCommandId() === paneId) {
       await deps.resolvePaneCommandChoice(paneId, 'typing');
     }
-    if (deps.getPaneKind(paneId) !== 'editor') {
+    if (!paneCanEditDocument(paneId)) {
       await deps.setPaneKind(paneId, 'editor');
     }
     return paneId;
@@ -104,14 +121,16 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
     getEditorForDocument: (document) => {
       const paneId = deps
         .getPaneIdsForDocument(document)
-        .find((id) => deps.getPaneKind(id) === 'editor');
+        .find(paneCanEditDocument);
       const editor = paneId ? deps.getEditor(paneId) : null;
       return editor?.isReady() ? editor : null;
     },
     getEditorsForDocument: (document) =>
-      deps
-        .getPaneIdsForDocument(document)
-        .filter((id) => deps.getPaneKind(id) === 'editor')
+      getPaneIdsWithCapability(
+        deps.getPaneIdsForDocument(document),
+        deps.getPaneKind,
+        'edit-document'
+      )
         .map(deps.getEditor)
         .filter(
           (editor): editor is EditorCapabilityAdapter =>
@@ -126,7 +145,7 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
       let paneId = document
         ? deps
             .getPaneIdsForDocument(document)
-            .find((id) => deps.getPaneKind(id) === 'editor') ?? null
+            .find(paneCanEditDocument) ?? null
         : getNearestEditorPaneId();
       const order = deps.getPaneOrder();
       if (!paneId) {
@@ -135,8 +154,8 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
         } else {
           const active = deps.getActivePaneId();
           const chatPane =
-            (deps.getPaneKind(active) === 'chat' ? active : null) ??
-            order.find((id) => deps.getPaneKind(id) === 'chat') ??
+            (paneHostsChat(active) ? active : null) ??
+            order.find(paneHostsChat) ??
             null;
           if (chatPane) {
             await deps.setPaneKind(chatPane, 'editor');
@@ -147,20 +166,20 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
       if (
         order.length === 1 &&
         paneId &&
-        deps.getPaneKind(paneId) === 'editor' &&
+        paneCanEditDocument(paneId) &&
         deps.canSplitWorkspace()
       ) {
         await deps.splitWorkspace('thoughtPartner');
         paneId = getNearestEditorPaneId() ?? paneId;
       }
-      if (paneId && !deps.getPaneDocument(paneId).currentNotePath) {
+      if (paneId && !getDocumentPath(deps.getPaneDocument(paneId))) {
         const source =
-          document?.currentNotePath
+          document && getDocumentPath(document)
             ? document
             : deps
                 .getPaneOrder()
                 .map(deps.getPaneDocument)
-                .find((note) => note.currentNotePath) ?? null;
+                .find((note) => getDocumentPath(note)) ?? null;
         if (source) deps.setPaneDocument(paneId, source);
       }
       await tick();
@@ -182,7 +201,7 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
       const withDocument = document
         ? deps
             .getPaneIdsForDocument(document)
-            .find((id) => deps.getPaneKind(id) === 'editor') ?? null
+            .find(paneCanEditDocument) ?? null
         : null;
       const withPath =
         withDocument ??
@@ -190,8 +209,8 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
           .getPaneOrder()
           .find(
             (id) =>
-              deps.getPaneKind(id) === 'editor' &&
-              Boolean(deps.getPaneDocument(id).currentNotePath)
+              paneCanEditDocument(id) &&
+              Boolean(getDocumentPath(deps.getPaneDocument(id)))
           );
       const paneId = withPath ?? getNearestEditorPaneId();
       if (paneId) {
@@ -207,7 +226,7 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
       let paneId =
         deps
           .getPaneIdsForDocument(document)
-          .find((id) => deps.getPaneKind(id) === 'editor') ?? null;
+          .find(paneCanEditDocument) ?? null;
       if (
         !paneId &&
         deps.getPaneOrder().length < deps.maxVisiblePanes

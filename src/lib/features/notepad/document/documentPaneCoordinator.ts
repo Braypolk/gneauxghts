@@ -1,10 +1,18 @@
-import type { PaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
+import type {
+  PaneEditorLifecycle,
+  PaneEditorOperationResult
+} from '$lib/features/notepad/pane/paneEditorLifecycle';
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
 import { cleanupNoteRuntime } from '$lib/features/notepad/session/noteRuntime';
 import type {
   NoteDraftState,
   NoteKey
 } from '$lib/features/notepad/state/noteStore';
+import {
+  getPaneIdsWithCapability,
+  paneHasCapability
+} from '$lib/features/notepad/workspace/paneCapabilities';
+import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
 
 export interface DocumentPaneCoordinatorDeps<
   TPaneId extends string
@@ -15,7 +23,7 @@ export interface DocumentPaneCoordinatorDeps<
   getPaneIdsForDocument: (
     document: NoteDraftState
   ) => TPaneId[];
-  getPaneKind: (paneId: TPaneId) => 'editor' | 'chat';
+  getPaneKind: (paneId: TPaneId) => PaneKind;
   getNavigationDocument: () => NoteDraftState;
   getNavigationPaneId: () => TPaneId;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
@@ -30,11 +38,14 @@ export interface DocumentPaneCoordinatorDeps<
 export function createDocumentPaneCoordinator<
   TPaneId extends string
 >(deps: DocumentPaneCoordinatorDeps<TPaneId>) {
-  function flushPaneCursorSave(paneId: TPaneId): void {
+  function flushPaneCursorSave(
+    paneId: TPaneId,
+    document: NoteDraftState = deps.getPaneDocument(paneId)
+  ): void {
     deps.getPaneRuntime(paneId).flushCursorSave(() => {
       void deps.paneLifecycle.saveCursorPosition(
         paneId,
-        deps.getPaneDocument(paneId)
+        document
       );
     });
   }
@@ -70,11 +81,11 @@ export function createDocumentPaneCoordinator<
   function preferredEditorPane(
     document: NoteDraftState
   ): TPaneId | null {
-    const paneIds = deps
-      .getPaneIdsForDocument(document)
-      .filter(
-        (paneId) => deps.getPaneKind(paneId) === 'editor'
-      );
+    const paneIds = getPaneIdsWithCapability(
+      deps.getPaneIdsForDocument(document),
+      deps.getPaneKind,
+      'edit-document'
+    );
     const preferred = deps.getNavigationPaneId();
     return paneIds.includes(preferred)
       ? preferred
@@ -103,15 +114,24 @@ export function createDocumentPaneCoordinator<
   async function replaceEditorContentInPlace(
     nextMarkdown: string
   ): Promise<void> {
-    const paneId = preferredEditorPane(
-      deps.getNavigationDocument()
+    await replaceDocumentContentInPlace(
+      deps.getNavigationDocument(),
+      nextMarkdown
     );
-    if (paneId) {
-      await deps.paneLifecycle.replaceContentInPlace(
-        paneId,
-        nextMarkdown
-      );
-    }
+  }
+
+  async function replaceDocumentContentInPlace(
+    document: NoteDraftState,
+    nextMarkdown: string
+  ): Promise<PaneEditorOperationResult> {
+    const paneId = preferredEditorPane(document);
+    if (!paneId) return 'unavailable';
+    return deps.paneLifecycle.replaceContentInPlace(
+      paneId,
+      nextMarkdown,
+      document,
+      true
+    );
   }
 
   async function replaceNoteAcrossPanes(
@@ -125,13 +145,14 @@ export function createDocumentPaneCoordinator<
       cleanupPrevious?: boolean;
     } = {}
   ): Promise<void> {
-    const matching = deps
-      .getVisiblePaneIds()
-      .filter(
-        (paneId) =>
-          deps.getPaneKind(paneId) === 'editor' &&
-          deps.getPaneDocument(paneId).key === nextNote.key
-      );
+    const matching = getPaneIdsWithCapability(
+      deps.getVisiblePaneIds(),
+      deps.getPaneKind,
+      'edit-document'
+    ).filter(
+      (paneId) =>
+        deps.getPaneDocument(paneId).key === nextNote.key
+    );
 
     if (previousNote.key === nextNote.key) {
       const paneId =
@@ -139,7 +160,7 @@ export function createDocumentPaneCoordinator<
       if (paneId) {
         await deps.paneLifecycle.replaceContentInPlace(
           paneId,
-          nextNote.bodyMarkdown,
+          nextNote.working.markdown,
           nextNote,
           true
         );
@@ -170,12 +191,19 @@ export function createDocumentPaneCoordinator<
       restoreCursor = false
     }: { restoreCursor?: boolean } = {}
   ): Promise<void> {
-    if (deps.getPaneKind(paneId) !== 'editor') return;
+    if (
+      !paneHasCapability(
+        deps.getPaneKind(paneId),
+        'edit-document'
+      )
+    ) {
+      return;
+    }
 
     if (previousNote.key === nextNote.key) {
       await deps.paneLifecycle.replaceContentInPlace(
         paneId,
-        nextNote.bodyMarkdown,
+        nextNote.working.markdown,
         nextNote,
         true
       );
@@ -199,6 +227,7 @@ export function createDocumentPaneCoordinator<
     saveCursorPositionForDocument,
     replaceEditorContent,
     replaceEditorContentInPlace,
+    replaceDocumentContentInPlace,
     replacePaneDocument,
     replaceNoteAcrossPanes
   };

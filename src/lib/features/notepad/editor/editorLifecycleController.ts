@@ -24,6 +24,10 @@ import {
 } from '$lib/features/notepad/editor/selectionMenuBridge';
 import { waitForEditorPaint } from '$lib/features/notepad/navigation/navigation';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import {
+  getDocumentNoteId,
+  getDocumentPath
+} from '$lib/features/notepad/document/documentState';
 
 interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
@@ -123,7 +127,7 @@ export function createEditorLifecycleController({
 
     const ok = swapEditorRuntime(controller, {
       sharedResources: getSharedEditorResources(nextDocument),
-      initialValue: nextDocument.bodyMarkdown,
+      initialValue: nextDocument.working.markdown,
       initialState: null,
       viewCallbacks: getViewCallbacks(),
       onMarkdownChange: (nextMarkdown) => {
@@ -144,11 +148,17 @@ export function createEditorLifecycleController({
     document: NoteDraftState = getDocumentSession(),
     position: CursorPosition | null = readCursorPosition(getController())
   ) {
-    if (!document.currentNotePath || !position) {
+    const path = getDocumentPath(document);
+    if (!path || !position) {
       return;
     }
 
-    saveCursorPosition(document.currentNotePath, position, getPaneId(), document.currentNoteId);
+    saveCursorPosition(
+      path,
+      position,
+      getPaneId(),
+      getDocumentNoteId(document)
+    );
   }
 
   function restoreEditorScrollTop(scrollTop: number) {
@@ -164,12 +174,12 @@ export function createEditorLifecycleController({
   function restoreCursorPositionForDocument(
     document: NoteDraftState = getDocumentSession(),
     position: CursorPosition | null = loadCursorPosition(
-      document.currentNotePath,
+      getDocumentPath(document),
       getPaneId(),
-      document.currentNoteId
+      getDocumentNoteId(document)
     )
   ) {
-    if (!document.currentNotePath || !position) {
+    if (!getDocumentPath(document) || !position) {
       return false;
     }
 
@@ -214,9 +224,9 @@ export function createEditorLifecycleController({
         cursorPosition !== undefined
           ? cursorPosition
           : (loadCursorPosition(
-              document.currentNotePath,
+              getDocumentPath(document),
               getPaneId(),
-              document.currentNoteId
+              getDocumentNoteId(document)
             ) ?? null);
 
       const shell = getEditorShell();
@@ -360,9 +370,9 @@ export function createEditorLifecycleController({
   ) {
     const cursorPosition =
       loadCursorPosition(
-        document.currentNotePath,
+        getDocumentPath(document),
         getPaneId(),
-        document.currentNoteId
+        getDocumentNoteId(document)
       ) ?? { anchor: 0, head: 0 };
     await replaceEditorContentInPlaceInternal(nextMarkdown, {
       expectedDocument: document,

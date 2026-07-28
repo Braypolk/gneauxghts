@@ -19,6 +19,10 @@ import {
   getPaneIdForSelectionMenuView,
   setSelectionMenuListener
 } from '$lib/features/notepad/editor/selectionMenuBridge';
+import {
+  transitionPaneTransientUi,
+  type PaneTransientUiState
+} from './paneTransientUiState';
 
 interface WikilinkController {
   closeWikilinkAutocomplete: () => void;
@@ -37,9 +41,9 @@ export interface PaneTransientUiDeps<TPaneId extends string> {
 
 /** Mutual exclusion and pane ownership for slash, selection and wikilink UI. */
 export class PaneTransientUiController<TPaneId extends string> {
-  activeSlashMenuPaneId = $state<TPaneId | null>(null);
-  activeSelectionMenuPaneId = $state<TPaneId | null>(null);
-  activeWikilinkPaneId = $state<TPaneId | null>(null);
+  active = $state<PaneTransientUiState<TPaneId>>({
+    kind: 'none'
+  });
 
   constructor(private readonly deps: PaneTransientUiDeps<TPaneId>) {}
 
@@ -72,9 +76,14 @@ export class PaneTransientUiController<TPaneId extends string> {
       this.deps.getEditorCapabilities(id)?.closeSelectionMenu();
       this.deps.getPaneRuntime(id).setSelectionMenu({ open: false });
     }
-    if (paneId === null || this.activeSelectionMenuPaneId === paneId) {
-      this.activeSelectionMenuPaneId = null;
-    }
+    this.active = transitionPaneTransientUi<TPaneId>(
+      this.active,
+      {
+        type: 'close',
+        kind: 'selection-menu',
+        paneId
+      }
+    );
   }
 
   closeSlashMenu(paneId: TPaneId | null = null) {
@@ -83,23 +92,39 @@ export class PaneTransientUiController<TPaneId extends string> {
       this.deps.getEditorCapabilities(id)?.closeSlashMenu();
       this.deps.getPaneRuntime(id).setSlashMenu({ open: false });
     }
-    if (paneId === null || this.activeSlashMenuPaneId === paneId) {
-      this.activeSlashMenuPaneId = null;
-    }
+    this.active = transitionPaneTransientUi<TPaneId>(
+      this.active,
+      {
+        type: 'close',
+        kind: 'slash-menu',
+        paneId
+      }
+    );
   }
 
   closeWikilinkAutocomplete(paneId: TPaneId | null = null) {
     if (paneId) {
       this.deps.getWikilinkController(paneId).closeWikilinkAutocomplete();
-      if (this.activeWikilinkPaneId === paneId) {
-        this.activeWikilinkPaneId = null;
-      }
+      this.active = transitionPaneTransientUi<TPaneId>(
+        this.active,
+        {
+          type: 'close',
+          kind: 'wikilink-autocomplete',
+          paneId
+        }
+      );
       return;
     }
     for (const id of this.deps.getVisiblePaneIds()) {
       this.deps.getWikilinkController(id).closeWikilinkAutocomplete();
     }
-    this.activeWikilinkPaneId = null;
+    this.active = transitionPaneTransientUi<TPaneId>(
+      this.active,
+      {
+        type: 'close',
+        kind: 'wikilink-autocomplete'
+      }
+    );
   }
 
   closeExcept(paneId: TPaneId) {
@@ -118,9 +143,14 @@ export class PaneTransientUiController<TPaneId extends string> {
   ) {
     if (!snapshot.open) {
       this.deps.getPaneRuntime(paneId).setSlashMenu({ open: false });
-      if (this.activeSlashMenuPaneId === paneId) {
-        this.activeSlashMenuPaneId = null;
-      }
+      this.active = transitionPaneTransientUi<TPaneId>(
+        this.active,
+        {
+          type: 'close',
+          kind: 'slash-menu',
+          paneId
+        }
+      );
       return;
     }
     if (paneId !== this.deps.getActivePaneId()) {
@@ -132,7 +162,14 @@ export class PaneTransientUiController<TPaneId extends string> {
       if (id !== paneId) this.closeSlashMenu(id);
     }
     this.closeWikilinkAutocomplete();
-    this.activeSlashMenuPaneId = paneId;
+    this.active = transitionPaneTransientUi<TPaneId>(
+      this.active,
+      {
+        type: 'open',
+        kind: 'slash-menu',
+        paneId
+      }
+    );
     this.deps.getPaneRuntime(paneId).setSlashMenu({
       open: true,
       view,
@@ -150,9 +187,14 @@ export class PaneTransientUiController<TPaneId extends string> {
   ) {
     if (!snapshot.open) {
       this.deps.getPaneRuntime(paneId).setSelectionMenu({ open: false });
-      if (this.activeSelectionMenuPaneId === paneId) {
-        this.activeSelectionMenuPaneId = null;
-      }
+      this.active = transitionPaneTransientUi<TPaneId>(
+        this.active,
+        {
+          type: 'close',
+          kind: 'selection-menu',
+          paneId
+        }
+      );
       return;
     }
     if (paneId !== this.deps.getActivePaneId()) {
@@ -165,7 +207,14 @@ export class PaneTransientUiController<TPaneId extends string> {
     }
     this.closeWikilinkAutocomplete();
     this.closeSlashMenu(paneId);
-    this.activeSelectionMenuPaneId = paneId;
+    this.active = transitionPaneTransientUi<TPaneId>(
+      this.active,
+      {
+        type: 'open',
+        kind: 'selection-menu',
+        paneId
+      }
+    );
     this.deps.getPaneRuntime(paneId).setSelectionMenu({
       open: true,
       view,
@@ -187,11 +236,23 @@ export class PaneTransientUiController<TPaneId extends string> {
       }
     }
     this.deps.getPaneRuntime(paneId).setWikilinkAutocomplete(next);
-    this.activeWikilinkPaneId = next.active
-      ? paneId
-      : this.activeWikilinkPaneId === paneId
-        ? null
-        : this.activeWikilinkPaneId;
+    this.active = next.active
+      ? transitionPaneTransientUi<TPaneId>(
+          this.active,
+          {
+            type: 'open',
+            kind: 'wikilink-autocomplete',
+            paneId
+          }
+        )
+      : transitionPaneTransientUi<TPaneId>(
+          this.active,
+          {
+            type: 'close',
+            kind: 'wikilink-autocomplete',
+            paneId
+          }
+        );
   }
 
   handleActiveWikilinkChange(

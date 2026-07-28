@@ -106,17 +106,36 @@ export class DocumentRuntime {
   }
 
   private async drainSaveOperations(): Promise<void> {
-    while (this._pendingSaveOperation) {
-      const operation = this._pendingSaveOperation;
-      this._pendingSaveOperation = null;
-      await operation();
+    let firstError: unknown = null;
+    try {
+      while (this._pendingSaveOperation) {
+        const operation = this._pendingSaveOperation;
+        this._pendingSaveOperation = null;
+        try {
+          await operation();
+        } catch (error) {
+          firstError ??= error;
+        }
+      }
+    } finally {
+      this._saveQueue = null;
     }
-    this._saveQueue = null;
+    if (firstError) throw firstError;
   }
 
   private async joinExternalQueue(queue: Promise<void>): Promise<void> {
-    await queue;
-    await this.drainSaveOperations();
+    let firstError: unknown = null;
+    try {
+      await queue;
+    } catch (error) {
+      firstError = error;
+    }
+    try {
+      await this.drainSaveOperations();
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (firstError) throw firstError;
   }
 
   attachedPaneCount(): number {

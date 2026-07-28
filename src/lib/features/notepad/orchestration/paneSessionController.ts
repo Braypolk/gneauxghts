@@ -1,7 +1,19 @@
 import type { SearchItem } from '$lib/types/semantic';
 import type { NoteDraftState, NoteKey, NotepadState } from '$lib/features/notepad/state/noteStore';
+import {
+  getNavigationPaneId as selectNavigationPaneId
+} from '$lib/features/notepad/workspace/paneRoles';
+import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+import {
+  getPaneIdsWithCapability,
+  paneHasCapability
+} from '$lib/features/notepad/workspace/paneCapabilities';
+import {
+  getDocumentNoteId,
+  getDocumentPath
+} from '$lib/features/notepad/document/documentState';
 
-export type PaneKind = 'editor' | 'chat';
+export type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
 
 export interface PaneSessionControllerParams<TPaneId extends string> {
   getPaneOrder: () => TPaneId[];
@@ -35,12 +47,12 @@ export function paneCommandNoteLabel(note: NoteDraftState | null | undefined) {
     return 'Untitled note';
   }
 
-  const trimmed = note.title.trim();
+  const trimmed = note.working.title.trim();
   if (trimmed) {
     return trimmed;
   }
 
-  const path = note.currentNotePath;
+  const path = getDocumentPath(note);
   if (path) {
     return path.split('/').pop()?.replace(/\.md$/i, '') ?? 'Untitled note';
   }
@@ -56,8 +68,8 @@ export function findPaneCommandPreviousItem(
   recentNotes: SearchItem[],
   source: NoteDraftState | null | undefined
 ) {
-  const path = source?.currentNotePath ?? null;
-  const id = source?.currentNoteId ?? null;
+  const path = source ? getDocumentPath(source) : null;
+  const id = source ? getDocumentNoteId(source) : null;
 
   for (const item of recentNotes) {
     if (searchItemMatchesSplitSource(item, path, id)) {
@@ -78,22 +90,28 @@ export function createPaneSessionController<TPaneId extends string>(
   }
 
   function getEditorPaneIds() {
-    return getVisiblePaneIds().filter((paneId) => params.getPaneKind(paneId) === 'editor');
+    return getPaneIdsWithCapability(
+      getVisiblePaneIds(),
+      params.getPaneKind,
+      'edit-document'
+    );
   }
 
   function getNavigationPaneId() {
-    const activePaneId = params.getActivePaneId();
-    if (params.getPaneKind(activePaneId) === 'editor') {
-      return activePaneId;
-    }
-
-    return getEditorPaneIds()[0] ?? activePaneId;
+    return selectNavigationPaneId({
+      paneOrder: getVisiblePaneIds(),
+      activePaneId: params.getActivePaneId(),
+      getPaneKind: params.getPaneKind
+    });
   }
 
   function getPaneIdsForDocument(document: NoteDraftState) {
     return getVisiblePaneIds().filter(
       (paneId) =>
-        params.getPaneKind(paneId) === 'editor' &&
+        paneHasCapability(
+          params.getPaneKind(paneId),
+          'edit-document'
+        ) &&
         params.getPaneDocumentSession(paneId).key === document.key
     );
   }

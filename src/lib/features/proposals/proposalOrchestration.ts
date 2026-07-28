@@ -9,6 +9,10 @@ import { enterProposalReviewView, exitProposalReviewView, resolveProposalHunk } 
 import { proposalTransaction, type ReviewHunkState } from './reviewExtension';
 import { reviewHoldStore, type ReviewHoldStore } from './reviewHold.svelte';
 import { proposalReviewSession, type ProposalReviewSession } from './reviewSession.svelte';
+import {
+  getDocumentPath,
+  updateDocumentMarkdown
+} from '$lib/features/notepad/document/documentState';
 
 export interface ProposalOrchestrationDeps {
   getEditorPaneDocument: (path?: string | null) => NoteDraftState | null;
@@ -70,10 +74,10 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         editor.replaceDocument(review.preview.baseEditorMarkdown, { focus: false });
       }
     }
-    if (review.document.bodyMarkdown !== review.preview.baseEditorMarkdown) {
-      review.document.bodyMarkdown = review.preview.baseEditorMarkdown;
-      review.document.operationRevision += 1;
-    }
+    updateDocumentMarkdown(
+      review.document,
+      review.preview.baseEditorMarkdown
+    );
     holds.end(review.document.key);
     if (active === review) active = null;
     session.clear();
@@ -233,7 +237,10 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       session.setError('Resolve the current proposed change first.');
       return false;
     }
-    if (document.bodyMarkdown !== document.lastSavedMarkdown) {
+    if (
+      document.working.markdown !==
+      (document.savedBaseline?.content.markdown ?? '')
+    ) {
       session.setError('Save current edits before reviewing a proposal.');
       return false;
     }
@@ -248,7 +255,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         conflicted: false,
         reloadConfirming: false,
         hunkSnapshot: [],
-        workingMarkdown: document.bodyMarkdown
+        workingMarkdown: document.working.markdown
       };
       enterProposalReviewView({
         preview,
@@ -314,7 +321,10 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
             request.preview.notePath
           )) ?? deps.getEditorPaneDocument(request.preview.notePath);
       }
-      if (!document?.currentNotePath || document.currentNotePath !== request.preview.notePath) {
+      if (
+        !document ||
+        getDocumentPath(document) !== request.preview.notePath
+      ) {
         session.setError('The target note could not be opened for proposal review.');
         return false;
       }
@@ -473,17 +483,23 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       captureReview(editor, active);
       // The document state is also retained so an ordinary open path mounts
       // the same working copy even before its review extension is attached.
-      document.bodyMarkdown = active.workingMarkdown;
+      updateDocumentMarkdown(
+        document,
+        active.workingMarkdown
+      );
       exitProposalReviewView(editor);
       syncHunkSummary();
     },
     restoreDocument: (document: NoteDraftState) => {
-      if (!active || active.preview.notePath !== document.currentNotePath) return false;
+      if (
+        !active ||
+        active.preview.notePath !== getDocumentPath(document)
+      ) return false;
       active.document = document;
-      if (document.bodyMarkdown !== active.workingMarkdown) {
-        document.bodyMarkdown = active.workingMarkdown;
-        document.operationRevision += 1;
-      }
+      updateDocumentMarkdown(
+        document,
+        active.workingMarkdown
+      );
       return true;
     },
     isReviewingDocument: (document: NoteDraftState) => holds.isHolding(document.key)

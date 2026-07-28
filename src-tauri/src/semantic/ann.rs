@@ -5,7 +5,6 @@ use super::{
         generation_path as core_generation_path, load_graph_and_vectors, new_hnsw_index,
         remove_unreferenced_generations, should_rebuild_for_tombstones, write_generation_artifacts,
         write_json_atomic, AnnGraph, AnnVectors, ANN_DISTANCE_KIND, ANN_EF_CONSTRUCTION, ANN_M,
-        ANN_TOMBSTONE_REBUILD_MIN,
     },
     chunking::SemanticChunk,
     db::{
@@ -742,7 +741,8 @@ fn build_snapshot_streaming(
 
 #[cfg(test)]
 mod tests {
-    use super::{AnnIndexState, ANN_TOMBSTONE_REBUILD_MIN};
+    use super::AnnIndexState;
+    use crate::semantic::ann_core::ANN_TOMBSTONE_REBUILD_MIN;
     use crate::semantic::{
         chunking::SemanticChunk,
         db::{
@@ -869,6 +869,35 @@ mod tests {
             .expect("load referenced generation");
         assert!(recovered.status_snapshot().loaded);
         assert_eq!(recovered.status_snapshot().indexed_chunks, 3);
+    }
+
+    #[test]
+    fn failed_rebuild_keeps_the_loaded_last_good_snapshot() {
+        let temp = TestDir::new("ann-last-good");
+        let cache_dir = temp.path().join("cache");
+        let db_path = temp.path().join("semantic.sqlite3");
+        let mut connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("ensure schema");
+        seed_chunks(&mut connection, "notes/good.md", 3, 3).expect("seed chunks");
+        let ann = AnnIndexState::new(cache_dir, 3, Arc::new(SemanticDebugState::new()))
+            .expect("create ann");
+        ann.rebuild_from_connection(&connection)
+            .expect("publish good snapshot");
+        let before = ann.status_snapshot();
+        let before_hits = ann.search(&[1.0, 0.0, 0.0], 8).expect("search good");
+
+        connection
+            .execute("UPDATE chunks SET embedding_blob = ?1", [vec![0_u8; 4]])
+            .expect("corrupt next rebuild input");
+        assert!(ann.rebuild_from_connection(&connection).is_err());
+
+        let after = ann.status_snapshot();
+        assert!(after.loaded);
+        assert_eq!(after.indexed_chunks, before.indexed_chunks);
+        assert_eq!(
+            ann.search(&[1.0, 0.0, 0.0], 8).expect("search last good"),
+            before_hits
+        );
     }
 
     #[test]

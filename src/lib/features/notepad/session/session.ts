@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CommittedMutationWarning } from "$lib/contracts/committedMutation";
 import type {
   NoteSession,
   StoredImageAsset,
@@ -29,6 +30,8 @@ export interface SessionSnapshot extends Draft {
   lastSavedMarkdown: string;
   lastSavedNoteId: string | null;
   lastSavedPath: string | null;
+  /** Canonical bytes committed; required projections need background repair. */
+  commitWarning?: CommittedMutationWarning;
 }
 
 export type SaveMode = "autosave" | "remember";
@@ -78,6 +81,9 @@ export function createSessionSnapshot(session: NoteSession): SessionSnapshot {
     lastSavedMarkdown: session.markdown,
     lastSavedNoteId: session.noteId,
     lastSavedPath: session.path,
+    ...(session.commitWarning
+      ? { commitWarning: session.commitWarning }
+      : {}),
   };
 }
 
@@ -157,12 +163,15 @@ export async function rememberNoteSession(
   currentPath: string | null,
   { clearLastOpened = true }: { clearLastOpened?: boolean } = {},
 ) {
-  await invoke("remember_note", {
+  const commitWarning = await invoke<CommittedMutationWarning | null>("remember_note", {
     title,
     markdown,
     currentPath,
     clearLastOpened,
   });
+  if (commitWarning) {
+    console.warn("Note was remembered with incomplete projections:", commitWarning);
+  }
 }
 
 function formatPastedImageTimestamp(date: Date) {

@@ -56,3 +56,45 @@ pub(crate) fn load_fixture(relative_path: &str) -> String {
 pub(crate) fn load_json_fixture(relative_path: &str) -> Value {
     serde_json::from_str(&load_fixture(relative_path)).expect("parse json fixture")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{proposals::ProposedTextEdit, semantic::SemanticSettings};
+
+    #[test]
+    fn representative_command_payloads_use_production_serde_contracts() {
+        let fixture = load_json_fixture("contracts/command-payloads.json");
+        let commands = fixture["commands"]
+            .as_object()
+            .expect("commands fixture object");
+
+        let edits: Vec<ProposedTextEdit> = serde_json::from_value(
+            commands["preview_note_change_proposal"]["args"]["edits"].clone(),
+        )
+        .expect("proposal edit arguments deserialize");
+        assert_eq!(edits.len(), 1);
+
+        let settings: SemanticSettings =
+            serde_json::from_value(commands["set_semantic_settings"]["args"]["settings"].clone())
+                .expect("semantic settings arguments deserialize");
+        assert_eq!(
+            serde_json::to_value(settings).expect("semantic settings serialize"),
+            commands["set_semantic_settings"]["result"],
+        );
+
+        for command in [
+            "save_note",
+            "remember_note",
+            "chat_send_message",
+            "preview_note_change_proposal",
+            "commit_note_review",
+            "commit_agent_proposal",
+            "set_semantic_settings",
+            "get_semantic_status",
+            "retry_semantic_index",
+        ] {
+            assert!(commands.contains_key(command), "missing {command} fixture");
+        }
+    }
+}

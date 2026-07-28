@@ -534,23 +534,6 @@ pub(crate) fn delete_tasks_for_note_path(
     })
 }
 
-/// Mark a single task row as deleted.
-pub(crate) fn delete_single_task(task_id: &str, timestamp_millis: u64) -> Result<(), String> {
-    with_state_database_internal(|connection| {
-        ensure_state_schema_idempotent(connection)?;
-        ensure_task_projection_schema(connection)?;
-        connection
-            .execute(
-                "UPDATE app_state_note_tasks
-                 SET deleted_at_millis = ?1, updated_at_millis = ?1
-                 WHERE task_id = ?2",
-                params![to_i64(timestamp_millis)?, task_id],
-            )
-            .map_err(|err| err.to_string())?;
-        Ok(())
-    })
-}
-
 /// Read all live (non-deleted) projection rows for a note id.
 pub(crate) fn load_tasks_for_note_id(note_id: &str) -> Result<Vec<TaskRecord>, String> {
     with_state_database_internal(|connection| {

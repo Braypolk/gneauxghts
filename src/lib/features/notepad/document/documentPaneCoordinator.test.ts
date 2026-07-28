@@ -73,4 +73,61 @@ describe('documentPaneCoordinator', () => {
       ['right', next, { restoreCursor: true }]
     ]);
   });
+
+  it('replaces a specifically targeted open document instead of the navigation document', async () => {
+    const navigation = note('path:/vault/current.md', 'current');
+    const target = note('path:/vault/tasks.md', 'updated tasks');
+    const replaceContentInPlace = vi.fn(async () => 'applied');
+    const coordinator = createDocumentPaneCoordinator({
+      paneLifecycle: { replaceContentInPlace } as never,
+      getPaneRuntime: () => ({}) as never,
+      getVisiblePaneIds: () => ['left', 'right'],
+      getPaneIdsForDocument: (document) =>
+        document === target ? ['right'] : ['left'],
+      getPaneKind: () => 'editor',
+      getNavigationDocument: () => navigation,
+      getNavigationPaneId: () => 'left',
+      getPaneDocument: (paneId) =>
+        paneId === 'right' ? target : navigation,
+      getNoteByKey: () => target
+    });
+
+    await coordinator.replaceDocumentContentInPlace(
+      target,
+      target.working.markdown
+    );
+
+    expect(replaceContentInPlace).toHaveBeenCalledWith(
+      'right',
+      'updated tasks',
+      target,
+      true
+    );
+  });
+
+  it('reports unavailable when no editable pane can apply a targeted replacement', async () => {
+    const document = note('path:/vault/shared.md', 'updated');
+    const replaceContentInPlace = vi.fn();
+    const coordinator = createDocumentPaneCoordinator({
+      paneLifecycle: {
+        replaceContentInPlace
+      } as never,
+      getPaneRuntime: () => ({}) as never,
+      getVisiblePaneIds: () => ['left'],
+      getPaneIdsForDocument: () => ['left'],
+      getPaneKind: () => 'chat',
+      getNavigationDocument: () => document,
+      getNavigationPaneId: () => 'left',
+      getPaneDocument: () => document,
+      getNoteByKey: () => document
+    });
+
+    await expect(
+      coordinator.replaceDocumentContentInPlace(
+        document,
+        'from disk'
+      )
+    ).resolves.toBe('unavailable');
+    expect(replaceContentInPlace).not.toHaveBeenCalled();
+  });
 });

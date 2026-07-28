@@ -14,7 +14,12 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{secrets, semantic::db::content_hash};
+use crate::{
+    proposals::{canonical_agent_commit_target, editor_visible_content_hash},
+    secrets,
+    semantic::db::content_hash,
+    state::is_valid_note_path,
+};
 
 const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 const DEFAULT_LOCAL_MODEL: &str = "";
@@ -311,6 +316,13 @@ pub(crate) struct ChatAgentProposal {
     pub(crate) updated_at_millis: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentProposalCommitIntent {
+    pub(crate) proposal_id: String,
+    pub(crate) target_path: PathBuf,
+    pub(crate) intended_editor_content_hash: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatStreamEvent {
@@ -538,6 +550,8 @@ impl ChatService {
                    preview_json TEXT NOT NULL,
                    status TEXT NOT NULL DEFAULT 'pending',
                    superseded_by TEXT,
+                   commit_target_path TEXT,
+                   intended_editor_content_hash TEXT,
                    created_at_millis INTEGER NOT NULL,
                    updated_at_millis INTEGER NOT NULL
                  );
@@ -600,6 +614,14 @@ impl ChatService {
         ).is_ok();
         let _ = connection.execute("ALTER TABLE chat_messages ADD COLUMN provider TEXT", []);
         let _ = connection.execute("ALTER TABLE chat_messages ADD COLUMN model TEXT", []);
+        let _ = connection.execute(
+            "ALTER TABLE chat_agent_proposals ADD COLUMN commit_target_path TEXT",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE chat_agent_proposals ADD COLUMN intended_editor_content_hash TEXT",
+            [],
+        );
         let defaults = ChatSettings::default();
         connection
             .execute(
@@ -659,8 +681,77 @@ impl ChatService {
             )
             .map_err(|error| error.to_string())?;
         drop(connection);
+        self.recover_agent_proposal_commits()?;
+        let interrupted_conversations = self.recover_interrupted_requests()?;
+        for conversation_id in interrupted_conversations {
+            // The database is authoritative and has already committed atomically.
+            // Projection refresh is best effort, matching ordinary chat completion.
+            let _ = self.write_projection(&conversation_id, false);
+        }
         self.backfill_default_conversation_titles()?;
         Ok(())
+    }
+
+    fn recover_interrupted_requests(&self) -> Result<Vec<String>, String> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        let conversation_ids = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT conversation_id
+                     FROM chat_agent_runs
+                     WHERE status = 'running'
+                     UNION
+                     SELECT conversation_id
+                     FROM chat_messages
+                     WHERE role = 'assistant' AND status = 'streaming'
+                     ORDER BY conversation_id",
+                )
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            rows
+        };
+        if conversation_ids.is_empty() {
+            transaction.commit().map_err(|error| error.to_string())?;
+            return Ok(conversation_ids);
+        }
+
+        let now = to_i64(now_millis())?;
+        transaction
+            .execute(
+                "UPDATE chat_agent_runs
+                 SET status = CASE (
+                       SELECT status
+                       FROM chat_messages
+                       WHERE id = chat_agent_runs.assistant_message_id
+                     )
+                       WHEN 'complete' THEN 'completed'
+                       WHEN 'error' THEN 'error'
+                       WHEN 'cancelled' THEN 'cancelled'
+                       WHEN 'streaming' THEN 'cancelled'
+                       ELSE 'cancelled'
+                     END,
+                     updated_at_millis = ?1
+                 WHERE status = 'running'",
+                [now],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "UPDATE chat_messages
+                 SET status = 'cancelled'
+                 WHERE role = 'assistant' AND status = 'streaming'",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        Ok(conversation_ids)
     }
 
     fn backfill_default_conversation_titles(&self) -> Result<(), String> {
@@ -2171,6 +2262,196 @@ impl ChatService {
         self.get_agent_proposal(proposal_id)
     }
 
+    pub(crate) fn begin_agent_proposal_commit(
+        &self,
+        proposal_id: &str,
+        target_path: &Path,
+        intended_editor_content_hash: &str,
+    ) -> Result<AgentProposalCommitIntent, String> {
+        if intended_editor_content_hash.trim().is_empty() {
+            return Err("A proposal commit intent requires a content hash".to_string());
+        }
+        let target_path = canonical_agent_commit_target(&self.inner.notes_root, target_path)?;
+        let target = target_path.to_string_lossy().into_owned();
+        let now = to_i64(now_millis())?;
+        let connection = self.connection()?;
+        let changed = connection
+            .execute(
+                "UPDATE chat_agent_proposals
+                 SET status = 'committing', commit_target_path = ?2,
+                     intended_editor_content_hash = ?3, updated_at_millis = ?4
+                 WHERE id = ?1 AND status IN ('pending', 'conflict')",
+                params![proposal_id, target, intended_editor_content_hash, now],
+            )
+            .map_err(|error| error.to_string())?;
+        if changed == 0 {
+            let existing = connection
+                .query_row(
+                    "SELECT status, commit_target_path, intended_editor_content_hash
+                     FROM chat_agent_proposals WHERE id = ?1",
+                    [proposal_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|error| error.to_string())?;
+            match existing {
+                Some((status, existing_target, existing_hash))
+                    if status == "committing"
+                        && existing_target.as_deref() == Some(target.as_str())
+                        && existing_hash.as_deref() == Some(intended_editor_content_hash) => {}
+                Some((status, _, _)) => {
+                    return Err(format!(
+                        "Proposal cannot enter committing state from {status}"
+                    ));
+                }
+                None => return Err("Proposal not found".to_string()),
+            }
+        }
+        Ok(AgentProposalCommitIntent {
+            proposal_id: proposal_id.to_string(),
+            target_path,
+            intended_editor_content_hash: intended_editor_content_hash.to_string(),
+        })
+    }
+
+    pub(crate) fn finish_agent_proposal_commit(
+        &self,
+        proposal_id: &str,
+        status: &str,
+    ) -> Result<ChatAgentProposal, String> {
+        if !matches!(status, "committed" | "conflict") {
+            return Err("Invalid proposal commit resolution".to_string());
+        }
+        let connection = self.connection()?;
+        let changed = connection
+            .execute(
+                "UPDATE chat_agent_proposals SET status = ?2, updated_at_millis = ?3
+                 WHERE id = ?1 AND status = 'committing'",
+                params![proposal_id, status, to_i64(now_millis())?],
+            )
+            .map_err(|error| error.to_string())?;
+        let proposal = self.get_agent_proposal(proposal_id)?;
+        if changed == 0 && proposal.status != status {
+            return Err(format!(
+                "Proposal commit cannot resolve as {status} from {}",
+                proposal.status
+            ));
+        }
+        Ok(proposal)
+    }
+
+    /// Resolve interrupted proposal commits from filesystem proof only. This
+    /// never reapplies a proposal: exact editor-visible content at the recorded
+    /// target proves commit, and every other state becomes a conflict.
+    pub(crate) fn recover_agent_proposal_commits(&self) -> Result<usize, String> {
+        let connection = self.connection()?;
+        let intents = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, commit_target_path, intended_editor_content_hash
+                     FROM chat_agent_proposals
+                     WHERE status = 'committing'
+                     ORDER BY created_at_millis, id",
+                )
+                .map_err(|error| error.to_string())?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            rows
+        };
+        drop(connection);
+
+        for (proposal_id, target_path, intended_hash) in &intents {
+            self.recover_agent_proposal_commit_intent(
+                proposal_id,
+                target_path.as_deref(),
+                intended_hash.as_deref(),
+            )?;
+        }
+        Ok(intents.len())
+    }
+
+    /// Recover one known in-process failure without resolving unrelated
+    /// commits that may still be between their durable intent and file write.
+    pub(crate) fn recover_agent_proposal_commit(&self, proposal_id: &str) -> Result<bool, String> {
+        let intent = self
+            .connection()?
+            .query_row(
+                "SELECT commit_target_path, intended_editor_content_hash
+                 FROM chat_agent_proposals
+                 WHERE id = ?1 AND status = 'committing'",
+                [proposal_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        let Some((target_path, intended_hash)) = intent else {
+            return Ok(false);
+        };
+        self.recover_agent_proposal_commit_intent(
+            proposal_id,
+            target_path.as_deref(),
+            intended_hash.as_deref(),
+        )?;
+        Ok(true)
+    }
+
+    fn recover_agent_proposal_commit_intent(
+        &self,
+        proposal_id: &str,
+        target_path: Option<&str>,
+        intended_hash: Option<&str>,
+    ) -> Result<(), String> {
+        let proved = target_path
+            .zip(intended_hash)
+            .is_some_and(|(target_path, intended_hash)| {
+                self.proposal_commit_target_matches(target_path, intended_hash)
+            });
+        self.finish_agent_proposal_commit(
+            proposal_id,
+            if proved { "committed" } else { "conflict" },
+        )?;
+        Ok(())
+    }
+
+    fn proposal_commit_target_matches(&self, target_path: &str, intended_hash: &str) -> bool {
+        let Ok(notes_root) = fs::canonicalize(&self.inner.notes_root) else {
+            return false;
+        };
+        let Ok(target_path) = fs::canonicalize(target_path) else {
+            return false;
+        };
+        if !is_valid_note_path(&target_path, &notes_root) || !target_path.is_file() {
+            return false;
+        }
+        let Ok(markdown) = fs::read_to_string(&target_path) else {
+            return false;
+        };
+        if crate::note::reject_chat_projection_write(&markdown).is_err() {
+            return false;
+        }
+        editor_visible_content_hash(&target_path, &markdown) == intended_hash
+    }
+
     fn refresh_continuation_summary(&self, conversation_id: &str) -> Result<(), String> {
         let connection = self.connection()?;
         let messages = load_messages(&connection, conversation_id)?;
@@ -3313,7 +3594,7 @@ fn to_i64(value: u64) -> Result<i64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::TestDir;
+    use crate::test_support::{load_json_fixture, TestDir};
     use serde_json::json;
 
     fn service(name: &str) -> (TestDir, ChatService) {
@@ -3361,6 +3642,382 @@ mod tests {
             )
             .unwrap();
         (run_id, assistant_id)
+    }
+
+    fn stage_test_proposal(
+        service: &ChatService,
+        kind: &str,
+        note_id: Option<&str>,
+        suggested_path: Option<&Path>,
+        title: &str,
+        proposed_markdown: &str,
+    ) -> ChatAgentProposal {
+        let conversation = service.create_conversation(None, None).unwrap();
+        let (run_id, assistant_id) = seed_agent_run(service, &conversation.summary.id, "commit", 1);
+        service
+            .stage_agent_proposal(
+                &run_id,
+                &conversation.summary.id,
+                &assistant_id,
+                kind,
+                note_id,
+                suggested_path.map(|path| path.to_string_lossy()).as_deref(),
+                title,
+                Some("base-hash"),
+                &json!({"title":title,"markdown":proposed_markdown}),
+                &json!({"proposedEditorMarkdown":proposed_markdown}),
+            )
+            .unwrap()
+    }
+
+    fn seed_streaming_agent_run(
+        service: &ChatService,
+        conversation_id: &str,
+        suffix: &str,
+        partial_content: &str,
+    ) -> (String, String, String) {
+        let user_id = format!("stream-user-{suffix}");
+        let assistant_id = format!("stream-assistant-{suffix}");
+        let connection = service.connection().unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_messages
+                 (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+                 VALUES (?1, ?2, 1, 'user', 'complete', 'request', 1, 1)",
+                params![user_id, conversation_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_messages
+                 (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+                 VALUES (?1, ?2, 2, 'assistant', 'streaming', ?3, 1, 2)",
+                params![assistant_id, conversation_id, partial_content],
+            )
+            .unwrap();
+        drop(connection);
+        let run_id = service
+            .create_agent_run(
+                conversation_id,
+                &user_id,
+                &assistant_id,
+                None,
+                "openai",
+                "test-model",
+            )
+            .unwrap();
+        (run_id, user_id, assistant_id)
+    }
+
+    #[test]
+    fn streaming_events_match_contract_fixture() {
+        let fixture = load_json_fixture("contracts/chat-stream-events.json");
+        let conversation = ChatConversationSummary {
+            id: "conversation-1".to_string(),
+            title: "Contract conversation".to_string(),
+            access: VaultAccess::Full,
+            status: "active".to_string(),
+            created_at_millis: 1_699_999_999_000,
+            updated_at_millis: 1_700_000_000_000,
+            message_count: 2,
+            detached: false,
+            provider: "openai".to_string(),
+            model: "gpt-5.6-terra".to_string(),
+        };
+        let mut started = stream_payload("request-1", "conversation-1", "message-assistant-1");
+        started.conversation = Some(conversation.clone());
+        let mut delta = stream_payload("request-1", "conversation-1", "message-assistant-1");
+        delta.delta = Some("Partial".to_string());
+        let mut source = stream_payload("request-1", "conversation-1", "message-assistant-1");
+        source.source = Some(ChatSource {
+            kind: "note".to_string(),
+            note_id: Some("note-1".to_string()),
+            note_path: Some("/vault/Title.md".to_string()),
+            title: "Title".to_string(),
+            excerpt: "Relevant text".to_string(),
+            url: None,
+            anchor: Some("section".to_string()),
+        });
+        let mut completed = stream_payload("request-1", "conversation-1", "message-assistant-1");
+        completed.conversation = Some(conversation.clone());
+        completed.content = Some("Complete response".to_string());
+        let mut failed = stream_payload("request-1", "conversation-1", "message-assistant-1");
+        failed.conversation = Some(conversation.clone());
+        failed.content = Some("Partial response".to_string());
+        failed.error = Some("Provider disconnected".to_string());
+        let mut cancelled = stream_payload("request-1", "conversation-1", "message-assistant-1");
+        cancelled.conversation = Some(conversation);
+        cancelled.content = Some("Partial response".to_string());
+
+        let actual = [
+            ("chat://started", started),
+            ("chat://text-delta", delta),
+            ("chat://source", source),
+            ("chat://completed", completed),
+            ("chat://failed", failed),
+            ("chat://cancelled", cancelled),
+        ]
+        .into_iter()
+        .map(|(channel, payload)| {
+            json!({
+                "channel": channel,
+                "payload": payload,
+            })
+        })
+        .collect::<Vec<_>>();
+
+        assert_eq!(fixture["version"], 1);
+        assert_eq!(fixture["events"], json!(actual));
+    }
+
+    #[test]
+    fn startup_preserves_partial_chat_output_and_interrupts_its_run() {
+        let (root, service) = service("chat-interrupted-startup");
+        let data = root.path().join(".gneauxghts");
+        let conversation = service.create_conversation(None, None).unwrap();
+        let (run_id, _, assistant_id) = seed_streaming_agent_run(
+            &service,
+            &conversation.summary.id,
+            "partial",
+            "A durable partial response",
+        );
+        drop(service);
+
+        let reopened =
+            ChatService::new(root.path().to_path_buf(), data).expect("reopen chat service");
+        let recovered = reopened
+            .get_conversation(&conversation.summary.id)
+            .expect("load recovered conversation");
+        let assistant = recovered
+            .messages
+            .iter()
+            .find(|message| message.id == assistant_id)
+            .expect("recovered assistant message");
+        assert_eq!(assistant.status, "cancelled");
+        assert_eq!(assistant.content, "A durable partial response");
+
+        let run_status = reopened
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT status FROM chat_agent_runs WHERE id = ?1",
+                [&run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(run_status, "cancelled");
+    }
+
+    #[test]
+    fn interrupted_chat_startup_recovery_is_idempotent() {
+        let (root, service) = service("chat-interrupted-idempotent");
+        let data = root.path().join(".gneauxghts");
+        let conversation = service.create_conversation(None, None).unwrap();
+        let (run_id, _, assistant_id) =
+            seed_streaming_agent_run(&service, &conversation.summary.id, "idempotent", "Partial");
+        drop(service);
+
+        let first =
+            ChatService::new(root.path().to_path_buf(), data.clone()).expect("first restart");
+        let first_state = first
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT m.status, m.content, r.status, r.updated_at_millis
+                 FROM chat_messages m
+                 JOIN chat_agent_runs r ON r.assistant_message_id = m.id
+                 WHERE m.id = ?1 AND r.id = ?2",
+                params![assistant_id, run_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        drop(first);
+
+        let second = ChatService::new(root.path().to_path_buf(), data).expect("second restart");
+        let second_state = second
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT m.status, m.content, r.status, r.updated_at_millis
+                 FROM chat_messages m
+                 JOIN chat_agent_runs r ON r.assistant_message_id = m.id
+                 WHERE m.id = ?1 AND r.id = ?2",
+                params![assistant_id, run_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(second_state, first_state);
+        assert_eq!(
+            second_state,
+            (
+                "cancelled".to_string(),
+                "Partial".to_string(),
+                "cancelled".to_string(),
+                first_state.3,
+            )
+        );
+    }
+
+    #[test]
+    fn startup_reconciles_every_running_run_from_its_durable_assistant_status() {
+        let (root, service) = service("chat-running-run-reconciliation");
+        let data = root.path().join(".gneauxghts");
+        let cases = [
+            ("complete", "complete", "completed"),
+            ("error", "error", "error"),
+            ("cancelled", "cancelled", "cancelled"),
+            ("streaming", "streaming", "cancelled"),
+        ];
+        let mut records = Vec::new();
+        for (suffix, message_status, expected_run_status) in cases {
+            let conversation = service.create_conversation(None, None).unwrap();
+            let partial = format!("durable content for {suffix}");
+            let (run_id, _, assistant_id) =
+                seed_streaming_agent_run(&service, &conversation.summary.id, suffix, &partial);
+            if message_status != "streaming" {
+                service
+                    .connection()
+                    .unwrap()
+                    .execute(
+                        "UPDATE chat_messages SET status = ?2 WHERE id = ?1",
+                        params![assistant_id, message_status],
+                    )
+                    .unwrap();
+            }
+            records.push((
+                run_id,
+                assistant_id,
+                message_status.to_string(),
+                expected_run_status.to_string(),
+                partial,
+            ));
+        }
+        drop(service);
+
+        let first = ChatService::new(root.path().to_path_buf(), data.clone())
+            .expect("reconcile running runs");
+        let mut first_states = Vec::new();
+        for (run_id, assistant_id, message_status, expected_run_status, content) in &records {
+            let state = first
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT m.status, m.content, r.status, r.updated_at_millis
+                     FROM chat_messages m
+                     JOIN chat_agent_runs r ON r.assistant_message_id = m.id
+                     WHERE m.id = ?1 AND r.id = ?2",
+                    params![assistant_id, run_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, i64>(3)?,
+                        ))
+                    },
+                )
+                .unwrap();
+            let expected_message_status = if message_status == "streaming" {
+                "cancelled"
+            } else {
+                message_status
+            };
+            assert_eq!(state.0, expected_message_status);
+            assert_eq!(&state.1, content);
+            assert_eq!(&state.2, expected_run_status);
+            first_states.push(state);
+        }
+        drop(first);
+
+        let second =
+            ChatService::new(root.path().to_path_buf(), data).expect("repeat reconciliation");
+        for ((run_id, assistant_id, _, _, _), first_state) in
+            records.iter().zip(first_states.iter())
+        {
+            let second_state = second
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT m.status, m.content, r.status, r.updated_at_millis
+                     FROM chat_messages m
+                     JOIN chat_agent_runs r ON r.assistant_message_id = m.id
+                     WHERE m.id = ?1 AND r.id = ?2",
+                    params![assistant_id, run_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, i64>(3)?,
+                        ))
+                    },
+                )
+                .unwrap();
+            assert_eq!(&second_state, first_state);
+        }
+    }
+
+    #[test]
+    fn retry_agent_run_keeps_interrupted_message_lineage_across_restart() {
+        let (root, service) = service("chat-retry-lineage");
+        let data = root.path().join(".gneauxghts");
+        let conversation = service.create_conversation(None, None).unwrap();
+        let (_, user_id, interrupted_assistant_id) =
+            seed_streaming_agent_run(&service, &conversation.summary.id, "original", "Partial");
+        drop(service);
+
+        let recovered =
+            ChatService::new(root.path().to_path_buf(), data.clone()).expect("recover original");
+        let retry_assistant_id = "stream-assistant-retry";
+        recovered
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO chat_messages
+                 (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+                 VALUES (?1, ?2, 3, 'assistant', 'streaming', 'Retry partial', 1, 3)",
+                params![retry_assistant_id, conversation.summary.id],
+            )
+            .unwrap();
+        let retry_run_id = recovered
+            .create_agent_run(
+                &conversation.summary.id,
+                &user_id,
+                retry_assistant_id,
+                Some(&interrupted_assistant_id),
+                "openai",
+                "test-model",
+            )
+            .unwrap();
+        drop(recovered);
+
+        let reopened = ChatService::new(root.path().to_path_buf(), data).expect("recover retry");
+        let (retry_of, run_status) = reopened
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT retry_of_message_id, status
+                 FROM chat_agent_runs WHERE id = ?1",
+                [&retry_run_id],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(retry_of.as_deref(), Some(interrupted_assistant_id.as_str()));
+        assert_eq!(run_status, "cancelled");
     }
 
     #[test]
@@ -3792,6 +4449,314 @@ mod tests {
                 .status,
             "dismissed"
         );
+    }
+
+    #[test]
+    fn proposal_commit_intent_converges_to_committed_after_success() {
+        let (root, service) = service("chat-proposal-commit-success");
+        let path = root.path().join("Plan.md");
+        let original = "# Plan\n\nOld body";
+        fs::write(&path, original).unwrap();
+        let proposal =
+            stage_test_proposal(&service, "update", Some("note-1"), None, "Plan", "New body");
+        let plan = crate::proposals::plan_agent_update_commit(
+            root.path(),
+            &path.to_string_lossy(),
+            "New body",
+        )
+        .unwrap();
+
+        let intent = service
+            .begin_agent_proposal_commit(
+                &proposal.id,
+                &plan.target_path,
+                &plan.intended_editor_content_hash,
+            )
+            .unwrap();
+        assert_eq!(
+            service.get_agent_proposal(&proposal.id).unwrap().status,
+            "committing"
+        );
+        let result = crate::proposals::commit_note_review(
+            root.path(),
+            intent.target_path.to_string_lossy().into_owned(),
+            content_hash(original),
+            "New body".to_string(),
+        )
+        .unwrap();
+        assert_eq!(result.status, "committed");
+
+        let resolved = service
+            .finish_agent_proposal_commit(&proposal.id, "committed")
+            .unwrap();
+        assert_eq!(resolved.status, "committed");
+    }
+
+    #[test]
+    fn startup_recovers_canonical_write_after_status_update_was_missed() {
+        let (root, service) = service("chat-proposal-startup-recovery");
+        let data = root.path().join(".gneauxghts");
+        let path = root.path().join("Plan.md");
+        let original = "# Plan\n\nOld body";
+        fs::write(&path, original).unwrap();
+        let proposal = stage_test_proposal(
+            &service,
+            "update",
+            Some("note-1"),
+            None,
+            "Plan",
+            "\n\nRecovered body",
+        );
+        let plan = crate::proposals::plan_agent_update_commit(
+            root.path(),
+            &path.to_string_lossy(),
+            "\n\nRecovered body",
+        )
+        .unwrap();
+        let intent = service
+            .begin_agent_proposal_commit(
+                &proposal.id,
+                &plan.target_path,
+                &plan.intended_editor_content_hash,
+            )
+            .unwrap();
+        crate::proposals::commit_note_review(
+            root.path(),
+            intent.target_path.to_string_lossy().into_owned(),
+            content_hash(original),
+            "\n\nRecovered body".to_string(),
+        )
+        .unwrap();
+        drop(service);
+
+        let reopened = ChatService::new(root.path().to_path_buf(), data).unwrap();
+        assert_eq!(
+            reopened.get_agent_proposal(&proposal.id).unwrap().status,
+            "committed"
+        );
+    }
+
+    #[test]
+    fn explicit_recovery_converges_after_status_write_failure() {
+        let (root, service) = service("chat-proposal-status-write-recovery");
+        let path = root.path().join("Plan.md");
+        let original = "# Plan\n\nOld body";
+        fs::write(&path, original).unwrap();
+        let proposal = stage_test_proposal(
+            &service,
+            "update",
+            Some("note-1"),
+            None,
+            "Plan",
+            "Recovered body",
+        );
+        let plan = crate::proposals::plan_agent_update_commit(
+            root.path(),
+            &path.to_string_lossy(),
+            "Recovered body",
+        )
+        .unwrap();
+        let intent = service
+            .begin_agent_proposal_commit(
+                &proposal.id,
+                &plan.target_path,
+                &plan.intended_editor_content_hash,
+            )
+            .unwrap();
+        crate::proposals::commit_note_review(
+            root.path(),
+            intent.target_path.to_string_lossy().into_owned(),
+            content_hash(original),
+            "Recovered body".to_string(),
+        )
+        .unwrap();
+        service
+            .connection()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_proposal_commit_status
+                 BEFORE UPDATE OF status ON chat_agent_proposals
+                 WHEN NEW.status = 'committed'
+                 BEGIN
+                   SELECT RAISE(FAIL, 'injected status write failure');
+                 END;",
+            )
+            .unwrap();
+        assert!(service
+            .finish_agent_proposal_commit(&proposal.id, "committed")
+            .is_err());
+        assert_eq!(
+            service.get_agent_proposal(&proposal.id).unwrap().status,
+            "committing"
+        );
+        service
+            .connection()
+            .unwrap()
+            .execute("DROP TRIGGER fail_proposal_commit_status", [])
+            .unwrap();
+
+        assert!(service.recover_agent_proposal_commit(&proposal.id).unwrap());
+        assert_eq!(
+            service.get_agent_proposal(&proposal.id).unwrap().status,
+            "committed"
+        );
+    }
+
+    #[test]
+    fn mismatched_commit_target_recovers_as_conflict_without_reapplying() {
+        let (root, service) = service("chat-proposal-mismatch-recovery");
+        let path = root.path().join("Plan.md");
+        fs::write(&path, "# Plan\n\nExisting body").unwrap();
+        let proposal = stage_test_proposal(
+            &service,
+            "update",
+            Some("note-1"),
+            None,
+            "Plan",
+            "Intended body",
+        );
+        let plan = crate::proposals::plan_agent_update_commit(
+            root.path(),
+            &path.to_string_lossy(),
+            "Intended body",
+        )
+        .unwrap();
+        service
+            .begin_agent_proposal_commit(
+                &proposal.id,
+                &plan.target_path,
+                &plan.intended_editor_content_hash,
+            )
+            .unwrap();
+
+        assert_eq!(service.recover_agent_proposal_commits().unwrap(), 1);
+        assert_eq!(
+            service.get_agent_proposal(&proposal.id).unwrap().status,
+            "conflict"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "# Plan\n\nExisting body"
+        );
+    }
+
+    #[test]
+    fn fixed_creation_target_collision_becomes_conflict_without_new_path() {
+        let (root, service) = service("chat-proposal-create-collision");
+        let target = root.path().join("Created.md");
+        let proposal = stage_test_proposal(
+            &service,
+            "create",
+            None,
+            Some(&target),
+            "Created",
+            "Intended body",
+        );
+        let plan = crate::proposals::plan_agent_creation_commit(
+            root.path(),
+            &target.to_string_lossy(),
+            "Intended body",
+        )
+        .unwrap();
+        let intent = service
+            .begin_agent_proposal_commit(
+                &proposal.id,
+                &plan.target_path,
+                &plan.intended_editor_content_hash,
+            )
+            .unwrap();
+        fs::write(&target, "Occupying note").unwrap();
+
+        let result = crate::proposals::commit_note_creation_at_path(
+            root.path(),
+            &intent.target_path,
+            "Created".to_string(),
+            "Intended body".to_string(),
+        )
+        .unwrap();
+        assert_eq!(result.status, "conflict");
+        service
+            .finish_agent_proposal_commit(&proposal.id, "conflict")
+            .unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "Occupying note");
+        assert!(!root.path().join("Created 2.md").exists());
+    }
+
+    #[test]
+    fn proposal_commit_recovery_is_idempotent() {
+        let (root, service) = service("chat-proposal-recovery-idempotent");
+        let target = root.path().join("Missing.md");
+        let proposal = stage_test_proposal(
+            &service,
+            "create",
+            None,
+            Some(&target),
+            "Missing",
+            "Intended body",
+        );
+        let plan = crate::proposals::plan_agent_creation_commit(
+            root.path(),
+            &target.to_string_lossy(),
+            "Intended body",
+        )
+        .unwrap();
+        service
+            .begin_agent_proposal_commit(
+                &proposal.id,
+                &plan.target_path,
+                &plan.intended_editor_content_hash,
+            )
+            .unwrap();
+
+        assert_eq!(service.recover_agent_proposal_commits().unwrap(), 1);
+        assert_eq!(service.recover_agent_proposal_commits().unwrap(), 0);
+        assert_eq!(
+            service.get_agent_proposal(&proposal.id).unwrap().status,
+            "conflict"
+        );
+    }
+
+    #[test]
+    fn proposal_commit_intent_columns_migrate_existing_database() {
+        let root = TestDir::new("chat-proposal-intent-migration");
+        let data = root.path().join(".gneauxghts");
+        fs::create_dir_all(&data).unwrap();
+        let db_path = data.join("ai.sqlite3");
+        Connection::open(&db_path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE chat_agent_proposals (
+                   id TEXT PRIMARY KEY,
+                   run_id TEXT NOT NULL,
+                   conversation_id TEXT NOT NULL,
+                   assistant_message_id TEXT NOT NULL,
+                   kind TEXT NOT NULL,
+                   note_id TEXT,
+                   suggested_path TEXT,
+                   title TEXT NOT NULL,
+                   base_hash TEXT,
+                   payload_json TEXT NOT NULL,
+                   preview_json TEXT NOT NULL,
+                   status TEXT NOT NULL DEFAULT 'pending',
+                   superseded_by TEXT,
+                   created_at_millis INTEGER NOT NULL,
+                   updated_at_millis INTEGER NOT NULL
+                 );",
+            )
+            .unwrap();
+
+        let service = ChatService::new(root.path().to_path_buf(), data).unwrap();
+        let connection = service.connection().unwrap();
+        let mut statement = connection
+            .prepare("PRAGMA table_info(chat_agent_proposals)")
+            .unwrap();
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<HashSet<_>, _>>()
+            .unwrap();
+        assert!(columns.contains("commit_target_path"));
+        assert!(columns.contains("intended_editor_content_hash"));
     }
 
     #[test]

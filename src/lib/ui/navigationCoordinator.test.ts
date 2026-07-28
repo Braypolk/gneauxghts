@@ -59,7 +59,7 @@ describe('createNavigationCoordinator', () => {
     expect(currentPath).toBe('/');
   });
 
-  it('continues navigation when flushing pending work fails', async () => {
+  it('keeps the current route when flushing pending work fails', async () => {
     let currentPath = '/';
     const onFlushError = vi.fn();
     const navigate = vi.fn(async (href: string) => {
@@ -78,7 +78,8 @@ describe('createNavigationCoordinator', () => {
     await coordinator.request('/map');
 
     expect(onFlushError).toHaveBeenCalledOnce();
-    expect(navigate).toHaveBeenCalledWith('/map');
+    expect(navigate).not.toHaveBeenCalled();
+    expect(currentPath).toBe('/');
   });
 
   it('force-remounts when page.url already matches the target before goto', async () => {

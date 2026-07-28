@@ -186,6 +186,7 @@ pub(crate) fn read_note_session_from_path(note_path: &Path) -> Result<NoteSessio
         title,
         markdown: body,
         path: Some(note_path.to_string_lossy().into_owned()),
+        commit_warning: None,
     })
 }
 

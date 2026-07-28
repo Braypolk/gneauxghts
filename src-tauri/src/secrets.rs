@@ -24,8 +24,7 @@ pub(crate) fn has_openai_api_key(_app: &AppHandle) -> Result<bool, String> {
     }
 
     #[cfg(not(target_os = "macos"))]
-    _app
-        .keyring()
+    _app.keyring()
         .store
         .exists_nonempty(OPENAI_API_KEY_ACCOUNT)
         .map_err(|error| format!("Unable to inspect secure credential storage: {error}"))

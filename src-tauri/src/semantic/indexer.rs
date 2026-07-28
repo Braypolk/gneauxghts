@@ -16,7 +16,7 @@ use super::{
     debug::SemanticDebugState,
     embed::{EmbeddingInputKind, EmbeddingProvider, EMBEDDING_BATCH_SIZE},
     note_ann::NoteAnnIndexState,
-    RuntimeState,
+    RuntimeState, SemanticHealth, SEMANTIC_RETRY_MAX_ATTEMPTS,
 };
 use crate::{
     note, path_utils::collect_markdown_files_recursively, state::derive_file_stem,
@@ -77,7 +77,7 @@ pub(crate) struct PendingNoteMove {
     pub(crate) modified_millis: u64,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct PendingIndexState {
     pub(crate) full_scan_requested: bool,
     pub(crate) force_full_scan: bool,
@@ -233,6 +233,13 @@ fn process_pending_jobs(
     debug: &Arc<SemanticDebugState>,
     background_gate: &Arc<BackgroundWorkGate>,
 ) {
+    if runtime
+        .lock()
+        .map(|state| state.retry_exhausted)
+        .unwrap_or(true)
+    {
+        return;
+    }
     let mut atlas_retry_attempts = HashMap::<AtlasGenerationKey, u32>::new();
     let mut label_retry_attempts = HashMap::<AtlasGenerationKey, u32>::new();
     loop {
@@ -246,6 +253,7 @@ fn process_pending_jobs(
             }
             std::mem::take(&mut *pending)
         };
+        let retry_batch = batch.clone();
         let deferred_explicit_updates = if batch.rebuild_requested || batch.full_scan_requested {
             Some((
                 batch.note_updates.clone(),
@@ -355,7 +363,7 @@ fn process_pending_jobs(
         } else if batch.automatic_rebuild_requested {
             handled_automatic_rebuild = true;
             update_runtime(runtime, |state| {
-                state.recovery_state = "rebuilding".to_string();
+                state.health = SemanticHealth::Working;
                 state.rebuild_reason = Some("ANN snapshot requires fallback rebuild".to_string());
                 state.indexing_in_progress = true;
                 state.current_job_label = Some("Rebuilding ANN snapshot".to_string());
@@ -389,7 +397,7 @@ fn process_pending_jobs(
         } else if batch.edge_refresh_requested && !batch.snapshot_publish_requested {
             handled_edges = true;
             update_runtime(runtime, |state| {
-                state.recovery_state = "rebuilding".to_string();
+                state.health = SemanticHealth::Working;
                 state.rebuild_reason = Some("Related-note edges are stale".to_string());
                 state.indexing_in_progress = true;
                 state.current_job_label = Some("Refreshing related notes".to_string());
@@ -775,13 +783,37 @@ fn process_pending_jobs(
                     state.edges_stale = false;
                 }
                 if !state.indexing_paused {
-                    state.recovery_state = if ann.needs_rebuild() || note_ann.needs_rebuild() {
-                        "stale".to_string()
+                    state.health = if ann.needs_rebuild() || note_ann.needs_rebuild() {
+                        SemanticHealth::Stale
                     } else {
-                        "ready".to_string()
+                        SemanticHealth::Fresh
                     };
                 }
+                state.retry_attempt = 0;
+                state.retry_exhausted = false;
             });
+        } else {
+            let (attempt, exhausted) = {
+                let mut attempt = 1;
+                update_runtime(runtime, |state| {
+                    state.retry_attempt = state.retry_attempt.saturating_add(1);
+                    attempt = state.retry_attempt;
+                    state.retry_exhausted = attempt >= SEMANTIC_RETRY_MAX_ATTEMPTS;
+                    state.health = if state.retry_exhausted {
+                        SemanticHealth::Degraded
+                    } else {
+                        SemanticHealth::Working
+                    };
+                });
+                (attempt, attempt >= SEMANTIC_RETRY_MAX_ATTEMPTS)
+            };
+            if let Ok(mut next) = pending.lock() {
+                merge_retry_batch(&mut next, retry_batch);
+            }
+            if exhausted {
+                return;
+            }
+            thread::sleep(semantic_failure_backoff(attempt));
         }
         if !atlas_retry_delay.is_zero() {
             thread::sleep(atlas_retry_delay);
@@ -798,6 +830,101 @@ fn atlas_failure_backoff(attempt: u32) -> Duration {
             .saturating_mul(1_u64 << exponent)
             .min(MAX_MILLIS),
     )
+}
+
+fn semantic_failure_backoff(attempt: u32) -> Duration {
+    const BASE_MILLIS: u64 = 100;
+    const MAX_MILLIS: u64 = 400;
+    let exponent = attempt.saturating_sub(1).min(2);
+    Duration::from_millis(
+        BASE_MILLIS
+            .saturating_mul(1_u64 << exponent)
+            .min(MAX_MILLIS),
+    )
+}
+
+fn merge_retry_batch(target: &mut PendingIndexState, retry: PendingIndexState) {
+    // `retry` was dequeued before `target` was populated, so every document
+    // mutation already in `target` is newer. Rebuild the queue in temporal
+    // order instead of extending the maps: `HashMap::extend(retry)` would let
+    // stale failed updates replace newer edits and could pair a newer delete
+    // with the stale update, resurrecting the document when updates run last.
+    let newer = std::mem::take(target);
+    let newer_reconciles_every_document = newer.rebuild_requested || newer.full_scan_requested;
+    let mut merged = retry;
+
+    merged.full_scan_requested |= newer.full_scan_requested;
+    merged.force_full_scan |= newer.force_full_scan;
+    merged.rebuild_requested |= newer.rebuild_requested;
+    merged.automatic_rebuild_requested |= newer.automatic_rebuild_requested;
+    merged.edge_refresh_requested |= newer.edge_refresh_requested;
+    merged.snapshot_publish_requested |= newer.snapshot_publish_requested;
+
+    if newer_reconciles_every_document {
+        // A newer full scan/rebuild supersedes every older incremental
+        // mutation. Its own queue is normally empty because enqueueing the
+        // request clears it, but retain it defensively.
+        merged.note_updates.clear();
+        merged.deleted_notes.clear();
+        merged.moved_notes.clear();
+    }
+
+    // Moves are replayed first because updates/deletes at their destination
+    // represent later actions. A move following an older move is folded into
+    // one source-to-final-destination operation so HashMap iteration order
+    // cannot strand the original indexed path.
+    for (old_path, moved) in newer.moved_notes {
+        merge_newer_move(&mut merged, old_path, moved);
+    }
+    for path in newer.deleted_notes {
+        merged.note_updates.remove(&path);
+        merged.deleted_notes.insert(path);
+    }
+    for (path, update) in newer.note_updates {
+        merged.deleted_notes.remove(&path);
+        merged.note_updates.insert(path, update);
+    }
+
+    for (key, epoch) in newer.atlas_requests {
+        merged
+            .atlas_requests
+            .entry(key)
+            .and_modify(|current| *current = (*current).max(epoch))
+            .or_insert(epoch);
+    }
+    // The live request is newer than the failed request for the same key.
+    for (key, request) in newer.atlas_label_requests {
+        merged.atlas_label_requests.insert(key, request);
+    }
+    merged.atlas_building = newer.atlas_building;
+    merged.atlas_label_building = newer.atlas_label_building;
+    *target = merged;
+}
+
+fn merge_newer_move(state: &mut PendingIndexState, old_path: PathBuf, moved: PendingNoteMove) {
+    let mut source = old_path.clone();
+    let destination = moved.new_path.clone();
+
+    // Fold A→B followed by B→C into A→C. The newest move carries the
+    // authoritative destination Markdown and timestamp.
+    while let Some(previous_source) = state
+        .moved_notes
+        .iter()
+        .find_map(|(candidate, pending)| (pending.new_path == source).then(|| candidate.clone()))
+    {
+        state.moved_notes.remove(&previous_source);
+        source = previous_source;
+    }
+
+    // A newer move is authoritative for both of its endpoints. This mirrors
+    // ordinary queueing and prevents an older update/delete from being applied
+    // after the move.
+    for path in [&source, &old_path, &destination] {
+        state.note_updates.remove(path);
+        state.deleted_notes.remove(path);
+    }
+    state.moved_notes.remove(&source);
+    state.moved_notes.insert(source, moved);
 }
 
 fn run_structural_atlas_build<T>(
@@ -852,9 +979,7 @@ where
         state.last_error = None;
         state.progress_current = 0;
         state.progress_total = 0;
-        if label == "Scanning notes" || label == "Indexing notes" {
-            state.recovery_state = "catchingUp".to_string();
-        }
+        state.health = SemanticHealth::Working;
     });
     debug.record_with_metrics(
         "index",
@@ -1074,16 +1199,10 @@ fn process_rebuild(
     background_gate: &Arc<BackgroundWorkGate>,
     runtime: &Arc<Mutex<RuntimeState>>,
 ) -> Result<JobOutcome, String> {
-    connection
-        .execute_batch(
-            "
-            DELETE FROM chunks;
-            DELETE FROM note_embeddings;
-            DELETE FROM edges;
-            DELETE FROM notes;
-            ",
-        )
-        .map_err(|err| err.to_string())?;
+    // Reconcile in place so a provider or rebuild failure cannot erase the
+    // SQLite rows backing the currently loaded last-good ANN generation.
+    // `force=true` still refreshes every filesystem note, and the full-scan
+    // deletion set removes notes that genuinely disappeared.
     let outcome = process_full_scan(connection, notes_dir, provider, ann, note_ann, true, debug)?;
     let progress = |current, total| {
         update_runtime(runtime, |state| {
@@ -1798,15 +1917,16 @@ struct PreparedNoteContent {
 #[cfg(test)]
 mod tests {
     use super::{
-        atlas_failure_backoff, dirty_count_allows_incremental, process_full_scan,
-        process_note_batch, process_pending_jobs, run_label_atlas_build,
-        run_structural_atlas_build, ChatRecallExcerpt, PendingIndexState, PendingNoteUpdate,
-        PendingSemanticDocument, EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
+        atlas_failure_backoff, dirty_count_allows_incremental, merge_retry_batch,
+        process_full_scan, process_note_batch, process_pending_jobs, run_label_atlas_build,
+        run_structural_atlas_build, semantic_failure_backoff, ChatRecallExcerpt, PendingIndexState,
+        PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument,
+        EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
     };
     use crate::semantic::{
         activity::BackgroundWorkGate,
         atlas::{AtlasChatVisibilityKey, AtlasGenerationKey},
-        RuntimeState,
+        RuntimeState, SemanticHealth, SEMANTIC_RETRY_MAX_ATTEMPTS,
     };
 
     #[test]
@@ -1893,6 +2013,223 @@ mod tests {
         assert_eq!(atlas_failure_backoff(1).as_millis(), 100);
         assert_eq!(atlas_failure_backoff(2).as_millis(), 200);
         assert_eq!(atlas_failure_backoff(100).as_millis(), 2_000);
+    }
+
+    #[test]
+    fn semantic_failure_backoff_is_bounded() {
+        assert_eq!(semantic_failure_backoff(1).as_millis(), 100);
+        assert_eq!(semantic_failure_backoff(2).as_millis(), 200);
+        assert_eq!(semantic_failure_backoff(3).as_millis(), 400);
+        assert_eq!(semantic_failure_backoff(100).as_millis(), 400);
+    }
+
+    #[test]
+    fn indexing_failures_stop_at_the_retry_bound_and_keep_repair_pending() {
+        let temp = TestDir::new("indexer-retry-bound");
+        let semantic_dir = temp.path().join("semantic");
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).expect("create notes");
+        fs::write(
+            notes_dir.join("Retry.md"),
+            "# Retry\n\nContent requiring an embedding.",
+        )
+        .expect("write note");
+        let db_path = semantic_dir.join("semantic.sqlite3");
+        let connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("schema");
+        drop(connection);
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(FailingEmbeddingProvider);
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann =
+            Arc::new(AnnIndexState::new(semantic_dir.clone(), 3, debug.clone()).expect("ann"));
+        let note_ann = test_note_ann(&semantic_dir);
+        let pending = Arc::new(Mutex::new(PendingIndexState {
+            full_scan_requested: true,
+            force_full_scan: true,
+            ..PendingIndexState::default()
+        }));
+        let runtime = Arc::new(Mutex::new(RuntimeState::default()));
+
+        process_pending_jobs(
+            &db_path,
+            &notes_dir,
+            &provider,
+            &ann,
+            &note_ann,
+            &pending,
+            &Arc::new(AtomicU64::new(0)),
+            &runtime,
+            &debug,
+            &Arc::new(BackgroundWorkGate::new()),
+        );
+
+        let runtime = runtime.lock().expect("runtime");
+        assert_eq!(runtime.retry_attempt, SEMANTIC_RETRY_MAX_ATTEMPTS);
+        assert!(runtime.retry_exhausted);
+        assert_eq!(runtime.health, SemanticHealth::Degraded);
+        drop(runtime);
+        assert!(pending.lock().expect("pending").full_scan_requested);
+        assert_eq!(
+            debug
+                .snapshot()
+                .expect("debug")
+                .metrics
+                .index_job_failed_count,
+            u64::from(SEMANTIC_RETRY_MAX_ATTEMPTS)
+        );
+    }
+
+    fn pending_markdown(markdown: &str, modified_millis: u64) -> PendingNoteUpdate {
+        PendingNoteUpdate {
+            document: PendingSemanticDocument::NoteMarkdown(markdown.to_string()),
+            modified_millis,
+        }
+    }
+
+    fn markdown_from(update: &PendingNoteUpdate) -> &str {
+        match &update.document {
+            PendingSemanticDocument::NoteMarkdown(markdown) => markdown,
+            PendingSemanticDocument::ChatRecall { .. } => panic!("expected note Markdown"),
+        }
+    }
+
+    #[test]
+    fn failed_batch_merge_keeps_the_newest_update_for_a_path() {
+        let path = PathBuf::from("/vault/Note.md");
+        let mut failed = PendingIndexState::default();
+        failed
+            .note_updates
+            .insert(path.clone(), pending_markdown("old", 1));
+        let mut live = PendingIndexState::default();
+        live.note_updates
+            .insert(path.clone(), pending_markdown("new", 2));
+
+        merge_retry_batch(&mut live, failed);
+
+        let update = live.note_updates.get(&path).expect("newest update");
+        assert_eq!(markdown_from(update), "new");
+        assert_eq!(update.modified_millis, 2);
+        assert!(!live.deleted_notes.contains(&path));
+    }
+
+    #[test]
+    fn failed_batch_merge_uses_newest_wins_for_update_and_delete() {
+        let deleted_path = PathBuf::from("/vault/Deleted.md");
+        let restored_path = PathBuf::from("/vault/Restored.md");
+        let mut failed = PendingIndexState::default();
+        failed.note_updates.insert(
+            deleted_path.clone(),
+            pending_markdown("must not resurrect", 1),
+        );
+        failed.deleted_notes.insert(restored_path.clone());
+        let mut live = PendingIndexState::default();
+        live.deleted_notes.insert(deleted_path.clone());
+        live.note_updates
+            .insert(restored_path.clone(), pending_markdown("newly restored", 2));
+
+        merge_retry_batch(&mut live, failed);
+
+        assert!(live.deleted_notes.contains(&deleted_path));
+        assert!(!live.note_updates.contains_key(&deleted_path));
+        assert!(!live.deleted_notes.contains(&restored_path));
+        assert_eq!(
+            markdown_from(
+                live.note_updates
+                    .get(&restored_path)
+                    .expect("newer restoration")
+            ),
+            "newly restored"
+        );
+    }
+
+    #[test]
+    fn failed_batch_merge_folds_move_chains_and_preserves_later_destination_delete() {
+        let old_path = PathBuf::from("/vault/A.md");
+        let middle_path = PathBuf::from("/vault/B.md");
+        let final_path = PathBuf::from("/vault/C.md");
+        let mut failed = PendingIndexState::default();
+        failed.moved_notes.insert(
+            old_path.clone(),
+            PendingNoteMove {
+                new_path: middle_path.clone(),
+                markdown: "old move".to_string(),
+                modified_millis: 1,
+            },
+        );
+        let mut live = PendingIndexState::default();
+        live.moved_notes.insert(
+            middle_path,
+            PendingNoteMove {
+                new_path: final_path.clone(),
+                markdown: "new move".to_string(),
+                modified_millis: 2,
+            },
+        );
+        live.deleted_notes.insert(final_path.clone());
+
+        merge_retry_batch(&mut live, failed);
+
+        let moved = live.moved_notes.get(&old_path).expect("folded move");
+        assert_eq!(moved.new_path, final_path);
+        assert_eq!(moved.markdown, "new move");
+        assert_eq!(moved.modified_millis, 2);
+        assert!(live.deleted_notes.contains(&moved.new_path));
+        assert_eq!(live.moved_notes.len(), 1);
+    }
+
+    #[test]
+    fn failed_batch_merge_treats_a_newer_move_as_authoritative_for_both_endpoints() {
+        let old_path = PathBuf::from("/vault/A.md");
+        let new_path = PathBuf::from("/vault/B.md");
+        let mut failed = PendingIndexState::default();
+        failed
+            .note_updates
+            .insert(old_path.clone(), pending_markdown("old source", 1));
+        failed
+            .note_updates
+            .insert(new_path.clone(), pending_markdown("old destination", 1));
+        failed.deleted_notes.insert(old_path.clone());
+        failed.deleted_notes.insert(new_path.clone());
+        let mut live = PendingIndexState::default();
+        live.moved_notes.insert(
+            old_path.clone(),
+            PendingNoteMove {
+                new_path: new_path.clone(),
+                markdown: "authoritative move".to_string(),
+                modified_millis: 2,
+            },
+        );
+
+        merge_retry_batch(&mut live, failed);
+
+        assert!(live.note_updates.is_empty());
+        assert!(live.deleted_notes.is_empty());
+        let moved = live.moved_notes.get(&old_path).expect("newer move");
+        assert_eq!(moved.new_path, new_path);
+        assert_eq!(moved.markdown, "authoritative move");
+    }
+
+    #[test]
+    fn newer_rebuild_discards_failed_incremental_mutations() {
+        let path = PathBuf::from("/vault/Note.md");
+        let mut failed = PendingIndexState::default();
+        failed
+            .note_updates
+            .insert(path.clone(), pending_markdown("stale", 1));
+        failed
+            .deleted_notes
+            .insert(PathBuf::from("/vault/Deleted.md"));
+        let mut live = PendingIndexState {
+            rebuild_requested: true,
+            ..PendingIndexState::default()
+        };
+
+        merge_retry_batch(&mut live, failed);
+
+        assert!(live.rebuild_requested);
+        assert!(live.note_updates.is_empty());
+        assert!(live.deleted_notes.is_empty());
+        assert!(live.moved_notes.is_empty());
     }
 
     #[test]
@@ -2358,6 +2695,7 @@ mod tests {
     }
 
     struct MockEmbeddingProvider;
+    struct FailingEmbeddingProvider;
 
     #[derive(Default)]
     struct RecordingEmbeddingProvider {
@@ -2408,6 +2746,26 @@ mod tests {
                 status: "ready".to_string(),
                 error: None,
             }
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    impl EmbeddingProvider for FailingEmbeddingProvider {
+        fn embed_texts(
+            &self,
+            _texts: &[String],
+            _kind: EmbeddingInputKind,
+        ) -> Result<Vec<Vec<f32>>, String> {
+            Err("deterministic embedding failure".to_string())
+        }
+
+        fn prepare(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn model_info(&self) -> ModelInfo {
+            MockEmbeddingProvider.model_info()
         }
 
         fn shutdown(&self) {}

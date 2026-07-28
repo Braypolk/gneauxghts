@@ -47,6 +47,8 @@ use std::{
     time::Instant,
 };
 
+pub(crate) const SEMANTIC_RETRY_MAX_ATTEMPTS: u32 = 3;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SemanticSettings {
@@ -79,6 +81,27 @@ pub(crate) struct SemanticIndexJob {
     pub(crate) updated_at_millis: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum SemanticHealth {
+    Fresh,
+    Working,
+    Stale,
+    Degraded,
+    Paused,
+}
+
+impl SemanticHealth {
+    fn legacy_recovery_state(self) -> &'static str {
+        match self {
+            Self::Fresh => "ready",
+            Self::Working => "catchingUp",
+            Self::Stale | Self::Degraded => "stale",
+            Self::Paused => "paused",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SemanticStatus {
@@ -105,8 +128,12 @@ pub(crate) struct SemanticStatus {
     pub(crate) last_error: Option<String>,
     pub(crate) current_job_label: Option<String>,
     pub(crate) latest_job: Option<SemanticIndexJob>,
+    pub(crate) health: SemanticHealth,
     pub(crate) recovery_state: String,
     pub(crate) index_usable: bool,
+    pub(crate) retry_attempt: u32,
+    pub(crate) retry_max_attempts: u32,
+    pub(crate) retry_exhausted: bool,
     pub(crate) progress_current: usize,
     pub(crate) progress_total: usize,
     pub(crate) rebuild_reason: Option<String>,
@@ -158,7 +185,9 @@ pub(super) struct RuntimeState {
     last_indexed_at_millis: Option<u64>,
     last_error: Option<String>,
     last_scan_requested_at_millis: Option<u64>,
-    recovery_state: String,
+    health: SemanticHealth,
+    retry_attempt: u32,
+    retry_exhausted: bool,
     progress_current: usize,
     progress_total: usize,
     rebuild_reason: Option<String>,
@@ -176,7 +205,9 @@ impl Default for RuntimeState {
             last_indexed_at_millis: None,
             last_error: None,
             last_scan_requested_at_millis: None,
-            recovery_state: "catchingUp".to_string(),
+            health: SemanticHealth::Working,
+            retry_attempt: 0,
+            retry_exhausted: false,
             progress_current: 0,
             progress_total: 0,
             rebuild_reason: None,
@@ -184,6 +215,33 @@ impl Default for RuntimeState {
             last_job_edges_dirtied: false,
             edges_stale: false,
         }
+    }
+}
+
+impl RuntimeState {
+    fn reset_for_manual_retry(&mut self) {
+        self.retry_attempt = 0;
+        self.retry_exhausted = false;
+        self.last_error = None;
+        self.health = SemanticHealth::Working;
+        self.indexing_in_progress = true;
+        self.current_job_label = Some("Retrying semantic repair".to_string());
+    }
+
+    fn mark_query_failure(&mut self, error: &str) {
+        self.last_error = Some(error.to_string());
+        if !self.indexing_paused {
+            self.health = SemanticHealth::Degraded;
+        }
+    }
+}
+
+fn queue_manual_retry_work(pending: &mut PendingIndexState, needs_rebuild: bool) {
+    if needs_rebuild {
+        pending.automatic_rebuild_requested = true;
+    } else {
+        pending.full_scan_requested = true;
+        pending.force_full_scan = true;
     }
 }
 
@@ -510,7 +568,9 @@ impl SemanticState {
                     if let Ok(mut runtime) = state.runtime.lock() {
                         runtime.indexing_in_progress = true;
                         runtime.current_job_label = Some("Applying changes".to_string());
-                        runtime.recovery_state = "catchingUp".to_string();
+                        if !runtime.retry_exhausted {
+                            runtime.health = SemanticHealth::Working;
+                        }
                         runtime.progress_current = 0;
                         runtime.progress_total = 1;
                     }
@@ -549,7 +609,9 @@ impl SemanticState {
                     if let Ok(mut runtime) = state.runtime.lock() {
                         runtime.indexing_in_progress = true;
                         runtime.current_job_label = Some("Applying changes".to_string());
-                        runtime.recovery_state = "catchingUp".to_string();
+                        if !runtime.retry_exhausted {
+                            runtime.health = SemanticHealth::Working;
+                        }
                         runtime.progress_current = 0;
                         runtime.progress_total = 1;
                     }
@@ -641,6 +703,40 @@ impl SemanticState {
                 state.request_wake()
             }
             SemanticStateInner::Disabled(_) => Ok(()),
+        }
+    }
+
+    pub(crate) fn retry_indexing_now(&self) -> Result<(), String> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => {
+                {
+                    let mut runtime = state
+                        .runtime
+                        .lock()
+                        .map_err(|_| "Semantic runtime lock poisoned".to_string())?;
+                    runtime.reset_for_manual_retry();
+                }
+                {
+                    let mut pending = state
+                        .pending
+                        .lock()
+                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                    queue_manual_retry_work(
+                        &mut pending,
+                        state.ann.needs_rebuild() || state.note_ann.needs_rebuild(),
+                    );
+                }
+                state.request_wake()
+            }
+            SemanticStateInner::Disabled(_) => Ok(()),
+        }
+    }
+
+    pub(crate) fn record_query_failure(&self, error: &str) {
+        if let SemanticStateInner::Active(state) = &self.inner {
+            if let Ok(mut runtime) = state.runtime.lock() {
+                runtime.mark_query_failure(error);
+            }
         }
     }
 
@@ -746,7 +842,7 @@ impl SemanticState {
                 state.background_gate.set_manually_paused(true);
                 if let Ok(mut runtime) = state.runtime.lock() {
                     runtime.indexing_paused = true;
-                    runtime.recovery_state = "paused".to_string();
+                    runtime.health = SemanticHealth::Paused;
                 }
                 state
                     .signal_tx
@@ -763,10 +859,12 @@ impl SemanticState {
                 state.background_gate.set_manually_paused(false);
                 if let Ok(mut runtime) = state.runtime.lock() {
                     runtime.indexing_paused = false;
-                    runtime.recovery_state = if state.ann.needs_rebuild() {
-                        "stale".to_string()
+                    runtime.health = if runtime.retry_exhausted {
+                        SemanticHealth::Degraded
+                    } else if state.ann.needs_rebuild() || state.note_ann.needs_rebuild() {
+                        SemanticHealth::Stale
                     } else {
-                        "ready".to_string()
+                        SemanticHealth::Fresh
                     };
                 }
                 state
@@ -1064,12 +1162,20 @@ impl ActiveSemanticState {
             last_error: runtime.last_error.clone().or(model.error.clone()),
             current_job_label: runtime.current_job_label.clone(),
             latest_job,
-            recovery_state: if runtime.indexing_paused {
-                "paused".to_string()
+            health: if runtime.indexing_paused {
+                SemanticHealth::Paused
             } else {
-                runtime.recovery_state.clone()
+                runtime.health
+            },
+            recovery_state: if runtime.indexing_paused {
+                SemanticHealth::Paused.legacy_recovery_state().to_string()
+            } else {
+                runtime.health.legacy_recovery_state().to_string()
             },
             index_usable: ann_status.loaded,
+            retry_attempt: runtime.retry_attempt,
+            retry_max_attempts: SEMANTIC_RETRY_MAX_ATTEMPTS,
+            retry_exhausted: runtime.retry_exhausted,
             progress_current: runtime.progress_current,
             progress_total: runtime.progress_total,
             rebuild_reason: runtime.rebuild_reason.clone(),
@@ -1198,8 +1304,12 @@ impl DisabledSemanticState {
             last_error: None,
             current_job_label: None,
             latest_job: None,
+            health: SemanticHealth::Fresh,
             recovery_state: "ready".to_string(),
             index_usable: false,
+            retry_attempt: 0,
+            retry_max_attempts: SEMANTIC_RETRY_MAX_ATTEMPTS,
+            retry_exhausted: false,
             progress_current: 0,
             progress_total: 0,
             rebuild_reason: None,
@@ -1210,6 +1320,64 @@ impl DisabledSemanticState {
 fn disabled_settings(mut settings: SemanticSettings) -> SemanticSettings {
     settings.semantic_search_enabled = false;
     settings
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+
+    #[test]
+    fn query_failure_degrades_without_consuming_the_worker_retry_budget() {
+        let mut runtime = RuntimeState::default();
+        runtime.retry_attempt = 2;
+
+        runtime.mark_query_failure("query embedding failed");
+
+        assert_eq!(runtime.health, SemanticHealth::Degraded);
+        assert_eq!(runtime.retry_attempt, 2);
+        assert!(!runtime.retry_exhausted);
+        assert_eq!(
+            runtime.last_error.as_deref(),
+            Some("query embedding failed")
+        );
+    }
+
+    #[test]
+    fn manual_retry_resets_the_bound_and_queues_the_needed_repair() {
+        let mut runtime = RuntimeState {
+            retry_attempt: SEMANTIC_RETRY_MAX_ATTEMPTS,
+            retry_exhausted: true,
+            health: SemanticHealth::Degraded,
+            last_error: Some("failed".to_string()),
+            ..RuntimeState::default()
+        };
+        let mut pending = PendingIndexState {
+            full_scan_requested: true,
+            ..PendingIndexState::default()
+        };
+
+        runtime.reset_for_manual_retry();
+        queue_manual_retry_work(&mut pending, true);
+
+        assert_eq!(runtime.retry_attempt, 0);
+        assert!(!runtime.retry_exhausted);
+        assert_eq!(runtime.health, SemanticHealth::Working);
+        assert!(runtime.indexing_in_progress);
+        assert!(pending.full_scan_requested);
+        assert!(pending.automatic_rebuild_requested);
+    }
+
+    #[test]
+    fn health_states_derive_compatible_legacy_recovery_values() {
+        assert_eq!(SemanticHealth::Fresh.legacy_recovery_state(), "ready");
+        assert_eq!(
+            SemanticHealth::Working.legacy_recovery_state(),
+            "catchingUp"
+        );
+        assert_eq!(SemanticHealth::Stale.legacy_recovery_state(), "stale");
+        assert_eq!(SemanticHealth::Degraded.legacy_recovery_state(), "stale");
+        assert_eq!(SemanticHealth::Paused.legacy_recovery_state(), "paused");
+    }
 }
 
 /// Load the persisted HNSW snapshot off the startup hot path and only

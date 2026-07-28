@@ -79,7 +79,7 @@ class PaneEditorSession<TPaneId extends string> {
       const document = this.deps.getPaneDocument(this.paneId);
       const lifecycle =
         this.deps.getEditorLifecycleController(this.paneId);
-      await lifecycle.createEditor(document.bodyMarkdown);
+      await lifecycle.createEditor(document.working.markdown);
       if (!runtime.controller || this.#disposed) {
         if (runtime.controller) await lifecycle.destroyEditor();
         return this.#disposed ? 'disposed' : 'unavailable';
@@ -91,12 +91,16 @@ class PaneEditorSession<TPaneId extends string> {
     });
   }
 
-  destroy(): Promise<PaneEditorOperationResult> {
+  destroy(
+    documentOverride: NoteDraftState | null = null
+  ): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
       const runtime = this.deps.getPaneRuntime(this.paneId);
       if (!runtime.controller) return 'unavailable';
 
-      const document = this.deps.getPaneDocument(this.paneId);
+      const document =
+        documentOverride ??
+        this.deps.getPaneDocument(this.paneId);
       const lifecycle =
         this.deps.getEditorLifecycleController(this.paneId);
       lifecycle.saveCursorPositionForDocument(document);
@@ -207,7 +211,7 @@ class PaneEditorSession<TPaneId extends string> {
       }
       if (!swapped) {
         await lifecycle.replaceEditorContent(
-          document.bodyMarkdown,
+          document.working.markdown,
           {
             restoreCursor,
             expectedDocument: document,
@@ -229,9 +233,11 @@ class PaneEditorSession<TPaneId extends string> {
       : this.destroy();
   }
 
-  dispose(): Promise<PaneEditorOperationResult> {
+  dispose(
+    documentOverride: NoteDraftState | null = null
+  ): Promise<PaneEditorOperationResult> {
     this.#disposed = true;
-    return this.destroy();
+    return this.destroy(documentOverride);
   }
 }
 
@@ -304,10 +310,13 @@ export function createPaneEditorLifecycle<
     );
   }
 
-  async function disposePane(paneId: TPaneId): Promise<void> {
+  async function disposePane(
+    paneId: TPaneId,
+    document: NoteDraftState | null = null
+  ): Promise<void> {
     const session = sessions.get(paneId);
     if (!session) return;
-    await session.dispose();
+    await session.dispose(document);
     sessions.delete(paneId);
   }
 

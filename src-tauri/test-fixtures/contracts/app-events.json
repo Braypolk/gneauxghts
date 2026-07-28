@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "events": [
+    {
+      "channel": "vault-note-changed",
+      "payload": {
+        "notePath": "/vault/Changed.md",
+        "deleted": false,
+        "documentKind": "note",
+        "source": "watcher",
+        "chatId": null
+      }
+    },
+    {
+      "channel": "chat://projection-conflict",
+      "payload": {
+        "conversationId": "conversation-1",
+        "notePath": "/vault/Chats/conversation-1/Conversation.md",
+        "deleted": false
+      }
+    },
+    {
+      "channel": "semantic-status-changed",
+      "payload": {
+        "settings": {
+          "semanticSearchEnabled": true,
+          "localOnlyMode": true,
+          "lexicalWeight": 0.5,
+          "semanticWeight": 0.4000000059604645
+        },
+        "model": {
+          "id": "jina-v5-nano",
+          "label": "Jina embeddings v5 nano",
+          "dimensions": 768,
+          "localOnly": true,
+          "runtimeBinaryPath": "/app/llama-server",
+          "modelPath": "/app/models/jina.gguf",
+          "modelRepoId": "jinaai/jina-embeddings-v5-text-nano-retrieval",
+          "available": true,
+          "loading": false,
+          "ready": true,
+          "status": "ready",
+          "error": null
+        },
+        "platformSupported": true,
+        "disabledReason": null,
+        "modelAvailable": true,
+        "indexingPaused": false,
+        "indexingInProgress": false,
+        "indexedNotes": 12,
+        "indexedChunks": 48,
+        "annIndexLoaded": true,
+        "annIndexDirty": false,
+        "annRebuildPending": false,
+        "annLastDumpedAtMillis": 1700000000000,
+        "annIndexedChunks": 48,
+        "noteAnnIndexLoaded": true,
+        "noteAnnIndexDirty": false,
+        "noteAnnRebuildPending": false,
+        "noteAnnIndexedNotes": 12,
+        "noteAnnGenerationId": "note-ann-generation-1",
+        "lastIndexedAtMillis": 1700000000000,
+        "lastError": null,
+        "currentJobLabel": null,
+        "latestJob": {
+          "id": 7,
+          "status": "completed",
+          "scannedCount": 12,
+          "embeddedCount": 12,
+          "errorText": null,
+          "startedAtMillis": 1699999999000,
+          "updatedAtMillis": 1700000000000
+        },
+        "health": "fresh",
+        "recoveryState": "ready",
+        "indexUsable": true,
+        "retryAttempt": 0,
+        "retryMaxAttempts": 3,
+        "retryExhausted": false,
+        "progressCurrent": 12,
+        "progressTotal": 12,
+        "rebuildReason": null
+      }
+    },
+    {
+      "channel": "note-saved",
+      "payload": {
+        "noteId": "note-1",
+        "notePath": "/vault/Title.md",
+        "title": "Title",
+        "revision": 42
+      }
+    },
+    {
+      "channel": "vault-changed",
+      "payload": {
+        "currentPath": "/vault",
+        "defaultPath": "/documents/Gneauxghts",
+        "forgottenPath": "/vault/.forgotten",
+        "isDefault": false,
+        "noteCount": 12,
+        "requiresRestart": true,
+        "canConfigurePath": true,
+        "canPickArbitraryPath": true,
+        "vaultContainerPath": null,
+        "pathConfigurationNote": "Restart to finish switching vaults."
+      }
+    }
+  ]
+}

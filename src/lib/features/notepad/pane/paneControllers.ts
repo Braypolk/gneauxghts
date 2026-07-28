@@ -9,6 +9,10 @@ import type { SharedEditorResources } from '$lib/features/notepad/editor/editor'
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import type { NavigationContext } from '$lib/features/notepad/navigation/openFlow';
 import type { WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
+import {
+  getDocumentNoteId,
+  getDocumentPath
+} from '$lib/features/notepad/document/documentState';
 
 export interface PaneControllerSetupDeps<TPaneId extends string> {
   getPaneRuntime: (paneId: TPaneId) => PaneRuntime;
@@ -78,10 +82,14 @@ export function createPaneControllers<TPaneId extends string>(
   const wikilinkController = createWikilinkRuntime({
     getState: () => deps.getPaneRuntime(paneId).ui.wikilinkAutocomplete,
     setState: (value) => deps.setWikilinkAutocomplete(paneId, value),
-    getCurrentNoteId: () => deps.getPaneDocument(paneId).currentNoteId,
-    getCurrentPath: () => deps.getPaneDocument(paneId).currentNotePath,
-    getCurrentTitle: () => deps.getPaneDocument(paneId).title,
-    getCurrentMarkdown: () => deps.getPaneDocument(paneId).bodyMarkdown,
+    getCurrentNoteId: () =>
+      getDocumentNoteId(deps.getPaneDocument(paneId)),
+    getCurrentPath: () =>
+      getDocumentPath(deps.getPaneDocument(paneId)),
+    getCurrentTitle: () =>
+      deps.getPaneDocument(paneId).working.title,
+    getCurrentMarkdown: () =>
+      deps.getPaneDocument(paneId).working.markdown,
     getEditorController: () => deps.getPaneRuntime(paneId).controller,
     cancelPendingAutosave: deps.cancelPendingAutosave,
     openNotePath: async (noteId, notePath, options) => {

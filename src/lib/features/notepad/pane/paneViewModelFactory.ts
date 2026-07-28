@@ -7,17 +7,28 @@ import type {
 } from '$lib/features/notepad/state/noteStore';
 import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
 import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
+import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+import {
+  canRemovePane,
+  getPaneCapabilityPolicy
+} from '$lib/features/notepad/workspace/paneCapabilities';
+import {
+  getDocumentStatusViewModel
+} from '$lib/features/notepad/document/documentState';
+import type {
+  PaneTransientUiState
+} from '$lib/features/notepad/pane/paneTransientUiState';
 
 export interface PaneViewModelFactoryDeps {
   getPaneOrder: () => NotepadPaneId[];
   getActivePaneId: () => NotepadPaneId;
-  getPaneKind: (paneId: NotepadPaneId) => 'editor' | 'chat';
+  getPaneKind: (paneId: NotepadPaneId) => PaneKind;
   getPaneDocument: (paneId: NotepadPaneId) => NoteDraftState;
   getPaneRuntime: (paneId: NotepadPaneId) => PaneRuntime;
   getChatBindings: (paneId: NotepadPaneId) => ChatPaneBindings;
   isReviewingDocument: (document: NoteDraftState) => boolean;
   paneTitleInputClass: string;
-  getActiveSlashMenuPaneId: () => NotepadPaneId | null;
+  getTransientUiState: () => PaneTransientUiState<NotepadPaneId>;
   getPaneCommandPaneId: () => NotepadPaneId | null;
   getPaneCommandHighlightedIndex: () => number;
   getPaneCommandMode: () => PaneCommandMode;
@@ -35,8 +46,11 @@ export function createPaneViewModelFactory(
     paneId: NotepadPaneId
   ): PaneViewModel {
     const paneKind = deps.getPaneKind(paneId);
+    const panePolicy = getPaneCapabilityPolicy(paneKind);
+    const transientUiState = deps.getTransientUiState();
     const document = deps.getPaneDocument(paneId);
-    const paneIndex = deps.getPaneOrder().indexOf(paneId);
+    const paneOrder = deps.getPaneOrder();
+    const paneIndex = paneOrder.indexOf(paneId);
     const stackClass =
       deps.getActivePaneId() === paneId ? 'z-10' : 'z-0';
     const common = {
@@ -44,14 +58,25 @@ export function createPaneViewModelFactory(
       ariaLabel: `Pane ${paneIndex + 1}`,
       bodyClass: `relative flex min-h-0 min-w-0 flex-1 flex-col ${stackClass}`,
       frameClass: `relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${stackClass}`,
-      showCloseButton: deps.getPaneOrder().length > 1,
+      showCloseButton: canRemovePane(
+        {
+          paneOrder,
+          getPaneKind: deps.getPaneKind
+        },
+        paneId
+      ),
       titleClass: deps.paneTitleInputClass,
-      titlePlaceholder: paneKind === 'editor' ? 'Title' : 'Chat title',
+      titlePlaceholder:
+        panePolicy.titleMode === 'document'
+          ? 'Title'
+          : 'Chat title',
       titleDocument: document,
       titleValue:
-        paneKind === 'editor' ? document.title : 'Thought partner',
+        panePolicy.titleMode === 'document'
+          ? document.working.title
+          : 'Thought partner',
       titleReadonly:
-        paneKind === 'chat' ||
+        !panePolicy.capabilities['edit-title'] ||
         deps.isReviewingDocument(document)
     };
 
@@ -59,9 +84,11 @@ export function createPaneViewModelFactory(
       return {
         ...common,
         paneKind,
+        documentStatus: getDocumentStatusViewModel(document),
         isEditorReady: deps.getPaneRuntime(paneId).ui.isEditorReady,
         isSlashMenuOpen:
-          deps.getActiveSlashMenuPaneId() === paneId,
+          transientUiState.kind === 'slash-menu' &&
+          transientUiState.paneId === paneId,
         isPaneCommandOpen: deps.getPaneCommandPaneId() === paneId,
         paneCommandHighlightedIndex:
           deps.getPaneCommandHighlightedIndex(),

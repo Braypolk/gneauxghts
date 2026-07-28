@@ -1,0 +1,612 @@
+//! Post-commit coordination for authoritative ordinary-note mutations.
+//!
+//! Callers enter this service only after canonical bytes exist on disk. From
+//! that point onward failures are reported as committed-but-degraded projection
+//! state; each caller decides whether its public contract must surface a
+//! required read-your-writes synchronization failure.
+
+use super::{note_catalog::PostCommitCatalogOutcome, NoteCatalog};
+use crate::index::{build_indexed_note, AppState, IndexedNote};
+use serde::Serialize;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum PostCommitStage {
+    CanonicalRead,
+    CatalogUpsert,
+    TaskProjectionUpsert,
+    CatalogRemove,
+    TaskProjectionRemove,
+    TaskViewRefresh,
+    SemanticUpdate,
+    SemanticMove,
+    DirtyRecovery,
+    Revision,
+    SessionState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PostCommitIssue {
+    pub(crate) stage: PostCommitStage,
+    pub(crate) message: String,
+}
+
+/// A canonical write succeeded, but one or more required read-your-write
+/// projections did not. Commands return this warning as data so callers must
+/// not retry the canonical mutation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CommittedMutationWarning {
+    pub(crate) message: String,
+    pub(crate) issues: Vec<PostCommitIssue>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PostCommitNoteMutationOutcome {
+    pub(crate) note_id: String,
+    pub(crate) path: PathBuf,
+    pub(crate) canonical_markdown: String,
+    pub(crate) issues: Vec<PostCommitIssue>,
+}
+
+impl PostCommitNoteMutationOutcome {
+    pub(crate) fn record_issue(&mut self, stage: PostCommitStage, message: String) {
+        self.issues.push(PostCommitIssue { stage, message });
+    }
+
+    pub(crate) fn required_consistency_warning(&self) -> Option<CommittedMutationWarning> {
+        let required_issues = self
+            .issues
+            .iter()
+            .filter(|issue| issue.stage.is_required_consistency())
+            .cloned()
+            .collect::<Vec<_>>();
+        if required_issues.is_empty() {
+            return None;
+        }
+        let details = required_issues
+            .iter()
+            .map(|issue| format!("{:?}: {}", issue.stage, issue.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(CommittedMutationWarning {
+            message: format!(
+                "Canonical note file was saved at {}, but required catalog/task synchronization is incomplete: {}",
+                self.path.display(),
+                details
+            ),
+            issues: required_issues,
+        })
+    }
+
+    pub(crate) fn report_degraded(&self, source: &str) {
+        if self.issues.is_empty() {
+            return;
+        }
+        for issue in &self.issues {
+            eprintln!(
+                "{source} committed {} but post-commit {:?} degraded: {}",
+                self.path.display(),
+                issue.stage,
+                issue.message
+            );
+        }
+    }
+}
+
+impl PostCommitStage {
+    fn is_required_consistency(self) -> bool {
+        matches!(
+            self,
+            Self::CanonicalRead
+                | Self::CatalogUpsert
+                | Self::TaskProjectionUpsert
+                | Self::CatalogRemove
+                | Self::TaskProjectionRemove
+        )
+    }
+}
+
+#[derive(Clone)]
+struct CommittedNoteMutation {
+    path: PathBuf,
+    previous_path: Option<PathBuf>,
+    markdown: String,
+    modified_millis: u64,
+}
+
+trait PostCommitSink {
+    fn catalog_upsert(&self, path: PathBuf, note: IndexedNote) -> PostCommitCatalogOutcome;
+    fn catalog_remove(&self, path: &Path) -> PostCommitCatalogOutcome;
+    fn clear_dirty(&self, path: &Path) -> Result<(), String>;
+    fn mark_dirty(&self, path: &Path, source: &str) -> Result<(), String>;
+    fn semantic_update(
+        &self,
+        path: &Path,
+        markdown: String,
+        modified_millis: u64,
+    ) -> Result<(), String>;
+    fn semantic_move(
+        &self,
+        old_path: &Path,
+        new_path: &Path,
+        markdown: String,
+        modified_millis: u64,
+    ) -> Result<(), String>;
+    fn revision(&self) -> Result<u64, String>;
+    fn emit_note_saved(&self, note_id: String, path: &Path, title: String, revision: u64);
+}
+
+struct AppStatePostCommitSink<'a> {
+    state: &'a AppState,
+}
+
+impl PostCommitSink for AppStatePostCommitSink<'_> {
+    fn catalog_upsert(&self, path: PathBuf, note: IndexedNote) -> PostCommitCatalogOutcome {
+        NoteCatalog::new(
+            &self.state.notes_index,
+            &self.state.lexical,
+            &self.state.background_index_queue,
+        )
+        .upsert_post_commit(path, note)
+    }
+
+    fn catalog_remove(&self, path: &Path) -> PostCommitCatalogOutcome {
+        NoteCatalog::new(
+            &self.state.notes_index,
+            &self.state.lexical,
+            &self.state.background_index_queue,
+        )
+        .remove_post_commit(path)
+    }
+
+    fn clear_dirty(&self, path: &Path) -> Result<(), String> {
+        self.state.clear_notes_index_dirty(path)
+    }
+
+    fn mark_dirty(&self, path: &Path, source: &str) -> Result<(), String> {
+        self.state.mark_notes_index_dirty(path, source)
+    }
+
+    fn semantic_update(
+        &self,
+        path: &Path,
+        markdown: String,
+        modified_millis: u64,
+    ) -> Result<(), String> {
+        self.state
+            .semantic
+            .queue_note_update(path, markdown, modified_millis)
+    }
+
+    fn semantic_move(
+        &self,
+        old_path: &Path,
+        new_path: &Path,
+        markdown: String,
+        modified_millis: u64,
+    ) -> Result<(), String> {
+        self.state
+            .semantic
+            .queue_note_move(old_path, new_path, markdown, modified_millis)
+    }
+
+    fn revision(&self) -> Result<u64, String> {
+        self.state
+            .notes_index
+            .lock()
+            .map(|index| index.revision())
+            .map_err(|_| "Search index lock poisoned".to_string())
+    }
+
+    fn emit_note_saved(&self, note_id: String, path: &Path, title: String, revision: u64) {
+        self.state.events.note_saved(
+            Some(note_id),
+            Some(path.to_string_lossy().into_owned()),
+            title,
+            revision,
+        );
+    }
+}
+
+pub(crate) struct PostCommitNoteMutationService<'a> {
+    sink: AppStatePostCommitSink<'a>,
+}
+
+impl<'a> PostCommitNoteMutationService<'a> {
+    pub(crate) fn new(state: &'a AppState) -> Self {
+        Self {
+            sink: AppStatePostCommitSink { state },
+        }
+    }
+
+    /// Synchronize a canonical file after its write has committed. A read
+    /// failure uses the caller's last-known Markdown as a recovery snapshot and
+    /// is explicitly reported in the returned degraded outcome.
+    pub(crate) fn apply_canonical_file(
+        &self,
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> PostCommitNoteMutationOutcome {
+        let (markdown, read_error) = match fs::read_to_string(&path) {
+            Ok(markdown) => (markdown, None),
+            Err(error) => (fallback_markdown, Some(error.to_string())),
+        };
+        let mutation = CommittedNoteMutation {
+            path,
+            previous_path,
+            markdown,
+            modified_millis: crate::time::current_time_millis().unwrap_or(0),
+        };
+        let mut outcome = apply_committed_mutation(&self.sink, mutation);
+        if let Some(error) = read_error {
+            outcome.record_issue(PostCommitStage::CanonicalRead, error);
+            if let Err(recovery_error) = self
+                .sink
+                .mark_dirty(&outcome.path, "post-commit-canonical-read")
+            {
+                outcome.record_issue(PostCommitStage::DirtyRecovery, recovery_error);
+            }
+        }
+        outcome
+    }
+}
+
+fn apply_committed_mutation(
+    sink: &impl PostCommitSink,
+    mutation: CommittedNoteMutation,
+) -> PostCommitNoteMutationOutcome {
+    let moved_from = mutation
+        .previous_path
+        .as_deref()
+        .filter(|previous| *previous != mutation.path.as_path());
+    let indexed_note =
+        build_indexed_note(&mutation.path, &mutation.markdown, mutation.modified_millis);
+    let note_id = indexed_note.note_id.clone();
+    let title = indexed_note.title.clone();
+    let mut issues = Vec::new();
+
+    let upsert = sink.catalog_upsert(mutation.path.clone(), indexed_note);
+    collect_catalog_issues(
+        &mut issues,
+        upsert,
+        PostCommitStage::CatalogUpsert,
+        PostCommitStage::TaskProjectionUpsert,
+    );
+    if issues.iter().any(|issue| {
+        matches!(
+            issue.stage,
+            PostCommitStage::CatalogUpsert | PostCommitStage::TaskProjectionUpsert
+        )
+    }) {
+        if let Err(error) = sink.mark_dirty(&mutation.path, "post-commit-upsert") {
+            issues.push(PostCommitIssue {
+                stage: PostCommitStage::DirtyRecovery,
+                message: error,
+            });
+        }
+    } else if let Err(error) = sink.clear_dirty(&mutation.path) {
+        issues.push(PostCommitIssue {
+            stage: PostCommitStage::DirtyRecovery,
+            message: error,
+        });
+    }
+
+    if let Some(previous_path) = moved_from {
+        let before_remove_count = issues.len();
+        let removal = sink.catalog_remove(previous_path);
+        collect_catalog_issues(
+            &mut issues,
+            removal,
+            PostCommitStage::CatalogRemove,
+            PostCommitStage::TaskProjectionRemove,
+        );
+        if issues.len() > before_remove_count {
+            if let Err(error) = sink.mark_dirty(previous_path, "post-commit-remove") {
+                issues.push(PostCommitIssue {
+                    stage: PostCommitStage::DirtyRecovery,
+                    message: error,
+                });
+            }
+        } else if let Err(error) = sink.clear_dirty(previous_path) {
+            issues.push(PostCommitIssue {
+                stage: PostCommitStage::DirtyRecovery,
+                message: error,
+            });
+        }
+        if let Err(error) = sink.semantic_move(
+            previous_path,
+            &mutation.path,
+            mutation.markdown.clone(),
+            mutation.modified_millis,
+        ) {
+            issues.push(PostCommitIssue {
+                stage: PostCommitStage::SemanticMove,
+                message: error,
+            });
+        }
+    } else if let Err(error) = sink.semantic_update(
+        &mutation.path,
+        mutation.markdown.clone(),
+        mutation.modified_millis,
+    ) {
+        issues.push(PostCommitIssue {
+            stage: PostCommitStage::SemanticUpdate,
+            message: error,
+        });
+    }
+
+    let revision = match sink.revision() {
+        Ok(revision) => revision,
+        Err(error) => {
+            issues.push(PostCommitIssue {
+                stage: PostCommitStage::Revision,
+                message: error,
+            });
+            0
+        }
+    };
+    sink.emit_note_saved(note_id.clone(), &mutation.path, title.clone(), revision);
+
+    PostCommitNoteMutationOutcome {
+        note_id,
+        path: mutation.path,
+        canonical_markdown: mutation.markdown,
+        issues,
+    }
+}
+
+fn collect_catalog_issues(
+    issues: &mut Vec<PostCommitIssue>,
+    outcome: PostCommitCatalogOutcome,
+    catalog_stage: PostCommitStage,
+    task_stage: PostCommitStage,
+) {
+    if let Some(message) = outcome.catalog_error {
+        issues.push(PostCommitIssue {
+            stage: catalog_stage,
+            message,
+        });
+    }
+    if let Some(message) = outcome.task_projection_error {
+        issues.push(PostCommitIssue {
+            stage: task_stage,
+            message,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{cell::RefCell, collections::VecDeque};
+
+    #[derive(Default)]
+    struct FakeSink {
+        calls: RefCell<Vec<String>>,
+        catalog_results: RefCell<VecDeque<PostCommitCatalogOutcome>>,
+        semantic_error: RefCell<Option<String>>,
+        revision: u64,
+    }
+
+    impl FakeSink {
+        fn calls(&self) -> Vec<String> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl PostCommitSink for FakeSink {
+        fn catalog_upsert(&self, path: PathBuf, _note: IndexedNote) -> PostCommitCatalogOutcome {
+            self.calls
+                .borrow_mut()
+                .push(format!("upsert:{}", path.display()));
+            self.catalog_results
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_default()
+        }
+
+        fn catalog_remove(&self, path: &Path) -> PostCommitCatalogOutcome {
+            self.calls
+                .borrow_mut()
+                .push(format!("remove:{}", path.display()));
+            self.catalog_results
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_default()
+        }
+
+        fn clear_dirty(&self, path: &Path) -> Result<(), String> {
+            self.calls
+                .borrow_mut()
+                .push(format!("clear:{}", path.display()));
+            Ok(())
+        }
+
+        fn mark_dirty(&self, path: &Path, _source: &str) -> Result<(), String> {
+            self.calls
+                .borrow_mut()
+                .push(format!("dirty:{}", path.display()));
+            Ok(())
+        }
+
+        fn semantic_update(
+            &self,
+            path: &Path,
+            _markdown: String,
+            _modified_millis: u64,
+        ) -> Result<(), String> {
+            self.calls
+                .borrow_mut()
+                .push(format!("semantic-update:{}", path.display()));
+            self.semantic_error.borrow_mut().take().map_or(Ok(()), Err)
+        }
+
+        fn semantic_move(
+            &self,
+            old_path: &Path,
+            new_path: &Path,
+            _markdown: String,
+            _modified_millis: u64,
+        ) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!(
+                "semantic-move:{}->{}",
+                old_path.display(),
+                new_path.display()
+            ));
+            self.semantic_error.borrow_mut().take().map_or(Ok(()), Err)
+        }
+
+        fn revision(&self) -> Result<u64, String> {
+            Ok(self.revision)
+        }
+
+        fn emit_note_saved(&self, _note_id: String, path: &Path, _title: String, revision: u64) {
+            self.calls
+                .borrow_mut()
+                .push(format!("event:{}:{revision}", path.display()));
+        }
+    }
+
+    fn mutation(path: &str, previous_path: Option<&str>) -> CommittedNoteMutation {
+        CommittedNoteMutation {
+            path: PathBuf::from(path),
+            previous_path: previous_path.map(PathBuf::from),
+            markdown: "---\ngneauxghts:\n  id: note-1\n  kind: note\n---\n\n# Note\n\n- [ ] task"
+                .to_string(),
+            modified_millis: 42,
+        }
+    }
+
+    #[test]
+    fn create_and_update_apply_one_upsert_without_a_remove() {
+        let cases = [
+            mutation("/vault/Note.md", None),
+            mutation("/vault/Note.md", Some("/vault/Note.md")),
+        ];
+
+        for mutation in cases {
+            let sink = FakeSink {
+                revision: 7,
+                ..FakeSink::default()
+            };
+            let outcome = apply_committed_mutation(&sink, mutation);
+            assert!(outcome.issues.is_empty());
+            assert_eq!(
+                sink.calls(),
+                vec![
+                    "upsert:/vault/Note.md",
+                    "clear:/vault/Note.md",
+                    "semantic-update:/vault/Note.md",
+                    "event:/vault/Note.md:7",
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn move_removes_the_previous_path_and_queues_one_semantic_move() {
+        let sink = FakeSink {
+            revision: 9,
+            ..FakeSink::default()
+        };
+        apply_committed_mutation(&sink, mutation("/vault/Renamed.md", Some("/vault/Old.md")));
+        assert_eq!(
+            sink.calls(),
+            vec![
+                "upsert:/vault/Renamed.md",
+                "clear:/vault/Renamed.md",
+                "remove:/vault/Old.md",
+                "clear:/vault/Old.md",
+                "semantic-move:/vault/Old.md->/vault/Renamed.md",
+                "event:/vault/Renamed.md:9",
+            ]
+        );
+    }
+
+    #[test]
+    fn required_and_derived_failures_remain_distinguishable_after_commit() {
+        let sink = FakeSink {
+            catalog_results: RefCell::new(VecDeque::from([PostCommitCatalogOutcome {
+                catalog_error: None,
+                task_projection_error: Some("tasks unavailable".to_string()),
+            }])),
+            semantic_error: RefCell::new(Some("semantic queue unavailable".to_string())),
+            revision: 11,
+            ..FakeSink::default()
+        };
+        let outcome = apply_committed_mutation(&sink, mutation("/vault/Note.md", None));
+
+        assert!(!outcome.issues.is_empty());
+        assert!(outcome
+            .issues
+            .iter()
+            .any(|issue| issue.stage == PostCommitStage::TaskProjectionUpsert));
+        assert!(outcome
+            .issues
+            .iter()
+            .any(|issue| issue.stage == PostCommitStage::SemanticUpdate));
+        assert!(sink.calls().contains(&"dirty:/vault/Note.md".to_string()));
+        assert!(sink
+            .calls()
+            .contains(&"event:/vault/Note.md:11".to_string()));
+        let warning = outcome
+            .required_consistency_warning()
+            .expect("task projection failure is required");
+        assert!(warning.message.starts_with(
+            "Canonical note file was saved at /vault/Note.md, but required catalog/task synchronization is incomplete"
+        ));
+        assert!(warning
+            .message
+            .contains("TaskProjectionUpsert: tasks unavailable"));
+        assert!(!warning.message.contains("semantic queue unavailable"));
+        assert_eq!(warning.issues.len(), 1);
+        assert_eq!(
+            warning.issues[0].stage,
+            PostCommitStage::TaskProjectionUpsert
+        );
+    }
+
+    #[test]
+    fn derived_failures_do_not_fail_required_consistency_policy() {
+        let sink = FakeSink {
+            semantic_error: RefCell::new(Some("semantic queue unavailable".to_string())),
+            revision: 13,
+            ..FakeSink::default()
+        };
+        let outcome = apply_committed_mutation(&sink, mutation("/vault/Note.md", None));
+
+        assert!(!outcome.issues.is_empty());
+        assert!(outcome
+            .issues
+            .iter()
+            .any(|issue| issue.stage == PostCommitStage::SemanticUpdate));
+        assert_eq!(outcome.required_consistency_warning(), None);
+    }
+
+    #[test]
+    fn canonical_read_failure_is_required_even_with_a_fallback_catalog_snapshot() {
+        let sink = FakeSink {
+            revision: 17,
+            ..FakeSink::default()
+        };
+        let mut outcome = apply_committed_mutation(&sink, mutation("/vault/Note.md", None));
+        outcome.record_issue(
+            PostCommitStage::CanonicalRead,
+            "canonical bytes unavailable".to_string(),
+        );
+
+        let warning = outcome
+            .required_consistency_warning()
+            .expect("canonical read is required");
+        assert!(warning
+            .message
+            .contains("CanonicalRead: canonical bytes unavailable"));
+    }
+}

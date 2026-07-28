@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "commands": {
+    "save_note": {
+      "args": {
+        "title": "Title",
+        "markdown": "Body",
+        "currentPath": "/vault/Title.md"
+      },
+      "result": {
+        "noteId": "note-1",
+        "title": "Title",
+        "markdown": "Body",
+        "path": "/vault/Title.md"
+      }
+    },
+    "remember_note": {
+      "args": {
+        "title": "Remembered",
+        "markdown": "Remembered body",
+        "currentPath": null,
+        "clearLastOpened": false
+      },
+      "result": null
+    },
+    "prepare_task_document_mutation": {
+      "args": {
+        "taskId": "task-1",
+        "mutationKind": "toggle",
+        "workingMarkdown": "- [ ] Ship it\n\nLocal work",
+        "bodyHash": "b4ab9534e38cb17c9d1862b1276336c94ae2981884c5f2737271446f7def1536"
+      },
+      "result": {
+        "taskId": "task-1",
+        "noteId": "note-1",
+        "notePath": "/vault/Tasks.md",
+        "baseHash": "b4ab9534e38cb17c9d1862b1276336c94ae2981884c5f2737271446f7def1536",
+        "updatedEditorMarkdown": "- [x] Ship it\n\nLocal work"
+      }
+    },
+    "chat_send_message": {
+      "args": {
+        "request": {
+          "conversationId": "conversation-1",
+          "content": "Compare these notes",
+          "attachments": [
+            {
+              "kind": "image",
+              "name": "diagram.png",
+              "mimeType": "image/png",
+              "sizeBytes": 4,
+              "dataBase64": "iVBORw=="
+            }
+          ],
+          "forceWebSearch": true,
+          "activeNote": {
+            "noteId": "note-1",
+            "title": "Title",
+            "path": "/vault/Title.md",
+            "body": "Body",
+            "bodyHash": "body-hash-1",
+            "selection": "Body"
+          }
+        }
+      },
+      "result": {
+        "requestId": "request-1",
+        "conversationId": "conversation-1",
+        "userMessageId": "message-user-1",
+        "assistantMessageId": "message-assistant-1"
+      }
+    },
+    "preview_note_change_proposal": {
+      "args": {
+        "path": "/vault/Title.md",
+        "edits": [
+          {
+            "kind": "replace",
+            "oldText": "Body",
+            "newText": "Updated body",
+            "contextBefore": null,
+            "contextAfter": null
+          }
+        ]
+      },
+      "result": {
+        "reviewId": "review-1",
+        "notePath": "/vault/Title.md",
+        "title": "Title",
+        "baseContentHash": "base-hash-1",
+        "baseEditorMarkdown": "Body",
+        "proposedEditorMarkdown": "Updated body",
+        "hunks": [
+          {
+            "id": "hunk-1",
+            "baseFrom": 0,
+            "baseTo": 4,
+            "proposedFrom": 0,
+            "proposedTo": 12,
+            "oldText": "Body",
+            "newText": "Updated body"
+          }
+        ]
+      }
+    },
+    "commit_note_review": {
+      "args": {
+        "path": "/vault/Title.md",
+        "expectedBaseHash": "base-hash-1",
+        "markdown": "Updated body"
+      },
+      "result": {
+        "status": "committed",
+        "applied": {
+          "kind": "update",
+          "path": "/vault/Title.md",
+          "previousPath": null
+        },
+        "message": null
+      }
+    },
+    "commit_agent_proposal": {
+      "args": {
+        "proposalId": "proposal-1",
+        "markdown": "Updated body"
+      },
+      "result": {
+        "status": "committed",
+        "applied": {
+          "kind": "update",
+          "path": "/vault/Title.md",
+          "previousPath": null
+        },
+        "message": null
+      }
+    },
+    "set_semantic_settings": {
+      "args": {
+        "settings": {
+          "semanticSearchEnabled": true,
+          "localOnlyMode": true,
+          "lexicalWeight": 0.5,
+          "semanticWeight": 0.4000000059604645
+        }
+      },
+      "result": {
+        "semanticSearchEnabled": true,
+        "localOnlyMode": true,
+        "lexicalWeight": 0.5,
+        "semanticWeight": 0.4000000059604645
+      }
+    },
+    "get_semantic_status": {
+      "args": null,
+      "resultFixture": "app-events.json#semantic-status-changed"
+    },
+    "retry_semantic_index": {
+      "args": null,
+      "result": null
+    }
+  }
+}

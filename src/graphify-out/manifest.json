@@ -1,0 +1,1502 @@
+{
+  "lib/app/appStore.svelte.ts": {
+    "mtime": 1784019085.668497,
+    "ast_hash": "46e556059cf1028dd2ee1c73e91f8375",
+    "semantic_hash": "46e556059cf1028dd2ee1c73e91f8375"
+  },
+  "lib/appSettings.svelte.ts": {
+    "mtime": 1785221825.3219235,
+    "ast_hash": "75295d4fcb999be317cea9097b1fbcdc",
+    "semantic_hash": "75295d4fcb999be317cea9097b1fbcdc"
+  },
+  "lib/architectureFitness.test.ts": {
+    "mtime": 1785263544.9686298,
+    "ast_hash": "46c7371dc925a1818745ccf8f7dec693",
+    "semantic_hash": "46c7371dc925a1818745ccf8f7dec693"
+  },
+  "lib/contracts/committedMutation.ts": {
+    "mtime": 1785265653.07509,
+    "ast_hash": "de99646f8f6103e695398345b3abd751",
+    "semantic_hash": "de99646f8f6103e695398345b3abd751"
+  },
+  "lib/contracts/ipcFixtures.test.ts": {
+    "mtime": 1785263620.4082386,
+    "ast_hash": "6653a4cf381f478841811513f5005808",
+    "semantic_hash": "6653a4cf381f478841811513f5005808"
+  },
+  "lib/editorTextSize.svelte.ts": {
+    "mtime": 1784552086.8773074,
+    "ast_hash": "59d71d7ffaa1379fc86084064212e70e",
+    "semantic_hash": "59d71d7ffaa1379fc86084064212e70e"
+  },
+  "lib/editorTextSize.test.ts": {
+    "mtime": 1784552397.332246,
+    "ast_hash": "0a0e68857c061bac64ab65fda1fb1b71",
+    "semantic_hash": "0a0e68857c061bac64ab65fda1fb1b71"
+  },
+  "lib/features/atlas/atlasStore.svelte.ts": {
+    "mtime": 1784995772.7298644,
+    "ast_hash": "c1020051494c307c1370bdfae564630b",
+    "semantic_hash": "c1020051494c307c1370bdfae564630b"
+  },
+  "lib/features/atlas/atlasStore.test.ts": {
+    "mtime": 1784996777.6534972,
+    "ast_hash": "e4f22decac54b50078fa18146fc2c892",
+    "semantic_hash": "e4f22decac54b50078fa18146fc2c892"
+  },
+  "lib/features/chat/AttachmentPreview.svelte": {
+    "mtime": 1785177901.3089952,
+    "ast_hash": "03d1e1b886b75e549f0cc1a21f881719",
+    "semantic_hash": "03d1e1b886b75e549f0cc1a21f881719"
+  },
+  "lib/features/chat/ChatPanel.svelte": {
+    "mtime": 1785243824.0397172,
+    "ast_hash": "4b4d55216ea8f82e3e4947d6e2f0d8a9",
+    "semantic_hash": "4b4d55216ea8f82e3e4947d6e2f0d8a9"
+  },
+  "lib/features/chat/api.test.ts": {
+    "mtime": 1785226767.1974096,
+    "ast_hash": "932c73e95ff566deecfceb85b888c93a",
+    "semantic_hash": "932c73e95ff566deecfceb85b888c93a"
+  },
+  "lib/features/chat/api.ts": {
+    "mtime": 1785226766.8172138,
+    "ast_hash": "b3dae047b08721a04e520562f5b66481",
+    "semantic_hash": "b3dae047b08721a04e520562f5b66481"
+  },
+  "lib/features/chat/attachments.test.ts": {
+    "mtime": 1785177414.9282825,
+    "ast_hash": "91dafed1927c7c2107431c712f1c3a4f",
+    "semantic_hash": "91dafed1927c7c2107431c712f1c3a4f"
+  },
+  "lib/features/chat/attachments.ts": {
+    "mtime": 1785177414.7396014,
+    "ast_hash": "463734f3fe928586b152b73a8ad531e1",
+    "semantic_hash": "463734f3fe928586b152b73a8ad531e1"
+  },
+  "lib/features/chat/controller.svelte.ts": {
+    "mtime": 1785222631.2238827,
+    "ast_hash": "6a6443a7754aad73ee9e2edae8118ce1",
+    "semantic_hash": "6a6443a7754aad73ee9e2edae8118ce1"
+  },
+  "lib/features/chat/controller.test.ts": {
+    "mtime": 1785222650.146868,
+    "ast_hash": "f0f2aaff1ce40f431d469e46c5e75b74",
+    "semantic_hash": "f0f2aaff1ce40f431d469e46c5e75b74"
+  },
+  "lib/features/chat/discussionContext.test.ts": {
+    "mtime": 1783966332.8122482,
+    "ast_hash": "b47b9d0e1da5c409fedf3fa75973c83e",
+    "semantic_hash": "b47b9d0e1da5c409fedf3fa75973c83e"
+  },
+  "lib/features/chat/discussionContext.ts": {
+    "mtime": 1783966332.812352,
+    "ast_hash": "6b9aca4f25d82abf5dd552f5c9dd7659",
+    "semantic_hash": "6b9aca4f25d82abf5dd552f5c9dd7659"
+  },
+  "lib/features/chat/index.ts": {
+    "mtime": 1784551797.1433203,
+    "ast_hash": "b7aa1e39f334905c04912b587bb902c9",
+    "semantic_hash": "b7aa1e39f334905c04912b587bb902c9"
+  },
+  "lib/features/chat/proposalVisibility.test.ts": {
+    "mtime": 1785098204.1106722,
+    "ast_hash": "3f730577657c6994e16606918f5e8585",
+    "semantic_hash": "3f730577657c6994e16606918f5e8585"
+  },
+  "lib/features/chat/proposalVisibility.ts": {
+    "mtime": 1785098204.0183713,
+    "ast_hash": "5e42b46560f974b8a39a21ec6a80b6ce",
+    "semantic_hash": "5e42b46560f974b8a39a21ec6a80b6ce"
+  },
+  "lib/features/chat/types.ts": {
+    "mtime": 1785243676.51521,
+    "ast_hash": "29d57cfcfb9c7bbb1430be8aec3df317",
+    "semantic_hash": "29d57cfcfb9c7bbb1430be8aec3df317"
+  },
+  "lib/features/chat/ui/ChatComposer.svelte": {
+    "mtime": 1785234397.9332619,
+    "ast_hash": "f90e75b274210fccd6172b3af35a63a1",
+    "semantic_hash": "f90e75b274210fccd6172b3af35a63a1"
+  },
+  "lib/features/chat/ui/ChatHeader.svelte": {
+    "mtime": 1785231928.9564643,
+    "ast_hash": "48e629856d0951b71c68d91df8352686",
+    "semantic_hash": "48e629856d0951b71c68d91df8352686"
+  },
+  "lib/features/chat/ui/ChatMessage.svelte": {
+    "mtime": 1785231850.8754892,
+    "ast_hash": "459110615c8d836e64d91399fe89aadb",
+    "semantic_hash": "459110615c8d836e64d91399fe89aadb"
+  },
+  "lib/features/chat/ui/ChatMessageList.svelte": {
+    "mtime": 1785234398.0337605,
+    "ast_hash": "504af5939d4654bacb416942328227ea",
+    "semantic_hash": "504af5939d4654bacb416942328227ea"
+  },
+  "lib/features/chat/ui/ChatProposalRegion.svelte": {
+    "mtime": 1785232226.413602,
+    "ast_hash": "d5f60be1a836f8d62771738c1a6d6b9b",
+    "semantic_hash": "d5f60be1a836f8d62771738c1a6d6b9b"
+  },
+  "lib/features/chat/ui/chatPanelHelpers.test.ts": {
+    "mtime": 1785231818.0891647,
+    "ast_hash": "f55ba54cb6453dce0c18e355300cbbf4",
+    "semantic_hash": "f55ba54cb6453dce0c18e355300cbbf4"
+  },
+  "lib/features/chat/ui/chatPanelHelpers.ts": {
+    "mtime": 1785231818.002374,
+    "ast_hash": "e9ecf900a8363ef61818da7f02b40313",
+    "semantic_hash": "e9ecf900a8363ef61818da7f02b40313"
+  },
+  "lib/features/notepad/Notepad.svelte": {
+    "mtime": 1785265017.1909235,
+    "ast_hash": "81b3f5d2213e1f3a67f1f219fd8754d2",
+    "semantic_hash": "81b3f5d2213e1f3a67f1f219fd8754d2"
+  },
+  "lib/features/notepad/NotepadPane.svelte": {
+    "mtime": 1785263942.9355037,
+    "ast_hash": "311c9faa89a5bf9d805cb7f044b5a904",
+    "semantic_hash": "311c9faa89a5bf9d805cb7f044b5a904"
+  },
+  "lib/features/notepad/PaneCommandPicker.svelte": {
+    "mtime": 1784831174.6662643,
+    "ast_hash": "6610ee4e12f83c3dbf8d9f30f706160f",
+    "semantic_hash": "6610ee4e12f83c3dbf8d9f30f706160f"
+  },
+  "lib/features/notepad/SplitPaneButton.svelte": {
+    "mtime": 1784831174.5672698,
+    "ast_hash": "1b4d3879747b8d109331765906a88f0f",
+    "semantic_hash": "1b4d3879747b8d109331765906a88f0f"
+  },
+  "lib/features/notepad/document/documentConflictController.test.ts": {
+    "mtime": 1785265531.9676552,
+    "ast_hash": "f1824c9a5edd21cf052f360f42ba5776",
+    "semantic_hash": "f1824c9a5edd21cf052f360f42ba5776"
+  },
+  "lib/features/notepad/document/documentConflictController.ts": {
+    "mtime": 1785265550.4232838,
+    "ast_hash": "03d7c1ad309f005b6044ac52fffb29f1",
+    "semantic_hash": "03d7c1ad309f005b6044ac52fffb29f1"
+  },
+  "lib/features/notepad/document/documentEditingService.test.ts": {
+    "mtime": 1785265427.1640792,
+    "ast_hash": "557f88d1e98398c5e894bf97d77bb500",
+    "semantic_hash": "557f88d1e98398c5e894bf97d77bb500"
+  },
+  "lib/features/notepad/document/documentEditingService.ts": {
+    "mtime": 1785265427.0602083,
+    "ast_hash": "03542b3b3a2929e0b6154d1d4c8f3dfa",
+    "semantic_hash": "03542b3b3a2929e0b6154d1d4c8f3dfa"
+  },
+  "lib/features/notepad/document/documentPaneCoordinator.test.ts": {
+    "mtime": 1785265532.0714781,
+    "ast_hash": "dda1148747df82315424acf702cfc093",
+    "semantic_hash": "dda1148747df82315424acf702cfc093"
+  },
+  "lib/features/notepad/document/documentPaneCoordinator.ts": {
+    "mtime": 1785265346.560267,
+    "ast_hash": "cb88e105031d83c457fd0eebae61ced8",
+    "semantic_hash": "cb88e105031d83c457fd0eebae61ced8"
+  },
+  "lib/features/notepad/document/documentRegistry.test.ts": {
+    "mtime": 1785228669.8998752,
+    "ast_hash": "411b91c98b7a9baefd960c0a74b6f8b5",
+    "semantic_hash": "411b91c98b7a9baefd960c0a74b6f8b5"
+  },
+  "lib/features/notepad/document/documentRegistry.ts": {
+    "mtime": 1785258570.0859165,
+    "ast_hash": "5529bd64070b85cf4a89ee9ca0d83e98",
+    "semantic_hash": "5529bd64070b85cf4a89ee9ca0d83e98"
+  },
+  "lib/features/notepad/document/documentRuntime.test.ts": {
+    "mtime": 1785264420.962541,
+    "ast_hash": "8bdccc3307263bbbf07d78bfb4c74890",
+    "semantic_hash": "8bdccc3307263bbbf07d78bfb4c74890"
+  },
+  "lib/features/notepad/document/documentRuntime.ts": {
+    "mtime": 1785264395.6198535,
+    "ast_hash": "548f8da1375c766a6e4017c1cbbcac65",
+    "semantic_hash": "548f8da1375c766a6e4017c1cbbcac65"
+  },
+  "lib/features/notepad/document/documentState.sequence.test.ts": {
+    "mtime": 1785264177.2320373,
+    "ast_hash": "554d7d5f0b2b69c12c81c8f8d2c3ec8b",
+    "semantic_hash": "554d7d5f0b2b69c12c81c8f8d2c3ec8b"
+  },
+  "lib/features/notepad/document/documentState.test.ts": {
+    "mtime": 1785264147.103052,
+    "ast_hash": "b3976759d3371e5d0073193e40ad3e94",
+    "semantic_hash": "b3976759d3371e5d0073193e40ad3e94"
+  },
+  "lib/features/notepad/document/documentState.ts": {
+    "mtime": 1785264146.887116,
+    "ast_hash": "7b5cc4c0857f789684ab42809bad72ea",
+    "semantic_hash": "7b5cc4c0857f789684ab42809bad72ea"
+  },
+  "lib/features/notepad/editor/BlockHandle.svelte": {
+    "mtime": 1782926168.3199947,
+    "ast_hash": "dc4b10f2ac4a4d49c47fd261f411a8f5",
+    "semantic_hash": "dc4b10f2ac4a4d49c47fd261f411a8f5"
+  },
+  "lib/features/notepad/editor/SelectionMenu.svelte": {
+    "mtime": 1783966332.8134987,
+    "ast_hash": "424f18bf32089f2651d369abc842afe0",
+    "semantic_hash": "424f18bf32089f2651d369abc842afe0"
+  },
+  "lib/features/notepad/editor/SlashMenu.svelte": {
+    "mtime": 1782141867.088118,
+    "ast_hash": "9bcd119ac10b0eaff6f3340a380741b4",
+    "semantic_hash": "9bcd119ac10b0eaff6f3340a380741b4"
+  },
+  "lib/features/notepad/editor/blockHandleExtension.ts": {
+    "mtime": 1785225616.2597923,
+    "ast_hash": "8980b8e2d7573cb792af16a17c358246",
+    "semantic_hash": "8980b8e2d7573cb792af16a17c358246"
+  },
+  "lib/features/notepad/editor/blockHandleMount.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "e6f114292a055c442d45908aa0567dd2",
+    "semantic_hash": "e6f114292a055c442d45908aa0567dd2"
+  },
+  "lib/features/notepad/editor/blockMoveUndo.test.ts": {
+    "mtime": 1781678651.477428,
+    "ast_hash": "043d9cb87cf7e7872a5100f0790f98e3",
+    "semantic_hash": "043d9cb87cf7e7872a5100f0790f98e3"
+  },
+  "lib/features/notepad/editor/blockTypes.ts": {
+    "mtime": 1783275042.0503597,
+    "ast_hash": "25fc1f6fbc79c02d179f5b62925893d6",
+    "semantic_hash": "25fc1f6fbc79c02d179f5b62925893d6"
+  },
+  "lib/features/notepad/editor/cursorState.ts": {
+    "mtime": 1783078047.7464657,
+    "ast_hash": "8b38481eea8703593b709a6837903621",
+    "semantic_hash": "8b38481eea8703593b709a6837903621"
+  },
+  "lib/features/notepad/editor/editor.ts": {
+    "mtime": 1785225829.3343236,
+    "ast_hash": "f676a502b6f5d12b0e679ae0bd687a38",
+    "semantic_hash": "f676a502b6f5d12b0e679ae0bd687a38"
+  },
+  "lib/features/notepad/editor/editorAction.ts": {
+    "mtime": 1785226134.85282,
+    "ast_hash": "534c9eeaa1c368071aa32e7c878aa491",
+    "semantic_hash": "534c9eeaa1c368071aa32e7c878aa491"
+  },
+  "lib/features/notepad/editor/editorCapabilities.test.ts": {
+    "mtime": 1785225861.8541784,
+    "ast_hash": "bb2f385efddb1cace8f679c8b271201f",
+    "semantic_hash": "bb2f385efddb1cace8f679c8b271201f"
+  },
+  "lib/features/notepad/editor/editorCapabilities.ts": {
+    "mtime": 1785228397.9180326,
+    "ast_hash": "2c0810e91681997552c7b8b4d18c3506",
+    "semantic_hash": "2c0810e91681997552c7b8b4d18c3506"
+  },
+  "lib/features/notepad/editor/editorDispatch.ts": {
+    "mtime": 1783274982.656795,
+    "ast_hash": "443feb03bacdd0d3432c7403b250c3be",
+    "semantic_hash": "443feb03bacdd0d3432c7403b250c3be"
+  },
+  "lib/features/notepad/editor/editorDocumentResources.ts": {
+    "mtime": 1785225389.9717102,
+    "ast_hash": "6bd28704e529367c5e70df03d30484cd",
+    "semantic_hash": "6bd28704e529367c5e70df03d30484cd"
+  },
+  "lib/features/notepad/editor/editorDocumentRuntime.test.ts": {
+    "mtime": 1785228749.4850018,
+    "ast_hash": "4fad522da2f73c6e3dbaf260893c1d4e",
+    "semantic_hash": "4fad522da2f73c6e3dbaf260893c1d4e"
+  },
+  "lib/features/notepad/editor/editorDocumentRuntime.ts": {
+    "mtime": 1785230717.6050851,
+    "ast_hash": "9a2e1fe07ede4fc3a528bcef3888f787",
+    "semantic_hash": "9a2e1fe07ede4fc3a528bcef3888f787"
+  },
+  "lib/features/notepad/editor/editorDom.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "2d946602a9027c234c786062dac26035",
+    "semantic_hash": "2d946602a9027c234c786062dac26035"
+  },
+  "lib/features/notepad/editor/editorExtensions.ts": {
+    "mtime": 1785225637.5254884,
+    "ast_hash": "73ab78df6e6fbf0f98a2f1c1577fb8b6",
+    "semantic_hash": "73ab78df6e6fbf0f98a2f1c1577fb8b6"
+  },
+  "lib/features/notepad/editor/editorLifecycleController.test.ts": {
+    "mtime": 1785226249.3265626,
+    "ast_hash": "83bc28b694f1fbc658ce13f67bf8dc77",
+    "semantic_hash": "83bc28b694f1fbc658ce13f67bf8dc77"
+  },
+  "lib/features/notepad/editor/editorLifecycleController.ts": {
+    "mtime": 1785262091.5067499,
+    "ast_hash": "49652526dd3353865f6e7da29c8f7dda",
+    "semantic_hash": "49652526dd3353865f6e7da29c8f7dda"
+  },
+  "lib/features/notepad/editor/editorMenuBridge.ts": {
+    "mtime": 1783274981.9158554,
+    "ast_hash": "5c42f5d7855224869e22eab30554dba4",
+    "semantic_hash": "5c42f5d7855224869e22eab30554dba4"
+  },
+  "lib/features/notepad/editor/editorMenuKeyboard.test.ts": {
+    "mtime": 1783275057.555662,
+    "ast_hash": "cf872320cfdf86f79d03e8520dba156f",
+    "semantic_hash": "cf872320cfdf86f79d03e8520dba156f"
+  },
+  "lib/features/notepad/editor/editorMenuKeyboard.ts": {
+    "mtime": 1783274982.145149,
+    "ast_hash": "b59a03329e9c3bc6cac408a9a0b90fb8",
+    "semantic_hash": "b59a03329e9c3bc6cac408a9a0b90fb8"
+  },
+  "lib/features/notepad/editor/editorMenuModel.ts": {
+    "mtime": 1783272394.4769955,
+    "ast_hash": "e8017af662a73a8a6cd42dcd44b3d0a6",
+    "semantic_hash": "e8017af662a73a8a6cd42dcd44b3d0a6"
+  },
+  "lib/features/notepad/editor/editorShortcuts.ts": {
+    "mtime": 1785225431.2693245,
+    "ast_hash": "968122d4faee5db9d7f5275e79f37435",
+    "semantic_hash": "968122d4faee5db9d7f5275e79f37435"
+  },
+  "lib/features/notepad/editor/editorTheme.ts": {
+    "mtime": 1785225494.657675,
+    "ast_hash": "50a17a3d93a5fa89bfab85781ac5e55a",
+    "semantic_hash": "50a17a3d93a5fa89bfab85781ac5e55a"
+  },
+  "lib/features/notepad/editor/editorViewController.ts": {
+    "mtime": 1785228528.4817526,
+    "ast_hash": "4c0fa1e28f358fc8c6cac3fce4ee9e33",
+    "semantic_hash": "4c0fa1e28f358fc8c6cac3fce4ee9e33"
+  },
+  "lib/features/notepad/editor/enterKey.test.ts": {
+    "mtime": 1784042755.760956,
+    "ast_hash": "f1f9f0ad632c45961b262be3a2ce19fc",
+    "semantic_hash": "f1f9f0ad632c45961b262be3a2ce19fc"
+  },
+  "lib/features/notepad/editor/externalLinkExtension.ts": {
+    "mtime": 1785225494.7521129,
+    "ast_hash": "caf8b7a65d3c3f3afb7e4471b8c4df4d",
+    "semantic_hash": "caf8b7a65d3c3f3afb7e4471b8c4df4d"
+  },
+  "lib/features/notepad/editor/indentConfig.test.ts": {
+    "mtime": 1783793108.6433072,
+    "ast_hash": "5ec39533da04cb58dcd385d9eeaacbde",
+    "semantic_hash": "5ec39533da04cb58dcd385d9eeaacbde"
+  },
+  "lib/features/notepad/editor/indentConfig.ts": {
+    "mtime": 1784041653.674793,
+    "ast_hash": "7d177cadac71e86620ebf5528fc1443f",
+    "semantic_hash": "7d177cadac71e86620ebf5528fc1443f"
+  },
+  "lib/features/notepad/editor/inlineFormatting.test.ts": {
+    "mtime": 1783793150.0342767,
+    "ast_hash": "cdfb83ebd2917582662adebd91cf71d2",
+    "semantic_hash": "cdfb83ebd2917582662adebd91cf71d2"
+  },
+  "lib/features/notepad/editor/inlineFormatting.ts": {
+    "mtime": 1785001717.2940857,
+    "ast_hash": "a1a2d428f5290a89c593299ac07631ba",
+    "semantic_hash": "a1a2d428f5290a89c593299ac07631ba"
+  },
+  "lib/features/notepad/editor/paneSelectionTracking.ts": {
+    "mtime": 1781678651.4802597,
+    "ast_hash": "320a3bbced30d44e803a9cf9ee314be9",
+    "semantic_hash": "320a3bbced30d44e803a9cf9ee314be9"
+  },
+  "lib/features/notepad/editor/passiveTableExtension.ts": {
+    "mtime": 1785225528.5765522,
+    "ast_hash": "d90fcb23f3ac5a8f4f688bbf660db2ef",
+    "semantic_hash": "d90fcb23f3ac5a8f4f688bbf660db2ef"
+  },
+  "lib/features/notepad/editor/searchHighlightExtension.ts": {
+    "mtime": 1785225494.561054,
+    "ast_hash": "9730cf41094a51198cf99c3ac5cfb3bf",
+    "semantic_hash": "9730cf41094a51198cf99c3ac5cfb3bf"
+  },
+  "lib/features/notepad/editor/selectionMenu.ts": {
+    "mtime": 1783275073.8476846,
+    "ast_hash": "9add9bd46a8bac1855e8e79683f43550",
+    "semantic_hash": "9add9bd46a8bac1855e8e79683f43550"
+  },
+  "lib/features/notepad/editor/selectionMenuBridge.ts": {
+    "mtime": 1783274985.311571,
+    "ast_hash": "91e7e00a5aca2d657a9036c2cb32c17f",
+    "semantic_hash": "91e7e00a5aca2d657a9036c2cb32c17f"
+  },
+  "lib/features/notepad/editor/selectionSurround.test.ts": {
+    "mtime": 1783793150.1254823,
+    "ast_hash": "37b4df432488f60fbbefbc7c92ac2058",
+    "semantic_hash": "37b4df432488f60fbbefbc7c92ac2058"
+  },
+  "lib/features/notepad/editor/selectionSurround.ts": {
+    "mtime": 1783276801.6104345,
+    "ast_hash": "13b208354d2550e67a9e82001cae7b8f",
+    "semantic_hash": "13b208354d2550e67a9e82001cae7b8f"
+  },
+  "lib/features/notepad/editor/slashMenu.ts": {
+    "mtime": 1783275008.1478434,
+    "ast_hash": "6d315d6f70fd5b0e1621355c877b3dac",
+    "semantic_hash": "6d315d6f70fd5b0e1621355c877b3dac"
+  },
+  "lib/features/notepad/editor/slashMenuBridge.ts": {
+    "mtime": 1783274983.6913748,
+    "ast_hash": "20e02a340531e13b4457e0f2dc78adbc",
+    "semantic_hash": "20e02a340531e13b4457e0f2dc78adbc"
+  },
+  "lib/features/notepad/editor/structuralIndentation.test.ts": {
+    "mtime": 1784042773.60849,
+    "ast_hash": "8d6081f811c41ec9c224a23dad22ead1",
+    "semantic_hash": "8d6081f811c41ec9c224a23dad22ead1"
+  },
+  "lib/features/notepad/editor/structuralIndentation.ts": {
+    "mtime": 1784041599.8678582,
+    "ast_hash": "13dc345cb7edc2c6ce1f90158ac9cdf5",
+    "semantic_hash": "13dc345cb7edc2c6ce1f90158ac9cdf5"
+  },
+  "lib/features/notepad/editor/types.ts": {
+    "mtime": 1785227076.1659682,
+    "ast_hash": "d53f7441376597bd5adfadcffaa7c623",
+    "semantic_hash": "d53f7441376597bd5adfadcffaa7c623"
+  },
+  "lib/features/notepad/editor/undoSelection.test.ts": {
+    "mtime": 1783786989.4390376,
+    "ast_hash": "bdf233e726e4fa91d5525f26efad3483",
+    "semantic_hash": "bdf233e726e4fa91d5525f26efad3483"
+  },
+  "lib/features/notepad/host.test.ts": {
+    "mtime": 1785262523.4239595,
+    "ast_hash": "750ae07f98f5fe2b609e1e8ef10872aa",
+    "semantic_hash": "750ae07f98f5fe2b609e1e8ef10872aa"
+  },
+  "lib/features/notepad/host.ts": {
+    "mtime": 1785262082.4264002,
+    "ast_hash": "b0b8ecabfe3e22772192475c3e2c20b8",
+    "semantic_hash": "b0b8ecabfe3e22772192475c3e2c20b8"
+  },
+  "lib/features/notepad/images/imageConfig.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "8f278d0a11f298569fa232e65500fdbf",
+    "semantic_hash": "8f278d0a11f298569fa232e65500fdbf"
+  },
+  "lib/features/notepad/images/imageEmbedParser.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "511bc7551eb15b811cd1c44b6d630c68",
+    "semantic_hash": "511bc7551eb15b811cd1c44b6d630c68"
+  },
+  "lib/features/notepad/images/imageEmbedWidgets.test.ts": {
+    "mtime": 1784553893.7583485,
+    "ast_hash": "6b37b4023567a384594e5b3312cc9489",
+    "semantic_hash": "6b37b4023567a384594e5b3312cc9489"
+  },
+  "lib/features/notepad/images/imageEmbedWidgets.ts": {
+    "mtime": 1784553904.7780056,
+    "ast_hash": "29a41c36d5d093e07579a5c74d569ac7",
+    "semantic_hash": "29a41c36d5d093e07579a5c74d569ac7"
+  },
+  "lib/features/notepad/images/imageEmbeds.ts": {
+    "mtime": 1784553886.428893,
+    "ast_hash": "cf9850ecfb975f696f8c4258bf1396cb",
+    "semantic_hash": "cf9850ecfb975f696f8c4258bf1396cb"
+  },
+  "lib/features/notepad/images/imagePaste.ts": {
+    "mtime": 1784553887.5025387,
+    "ast_hash": "983cda171464cc21f900dd93f7ad30ce",
+    "semantic_hash": "983cda171464cc21f900dd93f7ad30ce"
+  },
+  "lib/features/notepad/interaction/navigationSelectionController.test.ts": {
+    "mtime": 1785264454.1110957,
+    "ast_hash": "695bfc9db577e0de57ada9682cd3b7a4",
+    "semantic_hash": "695bfc9db577e0de57ada9682cd3b7a4"
+  },
+  "lib/features/notepad/interaction/navigationSelectionController.ts": {
+    "mtime": 1785264644.7725763,
+    "ast_hash": "55e79358e835edece0b4dd8e585f1471",
+    "semantic_hash": "55e79358e835edece0b4dd8e585f1471"
+  },
+  "lib/features/notepad/interaction/titleInteractionController.test.ts": {
+    "mtime": 1785264390.1536615,
+    "ast_hash": "8719ff88e62fb581f452f53421d9f711",
+    "semantic_hash": "8719ff88e62fb581f452f53421d9f711"
+  },
+  "lib/features/notepad/interaction/titleInteractionController.ts": {
+    "mtime": 1785264322.2269096,
+    "ast_hash": "f1422642ba83ab8a2af469df9b59023e",
+    "semantic_hash": "f1422642ba83ab8a2af469df9b59023e"
+  },
+  "lib/features/notepad/interaction/wikilinkInteractionController.test.ts": {
+    "mtime": 1785264390.260878,
+    "ast_hash": "0f6272fc152de554551bda37f62b1e72",
+    "semantic_hash": "0f6272fc152de554551bda37f62b1e72"
+  },
+  "lib/features/notepad/interaction/wikilinkInteractionController.ts": {
+    "mtime": 1785264369.664985,
+    "ast_hash": "a5839da4fd12f19a80050e53e9714223",
+    "semantic_hash": "a5839da4fd12f19a80050e53e9714223"
+  },
+  "lib/features/notepad/interaction/workspaceChoiceController.test.ts": {
+    "mtime": 1785264802.2115858,
+    "ast_hash": "ee36996c68ee390100d4f24462d5be70",
+    "semantic_hash": "ee36996c68ee390100d4f24462d5be70"
+  },
+  "lib/features/notepad/interaction/workspaceChoiceController.ts": {
+    "mtime": 1785264802.107678,
+    "ast_hash": "e88b6109a9d0a70a96c682f2f632f0a8",
+    "semantic_hash": "e88b6109a9d0a70a96c682f2f632f0a8"
+  },
+  "lib/features/notepad/markdown/commentExtension.ts": {
+    "mtime": 1783276270.0250702,
+    "ast_hash": "b943196996efc03986bcff2160622d8b",
+    "semantic_hash": "b943196996efc03986bcff2160622d8b"
+  },
+  "lib/features/notepad/markdown/conceal.ts": {
+    "mtime": 1781678651.4807177,
+    "ast_hash": "291404cabb21a44258e8febc5bfa52b8",
+    "semantic_hash": "291404cabb21a44258e8febc5bfa52b8"
+  },
+  "lib/features/notepad/markdown/decorations/blockquote.ts": {
+    "mtime": 1781678651.4809675,
+    "ast_hash": "d646de5d491cc89246a3cd0baa3bcf3c",
+    "semantic_hash": "d646de5d491cc89246a3cd0baa3bcf3c"
+  },
+  "lib/features/notepad/markdown/decorations/codeBlocks.ts": {
+    "mtime": 1783275774.6394665,
+    "ast_hash": "c88c1208cb41b17274e433372ba23e4e",
+    "semantic_hash": "c88c1208cb41b17274e433372ba23e4e"
+  },
+  "lib/features/notepad/markdown/decorations/headings.ts": {
+    "mtime": 1781678651.481687,
+    "ast_hash": "ad4aac90cd7615a0eda18a509adfbfc4",
+    "semantic_hash": "ad4aac90cd7615a0eda18a509adfbfc4"
+  },
+  "lib/features/notepad/markdown/decorations/horizontalRule.ts": {
+    "mtime": 1781678651.4819336,
+    "ast_hash": "94a1a824575f38483a2b228fd3065c4d",
+    "semantic_hash": "94a1a824575f38483a2b228fd3065c4d"
+  },
+  "lib/features/notepad/markdown/decorations/inlineFormatting.ts": {
+    "mtime": 1783275793.0697849,
+    "ast_hash": "acfe6492e923619a1085519bdf4553d0",
+    "semantic_hash": "acfe6492e923619a1085519bdf4553d0"
+  },
+  "lib/features/notepad/markdown/decorations/links.ts": {
+    "mtime": 1781678651.4824634,
+    "ast_hash": "6f8dd85dc9f0ed265b0769fe741784d1",
+    "semantic_hash": "6f8dd85dc9f0ed265b0769fe741784d1"
+  },
+  "lib/features/notepad/markdown/decorations/lists.ts": {
+    "mtime": 1784039787.4094238,
+    "ast_hash": "f49a3b103737a84b1c071cfe9d8f9741",
+    "semantic_hash": "f49a3b103737a84b1c071cfe9d8f9741"
+  },
+  "lib/features/notepad/markdown/decorations/types.ts": {
+    "mtime": 1781678651.482974,
+    "ast_hash": "735924359c95b95f808cc0d8f16ef547",
+    "semantic_hash": "735924359c95b95f808cc0d8f16ef547"
+  },
+  "lib/features/notepad/markdown/decorations/wikilinks.ts": {
+    "mtime": 1785001928.6213293,
+    "ast_hash": "e38f4ab656a169e38811c2af13f7cc4c",
+    "semantic_hash": "e38f4ab656a169e38811c2af13f7cc4c"
+  },
+  "lib/features/notepad/markdown/highlightExtension.ts": {
+    "mtime": 1783276270.0147862,
+    "ast_hash": "1320fed8ca4921e554cbb068177af25e",
+    "semantic_hash": "1320fed8ca4921e554cbb068177af25e"
+  },
+  "lib/features/notepad/markdown/inlineFormatSpec.test.ts": {
+    "mtime": 1783793213.703267,
+    "ast_hash": "1b6a9b4bc5461b1c91d2330dbad71616",
+    "semantic_hash": "1b6a9b4bc5461b1c91d2330dbad71616"
+  },
+  "lib/features/notepad/markdown/inlineFormatSpec.ts": {
+    "mtime": 1783276276.8501816,
+    "ast_hash": "2e3b9e0a3ec730d7a0f3ad86fba5d4a2",
+    "semantic_hash": "2e3b9e0a3ec730d7a0f3ad86fba5d4a2"
+  },
+  "lib/features/notepad/markdown/markdown.test.ts": {
+    "mtime": 1785177207.7235246,
+    "ast_hash": "1a8aaa64dd65f321e5863c61c2266357",
+    "semantic_hash": "1a8aaa64dd65f321e5863c61c2266357"
+  },
+  "lib/features/notepad/markdown/markdownExtensions.ts": {
+    "mtime": 1785177207.6300733,
+    "ast_hash": "9233bfa4d40e634e7b4814f98a37fcbf",
+    "semantic_hash": "9233bfa4d40e634e7b4814f98a37fcbf"
+  },
+  "lib/features/notepad/markdown/markdownHighlight.ts": {
+    "mtime": 1781678651.4836972,
+    "ast_hash": "48ebbeae39ba469d9ed2b130dd78495c",
+    "semantic_hash": "48ebbeae39ba469d9ed2b130dd78495c"
+  },
+  "lib/features/notepad/markdown/markdownLanguage.ts": {
+    "mtime": 1785001681.302093,
+    "ast_hash": "015bf562725924005d055726cb6ea2f5",
+    "semantic_hash": "015bf562725924005d055726cb6ea2f5"
+  },
+  "lib/features/notepad/markdown/obsidianMarkdownExtensions.ts": {
+    "mtime": 1785001474.959026,
+    "ast_hash": "5a09b78c7db112f8b42d6a14a3f693d4",
+    "semantic_hash": "5a09b78c7db112f8b42d6a14a3f693d4"
+  },
+  "lib/features/notepad/markdown/wikilinkExtension.ts": {
+    "mtime": 1785001928.526263,
+    "ast_hash": "8a38f6ede071d6a297474002ee7c2b95",
+    "semantic_hash": "8a38f6ede071d6a297474002ee7c2b95"
+  },
+  "lib/features/notepad/model/document.ts": {
+    "mtime": 1782650096.7177544,
+    "ast_hash": "32655c469d49dc374002b3c0c480844c",
+    "semantic_hash": "32655c469d49dc374002b3c0c480844c"
+  },
+  "lib/features/notepad/model/types.ts": {
+    "mtime": 1785265653.176154,
+    "ast_hash": "b687986bf65bc7e2d01a82e1524a779f",
+    "semantic_hash": "b687986bf65bc7e2d01a82e1524a779f"
+  },
+  "lib/features/notepad/navigation/locationMru.test.ts": {
+    "mtime": 1785244249.7218292,
+    "ast_hash": "f73d79c8adb0ec16bc9d07314864cbc1",
+    "semantic_hash": "f73d79c8adb0ec16bc9d07314864cbc1"
+  },
+  "lib/features/notepad/navigation/locationMru.ts": {
+    "mtime": 1785244249.3057206,
+    "ast_hash": "b4039c83b34d52f8f0682c830deb4808",
+    "semantic_hash": "b4039c83b34d52f8f0682c830deb4808"
+  },
+  "lib/features/notepad/navigation/navigation.ts": {
+    "mtime": 1781678651.4843953,
+    "ast_hash": "75f1ff36b5d4356b492e8f2f806395e5",
+    "semantic_hash": "75f1ff36b5d4356b492e8f2f806395e5"
+  },
+  "lib/features/notepad/navigation/openFlow.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "6b0b81cddbb7b4c7b245725fd57972b9",
+    "semantic_hash": "6b0b81cddbb7b4c7b245725fd57972b9"
+  },
+  "lib/features/notepad/navigation/pendingNoteSave.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "a10118e11d1df6a220aaf0f5f00cb5f3",
+    "semantic_hash": "a10118e11d1df6a220aaf0f5f00cb5f3"
+  },
+  "lib/features/notepad/notepadPane.types.ts": {
+    "mtime": 1785263942.7179403,
+    "ast_hash": "fa375904ffc32a565032fc93de914cd6",
+    "semantic_hash": "fa375904ffc32a565032fc93de914cd6"
+  },
+  "lib/features/notepad/orchestration/locationHistoryController.ts": {
+    "mtime": 1785264064.8426063,
+    "ast_hash": "5d920b68e0f24f9564998f9bc91d1c55",
+    "semantic_hash": "5d920b68e0f24f9564998f9bc91d1c55"
+  },
+  "lib/features/notepad/orchestration/noteCommandController.test.ts": {
+    "mtime": 1785265427.3696284,
+    "ast_hash": "8df200f2c4f9f0090fe61000b6c2a6b4",
+    "semantic_hash": "8df200f2c4f9f0090fe61000b6c2a6b4"
+  },
+  "lib/features/notepad/orchestration/noteCommandController.ts": {
+    "mtime": 1785265346.3565705,
+    "ast_hash": "4a7e7328d38f698423e1190a4455292d",
+    "semantic_hash": "4a7e7328d38f698423e1190a4455292d"
+  },
+  "lib/features/notepad/orchestration/notepadChatCoordinator.svelte.test.ts": {
+    "mtime": 1785243772.1652312,
+    "ast_hash": "53dd0bb05e928f27ad3d1d6286f0b73f",
+    "semantic_hash": "53dd0bb05e928f27ad3d1d6286f0b73f"
+  },
+  "lib/features/notepad/orchestration/notepadChatCoordinator.svelte.ts": {
+    "mtime": 1785263906.3909614,
+    "ast_hash": "43c6afd14cbf09a7357d8f3c6fa820a5",
+    "semantic_hash": "43c6afd14cbf09a7357d8f3c6fa820a5"
+  },
+  "lib/features/notepad/orchestration/notepadChatPaneAdapter.test.ts": {
+    "mtime": 1785262532.80548,
+    "ast_hash": "fd1db9de7749e98c1d442e4c3fd7eebb",
+    "semantic_hash": "fd1db9de7749e98c1d442e4c3fd7eebb"
+  },
+  "lib/features/notepad/orchestration/notepadChatPaneAdapter.ts": {
+    "mtime": 1785263884.0720546,
+    "ast_hash": "5e7b4e5428057159eb070ea0fe00356d",
+    "semantic_hash": "5e7b4e5428057159eb070ea0fe00356d"
+  },
+  "lib/features/notepad/orchestration/notepadCommandFacades.ts": {
+    "mtime": 1785264844.9066052,
+    "ast_hash": "33c3487865f6739f6517d0b033675b16",
+    "semantic_hash": "33c3487865f6739f6517d0b033675b16"
+  },
+  "lib/features/notepad/orchestration/notepadCommands.ts": {
+    "mtime": 1785264845.009022,
+    "ast_hash": "2c867e8f01df0f53a48449dae902f229",
+    "semantic_hash": "2c867e8f01df0f53a48449dae902f229"
+  },
+  "lib/features/notepad/orchestration/notepadProposalAdapter.ts": {
+    "mtime": 1785264381.1675882,
+    "ast_hash": "b020485fbaa9c5c5b11ee131ca56ca7e",
+    "semantic_hash": "b020485fbaa9c5c5b11ee131ca56ca7e"
+  },
+  "lib/features/notepad/orchestration/notepadRefreshController.test.ts": {
+    "mtime": 1785262743.6564174,
+    "ast_hash": "d0ff0ca86dc7e848883cbb58a17e87c6",
+    "semantic_hash": "d0ff0ca86dc7e848883cbb58a17e87c6"
+  },
+  "lib/features/notepad/orchestration/notepadRefreshController.ts": {
+    "mtime": 1785262735.3258228,
+    "ast_hash": "5e96761c90ab03e1be96a335564dc854",
+    "semantic_hash": "5e96761c90ab03e1be96a335564dc854"
+  },
+  "lib/features/notepad/orchestration/notepadSessionLifecycle.ts": {
+    "mtime": 1785227195.0230284,
+    "ast_hash": "fce90e92cd2ec8bd76714d7e32151637",
+    "semantic_hash": "fce90e92cd2ec8bd76714d7e32151637"
+  },
+  "lib/features/notepad/orchestration/notepadTaskMutationAdapter.test.ts": {
+    "mtime": 1785264210.9670608,
+    "ast_hash": "53de0eaa22d2d11b92a29739a13817bf",
+    "semantic_hash": "53de0eaa22d2d11b92a29739a13817bf"
+  },
+  "lib/features/notepad/orchestration/notepadTaskMutationAdapter.ts": {
+    "mtime": 1785265465.1535523,
+    "ast_hash": "84ad1b89a4fcee4c69d904c044a5fc3c",
+    "semantic_hash": "84ad1b89a4fcee4c69d904c044a5fc3c"
+  },
+  "lib/features/notepad/orchestration/paneCommandController.ts": {
+    "mtime": 1785263725.5443008,
+    "ast_hash": "1ee950d9d63397a31051929462a1e022",
+    "semantic_hash": "1ee950d9d63397a31051929462a1e022"
+  },
+  "lib/features/notepad/orchestration/paneCommandGroup.test.ts": {
+    "mtime": 1785243620.5168066,
+    "ast_hash": "f16bd1a3bc91d7bd18675bafd06425e2",
+    "semantic_hash": "f16bd1a3bc91d7bd18675bafd06425e2"
+  },
+  "lib/features/notepad/orchestration/paneCommandGroup.ts": {
+    "mtime": 1785243620.4241164,
+    "ast_hash": "ba9b331cddb00f48dff7e52a487565b9",
+    "semantic_hash": "ba9b331cddb00f48dff7e52a487565b9"
+  },
+  "lib/features/notepad/orchestration/paneNavigationTransitionPipeline.test.ts": {
+    "mtime": 1785263327.5101078,
+    "ast_hash": "252dd3d8b7fcb899303f0d38999cf1e3",
+    "semantic_hash": "252dd3d8b7fcb899303f0d38999cf1e3"
+  },
+  "lib/features/notepad/orchestration/paneNavigationTransitionPipeline.ts": {
+    "mtime": 1785263247.1711152,
+    "ast_hash": "c7343ad90a5334c298e6f0e2224f31ca",
+    "semantic_hash": "c7343ad90a5334c298e6f0e2224f31ca"
+  },
+  "lib/features/notepad/orchestration/paneSessionController.test.ts": {
+    "mtime": 1782841997.7578692,
+    "ast_hash": "774449d88c4f4b0e7c798545b26d8551",
+    "semantic_hash": "774449d88c4f4b0e7c798545b26d8551"
+  },
+  "lib/features/notepad/orchestration/paneSessionController.ts": {
+    "mtime": 1785264380.955423,
+    "ast_hash": "471c48f9087f20d47044f0bcdbb9f178",
+    "semantic_hash": "471c48f9087f20d47044f0bcdbb9f178"
+  },
+  "lib/features/notepad/orchestration/persistenceController.test.ts": {
+    "mtime": 1785265480.2423344,
+    "ast_hash": "2610914b50a28b4be0d9df965b359c1c",
+    "semantic_hash": "2610914b50a28b4be0d9df965b359c1c"
+  },
+  "lib/features/notepad/orchestration/persistenceController.ts": {
+    "mtime": 1785265428.618434,
+    "ast_hash": "890d55ed08fe24c1dbf3908327a20f87",
+    "semantic_hash": "890d55ed08fe24c1dbf3908327a20f87"
+  },
+  "lib/features/notepad/orchestration/workspacePaneController.test.ts": {
+    "mtime": 1785264229.853504,
+    "ast_hash": "3bb00574d47e00062e4252d36651b8df",
+    "semantic_hash": "3bb00574d47e00062e4252d36651b8df"
+  },
+  "lib/features/notepad/orchestration/workspacePaneController.ts": {
+    "mtime": 1785264291.8177128,
+    "ast_hash": "67b8da97198623608159c7d5ea7a934d",
+    "semantic_hash": "67b8da97198623608159c7d5ea7a934d"
+  },
+  "lib/features/notepad/pane/chatPaneBindings.ts": {
+    "mtime": 1785243919.6307282,
+    "ast_hash": "9a3b44b002b2047ee93e15a3eedf72b2",
+    "semantic_hash": "9a3b44b002b2047ee93e15a3eedf72b2"
+  },
+  "lib/features/notepad/pane/paneControllers.ts": {
+    "mtime": 1785262082.6170042,
+    "ast_hash": "a64b69e82b2d19fc4ab56b10144d601f",
+    "semantic_hash": "a64b69e82b2d19fc4ab56b10144d601f"
+  },
+  "lib/features/notepad/pane/paneEditorLifecycle.test.ts": {
+    "mtime": 1785230564.6217754,
+    "ast_hash": "927487082c800408b62fd9a6609011e0",
+    "semantic_hash": "927487082c800408b62fd9a6609011e0"
+  },
+  "lib/features/notepad/pane/paneEditorLifecycle.ts": {
+    "mtime": 1785262097.4113433,
+    "ast_hash": "9aeb9099da2ed70b7ea60125ef00f3ba",
+    "semantic_hash": "9aeb9099da2ed70b7ea60125ef00f3ba"
+  },
+  "lib/features/notepad/pane/paneRuntime.svelte.ts": {
+    "mtime": 1785226042.692349,
+    "ast_hash": "4ee35862413bfdc15cee329a0939529f",
+    "semantic_hash": "4ee35862413bfdc15cee329a0939529f"
+  },
+  "lib/features/notepad/pane/paneTransientUiController.svelte.ts": {
+    "mtime": 1785265480.1364803,
+    "ast_hash": "0f44f324940e22c6460439cfb997b57c",
+    "semantic_hash": "0f44f324940e22c6460439cfb997b57c"
+  },
+  "lib/features/notepad/pane/paneTransientUiController.test.ts": {
+    "mtime": 1785265480.242424,
+    "ast_hash": "b40fbe15baf4684d92934929bfd82e8c",
+    "semantic_hash": "b40fbe15baf4684d92934929bfd82e8c"
+  },
+  "lib/features/notepad/pane/paneTransientUiState.test.ts": {
+    "mtime": 1785265493.7758355,
+    "ast_hash": "08320e891425ff16f2f4f18886e3f359",
+    "semantic_hash": "08320e891425ff16f2f4f18886e3f359"
+  },
+  "lib/features/notepad/pane/paneTransientUiState.ts": {
+    "mtime": 1785265493.6722908,
+    "ast_hash": "90d76069307504e02c17cf22ffb887d5",
+    "semantic_hash": "90d76069307504e02c17cf22ffb887d5"
+  },
+  "lib/features/notepad/pane/paneViewModelFactory.test.ts": {
+    "mtime": 1785265017.0836015,
+    "ast_hash": "0b45c9fe25bd268bcacdf184a2afabbe",
+    "semantic_hash": "0b45c9fe25bd268bcacdf184a2afabbe"
+  },
+  "lib/features/notepad/pane/paneViewModelFactory.ts": {
+    "mtime": 1785265026.9780252,
+    "ast_hash": "682d9fb9cfe3ebd775bb5b5ade750be1",
+    "semantic_hash": "682d9fb9cfe3ebd775bb5b5ade750be1"
+  },
+  "lib/features/notepad/paneCommandPicker.test.ts": {
+    "mtime": 1784831174.762291,
+    "ast_hash": "88aac69597af8cb279b84f29511e974e",
+    "semantic_hash": "88aac69597af8cb279b84f29511e974e"
+  },
+  "lib/features/notepad/paneCommandPicker.ts": {
+    "mtime": 1784831174.4530046,
+    "ast_hash": "c3243791d9df63c6c4f63d78bc8dca40",
+    "semantic_hash": "c3243791d9df63c6c4f63d78bc8dca40"
+  },
+  "lib/features/notepad/related/RelatedPanel.svelte": {
+    "mtime": 1784035343.7006826,
+    "ast_hash": "e62dc59ebcb73510294e203661bd9826",
+    "semantic_hash": "e62dc59ebcb73510294e203661bd9826"
+  },
+  "lib/features/notepad/related/RelatedPanelHost.svelte": {
+    "mtime": 1784558993.3186748,
+    "ast_hash": "708b07cbd3396b5a3bde1bfc522dd434",
+    "semantic_hash": "708b07cbd3396b5a3bde1bfc522dd434"
+  },
+  "lib/features/notepad/related/layout.ts": {
+    "mtime": 1784559192.456718,
+    "ast_hash": "9067953d5febfa8398264c95d278401c",
+    "semantic_hash": "9067953d5febfa8398264c95d278401c"
+  },
+  "lib/features/notepad/related/store.svelte.ts": {
+    "mtime": 1784551871.7719462,
+    "ast_hash": "1a48209cdfb79501cb0552a649a160fb",
+    "semantic_hash": "1a48209cdfb79501cb0552a649a160fb"
+  },
+  "lib/features/notepad/related/store.test.ts": {
+    "mtime": 1784551817.4167278,
+    "ast_hash": "e82fa7e6a06a693b41587a0cfff2317a",
+    "semantic_hash": "e82fa7e6a06a693b41587a0cfff2317a"
+  },
+  "lib/features/notepad/search/currentNoteSearch.test.ts": {
+    "mtime": 1783793149.9436324,
+    "ast_hash": "b178cbf1302dc5b4f8311ee8489e4ab2",
+    "semantic_hash": "b178cbf1302dc5b4f8311ee8489e4ab2"
+  },
+  "lib/features/notepad/search/currentNoteSearch.ts": {
+    "mtime": 1783258680.384817,
+    "ast_hash": "95f44c8b6084c5bf3e49fcb0a977a7e8",
+    "semantic_hash": "95f44c8b6084c5bf3e49fcb0a977a7e8"
+  },
+  "lib/features/notepad/search/draftRef.test.ts": {
+    "mtime": 1781678651.486145,
+    "ast_hash": "e6860d8c99c9c3b8d660d984c85bf764",
+    "semantic_hash": "e6860d8c99c9c3b8d660d984c85bf764"
+  },
+  "lib/features/notepad/search/draftRef.ts": {
+    "mtime": 1781678651.4864004,
+    "ast_hash": "ecae16ba5f6f0d8229ec4f1bfddf94fe",
+    "semantic_hash": "ecae16ba5f6f0d8229ec4f1bfddf94fe"
+  },
+  "lib/features/notepad/search/recent.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "89793248e86e9b2f92ad0b7e5ab31751",
+    "semantic_hash": "89793248e86e9b2f92ad0b7e5ab31751"
+  },
+  "lib/features/notepad/search/search.test.ts": {
+    "mtime": 1784397688.026887,
+    "ast_hash": "f9e85c7287afb670739c54bf5b597302",
+    "semantic_hash": "f9e85c7287afb670739c54bf5b597302"
+  },
+  "lib/features/notepad/search/search.ts": {
+    "mtime": 1784397688.0434756,
+    "ast_hash": "70ee1926c3f72a42f1f33e6b22bc9c06",
+    "semantic_hash": "70ee1926c3f72a42f1f33e6b22bc9c06"
+  },
+  "lib/features/notepad/search/store.svelte.ts": {
+    "mtime": 1785244249.612984,
+    "ast_hash": "705068a3ef5ba53b4564fb08c07938cc",
+    "semantic_hash": "705068a3ef5ba53b4564fb08c07938cc"
+  },
+  "lib/features/notepad/search/store.test.ts": {
+    "mtime": 1784397688.0279717,
+    "ast_hash": "2165aba58c0c7877c4ff1599145db4d6",
+    "semantic_hash": "2165aba58c0c7877c4ff1599145db4d6"
+  },
+  "lib/features/notepad/session/bootstrap.ts": {
+    "mtime": 1782138125.295719,
+    "ast_hash": "d3bd473358a63a8e3d44c7b30c0e420a",
+    "semantic_hash": "d3bd473358a63a8e3d44c7b30c0e420a"
+  },
+  "lib/features/notepad/session/noteRuntime.ts": {
+    "mtime": 1785226016.3596535,
+    "ast_hash": "e75ab2fa6f90f36dbe9d3b401084b0fc",
+    "semantic_hash": "e75ab2fa6f90f36dbe9d3b401084b0fc"
+  },
+  "lib/features/notepad/session/paneOwnership.test.ts": {
+    "mtime": 1785262523.6090796,
+    "ast_hash": "d1bacacc31d0a6e1df3156c3aa3416d8",
+    "semantic_hash": "d1bacacc31d0a6e1df3156c3aa3416d8"
+  },
+  "lib/features/notepad/session/runtimeStore.svelte.ts": {
+    "mtime": 1785261072.359231,
+    "ast_hash": "972358f0a2b893a2ad397d99bd51b794",
+    "semantic_hash": "972358f0a2b893a2ad397d99bd51b794"
+  },
+  "lib/features/notepad/session/session.ts": {
+    "mtime": 1785265653.2787628,
+    "ast_hash": "b008b5042a57ca090419a48496986362",
+    "semantic_hash": "b008b5042a57ca090419a48496986362"
+  },
+  "lib/features/notepad/state/noteState.svelte.ts": {
+    "mtime": 1785261072.2677515,
+    "ast_hash": "9294d0264b3fef9417d01665608c8b2c",
+    "semantic_hash": "9294d0264b3fef9417d01665608c8b2c"
+  },
+  "lib/features/notepad/state/noteStore.ts": {
+    "mtime": 1785263512.2229028,
+    "ast_hash": "b0edf197f322cb0cc4a6488c5bbd26d1",
+    "semantic_hash": "b0edf197f322cb0cc4a6488c5bbd26d1"
+  },
+  "lib/features/notepad/ui/ExternalConflictResolver.svelte": {
+    "mtime": 1785264157.536522,
+    "ast_hash": "de7b3ec6cb58ddf8ecf09bf168f68304",
+    "semantic_hash": "de7b3ec6cb58ddf8ecf09bf168f68304"
+  },
+  "lib/features/notepad/ui/NotepadCommandBar.svelte": {
+    "mtime": 1785222701.341972,
+    "ast_hash": "e2bb767f2ec40cf0e4019b48fcf8471b",
+    "semantic_hash": "e2bb767f2ec40cf0e4019b48fcf8471b"
+  },
+  "lib/features/notepad/ui/notepadCommandBarProps.ts": {
+    "mtime": 1785189755.2579942,
+    "ast_hash": "63e507086a9a711cb5a484db896342ed",
+    "semantic_hash": "63e507086a9a711cb5a484db896342ed"
+  },
+  "lib/features/notepad/ui/notepadCommandBarState.svelte.ts": {
+    "mtime": 1785189755.3552434,
+    "ast_hash": "5c96d467d97c591f057910eae7b14def",
+    "semantic_hash": "5c96d467d97c591f057910eae7b14def"
+  },
+  "lib/features/notepad/ui/notepadCommandBarState.test.ts": {
+    "mtime": 1785190003.3611343,
+    "ast_hash": "909a4ec3b313a7a1602674ddbc332b04",
+    "semantic_hash": "909a4ec3b313a7a1602674ddbc332b04"
+  },
+  "lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte": {
+    "mtime": 1777671393.0,
+    "ast_hash": "e34a3cf9c8e45403dfb2c102779d5379",
+    "semantic_hash": "e34a3cf9c8e45403dfb2c102779d5379"
+  },
+  "lib/features/notepad/wikilinks/parse.ts": {
+    "mtime": 1785001928.4329808,
+    "ast_hash": "422ded011125e7ba6dd2128c40856579",
+    "semantic_hash": "422ded011125e7ba6dd2128c40856579"
+  },
+  "lib/features/notepad/wikilinks/runtime.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "e50f0ac360656defc1061e0e53aade5c",
+    "semantic_hash": "e50f0ac360656defc1061e0e53aade5c"
+  },
+  "lib/features/notepad/wikilinks/state.test.ts": {
+    "mtime": 1781678651.4891894,
+    "ast_hash": "3f2e4760dc7d2b13303dbbb8b022d04d",
+    "semantic_hash": "3f2e4760dc7d2b13303dbbb8b022d04d"
+  },
+  "lib/features/notepad/wikilinks/state.ts": {
+    "mtime": 1785001928.7199357,
+    "ast_hash": "6ebef349e31e57206b646493473e3701",
+    "semantic_hash": "6ebef349e31e57206b646493473e3701"
+  },
+  "lib/features/notepad/wikilinks/wikilinks.test.ts": {
+    "mtime": 1785001928.8166935,
+    "ast_hash": "41b728e31464141811f204702e55e079",
+    "semantic_hash": "41b728e31464141811f204702e55e079"
+  },
+  "lib/features/notepad/wikilinks/wikilinks.ts": {
+    "mtime": 1785001861.6886957,
+    "ast_hash": "1003bc37b640983d531e858f63ead3ab",
+    "semantic_hash": "1003bc37b640983d531e858f63ead3ab"
+  },
+  "lib/features/notepad/workspace/paneCapabilities.test.ts": {
+    "mtime": 1785264393.3922093,
+    "ast_hash": "4a0476d9463d799fd0b07ff24cc7ee3c",
+    "semantic_hash": "4a0476d9463d799fd0b07ff24cc7ee3c"
+  },
+  "lib/features/notepad/workspace/paneCapabilities.ts": {
+    "mtime": 1785264380.742605,
+    "ast_hash": "861d16aad426a4d1d711978d04fc58d7",
+    "semantic_hash": "861d16aad426a4d1d711978d04fc58d7"
+  },
+  "lib/features/notepad/workspace/paneCapabilityWiring.test.ts": {
+    "mtime": 1785264164.6212354,
+    "ast_hash": "064426c0c3b1bd06adb9bff310b15bf6",
+    "semantic_hash": "064426c0c3b1bd06adb9bff310b15bf6"
+  },
+  "lib/features/notepad/workspace/paneRoles.test.ts": {
+    "mtime": 1785264090.9692256,
+    "ast_hash": "835c51e2d6f14be498b8a6da0bd2bef6",
+    "semantic_hash": "835c51e2d6f14be498b8a6da0bd2bef6"
+  },
+  "lib/features/notepad/workspace/paneRoles.ts": {
+    "mtime": 1785264380.8506143,
+    "ast_hash": "aac32ed8f07019da3e8419df725f973a",
+    "semantic_hash": "aac32ed8f07019da3e8419df725f973a"
+  },
+  "lib/features/notepad/workspace/paneTypes.ts": {
+    "mtime": 1785261072.175619,
+    "ast_hash": "b84a64edbd76957c32893498e06b8804",
+    "semantic_hash": "b84a64edbd76957c32893498e06b8804"
+  },
+  "lib/features/notepad/workspace/shortcuts.test.ts": {
+    "mtime": 1785097685.9884348,
+    "ast_hash": "d6d7b7831aa6bdcf69adf66cce9509ef",
+    "semantic_hash": "d6d7b7831aa6bdcf69adf66cce9509ef"
+  },
+  "lib/features/notepad/workspace/shortcuts.ts": {
+    "mtime": 1785097685.988338,
+    "ast_hash": "6d97e3aca1288d336ceadb15ee786075",
+    "semantic_hash": "6d97e3aca1288d336ceadb15ee786075"
+  },
+  "lib/features/notepad/workspace/workspacePersistenceService.test.ts": {
+    "mtime": 1785264427.4365127,
+    "ast_hash": "e2b3bea6ea96bb21a3b68af33b89bca0",
+    "semantic_hash": "e2b3bea6ea96bb21a3b68af33b89bca0"
+  },
+  "lib/features/notepad/workspace/workspacePersistenceService.ts": {
+    "mtime": 1785264395.8331172,
+    "ast_hash": "062fc632db421a9f3e093875c2069c37",
+    "semantic_hash": "062fc632db421a9f3e093875c2069c37"
+  },
+  "lib/features/notepad/workspace/workspaceStore.sequence.test.ts": {
+    "mtime": 1785264130.3737714,
+    "ast_hash": "d67ffc5e9d3a6915a683b30cd33379a1",
+    "semantic_hash": "d67ffc5e9d3a6915a683b30cd33379a1"
+  },
+  "lib/features/notepad/workspace/workspaceStore.svelte.ts": {
+    "mtime": 1785263554.0638175,
+    "ast_hash": "95219a25bc8a76cc6991cb32472f1dbc",
+    "semantic_hash": "95219a25bc8a76cc6991cb32472f1dbc"
+  },
+  "lib/features/notepad/workspace/workspaceStore.test.ts": {
+    "mtime": 1785263637.2917354,
+    "ast_hash": "0ba90817b06a51fefe2bd5b51128481a",
+    "semantic_hash": "0ba90817b06a51fefe2bd5b51128481a"
+  },
+  "lib/features/proposals/ProposedChangesCard.svelte": {
+    "mtime": 1785096850.635553,
+    "ast_hash": "b6f417ffc3f0dd7fb20b623955214247",
+    "semantic_hash": "b6f417ffc3f0dd7fb20b623955214247"
+  },
+  "lib/features/proposals/api.ts": {
+    "mtime": 1784552756.745994,
+    "ast_hash": "f7ef80429bffcdc18debed6c4d6170db",
+    "semantic_hash": "f7ef80429bffcdc18debed6c4d6170db"
+  },
+  "lib/features/proposals/diffModel.test.ts": {
+    "mtime": 1784407037.845582,
+    "ast_hash": "66d08021f4133fb60b207fc879224572",
+    "semantic_hash": "66d08021f4133fb60b207fc879224572"
+  },
+  "lib/features/proposals/diffModel.ts": {
+    "mtime": 1784407009.3411653,
+    "ast_hash": "c49043ba51769c786674d6bf49cde91e",
+    "semantic_hash": "c49043ba51769c786674d6bf49cde91e"
+  },
+  "lib/features/proposals/index.ts": {
+    "mtime": 1785009268.4641173,
+    "ast_hash": "18b3d7c2f8bb92a5ce750eb320988244",
+    "semantic_hash": "18b3d7c2f8bb92a5ce750eb320988244"
+  },
+  "lib/features/proposals/proposalOrchestration.test.ts": {
+    "mtime": 1785228413.4147727,
+    "ast_hash": "e4ac5b43466b1369fbab086f933df777",
+    "semantic_hash": "e4ac5b43466b1369fbab086f933df777"
+  },
+  "lib/features/proposals/proposalOrchestration.ts": {
+    "mtime": 1785262170.8724895,
+    "ast_hash": "a058af35e09d3608d10ce97b338ab88b",
+    "semantic_hash": "a058af35e09d3608d10ce97b338ab88b"
+  },
+  "lib/features/proposals/reviewDisplay.ts": {
+    "mtime": 1784490943.2185287,
+    "ast_hash": "8e80f5600aa807d64a905d4ead915c9c",
+    "semantic_hash": "8e80f5600aa807d64a905d4ead915c9c"
+  },
+  "lib/features/proposals/reviewExtension.test.ts": {
+    "mtime": 1784550701.2343497,
+    "ast_hash": "82e47fc1a7bade4af697137749927f7a",
+    "semantic_hash": "82e47fc1a7bade4af697137749927f7a"
+  },
+  "lib/features/proposals/reviewExtension.ts": {
+    "mtime": 1785097749.8842459,
+    "ast_hash": "4f3572d73ae10f715baee315676fde0c",
+    "semantic_hash": "4f3572d73ae10f715baee315676fde0c"
+  },
+  "lib/features/proposals/reviewHold.svelte.ts": {
+    "mtime": 1785262082.7263649,
+    "ast_hash": "9cf116937cc7289a058f638238340c95",
+    "semantic_hash": "9cf116937cc7289a058f638238340c95"
+  },
+  "lib/features/proposals/reviewSession.svelte.ts": {
+    "mtime": 1784550809.3305287,
+    "ast_hash": "ee33cf856c690ee6e21aeb7b345736d6",
+    "semantic_hash": "ee33cf856c690ee6e21aeb7b345736d6"
+  },
+  "lib/features/proposals/reviewSession.test.ts": {
+    "mtime": 1784550809.7244685,
+    "ast_hash": "e6878e5ca6185235679e92f38aa64776",
+    "semantic_hash": "e6878e5ca6185235679e92f38aa64776"
+  },
+  "lib/features/proposals/types.ts": {
+    "mtime": 1784550809.2328694,
+    "ast_hash": "07b3eb931f8dd3df22f86d16ac98d437",
+    "semantic_hash": "07b3eb931f8dd3df22f86d16ac98d437"
+  },
+  "lib/features/settings/ChatSettingsPanel.svelte": {
+    "mtime": 1785179521.5007164,
+    "ast_hash": "6689963cd6c12abe96f54ae8a5f87c69",
+    "semantic_hash": "6689963cd6c12abe96f54ae8a5f87c69"
+  },
+  "lib/features/settings/EditorTextSizePanel.svelte": {
+    "mtime": 1784552241.367782,
+    "ast_hash": "b31f598f029876da27d6da7540ae3b23",
+    "semantic_hash": "b31f598f029876da27d6da7540ae3b23"
+  },
+  "lib/features/settings/ExcludedNotesSettings.svelte": {
+    "mtime": 1785057947.2653203,
+    "ast_hash": "0d46ae1f7b7bb389801f2033db4544d4",
+    "semantic_hash": "0d46ae1f7b7bb389801f2033db4544d4"
+  },
+  "lib/features/settings/ForgottenNotesPanel.svelte": {
+    "mtime": 1785221825.2276912,
+    "ast_hash": "f9e92e3d9f7e6dcbb7335d1ea51e6ef4",
+    "semantic_hash": "f9e92e3d9f7e6dcbb7335d1ea51e6ef4"
+  },
+  "lib/features/settings/KeyboardShortcutsPanel.svelte": {
+    "mtime": 1784552243.8783693,
+    "ast_hash": "d3324e9ddfc2499b7e5d904f1e43fa4f",
+    "semantic_hash": "d3324e9ddfc2499b7e5d904f1e43fa4f"
+  },
+  "lib/features/settings/SemanticSettingsPanel.svelte": {
+    "mtime": 1785262276.9979498,
+    "ast_hash": "cd75392faffa06c9d631b0da222e484f",
+    "semantic_hash": "cd75392faffa06c9d631b0da222e484f"
+  },
+  "lib/features/settings/SemanticSettingsPanel.svelte.test.ts": {
+    "mtime": 1785262631.115725,
+    "ast_hash": "9d326233ebe4c7ff1174f1c3f0e77376",
+    "semantic_hash": "9d326233ebe4c7ff1174f1c3f0e77376"
+  },
+  "lib/features/settings/SettingsCard.svelte": {
+    "mtime": 1784020570.1568859,
+    "ast_hash": "a8f14beb9a75d91e21b70e1bab905c88",
+    "semantic_hash": "a8f14beb9a75d91e21b70e1bab905c88"
+  },
+  "lib/features/settings/SettingsField.svelte": {
+    "mtime": 1784020734.1476433,
+    "ast_hash": "6765ae40a6a0251259098b687a1041b8",
+    "semantic_hash": "6765ae40a6a0251259098b687a1041b8"
+  },
+  "lib/features/settings/SettingsLabel.svelte": {
+    "mtime": 1784020570.2435033,
+    "ast_hash": "dfbaabcc2a427ffeb3ca78fe600fd74f",
+    "semantic_hash": "dfbaabcc2a427ffeb3ca78fe600fd74f"
+  },
+  "lib/features/settings/SettingsRefreshButton.svelte": {
+    "mtime": 1784020811.607261,
+    "ast_hash": "9fe9a977bab8d9e21ef148d4b32b932e",
+    "semantic_hash": "9fe9a977bab8d9e21ef148d4b32b932e"
+  },
+  "lib/features/settings/excludedNotes.test.ts": {
+    "mtime": 1785057947.1728697,
+    "ast_hash": "23695014e7ef7ae814a9336ea66b59c3",
+    "semantic_hash": "23695014e7ef7ae814a9336ea66b59c3"
+  },
+  "lib/features/settings/excludedNotes.ts": {
+    "mtime": 1785057947.0752912,
+    "ast_hash": "638a7dcedc8ec290c16cd66564ca35c6",
+    "semantic_hash": "638a7dcedc8ec290c16cd66564ca35c6"
+  },
+  "lib/features/settings/formatters.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "9953b9ed5f027fef1285da803c827128",
+    "semantic_hash": "9953b9ed5f027fef1285da803c827128"
+  },
+  "lib/features/settings/loaders/forgottenLoader.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "485a339cbbb1c863eb87d9424e2f0461",
+    "semantic_hash": "485a339cbbb1c863eb87d9424e2f0461"
+  },
+  "lib/features/settings/loaders/semanticLoader.ts": {
+    "mtime": 1785262276.8218777,
+    "ast_hash": "02681a12ab5e7ad4478de133d1d2cf50",
+    "semantic_hash": "02681a12ab5e7ad4478de133d1d2cf50"
+  },
+  "lib/features/settings/loaders/settingsViewLoader.ts": {
+    "mtime": 1782138103.0084198,
+    "ast_hash": "014bed5549f7e31f71a47b75099afac1",
+    "semantic_hash": "014bed5549f7e31f71a47b75099afac1"
+  },
+  "lib/features/settings/loaders/vaultLoader.ts": {
+    "mtime": 1784831209.1320827,
+    "ast_hash": "dda754cafb13c6b6e756dba749e6cc55",
+    "semantic_hash": "dda754cafb13c6b6e756dba749e6cc55"
+  },
+  "lib/features/settings/refreshCoordinator.test.ts": {
+    "mtime": 1782138519.5944242,
+    "ast_hash": "4da69bcf01c9ce48b5e034a324fc8e2d",
+    "semantic_hash": "4da69bcf01c9ce48b5e034a324fc8e2d"
+  },
+  "lib/features/settings/refreshCoordinator.ts": {
+    "mtime": 1784551938.8984058,
+    "ast_hash": "3232ef3f052a2eeef246ef945a119d77",
+    "semantic_hash": "3232ef3f052a2eeef246ef945a119d77"
+  },
+  "lib/features/settings/semanticStatus.test.ts": {
+    "mtime": 1785262276.7328975,
+    "ast_hash": "afcfd9d2c63516edbb2d46dee567fa7a",
+    "semantic_hash": "afcfd9d2c63516edbb2d46dee567fa7a"
+  },
+  "lib/features/settings/semanticStatus.ts": {
+    "mtime": 1785262276.6439114,
+    "ast_hash": "72d5cb1492c546244887ecf845b38b3f",
+    "semantic_hash": "72d5cb1492c546244887ecf845b38b3f"
+  },
+  "lib/features/settings/store.svelte.ts": {
+    "mtime": 1785262276.9097834,
+    "ast_hash": "06f7f94fb3cf81b50baa1a8181d181c5",
+    "semantic_hash": "06f7f94fb3cf81b50baa1a8181d181c5"
+  },
+  "lib/features/settings/store.test.ts": {
+    "mtime": 1785262502.2183664,
+    "ast_hash": "e9ddd9165c99539eb1362762afef1716",
+    "semantic_hash": "e9ddd9165c99539eb1362762afef1716"
+  },
+  "lib/features/tasks/openDocumentTaskMutation.test.ts": {
+    "mtime": 1785263453.8433652,
+    "ast_hash": "5e03431a4fb263bf9f27c91a6c0a06ce",
+    "semantic_hash": "5e03431a4fb263bf9f27c91a6c0a06ce"
+  },
+  "lib/features/tasks/openDocumentTaskMutation.ts": {
+    "mtime": 1785263272.4288766,
+    "ast_hash": "60923166531884e04cb933b995b09c4a",
+    "semantic_hash": "60923166531884e04cb933b995b09c4a"
+  },
+  "lib/features/tasks/taskListStore.svelte.ts": {
+    "mtime": 1785265653.3818412,
+    "ast_hash": "0d6f33ed677f6beab58c4abb0c24c8b6",
+    "semantic_hash": "0d6f33ed677f6beab58c4abb0c24c8b6"
+  },
+  "lib/features/tasks/taskListStore.test.ts": {
+    "mtime": 1785265480.3473308,
+    "ast_hash": "cae5f994d4fcf6aba8ac6cec69e45060",
+    "semantic_hash": "cae5f994d4fcf6aba8ac6cec69e45060"
+  },
+  "lib/features/tasks/taskMutationGateway.ts": {
+    "mtime": 1785263224.705487,
+    "ast_hash": "000fc535fe49055a0027eb3268509bc8",
+    "semantic_hash": "000fc535fe49055a0027eb3268509bc8"
+  },
+  "lib/keyboardShortcuts.svelte.ts": {
+    "mtime": 1785098254.4401205,
+    "ast_hash": "d916c93be74720c978af4d96c351201d",
+    "semantic_hash": "d916c93be74720c978af4d96c351201d"
+  },
+  "lib/logDevError.ts": {
+    "mtime": 1783078027.5519216,
+    "ast_hash": "0bb20df06dc19702cb36fb50bdc7910e",
+    "semantic_hash": "0bb20df06dc19702cb36fb50bdc7910e"
+  },
+  "lib/noteNavigation.test.ts": {
+    "mtime": 1783330561.0128984,
+    "ast_hash": "58270c92a270dee67b9ccfad79511aa4",
+    "semantic_hash": "58270c92a270dee67b9ccfad79511aa4"
+  },
+  "lib/noteNavigation.ts": {
+    "mtime": 1784019085.6722653,
+    "ast_hash": "c01992ddfae404d8941273882354657b",
+    "semantic_hash": "c01992ddfae404d8941273882354657b"
+  },
+  "lib/taskNavigation.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "13ae8b6268f9ee5b77e53c9249fd5044",
+    "semantic_hash": "13ae8b6268f9ee5b77e53c9249fd5044"
+  },
+  "lib/tauriRuntime.ts": {
+    "mtime": 1783077753.8285222,
+    "ast_hash": "97f05c4a8c0c53e88bb431ce808e9692",
+    "semantic_hash": "97f05c4a8c0c53e88bb431ce808e9692"
+  },
+  "lib/theme.svelte.ts": {
+    "mtime": 1784552086.4874053,
+    "ast_hash": "4fade90026ac38a43bf82b8bb50d15c0",
+    "semantic_hash": "4fade90026ac38a43bf82b8bb50d15c0"
+  },
+  "lib/types/atlas.ts": {
+    "mtime": 1784996753.053571,
+    "ast_hash": "5ae4eb510238944001c86bf21301dc9b",
+    "semantic_hash": "5ae4eb510238944001c86bf21301dc9b"
+  },
+  "lib/types/forgottenNotes.ts": {
+    "mtime": 1785221825.1340873,
+    "ast_hash": "5e5a5b47cf3b4de9b3581ad77a601cf3",
+    "semantic_hash": "5e5a5b47cf3b4de9b3581ad77a601cf3"
+  },
+  "lib/types/proposals.ts": {
+    "mtime": 1784552765.7740917,
+    "ast_hash": "3b31087cec5a3506a591e11da7335803",
+    "semantic_hash": "3b31087cec5a3506a591e11da7335803"
+  },
+  "lib/types/semantic.ts": {
+    "mtime": 1785262300.5676033,
+    "ast_hash": "06de2780b14127faea56b7e885e0c67d",
+    "semantic_hash": "06de2780b14127faea56b7e885e0c67d"
+  },
+  "lib/types/vault.ts": {
+    "mtime": 1784831209.1321316,
+    "ast_hash": "aafb062dfa9f5adf74fe813c37a0925e",
+    "semantic_hash": "aafb062dfa9f5adf74fe813c37a0925e"
+  },
+  "lib/ui/NavBar.svelte": {
+    "mtime": 1784629051.2218447,
+    "ast_hash": "9ec273420613ba544e440ba7b07a8138",
+    "semantic_hash": "9ec273420613ba544e440ba7b07a8138"
+  },
+  "lib/ui/ShortcutBinding.svelte": {
+    "mtime": 1784552276.097475,
+    "ast_hash": "3e432982caac304db76375af8c4981c7",
+    "semantic_hash": "3e432982caac304db76375af8c4981c7"
+  },
+  "lib/ui/appShellNavigation.svelte.ts": {
+    "mtime": 1784553583.8366122,
+    "ast_hash": "da782705a07d680931f55bca8992425f",
+    "semantic_hash": "da782705a07d680931f55bca8992425f"
+  },
+  "lib/ui/listSelection.test.ts": {
+    "mtime": 1783255005.0052931,
+    "ast_hash": "539cabd510cf34071b7de991c58efe93",
+    "semantic_hash": "539cabd510cf34071b7de991c58efe93"
+  },
+  "lib/ui/listSelection.ts": {
+    "mtime": 1783254944.1928513,
+    "ast_hash": "1f4cb52b24b58e02f8b19b6533cebc51",
+    "semantic_hash": "1f4cb52b24b58e02f8b19b6533cebc51"
+  },
+  "lib/ui/mobileViewport.ts": {
+    "mtime": 1784630266.6704233,
+    "ast_hash": "8521ba5a6eb5e1b435ca9bc5aa90ab93",
+    "semantic_hash": "8521ba5a6eb5e1b435ca9bc5aa90ab93"
+  },
+  "lib/ui/navigationCoordinator.test.ts": {
+    "mtime": 1785264420.8568723,
+    "ast_hash": "cb3608e78c6d92c1444aeefa18fd75f2",
+    "semantic_hash": "cb3608e78c6d92c1444aeefa18fd75f2"
+  },
+  "lib/ui/navigationCoordinator.ts": {
+    "mtime": 1785264395.9396584,
+    "ast_hash": "f62aadf8d4057bad57e14f292bdca77b",
+    "semantic_hash": "f62aadf8d4057bad57e14f292bdca77b"
+  },
+  "lib/ui/search/SearchBar.svelte": {
+    "mtime": 1784628060.369247,
+    "ast_hash": "f356a8cfac6bb127f2d4c3214728b6ce",
+    "semantic_hash": "f356a8cfac6bb127f2d4c3214728b6ce"
+  },
+  "lib/ui/search/SearchDock.svelte": {
+    "mtime": 1783412647.651733,
+    "ast_hash": "9f45c64d40eecfc65395bd4fecb487b2",
+    "semantic_hash": "9f45c64d40eecfc65395bd4fecb487b2"
+  },
+  "lib/ui/search/searchMatch.test.ts": {
+    "mtime": 1783358285.7657125,
+    "ast_hash": "75298bf767fcab9ea4f8a1b1fd1e96e8",
+    "semantic_hash": "75298bf767fcab9ea4f8a1b1fd1e96e8"
+  },
+  "lib/ui/search/searchMatch.ts": {
+    "mtime": 1783358285.678884,
+    "ast_hash": "eefa5365e43e53057d1fe62f2ea82551",
+    "semantic_hash": "eefa5365e43e53057d1fe62f2ea82551"
+  },
+  "lib/vendor/codemirrorLanguageData.ts": {
+    "mtime": 1782056516.990977,
+    "ast_hash": "17d88602e472579d5efaf81c86e256d6",
+    "semantic_hash": "17d88602e472579d5efaf81c86e256d6"
+  },
+  "routes/+layout.svelte": {
+    "mtime": 1784629051.1253955,
+    "ast_hash": "aab6085e9eadc9b40c54978e22adeb6e",
+    "semantic_hash": "aab6085e9eadc9b40c54978e22adeb6e"
+  },
+  "routes/+layout.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "6fcc01a9e86b5ac2814ef7b2e6831657",
+    "semantic_hash": "6fcc01a9e86b5ac2814ef7b2e6831657"
+  },
+  "routes/+page.svelte": {
+    "mtime": 1784558160.0661685,
+    "ast_hash": "5be99ec194cbf8140a5c69f0933038c3",
+    "semantic_hash": "5be99ec194cbf8140a5c69f0933038c3"
+  },
+  "routes/atlas/+page.ts": {
+    "mtime": 1784561364.561325,
+    "ast_hash": "5d7de06ae263b6f8db2b53d32ecae712",
+    "semantic_hash": "5d7de06ae263b6f8db2b53d32ecae712"
+  },
+  "routes/list/+page.svelte": {
+    "mtime": 1784631030.2977772,
+    "ast_hash": "3ce7aac12f04eb483e9afbb4ea346134",
+    "semantic_hash": "3ce7aac12f04eb483e9afbb4ea346134"
+  },
+  "routes/map/+page.svelte": {
+    "mtime": 1784995760.1509917,
+    "ast_hash": "b42324a329e9993277dcb4b3b453927d",
+    "semantic_hash": "b42324a329e9993277dcb4b3b453927d"
+  },
+  "routes/settings/+page.svelte": {
+    "mtime": 1785221825.416632,
+    "ast_hash": "df13d4f652a68caa30e775fedc1883a4",
+    "semantic_hash": "df13d4f652a68caa30e775fedc1883a4"
+  },
+  "types/browser-timers.d.ts": {
+    "mtime": 1783330485.352877,
+    "ast_hash": "0fd0b6ae0ca045c5a3e77a451b982677",
+    "semantic_hash": "0fd0b6ae0ca045c5a3e77a451b982677"
+  },
+  "types/markdown-it.d.ts": {
+    "mtime": 1777671393.0,
+    "ast_hash": "09c7a41f7b3874720a6f5821a56713a7",
+    "semantic_hash": "09c7a41f7b3874720a6f5821a56713a7"
+  },
+  "types/node-shims.d.ts": {
+    "mtime": 1783275948.6236675,
+    "ast_hash": "7bf31dd7f1b3287c9f5879c0605bfe94",
+    "semantic_hash": "7bf31dd7f1b3287c9f5879c0605bfe94"
+  }
+}

@@ -16,7 +16,11 @@ import {
   refreshSettingsForVisibility
 } from './refreshCoordinator';
 import { loadForgottenNotesSlice } from './loaders/forgottenLoader';
-import { loadSemanticSlice, loadSemanticStatusSlice } from './loaders/semanticLoader';
+import {
+  loadSemanticSlice,
+  loadSemanticStatusSlice,
+  retrySemanticIndex
+} from './loaders/semanticLoader';
 import { loadSettingsViewSlice } from './loaders/settingsViewLoader';
 import {
   createVaultFolderSlice,
@@ -35,6 +39,7 @@ type GeneralSection =
 type ForgottenAction = 'restore_forgotten_notes' | 'delete_forgotten_notes';
 type SemanticAction =
   | 'rebuild_semantic_index'
+  | 'retry_semantic_index'
   | 'pause_semantic_indexing'
   | 'resume_semantic_indexing'
   | 'prepare_semantic_model';
@@ -396,7 +401,11 @@ export class SettingsStore {
     this.semanticLayerError = null;
     this.semanticLayerMessage = null;
     try {
-      await invoke(command);
+      if (command === 'retry_semantic_index') {
+        await retrySemanticIndex();
+      } else {
+        await invoke(command);
+      }
       await this.loadSemanticState();
     } catch (error) {
       console.error(`Failed to run ${command}:`, error);

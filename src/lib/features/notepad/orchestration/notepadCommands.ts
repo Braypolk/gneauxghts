@@ -1,7 +1,5 @@
-import {
-  setPaneKind as setStoredPaneKind,
-  type NoteDraftState
-} from '$lib/features/notepad/state/noteStore';
+import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import { removeNoteIfUnreferenced } from '$lib/features/notepad/state/noteStore';
 import { createPaneCommandGroup } from './paneCommandGroup';
 import { createLocationHistoryController } from './locationHistoryController';
 import { createPaneCommandController } from './paneCommandController';
@@ -10,6 +8,9 @@ import {
   type OpenNoteOptions
 } from './noteCommandController';
 import { createWorkspacePaneController } from './workspacePaneController';
+import {
+  createPaneNavigationTransitionPipeline
+} from './paneNavigationTransitionPipeline';
 import type { NotepadCommandsDeps } from './notepadCommandFacades';
 
 export type { NotepadCommandsDeps } from './notepadCommandFacades';
@@ -52,6 +53,13 @@ export function createNotepadCommands<TPaneId extends string>(
       derivedViews.scheduleRelatedIfNeeded
   });
   const { activatePane, focusPaneAfterShortcut } = paneCommands;
+  const transitions =
+    createPaneNavigationTransitionPipeline<TPaneId>({
+      assertWorkspaceInvariants:
+        workspace.assertInvariants,
+      ensurePaneEditors:
+        paneLifecycle.ensurePaneEditors
+    });
 
   let noteCommands!: ReturnType<
     typeof createNoteCommandController<TPaneId>
@@ -64,18 +72,19 @@ export function createNotepadCommands<TPaneId extends string>(
   }
 
   const locationHistory = createLocationHistoryController({
-    state,
     getActivePaneId: workspace.getActivePaneId,
     getPaneOrder: workspace.getPaneOrder,
+    getPaneState: workspace.getPaneState,
     getPaneKind: panes.getPaneKind,
+    setPaneConversationId:
+      workspace.setPaneConversationId,
     getPaneDocument: panes.getPaneDocument,
     getPaneCommandMode: workspace.getPaneCommandMode,
     getPaneCommandSourcePaneId:
       workspace.getPaneCommandSourcePaneId,
     getPaneTitleInput: panes.getPaneTitleInput,
     activatePaneSession: panes.activatePaneSession,
-    setPaneKind: (paneId, kind) =>
-      setStoredPaneKind(state, paneId, kind),
+    setPaneKind: workspace.setPaneKind,
     saveCursorPosition:
       documents.saveCursorPositionForDocument,
     cancelPendingAutosave:
@@ -86,25 +95,29 @@ export function createNotepadCommands<TPaneId extends string>(
     paneLifecycle,
     updateSelectedRelatedText:
       panes.updateSelectedRelatedText,
-    focusPaneAfterShortcut
+    focusPaneAfterShortcut,
+    transitions
   });
 
   const workspacePaneCommands = createWorkspacePaneController({
     state,
     maxVisiblePanes,
     getPaneOrder: workspace.getPaneOrder,
-    setPaneOrder: workspace.setPaneOrder,
+    addWorkspacePane: workspace.addPane,
+    canRemoveWorkspacePane: workspace.canRemovePane,
     removeWorkspacePane: workspace.removePane,
     getActivePaneId: workspace.getActivePaneId,
     getNextPaneId: panes.getNextPaneId,
     getPaneKind: panes.getPaneKind,
+    getPaneConversationId: (paneId) =>
+      workspace.getPaneState(paneId).chatConversationId,
+    setStoredPaneKind: workspace.setPaneKind,
     getPaneDocument: panes.getPaneDocument,
-    getPaneRuntime: panes.getPaneRuntime,
     getPaneTitleInput: panes.getPaneTitleInput,
     focusPaneEditorAtEnd: panes.focusPaneEditorAtEnd,
     createPane: panes.createPane,
-    closePaneRuntime: panes.closePaneRuntime,
-    setPaneDocument: panes.setPaneDocumentSession,
+    preparePaneClose: panes.preparePaneClose,
+    disposePaneRuntime: panes.disposePaneRuntime,
     activatePaneSession: panes.activatePaneSession,
     activatePane,
     focusPane: focusPaneAfterShortcut,
@@ -126,11 +139,18 @@ export function createNotepadCommands<TPaneId extends string>(
     resetPaneCommand: workspace.resetPaneCommand,
     getPaneCommandPaneId:
       workspace.getPaneCommandPaneId,
+    removeUnreferencedNote: (noteKey) =>
+      removeNoteIfUnreferenced(
+        state,
+        workspace,
+        noteKey
+      ),
     paneLifecycle,
     canLeaveDocument: deps.canLeaveDocument,
     onNavigationBlocked: deps.onNavigationBlocked,
     onDocumentLeaving: deps.onDocumentLeaving,
-    clearSearch: derivedViews.clearSearch
+    clearSearch: derivedViews.clearSearch,
+    transitions
   });
 
   noteCommands = createNoteCommandController({
@@ -150,11 +170,18 @@ export function createNotepadCommands<TPaneId extends string>(
     bumpLocationHistoryEpoch:
       locationHistory.bumpLocationHistoryEpoch,
     setPaneKind: workspacePaneCommands.setPaneKind,
-    focusPane: focusPaneAfterShortcut
+    focusPane: focusPaneAfterShortcut,
+    transitions
   });
 
   const paneCommandController = createPaneCommandController({
-    state,
+    setStoredPaneKind: workspace.setPaneKind,
+    removeUnreferencedNote: (noteKey) =>
+      removeNoteIfUnreferenced(
+        state,
+        workspace,
+        noteKey
+      ),
     getActivePaneId: workspace.getActivePaneId,
     getPaneCommandPaneId:
       workspace.getPaneCommandPaneId,
@@ -196,7 +223,8 @@ export function createNotepadCommands<TPaneId extends string>(
       locationHistory.resolvePreviousLocationForPaneCommand,
     peekPreviousLocation:
       locationHistory.peekPreviousLocationForPaneCommand,
-    onDocumentPresented: deps.onDocumentPresented
+    onDocumentPresented: deps.onDocumentPresented,
+    transitions
   });
 
   return {

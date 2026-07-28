@@ -2,6 +2,7 @@ import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.s
 import type { PaneCommandChoice, PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import type { ChatPaneBindings } from '$lib/features/notepad/pane/chatPaneBindings';
+import type { DocumentStatusViewModel } from '$lib/features/notepad/document/documentState';
 
 /**
  * Stable fields shared by both pane kinds. Kind-specific capabilities live on
@@ -23,6 +24,7 @@ interface PaneViewModelBase {
 
 export interface EditorPaneViewModel extends PaneViewModelBase {
   paneKind: 'editor';
+  documentStatus: DocumentStatusViewModel;
   isEditorReady: boolean;
   isSlashMenuOpen: boolean;
   isPaneCommandOpen: boolean;
@@ -58,6 +60,9 @@ export interface PaneWorkspaceActions {
   onTitleInput: (paneId: NotepadPaneId) => void;
   onTitleBlur: (paneId: NotepadPaneId, rawTitle: string) => void;
   onTitleKeydown: (paneId: NotepadPaneId, event: KeyboardEvent) => void;
+  onKeepMyEdits: (paneId: NotepadPaneId) => void | Promise<void>;
+  onLoadDiskVersion: (paneId: NotepadPaneId) => void | Promise<void>;
+  onCopyMyEdits: (paneId: NotepadPaneId) => void | Promise<void>;
   onPaneCommandHighlightChange: (index: number) => void;
   onPaneCommandChoose: (paneId: NotepadPaneId, choice: PaneCommandChoice) => void | Promise<void>;
 }

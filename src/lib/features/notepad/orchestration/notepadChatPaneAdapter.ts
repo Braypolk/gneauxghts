@@ -2,6 +2,18 @@ import { computeDraftHash } from '$lib/features/notepad/search/draftRef';
 import type { ChatContextNote } from '$lib/features/chat/types';
 import type { ChatPaneBindings } from '$lib/features/notepad/pane/chatPaneBindings';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import {
+  getNearestEditorPaneId,
+  getRetainedPaneContext
+} from '$lib/features/notepad/workspace/paneRoles';
+import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
+import {
+  getDocumentMarkdown,
+  getDocumentNoteId,
+  getDocumentPath,
+  getDocumentTitle
+} from '$lib/features/notepad/document/documentState';
 import type { createProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
 import type { NotepadChatCoordinator } from './notepadChatCoordinator.svelte';
 
@@ -11,7 +23,7 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
   coordinator: NotepadChatCoordinator<TPaneId>;
   proposal: ProposalOrchestration;
   getPaneOrder: () => TPaneId[];
-  getPaneKind: (paneId: TPaneId) => 'editor' | 'chat';
+  getPaneKind: (paneId: TPaneId) => PaneKind;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   getPaneConversationId: (paneId: TPaneId) => string | null;
   setPaneConversationId: (
@@ -43,25 +55,18 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
   deps: NotepadChatPaneAdapterDeps<TPaneId>
 ) {
   function getContextDocument(paneId: TPaneId) {
-    const order = deps.getPaneOrder();
-    const paneIndex = order.indexOf(paneId);
-    const nearestEditor = order
-      .filter((candidate) => deps.getPaneKind(candidate) === 'editor')
-      .sort(
-        (left, right) =>
-          Math.abs(order.indexOf(left) - paneIndex) -
-          Math.abs(order.indexOf(right) - paneIndex)
-      )[0];
-    return nearestEditor
-      ? deps.getPaneDocument(nearestEditor)
-      : deps.getPaneDocument(paneId);
+    return getRetainedPaneContext(
+      paneId,
+      deps.getPaneDocument
+    );
   }
 
   function getContextNote(document: NoteDraftState): ChatContextNote | null {
-    if (!document.currentNotePath && !document.title.trim()) return null;
+    const notePath = getDocumentPath(document);
+    if (!notePath && !getDocumentTitle(document).trim()) return null;
     return {
-      noteId: document.currentNoteId,
-      notePath: document.currentNotePath,
+      noteId: getDocumentNoteId(document),
+      notePath,
       noteTitle: noteTitle(document)
     };
   }
@@ -76,7 +81,12 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
         targetAnchor: deps.coordinator.getTargetAnchor(paneId),
         onConversationChange: (conversationId) => {
           deps.setPaneConversationId(paneId, conversationId);
-          if (deps.getPaneKind(paneId) === 'chat') {
+          if (
+            paneHasCapability(
+              deps.getPaneKind(paneId),
+              'host-chat'
+            )
+          ) {
             deps.touchPaneLocation(paneId);
           }
         },
@@ -88,26 +98,34 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
         note: getContextNote(contextDocument),
         getActiveNoteSnapshot: async () => {
           const active = getContextDocument(paneId);
-          if (!active.currentNotePath || !active.currentNoteId) return null;
+          const notePath = getDocumentPath(active);
+          const noteId = getDocumentNoteId(active);
+          if (!notePath || !noteId) return null;
           deps.flushPendingAutosave(active);
           await deps.getNoteSaveQueue(active);
-          if (active.status === 'error') {
+          if (active.operation.kind === 'failed') {
             throw new Error(
               'The active note could not be saved before sending.'
             );
           }
           return {
-            noteId: active.currentNoteId,
+            noteId,
             title: noteTitle(active),
-            path: active.currentNotePath,
-            body: active.bodyMarkdown,
-            bodyHash: computeDraftHash(active.bodyMarkdown),
+            path: notePath,
+            body: getDocumentMarkdown(active),
+            bodyHash: computeDraftHash(
+              getDocumentMarkdown(active)
+            ),
             selection: deps.getSelectedRelatedText()
           };
         },
         selectionActions: deps.coordinator.selectionActions,
         onOpenCitation: async (citation) => {
-          const editorPaneId = deps.getEditorPaneIds()[0];
+          const editorPaneId = getNearestEditorPaneId(
+            deps.getPaneOrder(),
+            deps.getPaneKind,
+            paneId
+          );
           if (editorPaneId) {
             deps.setActivePane(editorPaneId);
             await deps.openNote(citation.notePath, {
@@ -149,8 +167,8 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
 
 function noteTitle(document: NoteDraftState) {
   return (
-    document.title.trim() ||
-    document.currentNotePath
+    getDocumentTitle(document).trim() ||
+    getDocumentPath(document)
       ?.split('/')
       .at(-1)
       ?.replace(/\.md$/i, '') ||

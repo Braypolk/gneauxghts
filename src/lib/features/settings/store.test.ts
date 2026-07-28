@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeMock = vi.fn();
 const loadForgottenNotesSliceMock = vi.fn();
+const loadSettingsViewSliceMock = vi.fn();
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
@@ -19,6 +20,9 @@ vi.mock('$lib/features/atlas/atlasStore.svelte', () => ({
 vi.mock('./loaders/forgottenLoader', () => ({
   loadForgottenNotesSlice: loadForgottenNotesSliceMock
 }));
+vi.mock('./loaders/settingsViewLoader', () => ({
+  loadSettingsViewSlice: loadSettingsViewSliceMock
+}));
 
 describe('SettingsStore forgotten item actions', () => {
   beforeEach(() => {
@@ -26,6 +30,23 @@ describe('SettingsStore forgotten item actions', () => {
     loadForgottenNotesSliceMock.mockReset();
     invokeMock.mockResolvedValue(undefined);
     loadForgottenNotesSliceMock.mockResolvedValue([]);
+    loadSettingsViewSliceMock.mockResolvedValue({
+      semanticStatus: null,
+      semanticSettings: null,
+      semanticDebug: null,
+      vault: {
+        currentPath: '/vault',
+        defaultPath: '/vault',
+        forgottenPath: '/vault/.forgotten',
+        isDefault: true,
+        noteCount: 0,
+        requiresRestart: false,
+        canConfigurePath: true,
+        canPickArbitraryPath: true,
+        vaultContainerPath: null,
+        pathConfigurationNote: null
+      }
+    });
   });
 
   it('keeps component-passed actions bound to the settings store', async () => {
@@ -45,5 +66,15 @@ describe('SettingsStore forgotten item actions', () => {
     expect(loadForgottenNotesSliceMock).toHaveBeenCalledOnce();
     expect(store.selectedForgottenPaths).toEqual([forgottenPath]);
     expect(store.isUpdatingForgottenNotes).toBe(false);
+  });
+
+  it('routes Retry now through the focused semantic command adapter', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+
+    await store.runAction('retry_semantic_index');
+
+    expect(invokeMock).toHaveBeenCalledWith('retry_semantic_index');
+    expect(store.isRunningAction).toBe(false);
   });
 });

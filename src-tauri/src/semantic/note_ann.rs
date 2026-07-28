@@ -897,6 +897,30 @@ mod tests {
         assert_eq!(recovered.status_snapshot().indexed_notes, 1);
     }
 
+    #[test]
+    fn failed_rebuild_keeps_the_loaded_last_good_generation() {
+        let temp = TestDir::new("note-ann-last-good");
+        let mut connection = database(&temp);
+        seed(&mut connection, "notes/a.md", &[1.0, 0.0], "hash-a");
+        let ann = state(&temp);
+        ann.rebuild_from_connection(&connection)
+            .expect("publish good generation");
+        let generation = ann.generation_id();
+
+        connection
+            .execute(
+                "UPDATE notes SET stable_ann_label = 0 WHERE path = 'notes/a.md'",
+                [],
+            )
+            .expect("invalidate next rebuild input");
+        assert!(ann.rebuild_from_connection(&connection).is_err());
+
+        let status = ann.status_snapshot();
+        assert!(status.loaded);
+        assert_eq!(status.generation_id, generation);
+        assert_eq!(status.indexed_notes, 1);
+    }
+
     fn state(temp: &TestDir) -> NoteAnnIndexState {
         NoteAnnIndexState::new(temp.path().join("cache"), 2, "mock-model-v1".to_string())
             .expect("state")

@@ -10,17 +10,26 @@ import type { PaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorL
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
 import type { DocumentPaneCoordinator } from '$lib/features/notepad/document/documentPaneCoordinator';
 import {
-  removeNoteIfUnreferenced,
-  setPaneKind,
   type NoteDraftState,
-  type NoteKey,
-  type NotepadState
+  type NoteKey
 } from '$lib/features/notepad/state/noteStore';
 import { cleanupNoteRuntime } from '$lib/features/notepad/session/noteRuntime';
 import type { NavLocation } from '$lib/features/notepad/navigation/locationMru';
+import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+import {
+  getDocumentNoteId,
+  getDocumentPath
+} from '$lib/features/notepad/document/documentState';
+import type {
+  PaneNavigationTransitionPipeline
+} from './paneNavigationTransitionPipeline';
 
 export interface PaneCommandControllerDeps<TPaneId extends string> {
-  state: NotepadState<TPaneId>;
+  setStoredPaneKind: (
+    paneId: TPaneId,
+    kind: PaneKind
+  ) => boolean;
+  removeUnreferencedNote: (noteKey: NoteKey) => void;
   getActivePaneId: () => TPaneId;
   getPaneCommandPaneId: () => TPaneId | null;
   getPaneCommandSourceNoteKey: () => NoteKey | null;
@@ -29,7 +38,7 @@ export interface PaneCommandControllerDeps<TPaneId extends string> {
   setPaneCommandHighlight: (index: number) => void;
   resetPaneCommand: () => void;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
-  getPaneKind: (paneId: TPaneId) => 'editor' | 'chat';
+  getPaneKind: (paneId: TPaneId) => PaneKind;
   getPaneRuntime: (paneId: TPaneId) => PaneRuntime;
   focusPaneEditorAtEnd: (paneId: TPaneId) => boolean;
   getNoteByKey: (key: NoteKey) => NoteDraftState | null;
@@ -50,6 +59,7 @@ export interface PaneCommandControllerDeps<TPaneId extends string> {
   resolvePreviousLocation: (paneId: TPaneId) => Promise<NavLocation | null>;
   peekPreviousLocation: (paneId: TPaneId) => NavLocation | null;
   onDocumentPresented?: (document: NoteDraftState) => void;
+  transitions: PaneNavigationTransitionPipeline<TPaneId>;
 }
 
 export function createPaneCommandController<TPaneId extends string>(
@@ -67,9 +77,7 @@ export function createPaneCommandController<TPaneId extends string>(
     );
   }
 
-  async function finalizePaneCommandSelection(paneId: TPaneId) {
-    await tick();
-    await deps.paneLifecycle.ensurePaneEditors();
+  function finalizePaneCommandSelection(paneId: TPaneId) {
     deps.updateSelectedRelatedText(paneId);
     deps.scheduleSearch();
     deps.scheduleRelated({ immediate: true });
@@ -79,94 +87,162 @@ export function createPaneCommandController<TPaneId extends string>(
     paneId: TPaneId,
     choice: PaneCommandChoice
   ) {
-    if (deps.getPaneCommandPaneId() !== paneId) return;
+    let sourceKey: NoteKey | null = null;
+    let referencePaneId = paneId;
+    let currentLocation: NavLocation | null = null;
+    let previousLocation: NavLocation | null = null;
+    let placeholderDocument!: NoteDraftState;
+    let sharedDocument: NoteDraftState | null = null;
+    let commandClaimed = false;
+    const result = await deps.transitions.execute({
+      kind: 'pane-command',
+      resolvePane: () =>
+        deps.getPaneCommandPaneId() === paneId
+          ? paneId
+          : null,
+      guard: () => {
+        sourceKey = deps.getPaneCommandSourceNoteKey();
+        referencePaneId = deps.findReferencePane(paneId);
+        currentLocation =
+          deps.getPaneCommandMode() === 'split'
+            ? deps.captureLocation(referencePaneId)
+            : null;
+        placeholderDocument =
+          deps.getPaneDocument(paneId);
+        if (
+          choice === 'current' &&
+          currentLocation?.kind !== 'chat'
+        ) {
+          sharedDocument = sourceKey
+            ? deps.getNoteByKey(sourceKey)
+            : null;
+          if (!sharedDocument) {
+            return {
+              status: 'blocked',
+              reason:
+                'The current pane-command document is no longer available.'
+            };
+          }
+        }
+        return { status: 'allow' };
+      },
+      prepare:
+        choice === 'previous'
+          ? async () => {
+              previousLocation =
+                await deps.resolvePreviousLocation(paneId);
+            }
+          : undefined,
+      isCurrent: () =>
+        commandClaimed
+          ? deps.getActivePaneId() === paneId
+          : deps.getPaneCommandPaneId() === paneId,
+      mutateWorkspace: async () => {
+        const placeholderKey = placeholderDocument.key;
+        commandClaimed = true;
+        deps.resetPaneCommand();
+        deps.activatePane(paneId);
 
-    const sourceKey = deps.getPaneCommandSourceNoteKey();
-    const referencePaneId = deps.findReferencePane(paneId);
-    const currentLocation =
-      deps.getPaneCommandMode() === 'split'
-        ? deps.captureLocation(referencePaneId)
-        : null;
-    const previousLocation =
-      choice === 'previous'
-        ? await deps.resolvePreviousLocation(paneId)
-        : null;
-    const placeholderDocument = deps.getPaneDocument(paneId);
-    const placeholderKey = placeholderDocument.key;
+        if (choice === 'typing') return;
 
-    deps.resetPaneCommand();
-    deps.activatePane(paneId);
+        if (choice === 'current') {
+          if (currentLocation?.kind === 'chat') {
+            await deps.restoreLocation(
+              paneId,
+              currentLocation
+            );
+            deps.touchLocation(paneId, currentLocation);
+            return;
+          }
+          if (!sharedDocument) {
+            throw new Error(
+              'Pane-command source disappeared before mutation.'
+            );
+          }
 
-    if (choice === 'typing') {
-      await finalizePaneCommandSelection(paneId);
-      deps.focusPaneEditorAtEnd(paneId);
-      return;
+          deps.touchCurrentLocation(paneId);
+          if (!deps.setStoredPaneKind(paneId, 'editor')) {
+            throw new Error(
+              'Workspace rejected the pane-command editor transition.'
+            );
+          }
+          deps.setPaneDocument(paneId, sharedDocument);
+          if (
+            deps.getPaneRuntime(paneId).ui.isEditorReady
+          ) {
+            await deps.documents.replaceNoteAcrossPanes(
+              placeholderDocument,
+              sharedDocument,
+              { restoreCursor: true }
+            );
+          }
+          if (placeholderKey !== sharedDocument.key) {
+            deps.removeUnreferencedNote(placeholderKey);
+            cleanupNoteRuntime(placeholderKey);
+          }
+          return;
+        }
+
+        if (choice === 'previous') {
+          if (!previousLocation) return;
+          if (referencePaneId === paneId) {
+            await deps.goToPreviousLocation(paneId);
+          } else {
+            await deps.restoreLocation(
+              paneId,
+              previousLocation
+            );
+          }
+          return;
+        }
+
+        const sourceNote = sourceKey
+          ? deps.getNoteByKey(sourceKey)
+          : null;
+        if (sourceNote) {
+          deps.touchLocation(paneId, {
+            kind: 'editor',
+            noteId: getDocumentNoteId(sourceNote),
+            notePath: getDocumentPath(sourceNote)
+          });
+        } else {
+          deps.touchCurrentLocation(paneId);
+        }
+        if (!deps.setStoredPaneKind(paneId, 'chat')) {
+          throw new Error(
+            'Workspace rejected the pane-command chat transition.'
+          );
+        }
+        if (sourceNote) {
+          deps.setPaneDocument(paneId, sourceNote);
+        }
+        if (placeholderKey !== sourceKey) {
+          deps.removeUnreferencedNote(placeholderKey);
+          cleanupNoteRuntime(placeholderKey);
+        }
+      },
+      ensureEditors: true,
+      complete: () => {
+        finalizePaneCommandSelection(paneId);
+        if (choice === 'current' && sharedDocument) {
+          deps.onDocumentPresented?.(sharedDocument);
+        }
+      },
+      focus:
+        choice === 'previous'
+          ? undefined
+          : async () => {
+              await tick();
+              if (choice === 'typing') {
+                deps.focusPaneEditorAtEnd(paneId);
+              } else {
+                deps.focusPaneAfterShortcut(paneId);
+              }
+            }
+    });
+    if (result.status === 'failed') {
+      throw result.error;
     }
-
-    if (choice === 'current') {
-      if (currentLocation?.kind === 'chat') {
-        await deps.restoreLocation(paneId, currentLocation);
-        deps.touchLocation(paneId, currentLocation);
-        await finalizePaneCommandSelection(paneId);
-        return;
-      }
-      if (!sourceKey) return;
-      const shared = deps.getNoteByKey(sourceKey);
-      if (!shared) return;
-
-      deps.touchCurrentLocation(paneId);
-      setPaneKind(deps.state, paneId, 'editor');
-      deps.setPaneDocument(paneId, shared);
-      if (
-        deps.getPaneKind(paneId) === 'editor' &&
-        deps.getPaneRuntime(paneId).ui.isEditorReady
-      ) {
-        await deps.documents.replaceNoteAcrossPanes(
-          placeholderDocument,
-          shared,
-          { restoreCursor: true }
-        );
-      }
-      if (placeholderKey !== shared.key) {
-        removeNoteIfUnreferenced(deps.state, placeholderKey);
-        cleanupNoteRuntime(placeholderKey);
-      }
-      await finalizePaneCommandSelection(paneId);
-      deps.onDocumentPresented?.(shared);
-      deps.focusPaneAfterShortcut(paneId);
-      return;
-    }
-
-    if (choice === 'previous') {
-      if (!previousLocation) return;
-      if (referencePaneId === paneId) {
-        await deps.goToPreviousLocation(paneId);
-      } else {
-        await deps.restoreLocation(paneId, previousLocation);
-      }
-      await finalizePaneCommandSelection(paneId);
-      return;
-    }
-
-    const sourceNote = sourceKey ? deps.getNoteByKey(sourceKey) : null;
-    if (sourceNote) {
-      deps.touchLocation(paneId, {
-        kind: 'editor',
-        noteId: sourceNote.currentNoteId,
-        notePath: sourceNote.currentNotePath
-      });
-    } else {
-      deps.touchCurrentLocation(paneId);
-    }
-    setPaneKind(deps.state, paneId, 'chat');
-    if (sourceNote) deps.setPaneDocument(paneId, sourceNote);
-    if (placeholderKey !== sourceKey) {
-      removeNoteIfUnreferenced(deps.state, placeholderKey);
-      cleanupNoteRuntime(placeholderKey);
-    }
-    await finalizePaneCommandSelection(paneId);
-    await tick();
-    deps.focusPaneAfterShortcut(paneId);
   }
 
   async function confirmPaneCommandChoiceByHighlight() {

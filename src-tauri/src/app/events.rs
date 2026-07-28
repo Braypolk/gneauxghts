@@ -136,6 +136,7 @@ impl EventBus {
 
     /// No-op bus for unit tests that construct [`crate::index::AppState`]
     /// outside a Tauri runtime.
+    #[cfg(test)]
     pub(crate) fn disabled() -> Self {
         Self { app_handle: None }
     }
@@ -218,5 +219,119 @@ impl EventBus {
 
     pub(crate) fn vault_changed(&self, info: VaultInfo) {
         self.emit(AppEvent::VaultChanged(info));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        semantic::{embed::ModelInfo, SemanticHealth, SemanticIndexJob, SemanticSettings},
+        test_support::load_json_fixture,
+    };
+
+    #[test]
+    fn typed_non_streaming_events_match_contract_fixture() {
+        let fixture = load_json_fixture("contracts/app-events.json");
+        let events = vec![
+            AppEvent::VaultNoteChanged {
+                note_path: "/vault/Changed.md".to_string(),
+                deleted: false,
+                document_kind: DocumentKind::Note,
+                source: Some("watcher".to_string()),
+                chat_id: None,
+            },
+            AppEvent::ChatProjectionConflict {
+                chat_id: "conversation-1".to_string(),
+                note_path: "/vault/Chats/conversation-1/Conversation.md".to_string(),
+                deleted: false,
+            },
+            AppEvent::SemanticStatusChanged(SemanticStatus {
+                settings: SemanticSettings::default(),
+                model: ModelInfo {
+                    id: "jina-v5-nano".to_string(),
+                    label: "Jina embeddings v5 nano".to_string(),
+                    dimensions: 768,
+                    local_only: true,
+                    runtime_binary_path: Some("/app/llama-server".to_string()),
+                    model_path: Some("/app/models/jina.gguf".to_string()),
+                    model_repo_id: "jinaai/jina-embeddings-v5-text-nano-retrieval".to_string(),
+                    available: true,
+                    loading: false,
+                    ready: true,
+                    status: "ready".to_string(),
+                    error: None,
+                },
+                platform_supported: true,
+                disabled_reason: None,
+                model_available: true,
+                indexing_paused: false,
+                indexing_in_progress: false,
+                indexed_notes: 12,
+                indexed_chunks: 48,
+                ann_index_loaded: true,
+                ann_index_dirty: false,
+                ann_rebuild_pending: false,
+                ann_last_dumped_at_millis: Some(1_700_000_000_000),
+                ann_indexed_chunks: 48,
+                note_ann_index_loaded: true,
+                note_ann_index_dirty: false,
+                note_ann_rebuild_pending: false,
+                note_ann_indexed_notes: 12,
+                note_ann_generation_id: Some("note-ann-generation-1".to_string()),
+                last_indexed_at_millis: Some(1_700_000_000_000),
+                last_error: None,
+                current_job_label: None,
+                latest_job: Some(SemanticIndexJob {
+                    id: 7,
+                    status: "completed".to_string(),
+                    scanned_count: 12,
+                    embedded_count: 12,
+                    error_text: None,
+                    started_at_millis: 1_699_999_999_000,
+                    updated_at_millis: 1_700_000_000_000,
+                }),
+                health: SemanticHealth::Fresh,
+                recovery_state: "ready".to_string(),
+                index_usable: true,
+                retry_attempt: 0,
+                retry_max_attempts: 3,
+                retry_exhausted: false,
+                progress_current: 12,
+                progress_total: 12,
+                rebuild_reason: None,
+            }),
+            AppEvent::NoteSaved {
+                note_id: Some("note-1".to_string()),
+                note_path: Some("/vault/Title.md".to_string()),
+                title: "Title".to_string(),
+                revision: 42,
+            },
+            AppEvent::VaultChanged(VaultInfo {
+                current_path: "/vault".to_string(),
+                default_path: "/documents/Gneauxghts".to_string(),
+                forgotten_path: "/vault/.forgotten".to_string(),
+                is_default: false,
+                note_count: 12,
+                requires_restart: true,
+                can_configure_path: true,
+                can_pick_arbitrary_path: true,
+                vault_container_path: None,
+                path_configuration_note: Some("Restart to finish switching vaults.".to_string()),
+            }),
+        ];
+
+        let actual = events
+            .iter()
+            .map(|event| {
+                json!({
+                    "channel": event.channel().0,
+                    "payload": event.legacy_payload(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(fixture["version"], 1);
+        assert_eq!(fixture["events"], json!(actual));
     }
 }

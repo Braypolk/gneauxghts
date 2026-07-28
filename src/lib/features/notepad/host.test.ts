@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { createNotepadFeatureHost, snapshotDocument } from './host';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import {
+  createNoteDraftState
+} from '$lib/features/notepad/state/noteStore';
 
 describe('snapshotDocument', () => {
   it('returns a detached document snapshot for feature consumers', () => {
-    const document: NoteDraftState = {
-      key: 'path:/vault/Test.md',
+    const document = createNoteDraftState({
       title: 'Test',
       bodyMarkdown: 'Body',
       currentNoteId: 'note-id',
@@ -13,15 +14,13 @@ describe('snapshotDocument', () => {
       lastSavedTitle: 'Saved',
       lastSavedMarkdown: 'Saved body',
       lastSavedNoteId: 'note-id',
-      lastSavedPath: '/vault/Test.md',
-      status: 'idle',
-      operationRevision: 3,
-      saveInvalidation: 1
-    };
+      lastSavedPath: '/vault/Test.md'
+    }, 'path:/vault/Test.md');
+    document.operation.revision = 3;
 
     const snapshot = snapshotDocument(document);
-    document.title = 'Mutated';
-    document.bodyMarkdown = 'Changed';
+    document.working.title = 'Mutated';
+    document.working.markdown = 'Changed';
 
     expect(snapshot).toEqual({
       key: 'path:/vault/Test.md',
@@ -40,8 +39,7 @@ describe('snapshotDocument', () => {
 
 describe('createNotepadFeatureHost', () => {
   it('adapts active document and editor capabilities without exposing runtime state', async () => {
-    const document: NoteDraftState = {
-      key: 'draft:1',
+    const document = createNoteDraftState({
       title: 'Draft',
       bodyMarkdown: 'Hello world',
       currentNoteId: null,
@@ -49,11 +47,8 @@ describe('createNotepadFeatureHost', () => {
       lastSavedTitle: '',
       lastSavedMarkdown: '',
       lastSavedNoteId: null,
-      lastSavedPath: null,
-      status: 'idle',
-      operationRevision: 0,
-      saveInvalidation: 0
-    };
+      lastSavedPath: null
+    }, 'draft:1');
     let saved = false;
     let replaced = '';
     let inserted = '';
@@ -64,7 +59,7 @@ describe('createNotepadFeatureHost', () => {
         focus: () => true,
         focusAtEnd: () => true,
         readSnapshot: () => ({
-          markdown: document.bodyMarkdown,
+          markdown: document.working.markdown,
           selection: { anchor: 0, head: 5 },
           revision: 1
         }),
@@ -116,8 +111,7 @@ describe('createNotepadFeatureHost', () => {
   });
 
   it('rejects insertion after the target document or its revision changes', () => {
-    const document: NoteDraftState = {
-      key: 'path:/vault/Current.md',
+    const document = createNoteDraftState({
       title: 'Current',
       bodyMarkdown: 'Body',
       currentNoteId: 'current',
@@ -125,11 +119,9 @@ describe('createNotepadFeatureHost', () => {
       lastSavedTitle: 'Current',
       lastSavedMarkdown: 'Body',
       lastSavedNoteId: 'current',
-      lastSavedPath: '/vault/Current.md',
-      status: 'idle',
-      operationRevision: 4,
-      saveInvalidation: 0
-    };
+      lastSavedPath: '/vault/Current.md'
+    }, 'path:/vault/Current.md');
+    document.operation.revision = 4;
     let insertionCount = 0;
     const host = createNotepadFeatureHost({
       getActiveDocument: () => document,

@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "events": [
+    {
+      "channel": "chat://started",
+      "payload": {
+        "requestId": "request-1",
+        "conversationId": "conversation-1",
+        "messageId": "message-assistant-1",
+        "conversation": {
+          "id": "conversation-1",
+          "title": "Contract conversation",
+          "access": "full",
+          "status": "active",
+          "createdAtMillis": 1699999999000,
+          "updatedAtMillis": 1700000000000,
+          "messageCount": 2,
+          "detached": false,
+          "provider": "openai",
+          "model": "gpt-5.6-terra"
+        }
+      }
+    },
+    {
+      "channel": "chat://text-delta",
+      "payload": {
+        "requestId": "request-1",
+        "conversationId": "conversation-1",
+        "messageId": "message-assistant-1",
+        "delta": "Partial"
+      }
+    },
+    {
+      "channel": "chat://source",
+      "payload": {
+        "requestId": "request-1",
+        "conversationId": "conversation-1",
+        "messageId": "message-assistant-1",
+        "source": {
+          "kind": "note",
+          "noteId": "note-1",
+          "notePath": "/vault/Title.md",
+          "title": "Title",
+          "excerpt": "Relevant text",
+          "url": null,
+          "anchor": "section"
+        }
+      }
+    },
+    {
+      "channel": "chat://completed",
+      "payload": {
+        "requestId": "request-1",
+        "conversationId": "conversation-1",
+        "messageId": "message-assistant-1",
+        "conversation": {
+          "id": "conversation-1",
+          "title": "Contract conversation",
+          "access": "full",
+          "status": "active",
+          "createdAtMillis": 1699999999000,
+          "updatedAtMillis": 1700000000000,
+          "messageCount": 2,
+          "detached": false,
+          "provider": "openai",
+          "model": "gpt-5.6-terra"
+        },
+        "content": "Complete response"
+      }
+    },
+    {
+      "channel": "chat://failed",
+      "payload": {
+        "requestId": "request-1",
+        "conversationId": "conversation-1",
+        "messageId": "message-assistant-1",
+        "conversation": {
+          "id": "conversation-1",
+          "title": "Contract conversation",
+          "access": "full",
+          "status": "active",
+          "createdAtMillis": 1699999999000,
+          "updatedAtMillis": 1700000000000,
+          "messageCount": 2,
+          "detached": false,
+          "provider": "openai",
+          "model": "gpt-5.6-terra"
+        },
+        "content": "Partial response",
+        "error": "Provider disconnected"
+      }
+    },
+    {
+      "channel": "chat://cancelled",
+      "payload": {
+        "requestId": "request-1",
+        "conversationId": "conversation-1",
+        "messageId": "message-assistant-1",
+        "conversation": {
+          "id": "conversation-1",
+          "title": "Contract conversation",
+          "access": "full",
+          "status": "active",
+          "createdAtMillis": 1699999999000,
+          "updatedAtMillis": 1700000000000,
+          "messageCount": 2,
+          "detached": false,
+          "provider": "openai",
+          "model": "gpt-5.6-terra"
+        },
+        "content": "Partial response"
+      }
+    }
+  ]
+}

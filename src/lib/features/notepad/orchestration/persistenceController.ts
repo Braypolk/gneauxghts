@@ -1,13 +1,22 @@
 import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
 import {
-  shouldSkipAutosave,
   type SessionSnapshot,
 } from "$lib/features/notepad/session/session";
 import {
-  setNoteStatus,
+  beginDocumentOperation,
+  completeDocumentOperation,
+  documentHasCleanBuffer,
+  documentHasUnresolvedConflict,
+  failDocumentOperation,
+  getDocumentMarkdown,
+  getDocumentNoteId,
+  getDocumentPath,
+  getDocumentTitle,
+  invalidateDocumentOperations,
+  isDocumentOperationCurrent,
   type NoteDraftState,
   type NoteKey,
-} from "$lib/features/notepad/state/noteStore";
+} from "$lib/features/notepad/document/documentState";
 
 export interface PersistenceControllerParams {
   getDocumentSession: () => NoteDraftState;
@@ -36,19 +45,13 @@ export function createNotepadPersistenceController(
   params: PersistenceControllerParams,
 ) {
   function hasCleanBuffer(note: NoteDraftState = params.getDocumentSession()) {
-    return shouldSkipAutosave(
-      note.title,
-      note.bodyMarkdown,
-      note.currentNoteId,
-      note.currentNotePath,
-      note,
-    );
+    return documentHasCleanBuffer(note);
   }
 
   function invalidatePendingSaveResults(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    note.saveInvalidation += 1;
+    invalidateDocumentOperations(note);
   }
 
   function getNoteSaveQueue(noteKey: NoteDraftState["key"]) {
@@ -65,42 +68,55 @@ export function createNotepadPersistenceController(
         await operation();
       } catch (error) {
         console.error("Notepad note operation failed:", error);
-        setNoteStatus(note, "error");
+        if (note.operation.kind === "saving") {
+          failDocumentOperation(
+            note,
+            "saving",
+            error,
+            note.operation.token,
+          );
+        }
+        throw error;
       }
     });
   }
 
   async function persistNote(note: NoteDraftState) {
-    if (params.shouldSuppressPersistence?.(note)) {
-      return;
-    }
-    const saveInvalidation = note.saveInvalidation;
-    const title = note.title;
-    const markdown = note.bodyMarkdown;
-    const currentNoteId = note.currentNoteId;
-    const currentNotePath = note.currentNotePath;
-
     if (
-      shouldSkipAutosave(title, markdown, currentNoteId, currentNotePath, note)
+      documentHasUnresolvedConflict(note) ||
+      params.shouldSuppressPersistence?.(note)
     ) {
       return;
     }
+    const title = getDocumentTitle(note);
+    const markdown = getDocumentMarkdown(note);
+    const currentNoteId = getDocumentNoteId(note);
+    const currentNotePath = getDocumentPath(note);
 
-    setNoteStatus(note, "saving");
+    if (documentHasCleanBuffer(note)) {
+      return;
+    }
+
+    const operationToken = beginDocumentOperation(
+      note,
+      "saving",
+    );
+    const operationRevision = note.operation.revision;
     const savedSession = await params.saveNoteSession(
       title,
       markdown,
       currentNotePath,
     );
-    if (note.saveInvalidation !== saveInvalidation) {
+    if (!isDocumentOperationCurrent(note, operationToken)) {
       return;
     }
 
     const preserveDraft =
-      note.title !== title ||
-      note.bodyMarkdown !== markdown ||
-      note.currentNoteId !== currentNoteId ||
-      note.currentNotePath !== currentNotePath ||
+      note.operation.revision !== operationRevision ||
+      getDocumentTitle(note) !== title ||
+      getDocumentMarkdown(note) !== markdown ||
+      getDocumentNoteId(note) !== currentNoteId ||
+      getDocumentPath(note) !== currentNotePath ||
       (params.isTitleEditing?.(note) ?? false);
 
     const savedNote = await params.rekeyNoteWithRuntime(
@@ -112,6 +128,12 @@ export function createNotepadPersistenceController(
       savedSession,
       { preserveDraft },
     );
+    if (savedSession.commitWarning) {
+      console.warn(
+        "Note was saved, but required projections need repair:",
+        savedSession.commitWarning,
+      );
+    }
     if (
       currentNotePath === null &&
       savedSession.currentNoteId &&
@@ -125,7 +147,12 @@ export function createNotepadPersistenceController(
         console.error("Failed to mark newly saved note as opened:", error);
       }
     }
-    setNoteStatus(savedNote, "idle");
+    completeDocumentOperation(
+      savedNote,
+      savedNote === note
+        ? operationToken
+        : savedNote.operation.token,
+    );
   }
 
   function cancelPendingAutosave(
@@ -142,7 +169,7 @@ export function createNotepadPersistenceController(
     runtime.setSaveTimer(
       window.setTimeout(() => {
         runtime.clearSaveTimer();
-        void enqueueSave(note);
+        void enqueueSave(note).catch(() => undefined);
       }, 1000),
     );
   }
@@ -162,7 +189,7 @@ export function createNotepadPersistenceController(
     }
 
     runtime.clearSaveTimer();
-    void enqueueSave(note);
+    void enqueueSave(note).catch(() => undefined);
   }
 
   /** Iterate every running save queue and await it. */

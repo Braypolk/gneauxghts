@@ -1,9 +1,9 @@
 import {
-  applySnapshotToNote,
-  updateNoteDraftMarkdown,
-  updateNoteDraftTitle,
+  applySessionSnapshotToDocument,
+  updateDocumentMarkdown,
+  updateDocumentTitle,
   type NoteDraftState
-} from '$lib/features/notepad/state/noteStore';
+} from './documentState';
 import type { SessionSnapshot } from '$lib/features/notepad/session/session';
 
 export interface DocumentEditingServiceDeps<TPaneId extends string> {
@@ -31,9 +31,7 @@ export function createDocumentEditingService<TPaneId extends string>(
     document: NoteDraftState,
     markdown: string
   ): boolean {
-    const previousRevision = document.operationRevision;
-    updateNoteDraftMarkdown(document, markdown);
-    return document.operationRevision !== previousRevision;
+    return updateDocumentMarkdown(document, markdown);
   }
 
   function recordUserEdit(
@@ -41,13 +39,16 @@ export function createDocumentEditingService<TPaneId extends string>(
     document: NoteDraftState,
     markdown: string
   ): boolean {
+    // Programmatic editor replacements update the model at their orchestration
+    // boundary. Their CodeMirror callback is only an acknowledgement and must
+    // not publish an intermediate model state before that boundary commits.
+    if (deps.isApplyingExternalContent(document)) {
+      return false;
+    }
+
     const changed = applyMarkdownProjection(document, markdown);
     if (changed) {
       deps.resetPaneCommandAfterBodyInput(paneId, markdown);
-    }
-
-    if (deps.isApplyingExternalContent(document)) {
-      return changed;
     }
 
     const suppressAutosave = deps.shouldSuppressAutosave(document);
@@ -97,16 +98,10 @@ export function createDocumentEditingService<TPaneId extends string>(
       immediateRelated?: boolean;
     } = {}
   ) {
-    const previousTitle = document.title;
-    const previousMarkdown = document.bodyMarkdown;
-    applySnapshotToNote(document, snapshot, { preserveDraft });
-
-    const titleChanged = document.title !== previousTitle;
-    const markdownChanged =
-      document.bodyMarkdown !== previousMarkdown;
-    if (titleChanged || markdownChanged) {
-      document.operationRevision += 1;
-    }
+    const { titleChanged, markdownChanged } =
+      applySessionSnapshotToDocument(document, snapshot, {
+        preserveWorking: preserveDraft
+      });
     if (markdownChanged) {
       await applyMarkdownToRuntime();
     }
@@ -126,9 +121,7 @@ export function createDocumentEditingService<TPaneId extends string>(
   }
 
   function updateTitle(document: NoteDraftState, title: string): boolean {
-    const previousRevision = document.operationRevision;
-    updateNoteDraftTitle(document, title);
-    return document.operationRevision !== previousRevision;
+    return updateDocumentTitle(document, title);
   }
 
   return {

@@ -1,22 +1,23 @@
-use super::index_bridge::upsert_notes_index_entry;
 use super::{
-    current_time_millis, prepare_notes_dir, RecentTaskItem, TaskFilter, TaskListGroup,
-    TaskListGroupPatch, TaskListItem, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+    prepare_notes_dir, RecentTaskItem, TaskFilter, TaskListGroup, TaskListGroupPatch, TaskListItem,
+    INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
 use crate::{
-    index::{build_indexed_note, delete_task_in_markdown, toggle_task_in_markdown, AppState},
+    index::AppState,
+    services::note_mutation::{CommittedMutationWarning, PostCommitIssue, PostCommitStage},
+    services::task_mutation::{
+        PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
+    },
     state::{
-        db_set_note_collapsed, db_set_note_hidden, db_set_note_order, read_state,
+        db_set_note_collapsed, db_set_note_hidden, db_set_note_order, notes_root, read_state,
         resolve_note_path_by_id,
         task_projection::{
-            delete_single_task, list_recent_open_tasks, list_tasks_with_filter, load_task_by_id,
-            load_tasks_for_note_id, reconcile_note_tasks, set_hidden_for_task_id, ProjectionFilter,
-            TaskRecord,
+            list_recent_open_tasks, list_tasks_with_filter, load_task_by_id,
+            load_tasks_for_note_id, set_hidden_for_task_id, ProjectionFilter, TaskRecord,
         },
-        validate_current_path,
     },
 };
-use std::{collections::HashSet, fs};
+use std::collections::HashSet;
 use tauri::State;
 
 pub(super) fn list_recent_tasks(
@@ -219,6 +220,7 @@ fn build_task_group_patch(
         note_id: note_id.to_string(),
         note_path: group.as_ref().map(|group| group.note_path.clone()),
         group,
+        commit_warning: None,
     })
 }
 
@@ -234,6 +236,7 @@ pub(super) fn set_task_hidden(
             note_id: String::new(),
             note_path: None,
             group: None,
+            commit_warning: None,
         });
     }
     let task = load_task_by_id(&task_id)?.ok_or_else(|| "Task not found".to_string())?;
@@ -304,37 +307,13 @@ pub(crate) fn toggle_task_with_view(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let notes_dir = prepare_notes_dir(false)?;
-    let task = load_task_by_id(&task_id)?.ok_or_else(|| "Task not found".to_string())?;
-
-    let note_path = validate_current_path(Some(task.note_path.clone()), &notes_dir)?
-        .ok_or_else(|| "Missing note path".to_string())?;
-    let markdown = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
-    let updated_markdown = toggle_task_in_markdown(&markdown, task.line_number, &task.text)?;
-    let expected_write = crate::vault_watcher::record_expected_write(&note_path, &updated_markdown);
-    fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
-    expected_write.commit();
-    let timestamp_millis = current_time_millis()?;
-    let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
-    // Reconciles the projection synchronously. The upsert below is also
-    // idempotent, but doing this first lets the event payload reflect the
-    // canonical projection state immediately.
-    let _ = reconcile_note_tasks(
-        &note_path,
-        Some(&updated_note),
-        &updated_note.note_id,
-        timestamp_millis,
-    )?;
-
-    upsert_notes_index_entry(&state, note_path.clone(), updated_note.clone())?;
-    state
-        .semantic
-        .queue_note_update(&note_path, updated_markdown, timestamp_millis)?;
-
-    let _ = notes_dir;
-    let mut patch = build_task_group_patch(&updated_note.note_id, filter, show_hidden)?;
-    patch.note_path = Some(note_path.to_string_lossy().into_owned());
-    Ok(patch)
+    mutate_task_with_view(
+        state,
+        task_id,
+        TaskMutationKind::Toggle,
+        filter,
+        show_hidden,
+    )
 }
 
 pub(crate) fn delete_task_with_view(
@@ -343,29 +322,67 @@ pub(crate) fn delete_task_with_view(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
+    mutate_task_with_view(
+        state,
+        task_id,
+        TaskMutationKind::Delete,
+        filter,
+        show_hidden,
+    )
+}
+
+fn mutate_task_with_view(
+    state: State<'_, AppState>,
+    task_id: String,
+    mutation_kind: TaskMutationKind,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
     let notes_dir = prepare_notes_dir(false)?;
-    let task = load_task_by_id(&task_id)?.ok_or_else(|| "Task not found".to_string())?;
-
-    let note_path = validate_current_path(Some(task.note_path.clone()), &notes_dir)?
-        .ok_or_else(|| "Missing note path".to_string())?;
-    let markdown = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
-    let updated_markdown = delete_task_in_markdown(&markdown, task.line_number, &task.text)?;
-    let expected_write = crate::vault_watcher::record_expected_write(&note_path, &updated_markdown);
-    fs::write(&note_path, &updated_markdown).map_err(|err| err.to_string())?;
-    expected_write.commit();
-    let timestamp_millis = current_time_millis()?;
-    let updated_note = build_indexed_note(&note_path, &updated_markdown, timestamp_millis);
-    upsert_notes_index_entry(&state, note_path.clone(), updated_note.clone())?;
-    delete_single_task(&task_id, timestamp_millis)?;
-
-    state
-        .semantic
-        .queue_note_update(&note_path, updated_markdown, timestamp_millis)?;
-
-    let _ = notes_dir;
-    let mut patch = build_task_group_patch(&updated_note.note_id, filter, show_hidden)?;
-    patch.note_path = Some(note_path.to_string_lossy().into_owned());
+    let committed = TaskMutationService::new(&state).commit(&notes_dir, &task_id, mutation_kind)?;
+    let mut patch = match build_task_group_patch(&committed.note_id, filter, show_hidden) {
+        Ok(patch) => patch,
+        Err(error) => TaskListGroupPatch {
+            note_id: committed.note_id.clone(),
+            note_path: None,
+            group: None,
+            commit_warning: Some(CommittedMutationWarning {
+                message: format!(
+                    "Canonical task mutation was saved at {}, but the task view could not refresh: {error}",
+                    committed.note_path.display()
+                ),
+                issues: vec![PostCommitIssue {
+                    stage: PostCommitStage::TaskViewRefresh,
+                    message: error,
+                }],
+            }),
+        },
+    };
+    patch.note_path = Some(committed.note_path.to_string_lossy().into_owned());
+    if let Some(mut warning) = committed.commit_warning {
+        if let Some(view_warning) = patch.commit_warning.take() {
+            warning.message = format!("{}; {}", warning.message, view_warning.message);
+            warning.issues.extend(view_warning.issues);
+        }
+        patch.commit_warning = Some(warning);
+    }
     Ok(patch)
+}
+
+#[tauri::command]
+pub(crate) fn prepare_task_document_mutation(
+    task_id: String,
+    mutation_kind: TaskMutationKind,
+    working_markdown: String,
+    body_hash: String,
+) -> Result<PreparedTaskDocumentMutation, String> {
+    TaskMutationService::prepare(
+        &notes_root()?,
+        &task_id,
+        mutation_kind,
+        &working_markdown,
+        &body_hash,
+    )
 }
 
 #[cfg(test)]

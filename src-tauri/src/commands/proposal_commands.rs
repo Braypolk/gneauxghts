@@ -1,17 +1,16 @@
-use super::index_bridge::upsert_notes_index_entry_for_save;
 use crate::{
     chat::{ChatAgentProposal, ChatService, VaultAccess},
-    index::build_indexed_note,
     index::AppState,
     proposals::{
-        commit_note_creation, commit_note_review as commit_review, preview_note_change,
+        commit_note_creation_at_path, commit_note_review as commit_review,
+        plan_agent_creation_commit, plan_agent_update_commit, preview_note_change,
         preview_note_creation, CommitNoteReviewResult, CreationProposalPreview, ProposalPreview,
         ProposedTextEdit,
     },
+    services::PostCommitNoteMutationService,
     state::notes_root,
-    time::current_time_millis,
 };
-use std::{fs, path::Path};
+use std::path::PathBuf;
 use tauri::State;
 
 #[tauri::command]
@@ -39,18 +38,9 @@ pub(crate) fn commit_note_review(
     markdown: String,
 ) -> Result<CommitNoteReviewResult, String> {
     let notes_dir = notes_root()?;
+    let fallback_markdown = markdown.clone();
     let result = commit_review(&notes_dir, path, expected_base_hash, markdown)?;
-    if let Some(applied) = result.applied.as_ref() {
-        let saved = applied
-            .path
-            .as_deref()
-            .and_then(|path| refresh_saved_note_best_effort(&state, Path::new(path)));
-        if let Some((note_id, title, revision)) = saved {
-            state
-                .events
-                .note_saved(Some(note_id), applied.path.clone(), title, revision);
-        }
-    }
+    synchronize_applied_change(&state, &result, fallback_markdown);
     Ok(result)
 }
 
@@ -78,18 +68,23 @@ pub(crate) fn commit_agent_proposal(
         return Err("Vault access is disabled for this conversation".to_string());
     }
     let notes_dir = notes_root()?;
-    let result = if proposal.kind == "update" {
+    let (plan, committed_markdown, create_title, expected_base_hash) = if proposal.kind == "update"
+    {
         let preview: ProposalPreview = serde_json::from_value(proposal.preview.clone())
             .map_err(|error| format!("Stored proposal preview is invalid: {error}"))?;
-        commit_review(
-            &notes_dir,
-            preview.note_path,
-            proposal
-                .base_hash
-                .clone()
-                .unwrap_or(preview.base_content_hash),
-            markdown.unwrap_or(preview.proposed_editor_markdown),
-        )?
+        let committed_markdown = markdown.unwrap_or(preview.proposed_editor_markdown);
+        let plan = plan_agent_update_commit(&notes_dir, &preview.note_path, &committed_markdown)?;
+        (
+            plan,
+            committed_markdown,
+            None,
+            Some(
+                proposal
+                    .base_hash
+                    .clone()
+                    .unwrap_or(preview.base_content_hash),
+            ),
+        )
     } else if proposal.kind == "create" {
         #[derive(serde::Deserialize)]
         struct CreatePayload {
@@ -98,21 +93,50 @@ pub(crate) fn commit_agent_proposal(
         }
         let payload: CreatePayload = serde_json::from_value(proposal.payload.clone())
             .map_err(|error| format!("Stored creation proposal is invalid: {error}"))?;
-        commit_note_creation(
-            &notes_dir,
-            payload.title,
-            markdown.unwrap_or(payload.markdown),
-        )?
+        let committed_markdown = markdown.unwrap_or(payload.markdown);
+        let suggested_path = proposal
+            .suggested_path
+            .as_deref()
+            .ok_or_else(|| "The creation proposal has no target path".to_string())?;
+        let plan = plan_agent_creation_commit(&notes_dir, suggested_path, &committed_markdown)?;
+        (plan, committed_markdown, Some(payload.title), None)
     } else {
         return Err("Unsupported proposal kind".to_string());
+    };
+    let intent = service.begin_agent_proposal_commit(
+        &proposal_id,
+        &plan.target_path,
+        &plan.intended_editor_content_hash,
+    )?;
+    let commit_result = if proposal.kind == "update" {
+        commit_review(
+            &notes_dir,
+            intent.target_path.to_string_lossy().into_owned(),
+            expected_base_hash.expect("update proposal base hash was parsed"),
+            committed_markdown.clone(),
+        )
+    } else {
+        commit_note_creation_at_path(
+            &notes_dir,
+            &intent.target_path,
+            create_title.expect("creation proposal title was parsed"),
+            committed_markdown.clone(),
+        )
+    };
+    let result = match commit_result {
+        Ok(result) => result,
+        Err(error) => {
+            converge_agent_proposal_status(&service, &proposal_id, "conflict", false)?;
+            return Err(error);
+        }
     };
     let resolution = if result.status == "committed" {
         "committed"
     } else {
         "conflict"
     };
-    let _ = service.resolve_agent_proposal(&proposal_id, resolution)?;
-    refresh_applied_change(&state, &result);
+    converge_agent_proposal_status(&service, &proposal_id, resolution, result.applied.is_some())?;
+    synchronize_applied_change(&state, &result, committed_markdown);
     Ok(result)
 }
 
@@ -124,47 +148,60 @@ pub(crate) fn dismiss_agent_proposal(
     service.resolve_agent_proposal(&proposal_id, "dismissed")
 }
 
-fn refresh_applied_change(state: &State<'_, AppState>, result: &CommitNoteReviewResult) {
+fn synchronize_applied_change(
+    state: &State<'_, AppState>,
+    result: &CommitNoteReviewResult,
+    fallback_markdown: String,
+) {
     let Some(applied) = result.applied.as_ref() else {
         return;
     };
-    let saved = applied
-        .path
-        .as_deref()
-        .and_then(|path| refresh_saved_note_best_effort(state, Path::new(path)));
-    if let Some((note_id, title, revision)) = saved {
-        state
-            .events
-            .note_saved(Some(note_id), applied.path.clone(), title, revision);
+    let Some(path) = applied.path.as_deref() else {
+        return;
+    };
+    let outcome = PostCommitNoteMutationService::new(state).apply_canonical_file(
+        PathBuf::from(path),
+        applied.previous_path.as_deref().map(PathBuf::from),
+        fallback_markdown,
+    );
+    outcome.report_degraded("proposal commit");
+}
+
+fn converge_agent_proposal_status(
+    service: &ChatService,
+    proposal_id: &str,
+    intended_status: &str,
+    canonical_bytes_committed: bool,
+) -> Result<(), String> {
+    if service
+        .finish_agent_proposal_commit(proposal_id, intended_status)
+        .is_ok()
+    {
+        return Ok(());
     }
-}
 
-/// Secondary save-side work must never turn a completed atomic write into a
-/// failed review. Return metadata only when enough work succeeded to emit the
-/// same useful event shape as an ordinary save.
-fn refresh_saved_note_best_effort(
-    state: &State<'_, AppState>,
-    path: &Path,
-) -> Option<(String, String, u64)> {
-    refresh_saved_note_best_effort_at(state, path, current_time_millis().unwrap_or(0))
-}
-
-fn refresh_saved_note_best_effort_at(
-    state: &State<'_, AppState>,
-    path: &Path,
-    timestamp: u64,
-) -> Option<(String, String, u64)> {
-    let markdown = fs::read_to_string(path).ok()?;
-    let indexed_note = build_indexed_note(path, &markdown, timestamp);
-    let note_id = indexed_note.note_id.clone();
-    let title = indexed_note.title.clone();
-    let _ = upsert_notes_index_entry_for_save(state, path.to_path_buf(), indexed_note);
-    let _ = state.semantic.queue_note_update(path, markdown, timestamp);
-    let revision = state
-        .notes_index
-        .lock()
+    let recovery = service.recover_agent_proposal_commit(proposal_id);
+    let recovered_status = service
+        .get_agent_proposal(proposal_id)
         .ok()
-        .map(|index| index.revision())
-        .unwrap_or(0);
-    Some((note_id, title, revision))
+        .map(|proposal| proposal.status);
+    if recovery.is_ok() && recovered_status.as_deref() == Some(intended_status) {
+        return Ok(());
+    }
+
+    let detail = match (recovery, recovered_status) {
+        (Err(error), _) => error,
+        (Ok(_), Some(status)) => format!("recovery resolved proposal as {status}"),
+        (Ok(_), None) => "proposal status could not be reloaded after recovery".to_string(),
+    };
+    if canonical_bytes_committed {
+        eprintln!(
+            "proposal {proposal_id} committed canonical note bytes but durable status synchronization degraded: {detail}"
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "Proposal filesystem commit did not complete, and status synchronization failed: {detail}"
+        ))
+    }
 }

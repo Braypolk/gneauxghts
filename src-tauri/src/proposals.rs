@@ -1,7 +1,7 @@
 use crate::{
     note,
     semantic::db::content_hash,
-    state::{atomic_write_note, is_valid_note_path},
+    state::{atomic_write_note, is_forgotten_note_path, is_valid_note_path},
     vault_watcher,
 };
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,12 @@ pub(crate) struct CommitNoteReviewResult {
     pub(crate) status: String,
     pub(crate) applied: Option<AppliedNoteChange>,
     pub(crate) message: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentProposalCommitPlan {
+    pub(crate) target_path: PathBuf,
+    pub(crate) intended_editor_content_hash: String,
 }
 
 #[derive(Clone, Debug)]
@@ -408,6 +414,20 @@ pub(crate) fn commit_note_review(
     })
 }
 
+pub(crate) fn plan_agent_update_commit(
+    notes_dir: &Path,
+    path: &str,
+    markdown: &str,
+) -> Result<AgentProposalCommitPlan, String> {
+    let target_path = validate_existing_note_path(notes_dir, path)?;
+    let normalized = note::normalize_wikilink_markdown(markdown);
+    note::reject_chat_projection_write(&normalized)?;
+    Ok(AgentProposalCommitPlan {
+        intended_editor_content_hash: editor_visible_content_hash(&target_path, &normalized),
+        target_path,
+    })
+}
+
 pub(crate) fn preview_note_creation(
     notes_dir: &Path,
     title: &str,
@@ -429,6 +449,21 @@ pub(crate) fn preview_note_creation(
     })
 }
 
+pub(crate) fn plan_agent_creation_commit(
+    notes_dir: &Path,
+    suggested_path: &str,
+    markdown: &str,
+) -> Result<AgentProposalCommitPlan, String> {
+    let target_path = canonical_agent_commit_target(notes_dir, Path::new(suggested_path))?;
+    let normalized = note::normalize_wikilink_markdown(markdown);
+    note::reject_chat_projection_write(&normalized)?;
+    Ok(AgentProposalCommitPlan {
+        intended_editor_content_hash: editor_visible_content_hash(&target_path, &normalized),
+        target_path,
+    })
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn commit_note_creation(
     notes_dir: &Path,
     title: String,
@@ -464,6 +499,62 @@ pub(crate) fn commit_note_creation(
     })
 }
 
+pub(crate) fn commit_note_creation_at_path(
+    notes_dir: &Path,
+    target_path: &Path,
+    title: String,
+    markdown: String,
+) -> Result<CommitNoteReviewResult, String> {
+    if title.trim().is_empty() {
+        return Err("A title is required for a new note.".to_string());
+    }
+    let target_path = canonical_agent_commit_target(notes_dir, target_path)?;
+    let normalized = note::normalize_wikilink_markdown(&markdown);
+    note::reject_chat_projection_write(&normalized)?;
+    let prepared = note::prepare_note_markdown(&normalized, None, Some(None))?.0;
+    let expected_write = vault_watcher::record_expected_write(&target_path, &prepared);
+    match create_note_without_overwrite(&target_path, prepared.as_bytes()) {
+        Ok(()) => {
+            expected_write.commit();
+            Ok(CommitNoteReviewResult {
+                status: "committed".to_string(),
+                applied: Some(AppliedNoteChange {
+                    kind: "createNote".to_string(),
+                    path: Some(target_path.to_string_lossy().into_owned()),
+                    previous_path: None,
+                }),
+                message: None,
+            })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Ok(CommitNoteReviewResult {
+                status: "conflict".to_string(),
+                applied: None,
+                message: Some(
+                    "The proposed creation path is now occupied; review the proposal again."
+                        .to_string(),
+                ),
+            })
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub(crate) fn editor_visible_content_hash(path: &Path, canonical_markdown: &str) -> String {
+    let fallback_title = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let normalized = note::normalize_wikilink_markdown(canonical_markdown);
+    let prepared_body = note::parse_note(&normalized)
+        .body
+        .trim_start_matches('\n')
+        .to_string();
+    let (_, editor_markdown) =
+        note::extract_file_name_title_and_body(&prepared_body, &fallback_title);
+    content_hash(&editor_markdown)
+}
+
 fn create_note_without_overwrite(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -475,6 +566,30 @@ fn create_note_without_overwrite(path: &Path, contents: &[u8]) -> std::io::Resul
         return Err(error);
     }
     Ok(())
+}
+
+pub(crate) fn canonical_agent_commit_target(
+    notes_dir: &Path,
+    path: &Path,
+) -> Result<PathBuf, String> {
+    let notes_dir = fs::canonicalize(notes_dir).map_err(|error| error.to_string())?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Creation target has no parent directory".to_string())?;
+    let parent = fs::canonicalize(parent).map_err(|error| error.to_string())?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| "Creation target has no file name".to_string())?;
+    let target = parent.join(file_name);
+    if !target.starts_with(&notes_dir)
+        || is_forgotten_note_path(&target, &notes_dir)
+        || !target
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+    {
+        return Err(format!("Invalid note path: {}", path.display()));
+    }
+    Ok(target)
 }
 
 fn unique_creation_path(notes_dir: &Path, stem: &str) -> PathBuf {

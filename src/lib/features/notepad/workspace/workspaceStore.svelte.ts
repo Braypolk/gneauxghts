@@ -1,13 +1,19 @@
 import {
-  notepadRuntimeState,
+  INITIAL_PANE_ID,
   type NotepadPaneId
 } from '$lib/features/notepad/session/runtimeStore.svelte';
-import { notepadState } from '$lib/features/notepad/session/runtimeStore.svelte';
-import {
-  setActivePane as setStoreActivePane,
-  type NoteKey
-} from '$lib/features/notepad/state/noteStore';
+import { initialNotepadNoteKey } from '$lib/features/notepad/state/noteState.svelte';
+import type { NoteKey } from '$lib/features/notepad/state/noteStore';
 import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
+import {
+  canRemovePane as policyCanRemovePane,
+  canSetPaneKind,
+  paneHasCapability
+} from './paneCapabilities';
+import type {
+  PaneKind,
+  WorkspacePaneState
+} from './paneTypes';
 
 /**
  * Pane command UI state. The pane command overlay is shown while the user
@@ -25,16 +31,15 @@ export interface PaneCommandState {
 }
 
 /**
- * WorkspaceStore owns workspace-level pane state: pane order, active pane,
- * and pane command chrome. It mirrors notepadRuntimeState (which persists
- * across navigation) so that effects in Notepad.svelte don't have to track
- * the same state in multiple places.
- *
- * Methods mutate notepadState as needed so the noteStore stays in sync.
+ * Sole owner of workspace pane structure and pane-to-content references.
+ * Document bodies live in noteState; pane runtimes live separately.
  */
 export class WorkspaceStore {
-  paneOrder = $state<NotepadPaneId[]>([...notepadRuntimeState.paneOrder]);
-  activePaneId = $state<NotepadPaneId>(notepadRuntimeState.activePaneId);
+  paneOrder = $state<NotepadPaneId[]>([]);
+  activePaneId = $state<NotepadPaneId>(INITIAL_PANE_ID);
+  panesById = $state<
+    Partial<Record<NotepadPaneId, WorkspacePaneState<NotepadPaneId>>>
+  >({});
   paneCommand = $state<PaneCommandState>({
     paneId: null,
     sourcePaneId: null,
@@ -44,26 +49,215 @@ export class WorkspaceStore {
     focusEl: null
   });
 
-  setPaneOrder(paneOrder: NotepadPaneId[]): void {
-    this.paneOrder = paneOrder;
-    notepadRuntimeState.paneOrder = paneOrder;
+  constructor(
+    initialPaneId: NotepadPaneId = INITIAL_PANE_ID,
+    initialNoteKey: NoteKey = initialNotepadNoteKey
+  ) {
+    this.paneOrder = [initialPaneId];
+    this.activePaneId = initialPaneId;
+    this.panesById = {
+      [initialPaneId]: {
+        paneId: initialPaneId,
+        kind: 'editor',
+        noteKey: initialNoteKey,
+        chatConversationId: null
+      }
+    };
+    this.assertInvariants();
   }
 
-  setActivePaneId(paneId: NotepadPaneId): void {
+  getPaneState(
+    paneId: NotepadPaneId
+  ): WorkspacePaneState<NotepadPaneId> {
+    const pane = this.panesById[paneId];
+    if (!pane) {
+      throw new Error(`Unknown workspace pane: ${paneId}`);
+    }
+    return pane;
+  }
+
+  hasPane(paneId: NotepadPaneId): boolean {
+    return Boolean(this.panesById[paneId]);
+  }
+
+  setActivePaneId = (paneId: NotepadPaneId): void => {
+    this.getPaneState(paneId);
     this.activePaneId = paneId;
-    notepadRuntimeState.activePaneId = paneId;
-    setStoreActivePane(notepadState, paneId);
+    this.assertInvariants();
+  };
+
+  addPane(
+    paneId: NotepadPaneId,
+    noteKey: NoteKey,
+    kind: PaneKind = 'editor'
+  ): WorkspacePaneState<NotepadPaneId> {
+    if (this.hasPane(paneId)) {
+      throw new Error(`Workspace pane already exists: ${paneId}`);
+    }
+    const pane: WorkspacePaneState<NotepadPaneId> = {
+      paneId,
+      kind,
+      noteKey,
+      chatConversationId: null
+    };
+    this.panesById[paneId] = pane;
+    this.paneOrder = [...this.paneOrder, paneId];
+    this.assertInvariants();
+    return pane;
   }
 
-  /** Insert paneId at end of paneOrder if not present. */
-  ensurePaneVisible(paneId: NotepadPaneId): void {
-    if (this.paneOrder.includes(paneId)) return;
-    this.setPaneOrder([...this.paneOrder, paneId]);
+  canRemovePane(paneId: NotepadPaneId): boolean {
+    return policyCanRemovePane(
+      {
+        paneOrder: this.paneOrder,
+        getPaneKind: (candidate) =>
+          this.getPaneState(candidate).kind
+      },
+      paneId
+    );
   }
 
-  removePane(paneId: NotepadPaneId): void {
-    if (!this.paneOrder.includes(paneId)) return;
-    this.setPaneOrder(this.paneOrder.filter((candidate) => candidate !== paneId));
+  removePane(
+    paneId: NotepadPaneId
+  ): WorkspacePaneState<NotepadPaneId> | null {
+    if (!this.canRemovePane(paneId)) return null;
+
+    const pane = this.getPaneState(paneId);
+    const index = this.paneOrder.indexOf(paneId);
+    const adjacentPaneId =
+      this.paneOrder[index + 1] ??
+      this.paneOrder[index - 1];
+    this.paneOrder = this.paneOrder.filter(
+      (candidate) => candidate !== paneId
+    );
+    delete this.panesById[paneId];
+    if (this.activePaneId === paneId && adjacentPaneId) {
+      this.activePaneId = adjacentPaneId;
+    }
+    this.assertInvariants();
+    return pane;
+  }
+
+  setPaneKind(
+    paneId: NotepadPaneId,
+    kind: PaneKind
+  ): boolean {
+    const pane = this.getPaneState(paneId);
+    if (pane.kind === kind) return true;
+    if (
+      !canSetPaneKind(
+        {
+          paneOrder: this.paneOrder,
+          getPaneKind: (candidate) =>
+            this.getPaneState(candidate).kind
+        },
+        paneId,
+        kind
+      )
+    ) {
+      return false;
+    }
+    pane.kind = kind;
+    if (kind === 'editor') {
+      pane.chatConversationId = null;
+    }
+    this.assertInvariants();
+    return true;
+  }
+
+  setPaneNoteKey(
+    paneId: NotepadPaneId,
+    noteKey: NoteKey
+  ): void {
+    this.getPaneState(paneId).noteKey = noteKey;
+    this.assertInvariants();
+  }
+
+  setPaneConversationId(
+    paneId: NotepadPaneId,
+    conversationId: string | null
+  ): void {
+    this.getPaneState(paneId).chatConversationId =
+      conversationId;
+    this.assertInvariants();
+  }
+
+  replaceNoteKeyReferences(
+    previousKey: NoteKey,
+    nextKey: NoteKey
+  ): void {
+    for (const paneId of this.paneOrder) {
+      const pane = this.getPaneState(paneId);
+      if (pane.noteKey === previousKey) {
+        pane.noteKey = nextKey;
+      }
+    }
+    this.assertInvariants();
+  }
+
+  isNoteReferenced(noteKey: NoteKey): boolean {
+    return this.paneOrder.some(
+      (paneId) =>
+        this.getPaneState(paneId).noteKey === noteKey
+    );
+  }
+
+  listReferencedNoteKeys(): NoteKey[] {
+    return [
+      ...new Set(
+        this.paneOrder.map(
+          (paneId) => this.getPaneState(paneId).noteKey
+        )
+      )
+    ];
+  }
+
+  assertInvariants(): void {
+    if (this.paneOrder.length === 0) {
+      throw new Error('Workspace must contain at least one pane.');
+    }
+    if (new Set(this.paneOrder).size !== this.paneOrder.length) {
+      throw new Error('Workspace pane order must be unique.');
+    }
+    if (!this.paneOrder.includes(this.activePaneId)) {
+      throw new Error('Active pane must be visible.');
+    }
+    for (const paneId of this.paneOrder) {
+      if (!this.panesById[paneId]) {
+        throw new Error(
+          `Visible pane is missing state: ${paneId}`
+        );
+      }
+    }
+    const storedPaneIds = Object.keys(this.panesById).filter(
+      (paneId) =>
+        Boolean(
+          this.panesById[paneId as NotepadPaneId]
+        )
+    ) as NotepadPaneId[];
+    if (
+      storedPaneIds.length !== this.paneOrder.length ||
+      storedPaneIds.some(
+        (paneId) => !this.paneOrder.includes(paneId)
+      )
+    ) {
+      throw new Error(
+        'Workspace pane records must match pane order.'
+      );
+    }
+    if (
+      !this.paneOrder.some(
+        (paneId) =>
+          paneHasCapability(
+            this.getPaneState(paneId).kind,
+            'edit-document'
+          )
+      )
+    ) {
+      throw new Error(
+        'Workspace must contain at least one editor.'
+      );
+    }
   }
 
   beginPaneCommand(

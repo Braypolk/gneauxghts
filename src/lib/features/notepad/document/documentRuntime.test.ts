@@ -48,4 +48,19 @@ describe('DocumentRuntime persistence', () => {
     expect(registry.get('path:/vault/Runtime.md')).toBe(runtime);
     expect(runtime.noteKey).toBe('path:/vault/Runtime.md');
   });
+
+  it('reports a failed drain and remains usable for a later save', async () => {
+    const runtime = new DocumentRuntime('draft:runtime');
+    const failure = new Error('disk unavailable');
+
+    await expect(
+      runtime.requestSave(async () => {
+        throw failure;
+      })
+    ).rejects.toBe(failure);
+
+    const retry = vi.fn(async () => undefined);
+    await expect(runtime.requestSave(retry)).resolves.toBeUndefined();
+    expect(retry).toHaveBeenCalledOnce();
+  });
 });

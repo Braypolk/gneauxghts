@@ -20,6 +20,8 @@ import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import type { createProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
 import type { ProposalPreview } from '$lib/types/proposals';
 import { restoreForgottenNotes } from '$lib/features/notepad/session/session';
+import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
 
 interface RecentlyForgottenChat<TPaneId extends string> {
   paneId: TPaneId;
@@ -32,7 +34,7 @@ export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
   maxVisiblePanes: number;
   getPaneOrder: () => TPaneId[];
   getActivePaneId: () => TPaneId;
-  getPaneKind: (paneId: TPaneId) => 'editor' | 'chat';
+  getPaneKind: (paneId: TPaneId) => PaneKind;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   getEditorPaneIds: () => TPaneId[];
   getPaneConversationId: (paneId: TPaneId) => string | null;
@@ -42,8 +44,8 @@ export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
   ) => void;
   setStoredPaneKind: (
     paneId: TPaneId,
-    kind: 'editor' | 'chat'
-  ) => void;
+    kind: PaneKind
+  ) => boolean;
   setActivePane: (paneId: TPaneId) => void;
   touchPaneLocation: (paneId: TPaneId) => void;
   splitWorkspace: () => Promise<void>;
@@ -53,7 +55,7 @@ export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
   ) => Promise<void>;
   setPaneKind: (
     paneId: TPaneId,
-    kind: 'editor' | 'chat'
+    kind: PaneKind
   ) => Promise<void>;
   focusPane: (paneId: TPaneId) => void;
   insertMarkdown: NotepadFeatureHost['insertMarkdown'];
@@ -151,6 +153,13 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     return this.surfaceHandles.get(paneId)?.focusComposer() ?? false;
   }
 
+  private paneHostsChat(paneId: TPaneId): boolean {
+    return paneHasCapability(
+      this.deps.getPaneKind(paneId),
+      'host-chat'
+    );
+  }
+
   canUnforget(paneId: TPaneId) {
     return this.recentlyForgotten?.paneId === paneId;
   }
@@ -213,16 +222,37 @@ export class NotepadChatCoordinator<TPaneId extends string> {
       );
     if (!conversationId) return false;
 
-    this.deps.touchPaneLocation(paneId);
-    this.deps.setStoredPaneKind(paneId, 'chat');
-    this.deps.setPaneConversationId(paneId, conversationId);
+    let chatPaneId = paneId;
+    this.deps.touchPaneLocation(chatPaneId);
+    if (!this.deps.setStoredPaneKind(chatPaneId, 'chat')) {
+      const previousPaneIds = new Set(
+        this.deps.getPaneOrder()
+      );
+      await this.deps.splitWorkspace();
+      chatPaneId =
+        this.deps
+          .getPaneOrder()
+          .find((candidate) => !previousPaneIds.has(candidate)) ??
+        paneId;
+      if (chatPaneId === paneId) return false;
+      await this.deps.resolvePaneCommandChoice(
+        chatPaneId,
+        'thoughtPartner'
+      );
+      if (!this.paneHostsChat(chatPaneId)) {
+        return false;
+      }
+    }
+    this.deps.setPaneConversationId(chatPaneId, conversationId);
     // Touch after the kind flips so the chat location enters the session MRU.
-    this.deps.touchPaneLocation(paneId);
-    this.targetAnchors[paneId] = targetAnchor;
-    this.deps.setActivePane(paneId);
-    await this.getController(paneId).initialize(conversationId);
+    this.deps.touchPaneLocation(chatPaneId);
+    this.targetAnchors[chatPaneId] = targetAnchor;
+    this.deps.setActivePane(chatPaneId);
+    await this.getController(chatPaneId).initialize(
+      conversationId
+    );
     await tick();
-    this.deps.focusPane(paneId);
+    this.deps.focusPane(chatPaneId);
     return true;
   }
 
@@ -235,7 +265,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
       const order = [...this.deps.getPaneOrder()];
       let chatPaneId =
         order.find(
-          (paneId) => this.deps.getPaneKind(paneId) === 'chat'
+          (paneId) => this.paneHostsChat(paneId)
         ) ?? null;
       let openedNewChatSurface = false;
       let createdSplitPane = false;
@@ -256,7 +286,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
           order.find((paneId) => paneId !== sourcePaneId) ?? null;
         openedNewChatSurface = Boolean(
           chatPaneId &&
-            this.deps.getPaneKind(chatPaneId) !== 'chat'
+            !this.paneHostsChat(chatPaneId)
         );
       }
       if (!chatPaneId) return;
@@ -299,7 +329,10 @@ export class NotepadChatCoordinator<TPaneId extends string> {
       this.discussionSeedCounter += 1;
       this.draftSeeds[chatPaneId] = {
         id: `${Date.now()}-${this.discussionSeedCounter}`,
-        text: formatDiscussionDraft(text, sourceDocument.title)
+        text: formatDiscussionDraft(
+          text,
+          sourceDocument.working.title
+        )
       };
 
       if (createdSplitPane) {
@@ -307,7 +340,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
           chatPaneId,
           'thoughtPartner'
         );
-      } else if (this.deps.getPaneKind(chatPaneId) !== 'chat') {
+      } else if (!this.paneHostsChat(chatPaneId)) {
         await this.deps.setPaneKind(chatPaneId, 'chat');
       } else {
         this.deps.setActivePane(chatPaneId);
@@ -320,7 +353,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
 
   async startNewActiveItem() {
     const paneId = this.deps.getActivePaneId();
-    if (this.deps.getPaneKind(paneId) !== 'chat') {
+    if (!this.paneHostsChat(paneId)) {
       await this.deps.startNewNote();
       return;
     }
@@ -330,7 +363,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
 
   async forgetActiveItem() {
     const paneId = this.deps.getActivePaneId();
-    if (this.deps.getPaneKind(paneId) !== 'chat') {
+    if (!this.paneHostsChat(paneId)) {
       this.recentlyForgotten = null;
       await this.deps.forgetNote();
       return;
@@ -356,7 +389,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
 
   async unforgetActiveItem() {
     const paneId = this.deps.getActivePaneId();
-    if (this.deps.getPaneKind(paneId) !== 'chat') {
+    if (!this.paneHostsChat(paneId)) {
       await this.deps.unforgetNote();
       return;
     }
@@ -427,7 +460,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     const document = this.deps.getPaneDocument(destinationPaneId);
     const result = this.deps.insertMarkdown({
       noteKey: document.key,
-      expectedDocumentRevision: document.operationRevision,
+      expectedDocumentRevision: document.operation.revision,
       markdown: formatChatInsertion(selection),
       target: 'selection',
       focus: true,

@@ -10,6 +10,7 @@
     PaneWorkspaceActions
   } from '$lib/features/notepad/notepadPane.types';
   import type { PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
+  import ExternalConflictResolver from '$lib/features/notepad/ui/ExternalConflictResolver.svelte';
 
   interface Props {
     pane: PaneRuntime;
@@ -142,6 +143,12 @@
 
     {#if viewModel.paneKind === 'editor'}
       <div class="flex h-full min-w-0 flex-1 min-h-0 flex-col">
+        <ExternalConflictResolver
+          status={viewModel.documentStatus}
+          onKeepMyEdits={() => actions.onKeepMyEdits(viewModel.paneId)}
+          onLoadDiskVersion={() => actions.onLoadDiskVersion(viewModel.paneId)}
+          onCopyMyEdits={() => actions.onCopyMyEdits(viewModel.paneId)}
+        />
         <div
           bind:this={pane.refs.editorShell}
           class={`notepad-editor-shell relative h-full min-h-0 min-w-0 flex-1 overflow-hidden overscroll-y-contain [-webkit-overflow-scrolling:touch] ${

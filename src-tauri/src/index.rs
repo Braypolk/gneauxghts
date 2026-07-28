@@ -147,40 +147,6 @@ enum PendingIndexUpdate {
     Remove(PathBuf),
 }
 
-/// Payload describing what to mirror into the SQLite task projection
-/// after a bulk index refresh has settled.
-enum ProjectionPayload {
-    Upsert { path: PathBuf, note: IndexedNote },
-    Remove { path: PathBuf },
-}
-
-fn apply_projection_payload(payload: ProjectionPayload) {
-    match payload {
-        ProjectionPayload::Upsert { path, note } => {
-            if note.document_kind.is_chat_projection() {
-                let timestamp = crate::time::current_time_millis().unwrap_or(0);
-                let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
-                return;
-            }
-            let timestamp = if note.modified_millis == 0 {
-                crate::time::current_time_millis().unwrap_or(0)
-            } else {
-                note.modified_millis
-            };
-            let _ = crate::state::task_projection::reconcile_note_tasks(
-                &path,
-                Some(&note),
-                &note.note_id,
-                timestamp,
-            );
-        }
-        ProjectionPayload::Remove { path } => {
-            let timestamp = crate::time::current_time_millis().unwrap_or(0);
-            let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
-        }
-    }
-}
-
 impl AppState {
     pub(crate) fn new(
         semantic: SemanticState,
@@ -283,74 +249,17 @@ impl AppState {
         path: PathBuf,
         note: IndexedNote,
     ) -> Result<(), String> {
-        self.lexical.upsert_note(&path, &note)?;
-        let note_id = note.note_id.clone();
-        let modified_millis = note.modified_millis;
-        let note_clone_for_projection = note.clone();
-        let mut index = self
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.upsert_note(path.clone(), note);
-        drop(index);
-        let timestamp = if modified_millis == 0 {
-            crate::time::current_time_millis().unwrap_or(modified_millis)
-        } else {
-            modified_millis
-        };
-        if note_clone_for_projection.document_kind == DocumentKind::Note {
-            let _ = crate::state::task_projection::reconcile_note_tasks(
-                &path,
-                Some(&note_clone_for_projection),
-                &note_id,
-                timestamp,
-            );
-        } else {
-            let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
-        }
+        crate::services::NoteCatalog::new(
+            &self.notes_index,
+            &self.lexical,
+            &self.background_index_queue,
+        )
+        .upsert(
+            path.clone(),
+            note,
+            crate::services::note_catalog::CatalogWriteMode::Synchronous,
+        )?;
         self.clear_dirty_path(&path)?;
-        Ok(())
-    }
-
-    /// Save-path index update.
-    ///
-    /// Updates the in-memory `notes_index` and single-note task projection
-    /// synchronously so search, recents, wikilinks, and the task list can
-    /// react to `note-saved` immediately. The heavier lexical indexing work
-    /// still runs through the background worker.
-    pub(crate) fn upsert_note_indexes_for_save(
-        &self,
-        path: PathBuf,
-        note: IndexedNote,
-    ) -> Result<(), String> {
-        // One clone for the background queue; project from a borrow, then move
-        // the owned note into `notes_index` (avoids a second pre-mutex clone).
-        let note_for_background = note.clone();
-        let timestamp = if note.modified_millis == 0 {
-            crate::time::current_time_millis().unwrap_or(0)
-        } else {
-            note.modified_millis
-        };
-        if note.document_kind == DocumentKind::Note {
-            let _ = crate::state::task_projection::reconcile_note_tasks(
-                &path,
-                Some(&note),
-                &note.note_id,
-                timestamp,
-            );
-        } else {
-            let _ = crate::state::task_projection::delete_tasks_for_note_path(&path, timestamp);
-        }
-        {
-            let mut index = self
-                .notes_index
-                .lock()
-                .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.upsert_note(path.clone(), note);
-        }
-        self.clear_dirty_path(&path)?;
-        self.background_index_queue
-            .enqueue_upsert(path, note_for_background);
         Ok(())
     }
 
@@ -362,42 +271,30 @@ impl AppState {
         path: PathBuf,
         note: IndexedNote,
     ) -> Result<(), String> {
-        self.lexical.upsert_note(&path, &note)?;
-        let mut index = self
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.upsert_note(path.clone(), note);
-        drop(index);
+        crate::services::NoteCatalog::new(
+            &self.notes_index,
+            &self.lexical,
+            &self.background_index_queue,
+        )
+        .upsert(
+            path.clone(),
+            note,
+            crate::services::note_catalog::CatalogWriteMode::ManagedProjection,
+        )?;
         self.clear_dirty_path(&path)
     }
 
     pub(crate) fn remove_note_indexes(&self, path: &Path) -> Result<(), String> {
-        self.lexical.remove_note(path)?;
-        let mut index = self
-            .notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.remove_note(path);
-        drop(index);
-        let timestamp = crate::time::current_time_millis().unwrap_or(0);
-        let _ = crate::state::task_projection::delete_tasks_for_note_path(path, timestamp);
+        crate::services::NoteCatalog::new(
+            &self.notes_index,
+            &self.lexical,
+            &self.background_index_queue,
+        )
+        .remove(
+            path,
+            crate::services::note_catalog::CatalogWriteMode::Synchronous,
+        )?;
         self.clear_dirty_path(path)?;
-        Ok(())
-    }
-
-    /// Save-path remove. Mirror of [`upsert_note_indexes_for_save`].
-    pub(crate) fn remove_note_indexes_for_save(&self, path: &Path) -> Result<(), String> {
-        {
-            let mut index = self
-                .notes_index
-                .lock()
-                .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.remove_note(path);
-        }
-        self.clear_dirty_path(path)?;
-        self.background_index_queue
-            .enqueue_remove(path.to_path_buf());
         Ok(())
     }
 
@@ -503,15 +400,17 @@ impl AppState {
                 }
             }
         }
-        let projection_payloads: Vec<ProjectionPayload> = updates
+        let projection_payloads: Vec<crate::services::note_catalog::CatalogMutation> = updates
             .iter()
             .map(|update| match update {
-                PendingIndexUpdate::Upsert(path, note) => ProjectionPayload::Upsert {
-                    path: path.clone(),
-                    note: note.clone(),
-                },
+                PendingIndexUpdate::Upsert(path, note) => {
+                    crate::services::note_catalog::CatalogMutation::Upsert {
+                        path: path.clone(),
+                        note: note.clone(),
+                    }
+                }
                 PendingIndexUpdate::Remove(path) => {
-                    ProjectionPayload::Remove { path: path.clone() }
+                    crate::services::note_catalog::CatalogMutation::Remove { path: path.clone() }
                 }
             })
             .collect();
@@ -525,7 +424,7 @@ impl AppState {
             changed
         };
         for payload in projection_payloads {
-            apply_projection_payload(payload);
+            let _ = crate::services::note_catalog::apply_task_projection(&payload);
         }
         let mut invalidation = self
             .interactive_invalidation
@@ -576,17 +475,17 @@ impl AppState {
         for path in &stale_lexical_paths {
             self.lexical.remove_note(path)?;
         }
-        let projection_payloads: Vec<ProjectionPayload> = updates
+        let projection_payloads: Vec<crate::services::note_catalog::CatalogMutation> = updates
             .iter()
-            .map(|(path, note)| ProjectionPayload::Upsert {
-                path: path.clone(),
-                note: note.clone(),
-            })
-            .chain(
-                stale_lexical_paths
-                    .iter()
-                    .map(|path| ProjectionPayload::Remove { path: path.clone() }),
+            .map(
+                |(path, note)| crate::services::note_catalog::CatalogMutation::Upsert {
+                    path: path.clone(),
+                    note: note.clone(),
+                },
             )
+            .chain(stale_lexical_paths.iter().map(|path| {
+                crate::services::note_catalog::CatalogMutation::Remove { path: path.clone() }
+            }))
             .collect();
         let changed = {
             let mut index = self
@@ -596,7 +495,7 @@ impl AppState {
             index.apply_refresh_updates(updates, seen_paths)
         };
         for payload in projection_payloads {
-            apply_projection_payload(payload);
+            let _ = crate::services::note_catalog::apply_task_projection(&payload);
         }
         let mut invalidation = self
             .interactive_invalidation
@@ -688,13 +587,17 @@ impl AppState {
         Ok(changed)
     }
 
-    fn clear_dirty_path(&self, path: &Path) -> Result<(), String> {
+    pub(crate) fn clear_notes_index_dirty(&self, path: &Path) -> Result<(), String> {
         let mut invalidation = self
             .interactive_invalidation
             .lock()
             .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
         invalidation.dirty_paths.remove(path);
         Ok(())
+    }
+
+    fn clear_dirty_path(&self, path: &Path) -> Result<(), String> {
+        self.clear_notes_index_dirty(path)
     }
 }
 
@@ -1045,6 +948,30 @@ pub(crate) fn delete_task_in_markdown(
     }
 
     Ok(join_task_lines(lines, had_trailing_newline))
+}
+
+/// Resolve a task in editor-visible Markdown only when its text identifies one
+/// line unambiguously. Dirty documents may have inserted or removed lines
+/// since the task projection was built, so its old line number is not a safe
+/// identity anchor when duplicate task text exists.
+pub(crate) fn find_unambiguous_task_line(markdown: &str, task_text: &str) -> Result<usize, String> {
+    let normalized_task_text = normalize_search_text(task_text);
+    let matching_lines = markdown
+        .replace("\r\n", "\n")
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| task_line_matches(line, &normalized_task_text))
+        .map(|(index, _)| index + 1)
+        .collect::<Vec<_>>();
+
+    match matching_lines.as_slice() {
+        [] => Err("Task not found in the open document".to_string()),
+        [line_number] => Ok(*line_number),
+        _ => Err(
+            "Task text is ambiguous in the edited document; save the note before changing this task"
+                .to_string(),
+        ),
+    }
 }
 
 pub(crate) fn normalize_search_text(value: &str) -> String {

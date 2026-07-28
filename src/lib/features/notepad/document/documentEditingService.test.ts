@@ -25,12 +25,12 @@ function createHarness(options: { suppressAutosave?: boolean; external?: boolean
 describe('documentEditingService', () => {
   it('increments the operation revision once per actual markdown change', () => {
     const harness = createHarness();
-    const revision = harness.note.operationRevision;
+    const revision = harness.note.operation.revision;
 
     expect(harness.service.recordUserEdit('primary', harness.note, 'hello')).toBe(true);
-    expect(harness.note.operationRevision).toBe(revision + 1);
+    expect(harness.note.operation.revision).toBe(revision + 1);
     expect(harness.service.recordUserEdit('primary', harness.note, 'hello')).toBe(false);
-    expect(harness.note.operationRevision).toBe(revision + 1);
+    expect(harness.note.operation.revision).toBe(revision + 1);
   });
 
   it('suppresses autosave during proposal review while retaining derived views', () => {
@@ -44,8 +44,15 @@ describe('documentEditingService', () => {
 
   it('does not duplicate policies for an externally-applied runtime callback', () => {
     const harness = createHarness({ external: true });
-    harness.service.recordUserEdit('primary', harness.note, 'replacement');
+    expect(
+      harness.service.recordUserEdit(
+        'primary',
+        harness.note,
+        'replacement'
+      )
+    ).toBe(false);
 
+    expect(harness.note.working.markdown).toBe('');
     expect(harness.scheduleAutosave).not.toHaveBeenCalled();
     expect(harness.scheduleSearch).not.toHaveBeenCalled();
     expect(harness.scheduleRelated).not.toHaveBeenCalled();
@@ -53,9 +60,9 @@ describe('documentEditingService', () => {
 
   it('applies a changed snapshot atomically with one revision and one runtime update', async () => {
     const harness = createHarness();
-    const revision = harness.note.operationRevision;
+    const revision = harness.note.operation.revision;
     const applyRuntime = vi.fn(async () => {
-      expect(harness.note.bodyMarkdown).toBe('from disk');
+      expect(harness.note.working.markdown).toBe('from disk');
     });
 
     const result = await harness.service.applySnapshot(
@@ -72,7 +79,7 @@ describe('documentEditingService', () => {
       titleChanged: true,
       markdownChanged: true
     });
-    expect(harness.note.operationRevision).toBe(revision + 1);
+    expect(harness.note.operation.revision).toBe(revision + 1);
     expect(applyRuntime).toHaveBeenCalledOnce();
     expect(harness.scheduleSearch).toHaveBeenCalledOnce();
     expect(harness.scheduleRelated).toHaveBeenCalledWith({
@@ -82,9 +89,9 @@ describe('documentEditingService', () => {
 
   it('preserves a newer draft while accepting saved metadata', async () => {
     const harness = createHarness();
-    harness.note.title = 'newer title';
-    harness.note.bodyMarkdown = 'newer body';
-    const revision = harness.note.operationRevision;
+    harness.note.working.title = 'newer title';
+    harness.note.working.markdown = 'newer body';
+    const revision = harness.note.operation.revision;
     const applyRuntime = vi.fn();
 
     await harness.service.applySnapshot(
@@ -104,10 +111,14 @@ describe('documentEditingService', () => {
       { preserveDraft: true, scheduleDerived: false }
     );
 
-    expect(harness.note.title).toBe('newer title');
-    expect(harness.note.bodyMarkdown).toBe('newer body');
-    expect(harness.note.currentNotePath).toBe('/vault/note.md');
-    expect(harness.note.operationRevision).toBe(revision);
+    expect(harness.note.working.title).toBe('newer title');
+    expect(harness.note.working.markdown).toBe('newer body');
+    expect(harness.note.identity).toEqual({
+      kind: 'persisted',
+      noteId: 'note-id',
+      path: '/vault/note.md'
+    });
+    expect(harness.note.operation.revision).toBe(revision);
     expect(applyRuntime).not.toHaveBeenCalled();
     expect(harness.scheduleSearch).not.toHaveBeenCalled();
   });

@@ -11,6 +11,10 @@ export function loadSemanticStatusSlice() {
   return invoke<SemanticStatus>('get_semantic_status');
 }
 
+export function retrySemanticIndex() {
+  return invoke<void>('retry_semantic_index');
+}
+
 export async function loadSemanticSlice(): Promise<SemanticSlice> {
   const [status, settings, debug] = await Promise.all([
     loadSemanticStatusSlice(),
