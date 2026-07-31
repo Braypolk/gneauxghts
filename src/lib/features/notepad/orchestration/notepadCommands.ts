@@ -106,6 +106,8 @@ export function createNotepadCommands<TPaneId extends string>(
     addWorkspacePane: workspace.addPane,
     canRemoveWorkspacePane: workspace.canRemovePane,
     removeWorkspacePane: workspace.removePane,
+    finalizeWorkspacePaneRemoval:
+      workspace.finalizePaneRemoval,
     getActivePaneId: workspace.getActivePaneId,
     getNextPaneId: panes.getNextPaneId,
     getPaneKind: panes.getPaneKind,
@@ -195,7 +197,6 @@ export function createNotepadCommands<TPaneId extends string>(
     resetPaneCommand: workspace.resetPaneCommand,
     getPaneDocument: panes.getPaneDocument,
     getPaneKind: panes.getPaneKind,
-    getPaneRuntime: panes.getPaneRuntime,
     focusPaneEditorAtEnd: panes.focusPaneEditorAtEnd,
     getNoteByKey: panes.getNoteByKey,
     setPaneDocument: panes.setPaneDocumentSession,

@@ -196,7 +196,14 @@ pub(crate) fn resolve_note_path_input_with_state(
     path: Option<String>,
     app_state: Option<&State<'_, AppState>>,
 ) -> Result<PathBuf, String> {
-    if let Some(note_path) = validate_current_path(path, notes_dir)? {
+    let path = path
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| resolve_note_path_reference(notes_dir, value))
+        .transpose()?;
+    if let Some(note_path) = validate_current_path(
+        path.map(|value| value.to_string_lossy().into_owned()),
+        notes_dir,
+    )? {
         if note_path.exists() {
             return Ok(note_path);
         }
@@ -219,4 +226,22 @@ pub(crate) fn resolve_note_path_input_with_state(
     }
 
     Err("Missing note path".to_string())
+}
+
+fn resolve_note_path_reference(notes_dir: &Path, value: String) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err("Current note path is outside the notes directory".to_string());
+    }
+    Ok(notes_dir.join(path))
 }

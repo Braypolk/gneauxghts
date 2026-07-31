@@ -46,6 +46,11 @@ export interface NotepadProposalAdapterDeps<TPaneId extends string> {
   getSaveQueue: (document: NoteDraftState) => Promise<void>;
   scheduleAutosave: (document: NoteDraftState) => void;
   refreshCurrentNote: () => Promise<void>;
+  acknowledgeDocumentCommit: (commit: {
+    document: NoteDraftState;
+    path: string;
+    markdown: string;
+  }) => Promise<void>;
 }
 
 /** Bridges proposal review to workspace panes without exposing CodeMirror. */
@@ -243,7 +248,8 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
       const editor = deps.getEditor(paneId);
       return editor?.isReady() ? editor : null;
     },
-    refreshDocumentAfterKeep: deps.refreshCurrentNote
+    acknowledgeDocumentCommit:
+      deps.acknowledgeDocumentCommit
   });
 
   return {

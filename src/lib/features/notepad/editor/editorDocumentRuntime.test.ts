@@ -20,6 +20,10 @@ function pane(
     doc: markdown,
     selection: { anchor }
   });
+  const scrollDOM = {
+    scrollTop: 0,
+    scrollLeft: 0
+  };
   const view = {
     get state() {
       return state;
@@ -31,7 +35,8 @@ function pane(
       const transaction =
         spec instanceof Transaction ? spec : state.update(spec);
       state = transaction.state;
-    }
+    },
+    scrollDOM
   } as unknown as EditorView;
   const controller: EditorController = {
     view,
@@ -42,7 +47,16 @@ function pane(
     proposalReviewCompartment: new Compartment()
   };
   runtime.attachController(controller);
-  return { controller, onMarkdownChange, readState: () => state };
+  return {
+    controller,
+    onMarkdownChange,
+    readState: () => state,
+    setViewport: (scrollTop: number, scrollLeft = 0) => {
+      scrollDOM.scrollTop = scrollTop;
+      scrollDOM.scrollLeft = scrollLeft;
+    },
+    readViewport: () => ({ ...scrollDOM })
+  };
 }
 
 describe('EditorDocumentRuntime', () => {
@@ -50,6 +64,7 @@ describe('EditorDocumentRuntime', () => {
     const runtime = new EditorDocumentRuntime('abcd');
     const first = pane(runtime, 'abcd', 1);
     const second = pane(runtime, 'abcd', 4);
+    second.setViewport(240, 12);
     const transaction = first.readState().update({
       changes: { from: 1, insert: 'X' },
       selection: { anchor: 2 }
@@ -60,6 +75,10 @@ describe('EditorDocumentRuntime', () => {
     expect(runtime.markdown).toBe('aXbcd');
     expect(first.readState().selection.main.head).toBe(2);
     expect(second.readState().selection.main.head).toBe(5);
+    expect(second.readViewport()).toEqual({
+      scrollTop: 240,
+      scrollLeft: 12
+    });
     expect(first.onMarkdownChange).toHaveBeenCalledTimes(1);
     expect(second.onMarkdownChange).not.toHaveBeenCalled();
   });
@@ -86,6 +105,8 @@ describe('EditorDocumentRuntime', () => {
     const runtime = new EditorDocumentRuntime('long document');
     const first = pane(runtime, 'long document', 2);
     const second = pane(runtime, 'long document', 12);
+    first.setViewport(80);
+    second.setViewport(320);
 
     const changed = runtime.applyExternalSnapshot(
       {
@@ -101,6 +122,8 @@ describe('EditorDocumentRuntime', () => {
     expect(second.readState().doc.toString()).toBe('tiny');
     expect(first.readState().selection.main.head).toBe(3);
     expect(second.readState().selection.main.head).toBe(4);
+    expect(first.readViewport().scrollTop).toBe(80);
+    expect(second.readViewport().scrollTop).toBe(320);
     expect(first.onMarkdownChange).toHaveBeenCalledTimes(1);
     expect(second.onMarkdownChange).not.toHaveBeenCalled();
   });

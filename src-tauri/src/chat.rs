@@ -862,12 +862,45 @@ impl ChatService {
         self.get_settings()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn create_conversation(
         &self,
         title: Option<String>,
         access: Option<VaultAccess>,
     ) -> Result<ChatConversation, String> {
+        self.create_conversation_with_config(title, access, None, None)
+    }
+
+    pub(crate) fn create_conversation_with_config(
+        &self,
+        title: Option<String>,
+        access: Option<VaultAccess>,
+        provider: Option<String>,
+        model: Option<String>,
+    ) -> Result<ChatConversation, String> {
         let settings = self.get_settings()?;
+        let provider = provider
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| settings.provider.clone());
+        if !matches!(provider.as_str(), "openai" | "local") {
+            return Err("Provider must be openai or local".to_string());
+        }
+        let model = model
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| {
+                if provider == settings.provider {
+                    settings.model.clone()
+                } else if provider == "local" {
+                    settings.local_model.clone()
+                } else {
+                    settings.openai_model.clone()
+                }
+            });
+        if model.is_empty() {
+            return Err("A model is required".to_string());
+        }
         let now = now_millis();
         let id = generate_id("chat");
         let title = title
@@ -880,14 +913,7 @@ impl ChatService {
                 "INSERT INTO chat_conversations
                  (id, title, mode, access, provider, model, created_at_millis, updated_at_millis)
                  VALUES (?1, ?2, 'auto', ?3, ?4, ?5, ?6, ?6)",
-                params![
-                    id,
-                    title,
-                    access.as_str(),
-                    settings.provider,
-                    settings.model,
-                    to_i64(now)?
-                ],
+                params![id, title, access.as_str(), provider, model, to_i64(now)?],
             )
             .map_err(|error| error.to_string())?;
         self.write_projection(&id, true)?;
@@ -4096,6 +4122,25 @@ mod tests {
                 .access,
             VaultAccess::Approved
         );
+    }
+
+    #[test]
+    fn draft_chat_configuration_is_applied_when_the_conversation_is_created() {
+        let (_root, service) = service("chat-draft-configuration");
+
+        let conversation = service
+            .create_conversation_with_config(
+                Some("Configured draft".to_string()),
+                Some(VaultAccess::Full),
+                Some("local".to_string()),
+                Some("qwen3:8b".to_string()),
+            )
+            .unwrap();
+
+        assert_eq!(conversation.summary.title, "Configured draft");
+        assert_eq!(conversation.summary.access, VaultAccess::Full);
+        assert_eq!(conversation.summary.provider, "local");
+        assert_eq!(conversation.summary.model, "qwen3:8b");
     }
 
     #[test]

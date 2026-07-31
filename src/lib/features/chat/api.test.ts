@@ -149,7 +149,12 @@ describe('TauriChatApi', () => {
     const receipt = await api.sendMessage({ conversationId: 'chat-1', content: 'Hello', forceWebSearch: true });
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'chat_create_conversation', {
-      request: { title: undefined, access: 'approved' }
+      request: {
+        title: undefined,
+        access: 'approved',
+        provider: undefined,
+        model: undefined
+      }
     });
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_send_message', {
       request: {

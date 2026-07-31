@@ -7,7 +7,6 @@ import {
   type PaneCommandMode
 } from '$lib/features/notepad/paneCommandPicker';
 import type { PaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorLifecycle';
-import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
 import type { DocumentPaneCoordinator } from '$lib/features/notepad/document/documentPaneCoordinator';
 import {
   type NoteDraftState,
@@ -39,7 +38,6 @@ export interface PaneCommandControllerDeps<TPaneId extends string> {
   resetPaneCommand: () => void;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   getPaneKind: (paneId: TPaneId) => PaneKind;
-  getPaneRuntime: (paneId: TPaneId) => PaneRuntime;
   focusPaneEditorAtEnd: (paneId: TPaneId) => boolean;
   getNoteByKey: (key: NoteKey) => NoteDraftState | null;
   setPaneDocument: (paneId: TPaneId, document: NoteDraftState) => unknown;
@@ -167,15 +165,12 @@ export function createPaneCommandController<TPaneId extends string>(
             );
           }
           deps.setPaneDocument(paneId, sharedDocument);
-          if (
-            deps.getPaneRuntime(paneId).ui.isEditorReady
-          ) {
-            await deps.documents.replaceNoteAcrossPanes(
-              placeholderDocument,
-              sharedDocument,
-              { restoreCursor: true }
-            );
-          }
+          await deps.documents.replacePaneDocument(
+            paneId,
+            placeholderDocument,
+            sharedDocument,
+            { restoreCursor: true }
+          );
           if (placeholderKey !== sharedDocument.key) {
             deps.removeUnreferencedNote(placeholderKey);
             cleanupNoteRuntime(placeholderKey);

@@ -33,6 +33,7 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
   removePane: (
     paneId: TPaneId
   ) => WorkspacePaneState<TPaneId> | null;
+  finalizePaneRemoval: (paneId: TPaneId) => void;
   setPaneKind: (
     paneId: TPaneId,
     kind: PaneKind
@@ -129,7 +130,10 @@ export interface NotepadCommandsDeps<TPaneId extends string> {
   forgottenNoteRetentionPreference: () => ForgottenNoteRetentionPreference;
   canLeaveDocument?: (document: NoteDraftState) => boolean;
   onNavigationBlocked?: () => void;
-  onDocumentLeaving?: (document: NoteDraftState) => void;
+  onDocumentLeaving?: (
+    paneId: TPaneId,
+    document: NoteDraftState
+  ) => void;
   onDocumentOpened?: (document: NoteDraftState) => void;
   onDocumentPresented?: (document: NoteDraftState) => void;
 }
@@ -162,6 +166,10 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
       workspace.removePane(
         paneId as NotepadPaneId
       ) as WorkspacePaneState<TPaneId> | null,
+    finalizePaneRemoval: (paneId) =>
+      workspace.finalizePaneRemoval(
+        paneId as NotepadPaneId
+      ),
     setPaneKind: (paneId, kind) =>
       workspace.setPaneKind(
         paneId as NotepadPaneId,

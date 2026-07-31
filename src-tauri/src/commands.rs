@@ -710,6 +710,32 @@ mod tests {
     }
 
     #[test]
+    fn open_note_from_notes_dir_resolves_safe_vault_relative_paths() {
+        let _guard = lock_test_env();
+        let app_data_dir = TestDir::new("commands-app-data-open-relative");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        let temp = TestDir::new("commands-open-relative-note");
+        let notes_dir = temp.path();
+        crate::state::set_notes_root_override(Some(notes_dir.to_path_buf()))
+            .expect("override notes root");
+        let nested_dir = notes_dir.join("Projects");
+        fs::create_dir_all(&nested_dir).expect("create nested directory");
+        let note_path = nested_dir.join("Plan.md");
+        fs::write(&note_path, "# Plan\n\nBody").expect("write note");
+
+        let session =
+            open_note_from_notes_dir(notes_dir, None, Some("Projects/Plan.md".to_string()))
+                .expect("open relative note reference");
+
+        assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
+        assert_eq!(session.title, "Plan");
+
+        let error = open_note_from_notes_dir(notes_dir, None, Some("../Outside.md".to_string()))
+            .expect_err("reject parent traversal");
+        assert_eq!(error, "Current note path is outside the notes directory");
+    }
+
+    #[test]
     fn open_note_follows_note_id_when_supplied_path_was_externally_renamed() {
         let _guard = lock_test_env();
         let app_data_dir = TestDir::new("commands-app-data-open-renamed");

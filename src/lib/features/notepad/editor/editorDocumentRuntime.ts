@@ -36,6 +36,22 @@ function readSelection(view: EditorView): EditorSelection {
   };
 }
 
+/**
+ * CodeMirror may reset a view's DOM viewport while applying a document
+ * transaction, even when that transaction carries no scroll request. Each
+ * pane owns its viewport, so passive synchronization must preserve both axes.
+ */
+function updateViewPreservingViewport(
+  view: EditorView,
+  update: () => void
+) {
+  const scrollTop = view.scrollDOM.scrollTop;
+  const scrollLeft = view.scrollDOM.scrollLeft;
+  update();
+  view.scrollDOM.scrollTop = scrollTop;
+  view.scrollDOM.scrollLeft = scrollLeft;
+}
+
 function collectHistoryAnnotations(transaction: Transaction) {
   const annotations = [];
   const addToHistory = transaction.annotation(Transaction.addToHistory);
@@ -193,22 +209,24 @@ export class EditorDocumentRuntime {
       const rawSelection =
         selectionByPaneKey.get(paneKey) ?? readSelection(controller.view);
       const selection = clampSelection(rawSelection, nextDocLength);
-      controller.view.dispatch(
-        controller.view.state.update({
-          changes: {
-            from: 0,
-            to: controller.view.state.doc.length,
-            insert: markdown
-          },
-          selection,
-          annotations: [
-            paneSyncAnnotation.of(true),
-            Transaction.addToHistory.of(false),
-            isolateHistory.of('full'),
-            Transaction.userEvent.of('input.external-reset')
-          ]
-        })
-      );
+      updateViewPreservingViewport(controller.view, () => {
+        controller.view.dispatch(
+          controller.view.state.update({
+            changes: {
+              from: 0,
+              to: controller.view.state.doc.length,
+              insert: markdown
+            },
+            selection,
+            annotations: [
+              paneSyncAnnotation.of(true),
+              Transaction.addToHistory.of(false),
+              isolateHistory.of('full'),
+              Transaction.userEvent.of('input.external-reset')
+            ]
+          })
+        );
+      });
     }
 
     this.revision += 1;
@@ -289,7 +307,10 @@ export class EditorDocumentRuntime {
           ]
         });
       });
-      controller.view.update(updates);
+      updateViewPreservingViewport(
+        controller.view,
+        () => controller.view.update(updates)
+      );
     }
   }
 

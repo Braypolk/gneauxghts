@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatController } from '$lib/features/chat/controller.svelte';
-import type { ChatCitation } from '$lib/features/chat/types';
+import type {
+  ChatAgentProposal,
+  ChatCitation
+} from '$lib/features/chat/types';
 import type { ProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
 import {
   createNoteDraftState,
@@ -120,11 +123,31 @@ function setup(options: {
     openNote,
     flushPendingAutosave,
     getNoteSaveQueue,
-    setSurfaceHandle
+    setSurfaceHandle,
+    reviewAgentProposal
   };
 }
 
 describe('createNotepadChatPaneAdapter', () => {
+  it('opens proposal review only through the explicit review binding', () => {
+    const { adapter, reviewAgentProposal } = setup();
+    const proposal = {
+      id: 'proposal-1',
+      conversationId: 'conversation-1',
+      kind: 'update'
+    } as ChatAgentProposal;
+
+    adapter
+      .getBindings('chat')
+      .proposalReview.onReviewAgentProposal?.(proposal);
+
+    expect(reviewAgentProposal).toHaveBeenCalledOnce();
+    expect(reviewAgentProposal).toHaveBeenCalledWith(
+      'chat',
+      proposal
+    );
+  });
+
   it('uses the chat pane retained note and waits for its save before snapshotting', async () => {
     const {
       adapter,

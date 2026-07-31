@@ -76,7 +76,8 @@ function normalizeSettings(raw: RawChatSettings): ChatSettings {
   return {
     provider,
     model: raw.model,
-    openaiModel: raw.openaiModel ?? (provider === 'openai' ? raw.model : 'gpt-5.6-terra'),
+    openaiModel:
+      raw.openaiModel ?? (provider === 'openai' ? raw.model : ''),
     localModel: raw.localModel ?? (provider === 'local' ? raw.model : ''),
     localBaseUrl: raw.localBaseUrl ?? 'http://localhost:1234/v1',
     serviceTier: raw.serviceTier ?? 'standard',
@@ -97,7 +98,7 @@ function normalizeSummary(raw: RawSummary): ChatConversationSummary {
     messageCount: raw.messageCount,
     lastMessagePreview: null,
     provider: raw.provider === 'ollama' ? 'local' : (raw.provider ?? 'openai'),
-    model: raw.model ?? 'gpt-5.6-terra'
+    model: raw.model ?? ''
   };
 }
 
@@ -159,7 +160,12 @@ export interface ChatApi {
   setSettings(settings: ChatSettings): Promise<ChatSettings>;
   getKeyStatus(provider?: string): Promise<ChatKeyStatus>;
   setApiKey(provider: string, apiKey: string): Promise<ChatKeyStatus>;
-  createConversation(input?: { title?: string; vaultAccess?: VaultAccess }): Promise<ChatConversation>;
+  createConversation(input?: {
+    title?: string;
+    vaultAccess?: VaultAccess;
+    provider?: ChatProvider;
+    model?: string;
+  }): Promise<ChatConversation>;
   listConversations(includeArchived?: boolean): Promise<ChatConversationSummary[]>;
   getConversation(conversationId: string): Promise<ChatConversation>;
   findConversationByProjectionPath(notePath: string): Promise<string | null>;
@@ -264,9 +270,19 @@ export class TauriChatApi implements ChatApi {
     const raw = await invoke<{ configured: boolean }>(CHAT_COMMANDS.setApiKey, { apiKey });
     return { provider, configured: raw.configured, displayHint: null };
   }
-  createConversation(input: { title?: string; vaultAccess?: VaultAccess } = {}) {
+  createConversation(input: {
+    title?: string;
+    vaultAccess?: VaultAccess;
+    provider?: ChatProvider;
+    model?: string;
+  } = {}) {
     return invoke<RawConversation>(CHAT_COMMANDS.createConversation, {
-      request: { title: input.title, access: input.vaultAccess }
+      request: {
+        title: input.title,
+        access: input.vaultAccess,
+        provider: input.provider,
+        model: input.model
+      }
     }).then((raw) => this.#normalizeConversation(raw));
   }
   async listConversations(includeArchived = false) {

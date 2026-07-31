@@ -97,11 +97,11 @@ describe('pane capability policy', () => {
 
   it.each([
     {
-      name: 'single editor cannot become chat',
+      name: 'single editor can become chat',
       kinds: ['editor'] as PaneKind[],
       paneId: 'p1',
       nextKind: 'chat' as PaneKind,
-      expected: false
+      expected: true
     },
     {
       name: 'editor can become chat when another editor remains',
@@ -168,10 +168,10 @@ describe('pane capability policy', () => {
       expected: true
     },
     {
-      name: 'last editor cannot be removed from mixed workspace',
+      name: 'last editor can be removed when a chat remains',
       kinds: ['editor', 'chat'] as PaneKind[],
       paneId: 'p1',
-      expected: false
+      expected: true
     },
     {
       name: 'unknown pane cannot be removed',

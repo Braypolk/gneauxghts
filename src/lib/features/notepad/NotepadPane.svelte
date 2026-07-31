@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FileText, MessagesSquare, X } from '@lucide/svelte';
+  import { History, MessagesSquare, X } from '@lucide/svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
   import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
   import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
@@ -11,6 +11,10 @@
   } from '$lib/features/notepad/notepadPane.types';
   import type { PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
   import ExternalConflictResolver from '$lib/features/notepad/ui/ExternalConflictResolver.svelte';
+  import {
+    getPaneTopActions,
+    type SplitPaneTopAction
+  } from '$lib/features/notepad/workspace/paneTopActions';
 
   interface Props {
     pane: PaneRuntime;
@@ -34,30 +38,49 @@
   const displayedTitle = $derived(
     titleDraftBelongsToCurrentDocument ? titleDraft ?? viewModel.titleValue : viewModel.titleValue
   );
+  const splitPaneTopActions = $derived(
+    getPaneTopActions(viewModel.paneKind, 'split')
+  );
+
+  const splitPaneActionIcons = {
+    'open-chat': MessagesSquare,
+    'open-previous': History,
+    close: X
+  } as const;
+
+  const splitPaneActionLabels = {
+    'open-chat': 'Open thought partner',
+    'open-previous': 'Open previous location',
+    close: 'Close pane'
+  } as const;
+
+  function runSplitPaneTopAction(action: SplitPaneTopAction) {
+    if (action === 'open-chat') {
+      return actions.onOpenPaneChoice('thoughtPartner');
+    }
+    if (action === 'open-previous') {
+      return actions.onOpenPaneChoice('previous');
+    }
+    if (action === 'close') {
+      return actions.onClose(viewModel.paneId);
+    }
+  }
 </script>
 
-{#snippet closePaneButton()}
-  <button
-    type="button"
-    class="mobile-touch-target mobile-pane-top-action inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-    onclick={() => void actions.onClose(viewModel.paneId)}
-    aria-label="Close this pane"
-    title="Close pane"
-  >
-    <X class="h-4 w-4" />
-  </button>
-{/snippet}
-
-{#snippet backToNoteButton()}
-  <button
-    type="button"
-    class="mobile-touch-target mobile-pane-top-action inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:h-9 sm:w-9"
-    onclick={() => void actions.onSwitchToEditor(viewModel.paneId)}
-    aria-label="Back to note"
-    title="Back to note"
-  >
-    <FileText class="h-4 w-4" />
-  </button>
+{#snippet splitPaneButtons()}
+  {#each splitPaneTopActions as action}
+    {@const ActionIcon = splitPaneActionIcons[action]}
+    {@const label = splitPaneActionLabels[action]}
+    <button
+      type="button"
+      class="mobile-touch-target mobile-pane-top-action inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80"
+      onclick={() => void runSplitPaneTopAction(action)}
+      aria-label={label}
+      title={label}
+    >
+      <ActionIcon class="h-4 w-4" />
+    </button>
+  {/each}
 {/snippet}
 
 <div
@@ -106,9 +129,11 @@
             </div>
           </div>
           {#if viewModel.showCloseButton}
-            {@render closePaneButton()}
+            <div class="flex items-center gap-2">
+              {@render splitPaneButtons()}
+            </div>
           {:else}
-            <SplitPaneButton onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
+            <SplitPaneButton paneKind="editor" onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
             <button
               type="button"
               class="mobile-touch-target mobile-pane-top-action mobile-thought-partner-button inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:hidden"
@@ -124,18 +149,25 @@
     {:else}
       <div class="notepad-chat-top-actions absolute right-4 top-3 z-30 flex items-center gap-2 sm:top-4">
         {#if viewModel.showCloseButton}
-          {@render backToNoteButton()}
-          {@render closePaneButton()}
+          {@render splitPaneButtons()}
         {:else}
           <div class="chat-pane-split-slot relative hidden h-9 shrink-0 sm:block">
             <SplitPaneButton
+              paneKind="chat"
               onSplit={actions.onSplit}
               onOpenCurrent={actions.onOpenPaneChoice}
-              onBackToNote={() => actions.onSwitchToEditor(viewModel.paneId)}
             />
           </div>
           <div class="sm:hidden">
-            {@render backToNoteButton()}
+            <button
+              type="button"
+              class="mobile-touch-target mobile-pane-top-action inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80"
+              onclick={() => void actions.onOpenPaneChoice('previous')}
+              aria-label="Open previous location"
+              title="Open previous location"
+            >
+              <History class="h-4 w-4" />
+            </button>
           </div>
         {/if}
       </div>

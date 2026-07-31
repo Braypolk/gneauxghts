@@ -37,6 +37,10 @@ vi.mock('$lib/features/notepad/navigation/navigation', () => ({
 
 import { createEditorLifecycleController } from './editorLifecycleController';
 import {
+  replaceEditorContent,
+  restoreCursorPosition
+} from '$lib/features/notepad/editor/editor';
+import {
   createNoteDraftState,
   type NoteDraftState
 } from '$lib/features/notepad/state/noteStore';
@@ -44,6 +48,7 @@ import {
 describe('editorLifecycleController onMarkdownChange routing', () => {
   beforeEach(() => {
     capturedOnMarkdownChange = null;
+    vi.clearAllMocks();
   });
 
   it('routes body edits to the live pane note after a save rekeys the draft', async () => {
@@ -103,5 +108,50 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
     // otherwise the body is saved as a separate file.
     expect(received).toEqual([{ key: liveDocument.key, markdown: 'body text' }]);
     expect(liveDocument.key).not.toBe(draftDocument.key);
+  });
+
+  it('does not reset a shared runtime when a pane remounts the same document', async () => {
+    const liveDocument = createNoteDraftState({
+      title: 'Shared',
+      bodyMarkdown: 'already live',
+      currentNoteId: 'shared-id',
+      currentNotePath: '/vault/Shared.md',
+      lastSavedTitle: 'Shared',
+      lastSavedMarkdown: 'already live',
+      lastSavedNoteId: 'shared-id',
+      lastSavedPath: '/vault/Shared.md'
+    });
+    const editor = {
+      runtime: { markdown: 'already live' },
+      view: {}
+    } as never;
+    const closeTransientUi = vi.fn();
+    const controller = createEditorLifecycleController({
+      getController: () => editor,
+      getPaneId: () => 'right',
+      setController: () => {},
+      getEditorShell: () => null,
+      getEditorRoot: () => null,
+      getDocumentSession: () => liveDocument,
+      setIsEditorReady: () => {},
+      setIsApplyingExternalContent: () => {},
+      handleEditorMarkdownChange: () => {},
+      getSharedEditorResources: () => ({}) as never,
+      getViewCallbacks: () => ({}) as never,
+      closeTransientUi
+    });
+
+    await controller.replaceEditorContentInPlaceForDocument(
+      'already live',
+      liveDocument
+    );
+
+    expect(replaceEditorContent).not.toHaveBeenCalled();
+    expect(closeTransientUi).toHaveBeenCalledOnce();
+    expect(restoreCursorPosition).toHaveBeenCalledWith(
+      editor,
+      { anchor: 0, head: 0 },
+      { scrollIntoView: true }
+    );
   });
 });

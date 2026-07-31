@@ -72,18 +72,31 @@ export function getPaneNote<TPaneId extends string>(
   ];
 }
 
+/**
+ * Store and return the canonical note object exposed by the state container.
+ *
+ * Svelte wraps objects assigned into a deeply reactive record. Returning the
+ * pre-assignment object would give orchestration a different identity from the
+ * one panes read back, causing editor lifecycle stale-document guards to reject
+ * a valid first binding.
+ */
+function storeNote<TPaneId extends string>(
+  state: NotepadState<TPaneId>,
+  note: NoteDraftState
+): NoteDraftState {
+  state.notesByKey[note.key] = note;
+  return state.notesByKey[note.key];
+}
+
 export function upsertNote<TPaneId extends string>(
   state: NotepadState<TPaneId>,
   note: NoteDraftState
 ) {
-  state.notesByKey[note.key] = note;
-  return note;
+  return storeNote(state, note);
 }
 
 export function createFreshDraftNote<TPaneId extends string>(state: NotepadState<TPaneId>) {
-  const note = createNoteDraftState();
-  state.notesByKey[note.key] = note;
-  return note;
+  return storeNote(state, createNoteDraftState());
 }
 
 export function replacePaneReferenceWithFreshDraft<
@@ -136,9 +149,9 @@ export function rekeyNote<TPaneId extends string>(
 
   delete state.notesByKey[oldKey];
   note.key = nextKey;
-  state.notesByKey[nextKey] = note;
+  const canonicalNote = storeNote(state, note);
   references.replaceNoteKeyReferences(oldKey, nextKey);
-  return note;
+  return canonicalNote;
 }
 
 export function removeNoteIfUnreferenced<TPaneId extends string>(
@@ -190,14 +203,14 @@ export function adoptSnapshotForPane<TPaneId extends string>(
       existing ??
       createNoteDraftState(snapshot, nextPersistedKey);
     applySessionSnapshotToDocument(note, snapshot);
-    state.notesByKey[note.key] = note;
-    references.setPaneNoteKey(paneId, note.key);
+    const canonicalNote = storeNote(state, note);
+    references.setPaneNoteKey(paneId, canonicalNote.key);
     removeTransientNoteIfUnreferenced(
       state,
       references,
       currentNote.key
     );
-    return note;
+    return canonicalNote;
   }
 
   if (currentNote.key.startsWith('draft:')) {
@@ -206,12 +219,12 @@ export function adoptSnapshotForPane<TPaneId extends string>(
   }
 
   const freshDraft = createNoteDraftState(snapshot);
-  state.notesByKey[freshDraft.key] = freshDraft;
-  references.setPaneNoteKey(paneId, freshDraft.key);
+  const canonicalDraft = storeNote(state, freshDraft);
+  references.setPaneNoteKey(paneId, canonicalDraft.key);
   removeTransientNoteIfUnreferenced(
     state,
     references,
     currentNote.key
   );
-  return freshDraft;
+  return canonicalDraft;
 }

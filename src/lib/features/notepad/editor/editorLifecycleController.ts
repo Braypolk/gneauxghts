@@ -374,6 +374,19 @@ export function createEditorLifecycleController({
         getPaneId(),
         getDocumentNoteId(document)
       ) ?? { anchor: 0, head: 0 };
+    const controller = getController();
+    if (controller?.runtime.markdown === nextMarkdown) {
+      // The pane may have just remounted onto a document runtime that is
+      // already live in a sibling pane (for example, chat -> previous note).
+      // This is a pane-navigation event, not a document replacement: restore
+      // only this pane's cursor and leave the shared runtime and sibling
+      // viewports untouched.
+      closeTransientUi();
+      restoreCursorPosition(controller, cursorPosition, {
+        scrollIntoView: true
+      });
+      return;
+    }
     await replaceEditorContentInPlaceInternal(nextMarkdown, {
       expectedDocument: document,
       flushHistory: true,

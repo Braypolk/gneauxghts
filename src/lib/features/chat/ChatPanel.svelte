@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type {
     ChatController,
     ChatControllerState
@@ -90,24 +90,12 @@
     onReviewAgentProposal
   }: Props = $props();
 
-  let snapshot = $state<ChatControllerState>({
-    settings: null,
-    conversations: [],
-    conversationDraft: {
-      revision: 0,
-      title: ''
-    },
-    grants: [],
-    policies: [],
-    conversation: null,
-    isInitializing: false,
-    isLoadingConversation: false,
-    isSending: false,
-    error: null,
-    activity: null,
-    proposals: [],
-    modelCapabilities: null
-  });
+  // The first render must reflect the controller, not a duplicated placeholder
+  // state. A placeholder briefly styled full-vault chats as approved-only while
+  // the component waited for onMount to copy the real snapshot.
+  let snapshot = $state<ChatControllerState>(
+    untrack(() => controller.getSnapshot())
+  );
   let titleDraft = $state('');
   let actionError = $state<string | null>(null);
   let previewAttachment = $state<ChatAttachmentInput | null>(null);
@@ -144,7 +132,6 @@
   });
 
   onMount(() => {
-    snapshot = controller.getSnapshot();
     const unsubscribe = controller.subscribe((next) => {
       snapshot = next;
       const nextConversationId = next.conversation?.id ?? null;

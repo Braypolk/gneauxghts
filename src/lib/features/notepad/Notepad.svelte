@@ -592,6 +592,7 @@
       const editor = editorCapabilities.get(paneId);
       if (editor) proposalOrchestrationInstance?.attachEditor(document, editor);
     }
+    void chatCoordinator.showPendingProposalsForDocument(document);
   }
 
   const paneLifecycle = createPaneEditorLifecycle<PaneId>({
@@ -823,10 +824,10 @@
       appSettings.forgottenNoteRetentionPreference,
     canLeaveDocument: (document) =>
       !documentHasUnresolvedConflict(document),
-    onDocumentLeaving: (document) => {
+    onDocumentLeaving: (paneId, document) => {
       proposalOrchestrationInstance?.suspendDocument(
         document,
-        editorCapabilities.get(getNavigationPaneId()) ?? null,
+        editorCapabilities.get(paneId) ?? null,
       );
     },
     onDocumentOpened: (document) => {
@@ -956,6 +957,8 @@
     refreshCurrentNote: async () => {
       await commands.refreshCurrentNoteIfChanged();
     },
+    acknowledgeDocumentCommit:
+      commands.acknowledgeDocumentCommit,
   });
   const {
     orchestration: proposalOrchestration,
@@ -1116,8 +1119,6 @@
     onClose: commands.closePane,
     onSplit: splitWorkspaceIfAllowed,
     onOpenPaneChoice: openPaneChoiceInCurrent,
-    // Restore the previous location from the pane MRU.
-    onSwitchToEditor: (paneId) => commands.goToPreviousLocation(paneId),
     onTitleFocus: titleInteractions.handleFocus,
     onTitleInput: titleInteractions.handleInput,
     onTitleBlur: titleInteractions.handleBlur,
@@ -1218,6 +1219,7 @@
 
   // Selection tracking per pane (cursor save scheduling + related text update).
   function trackPaneSelection(paneId: PaneId) {
+    const trackedDocument = getPaneDocumentSession(paneId);
     return attachPaneSelectionTracking({
       paneId,
       isEditorReady: getPaneRuntime(paneId).ui.isEditorReady,
@@ -1227,7 +1229,8 @@
         paneHasCapability(getPaneKind(paneId), "edit-document"),
       persistCursorPosition: () => documents.schedulePaneCursorSave(paneId),
       updateSelectedRelatedText: () => updateSelectedRelatedText(paneId),
-      flushPendingCursorSave: () => documents.flushPaneCursorSave(paneId),
+      flushPendingCursorSave: () =>
+        documents.flushPaneCursorSave(paneId, trackedDocument),
     });
   }
 

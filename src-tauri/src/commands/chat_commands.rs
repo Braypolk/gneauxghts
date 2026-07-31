@@ -36,6 +36,8 @@ pub(crate) struct ChatNoteCandidate {
 pub(crate) struct CreateConversationRequest {
     title: Option<String>,
     access: Option<VaultAccess>,
+    provider: Option<String>,
+    model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -198,7 +200,12 @@ pub(crate) fn chat_create_conversation(
     service: State<'_, ChatService>,
     request: CreateConversationRequest,
 ) -> Result<ChatConversation, String> {
-    service.create_conversation(request.title, request.access)
+    service.create_conversation_with_config(
+        request.title,
+        request.access,
+        request.provider,
+        request.model,
+    )
 }
 
 #[tauri::command]

@@ -49,4 +49,26 @@ describe('pane capability orchestration wiring', () => {
       'paneRemovalRetainsEditor'
     );
   });
+
+  it('does not use presentation readiness to skip document binding', () => {
+    const violations: string[] = [];
+
+    for (const file of readdirSync(orchestrationDirectory)) {
+      if (
+        !file.endsWith('.ts') ||
+        file.endsWith('.test.ts')
+      ) {
+        continue;
+      }
+      const source = readFileSync(
+        `${orchestrationDirectory}/${file}`,
+        'utf8'
+      );
+      if (source.includes('.ui.isEditorReady')) {
+        violations.push(file);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
 });

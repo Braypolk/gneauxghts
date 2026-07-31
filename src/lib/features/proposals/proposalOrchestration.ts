@@ -27,7 +27,11 @@ export interface ProposalOrchestrationDeps {
   cancelPendingAutosave?: (document: NoteDraftState) => void;
   scheduleAutosave?: (document: NoteDraftState) => void;
   flushBeforePreview?: (document: NoteDraftState) => Promise<void>;
-  refreshDocumentAfterKeep: (path: string) => void | Promise<void>;
+  acknowledgeDocumentCommit: (commit: {
+    document: NoteDraftState;
+    path: string;
+    markdown: string;
+  }) => void | Promise<void>;
   reloadReviewFromDisk?: (path: string) => Promise<void>;
   reopenReviewEditor?: (document: NoteDraftState) => Promise<EditorCapabilityAdapter | null>;
   session?: ProposalReviewSession;
@@ -142,6 +146,16 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     });
   }
 
+  function editorHasReviewInstalled(
+    review: ActiveReview,
+    editor: EditorCapabilityAdapter
+  ) {
+    return (
+      editor.readProposalReviewState?.()?.reviewId ===
+      review.preview.reviewId
+    );
+  }
+
   function unresolved() {
     return active ? hunks(active).filter((hunk) => hunk.status === 'pending' || hunk.status === 'modified').length : 0;
   }
@@ -191,7 +205,13 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         return;
       }
       closeReview(review);
-      await deps.refreshDocumentAfterKeep(result.applied?.path ?? review.preview.notePath);
+      await deps.acknowledgeDocumentCommit({
+        document: review.document,
+        path:
+          result.applied?.path ??
+          review.preview.notePath,
+        markdown
+      });
     } catch (error) {
       session.setError(proposalErrorMessage(error, 'Unable to commit reviewed note.'));
     } finally {
@@ -343,18 +363,63 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
   }
 
-  function loadDurableProposal(
+  async function loadDurableProposalIfOpenNow(
     request: DurableProposalReviewRequest
   ): Promise<boolean> {
-    const task = durableLoadQueue.then(
-      () => loadDurableProposalNow(request),
-      () => loadDurableProposalNow(request)
+    if (active?.durable?.proposalId === request.proposalId) {
+      return true;
+    }
+    if (active) {
+      if (active.preview.notePath !== request.preview.notePath) {
+        return false;
+      }
+      replaceActiveReview(active);
+    }
+
+    const document = deps.getEditorPaneDocument(
+      request.preview.notePath
     );
+    if (
+      !document ||
+      getDocumentPath(document) !== request.preview.notePath ||
+      document.working.markdown !==
+        (document.savedBaseline?.content.markdown ?? '')
+    ) {
+      return false;
+    }
+    const editor = deps.getEditorForDocument(document);
+    if (!editor?.isReady()) return false;
+
+    // Passive display is intentionally limited to an editor that already
+    // exists. It must not ensure, open, activate, or focus a pane.
+    return start(request.preview, document, editor, request);
+  }
+
+  function enqueueDurableLoad(
+    load: () => Promise<boolean>
+  ): Promise<boolean> {
+    const task = durableLoadQueue.then(load, load);
     durableLoadQueue = task.then(
       () => undefined,
       () => undefined
     );
     return task;
+  }
+
+  function loadDurableProposal(
+    request: DurableProposalReviewRequest
+  ): Promise<boolean> {
+    return enqueueDurableLoad(
+      () => loadDurableProposalNow(request)
+    );
+  }
+
+  function loadDurableProposalIfOpen(
+    request: DurableProposalReviewRequest
+  ): Promise<boolean> {
+    return enqueueDurableLoad(
+      () => loadDurableProposalIfOpenNow(request)
+    );
   }
 
   function keepAll() {
@@ -392,10 +457,11 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       return null;
     }
 
-    const editorReview = editor.readProposalReviewState?.();
-    if (editor !== review.editor || editorReview?.reviewId !== review.preview.reviewId) {
+    if (editor !== review.editor) {
       captureReview(review.editor, review);
       review.editor = editor;
+    }
+    if (!editorHasReviewInstalled(review, editor)) {
       installReviewInEditor(review, editor);
     }
     return editor;
@@ -421,6 +487,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     session,
     holds,
     loadDurableProposal,
+    loadDurableProposalIfOpen,
     keep: (_changeId?: string) => keepAll(),
     keepAll,
     undo: (_changeId?: string) => undoAll(),
@@ -476,7 +543,9 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     attachEditor: (document: NoteDraftState, editor: EditorCapabilityAdapter) => {
       if (!active || active.document.key !== document.key || !editor.isReady()) return;
       active.editor = editor;
-      installReviewInEditor(active, editor);
+      if (!editorHasReviewInstalled(active, editor)) {
+        installReviewInEditor(active, editor);
+      }
     },
     suspendDocument: (document: NoteDraftState, editor: EditorCapabilityAdapter | null) => {
       if (!active || active.document.key !== document.key) return;

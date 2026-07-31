@@ -262,8 +262,14 @@ export function createPaneEditorLifecycle<
     return getSession(paneId).mount();
   }
 
-  function destroyPaneEditor(paneId: TPaneId) {
-    return getSession(paneId).destroy();
+  function destroyPaneEditor(
+    paneId: TPaneId,
+    document: NoteDraftState | null = null
+  ): Promise<PaneEditorOperationResult> {
+    const session = sessions.get(paneId);
+    return session
+      ? session.destroy(document)
+      : Promise.resolve('disposed');
   }
 
   function saveCursorPosition(

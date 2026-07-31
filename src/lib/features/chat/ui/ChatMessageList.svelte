@@ -11,6 +11,7 @@
   } from '../types';
   import ChatMessage from './ChatMessage.svelte';
   import { resolveTargetMessageId } from './chatPanelHelpers';
+  import { positionInitialChatScroll } from './chatMessageScroll';
 
   interface Props {
     controller: ChatController;
@@ -46,18 +47,87 @@
   let selected = $state<ChatSelection | null>(null);
   let selectedExcerpt = $state<ChatExcerpt | null>(null);
   // One-shot guards are deliberately non-reactive to avoid effect↔state loops.
+  let positionedConversationId: string | null = null;
   let appliedTargetAnchor: string | null = null;
   let previousScrollKey: string | null = null;
 
   const isEmpty = $derived(!conversation || conversation.messages.length === 0);
+
+  function scrollKeyFor(current: ChatConversation) {
+    const lastMessage = current.messages.at(-1);
+    return lastMessage
+      ? `${lastMessage.id}:${lastMessage.updatedAtMillis}:${activity ?? ''}`
+      : null;
+  }
+
+  function positionInitialConversation(
+    root: HTMLElement,
+    current: ChatConversation
+  ) {
+    const messageId = resolveTargetMessageId(targetAnchor, current);
+    const anchor = targetAnchor?.replace(/^\^/, '') ?? null;
+    const target = messageId
+      ? root.querySelector<HTMLElement>(
+          `[data-chat-message-id="${CSS.escape(messageId)}"]`
+        )
+      : null;
+    if (anchor && target) {
+      positionInitialChatScroll(root, target);
+      appliedTargetAnchor = `${current.id}:${anchor}`;
+      return;
+    }
+    // Initial conversation positioning is intentionally immediate. Scheduling
+    // a smooth scroll here paints the thread at the top before animating down.
+    positionInitialChatScroll(root, null);
+  }
+
+  $effect(() => {
+    const current = conversation;
+    const root = messagesElement;
+    if (!current) {
+      positionedConversationId = null;
+      appliedTargetAnchor = null;
+      previousScrollKey = null;
+      return;
+    }
+    if (
+      !root ||
+      isInitializing ||
+      isLoadingConversation ||
+      positionedConversationId === current.id
+    ) return;
+
+    positionInitialConversation(root, current);
+    positionedConversationId = current.id;
+    previousScrollKey = scrollKeyFor(current);
+
+    // Correct for layout completed later in the frame (for example message
+    // components with measured content) without introducing animation.
+    requestAnimationFrame(() => {
+      if (
+        controller.getSnapshot().conversation?.id === current.id &&
+        positionedConversationId === current.id
+      ) {
+        positionInitialConversation(root, current);
+      }
+    });
+  });
 
   $effect(() => {
     const current = conversation;
     const messageId = resolveTargetMessageId(targetAnchor, current);
     const anchor = targetAnchor?.replace(/^\^/, '') ?? null;
     const root = messagesElement;
-    if (!anchor || !messageId || !root || anchor === appliedTargetAnchor) return;
-    appliedTargetAnchor = anchor;
+    const targetKey = current && anchor ? `${current.id}:${anchor}` : null;
+    if (
+      !current ||
+      !anchor ||
+      !messageId ||
+      !root ||
+      positionedConversationId !== current.id ||
+      targetKey === appliedTargetAnchor
+    ) return;
+    appliedTargetAnchor = targetKey;
     requestAnimationFrame(() => {
       root
         .querySelector<HTMLElement>(
@@ -68,12 +138,15 @@
   });
 
   $effect(() => {
-    const lastMessage = conversation?.messages.at(-1);
-    const scrollKey = lastMessage
-      ? `${lastMessage.id}:${lastMessage.updatedAtMillis}:${activity ?? ''}`
-      : null;
+    const current = conversation;
+    const scrollKey = current ? scrollKeyFor(current) : null;
     const root = messagesElement;
-    if (!root || (scrollKey === previousScrollKey && !isSending)) return;
+    if (
+      !current ||
+      !root ||
+      positionedConversationId !== current.id ||
+      (scrollKey === previousScrollKey && !isSending)
+    ) return;
     previousScrollKey = scrollKey;
     requestAnimationFrame(() => {
       root.scrollTo({ top: root.scrollHeight, behavior: 'smooth' });
@@ -167,6 +240,21 @@
     }
   }
 
+  async function openCitation(
+    citation: Extract<ChatCitation, { kind: 'note' }>
+  ) {
+    try {
+      await onOpenCitation?.(citation);
+      onActionError(null);
+    } catch (error) {
+      onActionError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to open the referenced note.'
+      );
+    }
+  }
+
   async function toggleRemember() {
     if (!selected) return;
     try {
@@ -220,7 +308,7 @@
           {selectedExcerpt}
           canInsertSelection={Boolean(selectionActions.onInsertIntoNote)}
           {onPreviewAttachment}
-          {onOpenCitation}
+          onOpenCitation={openCitation}
           onRetry={() => controller.retry(message.id)}
           onCopySelection={copySelection}
           onCopyLink={copyLink}

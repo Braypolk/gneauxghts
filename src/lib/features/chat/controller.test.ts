@@ -153,6 +153,19 @@ function fakeApi() {
 }
 
 describe('createChatController', () => {
+  it('does not create a conversation before backend settings establish the draft model', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+
+    expect(controller.getSnapshot().conversationDraft.model).toBe('');
+    await expect(controller.createConversation()).resolves.toBeNull();
+
+    expect(fake.api.createConversation).not.toHaveBeenCalled();
+    expect(controller.getSnapshot().error).toBe(
+      'Chat settings are still loading. Try again in a moment.'
+    );
+  });
+
   it('loads settings, conversations, and the requested conversation', async () => {
     const fake = fakeApi();
     const controller = createChatController(fake.api);
@@ -236,7 +249,19 @@ describe('createChatController', () => {
     expect(controller.getSnapshot().conversation).toBeNull();
     expect(controller.getSnapshot().conversationDraft).toEqual({
       revision: 2,
-      title: 'A local draft title'
+      title: 'A local draft title',
+      provider: 'openai',
+      model: 'test-model',
+      vaultAccess: 'approved'
+    });
+    expect(controller.getSnapshot().modelCapabilities).toEqual({
+      images: true,
+      files: true,
+      acceptedMimeTypes: [
+        'image/png',
+        'text/plain',
+        'application/pdf'
+      ]
     });
   });
 
@@ -249,7 +274,36 @@ describe('createChatController', () => {
     await controller.createConversation();
 
     expect(fake.api.createConversation).toHaveBeenCalledWith({
-      title: 'Draft title'
+      title: 'Draft title',
+      vaultAccess: 'approved',
+      provider: 'openai',
+      model: 'test-model'
+    });
+  });
+
+  it('keeps provider and vault choices on a draft and uses them at creation', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    controller.startNewConversation();
+
+    await controller.setProvider('local', 'local-model');
+    await controller.setVaultAccess('full');
+
+    expect(controller.getSnapshot().conversation).toBeNull();
+    expect(controller.getSnapshot().conversationDraft).toMatchObject({
+      provider: 'local',
+      model: 'local-model',
+      vaultAccess: 'full'
+    });
+
+    await controller.createConversation();
+
+    expect(fake.api.createConversation).toHaveBeenCalledWith({
+      title: undefined,
+      vaultAccess: 'full',
+      provider: 'local',
+      model: 'local-model'
     });
   });
 
@@ -432,14 +486,16 @@ describe('createChatController', () => {
   it('reloads unresolved proposals without opening their notes when a conversation opens', async () => {
     const fake = fakeApi();
     vi.mocked(fake.api.listPendingProposals).mockResolvedValue([proposal()]);
-    const onProposal = vi.fn();
-    const controller = createChatController(fake.api, { onProposal });
+    const onProposalAvailable = vi.fn();
+    const controller = createChatController(fake.api, {
+      onProposalAvailable
+    });
 
     await controller.initialize('conversation-1');
 
     expect(fake.api.listPendingProposals).toHaveBeenCalledWith('conversation-1');
     expect(controller.getSnapshot().proposals).toEqual([proposal()]);
-    expect(onProposal).not.toHaveBeenCalled();
+    expect(onProposalAvailable).toHaveBeenCalledWith(proposal());
   });
 
   it('tracks compact activity and clears it when cancelled', async () => {
@@ -464,16 +520,18 @@ describe('createChatController', () => {
     expect(controller.getSnapshot().activity).toBeNull();
   });
 
-  it('queues proposal events and notifies the automatic review hook', async () => {
+  it('queues proposal events for explicit review', async () => {
     const fake = fakeApi();
-    const onProposal = vi.fn();
-    const controller = createChatController(fake.api, { onProposal });
+    const onProposalAvailable = vi.fn();
+    const controller = createChatController(fake.api, {
+      onProposalAvailable
+    });
     await controller.initialize('conversation-1');
 
     fake.emit('chat://proposal', proposal());
 
     expect(controller.getSnapshot().proposals).toEqual([proposal()]);
-    expect(onProposal).toHaveBeenCalledWith(proposal());
+    expect(onProposalAvailable).toHaveBeenCalledWith(proposal());
   });
 
   it('replaces a superseded target from an earlier run in the visible proposal queue', async () => {

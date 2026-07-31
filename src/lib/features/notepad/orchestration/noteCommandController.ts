@@ -199,6 +199,57 @@ export function createNoteCommandController<
     );
   }
 
+  /**
+   * Reconciles a successful app-owned proposal write with its open document.
+   * The commit's exact editor markdown is the ownership proof: if disk matches
+   * it, advance the saved baseline without manufacturing an external conflict.
+   * Any local edit made after the commit remains as a dirty working copy.
+   */
+  async function acknowledgeDocumentCommit(commit: {
+    document: NoteDraftState;
+    path: string;
+    markdown: string;
+  }) {
+    const { document, path, markdown } = commit;
+    const snapshot = await readNoteSession(
+      getDocumentNoteId(document),
+      path
+    );
+
+    if (snapshot.bodyMarkdown !== markdown) {
+      // The file no longer contains the bytes this app committed. Route the
+      // mismatch through normal external-change protection instead of claiming
+      // ownership of a racing write.
+      await refreshDocumentFromDisk(document, {
+        source: 'watcher'
+      });
+      return;
+    }
+
+    persistence.cancelPendingAutosave(document);
+    persistence.invalidatePendingSaveResults(document);
+    const preserveDraft =
+      getDocumentMarkdown(document) !== markdown;
+    await deps.base.documentEditing.applySnapshot(
+      document,
+      snapshot,
+      () =>
+        documents.replaceNoteAcrossPanes(
+          document,
+          document
+        ),
+      {
+        preserveDraft,
+        autosave: preserveDraft
+      }
+    );
+    derivedViews.setRecentlyForgotten(null);
+    derivedViews.clearSelectedRelatedText();
+    derivedViews.scheduleRelatedIfNeeded({
+      immediate: true
+    });
+  }
+
   async function openStartPaneCommand(
     paneId: TPaneId,
     noteKey: NoteKey
@@ -347,7 +398,8 @@ export function createNoteCommandController<
           session
         );
         derivedViews.setRecentlyForgotten(null);
-        await documents.replaceNoteAcrossPanes(
+        await documents.replacePaneDocument(
+          paneId,
           previousNote,
           restoredNote,
           { restoreCursor: true }
@@ -538,7 +590,10 @@ export function createNoteCommandController<
         if (
           getDocumentPath(previousDocument) !== notePath
         ) {
-          deps.base.onDocumentLeaving?.(previousDocument);
+          deps.base.onDocumentLeaving?.(
+            paneId,
+            previousDocument
+          );
         }
         const targetLocation: NavLocation = {
           kind: 'editor',
@@ -623,13 +678,13 @@ export function createNoteCommandController<
       complete: async () => {
         if (!nextDocument) return;
         if (
-          panes.getPaneRuntime(paneId).ui.isEditorReady &&
           paneHasCapability(
             panes.getPaneKind(paneId),
             'edit-document'
           )
         ) {
-          await documents.replaceNoteAcrossPanes(
+          await documents.replacePaneDocument(
+            paneId,
             previousDocument,
             nextDocument,
             { restoreCursor: true }
@@ -703,6 +758,7 @@ export function createNoteCommandController<
       refreshCurrentNoteFromDisk('windowFocus'),
     refreshCurrentNoteFromTaskMutation: () =>
       refreshCurrentNoteFromDisk('taskMutation'),
+    acknowledgeDocumentCommit,
     refreshDocumentFromDisk,
     clearNotepad,
     unforgetNotepad,

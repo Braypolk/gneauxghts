@@ -19,15 +19,22 @@ Invariants:
 ## 2. Chat context and generic note navigation have different targets
 
 Chat-specific context comes from the chat pane's retained context note. Generic
-note navigation targets the nearest editor pane. The workspace always retains
-at least one editor.
+note navigation targets the nearest editor pane when one is visible; otherwise
+it reuses the active retained-context pane and reveals its editor.
 
 Invariants:
 
 - A chat pane does not borrow context from whichever editor happens to be active.
 - Generic note navigation never repurposes a chat pane while an editor target is
   available.
-- A workspace transition cannot leave the workspace with zero editor panes.
+- A single pane can switch directly between editor and chat while retaining its
+  document context.
+- A multi-pane workspace can temporarily contain only chat panes; each pane
+  still provides a direct route back to its retained note.
+- Any pane may close when another pane remains, regardless of pane kind.
+- Note navigation always queues the target document binding through the editor
+  lifecycle; presentation readiness may affect timing but cannot skip content
+  synchronization.
 
 ## 3. Closing the active pane selects an adjacent pane
 
@@ -161,3 +168,51 @@ Invariants:
   own.
 - A matching self-save may be deduplicated; a non-matching change is external
   even inside the deduplication window.
+
+## 13. Draft chats expose the complete chat configuration
+
+A chat does not need to be persisted before its provider, vault access, web
+option, or attachment control is available. Draft choices become the initial
+conversation configuration when the first message is sent.
+
+Invariants:
+
+- Starting a new chat does not remove composer configuration controls.
+- Provider and vault-access changes made before the first message are retained.
+- Backend-resolved chat settings are the sole source of the default model; an
+  uninitialized frontend draft does not assume a model name.
+- Conversation creation applies the draft provider, model, and vault access
+  atomically.
+- Attachment capability follows the selected draft model rather than the
+  previously open conversation.
+
+## 14. App-owned proposal commits advance the open document baseline
+
+After a successful proposal commit, the open document acknowledges the exact
+markdown written by the app instead of routing that write through the generic
+external-conflict path.
+
+Invariants:
+
+- A verified app-owned proposal write does not display Changed outside the app.
+- A local edit made after commit begins is preserved as dirty working content.
+- If disk no longer matches the markdown the app committed, normal external
+  conflict protection still applies.
+
+## 15. Proposal arrival does not navigate
+
+Receiving a durable chat proposal adds it to the conversation's pending review
+queue. If its target is already open in an editor, the proposal is displayed
+there without opening, activating, focusing, or repurposing a pane. Navigation
+into a closed target begins only when the user chooses **Review in editor**.
+
+Invariants:
+
+- A proposal targeting a closed note leaves the current note and chat panes
+  unchanged.
+- A proposal targeting an open, clean editor installs its proposed content and
+  review decorations without changing the active pane.
+- Reopening a conversation restores its pending proposals without opening their
+  targets.
+- Explicit review may open or activate the target note because that action is a
+  user navigation request.

@@ -125,30 +125,21 @@ export function getNearestPaneIdWithCapability<
 }
 
 /**
- * A kind transition is allowed only when it preserves a pane capable of
- * editing documents. Same-kind transitions are harmless and remain allowed.
+ * Any visible pane can change kind. Chat panes retain their document context
+ * and expose a direct route back to the editor, so an editor does not need to
+ * remain visible merely to keep note navigation recoverable.
  */
 export function canSetPaneKind<TPaneId extends string>(
   workspace: PaneCapabilityWorkspace<TPaneId>,
   paneId: TPaneId,
-  nextKind: PaneKind
+  _nextKind: PaneKind
 ): boolean {
-  if (!workspace.paneOrder.includes(paneId)) return false;
-  return workspace.paneOrder.some((candidate) => {
-    const candidateKind =
-      candidate === paneId
-        ? nextKind
-        : workspace.getPaneKind(candidate);
-    return paneHasCapability(
-      candidateKind,
-      'edit-document'
-    );
-  });
+  return workspace.paneOrder.includes(paneId);
 }
 
 /**
- * A pane may be removed only when another pane remains and the resulting
- * workspace still has a document-editing pane.
+ * A pane may be removed whenever another pane remains. Every pane kind retains
+ * document context, so the remaining pane can always return to note editing.
  */
 export function canRemovePane<TPaneId extends string>(
   workspace: PaneCapabilityWorkspace<TPaneId>,
@@ -160,12 +151,5 @@ export function canRemovePane<TPaneId extends string>(
   ) {
     return false;
   }
-  return workspace.paneOrder.some(
-    (candidate) =>
-      candidate !== paneId &&
-      paneHasCapability(
-        workspace.getPaneKind(candidate),
-        'edit-document'
-      )
-  );
+  return true;
 }

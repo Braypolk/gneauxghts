@@ -1,29 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type {
   ChatAgentProposal,
-  ChatConversation,
-  ChatSettings
+  ChatConversation
 } from '../types';
 import {
   chatConversationContextKey,
   proposalInitialMarkdown,
-  providerModel,
   renderChatMarkdown,
   resolveTargetMessageId,
   safeWebCitationHref
 } from './chatPanelHelpers';
-
-const settings: ChatSettings = {
-  provider: 'openai',
-  model: 'fallback-model',
-  openaiModel: 'hosted-model',
-  localModel: 'local-model',
-  localBaseUrl: 'http://localhost:1234/v1',
-  serviceTier: 'standard',
-  webAccess: 'auto',
-  defaultVaultAccess: 'full',
-  atlasVisibility: 'hidden'
-};
 
 function conversation(): ChatConversation {
   return {
@@ -74,13 +60,6 @@ describe('chat panel helpers', () => {
     expect(resolveTargetMessageId('excerpt', conversation())).toBe('message-from-excerpt');
     expect(resolveTargetMessageId('missing', conversation())).toBeNull();
     expect(resolveTargetMessageId(null, conversation())).toBeNull();
-  });
-
-  it('selects the configured model for each provider', () => {
-    expect(providerModel(settings, 'openai')).toBe('hosted-model');
-    expect(providerModel(settings, 'local')).toBe('local-model');
-    expect(providerModel(null, 'openai')).toBe('gpt-5.6-terra');
-    expect(providerModel(null, 'local')).toBe('');
   });
 
   it('reads proposal markdown only when the preview contains a string', () => {

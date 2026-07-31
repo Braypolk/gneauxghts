@@ -30,9 +30,9 @@
     VaultAccess
   } from '../types';
   import {
-    chatConversationContextKey,
-    providerModel
+    chatConversationContextKey
   } from './chatPanelHelpers';
+  import { configuredChatModel } from '../chatConfiguration';
 
   type ChatMenu = 'history' | 'vault' | 'provider';
 
@@ -89,6 +89,13 @@
   let creatingConversationFromDraft = false;
 
   const conversation = $derived(snapshot.conversation);
+  const effectiveProvider = $derived(
+    conversation?.provider ?? snapshot.conversationDraft.provider
+  );
+  const effectiveVaultAccess = $derived(
+    conversation?.vaultAccess ??
+      snapshot.conversationDraft.vaultAccess
+  );
   const canSend = $derived(
     Boolean(draft.trim() || attachments.length > 0) &&
       !snapshot.isSending &&
@@ -121,10 +128,9 @@
     )
   );
   const vaultLabel = $derived.by(() => {
-    if (!conversation) return 'No vault';
     if (contextExcluded) return 'Note excluded';
-    if (conversation.vaultAccess === 'full') return 'Full vault';
-    if (conversation.vaultAccess === 'none') return 'No vault';
+    if (effectiveVaultAccess === 'full') return 'Full vault';
+    if (effectiveVaultAccess === 'none') return 'No vault';
     if (contextNote && contextGrant) return contextNote.noteTitle;
     return 'Approved only';
   });
@@ -229,6 +235,22 @@
     input.value = '';
   }
 
+  function chooseAttachments() {
+    if (!snapshot.modelCapabilities) {
+      onActionError(
+        'Attachment support is still loading for the selected model.'
+      );
+      return;
+    }
+    if (!canAttach) {
+      onActionError(
+        'The selected model does not accept file or image attachments.'
+      );
+      return;
+    }
+    attachmentInput?.click();
+  }
+
   function onComposerPaste(event: ClipboardEvent) {
     const images = Array.from(event.clipboardData?.items ?? [])
       .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
@@ -251,7 +273,7 @@
 
   async function updateProvider(provider: ChatProvider) {
     onOpenMenu(null);
-    const model = providerModel(snapshot.settings, provider);
+    const model = configuredChatModel(snapshot.settings, provider);
     if (!model) {
       onActionError('Choose a tool-capable local model in Settings first.');
       return;
@@ -262,7 +284,7 @@
 
   async function updateAccess(vaultAccess: VaultAccess) {
     onOpenMenu(null);
-    if (conversation) await controller.setVaultAccess(vaultAccess);
+    await controller.setVaultAccess(vaultAccess);
   }
 
   async function toggleContextAccess() {
@@ -369,8 +391,6 @@
     ></textarea>
 
     <div class="flex flex-wrap items-center gap-1.5 px-1 pt-1">
-      {#if conversation}
-        {#if canAttach}
           <input
             bind:this={attachmentInput}
             class="sr-only"
@@ -383,15 +403,18 @@
           <button
             type="button"
             class="chat-composer-chip"
-            onclick={() => attachmentInput?.click()}
+            onclick={chooseAttachments}
             aria-label="Add files or images"
-            title={snapshot.modelCapabilities?.images
-              ? 'Add files or images; you can also paste images'
-              : 'Add files'}
+            title={!snapshot.modelCapabilities
+              ? 'Attachment support is loading'
+              : snapshot.modelCapabilities.images
+                ? 'Add files or images; you can also paste images'
+                : snapshot.modelCapabilities.files
+                  ? 'Add files'
+                  : 'Attachments are unavailable for the selected model'}
           >
             <Paperclip class="h-3.5 w-3.5" />
           </button>
-        {/if}
 
         <div class="relative" data-chat-menu>
           <button
@@ -403,7 +426,7 @@
             onclick={() =>
               onOpenMenu(openMenu === 'provider' ? null : 'provider')}
           >
-            <span>{conversation.provider === 'local' ? 'Local' : 'OpenAI'}</span>
+            <span>{effectiveProvider === 'local' ? 'Local' : 'OpenAI'}</span>
             <ChevronDown class="h-3 w-3 opacity-60" />
           </button>
           {#if openMenu === 'provider'}
@@ -416,7 +439,7 @@
                 <button
                   type="button"
                   class="chat-menu-item"
-                  class:chat-menu-item--active={provider === conversation.provider}
+                  class:chat-menu-item--active={provider === effectiveProvider}
                   role="menuitem"
                   onclick={() => void updateProvider(provider)}
                 >
@@ -425,11 +448,11 @@
                       {provider === 'local' ? 'Local' : 'OpenAI'}
                     </span>
                     <span class="block max-w-48 truncate text-[11px] font-normal text-muted-foreground">
-                      {providerModel(snapshot.settings, provider) ||
+                      {configuredChatModel(snapshot.settings, provider) ||
                         'Configure in Settings'}
                     </span>
                   </span>
-                  {#if provider === conversation.provider}
+                  {#if provider === effectiveProvider}
                     <Check class="h-3.5 w-3.5 shrink-0" />
                   {/if}
                 </button>
@@ -442,7 +465,7 @@
           <button
             type="button"
             class="chat-composer-chip"
-            class:chat-composer-chip--emphasis={conversation.vaultAccess ===
+            class:chat-composer-chip--emphasis={effectiveVaultAccess ===
               'approved' &&
               contextNote &&
               !contextGrant}
@@ -465,7 +488,7 @@
                   type="button"
                   class="chat-menu-item"
                   class:chat-menu-item--active={option.value ===
-                    conversation.vaultAccess}
+                    effectiveVaultAccess}
                   role="menuitem"
                   onclick={() => void updateAccess(option.value)}
                 >
@@ -475,7 +498,7 @@
                       {option.hint}
                     </span>
                   </span>
-                  {#if option.value === conversation.vaultAccess}
+                  {#if option.value === effectiveVaultAccess}
                     <Check class="h-3.5 w-3.5 shrink-0" />
                   {/if}
                 </button>
@@ -527,7 +550,7 @@
               <X class="h-3 w-3" />
             </button>
           </div>
-        {:else if conversation.vaultAccess === 'approved' && contextNote?.noteId}
+        {:else if effectiveVaultAccess === 'approved' && contextNote?.noteId}
           {#if contextGrant}
             <div
               class="chat-composer-chip chat-composer-chip--granted group"
@@ -556,7 +579,7 @@
               {contextAccessBusy ? '…' : 'Allow note'}
             </button>
           {/if}
-        {:else if conversation.vaultAccess === 'approved' &&
+        {:else if effectiveVaultAccess === 'approved' &&
         contextNote &&
         !contextNote.noteId}
           <span class="px-1 text-[11px] text-muted-foreground">
@@ -564,7 +587,7 @@
           </span>
         {/if}
 
-        {#if conversation.provider === 'openai'}
+        {#if effectiveProvider === 'openai'}
           <button
             type="button"
             class="chat-composer-chip"
@@ -579,7 +602,6 @@
             <span class="hidden sm:inline">Web</span>
           </button>
         {/if}
-      {/if}
 
       <div class="ml-auto flex items-center">
         {#if snapshot.isSending}

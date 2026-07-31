@@ -22,7 +22,9 @@ export function getNearestEditorPaneId<TPaneId extends string>(
 
 /**
  * Generic note navigation stays in the active editor, or targets the nearest
- * editor when the active pane is a non-editor surface.
+ * editor when the active pane is a non-editor surface. If no editor is visible,
+ * it reuses the active retained-context pane; the open-note transition reveals
+ * that pane's editor after loading the target.
  */
 export function getNavigationPaneId<TPaneId extends string>(
   state: PaneSelectionState<TPaneId>

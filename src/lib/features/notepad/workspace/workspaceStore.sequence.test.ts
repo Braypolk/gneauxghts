@@ -42,14 +42,6 @@ function assertWorkspaceInvariants(workspace: WorkspaceStore) {
   if (!order.includes(workspace.activePaneId)) {
     throw new Error('active pane is not visible');
   }
-  if (
-    !order.some(
-      (paneId) =>
-        workspace.getPaneState(paneId).kind === 'editor'
-    )
-  ) {
-    throw new Error('workspace has no editor');
-  }
   const referenced = [
     ...new Set(
       order.map(

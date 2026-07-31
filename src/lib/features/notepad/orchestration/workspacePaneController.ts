@@ -37,6 +37,7 @@ export interface WorkspacePaneControllerDeps<
   removeWorkspacePane: (
     paneId: TPaneId
   ) => WorkspacePaneState<TPaneId> | null;
+  finalizeWorkspacePaneRemoval: (paneId: TPaneId) => void;
   getActivePaneId: () => TPaneId;
   getNextPaneId: (
     paneId: TPaneId,
@@ -97,7 +98,10 @@ export interface WorkspacePaneControllerDeps<
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
   canLeaveDocument?: (document: NoteDraftState) => boolean;
   onNavigationBlocked?: () => void;
-  onDocumentLeaving?: (document: NoteDraftState) => void;
+  onDocumentLeaving?: (
+    paneId: TPaneId,
+    document: NoteDraftState
+  ) => void;
   clearSearch: () => void;
   transitions: PaneNavigationTransitionPipeline<TPaneId>;
 }
@@ -196,6 +200,26 @@ export function createWorkspacePaneController<
     let closingLocation: NavLocation | null = null;
     let orphanPlaceholderKey: NoteKey | null = null;
     let remainingPaneId: TPaneId | null = null;
+    let workspaceRemoved = false;
+    let teardownPromise: Promise<void> | null = null;
+    function teardownRemovedPane() {
+      if (!workspaceRemoved) return Promise.resolve();
+      teardownPromise ??= (async () => {
+        try {
+          // Keep the removed pane's workspace record and runtime readable
+          // through Svelte component/action teardown. Teardown callbacks save
+          // cursor state and destroy the editor before we release that lease.
+          await tick();
+          await deps.disposePaneRuntime(
+            paneId,
+            closingDocument
+          );
+        } finally {
+          deps.finalizeWorkspacePaneRemoval(paneId);
+        }
+      })();
+      return teardownPromise;
+    }
     await executeTransition({
       kind: 'close-pane',
       resolvePane: () =>
@@ -254,16 +278,14 @@ export function createWorkspacePaneController<
         if (!deps.removeWorkspacePane(paneId)) {
           throw new Error('Pane became unavailable before close.');
         }
+        workspaceRemoved = true;
         remainingPaneId = deps.getActivePaneId();
       },
       isCurrent: () =>
         !remainingPaneId ||
         deps.getActivePaneId() === remainingPaneId,
       complete: async () => {
-        await deps.disposePaneRuntime(
-          paneId,
-          closingDocument
-        );
+        await teardownRemovedPane();
         if (orphanPlaceholderKey) {
           deps.removeUnreferencedNote(orphanPlaceholderKey);
           cleanupNoteRuntime(orphanPlaceholderKey);
@@ -281,6 +303,17 @@ export function createWorkspacePaneController<
         if (!remainingPaneId) return;
         await tick();
         deps.focusPane(remainingPaneId);
+      },
+      onStale: async () => {
+        await teardownRemovedPane();
+      },
+      onFailed: async () => {
+        try {
+          await teardownRemovedPane();
+        } catch {
+          // Preserve the original transition failure. Teardown already releases
+          // the retired workspace record in its finally block.
+        }
       }
     });
   }
@@ -317,7 +350,7 @@ export function createWorkspacePaneController<
         ) {
           return {
             status: 'blocked',
-            reason: 'Changing pane kind would remove the last editor.'
+            reason: 'The pane cannot change to the requested kind.'
           };
         }
         paneDocument = deps.getPaneDocument(paneId);
@@ -349,7 +382,7 @@ export function createWorkspacePaneController<
       },
       captureHistory: () => {
         if (kind === 'chat') {
-          deps.onDocumentLeaving?.(paneDocument);
+          deps.onDocumentLeaving?.(paneId, paneDocument);
         }
         if (recordCurrentLocation) {
           deps.touchCurrentLocation(paneId);

@@ -7,8 +7,7 @@ import type { NoteKey } from '$lib/features/notepad/state/noteStore';
 import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 import {
   canRemovePane as policyCanRemovePane,
-  canSetPaneKind,
-  paneHasCapability
+  canSetPaneKind
 } from './paneCapabilities';
 import type {
   PaneKind,
@@ -40,6 +39,15 @@ export class WorkspaceStore {
   panesById = $state<
     Partial<Record<NotepadPaneId, WorkspacePaneState<NotepadPaneId>>>
   >({});
+  /**
+   * Removed panes remain readable until their Svelte subtree has torn down.
+   * This is deliberately non-reactive: it is a short-lived teardown lease,
+   * not visible workspace state.
+   */
+  private retiringPanesById = new Map<
+    NotepadPaneId,
+    WorkspacePaneState<NotepadPaneId>
+  >();
   paneCommand = $state<PaneCommandState>({
     paneId: null,
     sourcePaneId: null,
@@ -69,7 +77,9 @@ export class WorkspaceStore {
   getPaneState(
     paneId: NotepadPaneId
   ): WorkspacePaneState<NotepadPaneId> {
-    const pane = this.panesById[paneId];
+    const pane =
+      this.panesById[paneId] ??
+      this.retiringPanesById.get(paneId);
     if (!pane) {
       throw new Error(`Unknown workspace pane: ${paneId}`);
     }
@@ -81,7 +91,9 @@ export class WorkspaceStore {
   }
 
   setActivePaneId = (paneId: NotepadPaneId): void => {
-    this.getPaneState(paneId);
+    if (!this.paneOrder.includes(paneId)) {
+      throw new Error(`Unknown visible workspace pane: ${paneId}`);
+    }
     this.activePaneId = paneId;
     this.assertInvariants();
   };
@@ -91,7 +103,10 @@ export class WorkspaceStore {
     noteKey: NoteKey,
     kind: PaneKind = 'editor'
   ): WorkspacePaneState<NotepadPaneId> {
-    if (this.hasPane(paneId)) {
+    if (
+      this.hasPane(paneId) ||
+      this.retiringPanesById.has(paneId)
+    ) {
       throw new Error(`Workspace pane already exists: ${paneId}`);
     }
     const pane: WorkspacePaneState<NotepadPaneId> = {
@@ -130,12 +145,21 @@ export class WorkspaceStore {
     this.paneOrder = this.paneOrder.filter(
       (candidate) => candidate !== paneId
     );
+    this.retiringPanesById.set(paneId, pane);
     delete this.panesById[paneId];
     if (this.activePaneId === paneId && adjacentPaneId) {
       this.activePaneId = adjacentPaneId;
     }
     this.assertInvariants();
     return pane;
+  }
+
+  /**
+   * Releases a removed pane after its rendered subtree and editor actions have
+   * completed teardown.
+   */
+  finalizePaneRemoval(paneId: NotepadPaneId): void {
+    this.retiringPanesById.delete(paneId);
   }
 
   setPaneKind(
@@ -243,19 +267,6 @@ export class WorkspaceStore {
     ) {
       throw new Error(
         'Workspace pane records must match pane order.'
-      );
-    }
-    if (
-      !this.paneOrder.some(
-        (paneId) =>
-          paneHasCapability(
-            this.getPaneState(paneId).kind,
-            'edit-document'
-          )
-      )
-    ) {
-      throw new Error(
-        'Workspace must contain at least one editor.'
       );
     }
   }

@@ -21,8 +21,8 @@ capability check.
 
 Capability policy:
 
-- 40 decisions now route through the canonical policy: three workspace-store
-  rules (remove, change kind, retain an editor), one pane-role navigation rule,
+- 39 decisions now route through the canonical policy: two workspace-store
+  rules (remove and change kind), one pane-role navigation rule,
   one document-binding gate, three title/view-model derivations, pane
   close-action visibility, and 31 orchestration decisions (30 direct kind
   predicates plus the legacy kind-transition wrapper).
@@ -60,10 +60,12 @@ Transient UI:
 
 - The pane capability table is exhaustively checked for every capability and
   current pane kind.
-- Pane kind transition and removal matrices cover sole editor, multiple
-  editors, chat/editor mixes, same-kind transitions, and unknown pane IDs.
-- Workspace close tests prove preparation completes before removal and that a
-  preparation/save failure leaves the pane present and undisposed.
+- Pane kind transition and removal matrices cover single panes, multiple
+  editors, chat/editor mixes, chat-only workspaces, same-kind transitions, and
+  unknown pane IDs.
+- Workspace close tests prove preparation completes before removal, teardown
+  state remains leased until the rendered pane is gone, and a preparation/save
+  failure leaves the pane present and undisposed.
 - The open-note barrier test proves a failed previous-document save prevents
   target loading and workspace mutation.
 - Every transient kind is opened from every possible prior state, closed

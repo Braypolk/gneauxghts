@@ -74,6 +74,37 @@ describe('documentPaneCoordinator', () => {
     ]);
   });
 
+  it('rebinds only the navigating pane when another pane already shows the destination', async () => {
+    const previous = note('path:/vault/old.md', 'old');
+    const next = note('path:/vault/shared.md', 'shared');
+    const bindDocument = vi.fn(async () => 'applied');
+    const coordinator = createDocumentPaneCoordinator({
+      paneLifecycle: { bindDocument } as never,
+      getPaneRuntime: () => ({}) as never,
+      getVisiblePaneIds: () => ['left', 'right'],
+      getPaneIdsForDocument: () => ['left', 'right'],
+      getPaneKind: () => 'editor',
+      getNavigationDocument: () => next,
+      getNavigationPaneId: () => 'right',
+      getPaneDocument: () => next,
+      getNoteByKey: () => next
+    });
+
+    await coordinator.replacePaneDocument(
+      'right',
+      previous,
+      next,
+      { restoreCursor: true }
+    );
+
+    expect(bindDocument).toHaveBeenCalledOnce();
+    expect(bindDocument).toHaveBeenCalledWith(
+      'right',
+      next,
+      { restoreCursor: true }
+    );
+  });
+
   it('replaces a specifically targeted open document instead of the navigation document', async () => {
     const navigation = note('path:/vault/current.md', 'current');
     const target = note('path:/vault/tasks.md', 'updated tasks');

@@ -24,7 +24,10 @@ import {
 import type {
   PaneNavigationTransitionPipeline
 } from './paneNavigationTransitionPipeline';
-import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
+import {
+  canSetPaneKind,
+  paneHasCapability
+} from '$lib/features/notepad/workspace/paneCapabilities';
 
 export interface LocationHistoryControllerDeps<TPaneId extends string> {
   getActivePaneId: () => TPaneId;
@@ -60,6 +63,8 @@ export interface LocationHistoryControllerDeps<TPaneId extends string> {
   focusPaneAfterShortcut: (paneId: TPaneId) => void | Promise<void>;
   transitions: PaneNavigationTransitionPipeline<TPaneId>;
 }
+
+class LocationRestoreBlockedError extends Error {}
 
 export function createLocationHistoryController<TPaneId extends string>(
   deps: LocationHistoryControllerDeps<TPaneId>
@@ -100,6 +105,37 @@ export function createLocationHistoryController<TPaneId extends string>(
       noteId,
       notePath
     };
+  }
+
+  function canRestoreLocation(
+    paneId: TPaneId,
+    location: NavLocation
+  ): boolean {
+    if (location.kind === 'editor') return true;
+    return canSetPaneKind(
+      {
+        paneOrder: deps.getPaneOrder(),
+        getPaneKind: deps.getPaneKind
+      },
+      paneId,
+      'chat'
+    );
+  }
+
+  function previousRestorableLocation(
+    targetPaneId: TPaneId,
+    historyPaneId: TPaneId,
+    current: NavLocation | null
+  ): NavLocation | null {
+    for (const entry of locationMru.historyExcluding(
+      historyPaneId,
+      current
+    )) {
+      if (canRestoreLocation(targetPaneId, entry.location)) {
+        return entry.location;
+      }
+    }
+    return null;
   }
 
   function blurFocusedPaneTitle(paneId: TPaneId) {
@@ -173,6 +209,14 @@ export function createLocationHistoryController<TPaneId extends string>(
           deps.getPaneOrder().includes(paneId)
             ? paneId
             : null,
+        guard: () =>
+          canRestoreLocation(paneId, location)
+            ? { status: 'allow' }
+            : {
+                status: 'blocked',
+                reason:
+                  'The target pane cannot restore this chat location.'
+              },
         captureHistory:
           location.kind === 'chat'
             ? () => {
@@ -222,8 +266,8 @@ export function createLocationHistoryController<TPaneId extends string>(
             ) &&
             !deps.setPaneKind(paneId, 'chat')
           ) {
-            throw new Error(
-              'Restoring chat would remove the last editor.'
+            throw new LocationRestoreBlockedError(
+              'The target pane rejected the chat location.'
             );
           }
         },
@@ -246,6 +290,9 @@ export function createLocationHistoryController<TPaneId extends string>(
         trackLatestForPane: false
       });
       if (result.status === 'failed') {
+        if (result.error instanceof LocationRestoreBlockedError) {
+          return;
+        }
         throw result.error;
       }
     } finally {
@@ -258,7 +305,11 @@ export function createLocationHistoryController<TPaneId extends string>(
     blurFocusedPaneTitle(paneId);
     const current = await captureRestorablePaneLocation(paneId);
     await ensureLocationMruSeeded(paneId);
-    const previous = locationMru.previousExcluding(paneId, current);
+    const previous = previousRestorableLocation(
+      paneId,
+      paneId,
+      current
+    );
     if (!previous) {
       if (
         paneHasCapability(
@@ -317,7 +368,8 @@ export function createLocationHistoryController<TPaneId extends string>(
   async function resolvePreviousLocationForPaneCommand(targetPaneId: TPaneId) {
     const referencePaneId = findPaneCommandReferencePaneId(targetPaneId);
     await ensureLocationMruSeeded(referencePaneId);
-    return locationMru.previousExcluding(
+    return previousRestorableLocation(
+      targetPaneId,
       referencePaneId,
       capturePaneLocation(referencePaneId)
     );
@@ -325,7 +377,8 @@ export function createLocationHistoryController<TPaneId extends string>(
 
   function peekPreviousLocationForPaneCommand(targetPaneId: TPaneId) {
     const referencePaneId = findPaneCommandReferencePaneId(targetPaneId);
-    return locationMru.previousExcluding(
+    return previousRestorableLocation(
+      targetPaneId,
       referencePaneId,
       capturePaneLocation(referencePaneId)
     );
@@ -359,6 +412,7 @@ export function createLocationHistoryController<TPaneId extends string>(
 
   async function openLocationFromHistory(location: NavLocation) {
     const paneId = deps.getActivePaneId();
+    if (!canRestoreLocation(paneId, location)) return;
     const current = capturePaneLocation(paneId);
     if (current && locationsEqual(current, location)) return;
     touchLocation(paneId, current);

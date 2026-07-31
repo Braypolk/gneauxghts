@@ -17,7 +17,11 @@ import type {
 } from '$lib/features/chat/types';
 import type { NotepadFeatureHost } from '$lib/features/notepad/host';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
-import type { createProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
+import { getDocumentPath } from '$lib/features/notepad/document/documentState';
+import type {
+  createProposalOrchestration,
+  DurableProposalReviewRequest
+} from '$lib/features/proposals/proposalOrchestration';
 import type { ProposalPreview } from '$lib/types/proposals';
 import { restoreForgottenNotes } from '$lib/features/notepad/session/session';
 import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
@@ -109,8 +113,8 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     let controller = this.controllers.get(paneId);
     if (!controller) {
       controller = createChatController(this.api, {
-        onProposal: async (proposal) => {
-          await this.reviewAgentProposal(paneId, proposal);
+        onProposalAvailable: async (proposal) => {
+          await this.showAgentProposalIfOpen(paneId, proposal);
         },
         onProposalResolved: (proposalId) =>
           this.removeResolvedProposal(proposalId)
@@ -178,6 +182,69 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     paneId: TPaneId,
     proposal: ChatAgentProposal
   ): Promise<boolean> {
+    const request = await this.durableProposalReviewRequest(
+      paneId,
+      proposal
+    );
+    if (!request) return false;
+    return this.deps
+      .getProposalOrchestration()
+      .loadDurableProposal(request);
+  }
+
+  async showAgentProposalIfOpen(
+    paneId: TPaneId,
+    proposal: ChatAgentProposal
+  ): Promise<boolean> {
+    try {
+      const request = await this.durableProposalReviewRequest(
+        paneId,
+        proposal
+      );
+      if (!request) return false;
+      return this.deps
+        .getProposalOrchestration()
+        .loadDurableProposalIfOpen(request);
+    } catch {
+      // Passive display is opportunistic. The proposal remains queued for an
+      // explicit review if its editor or orchestration is not ready yet.
+      return false;
+    }
+  }
+
+  async showPendingProposalsForDocument(
+    document: NoteDraftState
+  ): Promise<boolean> {
+    const path = getDocumentPath(document);
+    if (!path) return false;
+    let displayed = false;
+    for (const [paneId, controller] of this.controllers) {
+      const matching = controller
+        .getSnapshot()
+        .proposals.filter(
+          (proposal) =>
+            storedUpdatePreview(proposal)?.notePath === path
+        );
+      for (const proposal of matching) {
+        try {
+          displayed =
+            (await this.showAgentProposalIfOpen(
+              paneId,
+              proposal
+            )) || displayed;
+        } catch {
+          // Passive reconciliation must never turn editor presentation into
+          // navigation failure or interrupt the note-opening lifecycle.
+        }
+      }
+    }
+    return displayed;
+  }
+
+  private async durableProposalReviewRequest(
+    paneId: TPaneId,
+    proposal: ChatAgentProposal
+  ): Promise<DurableProposalReviewRequest | null> {
     let pendingProposal = proposal;
     try {
       const pending = await this.api.listPendingProposals(
@@ -188,7 +255,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
       );
       if (!persisted) {
         this.removeResolvedProposal(proposal.id);
-        return false;
+        return null;
       }
       pendingProposal = persisted;
     } catch {
@@ -197,9 +264,9 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     }
 
     const preview = storedUpdatePreview(pendingProposal);
-    if (!preview) return false;
+    if (!preview) return null;
     const controller = this.getController(paneId);
-    return this.deps.getProposalOrchestration().loadDurableProposal({
+    return {
       proposalId: pendingProposal.id,
       noteId: pendingProposal.noteId,
       preview,
@@ -207,7 +274,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
         controller.keepProposal(pendingProposal.id, markdown),
       dismiss: () =>
         controller.dismissProposal(pendingProposal.id)
-    });
+    };
   }
 
   async openProjection(

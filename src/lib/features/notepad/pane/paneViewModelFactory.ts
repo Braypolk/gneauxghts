@@ -105,7 +105,10 @@ export function createPaneViewModelFactory(
             await deps.paneLifecycle.mountPaneEditor(paneId);
           },
           destroy: async () => {
-            await deps.paneLifecycle.destroyPaneEditor(paneId);
+            await deps.paneLifecycle.destroyPaneEditor(
+              paneId,
+              document
+            );
           }
         }
       };

@@ -52,17 +52,30 @@ describe('WorkspaceStore invariants', () => {
     });
   });
 
-  it('keeps at least one editor across kind changes and removals', () => {
+  it('allows chat-only workspaces while always retaining a pane', () => {
     const workspace = store();
     workspace.addPane(second, 'draft:workspace-2', 'chat');
 
-    expect(workspace.setPaneKind(first, 'chat')).toBe(false);
-    expect(workspace.getPaneState(first).kind).toBe('editor');
-    expect(workspace.removePane(first)).toBeNull();
-
-    expect(workspace.setPaneKind(second, 'editor')).toBe(true);
+    expect(workspace.setPaneKind(first, 'chat')).toBe(true);
+    expect(workspace.getPaneState(first).kind).toBe('chat');
     expect(workspace.removePane(first)?.paneId).toBe(first);
     expect(workspace.activePaneId).toBe(second);
+    expect(workspace.removePane(second)).toBeNull();
+  });
+
+  it('leases removed pane state until rendered teardown is finalized', () => {
+    const workspace = store();
+    workspace.addPane(second, 'draft:workspace-2');
+
+    workspace.removePane(second);
+
+    expect(workspace.getPaneState(second).noteKey).toBe(
+      'draft:workspace-2'
+    );
+    workspace.finalizePaneRemoval(second);
+    expect(() => workspace.getPaneState(second)).toThrow(
+      'Unknown workspace pane'
+    );
   });
 
   it('selects the adjacent pane to the right, otherwise the left', () => {

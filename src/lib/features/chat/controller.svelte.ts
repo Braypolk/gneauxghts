@@ -19,6 +19,7 @@ import type {
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
+import { configuredChatModel } from './chatConfiguration';
 
 export interface ChatControllerState {
   settings: ChatSettings | null;
@@ -26,6 +27,9 @@ export interface ChatControllerState {
   conversationDraft: {
     revision: number;
     title: string;
+    provider: ChatProvider;
+    model: string;
+    vaultAccess: VaultAccess;
   };
   grants: ChatNoteGrant[];
   policies: ChatNotePolicy[];
@@ -44,7 +48,10 @@ const initialState: ChatControllerState = {
   conversations: [],
   conversationDraft: {
     revision: 0,
-    title: ''
+    title: '',
+    provider: 'openai',
+    model: '',
+    vaultAccess: 'approved'
   },
   grants: [],
   policies: [],
@@ -143,6 +150,20 @@ function mergeSummary(list: ChatConversationSummary[], summary: ChatConversation
   );
 }
 
+function draftConfiguration(
+  settings: ChatSettings | null
+): Pick<
+  ChatControllerState['conversationDraft'],
+  'provider' | 'model' | 'vaultAccess'
+> {
+  const provider = settings?.provider ?? 'openai';
+  return {
+    provider,
+    model: configuredChatModel(settings, provider),
+    vaultAccess: settings?.defaultVaultAccess ?? 'approved'
+  };
+}
+
 export interface ChatControllerOptions {
   /**
    * Fired after a successful assistant completion for the open conversation.
@@ -152,7 +173,10 @@ export interface ChatControllerOptions {
     conversation: ChatConversation;
     message: ChatMessage;
   }) => void | Promise<void>;
-  onProposal?: (proposal: ChatAgentProposal) => void | Promise<void>;
+  /** Announces a durable proposal available for passive editor display. */
+  onProposalAvailable?: (
+    proposal: ChatAgentProposal
+  ) => void | Promise<void>;
   onProposalResolved?: (proposalId: string) => void;
 }
 
@@ -182,6 +206,7 @@ export class ChatControllerStore implements ChatController {
   #initializeSequence = 0;
   #disposed = false;
   #listenersReady = false;
+  #modelCapabilities = new Map<string, ChatModelCapabilities>();
 
   constructor(api: ChatApi = chatApi, options: ChatControllerOptions = {}) {
     this.#api = api;
@@ -256,6 +281,64 @@ export class ChatControllerStore implements ChatController {
 
   #ifCurrent<T extends { conversationId: string }>(event: T, apply: () => void) {
     if (this.conversation?.id === event.conversationId) apply();
+  }
+
+  #modelKey(provider: ChatProvider, model: string) {
+    return `${provider}:${model}`;
+  }
+
+  async #getModelCapabilities(
+    provider: ChatProvider,
+    model: string
+  ) {
+    const key = this.#modelKey(provider, model);
+    const cached = this.#modelCapabilities.get(key);
+    if (cached) return cached;
+    const capabilities =
+      await this.#api.getModelCapabilities(provider, model);
+    this.#modelCapabilities.set(key, capabilities);
+    return capabilities;
+  }
+
+  async #loadDraftModelCapabilities(
+    revision: number,
+    provider: ChatProvider,
+    model: string
+  ) {
+    if (!model) {
+      if (
+        !this.conversation &&
+        this.conversationDraft.revision === revision
+      ) {
+        this.#patch({ modelCapabilities: null });
+      }
+      return;
+    }
+    try {
+      const modelCapabilities =
+        await this.#getModelCapabilities(provider, model);
+      if (
+        !this.conversation &&
+        this.conversationDraft.revision === revision &&
+        this.conversationDraft.provider === provider &&
+        this.conversationDraft.model === model
+      ) {
+        this.#patch({ modelCapabilities });
+      }
+    } catch (error) {
+      if (
+        !this.conversation &&
+        this.conversationDraft.revision === revision
+      ) {
+        this.#patch({
+          modelCapabilities: null,
+          error: errorText(
+            error,
+            'Unable to load attachment capabilities for this model.'
+          )
+        });
+      }
+    }
   }
 
   #eventHandlers: { [K in keyof ChatEventMap]: (event: ChatEventMap[K]) => void } = {
@@ -369,7 +452,7 @@ export class ChatControllerStore implements ChatController {
             event
           ]
         });
-        void this.#options.onProposal?.(event);
+        void this.#options.onProposalAvailable?.(event);
       }),
     'chat://projection-conflict': (event) =>
       this.#ifCurrent(event, () => {
@@ -407,7 +490,7 @@ export class ChatControllerStore implements ChatController {
       const conversation = await this.#api.getConversation(conversationId);
       const [proposals, modelCapabilities] = await Promise.all([
         this.#api.listPendingProposals(conversationId),
-        this.#api.getModelCapabilities(conversation.provider, conversation.model)
+        this.#getModelCapabilities(conversation.provider, conversation.model)
       ]);
       this.#patch({
         conversation,
@@ -416,6 +499,9 @@ export class ChatControllerStore implements ChatController {
         isSending: Boolean(conversation.activeRequestId),
         activity: null
       });
+      for (const proposal of proposals) {
+        void this.#options.onProposalAvailable?.(proposal);
+      }
       return conversation;
     } catch (error) {
       this.#patch({ error: errorText(error, 'Unable to open this conversation.') });
@@ -428,11 +514,24 @@ export class ChatControllerStore implements ChatController {
   async createConversation(
     input: { title?: string; vaultAccess?: VaultAccess } = {}
   ) {
+    if (!this.settings) {
+      this.#patch({
+        error: 'Chat settings are still loading. Try again in a moment.'
+      });
+      return null;
+    }
     this.#patch({ isLoadingConversation: true, error: null });
     try {
       const title = input.title?.trim() || this.conversationDraft.title.trim() || undefined;
-      const conversation = await this.#api.createConversation({ ...input, title });
-      const modelCapabilities = await this.#api.getModelCapabilities(
+      const conversation = await this.#api.createConversation({
+        ...input,
+        title,
+        vaultAccess:
+          input.vaultAccess ?? this.conversationDraft.vaultAccess,
+        provider: this.conversationDraft.provider,
+        model: this.conversationDraft.model
+      });
+      const modelCapabilities = await this.#getModelCapabilities(
         conversation.provider,
         conversation.model
       );
@@ -452,17 +551,29 @@ export class ChatControllerStore implements ChatController {
   }
 
   startNewConversation(input: { title?: string } = {}) {
+    const revision = this.conversationDraft.revision + 1;
+    const configuration = draftConfiguration(this.settings);
+    const cachedCapabilities = this.#modelCapabilities.get(
+      this.#modelKey(configuration.provider, configuration.model)
+    ) ?? null;
     this.#patch({
       conversation: null,
       conversationDraft: {
-        revision: this.conversationDraft.revision + 1,
-        title: input.title?.trim() ?? ''
+        revision,
+        title: input.title?.trim() ?? '',
+        ...configuration
       },
       proposals: [],
+      modelCapabilities: cachedCapabilities,
       isSending: false,
       activity: null,
       error: null
     });
+    void this.#loadDraftModelCapabilities(
+      revision,
+      configuration.provider,
+      configuration.model
+    );
   }
 
   setConversationDraftTitle(title: string) {
@@ -518,7 +629,8 @@ export class ChatControllerStore implements ChatController {
       const conversationDraft = archivedCurrentConversation
         ? {
             revision: this.conversationDraft.revision + 1,
-            title: ''
+            title: '',
+            ...draftConfiguration(this.settings)
           }
         : this.conversationDraft;
 
@@ -538,6 +650,12 @@ export class ChatControllerStore implements ChatController {
 
       if (archivedCurrentConversation && conversations[0]) {
         await this.openConversation(conversations[0].id);
+      } else if (archivedCurrentConversation) {
+        await this.#loadDraftModelCapabilities(
+          conversationDraft.revision,
+          conversationDraft.provider,
+          conversationDraft.model
+        );
       }
       return forgottenItem;
     } catch (error) {
@@ -562,7 +680,23 @@ export class ChatControllerStore implements ChatController {
       if (this.#disposed || sequence !== this.#initializeSequence) return;
       this.#patch({ settings, conversations, grants, policies });
       const targetId = conversationId ?? conversations[0]?.id ?? null;
-      if (targetId) await this.openConversation(targetId);
+      if (targetId) {
+        await this.openConversation(targetId);
+      } else {
+        const configuration = draftConfiguration(settings);
+        const revision = this.conversationDraft.revision;
+        this.#patch({
+          conversationDraft: {
+            ...this.conversationDraft,
+            ...configuration
+          }
+        });
+        await this.#loadDraftModelCapabilities(
+          revision,
+          configuration.provider,
+          configuration.model
+        );
+      }
     } catch (error) {
       this.#patch({ error: errorText(error, 'Chat is unavailable right now.') });
     } finally {
@@ -635,7 +769,18 @@ export class ChatControllerStore implements ChatController {
 
   async setVaultAccess(vaultAccess: VaultAccess) {
     const conversation = this.conversation;
-    if (!conversation || conversation.vaultAccess === vaultAccess) {
+    if (!conversation) {
+      if (this.conversationDraft.vaultAccess !== vaultAccess) {
+        this.#patch({
+          conversationDraft: {
+            ...this.conversationDraft,
+            vaultAccess
+          }
+        });
+      }
+      return;
+    }
+    if (conversation.vaultAccess === vaultAccess) {
       return;
     }
     try {
@@ -648,10 +793,39 @@ export class ChatControllerStore implements ChatController {
 
   async setProvider(provider: ChatProvider, model: string) {
     const conversation = this.conversation;
-    if (!conversation || (conversation.provider === provider && conversation.model === model)) return;
+    if (!conversation) {
+      if (
+        this.conversationDraft.provider === provider &&
+        this.conversationDraft.model === model
+      ) {
+        return;
+      }
+      this.#patch({
+        conversationDraft: {
+          ...this.conversationDraft,
+          provider,
+          model
+        },
+        modelCapabilities:
+          this.#modelCapabilities.get(
+            this.#modelKey(provider, model)
+          ) ?? null
+      });
+      await this.#loadDraftModelCapabilities(
+        this.conversationDraft.revision,
+        provider,
+        model
+      );
+      return;
+    }
+    if (
+      conversation.provider === provider &&
+      conversation.model === model
+    ) return;
     try {
       const summary = await this.#api.setConversationProvider(conversation.id, provider, model);
-      const modelCapabilities = await this.#api.getModelCapabilities(provider, model);
+      const modelCapabilities =
+        await this.#getModelCapabilities(provider, model);
       this.#updateConversation((current) => ({ ...current, ...summary }));
       this.#patch({ modelCapabilities });
     } catch (error) {

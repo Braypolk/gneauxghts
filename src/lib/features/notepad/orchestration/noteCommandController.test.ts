@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createNoteDraftState
+  createNoteDraftState,
+  createNotepadState,
+  type NoteKey
 } from '$lib/features/notepad/state/noteStore';
+import {
+  applySessionSnapshotToDocument
+} from '$lib/features/notepad/document/documentState';
 import {
   createEmptySessionSnapshot,
   openNoteSession,
@@ -252,5 +257,204 @@ describe('open-note persistence barrier', () => {
     expect(enqueueSave).toHaveBeenCalledWith(previous);
     expect(openNoteSession).not.toHaveBeenCalled();
     expect(resetPaneCommand).toHaveBeenCalledOnce();
+  });
+
+  it('queues target content binding even while editor readiness is still false', async () => {
+    const previous = createNoteDraftState(
+      persistedSnapshot(
+        'previous',
+        '/vault/previous.md',
+        'previous content'
+      )
+    );
+    const nextSnapshot = persistedSnapshot(
+      'next',
+      '/vault/next.md',
+      'next content'
+    );
+    const state = createNotepadState<PaneId>(previous);
+    let paneNoteKey: NoteKey = previous.key;
+    let openGeneration = 0;
+    const runtime = {
+      ui: { isEditorReady: false },
+      bumpOpenRequestGeneration: () => {
+        openGeneration += 1;
+        return openGeneration;
+      },
+      getOpenRequestGeneration: () => openGeneration
+    };
+    const replacePaneDocument = vi.fn(
+      async () => undefined
+    );
+    vi.mocked(openNoteSession).mockResolvedValueOnce(
+      nextSnapshot
+    );
+    const transitions =
+      createPaneNavigationTransitionPipeline<PaneId>({
+        assertWorkspaceInvariants: vi.fn(),
+        ensurePaneEditors: vi.fn(async () => undefined)
+      });
+    const controller =
+      createNoteCommandController<PaneId>({
+        base: {
+          state,
+          workspace: {
+            getActivePaneId: () => 'left',
+            resetPaneCommand: vi.fn(),
+            getPaneState: () => ({
+              noteKey: paneNoteKey
+            }),
+            setPaneNoteKey: (
+              _paneId: PaneId,
+              noteKey: NoteKey
+            ) => {
+              paneNoteKey = noteKey;
+            },
+            isNoteReferenced: (noteKey: NoteKey) =>
+              paneNoteKey === noteKey,
+            setPaneKind: vi.fn(() => true)
+          },
+          panes: {
+            getPaneDocument: () =>
+              state.notesByKey[paneNoteKey],
+            getPaneKind: () => 'editor',
+            getPaneRuntime: () => runtime,
+            closeWikilinkAutocomplete: vi.fn(),
+            updateSelectedRelatedText: vi.fn(),
+            getNoteByKey: (noteKey: NoteKey) =>
+              state.notesByKey[noteKey] ?? null
+          },
+          persistence: {
+            cancelPendingAutosave: vi.fn(),
+            enqueueSave: vi.fn(async () => undefined)
+          },
+          derivedViews: {
+            setRecentlyForgotten: vi.fn(),
+            clearSelectedRelatedText: vi.fn(),
+            scheduleRelatedIfNeeded: vi.fn()
+          },
+          documents: {
+            flushAllPendingCursorSaves: vi.fn(),
+            saveCursorPositionForDocument: vi.fn(),
+            replacePaneDocument
+          },
+          paneLifecycle: {}
+        },
+        blurFocusedPaneTitle: vi.fn(),
+        capturePaneLocation: () => ({
+          kind: 'editor',
+          noteId: 'previous',
+          notePath: '/vault/previous.md'
+        }),
+        touchLocation: vi.fn(),
+        isLocationTouchSuppressed: () => false,
+        bumpLocationHistoryEpoch: vi.fn(),
+        transitions
+      } as never);
+
+    await controller.openNotePath('/vault/next.md', {
+      noteId: 'next',
+      currentNoteAlreadySaved: true,
+      focusEditorAfterOpen: false
+    });
+
+    const nextDocument = state.notesByKey[paneNoteKey];
+    expect(nextDocument.working.markdown).toBe(
+      'next content'
+    );
+    expect(replacePaneDocument).toHaveBeenCalledWith(
+      'left',
+      previous,
+      nextDocument,
+      { restoreCursor: true }
+    );
+  });
+});
+
+describe('app-owned proposal commit acknowledgement', () => {
+  it('advances the saved baseline without creating an external conflict', async () => {
+    const before = persistedSnapshot(
+      'plan',
+      '/vault/Plan.md',
+      'Before'
+    );
+    const committed = persistedSnapshot(
+      'plan',
+      '/vault/Plan.md',
+      'After'
+    );
+    const document = createNoteDraftState(before);
+    document.working.markdown = 'After';
+    document.externalSync = { kind: 'dirty' };
+    vi.mocked(readNoteSession).mockResolvedValueOnce(
+      committed
+    );
+    const replaceNoteAcrossPanes = vi.fn(
+      async () => undefined
+    );
+    const applySnapshot = vi.fn(
+      async (
+        target: typeof document,
+        snapshot: SessionSnapshot,
+        applyMarkdown: () => Promise<void>,
+        options: { preserveDraft?: boolean } = {}
+      ) => {
+        const result = applySessionSnapshotToDocument(
+          target,
+          snapshot,
+          {
+            preserveWorking:
+              options.preserveDraft ?? false
+          }
+        );
+        if (result.markdownChanged) {
+          await applyMarkdown();
+        }
+        return result;
+      }
+    );
+    const controller =
+      createNoteCommandController<PaneId>({
+        base: {
+          persistence: {
+            cancelPendingAutosave: vi.fn(),
+            invalidatePendingSaveResults: vi.fn()
+          },
+          derivedViews: {
+            setRecentlyForgotten: vi.fn(),
+            clearSelectedRelatedText: vi.fn(),
+            scheduleRelatedIfNeeded: vi.fn()
+          },
+          documents: {
+            replaceNoteAcrossPanes
+          },
+          documentEditing: {
+            applySnapshot
+          }
+        }
+      } as never);
+
+    await controller.acknowledgeDocumentCommit({
+      document,
+      path: '/vault/Plan.md',
+      markdown: 'After'
+    });
+
+    expect(document.savedBaseline?.content.markdown).toBe(
+      'After'
+    );
+    expect(document.working.markdown).toBe('After');
+    expect(document.externalSync).toEqual({
+      kind: 'inSync'
+    });
+    expect(applySnapshot).toHaveBeenCalledWith(
+      document,
+      committed,
+      expect.any(Function),
+      {
+        preserveDraft: false,
+        autosave: false
+      }
+    );
   });
 });

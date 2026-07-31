@@ -47,6 +47,7 @@ function fakeEditor(initialMarkdown = 'Before') {
   let markdown = initialMarkdown;
   let review: ProposalReviewState | null = null;
   let installed = false;
+  let reviewExtensionUpdates = 0;
   let documentAvailable = true;
 
   function applyChange(change: { from: number; to: number; insert: string }) {
@@ -74,6 +75,7 @@ function fakeEditor(initialMarkdown = 'Before') {
     closeSelectionMenu: () => {},
     addReadOnlyOverlay: () => ({ dispose: () => undefined }),
     setProposalReviewExtensions: (extension) => {
+      reviewExtensionUpdates += 1;
       installed = extension !== null;
       review = installed
         ? {
@@ -131,18 +133,21 @@ function fakeEditor(initialMarkdown = 'Before') {
     get installed() {
       return installed;
     },
+    get reviewExtensionUpdates() {
+      return reviewExtensionUpdates;
+    },
     setDocumentAvailable(available: boolean) {
       documentAvailable = available;
     }
   };
 }
 
-function setup() {
+function setup(options: { opened?: boolean } = {}) {
   const document = note();
   const firstEditor = fakeEditor();
   const session = createProposalReviewSession();
   const holds = createReviewHoldStore();
-  let opened = false;
+  let opened = options.opened ?? false;
   let currentEditor = firstEditor;
   const commit = vi.fn(async () => ({
     status: 'committed' as const,
@@ -154,19 +159,22 @@ function setup() {
     message: null
   }));
   const dismiss = vi.fn(async () => undefined);
-  const refreshDocumentAfterKeep = vi.fn(async () => undefined);
+  const acknowledgeDocumentCommit = vi.fn(async () => undefined);
+  const ensureEditorPaneForReview = vi.fn(async () => undefined);
+  const openNoteForReview = vi.fn(async () => {
+    opened = true;
+    return document;
+  });
+  const activateEditorPane = vi.fn(async () => undefined);
   const orchestration = createProposalOrchestration({
     getEditorPaneDocument: (requestedPath) =>
       opened && requestedPath === path ? document : null,
     getEditorForDocument: () => currentEditor.adapter,
-    ensureEditorPaneForReview: vi.fn(async () => undefined),
-    openNoteForReview: vi.fn(async () => {
-      opened = true;
-      return document;
-    }),
-    activateEditorPane: vi.fn(async () => undefined),
+    ensureEditorPaneForReview,
+    openNoteForReview,
+    activateEditorPane,
     reopenReviewEditor: vi.fn(async () => currentEditor.adapter),
-    refreshDocumentAfterKeep,
+    acknowledgeDocumentCommit,
     session,
     holds
   });
@@ -178,7 +186,10 @@ function setup() {
     holds,
     commit,
     dismiss,
-    refreshDocumentAfterKeep,
+    acknowledgeDocumentCommit,
+    ensureEditorPaneForReview,
+    openNoteForReview,
+    activateEditorPane,
     orchestration,
     setCurrentEditor: (editor: ReturnType<typeof fakeEditor>) => {
       currentEditor = editor;
@@ -194,6 +205,38 @@ function setup() {
 }
 
 describe('durable proposal editor review', () => {
+  it('passively installs a proposal in an existing editor without navigating or focusing', async () => {
+    const test = setup({ opened: true });
+    const focusProposalHunk = vi.spyOn(
+      test.firstEditor.adapter,
+      'focusProposalHunk'
+    );
+
+    await expect(
+      test.orchestration.loadDurableProposalIfOpen(test.request)
+    ).resolves.toBe(true);
+
+    expect(test.firstEditor.markdown).toBe('After');
+    expect(test.firstEditor.installed).toBe(true);
+    expect(test.ensureEditorPaneForReview).not.toHaveBeenCalled();
+    expect(test.openNoteForReview).not.toHaveBeenCalled();
+    expect(test.activateEditorPane).not.toHaveBeenCalled();
+    expect(focusProposalHunk).not.toHaveBeenCalled();
+  });
+
+  it('leaves a closed proposal target queued without opening a pane', async () => {
+    const test = setup();
+
+    await expect(
+      test.orchestration.loadDurableProposalIfOpen(test.request)
+    ).resolves.toBe(false);
+
+    expect(test.firstEditor.installed).toBe(false);
+    expect(test.openNoteForReview).not.toHaveBeenCalled();
+    expect(test.activateEditorPane).not.toHaveBeenCalled();
+    expect(test.orchestration.activeProposalId).toBeNull();
+  });
+
   it('opens the target note and installs the proposed body and live hunks', async () => {
     const test = setup();
 
@@ -226,6 +269,23 @@ describe('durable proposal editor review', () => {
     expect(remounted.adapter.readProposalReviewState?.()?.hunks[0].status).toBe(
       'pending'
     );
+  });
+
+  it('does not reinstall a review in a pane that already presents it', async () => {
+    const test = setup({ opened: true });
+    await test.orchestration.loadDurableProposalIfOpen(test.request);
+    const updatesAfterInitialInstall =
+      test.firstEditor.reviewExtensionUpdates;
+
+    test.orchestration.attachEditor(
+      test.document,
+      test.firstEditor.adapter
+    );
+
+    expect(test.firstEditor.reviewExtensionUpdates).toBe(
+      updatesAfterInitialInstall
+    );
+    expect(test.firstEditor.installed).toBe(true);
   });
 
   it('reactivates a remounted editor before focusing the next hunk', async () => {
@@ -282,7 +342,11 @@ describe('durable proposal editor review', () => {
 
     expect(test.holds.isHolding(test.document.key)).toBe(false);
     expect(test.session.snapshot.changes).toEqual([]);
-    expect(test.refreshDocumentAfterKeep).toHaveBeenCalledWith(path);
+    expect(test.acknowledgeDocumentCommit).toHaveBeenCalledWith({
+      document: test.document,
+      path,
+      markdown: 'After'
+    });
   });
 
   it('commits the captured working copy if the editor remounts during Keep All', async () => {

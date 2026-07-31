@@ -289,7 +289,7 @@ pub(crate) fn prepare_note_markdown(
             .as_ref()
             .and_then(|note| note.frontmatter.raw_other.clone())
     });
-    let body = parsed.body.trim_start_matches('\n');
+    let body = parsed.body.as_str();
     let frontmatter = compose_frontmatter(raw_other.as_deref(), &metadata);
 
     let enriched = if body.is_empty() {
@@ -572,6 +572,15 @@ mod tests {
         assert!(prepared.contains("chat_id: chat-1"));
         assert!(prepared.contains("part: 1"));
         assert!(prepared.contains("projection_hash: abc123"));
+    }
+
+    #[test]
+    fn prepare_note_markdown_preserves_leading_body_newlines() {
+        let markdown = "\n\nBody";
+        let (prepared, _) =
+            prepare_note_markdown(markdown, None, Some(None)).expect("prepare markdown");
+
+        assert_eq!(parse_note(&prepared).body, markdown);
     }
 
     #[test]

@@ -1,9 +1,7 @@
 import MarkdownIt from 'markdown-it';
 import type {
   ChatAgentProposal,
-  ChatConversation,
-  ChatProvider,
-  ChatSettings
+  ChatConversation
 } from '../types';
 
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -30,14 +28,6 @@ export function resolveTargetMessageId(
   return anchor.startsWith('msg_')
     ? anchor.slice(4) || null
     : conversation.excerptMessageIds[anchor] ?? null;
-}
-
-export function providerModel(
-  settings: ChatSettings | null,
-  provider: ChatProvider
-) {
-  if (provider === 'local') return settings?.localModel ?? '';
-  return settings?.openaiModel ?? settings?.model ?? 'gpt-5.6-terra';
 }
 
 export function proposalInitialMarkdown(proposal: ChatAgentProposal) {
