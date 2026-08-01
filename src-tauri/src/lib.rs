@@ -38,6 +38,20 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .setup(|app| {
+            // Restore the desktop window's last size and position. On a first
+            // launch, or when no saved state exists yet, Tauri uses the larger
+            // fallback dimensions from tauri.conf.json.
+            #[cfg(desktop)]
+            app.handle().plugin(
+                tauri_plugin_window_state::Builder::default()
+                    .with_state_flags(
+                        tauri_plugin_window_state::StateFlags::SIZE
+                            | tauri_plugin_window_state::StateFlags::POSITION
+                            | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                    )
+                    .build(),
+            )?;
+
             let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
             initialize_app_data_dir(app_data_dir.clone())?;
             if let Ok(documents_dir) = app.path().document_dir() {

@@ -46,6 +46,9 @@ url = "2"
 security-framework = "3.7"
 security-framework-sys = "2.17"
 
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-window-state = "2"
+
 [dev-dependencies]
 rig-core = { version = "=0.40.0", default-features = false, features = ["test-utils"] }
 
