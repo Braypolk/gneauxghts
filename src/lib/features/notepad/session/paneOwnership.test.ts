@@ -16,6 +16,10 @@ import {
   WorkspaceStore,
   type NotepadPaneId
 } from '$lib/features/notepad/workspace/workspaceStore.svelte';
+import {
+  createReadyPaneForTest,
+  retirePaneForTest
+} from '$lib/features/notepad/workspace/workspaceStoreTestSupport';
 import { notepadRuntimeState } from './runtimeStore.svelte';
 import {
   updateDocumentMarkdown
@@ -31,7 +35,11 @@ function setupWorkspace() {
     primary,
     initialNote.key
   );
-  workspace.addPane(secondary, initialNote.key);
+  createReadyPaneForTest(
+    workspace,
+    secondary,
+    initialNote.key
+  );
   return { state, workspace, initialNote };
 }
 
@@ -223,7 +231,7 @@ describe('noteStore and WorkspaceStore ownership', () => {
     const draft = createFreshDraftNote(state);
     workspace.setPaneNoteKey(secondary, draft.key);
 
-    workspace.removePane(secondary);
+    retirePaneForTest(workspace, secondary);
 
     expect(workspace.hasPane(secondary)).toBe(false);
     expect(state.notesByKey[draft.key]).toBe(draft);

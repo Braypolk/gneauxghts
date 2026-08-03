@@ -46,7 +46,7 @@ interface EditorLifecycleControllerDeps {
   getEditorRoot: () => HTMLDivElement | null;
   getDocumentSession: () => NoteDraftState;
   setIsEditorReady: (value: boolean) => void;
-  setIsApplyingExternalContent: (value: boolean) => void;
+  setIsApplyingProgrammaticUpdate: (value: boolean) => void;
   handleEditorMarkdownChange: (
     paneId: string,
     document: NoteDraftState,
@@ -65,7 +65,7 @@ export function createEditorLifecycleController({
   getEditorRoot,
   getDocumentSession,
   setIsEditorReady,
-  setIsApplyingExternalContent,
+  setIsApplyingProgrammaticUpdate,
   handleEditorMarkdownChange,
   getSharedEditorResources,
   getViewCallbacks,
@@ -314,7 +314,7 @@ export function createEditorLifecycleController({
       ? (controller?.view.scrollDOM.scrollTop ?? 0)
       : 0;
 
-    setIsApplyingExternalContent(true);
+    setIsApplyingProgrammaticUpdate(true);
     try {
       if (
         !replaceEditorBuffer(controller, nextMarkdown, {
@@ -328,7 +328,7 @@ export function createEditorLifecycleController({
           return;
         }
 
-        setIsApplyingExternalContent(false);
+        setIsApplyingProgrammaticUpdate(false);
         await replaceEditorContent(nextMarkdown, {
           preserveScroll,
           restoreCursor: Boolean(cursorPosition),
@@ -352,7 +352,7 @@ export function createEditorLifecycleController({
       await tick();
       if (preserveScroll) restoreEditorScrollTop(scrollTop);
     } finally {
-      setIsApplyingExternalContent(false);
+      setIsApplyingProgrammaticUpdate(false);
     }
   }
 

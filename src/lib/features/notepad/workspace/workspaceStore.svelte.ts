@@ -13,6 +13,12 @@ import type {
   PaneKind,
   WorkspacePaneState
 } from './paneTypes';
+import {
+  createPaneMembershipState,
+  transitionPaneMembership,
+  type PaneMembershipEvent,
+  type PaneMembershipState
+} from '$lib/features/notepad/pane/paneLifecycleMachine';
 
 /**
  * Pane command UI state. The pane command overlay is shown while the user
@@ -39,14 +45,9 @@ export class WorkspaceStore {
   panesById = $state<
     Partial<Record<NotepadPaneId, WorkspacePaneState<NotepadPaneId>>>
   >({});
-  /**
-   * Removed panes remain readable until their Svelte subtree has torn down.
-   * This is deliberately non-reactive: it is a short-lived teardown lease,
-   * not visible workspace state.
-   */
-  private retiringPanesById = new Map<
+  private paneMembershipById = new Map<
     NotepadPaneId,
-    WorkspacePaneState<NotepadPaneId>
+    PaneMembershipState
   >();
   paneCommand = $state<PaneCommandState>({
     paneId: null,
@@ -71,15 +72,37 @@ export class WorkspaceStore {
         chatConversationId: null
       }
     };
+    this.paneMembershipById.set(
+      initialPaneId,
+      createPaneMembershipState(true)
+    );
     this.assertInvariants();
+  }
+
+  getPaneMembership(
+    paneId: NotepadPaneId
+  ): PaneMembershipState {
+    return (
+      this.paneMembershipById.get(paneId) ??
+      createPaneMembershipState()
+    );
+  }
+
+  dispatchPaneMembership(
+    paneId: NotepadPaneId,
+    event: PaneMembershipEvent
+  ): boolean {
+    const previous = this.getPaneMembership(paneId);
+    const next = transitionPaneMembership(previous, event);
+    if (next === previous) return false;
+    this.paneMembershipById.set(paneId, next);
+    return true;
   }
 
   getPaneState(
     paneId: NotepadPaneId
   ): WorkspacePaneState<NotepadPaneId> {
-    const pane =
-      this.panesById[paneId] ??
-      this.retiringPanesById.get(paneId);
+    const pane = this.panesById[paneId];
     if (!pane) {
       throw new Error(`Unknown workspace pane: ${paneId}`);
     }
@@ -87,7 +110,11 @@ export class WorkspaceStore {
   }
 
   hasPane(paneId: NotepadPaneId): boolean {
-    return Boolean(this.panesById[paneId]);
+    const membership = this.getPaneMembership(paneId);
+    return (
+      membership.kind === 'ready' ||
+      membership.kind === 'closing'
+    );
   }
 
   setActivePaneId = (paneId: NotepadPaneId): void => {
@@ -98,16 +125,23 @@ export class WorkspaceStore {
     this.assertInvariants();
   };
 
-  addPane(
+  completePaneCreation(
     paneId: NotepadPaneId,
+    operationId: number,
     noteKey: NoteKey,
     kind: PaneKind = 'editor'
   ): WorkspacePaneState<NotepadPaneId> {
-    if (
-      this.hasPane(paneId) ||
-      this.retiringPanesById.has(paneId)
-    ) {
+    if (this.panesById[paneId]) {
       throw new Error(`Workspace pane already exists: ${paneId}`);
+    }
+    const membership = this.getPaneMembership(paneId);
+    if (
+      membership.kind !== 'creating' ||
+      membership.operationId !== operationId
+    ) {
+      throw new Error(
+        `Workspace pane creation is stale: ${paneId}`
+      );
     }
     const pane: WorkspacePaneState<NotepadPaneId> = {
       paneId,
@@ -117,6 +151,10 @@ export class WorkspaceStore {
     };
     this.panesById[paneId] = pane;
     this.paneOrder = [...this.paneOrder, paneId];
+    this.dispatchPaneMembership(paneId, {
+      type: 'creationCompleted',
+      operationId
+    });
     this.assertInvariants();
     return pane;
   }
@@ -132,10 +170,18 @@ export class WorkspaceStore {
     );
   }
 
-  removePane(
-    paneId: NotepadPaneId
+  retirePane(
+    paneId: NotepadPaneId,
+    operationId: number
   ): WorkspacePaneState<NotepadPaneId> | null {
     if (!this.canRemovePane(paneId)) return null;
+    const membership = this.getPaneMembership(paneId);
+    if (
+      membership.kind !== 'closing' ||
+      membership.operationId !== operationId
+    ) {
+      return null;
+    }
 
     const pane = this.getPaneState(paneId);
     const index = this.paneOrder.indexOf(paneId);
@@ -145,8 +191,10 @@ export class WorkspaceStore {
     this.paneOrder = this.paneOrder.filter(
       (candidate) => candidate !== paneId
     );
-    this.retiringPanesById.set(paneId, pane);
-    delete this.panesById[paneId];
+    this.dispatchPaneMembership(paneId, {
+      type: 'retirementStarted',
+      operationId
+    });
     if (this.activePaneId === paneId && adjacentPaneId) {
       this.activePaneId = adjacentPaneId;
     }
@@ -158,8 +206,24 @@ export class WorkspaceStore {
    * Releases a removed pane after its rendered subtree and editor actions have
    * completed teardown.
    */
-  finalizePaneRemoval(paneId: NotepadPaneId): void {
-    this.retiringPanesById.delete(paneId);
+  completePaneDisposal(
+    paneId: NotepadPaneId,
+    operationId: number
+  ): boolean {
+    const membership = this.getPaneMembership(paneId);
+    if (
+      membership.kind !== 'retiring' ||
+      membership.operationId !== operationId
+    ) {
+      return false;
+    }
+    delete this.panesById[paneId];
+    this.dispatchPaneMembership(paneId, {
+      type: 'disposalCompleted',
+      operationId
+    });
+    this.assertInvariants();
+    return true;
   }
 
   setPaneKind(
@@ -252,6 +316,15 @@ export class WorkspaceStore {
           `Visible pane is missing state: ${paneId}`
         );
       }
+      const membership = this.getPaneMembership(paneId);
+      if (
+        membership.kind !== 'ready' &&
+        membership.kind !== 'closing'
+      ) {
+        throw new Error(
+          `Visible pane has invalid membership: ${paneId} (${membership.kind})`
+        );
+      }
     }
     const storedPaneIds = Object.keys(this.panesById).filter(
       (paneId) =>
@@ -259,15 +332,19 @@ export class WorkspaceStore {
           this.panesById[paneId as NotepadPaneId]
         )
     ) as NotepadPaneId[];
-    if (
-      storedPaneIds.length !== this.paneOrder.length ||
-      storedPaneIds.some(
-        (paneId) => !this.paneOrder.includes(paneId)
-      )
-    ) {
-      throw new Error(
-        'Workspace pane records must match pane order.'
-      );
+    for (const paneId of storedPaneIds) {
+      const membership = this.getPaneMembership(paneId);
+      const visible = this.paneOrder.includes(paneId);
+      if (
+        (visible &&
+          membership.kind !== 'ready' &&
+          membership.kind !== 'closing') ||
+        (!visible && membership.kind !== 'retiring')
+      ) {
+        throw new Error(
+          `Pane record has invalid membership: ${paneId} (${membership.kind})`
+        );
+      }
     }
   }
 

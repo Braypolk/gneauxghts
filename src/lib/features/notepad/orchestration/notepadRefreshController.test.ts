@@ -145,6 +145,9 @@ describe('notepad refresh controller', () => {
 
     expect(harness.note.externalSync).toEqual({
       kind: 'conflict',
+      sequence: 1,
+      conflictId: 1,
+      phase: 'awaitingChoice',
       external: {
         kind: 'deletion',
         source: 'watcher',

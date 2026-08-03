@@ -11,7 +11,13 @@ import { createWorkspacePaneController } from './workspacePaneController';
 import {
   createPaneNavigationTransitionPipeline
 } from './paneNavigationTransitionPipeline';
+import {
+  createDocumentDepartureController
+} from './documentDepartureController';
 import type { NotepadCommandsDeps } from './notepadCommandFacades';
+import {
+  clearLastOpenedNote
+} from '$lib/features/notepad/session/session';
 
 export type { NotepadCommandsDeps } from './notepadCommandFacades';
 export type {
@@ -60,6 +66,19 @@ export function createNotepadCommands<TPaneId extends string>(
       ensurePaneEditors:
         paneLifecycle.ensurePaneEditors
     });
+  const documentDeparture =
+    createDocumentDepartureController<TPaneId>({
+      getPaneDocument: panes.getPaneDocument,
+      flushAllPendingCursorSaves:
+        documents.flushAllPendingCursorSaves,
+      saveCursorPositionForDocument:
+        documents.saveCursorPositionForDocument,
+      cancelPendingAutosave:
+        persistence.cancelPendingAutosave,
+      enqueueSave: persistence.enqueueSave,
+      getNoteSaveQueue: persistence.getNoteSaveQueue,
+      clearLastOpenedNote
+    });
 
   let noteCommands!: ReturnType<
     typeof createNoteCommandController<TPaneId>
@@ -85,17 +104,13 @@ export function createNotepadCommands<TPaneId extends string>(
     getPaneTitleInput: panes.getPaneTitleInput,
     activatePaneSession: panes.activatePaneSession,
     setPaneKind: workspace.setPaneKind,
-    saveCursorPosition:
-      documents.saveCursorPositionForDocument,
-    cancelPendingAutosave:
-      persistence.cancelPendingAutosave,
-    enqueueSave: persistence.enqueueSave,
     loadRecentNotes: derivedViews.loadRecentNotes,
     openNotePath,
     paneLifecycle,
     updateSelectedRelatedText:
       panes.updateSelectedRelatedText,
     focusPaneAfterShortcut,
+    documentDeparture,
     transitions
   });
 
@@ -103,11 +118,14 @@ export function createNotepadCommands<TPaneId extends string>(
     state,
     maxVisiblePanes,
     getPaneOrder: workspace.getPaneOrder,
-    addWorkspacePane: workspace.addPane,
+    getPaneMembership: workspace.getPaneMembership,
+    dispatchPaneMembership: workspace.dispatchPaneMembership,
+    completeWorkspacePaneCreation:
+      workspace.completePaneCreation,
     canRemoveWorkspacePane: workspace.canRemovePane,
-    removeWorkspacePane: workspace.removePane,
-    finalizeWorkspacePaneRemoval:
-      workspace.finalizePaneRemoval,
+    retireWorkspacePane: workspace.retirePane,
+    completeWorkspacePaneDisposal:
+      workspace.completePaneDisposal,
     getActivePaneId: workspace.getActivePaneId,
     getNextPaneId: panes.getNextPaneId,
     getPaneKind: panes.getPaneKind,
@@ -118,7 +136,6 @@ export function createNotepadCommands<TPaneId extends string>(
     getPaneTitleInput: panes.getPaneTitleInput,
     focusPaneEditorAtEnd: panes.focusPaneEditorAtEnd,
     createPane: panes.createPane,
-    preparePaneClose: panes.preparePaneClose,
     disposePaneRuntime: panes.disposePaneRuntime,
     activatePaneSession: panes.activatePaneSession,
     activatePane,
@@ -152,6 +169,7 @@ export function createNotepadCommands<TPaneId extends string>(
     onNavigationBlocked: deps.onNavigationBlocked,
     onDocumentLeaving: deps.onDocumentLeaving,
     clearSearch: derivedViews.clearSearch,
+    documentDeparture,
     transitions
   });
 
@@ -173,6 +191,7 @@ export function createNotepadCommands<TPaneId extends string>(
       locationHistory.bumpLocationHistoryEpoch,
     setPaneKind: workspacePaneCommands.setPaneKind,
     focusPane: focusPaneAfterShortcut,
+    documentDeparture,
     transitions
   });
 

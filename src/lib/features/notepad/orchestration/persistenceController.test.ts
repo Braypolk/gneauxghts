@@ -7,11 +7,11 @@ import {
 import type { SessionSnapshot } from "$lib/features/notepad/session/session";
 import {
   applySessionSnapshotToDocument,
-  captureExternalSnapshotConflict,
   getDocumentNoteId,
   getDocumentPath,
   updateDocumentMarkdown,
 } from "$lib/features/notepad/document/documentState";
+import { captureExternalSnapshotForTest } from "$lib/features/notepad/document/documentExternalSyncTestSupport";
 
 function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
   return {
@@ -267,7 +267,7 @@ describe("persistenceController", () => {
 
   it("does not persist across an unresolved external conflict", async () => {
     const note = dirtyNote();
-    captureExternalSnapshotConflict(
+    captureExternalSnapshotForTest(
       note,
       snapshot({
         bodyMarkdown: "external body",

@@ -3,46 +3,14 @@ use crate::{
     index::AppState,
     proposals::{
         commit_note_creation_at_path, commit_note_review as commit_review,
-        plan_agent_creation_commit, plan_agent_update_commit, preview_note_change,
-        preview_note_creation, CommitNoteReviewResult, CreationProposalPreview, ProposalPreview,
-        ProposedTextEdit,
+        plan_agent_creation_commit, plan_agent_update_commit, CommitNoteReviewResult,
+        ProposalPreview,
     },
     services::PostCommitNoteMutationService,
     state::notes_root,
 };
 use std::path::PathBuf;
 use tauri::State;
-
-#[tauri::command]
-pub(crate) fn preview_note_change_proposal(
-    path: String,
-    edits: Vec<ProposedTextEdit>,
-) -> Result<ProposalPreview, String> {
-    let notes_dir = notes_root()?;
-    preview_note_change(&notes_dir, &path, &edits)
-}
-
-#[tauri::command]
-pub(crate) fn preview_note_creation_proposal(
-    title: String,
-    markdown: String,
-) -> Result<CreationProposalPreview, String> {
-    preview_note_creation(&notes_root()?, &title, &markdown)
-}
-
-#[tauri::command]
-pub(crate) fn commit_note_review(
-    state: State<'_, AppState>,
-    path: String,
-    expected_base_hash: String,
-    markdown: String,
-) -> Result<CommitNoteReviewResult, String> {
-    let notes_dir = notes_root()?;
-    let fallback_markdown = markdown.clone();
-    let result = commit_review(&notes_dir, path, expected_base_hash, markdown)?;
-    synchronize_applied_change(&state, &result, fallback_markdown);
-    Ok(result)
-}
 
 #[tauri::command]
 pub(crate) fn commit_agent_proposal(

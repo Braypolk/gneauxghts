@@ -2,18 +2,18 @@ import { describe, expect, it } from 'vitest';
 import type { ProposalReviewSessionSnapshot } from '$lib/features/proposals/types';
 import type { ChatAgentProposal } from './types';
 import {
-  proposalIdFromReviewSource,
   reviewBelongsToConversation
 } from './proposalVisibility';
 
 const review: ProposalReviewSessionSnapshot = {
-  source: 'chat:proposal-1',
-  changes: [],
-  activeChangeId: null,
+  proposalId: 'proposal-1',
+  notePath: '/vault/Plan.md',
+  title: 'Plan',
+  totalHunks: 1,
+  unresolvedHunks: 1,
   isApplying: false,
   isConflicted: false,
-  error: null,
-  reviewHunks: null
+  error: null
 };
 
 const proposal: ChatAgentProposal = {
@@ -34,12 +34,6 @@ const proposal: ChatAgentProposal = {
 };
 
 describe('chat proposal review visibility', () => {
-  it('extracts only durable Chat proposal sources', () => {
-    expect(proposalIdFromReviewSource('chat:proposal-1')).toBe('proposal-1');
-    expect(proposalIdFromReviewSource('chat')).toBeNull();
-    expect(proposalIdFromReviewSource('fixture')).toBeNull();
-  });
-
   it('shows the review only in the conversation that owns the proposal', () => {
     expect(
       reviewBelongsToConversation(review, [proposal], 'conversation-1')

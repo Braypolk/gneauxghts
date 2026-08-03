@@ -62,8 +62,8 @@ export function createPaneControllers<TPaneId extends string>(
     getEditorRoot: () => deps.getPaneRuntime(paneId).refs.editorRoot,
     getDocumentSession: () => deps.getPaneDocument(paneId),
     setIsEditorReady: (value) => deps.getPaneRuntime(paneId).setIsEditorReady(value),
-    setIsApplyingExternalContent: (value) =>
-      deps.getPaneRuntime(paneId).setIsApplyingExternalContent(value),
+    setIsApplyingProgrammaticUpdate: (value) =>
+      deps.getPaneRuntime(paneId).setIsApplyingProgrammaticUpdate(value),
     handleEditorMarkdownChange: deps.handleEditorMarkdownChange,
     getSharedEditorResources: (document: NoteDraftState): SharedEditorResources =>
       getSharedEditorResources(document),

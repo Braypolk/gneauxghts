@@ -18,6 +18,13 @@ function sourceFile(relativePath: string) {
   );
 }
 
+function sourceText(relativePath: string) {
+  return readFileSync(
+    `${repositoryRoot}/${relativePath}`,
+    'utf8'
+  );
+}
+
 function propertyName(
   name: ts.PropertyName | ts.BindingName | undefined
 ): string | null {
@@ -157,6 +164,194 @@ describe('architecture fitness: notepad state ownership', () => {
       'operation',
       'externalSync'
     ]);
+  });
+});
+
+describe('architecture fitness: content operation machines', () => {
+  it('keeps chat operation booleans as derived projections', () => {
+    const controller = sourceText(
+      'src/lib/features/chat/controller.svelte.ts'
+    );
+    const fields = classProperties(
+      'src/lib/features/chat/controller.svelte.ts',
+      'ChatControllerStore'
+    );
+
+    expect(fields).toEqual(
+      expect.arrayContaining(['machine'])
+    );
+    expect(fields).not.toEqual(
+      expect.arrayContaining([
+        'controllerLifecycle',
+        'selectionOperation',
+        'requestOperation',
+        'isInitializing',
+        'isLoadingConversation',
+        'isSending',
+        'activity'
+      ])
+    );
+    expect(controller).toContain(
+      'const request = this.machine.request'
+    );
+    expect(controller).not.toContain(
+      'this.conversation?.activeRequestId'
+    );
+    expect(controller).not.toContain(
+      'sequence !== this.#initializeSequence'
+    );
+  });
+
+  it('routes document exits through the shared departure phase', () => {
+    const noteCommands = sourceText(
+      'src/lib/features/notepad/orchestration/noteCommandController.ts'
+    );
+    const workspaceCommands = sourceText(
+      'src/lib/features/notepad/orchestration/workspacePaneController.ts'
+    );
+    const session = sourceText(
+      'src/lib/features/notepad/session/session.ts'
+    );
+
+    expect(noteCommands).toContain(
+      'deps.documentDeparture.prepare'
+    );
+    expect(workspaceCommands).toContain(
+      'deps.documentDeparture.prepare'
+    );
+    expect(session).not.toContain('remember_note');
+    expect(noteCommands).not.toContain("operation: 'opening'");
+    expect(noteCommands).not.toContain('bumpOpenRequestGeneration');
+    expect(noteCommands).not.toContain('getOpenRequestGeneration');
+  });
+});
+
+describe('architecture fitness: document external-sync machine', () => {
+  it('keeps external-sync transitions behind the reducer boundary', () => {
+    const machine = sourceText(
+      'src/lib/features/notepad/document/documentExternalSyncMachine.ts'
+    );
+    const documentState = sourceText(
+      'src/lib/features/notepad/document/documentState.ts'
+    );
+    const conflictController = sourceText(
+      'src/lib/features/notepad/document/documentConflictController.ts'
+    );
+
+    expect(machine).toContain(
+      'transitionDocumentExternalSync'
+    );
+    expect(machine).toContain("phase: 'awaitingChoice'");
+    expect(machine).toContain("phase: 'applyingExternal'");
+    expect(machine).not.toContain("kind: 'inSync'");
+    expect(machine).not.toContain("kind: 'dirty'");
+    expect(machine).not.toContain("type: 'workingChanged'");
+    expect(documentState).toContain(
+      '!documentHasCleanBuffer(document)'
+    );
+    expect(
+      documentState.match(/document\.externalSync\s*=/g) ?? []
+    ).toHaveLength(1);
+    expect(documentState).toContain(
+      'transitionDocumentExternalSync('
+    );
+    for (const removedWrapper of [
+      'captureExternalSnapshotConflict',
+      'captureExternalDeletionConflict',
+      'resolveConflictKeepingWorking',
+      'beginApplyingExternalConflict',
+      'failApplyingExternalConflict',
+      'isApplyingExternalConflictCurrent'
+    ]) {
+      expect(documentState).not.toContain(removedWrapper);
+    }
+    expect(conflictController).not.toMatch(
+      /document\.externalSync\s*=/
+    );
+  });
+});
+
+describe('architecture fitness: pane lifecycle machine', () => {
+  it('owns membership and editor-runtime transitions without legacy lifecycle commands', () => {
+    const machine = sourceText(
+      'src/lib/features/notepad/pane/paneLifecycleMachine.ts'
+    );
+    const workspace = sourceText(
+      'src/lib/features/notepad/workspace/workspaceStore.svelte.ts'
+    );
+    const editorLifecycle = sourceText(
+      'src/lib/features/notepad/pane/paneEditorLifecycle.ts'
+    );
+
+    expect(machine).toContain('transitionPaneMembership');
+    expect(machine).toContain('transitionPaneEditorRuntime');
+    expect(workspace).toContain('transitionPaneMembership(');
+    expect(editorLifecycle).toContain(
+      'transitionPaneEditorRuntime('
+    );
+    expect(editorLifecycle).not.toContain('#disposed');
+    expect(editorLifecycle).not.toContain(
+      'synchronizeMountedResource'
+    );
+    expect(editorLifecycle).toContain(
+      'assertStableResourceInvariant'
+    );
+    expect(workspace).not.toContain('retiringPanesById');
+    expect(
+      workspace.match(/paneMembershipById\.set\(/g) ?? []
+    ).toHaveLength(2);
+    expect(
+      editorLifecycle.match(/this\.#state\s*=/g) ?? []
+    ).toHaveLength(1);
+    for (const removedCommand of [
+      'addPane(',
+      'removePane(',
+      'finalizePaneRemoval('
+    ]) {
+      expect(workspace).not.toContain(removedCommand);
+    }
+  });
+});
+
+describe('architecture fitness: proposal review workflow', () => {
+  it('has one workflow owner and no legacy review flags or hold store', () => {
+    const machine = sourceText(
+      'src/lib/features/proposals/proposalReviewMachine.ts'
+    );
+    const session = sourceText(
+      'src/lib/features/proposals/reviewSession.svelte.ts'
+    );
+    const orchestration = sourceText(
+      'src/lib/features/proposals/proposalOrchestration.ts'
+    );
+
+    for (const phase of [
+      'opening',
+      'reviewing',
+      'committing',
+      'dismissing',
+      'conflicted'
+    ]) {
+      expect(machine).toContain(`'${phase}'`);
+    }
+    expect(session).toContain(
+      'transitionProposalReviewWorkflow(workflow, event)'
+    );
+    expect(orchestration).not.toMatch(
+      /\b(committing|conflicted|reloadConfirming): boolean/
+    );
+    expect(orchestration).not.toContain('let active:');
+    expect(session).not.toContain('setApplying');
+    expect(session).not.toContain('setConflicted');
+    expect(session).not.toContain('activeChangeId');
+    expect(session).not.toContain('setReviewHunks');
+    expect(orchestration).not.toContain('showChange:');
+    expect(orchestration).not.toContain('keep: (');
+    expect(orchestration).not.toContain('undo: (');
+    expect(machine).not.toContain('attachmentChanged');
+    expect(orchestration).not.toContain('reviewHold');
+    expect(machine).toContain("kind: 'confirmingDiscard'");
+    expect(machine).not.toContain('discardConfirmation');
   });
 });
 

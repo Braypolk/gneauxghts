@@ -1,38 +1,22 @@
 export type {
-  NoteChange,
   AppliedNoteChange,
-  ProposedTextEdit,
   ProposalPreview,
   ProposalPreviewHunk,
   CommitNoteReviewResult
 } from '$lib/types/proposals';
-export {
-  noteChangePath,
-  noteChangeTitle,
-  noteChangeProposedMarkdown,
-  fileNameTitle
-} from '$lib/types/proposals';
 
-export {
-  buildLineDiff,
-  buildCreateDiff,
-  buildDeleteDiff,
-  type DiffLine,
-  type DiffLineKind,
-  type DiffHunk,
-  type NoteDiffModel
-} from './diffModel';
-
-export {
-  previewNoteChangeProposal,
-  commitNoteReview,
-  proposalErrorMessage
-} from './api';
 export {
   createProposalReviewSession,
   proposalReviewSession,
+  shouldSuppressAutosaveForDocument,
   type ProposalReviewSession
 } from './reviewSession.svelte';
+export {
+  createProposalReviewWorkflowState,
+  transitionProposalReviewWorkflow,
+  type ProposalReviewWorkflowState,
+  type ProposalReviewWorkflowEvent
+} from './proposalReviewMachine';
 export {
   createProposalReviewExtension,
   proposalTransaction,
@@ -40,13 +24,6 @@ export {
   type ProposalReviewState,
   type ReviewHunkState
 } from './reviewExtension';
-export {
-  reviewHoldStore,
-  createReviewHoldStore,
-  shouldSuppressAutosaveForDocument,
-  type ReviewHoldStore,
-  type ReviewDocumentHold
-} from './reviewHold.svelte';
 export {
   enterProposalReviewView,
   exitProposalReviewView
@@ -57,8 +34,7 @@ export {
   type ProposalOrchestrationDeps
 } from './proposalOrchestration';
 export type {
-  PendingProposalChange,
-  ProposalChangeStatus,
-  ProposalReviewSessionSnapshot,
-  ProposalReviewActions
+  DurableProposalReviewRequest,
+  ProposalReviewRuntime,
+  ProposalReviewSessionSnapshot
 } from './types';

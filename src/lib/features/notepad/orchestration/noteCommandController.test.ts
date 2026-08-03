@@ -5,7 +5,8 @@ import {
   type NoteKey
 } from '$lib/features/notepad/state/noteStore';
 import {
-  applySessionSnapshotToDocument
+  applySessionSnapshotToDocument,
+  updateDocumentMarkdown
 } from '$lib/features/notepad/document/documentState';
 import {
   createEmptySessionSnapshot,
@@ -204,7 +205,7 @@ describe('open-note persistence barrier', () => {
       )
     );
     const saveFailure = new Error('save failed');
-    const enqueueSave = vi.fn(async () => {
+    const enqueueSave = vi.fn(async (_document?: typeof previous) => {
       throw saveFailure;
     });
     const resetPaneCommand = vi.fn();
@@ -245,6 +246,12 @@ describe('open-note persistence barrier', () => {
         }),
         touchLocation: vi.fn(),
         isLocationTouchSuppressed: () => false,
+        documentDeparture: {
+          prepare: async () => {
+            await enqueueSave(previous);
+            return previous;
+          }
+        },
         transitions
       } as never);
 
@@ -256,7 +263,7 @@ describe('open-note persistence barrier', () => {
 
     expect(enqueueSave).toHaveBeenCalledWith(previous);
     expect(openNoteSession).not.toHaveBeenCalled();
-    expect(resetPaneCommand).toHaveBeenCalledOnce();
+    expect(resetPaneCommand).not.toHaveBeenCalled();
   });
 
   it('queues target content binding even while editor readiness is still false', async () => {
@@ -274,14 +281,8 @@ describe('open-note persistence barrier', () => {
     );
     const state = createNotepadState<PaneId>(previous);
     let paneNoteKey: NoteKey = previous.key;
-    let openGeneration = 0;
     const runtime = {
-      ui: { isEditorReady: false },
-      bumpOpenRequestGeneration: () => {
-        openGeneration += 1;
-        return openGeneration;
-      },
-      getOpenRequestGeneration: () => openGeneration
+      ui: { isEditorReady: false }
     };
     const replacePaneDocument = vi.fn(
       async () => undefined
@@ -349,6 +350,9 @@ describe('open-note persistence barrier', () => {
         touchLocation: vi.fn(),
         isLocationTouchSuppressed: () => false,
         bumpLocationHistoryEpoch: vi.fn(),
+        documentDeparture: {
+          prepare: vi.fn(async () => previous)
+        },
         transitions
       } as never);
 
@@ -369,6 +373,119 @@ describe('open-note persistence barrier', () => {
       { restoreCursor: true }
     );
   });
+
+  it('allows two panes sharing a document to open independently', async () => {
+    const shared = createNoteDraftState(
+      persistedSnapshot(
+        'shared',
+        '/vault/shared.md',
+        'shared content'
+      )
+    );
+    const state = createNotepadState<PaneId>(shared);
+    const paneNoteKeys: Record<PaneId, NoteKey> = {
+      left: shared.key,
+      right: shared.key
+    };
+    let activePane: PaneId = 'left';
+    const leftOpen = deferred<SessionSnapshot>();
+    const rightOpen = deferred<SessionSnapshot>();
+    vi.mocked(openNoteSession).mockImplementation(
+      async (_noteId, path) =>
+        path === '/vault/left-target.md'
+          ? leftOpen.promise
+          : rightOpen.promise
+    );
+    const transitions =
+      createPaneNavigationTransitionPipeline<PaneId>({
+        assertWorkspaceInvariants: vi.fn(),
+        ensurePaneEditors: vi.fn(async () => undefined)
+      });
+    const controller = createNoteCommandController<PaneId>({
+      base: {
+        state,
+        workspace: {
+          getActivePaneId: () => activePane,
+          resetPaneCommand: vi.fn(),
+          getPaneState: (paneId: PaneId) => ({
+            noteKey: paneNoteKeys[paneId]
+          }),
+          setPaneNoteKey: (paneId: PaneId, noteKey: NoteKey) => {
+            paneNoteKeys[paneId] = noteKey;
+          },
+          isNoteReferenced: (noteKey: NoteKey) =>
+            Object.values(paneNoteKeys).includes(noteKey),
+          setPaneKind: vi.fn(() => true)
+        },
+        panes: {
+          getPaneDocument: (paneId: PaneId) =>
+            state.notesByKey[paneNoteKeys[paneId]],
+          getPaneKind: () => 'editor',
+          closeWikilinkAutocomplete: vi.fn(),
+          updateSelectedRelatedText: vi.fn(),
+          getNoteByKey: (noteKey: NoteKey) =>
+            state.notesByKey[noteKey] ?? null
+        },
+        persistence: {
+          cancelPendingAutosave: vi.fn(),
+          enqueueSave: vi.fn(async () => undefined)
+        },
+        derivedViews: {
+          setRecentlyForgotten: vi.fn(),
+          clearSelectedRelatedText: vi.fn(),
+          scheduleRelatedIfNeeded: vi.fn()
+        },
+        documents: {
+          replacePaneDocument: vi.fn(async () => undefined)
+        },
+        paneLifecycle: {}
+      },
+      blurFocusedPaneTitle: vi.fn(),
+      capturePaneLocation: () => null,
+      touchLocation: vi.fn(),
+      isLocationTouchSuppressed: () => false,
+      bumpLocationHistoryEpoch: vi.fn(),
+      documentDeparture: {
+        prepare: vi.fn(async () => shared)
+      },
+      transitions
+    } as never);
+
+    const openingLeft = controller.openNotePath(
+      '/vault/left-target.md',
+      { currentNoteAlreadySaved: true, focusEditorAfterOpen: false }
+    );
+    activePane = 'right';
+    const openingRight = controller.openNotePath(
+      '/vault/right-target.md',
+      { currentNoteAlreadySaved: true, focusEditorAfterOpen: false }
+    );
+    leftOpen.resolve(
+      persistedSnapshot(
+        'left-target',
+        '/vault/left-target.md',
+        'left target'
+      )
+    );
+    rightOpen.resolve(
+      persistedSnapshot(
+        'right-target',
+        '/vault/right-target.md',
+        'right target'
+      )
+    );
+    await Promise.all([openingLeft, openingRight]);
+
+    expect(state.notesByKey[paneNoteKeys.left].identity).toMatchObject({
+      kind: 'persisted',
+      path: '/vault/left-target.md'
+    });
+    expect(state.notesByKey[paneNoteKeys.right].identity).toMatchObject({
+      kind: 'persisted',
+      path: '/vault/right-target.md'
+    });
+    expect(shared.operation.kind).toBe('idle');
+  });
 });
 
 describe('app-owned proposal commit acknowledgement', () => {
@@ -384,8 +501,7 @@ describe('app-owned proposal commit acknowledgement', () => {
       'After'
     );
     const document = createNoteDraftState(before);
-    document.working.markdown = 'After';
-    document.externalSync = { kind: 'dirty' };
+    updateDocumentMarkdown(document, 'After');
     vi.mocked(readNoteSession).mockResolvedValueOnce(
       committed
     );
@@ -445,7 +561,8 @@ describe('app-owned proposal commit acknowledgement', () => {
     );
     expect(document.working.markdown).toBe('After');
     expect(document.externalSync).toEqual({
-      kind: 'inSync'
+      kind: 'noConflict',
+      sequence: 0
     });
     expect(applySnapshot).toHaveBeenCalledWith(
       document,
@@ -455,6 +572,118 @@ describe('app-owned proposal commit acknowledgement', () => {
         preserveDraft: false,
         autosave: false
       }
+    );
+  });
+});
+
+describe('new-note location history', () => {
+  it('records the newly remembered note before replacing it with a fresh draft', async () => {
+    const draft = createNoteDraftState({
+      ...createEmptySessionSnapshot(),
+      title: 'Draft title',
+      bodyMarkdown: 'Draft body'
+    });
+    const state = createNotepadState<PaneId>(draft);
+    let paneNoteKey = draft.key;
+    const remembered = persistedSnapshot(
+      'remembered-note',
+      '/vault/Remembered.md',
+      'Draft body'
+    );
+    const saved = createNoteDraftState(remembered);
+    const touchLocation = vi.fn();
+    const beginPaneCommand = vi.fn();
+    const prepareDeparture = vi.fn(async () => {
+      state.notesByKey[saved.key] = saved;
+      paneNoteKey = saved.key;
+      return saved;
+    });
+    const transitions =
+      createPaneNavigationTransitionPipeline<PaneId>({
+        assertWorkspaceInvariants: vi.fn(),
+        ensurePaneEditors: vi.fn(async () => undefined)
+      });
+    const controller = createNoteCommandController<PaneId>({
+      base: {
+        state,
+        workspace: {
+          getActivePaneId: () => 'left',
+          getPaneOrder: () => ['left'],
+          setPaneNoteKey: (_paneId: PaneId, noteKey: NoteKey) => {
+            paneNoteKey = noteKey;
+          },
+          isNoteReferenced: (noteKey: NoteKey) =>
+            paneNoteKey === noteKey,
+          beginPaneCommand
+        },
+        panes: {
+          getPaneDocument: () => state.notesByKey[paneNoteKey],
+          getNavigationDocument: () =>
+            state.notesByKey[paneNoteKey],
+          getPaneKind: () => 'editor',
+          activatePaneSession: vi.fn(),
+          updateSelectedRelatedText: vi.fn(),
+          focusPaneEditorAtEnd: vi.fn()
+        },
+        persistence: {
+          cancelPendingAutosave: vi.fn(),
+          getNoteSaveQueue: vi.fn(async () => undefined),
+          invalidatePendingSaveResults: vi.fn()
+        },
+        derivedViews: {
+          setRecentlyForgotten: vi.fn(),
+          clearSearch: vi.fn(),
+          clearSelectedRelatedText: vi.fn(),
+          scheduleSearchIfNeeded: vi.fn(),
+          scheduleRelatedIfNeeded: vi.fn(),
+          loadRecentNotes: vi.fn(async () => [])
+        },
+        documents: {
+          flushAllPendingCursorSaves: vi.fn(),
+          saveCursorPositionForDocument: vi.fn(),
+          replacePaneDocument: vi.fn(async () => undefined)
+        },
+        paneLifecycle: {}
+      },
+      blurFocusedPaneTitle: vi.fn(),
+      ensureLocationMruSeeded: vi.fn(async () => undefined),
+      capturePaneLocation: () => {
+        const identity =
+          state.notesByKey[paneNoteKey].identity;
+        return identity.kind === 'persisted'
+          ? {
+              kind: 'editor' as const,
+              noteId: identity.noteId,
+              notePath: identity.path
+            }
+          : null;
+      },
+      touchLocation,
+      touchCurrentLocation: vi.fn(),
+      setPaneKind: vi.fn(async () => undefined),
+      documentDeparture: {
+        prepare: prepareDeparture
+      },
+      transitions
+    } as never);
+
+    await controller.startNewNoteFlow();
+
+    expect(touchLocation).toHaveBeenCalledWith('left', {
+      kind: 'editor',
+      noteId: 'remembered-note',
+      notePath: '/vault/Remembered.md'
+    });
+    expect(prepareDeparture).toHaveBeenCalledWith(
+      'left',
+      draft,
+      { clearLastOpened: true }
+    );
+    expect(state.notesByKey[paneNoteKey].savedBaseline).toBeNull();
+    expect(beginPaneCommand).toHaveBeenCalledWith(
+      'left',
+      paneNoteKey,
+      'start'
     );
   });
 });

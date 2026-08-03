@@ -416,12 +416,94 @@ describe('createChatController', () => {
     expect(controller.getSnapshot().isSending).toBe(false);
   });
 
+  it('ignores a stale terminal event from an older request in the current conversation', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    fake.emit('chat://started', {
+      requestId: 'request-new',
+      conversationId: 'conversation-1',
+      messageId: 'message-new',
+      message: message({
+        id: 'message-new',
+        requestId: 'request-new'
+      })
+    });
+    fake.emit('chat://completed', {
+      requestId: 'request-old',
+      conversationId: 'conversation-1',
+      messageId: 'message-old',
+      message: message({
+        id: 'message-old',
+        requestId: 'request-old',
+        status: 'completed'
+      })
+    });
+
+    expect(controller.getSnapshot().conversation?.activeRequestId).toBe(
+      'request-new'
+    );
+    expect(controller.getSnapshot().isSending).toBe(true);
+    expect(
+      controller
+        .getSnapshot()
+        .conversation?.messages.some(
+          (candidate) => candidate.id === 'message-old'
+        )
+    ).toBe(false);
+  });
+
+  it('keeps the newest conversation when open results arrive out of order', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    let resolveSlow!: (value: ChatConversation) => void;
+    const slow = new Promise<ChatConversation>((resolve) => {
+      resolveSlow = resolve;
+    });
+    vi.mocked(fake.api.getConversation).mockImplementation(async (id) => {
+      if (id === 'conversation-slow') return slow;
+      return conversation({ id, title: 'Newest' });
+    });
+
+    const slowOpen = controller.openConversation('conversation-slow');
+    const fastOpen = controller.openConversation('conversation-fast');
+    await fastOpen;
+    resolveSlow(
+      conversation({ id: 'conversation-slow', title: 'Stale' })
+    );
+    await slowOpen;
+
+    expect(controller.getSnapshot().conversation?.id).toBe(
+      'conversation-fast'
+    );
+  });
+
   it('disposes all stream listeners', async () => {
     const fake = fakeApi();
     const controller = createChatController(fake.api);
     await controller.initialize();
     controller.dispose();
     expect(fake.handlers.size).toBe(0);
+  });
+
+  it('does not invoke chat APIs after disposal', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    vi.mocked(fake.api.getConversation).mockClear();
+    vi.mocked(fake.api.sendMessage).mockClear();
+
+    controller.dispose();
+
+    await expect(
+      controller.openConversation('conversation-2')
+    ).resolves.toBeNull();
+    await expect(controller.send('after dispose')).resolves.toBe(false);
+    expect(fake.api.getConversation).not.toHaveBeenCalled();
+    expect(fake.api.sendMessage).not.toHaveBeenCalled();
   });
 
   it('persists and revokes approved note grants through controller state', async () => {

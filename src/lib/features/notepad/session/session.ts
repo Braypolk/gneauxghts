@@ -157,21 +157,8 @@ export async function markNoteOpened(noteId: string) {
   await invoke("mark_note_opened", { noteId });
 }
 
-export async function rememberNoteSession(
-  title: string,
-  markdown: string,
-  currentPath: string | null,
-  { clearLastOpened = true }: { clearLastOpened?: boolean } = {},
-) {
-  const commitWarning = await invoke<CommittedMutationWarning | null>("remember_note", {
-    title,
-    markdown,
-    currentPath,
-    clearLastOpened,
-  });
-  if (commitWarning) {
-    console.warn("Note was remembered with incomplete projections:", commitWarning);
-  }
+export async function clearLastOpenedNote() {
+  await invoke("clear_last_opened_note");
 }
 
 function formatPastedImageTimestamp(date: Date) {

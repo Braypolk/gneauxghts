@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  captureExternalSnapshotConflict,
   createDocumentState,
   updateDocumentMarkdown
 } from '$lib/features/notepad/document/documentState';
+import { captureExternalSnapshotForTest } from '$lib/features/notepad/document/documentExternalSyncTestSupport';
 import {
   createEmptySessionSnapshot
 } from '$lib/features/notepad/session/session';
@@ -31,7 +31,7 @@ describe('pane view model document status', () => {
       'path:/vault/Note.md'
     );
     updateDocumentMarkdown(document, 'local edits');
-    captureExternalSnapshotConflict(
+    captureExternalSnapshotForTest(
       document,
       {
         ...saved,

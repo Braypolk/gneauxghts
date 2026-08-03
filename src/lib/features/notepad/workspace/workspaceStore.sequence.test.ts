@@ -6,6 +6,10 @@ import {
 import type {
   NoteKey
 } from '$lib/features/notepad/document/documentState';
+import {
+  createReadyPaneForTest,
+  retirePaneForTest
+} from './workspaceStoreTestSupport';
 
 const first = 'notepad-pane-1' as NotepadPaneId;
 const second = 'notepad-pane-2' as NotepadPaneId;
@@ -26,7 +30,11 @@ function snapshotWorkspace(workspace: WorkspaceStore) {
     panes: workspace.paneOrder.map((paneId) => ({
       ...workspace.getPaneState(paneId)
     })),
-    referencedNoteKeys: workspace.listReferencedNoteKeys()
+    referencedNoteKeys: workspace.listReferencedNoteKeys(),
+    memberships: [first, second, third].map((paneId) => ({
+      paneId,
+      state: workspace.getPaneMembership(paneId)
+    }))
   };
 }
 
@@ -41,6 +49,17 @@ function assertWorkspaceInvariants(workspace: WorkspaceStore) {
   }
   if (!order.includes(workspace.activePaneId)) {
     throw new Error('active pane is not visible');
+  }
+  for (const paneId of order) {
+    const membership = workspace.getPaneMembership(paneId);
+    if (
+      membership.kind !== 'ready' &&
+      membership.kind !== 'closing'
+    ) {
+      throw new Error(
+        `visible pane ${paneId} is ${membership.kind}`
+      );
+    }
   }
   const referenced = [
     ...new Set(
@@ -73,7 +92,7 @@ function removeCommand(
         index === -1
           ? null
           : before[index + 1] ?? before[index - 1] ?? null;
-      const removed = workspace.removePane(paneId);
+      const removed = retirePaneForTest(workspace, paneId);
       if (
         removed &&
         activeBefore === paneId &&
@@ -91,25 +110,25 @@ const commands: WorkspaceCommand[] = [
   {
     label: 'add:second:editor',
     apply: (workspace) => {
-      workspace.addPane(second, noteA, 'editor');
+      createReadyPaneForTest(workspace, second, noteA, 'editor');
     }
   },
   {
     label: 'add:second:chat',
     apply: (workspace) => {
-      workspace.addPane(second, noteA, 'chat');
+      createReadyPaneForTest(workspace, second, noteA, 'chat');
     }
   },
   {
     label: 'add:third:editor',
     apply: (workspace) => {
-      workspace.addPane(third, noteB, 'editor');
+      createReadyPaneForTest(workspace, third, noteB, 'editor');
     }
   },
   {
     label: 'add:third:chat',
     apply: (workspace) => {
-      workspace.addPane(third, noteB, 'chat');
+      createReadyPaneForTest(workspace, third, noteB, 'chat');
     }
   },
   ...[first, second, third].map(
@@ -230,11 +249,11 @@ describe('WorkspaceStore generated command sequences', () => {
         first,
         'draft:sequence-root'
       );
-      workspace.addPane(second, noteA, 'editor');
-      workspace.addPane(third, noteB, 'editor');
+      createReadyPaneForTest(workspace, second, noteA, 'editor');
+      createReadyPaneForTest(workspace, third, noteB, 'editor');
       workspace.setActivePaneId(active);
 
-      workspace.removePane(close);
+      retirePaneForTest(workspace, close);
 
       expect(workspace.activePaneId).toBe(expected);
       assertWorkspaceInvariants(workspace);

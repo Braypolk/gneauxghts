@@ -4,12 +4,14 @@ export type PaneNavigationTransitionKind =
   | 'switch-pane'
   | 'change-pane-kind'
   | 'open-note'
+  | 'new-note'
   | 'restore-location'
   | 'pane-command';
 
 export type PaneNavigationTransitionPhase =
   | 'resolved'
   | 'guarded'
+  | 'document-departed'
   | 'history-captured'
   | 'prepared'
   | 'workspace-mutated'
@@ -47,9 +49,18 @@ export interface PaneNavigationTransitionRequest<
 > {
   kind: PaneNavigationTransitionKind;
   resolvePane: () => TPaneId | null;
-  guard?: (paneId: TPaneId) =>
+  onResolved?: (
+    paneId: TPaneId,
+    operationId: number
+  ) => void | Promise<void>;
+  guard?: (paneId: TPaneId, operationId: number) =>
     | PaneNavigationGuard
     | Promise<PaneNavigationGuard>;
+  /**
+   * Establishes the document's authoritative persisted identity and saves its
+   * cursor before history observes the location being left.
+   */
+  departDocument?: (paneId: TPaneId) => void | Promise<void>;
   captureHistory?: (paneId: TPaneId) => void | Promise<void>;
   prepare?: (paneId: TPaneId) => void | Promise<void>;
   isCurrent?: (paneId: TPaneId) => boolean;
@@ -132,8 +143,9 @@ export function createPaneNavigationTransitionPipeline<
       (request.isCurrent?.(paneId) ?? true);
 
     try {
+      await request.onResolved?.(paneId, operationId);
       const guard =
-        (await request.guard?.(paneId)) ??
+        (await request.guard?.(paneId, operationId)) ??
         ({ status: 'allow' } as const);
       if (guard.status !== 'allow') {
         return outcome(
@@ -146,6 +158,22 @@ export function createPaneNavigationTransitionPipeline<
         );
       }
       phases.push('guarded');
+
+      await request.departDocument?.(paneId);
+      if (request.departDocument) {
+        phases.push('document-departed');
+      }
+      if (!isCurrent()) {
+        await request.onStale?.(paneId);
+        return outcome(
+          operationId,
+          request,
+          paneId,
+          'stale',
+          phases,
+          { reason: 'A newer pane transition superseded this result.' }
+        );
+      }
 
       await request.captureHistory?.(paneId);
       if (request.captureHistory) {

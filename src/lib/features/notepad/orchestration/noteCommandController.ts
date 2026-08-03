@@ -9,7 +9,6 @@ import {
   hasContent,
   openNoteSession,
   readNoteSession,
-  rememberNoteSession,
   restoreForgottenNotes,
   type SessionSnapshot
 } from '$lib/features/notepad/session/session';
@@ -24,11 +23,10 @@ import {
 import { cleanupNoteRuntime } from '$lib/features/notepad/session/noteRuntime';
 import type { NotepadCommandsDeps } from './notepadCommandFacades';
 import {
-  beginDocumentOperation,
-  captureExternalSnapshotConflict,
-  completeDocumentOperation,
+  dispatchDocumentExternalSync,
+  dispatchDocumentOperation,
   externalSnapshotMatchesSavedBaseline,
-  failDocumentOperation,
+  externalDocumentSnapshotFromSession,
   getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
@@ -39,6 +37,9 @@ import {
 import type {
   PaneNavigationTransitionPipeline
 } from './paneNavigationTransitionPipeline';
+import type {
+  DocumentDepartureController
+} from './documentDepartureController';
 import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
 
 export interface OpenNoteOptions {
@@ -75,6 +76,7 @@ export interface NoteCommandControllerDeps<
     paneId: TPaneId,
     options?: { preferTitle?: boolean }
   ) => void;
+  documentDeparture: DocumentDepartureController<TPaneId>;
   transitions: PaneNavigationTransitionPipeline<TPaneId>;
 }
 
@@ -127,11 +129,15 @@ export function createNoteCommandController<
       if (!persistence.hasCleanBuffer(note)) {
         persistence.cancelPendingAutosave(note);
         persistence.invalidatePendingSaveResults(note);
-        captureExternalSnapshotConflict(
-          note,
-          session,
-          source
-        );
+        dispatchDocumentExternalSync(note, {
+          type: 'externalCaptured',
+          external: {
+            kind: 'snapshot',
+            source,
+            document:
+              externalDocumentSnapshotFromSession(session)
+          }
+        });
         return 'conflict' as const;
       }
 
@@ -314,10 +320,11 @@ export function createNoteCommandController<
     let forgottenPath: string | null = null;
 
     if (notePathToClear) {
-      const operationToken = beginDocumentOperation(
-        note,
-        'forgetting'
-      );
+      dispatchDocumentOperation(note, {
+        type: 'start',
+        operation: 'forgetting'
+      });
+      const operationToken = note.operation.token;
       try {
         const summary = await forgetNoteSession(
           notePathToClear,
@@ -331,15 +338,17 @@ export function createNoteCommandController<
         forgottenPath = summary?.forgottenPath ?? null;
       } catch (error) {
         console.error('Failed to forget note:', error);
-        failDocumentOperation(
-          note,
-          'forgetting',
+        dispatchDocumentOperation(note, {
+          type: 'fail',
           error,
-          operationToken
-        );
+          token: operationToken
+        });
         return;
       }
-      completeDocumentOperation(note, operationToken);
+      dispatchDocumentOperation(note, {
+        type: 'succeed',
+        token: operationToken
+      });
       deps.removeLocation({
         kind: 'editor',
         noteId: draft.currentNoteId,
@@ -377,35 +386,7 @@ export function createNoteCommandController<
         ]);
         const restoredPath = restoredNotes[0]?.restoredPath;
         if (!restoredPath) return;
-
-        const paneId = workspace.getActivePaneId();
-        const requestGeneration = panes
-          .getPaneRuntime(paneId)
-          .bumpOpenRequestGeneration();
-        const previousNote = panes.getNavigationDocument();
-        const session = await openNoteSession(null, restoredPath);
-        if (
-          panes
-            .getPaneRuntime(paneId)
-            .getOpenRequestGeneration() !== requestGeneration
-        ) {
-          return;
-        }
-        const restoredNote = adoptSnapshotForPane(
-          state,
-          workspace,
-          paneId,
-          session
-        );
-        derivedViews.setRecentlyForgotten(null);
-        await documents.replacePaneDocument(
-          paneId,
-          previousNote,
-          restoredNote,
-          { restoreCursor: true }
-        );
-        refreshDerivedViews();
-        void derivedViews.loadRecentNotes();
+        await openNotePath(restoredPath);
         return;
       } catch (error) {
         console.error('Failed to restore forgotten note:', error);
@@ -423,9 +404,9 @@ export function createNoteCommandController<
         lastSavedNoteId: null,
         lastSavedPath: null
       },
-      () =>
+      (markdown) =>
         documents.replaceEditorContent(
-          getDocumentMarkdown(note)
+          markdown
         ),
       { autosave: true }
     );
@@ -434,113 +415,123 @@ export function createNoteCommandController<
     void derivedViews.loadRecentNotes();
   }
 
-  async function rememberCurrentNote() {
-    return rememberCurrentNoteForPane(
-      panes.getNavigationPaneId()
-    );
-  }
-
-  async function rememberCurrentNoteForPane(paneId: TPaneId) {
-    documents.flushAllPendingCursorSaves();
-    const note = panes.getPaneDocument(paneId);
-    if (deps.base.canLeaveDocument?.(note) === false) {
-      deps.base.onNavigationBlocked?.();
-      return note;
-    }
-    documents.saveCursorPositionForDocument(note);
-    persistence.cancelPendingAutosave(note);
-    await persistence.getNoteSaveQueue(note.key);
-    const operationRevision = note.operation.revision;
-    const operationToken = beginDocumentOperation(
-      note,
-      'remembering'
-    );
-
-    try {
-      await rememberNoteSession(
-        getDocumentTitle(note),
-        getDocumentMarkdown(note),
-        getDocumentPath(note),
-        {
-          clearLastOpened:
-            panes.getNavigationDocument() === note
-        }
-      );
-    } catch (error) {
-      console.error('Failed to remember note:', error);
-      failDocumentOperation(
-        note,
-        'remembering',
-        error,
-        operationToken
-      );
-      return note;
-    }
-    if (
-      !isDocumentOperationCurrent(note, operationToken) ||
-      note.operation.revision !== operationRevision
-    ) {
-      completeDocumentOperation(note, operationToken);
-      return note;
-    }
-
-    completeDocumentOperation(note, operationToken);
-    derivedViews.setRecentlyForgotten(null);
-    persistence.invalidatePendingSaveResults(note);
-    persistence.cancelPendingAutosave(note);
-
-    const freshDraft = replacePaneReferenceWithFreshDraft(
-      state,
-      workspace,
-      paneId
-    );
-    await documents.replacePaneDocument(
-      paneId,
-      note,
-      freshDraft
-    );
-    removeNoteIfUnreferenced(
-      state,
-      workspace,
-      note.key
-    );
-    if (!state.notesByKey[note.key]) {
-      cleanupNoteRuntime(note.key);
-    }
-    derivedViews.clearSearch();
-    refreshDerivedViews();
-    void derivedViews.loadRecentNotes();
-    return freshDraft;
-  }
-
   async function startNewNoteFlow() {
-    let paneId = workspace.getActivePaneId();
+    const paneId = workspace.getActivePaneId();
     const startedInChat =
       paneHasCapability(
         panes.getPaneKind(paneId),
         'host-chat'
       );
-    if (startedInChat) deps.touchCurrentLocation(paneId);
     deps.blurFocusedPaneTitle(paneId);
     let note = panes.getPaneDocument(paneId);
 
-    if (
-      hasContent({
-        title: getDocumentTitle(note),
-        bodyMarkdown: getDocumentMarkdown(note),
-        currentNoteId: getDocumentNoteId(note),
-        currentNotePath: getDocumentPath(note)
-      })
-    ) {
-      await rememberCurrentNoteForPane(paneId);
-      paneId = workspace.getActivePaneId();
-      note = panes.getPaneDocument(paneId);
+    const hasCurrentContent = hasContent({
+      title: getDocumentTitle(note),
+      bodyMarkdown: getDocumentMarkdown(note),
+      currentNoteId: getDocumentNoteId(note),
+      currentNotePath: getDocumentPath(note)
+    });
+    if (!hasCurrentContent) {
+      if (startedInChat) {
+        await deps.setPaneKind(paneId, 'editor', {
+          recordCurrentLocation: true
+        });
+      }
+      await openStartPaneCommand(paneId, note.key);
+      return;
     }
-    if (startedInChat) {
-      await deps.setPaneKind(paneId, 'editor', {
-        recordCurrentLocation: false
-      });
+
+    let previousDocument = note;
+    let freshDraft: NoteDraftState | null = null;
+    const result = await deps.transitions.execute({
+      kind: 'new-note',
+      resolvePane: () =>
+        workspace.getPaneOrder().includes(paneId)
+          ? paneId
+          : null,
+      guard: () => {
+        if (
+          deps.base.canLeaveDocument?.(previousDocument) ===
+          false
+        ) {
+          deps.base.onNavigationBlocked?.();
+          return {
+            status: 'blocked',
+            reason:
+              'The current document has an unresolved navigation guard.'
+          };
+        }
+        return { status: 'allow' };
+      },
+      departDocument: async () => {
+        previousDocument =
+          await deps.documentDeparture.prepare(
+            paneId,
+            previousDocument,
+            { clearLastOpened: true }
+          );
+        if (!getDocumentPath(previousDocument)) {
+          throw new Error(
+            'Document departure completed without a persisted note path.'
+          );
+        }
+      },
+      captureHistory: () => {
+        deps.base.onDocumentLeaving?.(
+          paneId,
+          previousDocument
+        );
+        if (startedInChat) {
+          deps.touchCurrentLocation(paneId);
+        } else {
+          const location = deps.capturePaneLocation(paneId);
+          if (location) deps.touchLocation(paneId, location);
+        }
+      },
+      mutateWorkspace: () => {
+        freshDraft = replacePaneReferenceWithFreshDraft(
+          state,
+          workspace,
+          paneId
+        );
+        if (
+          startedInChat &&
+          !workspace.setPaneKind(paneId, 'editor')
+        ) {
+          throw new Error(
+            'Workspace rejected the new-note editor transition.'
+          );
+        }
+      },
+      ensureEditors: true,
+      complete: async () => {
+        if (!freshDraft) return;
+        await documents.replacePaneDocument(
+          paneId,
+          previousDocument,
+          freshDraft
+        );
+        removeNoteIfUnreferenced(
+          state,
+          workspace,
+          previousDocument.key
+        );
+        if (!state.notesByKey[previousDocument.key]) {
+          cleanupNoteRuntime(previousDocument.key);
+        }
+        derivedViews.setRecentlyForgotten(null);
+        derivedViews.clearSearch();
+        refreshDerivedViews();
+        void derivedViews.loadRecentNotes();
+      }
+    });
+    if (result.status === 'failed') {
+      throw result.error;
     }
+    if (result.status !== 'applied' || !freshDraft) {
+      return;
+    }
+    note = freshDraft;
     await openStartPaneCommand(paneId, note.key);
   }
 
@@ -554,22 +545,19 @@ export function createNoteCommandController<
     let nextDocument: NoteDraftState | null = null;
     let session: SessionSnapshot | null = null;
     let leavingChat = false;
-    let requestGeneration = 0;
-    let operationToken = 0;
+    let transitionOperationId = 0;
     const isOpenCurrent = () =>
-      requestGeneration > 0 &&
-      panes
-        .getPaneRuntime(paneId)
-        .getOpenRequestGeneration() === requestGeneration &&
-      isDocumentOperationCurrent(
-        previousDocument,
-        operationToken
-      );
+      transitionOperationId > 0 &&
+      deps.transitions.getLatestOperationId(paneId) ===
+        transitionOperationId;
 
     const result = await deps.transitions.execute({
       kind: 'open-note',
       resolvePane: () =>
         options.noteId || notePath ? paneId : null,
+      onResolved: (_paneId, operationId) => {
+        transitionOperationId = operationId;
+      },
       guard: () => {
         previousDocument = panes.getPaneDocument(paneId);
         if (
@@ -585,6 +573,18 @@ export function createNoteCommandController<
           };
         }
         return { status: 'allow' };
+      },
+      departDocument: async () => {
+        previousDocument =
+          await deps.documentDeparture.prepare(
+            paneId,
+            previousDocument,
+            {
+              persist: !(
+                options.currentNoteAlreadySaved ?? false
+              )
+            }
+          );
       },
       captureHistory: () => {
         if (
@@ -622,28 +622,6 @@ export function createNoteCommandController<
         workspace.resetPaneCommand();
       },
       prepare: async () => {
-        documents.flushAllPendingCursorSaves();
-        documents.saveCursorPositionForDocument(
-          previousDocument
-        );
-        if (
-          !(options.currentNoteAlreadySaved ?? false) &&
-          (getDocumentNoteId(previousDocument) !==
-            (options.noteId ?? null) ||
-            getDocumentPath(previousDocument) !== notePath)
-        ) {
-          persistence.cancelPendingAutosave(
-            previousDocument
-          );
-          await persistence.enqueueSave(previousDocument);
-        }
-        requestGeneration = panes
-          .getPaneRuntime(paneId)
-          .bumpOpenRequestGeneration();
-        operationToken = beginDocumentOperation(
-          previousDocument,
-          'opening'
-        );
         session = await openNoteSession(
           options.noteId ?? null,
           notePath
@@ -661,10 +639,6 @@ export function createNoteCommandController<
           workspace,
           paneId,
           session
-        );
-        completeDocumentOperation(
-          previousDocument,
-          operationToken
         );
         deps.base.onDocumentOpened?.(nextDocument);
         derivedViews.setRecentlyForgotten(null);
@@ -725,22 +699,7 @@ export function createNoteCommandController<
               }
             }
           : undefined,
-      onStale: () => {
-        completeDocumentOperation(
-          previousDocument,
-          operationToken
-        );
-      },
-      onFailed: (_failedPaneId, error) => {
-        if (operationToken > 0) {
-          failDocumentOperation(
-            previousDocument,
-            'opening',
-            error,
-            operationToken
-          );
-        }
-      }
+      onStale: () => undefined
     });
     if (result.status === 'failed') {
       throw result.error;
@@ -762,7 +721,6 @@ export function createNoteCommandController<
     refreshDocumentFromDisk,
     clearNotepad,
     unforgetNotepad,
-    rememberCurrentNote,
     startNewNoteFlow,
     openNotePath
   };

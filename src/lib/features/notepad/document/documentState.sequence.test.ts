@@ -1,23 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySessionSnapshotToDocument,
-  beginDocumentOperation,
-  captureExternalDeletionConflict,
-  captureExternalSnapshotConflict,
-  completeDocumentOperation,
   createDocumentState,
   documentHasCleanBuffer,
   documentHasUnresolvedConflict,
-  failDocumentOperation,
+  dispatchDocumentExternalSync,
+  dispatchDocumentOperation,
   getDocumentStatusViewModel,
-  invalidateDocumentOperations,
   isDocumentOperationCurrent,
-  resolveConflictKeepingWorking,
   resolveConflictUsingExternal,
   updateDocumentMarkdown,
   type DocumentOperationKind,
   type NoteDraftState
 } from './documentState';
+import {
+  captureExternalDeletionForTest,
+  captureExternalSnapshotForTest
+} from './documentExternalSyncTestSupport';
 import {
   createEmptySessionSnapshot,
   type SessionSnapshot
@@ -51,7 +50,8 @@ function document() {
 function assertDocumentInvariants(
   note: NoteDraftState,
   previousToken: number,
-  previousRevision: number
+  previousRevision: number,
+  previousConflictSequence: number
 ) {
   expect(note.operation.token).toBeGreaterThanOrEqual(
     previousToken
@@ -59,17 +59,24 @@ function assertDocumentInvariants(
   expect(note.operation.revision).toBeGreaterThanOrEqual(
     previousRevision
   );
+  expect(note.externalSync.sequence).toBeGreaterThanOrEqual(
+    previousConflictSequence
+  );
   expect(documentHasUnresolvedConflict(note)).toBe(
     note.externalSync.kind === 'conflict'
   );
   if (note.externalSync.kind === 'conflict') {
     expect(note.externalSync.external).toBeDefined();
+    expect(note.externalSync.conflictId).toBe(
+      note.externalSync.sequence
+    );
+    expect([
+      'awaitingChoice',
+      'applyingExternal'
+    ]).toContain(note.externalSync.phase);
     expect(getDocumentStatusViewModel(note).kind).toBe(
       'conflict'
     );
-  }
-  if (note.externalSync.kind === 'inSync') {
-    expect(documentHasCleanBuffer(note)).toBe(true);
   }
   if (note.identity.kind === 'persisted') {
     expect(note.identity.path).not.toBe('');
@@ -88,9 +95,7 @@ interface DocumentCommand {
 
 const operationKinds: DocumentOperationKind[] = [
   'saving',
-  'remembering',
-  'forgetting',
-  'opening'
+  'forgetting'
 ];
 
 const commands: DocumentCommand[] = [
@@ -98,9 +103,11 @@ const commands: DocumentCommand[] = [
     (kind): DocumentCommand => ({
       label: `begin:${kind}`,
       apply: (state) => {
-        state.issuedTokens.push(
-          beginDocumentOperation(state.note, kind)
-        );
+        dispatchDocumentOperation(state.note, {
+          type: 'start',
+          operation: kind
+        });
+        state.issuedTokens.push(state.note.operation.token);
       }
     })
   ),
@@ -116,27 +123,26 @@ const commands: DocumentCommand[] = [
   {
     label: 'invalidate',
     apply: ({ note }) => {
-      invalidateDocumentOperations(note);
+      dispatchDocumentOperation(note, { type: 'invalidate' });
     }
   },
   {
     label: 'complete:oldest',
     apply: ({ note, issuedTokens }) => {
-      completeDocumentOperation(
-        note,
-        issuedTokens[0] ?? -1
-      );
+      dispatchDocumentOperation(note, {
+        type: 'succeed',
+        token: issuedTokens[0] ?? -1
+      });
     }
   },
   {
     label: 'fail:oldest',
     apply: ({ note, issuedTokens }) => {
-      failDocumentOperation(
-        note,
-        'saving',
-        new Error('sequence failure'),
-        issuedTokens[0] ?? -1
-      );
+      dispatchDocumentOperation(note, {
+        type: 'fail',
+        error: new Error('sequence failure'),
+        token: issuedTokens[0] ?? -1
+      });
     }
   },
   {
@@ -145,7 +151,7 @@ const commands: DocumentCommand[] = [
       if (documentHasCleanBuffer(note)) {
         updateDocumentMarkdown(note, 'local-before-conflict');
       }
-      captureExternalSnapshotConflict(
+      captureExternalSnapshotForTest(
         note,
         savedSnapshot('external'),
         'watcher'
@@ -158,7 +164,7 @@ const commands: DocumentCommand[] = [
       if (documentHasCleanBuffer(note)) {
         updateDocumentMarkdown(note, 'local-before-deletion');
       }
-      captureExternalDeletionConflict(
+      captureExternalDeletionForTest(
         note,
         path,
         'watcher'
@@ -168,13 +174,57 @@ const commands: DocumentCommand[] = [
   {
     label: 'resolve:keep',
     apply: ({ note }) => {
-      resolveConflictKeepingWorking(note);
+      if (
+        note.externalSync.kind === 'conflict' &&
+        note.externalSync.phase === 'awaitingChoice'
+      ) {
+        dispatchDocumentExternalSync(note, {
+          type: 'keepWorking',
+          conflictId: note.externalSync.conflictId
+        });
+      }
     }
   },
   {
-    label: 'resolve:load',
+    label: 'begin:load-external',
     apply: ({ note }) => {
-      resolveConflictUsingExternal(note);
+      if (
+        note.externalSync.kind === 'conflict' &&
+        note.externalSync.phase === 'awaitingChoice'
+      ) {
+        dispatchDocumentExternalSync(note, {
+          type: 'beginApplyingExternal',
+          conflictId: note.externalSync.conflictId
+        });
+      }
+    }
+  },
+  {
+    label: 'complete:load-external',
+    apply: ({ note }) => {
+      if (
+        note.externalSync.kind === 'conflict' &&
+        note.externalSync.phase === 'applyingExternal'
+      ) {
+        resolveConflictUsingExternal(
+          note,
+          note.externalSync.conflictId
+        );
+      }
+    }
+  },
+  {
+    label: 'fail:load-external',
+    apply: ({ note }) => {
+      if (
+        note.externalSync.kind === 'conflict' &&
+        note.externalSync.phase === 'applyingExternal'
+      ) {
+        dispatchDocumentExternalSync(note, {
+          type: 'externalApplyFailed',
+          conflictId: note.externalSync.conflictId
+        });
+      }
     }
   }
 ];
@@ -201,13 +251,16 @@ describe('document-state generated transition sequences', () => {
               state.note.operation.token;
             const previousRevision =
               state.note.operation.revision;
+            const previousConflictSequence =
+              state.note.externalSync.sequence;
             command.apply(state);
             transitionCount += 1;
             try {
               assertDocumentInvariants(
                 state.note,
                 previousToken,
-                previousRevision
+                previousRevision,
+                previousConflictSequence
               );
             } catch (error) {
               throw new Error(
@@ -231,23 +284,30 @@ describe('document-state generated transition sequences', () => {
     'rejects stale completion and failure after %s is superseded',
     (kind) => {
       const note = document();
-      const staleToken = beginDocumentOperation(note, kind);
-      const currentToken = beginDocumentOperation(
-        note,
-        kind === 'opening' ? 'saving' : 'opening'
-      );
+      dispatchDocumentOperation(note, {
+        type: 'start',
+        operation: kind
+      });
+      const staleToken = note.operation.token;
+      dispatchDocumentOperation(note, {
+        type: 'start',
+        operation: kind === 'saving' ? 'forgetting' : 'saving'
+      });
+      const currentToken = note.operation.token;
       const before = structuredClone(note.operation);
 
       expect(
-        completeDocumentOperation(note, staleToken)
+        dispatchDocumentOperation(note, {
+          type: 'succeed',
+          token: staleToken
+        })
       ).toBe(false);
       expect(
-        failDocumentOperation(
-          note,
-          kind,
-          new Error('stale'),
-          staleToken
-        )
+        dispatchDocumentOperation(note, {
+          type: 'fail',
+          error: new Error('stale'),
+          token: staleToken
+        })
       ).toBe(false);
       expect(note.operation).toEqual(before);
       expect(
@@ -259,35 +319,49 @@ describe('document-state generated transition sequences', () => {
   it.each([
     {
       resolution: 'keep',
-      resolve: resolveConflictKeepingWorking,
+      resolve: (note: NoteDraftState, conflictId: number) =>
+        dispatchDocumentExternalSync(note, {
+          type: 'keepWorking',
+          conflictId
+        }),
       markdown: 'local',
-      sync: 'dirty'
+      sync: 'noConflict'
     },
     {
       resolution: 'load',
-      resolve: resolveConflictUsingExternal,
+      resolve: (note: NoteDraftState, conflictId: number) => {
+        if (
+          !dispatchDocumentExternalSync(note, {
+            type: 'beginApplyingExternal',
+            conflictId
+          })
+        ) {
+          return false;
+        }
+        return resolveConflictUsingExternal(note, conflictId);
+      },
       markdown: 'external',
-      sync: 'inSync'
+      sync: 'noConflict'
     }
   ] as const)(
     'keeps conflict blocking explicit until $resolution resolution',
     ({ resolve, markdown, sync }) => {
       const note = document();
       updateDocumentMarkdown(note, 'local');
-      captureExternalSnapshotConflict(
+      const conflictId = captureExternalSnapshotForTest(
         note,
         savedSnapshot('external'),
         'taskMutation'
       );
 
       expect(documentHasUnresolvedConflict(note)).toBe(true);
-      expect(resolve(note)).toBe(true);
+      expect(resolve(note, conflictId!)).toBe(true);
       expect(documentHasUnresolvedConflict(note)).toBe(
         false
       );
       expect(note.working.markdown).toBe(markdown);
       expect(note.externalSync.kind).toBe(sync);
-      expect(resolve(note)).toBe(false);
+      expect(resolve(note, conflictId!)).toBe(false);
     }
   );
 
@@ -308,6 +382,6 @@ describe('document-state generated transition sequences', () => {
     expect(shared.operation.revision).toBe(
       beforeRevision + 1
     );
-    expect(shared.externalSync.kind).toBe('inSync');
+    expect(shared.externalSync.kind).toBe('noConflict');
   });
 });

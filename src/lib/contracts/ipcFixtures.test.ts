@@ -42,12 +42,11 @@ describe('Rust-owned IPC contract fixtures', () => {
     invokeMock.mockReset();
   });
 
-  it('pins note save and remember argument names', async () => {
-    const { rememberNoteSession, saveNoteSession } = await import(
+  it('pins note save and session-clear argument names', async () => {
+    const { clearLastOpenedNote, saveNoteSession } = await import(
       '$lib/features/notepad/session/session'
     );
     const save = commandFixture.commands.save_note;
-    const remember = commandFixture.commands.remember_note;
 
     invokeMock.mockResolvedValueOnce(save.result);
     await saveNoteSession(
@@ -57,14 +56,11 @@ describe('Rust-owned IPC contract fixtures', () => {
     );
     expect(invokeMock).toHaveBeenLastCalledWith('save_note', save.args);
 
-    invokeMock.mockResolvedValueOnce(remember.result);
-    await rememberNoteSession(
-      remember.args!.title as string,
-      remember.args!.markdown as string,
-      remember.args!.currentPath as null,
-      { clearLastOpened: remember.args!.clearLastOpened as boolean }
+    invokeMock.mockResolvedValueOnce(null);
+    await clearLastOpenedNote();
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'clear_last_opened_note'
     );
-    expect(invokeMock).toHaveBeenLastCalledWith('remember_note', remember.args);
   });
 
   it('pins nested chat send and proposal commit argument names', async () => {
@@ -85,32 +81,6 @@ describe('Rust-owned IPC contract fixtures', () => {
       commit.args!.markdown as string
     );
     expect(invokeMock).toHaveBeenLastCalledWith('commit_agent_proposal', commit.args);
-  });
-
-  it('pins proposal preview and direct review commit argument names', async () => {
-    const { commitNoteReview, previewNoteChangeProposal } = await import(
-      '$lib/features/proposals/api'
-    );
-    const preview = commandFixture.commands.preview_note_change_proposal;
-    const commit = commandFixture.commands.commit_note_review;
-
-    invokeMock.mockResolvedValueOnce(preview.result);
-    await previewNoteChangeProposal(
-      preview.args!.path as string,
-      preview.args!.edits as Parameters<typeof previewNoteChangeProposal>[1]
-    );
-    expect(invokeMock).toHaveBeenLastCalledWith(
-      'preview_note_change_proposal',
-      preview.args
-    );
-
-    invokeMock.mockResolvedValueOnce(commit.result);
-    await commitNoteReview(
-      commit.args!.path as string,
-      commit.args!.expectedBaseHash as string,
-      commit.args!.markdown as string
-    );
-    expect(invokeMock).toHaveBeenLastCalledWith('commit_note_review', commit.args);
   });
 
   it('pins dirty-document task prepare argument and result names', async () => {
@@ -216,11 +186,9 @@ describe('Rust-owned IPC contract fixtures', () => {
     expect(Object.keys(commandFixture.commands)).toEqual(
       expect.arrayContaining([
         'save_note',
-        'remember_note',
+        'clear_last_opened_note',
         'prepare_task_document_mutation',
         'chat_send_message',
-        'preview_note_change_proposal',
-        'commit_note_review',
         'commit_agent_proposal',
         'set_semantic_settings',
         'get_semantic_status',

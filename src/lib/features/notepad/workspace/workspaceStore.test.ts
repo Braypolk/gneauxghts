@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { WorkspaceStore } from './workspaceStore.svelte';
 import type { NotepadPaneId } from './workspaceStore.svelte';
+import {
+  createReadyPaneForTest,
+  retirePaneForTest
+} from './workspaceStoreTestSupport';
 
 const first = 'notepad-pane-1' as NotepadPaneId;
 const second = 'notepad-pane-2' as NotepadPaneId;
@@ -37,7 +41,8 @@ describe('WorkspaceStore invariants', () => {
   it('adds pane structure and content reference atomically', () => {
     const workspace = store();
 
-    workspace.addPane(
+    createReadyPaneForTest(
+      workspace,
       second,
       'path:/vault/Second.md',
       'chat'
@@ -54,25 +59,35 @@ describe('WorkspaceStore invariants', () => {
 
   it('allows chat-only workspaces while always retaining a pane', () => {
     const workspace = store();
-    workspace.addPane(second, 'draft:workspace-2', 'chat');
+    createReadyPaneForTest(
+      workspace,
+      second,
+      'draft:workspace-2',
+      'chat'
+    );
 
     expect(workspace.setPaneKind(first, 'chat')).toBe(true);
     expect(workspace.getPaneState(first).kind).toBe('chat');
-    expect(workspace.removePane(first)?.paneId).toBe(first);
+    expect(
+      retirePaneForTest(workspace, first)?.pane.paneId
+    ).toBe(first);
     expect(workspace.activePaneId).toBe(second);
-    expect(workspace.removePane(second)).toBeNull();
+    expect(retirePaneForTest(workspace, second)).toBeNull();
   });
 
   it('leases removed pane state until rendered teardown is finalized', () => {
     const workspace = store();
-    workspace.addPane(second, 'draft:workspace-2');
+    createReadyPaneForTest(workspace, second, 'draft:workspace-2');
 
-    workspace.removePane(second);
+    const retirement = retirePaneForTest(workspace, second)!;
 
     expect(workspace.getPaneState(second).noteKey).toBe(
       'draft:workspace-2'
     );
-    workspace.finalizePaneRemoval(second);
+    workspace.completePaneDisposal(
+      second,
+      retirement.operationId
+    );
     expect(() => workspace.getPaneState(second)).toThrow(
       'Unknown workspace pane'
     );
@@ -80,20 +95,25 @@ describe('WorkspaceStore invariants', () => {
 
   it('selects the adjacent pane to the right, otherwise the left', () => {
     const workspace = store();
-    workspace.addPane(second, 'draft:workspace-2');
-    workspace.addPane(third, 'draft:workspace-3');
+    createReadyPaneForTest(workspace, second, 'draft:workspace-2');
+    createReadyPaneForTest(workspace, third, 'draft:workspace-3');
 
     workspace.setActivePaneId(second);
-    workspace.removePane(second);
+    retirePaneForTest(workspace, second);
     expect(workspace.activePaneId).toBe(third);
 
-    workspace.removePane(third);
+    retirePaneForTest(workspace, third);
     expect(workspace.activePaneId).toBe(first);
   });
 
   it('updates pane content and conversation through atomic commands', () => {
     const workspace = store();
-    workspace.addPane(second, 'draft:workspace-2', 'chat');
+    createReadyPaneForTest(
+      workspace,
+      second,
+      'draft:workspace-2',
+      'chat'
+    );
 
     workspace.setPaneNoteKey(
       second,
@@ -117,7 +137,8 @@ describe('WorkspaceStore invariants', () => {
 
   it('retains pane document identity across editor and chat transitions', () => {
     const workspace = store();
-    workspace.addPane(
+    createReadyPaneForTest(
+      workspace,
       second,
       'path:/vault/Context.md',
       'editor'

@@ -11,7 +11,7 @@ function createHarness(options: { suppressAutosave?: boolean; external?: boolean
   const scheduleSearch = vi.fn();
   const scheduleRelated = vi.fn();
   const service = createDocumentEditingService({
-    isApplyingExternalContent: () => options.external ?? false,
+    isApplyingProgrammaticUpdate: () => options.external ?? false,
     shouldSuppressAutosave: () => options.suppressAutosave ?? false,
     resetPaneCommandAfterBodyInput: vi.fn(),
     clearRecentlyForgotten: vi.fn(),
@@ -121,5 +121,42 @@ describe('documentEditingService', () => {
     expect(harness.note.operation.revision).toBe(revision);
     expect(applyRuntime).not.toHaveBeenCalled();
     expect(harness.scheduleSearch).not.toHaveBeenCalled();
+  });
+
+  it('reconciles a queued runtime replacement to a newer user edit', async () => {
+    const harness = createHarness();
+    let releaseFirstApply!: () => void;
+    const firstApply = new Promise<void>((resolve) => {
+      releaseFirstApply = resolve;
+    });
+    const appliedMarkdown: string[] = [];
+    const applyRuntime = vi.fn(async (markdown: string) => {
+      appliedMarkdown.push(markdown);
+      if (appliedMarkdown.length === 1) await firstApply;
+    });
+
+    const replacement = harness.service.replaceMarkdown(
+      harness.note,
+      'programmatic',
+      applyRuntime
+    );
+    await vi.waitFor(() => {
+      expect(applyRuntime).toHaveBeenCalledOnce();
+    });
+    harness.service.recordUserEdit(
+      'primary',
+      harness.note,
+      'newer user edit'
+    );
+    releaseFirstApply();
+    await replacement;
+
+    expect(appliedMarkdown).toEqual([
+      'programmatic',
+      'newer user edit'
+    ]);
+    expect(harness.note.working.markdown).toBe(
+      'newer user edit'
+    );
   });
 });

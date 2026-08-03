@@ -12,7 +12,7 @@ import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.s
  */
 export interface PaneUiState {
   isEditorReady: boolean;
-  isApplyingExternalContent: boolean;
+  isApplyingProgrammaticUpdate: boolean;
   wikilinkAutocomplete: WikilinkAutocompleteState;
   slashMenu: PaneSlashMenuModel;
   selectionMenu: PaneSelectionMenuModel;
@@ -37,7 +37,7 @@ export class PaneRuntime {
   paneId: NotepadPaneId;
   ui = $state<PaneUiState>({
     isEditorReady: false,
-    isApplyingExternalContent: false,
+    isApplyingProgrammaticUpdate: false,
     wikilinkAutocomplete: createWikilinkAutocompleteState(),
     slashMenu: { open: false },
     selectionMenu: { open: false }
@@ -51,7 +51,6 @@ export class PaneRuntime {
   });
   private _controller: EditorController | null = null;
   private _cursorSaveTimer: number | null = null;
-  private _openRequestGeneration = 0;
 
   constructor(paneId: NotepadPaneId) {
     this.paneId = paneId;
@@ -83,21 +82,12 @@ export class PaneRuntime {
     }, 220);
   }
 
-  bumpOpenRequestGeneration(): number {
-    this._openRequestGeneration += 1;
-    return this._openRequestGeneration;
-  }
-
-  getOpenRequestGeneration(): number {
-    return this._openRequestGeneration;
-  }
-
   setIsEditorReady(value: boolean): void {
     this.ui.isEditorReady = value;
   }
 
-  setIsApplyingExternalContent(value: boolean): void {
-    this.ui.isApplyingExternalContent = value;
+  setIsApplyingProgrammaticUpdate(value: boolean): void {
+    this.ui.isApplyingProgrammaticUpdate = value;
   }
 
   setSlashMenu(snapshot: PaneSlashMenuModel): void {

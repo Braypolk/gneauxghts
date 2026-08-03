@@ -7,7 +7,7 @@ import {
 import type { SessionSnapshot } from '$lib/features/notepad/session/session';
 
 export interface DocumentEditingServiceDeps<TPaneId extends string> {
-  isApplyingExternalContent: (document: NoteDraftState) => boolean;
+  isApplyingProgrammaticUpdate: (document: NoteDraftState) => boolean;
   shouldSuppressAutosave: (document: NoteDraftState) => boolean;
   resetPaneCommandAfterBodyInput: (
     paneId: TPaneId,
@@ -27,6 +27,20 @@ export interface DocumentEditingServiceDeps<TPaneId extends string> {
 export function createDocumentEditingService<TPaneId extends string>(
   deps: DocumentEditingServiceDeps<TPaneId>
 ) {
+  async function applyRuntimeAtCurrentRevision(
+    document: NoteDraftState,
+    applyToRuntime: (markdown: string) => Promise<void>
+  ) {
+    const appliedRevision = document.operation.revision;
+    await applyToRuntime(document.working.markdown);
+    if (document.operation.revision !== appliedRevision) {
+      // The first effect waited behind a pane operation while a newer edit
+      // became canonical. Reconcile the runtime to that newer model instead
+      // of allowing the queued replacement to win afterward.
+      await applyToRuntime(document.working.markdown);
+    }
+  }
+
   function applyMarkdownProjection(
     document: NoteDraftState,
     markdown: string
@@ -42,7 +56,7 @@ export function createDocumentEditingService<TPaneId extends string>(
     // Programmatic editor replacements update the model at their orchestration
     // boundary. Their CodeMirror callback is only an acknowledgement and must
     // not publish an intermediate model state before that boundary commits.
-    if (deps.isApplyingExternalContent(document)) {
+    if (deps.isApplyingProgrammaticUpdate(document)) {
       return false;
     }
 
@@ -66,14 +80,17 @@ export function createDocumentEditingService<TPaneId extends string>(
   async function replaceMarkdown(
     document: NoteDraftState,
     markdown: string,
-    applyToRuntime: () => Promise<void>,
+    applyToRuntime: (markdown: string) => Promise<void>,
     {
       autosave = true,
       immediateRelated = true
     }: { autosave?: boolean; immediateRelated?: boolean } = {}
   ): Promise<boolean> {
     const changed = applyMarkdownProjection(document, markdown);
-    await applyToRuntime();
+    await applyRuntimeAtCurrentRevision(
+      document,
+      applyToRuntime
+    );
     if (autosave && !deps.shouldSuppressAutosave(document)) {
       deps.scheduleAutosave(document);
     }
@@ -85,7 +102,7 @@ export function createDocumentEditingService<TPaneId extends string>(
   async function applySnapshot(
     document: NoteDraftState,
     snapshot: SessionSnapshot,
-    applyMarkdownToRuntime: () => Promise<void>,
+    applyMarkdownToRuntime: (markdown: string) => Promise<void>,
     {
       preserveDraft = false,
       autosave = false,
@@ -103,7 +120,10 @@ export function createDocumentEditingService<TPaneId extends string>(
         preserveWorking: preserveDraft
       });
     if (markdownChanged) {
-      await applyMarkdownToRuntime();
+      await applyRuntimeAtCurrentRevision(
+        document,
+        applyMarkdownToRuntime
+      );
     }
     if (
       autosave &&

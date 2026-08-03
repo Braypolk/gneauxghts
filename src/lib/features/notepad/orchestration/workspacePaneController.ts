@@ -21,6 +21,13 @@ import {
 import type {
   PaneNavigationTransitionPipeline
 } from './paneNavigationTransitionPipeline';
+import type {
+  DocumentDepartureController
+} from './documentDepartureController';
+import type {
+  PaneMembershipEvent,
+  PaneMembershipState
+} from '$lib/features/notepad/pane/paneLifecycleMachine';
 
 export interface WorkspacePaneControllerDeps<
   TPaneId extends string
@@ -28,16 +35,26 @@ export interface WorkspacePaneControllerDeps<
   state: NotepadState<TPaneId>;
   maxVisiblePanes: number;
   getPaneOrder: () => TPaneId[];
-  addWorkspacePane: (
+  getPaneMembership: (paneId: TPaneId) => PaneMembershipState;
+  dispatchPaneMembership: (
     paneId: TPaneId,
+    event: PaneMembershipEvent
+  ) => boolean;
+  completeWorkspacePaneCreation: (
+    paneId: TPaneId,
+    operationId: number,
     noteKey: NoteKey,
     kind?: PaneKind
   ) => WorkspacePaneState<TPaneId>;
   canRemoveWorkspacePane: (paneId: TPaneId) => boolean;
-  removeWorkspacePane: (
-    paneId: TPaneId
+  retireWorkspacePane: (
+    paneId: TPaneId,
+    operationId: number
   ) => WorkspacePaneState<TPaneId> | null;
-  finalizeWorkspacePaneRemoval: (paneId: TPaneId) => void;
+  completeWorkspacePaneDisposal: (
+    paneId: TPaneId,
+    operationId: number
+  ) => boolean;
   getActivePaneId: () => TPaneId;
   getNextPaneId: (
     paneId: TPaneId,
@@ -55,13 +72,9 @@ export interface WorkspacePaneControllerDeps<
   ) => HTMLInputElement | null;
   focusPaneEditorAtEnd: (paneId: TPaneId) => boolean;
   createPane: () => TPaneId;
-  preparePaneClose: (
-    paneId: TPaneId,
-    document: NoteDraftState
-  ) => Promise<void>;
   disposePaneRuntime: (
     paneId: TPaneId,
-    document: NoteDraftState
+    document: NoteDraftState | null
   ) => Promise<void>;
   activatePaneSession: (paneId: TPaneId) => unknown;
   activatePane: (paneId: TPaneId) => void;
@@ -103,6 +116,7 @@ export interface WorkspacePaneControllerDeps<
     document: NoteDraftState
   ) => void;
   clearSearch: () => void;
+  documentDeparture: DocumentDepartureController<TPaneId>;
   transitions: PaneNavigationTransitionPipeline<TPaneId>;
 }
 
@@ -157,22 +171,58 @@ export function createWorkspacePaneController<
     const sourcePaneId = order[0] ?? deps.getActivePaneId();
     const targetPaneId = deps.createPane();
     const sharedDocument = deps.getPaneDocument(sourcePaneId);
+    let creationOperationId: number | null = null;
     let claimedTarget = false;
+    let creationCompleted = false;
+    let abandonPromise: Promise<void> | null = null;
+    function abandonCreation() {
+      abandonPromise ??= (async () => {
+        const membership =
+          deps.getPaneMembership(targetPaneId);
+        if (membership.kind === 'creating') {
+          if (membership.operationId !== creationOperationId) return;
+          deps.dispatchPaneMembership(targetPaneId, {
+            type: 'creationFailed',
+            operationId: membership.operationId
+          });
+        } else if (membership.kind !== 'absent') {
+          return;
+        }
+        await deps.disposePaneRuntime(targetPaneId, null);
+      })();
+      return abandonPromise;
+    }
     await executeTransition({
       kind: 'split-pane',
       resolvePane: () => targetPaneId,
+      onResolved: (paneId, operationId) => {
+        creationOperationId = operationId;
+        if (
+          !deps.dispatchPaneMembership(paneId, {
+            type: 'createRequested',
+            operationId
+          })
+        ) {
+          throw new Error('Pane creation could not start.');
+        }
+      },
       prepare: async () => {
         await deps.loadRecentNotes();
         await deps.ensureLocationMruSeeded(sourcePaneId);
       },
       mutateWorkspace: (paneId) => {
+        if (creationOperationId === null) {
+          throw new Error('Pane creation operation is missing.');
+        }
         const placeholderDraft =
           createFreshDraftNote(deps.state);
-        deps.addWorkspacePane(
+        deps.completeWorkspacePaneCreation(
           paneId,
+          creationOperationId,
           placeholderDraft.key,
           'editor'
         );
+        creationCompleted = true;
         deps.beginPaneCommand(
           paneId,
           sharedDocument.key,
@@ -191,6 +241,12 @@ export function createWorkspacePaneController<
       },
       focus: (paneId) => {
         deps.focusPaneEditorAtEnd(paneId);
+      },
+      onStale: async () => {
+        if (!creationCompleted) await abandonCreation();
+      },
+      onFailed: async () => {
+        if (!creationCompleted) await abandonCreation();
       }
     });
   }
@@ -200,6 +256,7 @@ export function createWorkspacePaneController<
     let closingLocation: NavLocation | null = null;
     let orphanPlaceholderKey: NoteKey | null = null;
     let remainingPaneId: TPaneId | null = null;
+    let closeOperationId: number | null = null;
     let workspaceRemoved = false;
     let teardownPromise: Promise<void> | null = null;
     function teardownRemovedPane() {
@@ -215,7 +272,12 @@ export function createWorkspacePaneController<
             closingDocument
           );
         } finally {
-          deps.finalizeWorkspacePaneRemoval(paneId);
+          if (closeOperationId !== null) {
+            deps.completeWorkspacePaneDisposal(
+              paneId,
+              closeOperationId
+            );
+          }
         }
       })();
       return teardownPromise;
@@ -224,8 +286,31 @@ export function createWorkspacePaneController<
       kind: 'close-pane',
       resolvePane: () =>
         deps.getPaneOrder().includes(paneId) ? paneId : null,
-      guard: () => {
+      guard: (_paneId, operationId) => {
+        const membership = deps.getPaneMembership(paneId);
+        if (membership.kind !== 'ready') {
+          return {
+            status: 'noop',
+            reason: 'Pane is already transitioning.'
+          };
+        }
+        deps.dispatchPaneMembership(paneId, {
+          type: 'closeRequested',
+          operationId
+        });
+        const closing = deps.getPaneMembership(paneId);
+        if (closing.kind !== 'closing') {
+          return {
+            status: 'noop',
+            reason: 'Pane close could not start.'
+          };
+        }
+        closeOperationId = operationId;
         if (!deps.canRemoveWorkspacePane(paneId)) {
+          deps.dispatchPaneMembership(paneId, {
+            type: 'closeBlocked',
+            operationId: closeOperationId
+          });
           return {
             status: 'blocked',
             reason: 'Closing this pane would violate workspace invariants.'
@@ -252,6 +337,10 @@ export function createWorkspacePaneController<
           remainingEditorsForDocument === 0
         ) {
           deps.onNavigationBlocked?.();
+          deps.dispatchPaneMembership(paneId, {
+            type: 'closeBlocked',
+            operationId: closeOperationId
+          });
           return {
             status: 'blocked',
             reason: 'The document has an unresolved navigation guard.'
@@ -259,14 +348,15 @@ export function createWorkspacePaneController<
         }
         return { status: 'allow' };
       },
+      departDocument: async () => {
+        closingDocument =
+          await deps.documentDeparture.prepare(
+            paneId,
+            closingDocument
+          );
+      },
       captureHistory: () => {
         closingLocation = deps.capturePaneLocation(paneId);
-      },
-      prepare: async () => {
-        await deps.preparePaneClose(
-          paneId,
-          closingDocument
-        );
       },
       mutateWorkspace: () => {
         const wasPaneCommand =
@@ -275,7 +365,13 @@ export function createWorkspacePaneController<
           ? closingDocument.key
           : null;
         if (wasPaneCommand) deps.resetPaneCommand();
-        if (!deps.removeWorkspacePane(paneId)) {
+        if (
+          closeOperationId === null ||
+          !deps.retireWorkspacePane(
+            paneId,
+            closeOperationId
+          )
+        ) {
           throw new Error('Pane became unavailable before close.');
         }
         workspaceRemoved = true;
@@ -305,9 +401,21 @@ export function createWorkspacePaneController<
         deps.focusPane(remainingPaneId);
       },
       onStale: async () => {
+        if (closeOperationId !== null) {
+          deps.dispatchPaneMembership(paneId, {
+            type: 'closeBlocked',
+            operationId: closeOperationId
+          });
+        }
         await teardownRemovedPane();
       },
       onFailed: async () => {
+        if (closeOperationId !== null) {
+          deps.dispatchPaneMembership(paneId, {
+            type: 'closeBlocked',
+            operationId: closeOperationId
+          });
+        }
         try {
           await teardownRemovedPane();
         } catch {
@@ -380,6 +488,16 @@ export function createWorkspacePaneController<
         }
         return { status: 'allow' };
       },
+      departDocument:
+        kind === 'chat'
+          ? async () => {
+              paneDocument =
+                await deps.documentDeparture.prepare(
+                  paneId,
+                  paneDocument
+                );
+            }
+          : undefined,
       captureHistory: () => {
         if (kind === 'chat') {
           deps.onDocumentLeaving?.(paneId, paneDocument);

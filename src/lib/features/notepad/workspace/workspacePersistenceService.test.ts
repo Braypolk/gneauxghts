@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
 import {
   applySessionSnapshotToDocument,
-  captureExternalSnapshotConflict,
   updateDocumentMarkdown
 } from '$lib/features/notepad/document/documentState';
+import { captureExternalSnapshotForTest } from '$lib/features/notepad/document/documentExternalSyncTestSupport';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 import { createWorkspacePersistenceService } from './workspacePersistenceService';
 
@@ -79,7 +79,7 @@ describe('workspacePersistenceService', () => {
   it('blocks navigation while an external conflict is unresolved', async () => {
     const note = createNoteDraftState();
     updateDocumentMarkdown(note, 'local');
-    captureExternalSnapshotConflict(
+    captureExternalSnapshotForTest(
       note,
       {
         ...createEmptySessionSnapshot(),

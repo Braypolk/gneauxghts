@@ -144,10 +144,6 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
       },
       proposalReview: {
         snapshot: deps.proposal.session.snapshot,
-        pendingCount: deps.proposal.session.pendingCount,
-        onOpenChange: (change) => void deps.proposal.showChange(change),
-        onKeep: (changeId) => void deps.proposal.keep(changeId),
-        onUndo: (changeId) => void deps.proposal.undo(changeId),
         onKeepAll: () => void deps.proposal.keepAll(),
         onUndoAll: () => void deps.proposal.undoAll(),
         onReview: () => void deps.proposal.reviewNext(),

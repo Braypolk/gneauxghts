@@ -81,6 +81,56 @@ describe('paneEditorLifecycle', () => {
     expect(destroyEditor).toHaveBeenCalledTimes(0);
   });
 
+  it('invalidates an in-flight mount before disposal completes', async () => {
+    const document = createNoteDraftState(
+      createEmptySessionSnapshot()
+    );
+    const runtime = {
+      controller: null as unknown | null,
+      refs: { editorRoot: {} },
+      setIsEditorReady: vi.fn()
+    };
+    let releaseMount!: () => void;
+    const mountBarrier = new Promise<void>((resolve) => {
+      releaseMount = resolve;
+    });
+    let markMountStarted!: () => void;
+    const mountStarted = new Promise<void>((resolve) => {
+      markMountStarted = resolve;
+    });
+    const destroyEditor = vi.fn(async () => {
+      runtime.controller = null;
+    });
+    const lifecycle = createPaneEditorLifecycle({
+      getPaneIds: () => ['pane'],
+      getPaneRuntime: () => runtime as never,
+      getEditorLifecycleController: () =>
+        ({
+          createEditor: async () => {
+            markMountStarted();
+            await mountBarrier;
+            runtime.controller = { paneId: 'pane' };
+          },
+          destroyEditor,
+          restoreCursorPositionForDocument: vi.fn(),
+          saveCursorPositionForDocument: vi.fn()
+        }) as never,
+      getPaneDocument: () => document,
+      paneShouldMountEditor: () => true,
+      closeWikilinkAutocomplete: vi.fn()
+    });
+
+    const mounting = lifecycle.mountPaneEditor('pane');
+    await mountStarted;
+    const disposing = lifecycle.disposePane('pane');
+    releaseMount();
+
+    await expect(mounting).resolves.toBe('disposed');
+    await disposing;
+    expect(runtime.controller).toBeNull();
+    expect(destroyEditor).toHaveBeenCalledOnce();
+  });
+
   it('reconciles an already-mounted pane idempotently', async () => {
     const document = createNoteDraftState(createEmptySessionSnapshot());
     const runtime = {
@@ -116,7 +166,7 @@ describe('paneEditorLifecycle', () => {
       createEmptySessionSnapshot()
     );
     const runtime = {
-      controller: { paneId: 'pane' } as unknown | null,
+      controller: null as unknown | null,
       refs: { editorRoot: {} },
       setIsEditorReady: vi.fn()
     };
@@ -142,6 +192,9 @@ describe('paneEditorLifecycle', () => {
       getPaneRuntime: () => runtime as never,
       getEditorLifecycleController: () =>
         ({
+          createEditor: async () => {
+            runtime.controller = { paneId: 'pane' };
+          },
           swapEditorBuffer,
           replaceEditorContentInPlace: replaceInPlace,
           destroyEditor,
@@ -153,6 +206,7 @@ describe('paneEditorLifecycle', () => {
       closeWikilinkAutocomplete: vi.fn()
     });
 
+    await lifecycle.mountPaneEditor('pane');
     const binding = lifecycle.bindDocument('pane', document);
     await didStartSwap;
     const replacement = lifecycle.replaceContentInPlace(

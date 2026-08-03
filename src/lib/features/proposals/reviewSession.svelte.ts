@@ -1,209 +1,88 @@
-import {
-  noteChangePath,
-  noteChangeProposedMarkdown,
-  noteChangeTitle,
-  type NoteChange
-} from '$lib/types/proposals';
-import {
-  buildCreateDiff,
-  buildDeleteDiff,
-  buildLineDiff,
-  type NoteDiffModel
-} from './diffModel';
 import type {
-  PendingProposalChange,
-  ProposalChangeStatus,
+  ProposalReviewRuntime,
   ProposalReviewSessionSnapshot
 } from './types';
-
-function createId(change: NoteChange, index: number): string {
-  if (change.kind === 'updateNote') return `${index}:update:${change.path}`;
-  if (change.kind === 'createNote') {
-    return `${index}:create:${change.suggestedTitle || 'untitled'}`;
-  }
-  return `${index}:delete:${change.path}`;
-}
-
-function buildDiffForChange(change: NoteChange, baseMarkdown: string): NoteDiffModel {
-  if (change.kind === 'createNote') return buildCreateDiff(change.markdown);
-  if (change.kind === 'deleteNote') return buildDeleteDiff(baseMarkdown);
-  return buildLineDiff(baseMarkdown, change.newMarkdown);
-}
-
-export function createPendingChange(
-  change: NoteChange,
-  baseMarkdown: string,
-  index: number
-): PendingProposalChange {
-  return {
-    id: createId(change, index),
-    change,
-    status: 'pending',
-    baseMarkdown,
-    diff: buildDiffForChange(change, baseMarkdown),
-    title: noteChangeTitle(change),
-    path: noteChangePath(change),
-    error: null
-  };
-}
-
-function emptySnapshot(): ProposalReviewSessionSnapshot {
-  return {
-    source: '',
-    changes: [],
-    activeChangeId: null,
-    isApplying: false,
-    isConflicted: false,
-    error: null,
-    reviewHunks: null
-  };
-}
+import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import {
+  createProposalReviewWorkflowState,
+  transitionProposalReviewWorkflow,
+  type ProposalReviewWorkflowEvent,
+  type ProposalReviewWorkflowState
+} from './proposalReviewMachine';
 
 /**
  * Shared proposal review session. Chat list and notepad inline review both bind here.
  */
 export function createProposalReviewSession() {
-  let snapshot = $state<ProposalReviewSessionSnapshot>(emptySnapshot());
+  let workflow = $state.raw<
+    ProposalReviewWorkflowState<ProposalReviewRuntime>
+  >(createProposalReviewWorkflowState());
+  // Proposal runtimes intentionally remain raw because they retain editor and
+  // document resources. This revision invalidates reactive projections after
+  // their mutable hunk snapshot changes.
+  let runtimeRevision = $state(0);
 
-  function pendingChanges(): PendingProposalChange[] {
-    return snapshot.changes.filter((change) => change.status === 'pending');
-  }
-
-  function getChange(changeId: string): PendingProposalChange | undefined {
-    return snapshot.changes.find((change) => change.id === changeId);
-  }
-
-  function setStatus(changeId: string, status: ProposalChangeStatus, error: string | null = null) {
-    snapshot = {
-      ...snapshot,
-      changes: snapshot.changes.map((change) =>
-        change.id === changeId ? { ...change, status, error } : change
-      ),
-      error: error ?? snapshot.error
+  function snapshot(): ProposalReviewSessionSnapshot {
+    runtimeRevision;
+    const review = workflow.kind === 'idle'
+      ? null
+      : workflow.review;
+    const unresolvedHunks = review
+      ? review.hunkSnapshot.filter(
+          (hunk) =>
+            hunk.status === 'pending' ||
+            hunk.status === 'modified'
+        ).length
+      : 0;
+    return {
+      proposalId:
+        workflow.kind === 'idle'
+          ? null
+          : workflow.identity.proposalId,
+      notePath:
+        workflow.kind === 'idle'
+          ? null
+          : workflow.identity.notePath,
+      title: review?.request.preview.title ?? null,
+      totalHunks: review?.request.preview.hunks.length ?? 0,
+      unresolvedHunks,
+      isApplying:
+        workflow.kind === 'committing' ||
+        workflow.kind === 'dismissing',
+      isConflicted:
+        workflow.kind === 'conflicted' ||
+        (workflow.kind === 'confirmingDiscard' &&
+          workflow.recoverTo === 'conflicted'),
+      error: workflow.error
     };
   }
 
-  function load(
-    changes: NoteChange[],
-    baseMarkdownByPath: Record<string, string>,
-    source = 'fixture'
-  ) {
-    const pending = changes.map((change, index) => {
-      const path = noteChangePath(change);
-      const baseMarkdown =
-        change.kind === 'createNote'
-          ? ''
-          : (path ? baseMarkdownByPath[path] : undefined) ??
-            noteChangeProposedMarkdown(change) ??
-            '';
-      return createPendingChange(change, baseMarkdown, index);
-    });
-    snapshot = {
-      source,
-      changes: pending,
-      activeChangeId: pending.find((change) => change.status === 'pending')?.id ?? null,
-      isApplying: false,
-      isConflicted: false,
-      error: null,
-      reviewHunks: null
-    };
+  function dispatchWorkflow(
+    event: ProposalReviewWorkflowEvent<ProposalReviewRuntime>
+  ): boolean {
+    const next = transitionProposalReviewWorkflow(workflow, event);
+    if (next === workflow) return false;
+    workflow = next;
+    return true;
   }
 
-  function clear() {
-    snapshot = emptySnapshot();
-  }
-
-  function setActiveChangeId(changeId: string | null) {
-    snapshot = { ...snapshot, activeChangeId: changeId };
-  }
-
-  function markUndone(changeId: string) {
-    setStatus(changeId, 'undone');
-    if (snapshot.activeChangeId === changeId) {
-      const next = pendingChanges()[0];
-      snapshot = { ...snapshot, activeChangeId: next?.id ?? null };
-    }
-  }
-
-  function markKept(changeId: string) {
-    setStatus(changeId, 'kept');
-    if (snapshot.activeChangeId === changeId) {
-      const next = pendingChanges()[0];
-      snapshot = { ...snapshot, activeChangeId: next?.id ?? null };
-    }
-  }
-
-  function markAllUndone() {
-    snapshot = {
-      ...snapshot,
-      changes: snapshot.changes.map((change) =>
-        change.status === 'pending' ? { ...change, status: 'undone', error: null } : change
-      ),
-      activeChangeId: null,
-      error: null
-    };
-  }
-
-  function setApplying(isApplying: boolean) {
-    snapshot = { ...snapshot, isApplying };
-  }
-
-  function setError(error: string | null) {
-    snapshot = { ...snapshot, error };
-  }
-
-  function setConflicted(isConflicted: boolean) {
-    snapshot = { ...snapshot, isConflicted };
-  }
-
-  function setReviewHunks(total: number, unresolved: number) {
-    snapshot = { ...snapshot, reviewHunks: { total, unresolved } };
-  }
-
-  function setChangeError(changeId: string, error: string) {
-    setStatus(changeId, 'pending', error);
-    snapshot = { ...snapshot, error };
-  }
-
-  function findPendingForPath(path: string | null): PendingProposalChange | null {
-    if (!path) return null;
-    return (
-      pendingChanges().find((change) => change.path === path) ??
-      null
-    );
-  }
-
-  function nextPending(fromId: string | null = snapshot.activeChangeId): PendingProposalChange | null {
-    const pending = pendingChanges();
-    if (pending.length === 0) return null;
-    if (!fromId) return pending[0] ?? null;
-    const index = pending.findIndex((change) => change.id === fromId);
-    if (index < 0) return pending[0] ?? null;
-    return pending[(index + 1) % pending.length] ?? pending[0] ?? null;
+  function notifyReviewRuntimeChanged() {
+    runtimeRevision += 1;
   }
 
   return {
     get snapshot() {
-      return snapshot;
+      return snapshot();
     },
-    get pendingCount() {
-      return pendingChanges().length;
+    get workflow() {
+      return workflow;
     },
-    pendingChanges,
-    getChange,
-    load,
-    clear,
-    setActiveChangeId,
-    markUndone,
-    markKept,
-    markAllUndone,
-    setApplying,
-    setError,
-    setConflicted,
-    setReviewHunks,
-    setChangeError,
-    findPendingForPath,
-    nextPending
+    dispatchWorkflow,
+    notifyReviewRuntimeChanged,
+    isReviewingDocument(document: NoteDraftState) {
+      if (workflow.kind === 'idle') return false;
+      return workflow.review?.document.key === document.key;
+    }
   };
 }
 
@@ -211,3 +90,10 @@ export type ProposalReviewSession = ReturnType<typeof createProposalReviewSessio
 
 /** App-wide session singleton used by chat + notepad. */
 export const proposalReviewSession = createProposalReviewSession();
+
+export function shouldSuppressAutosaveForDocument(
+  document: NoteDraftState,
+  session: ProposalReviewSession = proposalReviewSession
+): boolean {
+  return session.isReviewingDocument(document);
+}

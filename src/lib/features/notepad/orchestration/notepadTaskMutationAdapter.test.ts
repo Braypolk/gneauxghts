@@ -92,10 +92,10 @@ describe('notepad task mutation adapter', () => {
       async (
         target,
         markdown: string,
-        applyToRuntime: () => Promise<void>
+        applyToRuntime: (markdown: string) => Promise<void>
       ) => {
         updateDocumentMarkdown(target, markdown);
-        await applyToRuntime();
+        await applyToRuntime(markdown);
       }
     );
     const enqueueSave = vi.fn(async () => undefined);
@@ -154,7 +154,7 @@ describe('notepad task mutation adapter', () => {
     );
     const trace: string[] = [];
     const editing = createDocumentEditingService({
-      isApplyingExternalContent: () => false,
+      isApplyingProgrammaticUpdate: () => false,
       shouldSuppressAutosave: () => false,
       resetPaneCommandAfterBodyInput: vi.fn(),
       clearRecentlyForgotten: vi.fn(),

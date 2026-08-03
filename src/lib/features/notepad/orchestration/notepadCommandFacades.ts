@@ -14,6 +14,10 @@ import type { SearchItem } from '$lib/types/semantic';
 import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
 import type { WorkspacePaneState } from '$lib/features/notepad/workspace/paneTypes';
+import type {
+  PaneMembershipEvent,
+  PaneMembershipState
+} from '$lib/features/notepad/pane/paneLifecycleMachine';
 
 export type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
 
@@ -24,16 +28,26 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
   getPaneState: (
     paneId: TPaneId
   ) => WorkspacePaneState<TPaneId>;
-  addPane: (
+  getPaneMembership: (paneId: TPaneId) => PaneMembershipState;
+  dispatchPaneMembership: (
     paneId: TPaneId,
+    event: PaneMembershipEvent
+  ) => boolean;
+  completePaneCreation: (
+    paneId: TPaneId,
+    operationId: number,
     noteKey: NoteKey,
     kind?: PaneKind
   ) => WorkspacePaneState<TPaneId>;
   canRemovePane: (paneId: TPaneId) => boolean;
-  removePane: (
-    paneId: TPaneId
+  retirePane: (
+    paneId: TPaneId,
+    operationId: number
   ) => WorkspacePaneState<TPaneId> | null;
-  finalizePaneRemoval: (paneId: TPaneId) => void;
+  completePaneDisposal: (
+    paneId: TPaneId,
+    operationId: number
+  ) => boolean;
   setPaneKind: (
     paneId: TPaneId,
     kind: PaneKind
@@ -85,13 +99,9 @@ export interface NotepadPaneCommands<TPaneId extends string> {
   focusPaneEditorAtEnd: (paneId: TPaneId) => boolean;
   focusPaneChat: (paneId: TPaneId) => boolean;
   createPane: () => TPaneId;
-  preparePaneClose: (
-    paneId: TPaneId,
-    document: NoteDraftState
-  ) => Promise<void>;
   disposePaneRuntime: (
     paneId: TPaneId,
-    document: NoteDraftState
+    document: NoteDraftState | null
   ) => Promise<void>;
   updateSelectedRelatedText: (paneId?: TPaneId) => void;
   closeWikilinkAutocomplete: (paneId?: TPaneId) => void;
@@ -154,21 +164,31 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
       workspace.getPaneState(
         paneId as NotepadPaneId
       ) as WorkspacePaneState<TPaneId>,
-    addPane: (paneId, noteKey, kind) =>
-      workspace.addPane(
+    getPaneMembership: (paneId) =>
+      workspace.getPaneMembership(paneId as NotepadPaneId),
+    dispatchPaneMembership: (paneId, event) =>
+      workspace.dispatchPaneMembership(
         paneId as NotepadPaneId,
+        event
+      ),
+    completePaneCreation: (paneId, operationId, noteKey, kind) =>
+      workspace.completePaneCreation(
+        paneId as NotepadPaneId,
+        operationId,
         noteKey,
         kind
       ) as WorkspacePaneState<TPaneId>,
     canRemovePane: (paneId) =>
       workspace.canRemovePane(paneId as NotepadPaneId),
-    removePane: (paneId) =>
-      workspace.removePane(
-        paneId as NotepadPaneId
+    retirePane: (paneId, operationId) =>
+      workspace.retirePane(
+        paneId as NotepadPaneId,
+        operationId
       ) as WorkspacePaneState<TPaneId> | null,
-    finalizePaneRemoval: (paneId) =>
-      workspace.finalizePaneRemoval(
-        paneId as NotepadPaneId
+    completePaneDisposal: (paneId, operationId) =>
+      workspace.completePaneDisposal(
+        paneId as NotepadPaneId,
+        operationId
       ),
     setPaneKind: (paneId, kind) =>
       workspace.setPaneKind(

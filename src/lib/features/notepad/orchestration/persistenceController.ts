@@ -3,16 +3,13 @@ import {
   type SessionSnapshot,
 } from "$lib/features/notepad/session/session";
 import {
-  beginDocumentOperation,
-  completeDocumentOperation,
+  dispatchDocumentOperation,
   documentHasCleanBuffer,
   documentHasUnresolvedConflict,
-  failDocumentOperation,
   getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
   getDocumentTitle,
-  invalidateDocumentOperations,
   isDocumentOperationCurrent,
   type NoteDraftState,
   type NoteKey,
@@ -51,7 +48,7 @@ export function createNotepadPersistenceController(
   function invalidatePendingSaveResults(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    invalidateDocumentOperations(note);
+    dispatchDocumentOperation(note, { type: "invalidate" });
   }
 
   function getNoteSaveQueue(noteKey: NoteDraftState["key"]) {
@@ -69,12 +66,11 @@ export function createNotepadPersistenceController(
       } catch (error) {
         console.error("Notepad note operation failed:", error);
         if (note.operation.kind === "saving") {
-          failDocumentOperation(
-            note,
-            "saving",
+          dispatchDocumentOperation(note, {
+            type: "fail",
             error,
-            note.operation.token,
-          );
+            token: note.operation.token,
+          });
         }
         throw error;
       }
@@ -97,10 +93,11 @@ export function createNotepadPersistenceController(
       return;
     }
 
-    const operationToken = beginDocumentOperation(
-      note,
-      "saving",
-    );
+    dispatchDocumentOperation(note, {
+      type: "start",
+      operation: "saving",
+    });
+    const operationToken = note.operation.token;
     const operationRevision = note.operation.revision;
     const savedSession = await params.saveNoteSession(
       title,
@@ -147,12 +144,13 @@ export function createNotepadPersistenceController(
         console.error("Failed to mark newly saved note as opened:", error);
       }
     }
-    completeDocumentOperation(
-      savedNote,
-      savedNote === note
-        ? operationToken
-        : savedNote.operation.token,
-    );
+    dispatchDocumentOperation(savedNote, {
+      type: "succeed",
+      token:
+        savedNote === note
+          ? operationToken
+          : savedNote.operation.token,
+    });
   }
 
   function cancelPendingAutosave(

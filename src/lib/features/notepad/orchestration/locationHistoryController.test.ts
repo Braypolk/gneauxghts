@@ -26,7 +26,7 @@ const otherPaneId = 'pane-2';
 function editorLocation(
   noteId: string,
   notePath: string
-): NavLocation {
+): Extract<NavLocation, { kind: 'editor' }> {
   return {
     kind: 'editor',
     noteId,
@@ -90,14 +90,14 @@ function setup(paneOrder: string[] = [paneId]) {
     getPaneTitleInput: () => null,
     activatePaneSession: vi.fn(),
     setPaneKind,
-    saveCursorPosition: vi.fn(),
-    cancelPendingAutosave: vi.fn(),
-    enqueueSave: vi.fn(async () => undefined),
     loadRecentNotes: vi.fn(async () => []),
     openNotePath,
     paneLifecycle: {} as never,
     updateSelectedRelatedText: vi.fn(),
     focusPaneAfterShortcut,
+    documentDeparture: {
+      prepare: vi.fn(async () => document)
+    },
     transitions: createPaneNavigationTransitionPipeline({
       assertWorkspaceInvariants: vi.fn(),
       ensurePaneEditors
@@ -173,5 +173,32 @@ describe('location history workspace invariants', () => {
     expect(
       harness.focusPaneAfterShortcut
     ).toHaveBeenCalledWith(paneId);
+  });
+
+  it('drops a missing previous note and restores the next location', async () => {
+    const harness = setup();
+    const fallback = editorLocation('note-b', '/vault/B.md');
+    const missing = editorLocation('missing', '/vault/Missing.md');
+    notepadLocationMru.touch(paneId, fallback);
+    notepadLocationMru.touch(paneId, missing);
+    harness.openNotePath
+      .mockRejectedValueOnce(new Error('Missing note path'))
+      .mockResolvedValueOnce(undefined);
+
+    await harness.controller.goToPreviousLocation();
+
+    expect(harness.openNotePath).toHaveBeenNthCalledWith(
+      1,
+      missing.notePath,
+      expect.objectContaining({ noteId: missing.noteId })
+    );
+    expect(harness.openNotePath).toHaveBeenNthCalledWith(
+      2,
+      fallback.notePath,
+      expect.objectContaining({ noteId: fallback.noteId })
+    );
+    expect(notepadLocationMru.list(paneId)).not.toContainEqual(
+      missing
+    );
   });
 });

@@ -65,17 +65,21 @@ export function createDocumentPaneCoordinator<
     }
   }
 
-  function saveCursorPositionForDocument(
+  async function saveCursorPositionForDocument(
     document: NoteDraftState = deps.getNavigationDocument()
-  ): void {
-    for (const paneId of deps.getPaneIdsForDocument(document)) {
-      deps.getPaneRuntime(paneId).flushCursorSave(() => {
-        void deps.paneLifecycle.saveCursorPosition(
-          paneId,
-          document
-        );
-      });
-    }
+  ): Promise<void> {
+    await Promise.all(
+      deps.getPaneIdsForDocument(document).map((paneId) => {
+        let save = Promise.resolve<unknown>(undefined);
+        deps.getPaneRuntime(paneId).flushCursorSave(() => {
+          save = deps.paneLifecycle.saveCursorPosition(
+            paneId,
+            document
+          );
+        });
+        return save;
+      })
+    );
   }
 
   function preferredEditorPane(

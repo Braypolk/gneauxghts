@@ -14,10 +14,7 @@
     ChatSelectionActions,
     ChatSurfaceHandle
   } from './types';
-  import type {
-    PendingProposalChange,
-    ProposalReviewSessionSnapshot
-  } from '$lib/features/proposals/types';
+  import type { ProposalReviewSessionSnapshot } from '$lib/features/proposals/types';
   import { reviewBelongsToConversation } from './proposalVisibility';
   import AttachmentPreview from './AttachmentPreview.svelte';
   import ChatComposer from './ui/ChatComposer.svelte';
@@ -44,12 +41,6 @@
     getActiveNoteSnapshot?: () => Promise<ChatActiveNoteSnapshot | null>;
     targetAnchor?: string | null;
     proposalSnapshot?: ProposalReviewSessionSnapshot | null;
-    proposalPendingCount?: number;
-    onProposalOpenChange?: (
-      change: PendingProposalChange
-    ) => void | Promise<void>;
-    onProposalKeep?: (changeId: string) => void | Promise<void>;
-    onProposalUndo?: (changeId: string) => void | Promise<void>;
     onProposalKeepAll?: () => void | Promise<void>;
     onProposalUndoAll?: () => void | Promise<void>;
     onProposalReview?: () => void | Promise<void>;
@@ -77,10 +68,6 @@
     getActiveNoteSnapshot,
     targetAnchor = null,
     proposalSnapshot = null,
-    proposalPendingCount = 0,
-    onProposalOpenChange,
-    onProposalKeep,
-    onProposalUndo,
     onProposalKeepAll,
     onProposalUndoAll,
     onProposalReview,
@@ -213,10 +200,6 @@
       {controller}
       proposals={snapshot.proposals}
       {visibleProposalSnapshot}
-      {proposalPendingCount}
-      {onProposalOpenChange}
-      {onProposalKeep}
-      {onProposalUndo}
       {onProposalKeepAll}
       {onProposalUndoAll}
       {onProposalReview}

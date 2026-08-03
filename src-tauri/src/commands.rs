@@ -25,13 +25,14 @@ use crate::{
         SemanticStatus,
     },
     state::{
-        create_vault_folder as create_vault_folder_state, current_vault_info, db_mark_note_opened,
-        ensure_vault_scaffold, list_vault_folders as list_vault_folders_state, notes_root,
-        set_notes_root, vault_root, CreateVaultFolderResult, VaultFolderInfo, VaultInfo,
+        create_vault_folder as create_vault_folder_state, current_vault_info,
+        db_clear_last_opened_note, db_mark_note_opened, ensure_vault_scaffold,
+        list_vault_folders as list_vault_folders_state, notes_root, set_notes_root, vault_root,
+        CreateVaultFolderResult, VaultFolderInfo, VaultInfo,
     },
     time::current_time_millis,
 };
-use note_persistence::{persist_note_session_with_outcome, NotePersistenceMode};
+use note_persistence::persist_note_session_with_outcome;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -336,14 +337,7 @@ pub(crate) fn save_note(
     markdown: String,
     current_path: Option<String>,
 ) -> Result<NoteSession, String> {
-    let outcome = persist_note_session_with_outcome(
-        &state,
-        title.clone(),
-        markdown,
-        current_path,
-        NotePersistenceMode::Save,
-        false,
-    )?;
+    let outcome = persist_note_session_with_outcome(&state, title.clone(), markdown, current_path)?;
     let session = outcome
         .session
         .clone()
@@ -357,22 +351,8 @@ pub(crate) fn mark_note_opened(note_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(crate) fn remember_note(
-    state: State<'_, AppState>,
-    title: String,
-    markdown: String,
-    current_path: Option<String>,
-    clear_last_opened: bool,
-) -> Result<Option<crate::services::note_mutation::CommittedMutationWarning>, String> {
-    let outcome = persist_note_session_with_outcome(
-        &state,
-        title.clone(),
-        markdown,
-        current_path,
-        NotePersistenceMode::Remember,
-        clear_last_opened,
-    )?;
-    Ok(outcome.commit_warning)
+pub(crate) fn clear_last_opened_note() -> Result<(), String> {
+    db_clear_last_opened_note()
 }
 
 #[tauri::command]

@@ -26,7 +26,6 @@ pub(crate) enum PostCommitStage {
     SemanticMove,
     DirtyRecovery,
     Revision,
-    SessionState,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

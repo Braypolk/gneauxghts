@@ -9,7 +9,6 @@ import type {
   ChatSurfaceHandle
 } from '$lib/features/chat';
 import type {
-  PendingProposalChange,
   ProposalReviewSessionSnapshot
 } from '$lib/features/proposals/types';
 
@@ -33,10 +32,6 @@ export interface ChatPaneContextBindings {
 
 export interface ChatPaneProposalBindings {
   snapshot: ProposalReviewSessionSnapshot | null;
-  pendingCount: number;
-  onOpenChange: (change: PendingProposalChange) => void | Promise<void>;
-  onKeep: (changeId: string) => void | Promise<void>;
-  onUndo: (changeId: string) => void | Promise<void>;
   onKeepAll: () => void | Promise<void>;
   onUndoAll: () => void | Promise<void>;
   onReview: () => void | Promise<void>;

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  captureExternalDeletionConflict,
-  captureExternalSnapshotConflict,
   createDocumentState,
   updateDocumentMarkdown
 } from './documentState';
+import {
+  captureExternalDeletionForTest,
+  captureExternalSnapshotForTest
+} from './documentExternalSyncTestSupport';
 import { createDocumentConflictController } from './documentConflictController';
 import {
   createEmptySessionSnapshot
@@ -14,6 +16,14 @@ import type {
 } from '$lib/features/notepad/pane/paneEditorLifecycle';
 
 const path = '/vault/Note.md';
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 function conflictedDocument() {
   const saved = {
@@ -29,7 +39,7 @@ function conflictedDocument() {
   };
   const document = createDocumentState(saved, `path:${path}`);
   updateDocumentMarkdown(document, 'my edits');
-  captureExternalSnapshotConflict(
+  captureExternalSnapshotForTest(
     document,
     {
       ...saved,
@@ -78,7 +88,7 @@ describe('document conflict controller', () => {
     ).resolves.toBe(true);
 
     expect(document.working.markdown).toBe('my edits');
-    expect(document.externalSync.kind).toBe('dirty');
+    expect(document.externalSync.kind).toBe('noConflict');
     expect(harness.enqueueSave).toHaveBeenCalledWith(document);
     expect(
       harness.replaceDocumentContentInPlace
@@ -97,7 +107,7 @@ describe('document conflict controller', () => {
       title: 'Disk title',
       markdown: 'disk version'
     });
-    expect(document.externalSync.kind).toBe('inSync');
+    expect(document.externalSync.kind).toBe('noConflict');
     expect(
       harness.replaceDocumentContentInPlace
     ).toHaveBeenCalledWith(document, 'disk version');
@@ -107,7 +117,7 @@ describe('document conflict controller', () => {
 
   it('applies retained deletion state while preserving recoverable text as a draft', async () => {
     const document = conflictedDocument();
-    captureExternalDeletionConflict(
+    captureExternalDeletionForTest(
       document,
       path,
       'watcher'
@@ -119,7 +129,7 @@ describe('document conflict controller', () => {
     expect(document.identity).toEqual({ kind: 'draft' });
     expect(document.savedBaseline).toBeNull();
     expect(document.working.markdown).toBe('my edits');
-    expect(document.externalSync.kind).toBe('dirty');
+    expect(document.externalSync.kind).toBe('noConflict');
     expect(
       harness.replaceDocumentContentInPlace
     ).toHaveBeenCalledWith(document, 'my edits');
@@ -163,7 +173,7 @@ describe('document conflict controller', () => {
         working: { ...document.working },
         identity: document.identity,
         savedBaseline: document.savedBaseline,
-        externalSync: document.externalSync
+        externalSync: structuredClone(document.externalSync)
       };
       const harness = setup();
       harness.replaceDocumentContentInPlace.mockImplementation(
@@ -179,7 +189,7 @@ describe('document conflict controller', () => {
       expect(document.savedBaseline).toBe(
         localState.savedBaseline
       );
-      expect(document.externalSync).toBe(
+      expect(document.externalSync).toEqual(
         localState.externalSync
       );
       expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
@@ -239,5 +249,61 @@ describe('document conflict controller', () => {
       markdown: 'my edits'
     });
     expect(document.externalSync.kind).toBe('conflict');
+    expect(document.externalSync).toMatchObject({
+      phase: 'awaitingChoice'
+    });
+  });
+
+  it('rejects an old editor result after a newer external conflict is captured', async () => {
+    const document = conflictedDocument();
+    const harness = setup();
+    const replacement = deferred<PaneEditorOperationResult>();
+    harness.replaceDocumentContentInPlace
+      .mockImplementationOnce(async () => replacement.promise)
+      .mockImplementationOnce(async () => 'applied');
+
+    const loading =
+      harness.controller.loadDiskVersion(document);
+    expect(document.externalSync).toMatchObject({
+      kind: 'conflict',
+      conflictId: 1,
+      phase: 'applyingExternal'
+    });
+
+    captureExternalSnapshotForTest(
+      document,
+      {
+        ...createEmptySessionSnapshot(),
+        title: 'Newer disk title',
+        bodyMarkdown: 'newer disk version',
+        currentNoteId: 'note-1',
+        currentNotePath: path,
+        lastSavedTitle: 'Newer disk title',
+        lastSavedMarkdown: 'newer disk version',
+        lastSavedNoteId: 'note-1',
+        lastSavedPath: path
+      },
+      'watcher'
+    );
+    replacement.resolve('applied');
+
+    await expect(loading).resolves.toBe(false);
+    expect(document.working.markdown).toBe('my edits');
+    expect(document.externalSync).toMatchObject({
+      kind: 'conflict',
+      conflictId: 2,
+      phase: 'awaitingChoice',
+      external: {
+        kind: 'snapshot',
+        document: {
+          content: { markdown: 'newer disk version' }
+        }
+      }
+    });
+    expect(
+      harness.replaceDocumentContentInPlace.mock.calls.map(
+        ([, markdown]) => markdown
+      )
+    ).toEqual(['disk version', 'my edits']);
   });
 });

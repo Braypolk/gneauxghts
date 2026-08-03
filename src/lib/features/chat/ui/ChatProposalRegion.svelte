@@ -1,10 +1,7 @@
 <script lang="ts">
   import { FileInput } from '@lucide/svelte';
   import ProposedChangesCard from '$lib/features/proposals/ProposedChangesCard.svelte';
-  import type {
-    PendingProposalChange,
-    ProposalReviewSessionSnapshot
-  } from '$lib/features/proposals/types';
+  import type { ProposalReviewSessionSnapshot } from '$lib/features/proposals/types';
   import type { ChatController } from '../controller.svelte';
   import type { ChatAgentProposal } from '../types';
   import { proposalInitialMarkdown } from './chatPanelHelpers';
@@ -13,12 +10,6 @@
     controller: ChatController;
     proposals: ChatAgentProposal[];
     visibleProposalSnapshot: ProposalReviewSessionSnapshot | null;
-    proposalPendingCount?: number;
-    onProposalOpenChange?: (
-      change: PendingProposalChange
-    ) => void | Promise<void>;
-    onProposalKeep?: (changeId: string) => void | Promise<void>;
-    onProposalUndo?: (changeId: string) => void | Promise<void>;
     onProposalKeepAll?: () => void | Promise<void>;
     onProposalUndoAll?: () => void | Promise<void>;
     onProposalReview?: () => void | Promise<void>;
@@ -34,10 +25,6 @@
     controller,
     proposals,
     visibleProposalSnapshot,
-    proposalPendingCount = 0,
-    onProposalOpenChange,
-    onProposalKeep,
-    onProposalUndo,
     onProposalKeepAll,
     onProposalUndoAll,
     onProposalReview,
@@ -59,15 +46,8 @@
 
   function proposalIsOpenInEditor(proposal: ChatAgentProposal) {
     if (proposal.kind !== 'update') return false;
-    const notePath = (proposal.preview as { notePath?: unknown }).notePath;
     return (
-      typeof notePath === 'string' &&
-      visibleProposalSnapshot?.source === `chat:${proposal.id}` &&
-      Boolean(
-        visibleProposalSnapshot?.changes.some(
-          (change) => change.path === notePath && change.status === 'pending'
-        )
-      )
+      visibleProposalSnapshot?.proposalId === proposal.id
     );
   }
 
@@ -159,10 +139,6 @@
 {#if visibleProposalSnapshot != null}
   <ProposedChangesCard
     snapshot={visibleProposalSnapshot}
-    pendingCount={proposalPendingCount}
-    onOpenChange={onProposalOpenChange ?? (() => {})}
-    onKeep={onProposalKeep ?? (() => {})}
-    onUndo={onProposalUndo ?? (() => {})}
     onKeepAll={onProposalKeepAll ?? (() => {})}
     onUndoAll={onProposalUndoAll ?? (() => {})}
     onReview={onProposalReview ?? (() => {})}

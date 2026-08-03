@@ -3,9 +3,11 @@ import type { StateEffect } from '@codemirror/state';
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
-import type { ProposalPreview } from '$lib/types/proposals';
+import type {
+  CommitNoteReviewResult,
+  ProposalPreview
+} from '$lib/types/proposals';
 import type { ProposalReviewState } from './reviewExtension';
-import { createReviewHoldStore } from './reviewHold.svelte';
 import { createProposalReviewSession } from './reviewSession.svelte';
 import { createProposalOrchestration } from './proposalOrchestration';
 
@@ -146,19 +148,20 @@ function setup(options: { opened?: boolean } = {}) {
   const document = note();
   const firstEditor = fakeEditor();
   const session = createProposalReviewSession();
-  const holds = createReviewHoldStore();
   let opened = options.opened ?? false;
   let currentEditor = firstEditor;
-  const commit = vi.fn(async () => ({
-    status: 'committed' as const,
-    applied: {
-      kind: 'updateNote',
-      path,
-      previousPath: path
-    },
-    message: null
-  }));
-  const dismiss = vi.fn(async () => undefined);
+  const commit = vi.fn<() => Promise<CommitNoteReviewResult>>(
+    async () => ({
+      status: 'committed',
+      applied: {
+        kind: 'updateNote',
+        path,
+        previousPath: path
+      },
+      message: null
+    })
+  );
+  const dismiss = vi.fn<() => Promise<void>>(async () => undefined);
   const acknowledgeDocumentCommit = vi.fn(async () => undefined);
   const ensureEditorPaneForReview = vi.fn(async () => undefined);
   const openNoteForReview = vi.fn(async () => {
@@ -166,6 +169,7 @@ function setup(options: { opened?: boolean } = {}) {
     return document;
   });
   const activateEditorPane = vi.fn(async () => undefined);
+  const reloadReviewFromDisk = vi.fn(async () => undefined);
   const orchestration = createProposalOrchestration({
     getEditorPaneDocument: (requestedPath) =>
       opened && requestedPath === path ? document : null,
@@ -174,22 +178,22 @@ function setup(options: { opened?: boolean } = {}) {
     openNoteForReview,
     activateEditorPane,
     reopenReviewEditor: vi.fn(async () => currentEditor.adapter),
+    reloadReviewFromDisk,
     acknowledgeDocumentCommit,
-    session,
-    holds
+    session
   });
 
   return {
     document,
     firstEditor,
     session,
-    holds,
     commit,
     dismiss,
     acknowledgeDocumentCommit,
     ensureEditorPaneForReview,
     openNoteForReview,
     activateEditorPane,
+    reloadReviewFromDisk,
     orchestration,
     setCurrentEditor: (editor: ReturnType<typeof fakeEditor>) => {
       currentEditor = editor;
@@ -246,10 +250,10 @@ describe('durable proposal editor review', () => {
 
     expect(test.firstEditor.markdown).toBe('After');
     expect(test.firstEditor.installed).toBe(true);
-    expect(test.holds.isHolding(test.document.key)).toBe(true);
-    expect(test.session.snapshot.reviewHunks).toEqual({
-      total: 1,
-      unresolved: 1
+    expect(test.session.isReviewingDocument(test.document)).toBe(true);
+    expect(test.session.snapshot).toMatchObject({
+      totalHunks: 1,
+      unresolvedHunks: 1
     });
     expect(test.orchestration.isReviewingProposal('proposal-1')).toBe(true);
   });
@@ -339,9 +343,12 @@ describe('durable proposal editor review', () => {
 
     test.orchestration.keepAll();
     await vi.waitFor(() => expect(test.commit).toHaveBeenCalledWith('After'));
+    await vi.waitFor(() =>
+      expect(test.orchestration.activeProposalId).toBeNull()
+    );
 
-    expect(test.holds.isHolding(test.document.key)).toBe(false);
-    expect(test.session.snapshot.changes).toEqual([]);
+    expect(test.session.isReviewingDocument(test.document)).toBe(false);
+    expect(test.session.snapshot.proposalId).toBeNull();
     expect(test.acknowledgeDocumentCommit).toHaveBeenCalledWith({
       document: test.document,
       path,
@@ -356,8 +363,83 @@ describe('durable proposal editor review', () => {
 
     test.orchestration.keepAll();
     await vi.waitFor(() => expect(test.commit).toHaveBeenCalledWith('After'));
+    await vi.waitFor(() =>
+      expect(test.orchestration.activeProposalId).toBeNull()
+    );
 
     expect(test.session.snapshot.error).toBeNull();
+    expect(test.orchestration.activeProposalId).toBeNull();
+  });
+
+  it('recovers a commit conflict through the same review state', async () => {
+    const test = setup();
+    test.commit.mockResolvedValueOnce({
+      status: 'conflict',
+      applied: null,
+      message: 'Changed on disk.'
+    });
+    await test.orchestration.loadDurableProposal(test.request);
+
+    test.orchestration.keepAll();
+    await vi.waitFor(() =>
+      expect(test.session.workflow.kind).toBe('conflicted')
+    );
+    expect(test.session.snapshot.isApplying).toBe(false);
+    expect(test.session.snapshot.error).toBe('Changed on disk.');
+
+    test.orchestration.retryCommit();
+    await vi.waitFor(() =>
+      expect(test.orchestration.activeProposalId).toBeNull()
+    );
+    expect(test.commit).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not replace a dismissal in progress', async () => {
+    const test = setup();
+    let releaseDismiss!: () => void;
+    test.dismiss.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDismiss = resolve;
+        })
+    );
+    await test.orchestration.loadDurableProposal(test.request);
+    test.orchestration.undoAll();
+    await vi.waitFor(() =>
+      expect(test.session.workflow.kind).toBe('dismissing')
+    );
+
+    const replacement = {
+      ...test.request,
+      proposalId: 'proposal-2',
+      preview: { ...preview, reviewId: 'review-2' }
+    };
+    await expect(
+      test.orchestration.loadDurableProposal(replacement)
+    ).resolves.toBe(false);
+    expect(test.orchestration.activeProposalId).toBe('proposal-1');
+
+    releaseDismiss();
+    await vi.waitFor(() =>
+      expect(test.orchestration.activeProposalId).toBeNull()
+    );
+  });
+
+  it('requires confirmation before dismissing and reloading a conflict', async () => {
+    const test = setup();
+    await test.orchestration.loadDurableProposal(test.request);
+    test.orchestration.markConflict(path);
+
+    await test.orchestration.reloadDisk();
+    expect(test.dismiss).not.toHaveBeenCalled();
+    expect(test.session.workflow).toMatchObject({
+      kind: 'confirmingDiscard',
+      recoverTo: 'conflicted'
+    });
+
+    await test.orchestration.reloadDisk();
+    expect(test.dismiss).toHaveBeenCalledOnce();
+    expect(test.reloadReviewFromDisk).toHaveBeenCalledWith(path);
     expect(test.orchestration.activeProposalId).toBeNull();
   });
 
@@ -369,7 +451,7 @@ describe('durable proposal editor review', () => {
     await vi.waitFor(() => expect(test.dismiss).toHaveBeenCalledOnce());
 
     expect(test.firstEditor.markdown).toBe('Before');
-    expect(test.holds.isHolding(test.document.key)).toBe(false);
+    expect(test.session.isReviewingDocument(test.document)).toBe(false);
     expect(test.commit).not.toHaveBeenCalled();
   });
 });

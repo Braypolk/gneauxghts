@@ -176,6 +176,20 @@ describe('locationMru', () => {
     expect(mru.list('p1')).toEqual([noteB]);
   });
 
+  it('removes a retired path even when its stored note ID differs', () => {
+    const mru = createLocationMruStore<'p1'>();
+    mru.touch('p1', noteA);
+    mru.touch('p1', noteB);
+
+    mru.remove({
+      kind: 'editor',
+      noteId: 'rekeyed-a',
+      notePath: noteA.notePath
+    });
+
+    expect(mru.list('p1')).toEqual([noteB]);
+  });
+
   it('remove is a no-op when the location is absent', () => {
     const mru = createLocationMruStore<'p1'>();
     mru.touch('p1', noteB);

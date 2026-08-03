@@ -24,10 +24,14 @@ export function locationsEqual(left: NavLocation, right: NavLocation): boolean {
     return false;
   }
   if (left.kind === 'editor' && right.kind === 'editor') {
-    if (left.noteId && right.noteId) {
-      return left.noteId === right.noteId;
-    }
-    return left.notePath !== null && left.notePath === right.notePath;
+    return Boolean(
+      (left.noteId &&
+        right.noteId &&
+        left.noteId === right.noteId) ||
+        (left.notePath &&
+          right.notePath &&
+          left.notePath === right.notePath)
+    );
   }
   if (left.kind === 'chat' && right.kind === 'chat') {
     // One thought-partner slot per pane: keep the latest conversation details on touch.

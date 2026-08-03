@@ -16,6 +16,7 @@ function deferred() {
 describe('pane navigation transition pipeline', () => {
   it('runs mutation phases in one deterministic order', async () => {
     const events: string[] = [];
+    let resolvedOperationId: number | null = null;
     const pipeline =
       createPaneNavigationTransitionPipeline<PaneId>({
         assertWorkspaceInvariants: () =>
@@ -28,9 +29,16 @@ describe('pane navigation transition pipeline', () => {
     const result = await pipeline.execute({
       kind: 'change-pane-kind',
       resolvePane: () => 'left',
+      onResolved: (_paneId, operationId) => {
+        resolvedOperationId = operationId;
+        events.push('resolved');
+      },
       guard: () => {
         events.push('guard');
         return { status: 'allow' };
+      },
+      departDocument: () => {
+        events.push('depart');
       },
       captureHistory: () => {
         events.push('history');
@@ -51,7 +59,9 @@ describe('pane navigation transition pipeline', () => {
     });
 
     expect(events).toEqual([
+      'resolved',
       'guard',
+      'depart',
       'history',
       'prepare',
       'mutate',
@@ -66,6 +76,7 @@ describe('pane navigation transition pipeline', () => {
       phases: [
         'resolved',
         'guarded',
+        'document-departed',
         'history-captured',
         'prepared',
         'workspace-mutated',
@@ -74,6 +85,7 @@ describe('pane navigation transition pipeline', () => {
         'focused'
       ]
     });
+    expect(resolvedOperationId).toBe(result.operationId);
   });
 
   it.each([

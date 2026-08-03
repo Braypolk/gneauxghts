@@ -1,18 +1,32 @@
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
-import type {
-  CommitNoteReviewResult,
-  ProposalPreview
-} from '$lib/types/proposals';
-import { commitNoteReview, proposalErrorMessage } from './api';
 import { enterProposalReviewView, exitProposalReviewView, resolveProposalHunk } from './reviewDisplay';
 import { proposalTransaction, type ReviewHunkState } from './reviewExtension';
-import { reviewHoldStore, type ReviewHoldStore } from './reviewHold.svelte';
 import { proposalReviewSession, type ProposalReviewSession } from './reviewSession.svelte';
+import type {
+  DurableProposalReviewRequest,
+  ProposalReviewRuntime
+} from './types';
+import type { ProposalReviewIdentity } from './proposalReviewMachine';
 import {
   getDocumentPath,
   updateDocumentMarkdown
 } from '$lib/features/notepad/document/documentState';
+
+function proposalErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === 'string' && error.trim()) return error;
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (error && typeof error === 'object') {
+    const record = error as { message?: unknown; error?: unknown };
+    if (typeof record.message === 'string' && record.message.trim()) {
+      return record.message;
+    }
+    if (typeof record.error === 'string' && record.error.trim()) {
+      return record.error;
+    }
+  }
+  return fallback;
+}
 
 export interface ProposalOrchestrationDeps {
   getEditorPaneDocument: (path?: string | null) => NoteDraftState | null;
@@ -24,9 +38,7 @@ export interface ProposalOrchestrationDeps {
     path: string
   ) => Promise<NoteDraftState | null>;
   activateEditorPane?: (document?: NoteDraftState) => void | Promise<void>;
-  cancelPendingAutosave?: (document: NoteDraftState) => void;
   scheduleAutosave?: (document: NoteDraftState) => void;
-  flushBeforePreview?: (document: NoteDraftState) => Promise<void>;
   acknowledgeDocumentCommit: (commit: {
     document: NoteDraftState;
     path: string;
@@ -35,59 +47,84 @@ export interface ProposalOrchestrationDeps {
   reloadReviewFromDisk?: (path: string) => Promise<void>;
   reopenReviewEditor?: (document: NoteDraftState) => Promise<EditorCapabilityAdapter | null>;
   session?: ProposalReviewSession;
-  holds?: ReviewHoldStore;
 }
 
-export interface DurableProposalReviewRequest {
-  proposalId: string;
-  noteId: string | null;
-  preview: ProposalPreview;
-  commit: (markdown: string) => Promise<CommitNoteReviewResult>;
-  dismiss: () => Promise<void>;
-}
-
-type ActiveReview = {
-  preview: ProposalPreview;
-  durable: DurableProposalReviewRequest | null;
-  document: NoteDraftState;
-  editor: EditorCapabilityAdapter;
-  committing: boolean;
-  conflicted: boolean;
-  reloadConfirming: boolean;
-  hunkSnapshot: ReviewHunkState[];
-  workingMarkdown: string;
-};
+export type { DurableProposalReviewRequest } from './types';
 
 export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   const session = deps.session ?? proposalReviewSession;
-  const holds = deps.holds ?? reviewHoldStore;
-  let active: ActiveReview | null = null;
   let durableLoadQueue: Promise<void> = Promise.resolve();
 
-  function closeReview(review: ActiveReview) {
-    for (const editor of editors(review)) exitProposalReviewView(editor);
-    holds.end(review.document.key);
-    if (active === review) active = null;
-    session.clear();
+  function identityFor(
+    request: DurableProposalReviewRequest
+  ): ProposalReviewIdentity {
+    return {
+      reviewId: request.preview.reviewId,
+      proposalId: request.proposalId,
+      notePath: request.preview.notePath
+    };
   }
 
-  function replaceActiveReview(review: ActiveReview) {
+  function currentReview(): ProposalReviewRuntime | null {
+    const state = session.workflow;
+    return state.kind === 'idle' ? null : state.review;
+  }
+
+  function reviewIsCurrent(review: ProposalReviewRuntime) {
+    return currentReview() === review;
+  }
+
+  function reviewIsResolving(review: ProposalReviewRuntime) {
+    const state = session.workflow;
+    return (
+      currentReview() === review &&
+      (state.kind === 'committing' ||
+        state.kind === 'dismissing')
+    );
+  }
+
+  function setReviewError(
+    review: ProposalReviewRuntime,
+    error: string | null
+  ) {
+    session.dispatchWorkflow({
+      type: 'errorSet',
+      reviewId: review.request.preview.reviewId,
+      error
+    });
+  }
+
+  function cancelDiscardConfirmation(
+    review: ProposalReviewRuntime
+  ) {
+    session.dispatchWorkflow({
+      type: 'discardCancelled',
+      reviewId: review.request.preview.reviewId
+    });
+  }
+
+  function closeReview(review: ProposalReviewRuntime) {
+    for (const editor of editors(review)) exitProposalReviewView(editor);
+    session.dispatchWorkflow({
+      type: 'completionSucceeded',
+      reviewId: review.request.preview.reviewId
+    });
+  }
+
+  function releaseReplacedReview(review: ProposalReviewRuntime) {
     for (const editor of editors(review)) {
       exitProposalReviewView(editor);
-      if (editor.getDocumentText?.() !== review.preview.baseEditorMarkdown) {
-        editor.replaceDocument(review.preview.baseEditorMarkdown, { focus: false });
+      if (editor.getDocumentText?.() !== review.request.preview.baseEditorMarkdown) {
+        editor.replaceDocument(review.request.preview.baseEditorMarkdown, { focus: false });
       }
     }
     updateDocumentMarkdown(
       review.document,
-      review.preview.baseEditorMarkdown
+      review.request.preview.baseEditorMarkdown
     );
-    holds.end(review.document.key);
-    if (active === review) active = null;
-    session.clear();
   }
 
-  function editors(review: ActiveReview) {
+  function editors(review: ProposalReviewRuntime) {
     return deps.getEditorsForDocument?.(review.document).filter((editor) => editor.isReady()) ?? [review.editor];
   }
 
@@ -95,22 +132,22 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     return hunks.map((hunk) => ({ ...hunk }));
   }
 
-  function hunks(review: ActiveReview): ReviewHunkState[] {
+  function hunks(review: ProposalReviewRuntime): ReviewHunkState[] {
     const state = editors(review)
       .map((editor) => editor.readProposalReviewState?.())
-      .find((candidate) => candidate?.reviewId === review.preview.reviewId);
+      .find((candidate) => candidate?.reviewId === review.request.preview.reviewId);
     return state?.hunks ?? review.hunkSnapshot;
   }
 
-  function captureReview(editor: EditorCapabilityAdapter | null, review: ActiveReview) {
+  function captureReview(editor: EditorCapabilityAdapter | null, review: ProposalReviewRuntime) {
     const state = editor?.readProposalReviewState?.();
-    if (state?.reviewId === review.preview.reviewId) {
+    if (state?.reviewId === review.request.preview.reviewId) {
       review.hunkSnapshot = cloneHunks(state.hunks);
     }
     review.workingMarkdown = editor?.getDocumentText?.() ?? review.workingMarkdown;
   }
 
-  function installReviewInEditor(review: ActiveReview, editor: EditorCapabilityAdapter) {
+  function installReviewInEditor(review: ProposalReviewRuntime, editor: EditorCapabilityAdapter) {
     // A pane can be recreated from the saved disk snapshot after the last
     // review pane was closed. Restore the review's working copy *before*
     // adding decorations; its mapped ranges only make sense in this document.
@@ -125,7 +162,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
     const initialHunks = cloneHunks(review.hunkSnapshot);
     enterProposalReviewView({
-      preview: review.preview,
+      preview: review.request.preview,
       editor,
       initialHunks,
       alreadyApplied: true,
@@ -135,201 +172,245 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         // Compartment reconfiguration can deliver a final update from an old
         // extension. Only the extension currently installed in this editor is
         // allowed to refresh the suspended review snapshot.
-        if (active !== review || state.reviewId !== review.preview.reviewId) return;
+        if (!reviewIsCurrent(review) || state.reviewId !== review.request.preview.reviewId) return;
         const live = editor.readProposalReviewState?.();
-        if (live?.reviewId !== review.preview.reviewId) return;
+        if (live?.reviewId !== review.request.preview.reviewId) return;
         review.hunkSnapshot = cloneHunks(state.hunks);
         review.workingMarkdown = editor.getDocumentText?.() ?? review.workingMarkdown;
-        syncHunkSummary();
+        session.notifyReviewRuntimeChanged();
         void finishIfResolved();
       }
     });
   }
 
   function editorHasReviewInstalled(
-    review: ActiveReview,
+    review: ProposalReviewRuntime,
     editor: EditorCapabilityAdapter
   ) {
     return (
       editor.readProposalReviewState?.()?.reviewId ===
-      review.preview.reviewId
+      review.request.preview.reviewId
     );
   }
 
   function unresolved() {
-    return active ? hunks(active).filter((hunk) => hunk.status === 'pending' || hunk.status === 'modified').length : 0;
+    const review = currentReview();
+    return review ? hunks(review).filter((hunk) => hunk.status === 'pending' || hunk.status === 'modified').length : 0;
   }
 
-  function syncHunkSummary() {
-    if (!active) return;
-    session.setReviewHunks(active.preview.hunks.length, unresolved());
+  function syncReviewRuntime() {
+    const review = currentReview();
+    if (!review) return;
+    review.hunkSnapshot = cloneHunks(hunks(review));
+    review.workingMarkdown =
+      review.editor.getDocumentText?.() ??
+      review.workingMarkdown;
+    session.notifyReviewRuntimeChanged();
   }
 
   async function finishIfResolved() {
-    if (!active || unresolved() > 0 || active.committing) return;
-    const review = active;
-    const kept = hunks(review).some((hunk) => hunk.status === 'kept');
-    if (!kept) {
-      review.committing = true;
-      session.setApplying(true);
-      try {
-        await review.durable?.dismiss();
-        closeReview(review);
-        deps.scheduleAutosave?.(review.document);
-      } catch (error) {
-        session.setError(proposalErrorMessage(error, 'Unable to dismiss this proposal.'));
-      } finally {
-        if (active === review) review.committing = false;
-        session.setApplying(false);
-      }
+    const review = currentReview();
+    if (!review || unresolved() > 0 || reviewIsResolving(review)) {
       return;
     }
-    review.committing = true;
-    session.setApplying(true);
+    const resolution = hunks(review).some(
+      (hunk) => hunk.status === 'kept'
+    )
+      ? 'commit'
+      : 'dismiss';
+    const started = session.dispatchWorkflow({
+      type: 'resolutionRequested',
+      reviewId: review.request.preview.reviewId,
+      resolution
+    });
+    if (!started) return;
+
     try {
-      // The editor can be remounted while Keep All resolves its final hunk.
-      // `workingMarkdown` is continuously captured from the live review and
-      // remains authoritative when that narrow teardown race occurs.
-      const markdown = review.editor.getDocumentText?.() ?? review.workingMarkdown;
-      const result = review.durable
-        ? await review.durable.commit(markdown)
-        : await commitNoteReview(
-            review.preview.notePath,
-            review.preview.baseContentHash,
-            markdown
-          );
-      if (result.status === 'conflict') {
-        review.conflicted = true;
-        session.setConflicted(true);
-        session.setError(result.message ?? 'Note changed on disk.');
+      if (resolution === 'dismiss') {
+        await review.request.dismiss();
+        closeReview(review);
+        deps.scheduleAutosave?.(review.document);
         return;
       }
-      closeReview(review);
+      // The captured working copy remains authoritative if the editor remounts
+      // while the final hunk resolves.
+      const markdown = review.editor.getDocumentText?.() ?? review.workingMarkdown;
+      const result = await review.request.commit(markdown);
+      if (result.status === 'conflict') {
+        session.dispatchWorkflow({
+          type: 'completionConflicted',
+          reviewId: review.request.preview.reviewId,
+          error: result.message ?? 'Note changed on disk.'
+        });
+        return;
+      }
       await deps.acknowledgeDocumentCommit({
         document: review.document,
-        path:
-          result.applied?.path ??
-          review.preview.notePath,
+        path: result.applied?.path ?? review.request.preview.notePath,
         markdown
       });
+      closeReview(review);
     } catch (error) {
-      session.setError(proposalErrorMessage(error, 'Unable to commit reviewed note.'));
-    } finally {
-      if (active) active.committing = false;
-      session.setApplying(false);
+      session.dispatchWorkflow({
+        type: 'completionFailed',
+        reviewId: review.request.preview.reviewId,
+        error: proposalErrorMessage(
+          error,
+          resolution === 'commit'
+            ? 'Unable to commit reviewed note.'
+            : 'Unable to dismiss this proposal.'
+        )
+      });
     }
   }
 
   function keepHunk(hunk: ReviewHunkState) {
-    if (!active || active.committing) return;
-    for (const editor of editors(active)) resolveProposalHunk(editor, hunk.id, 'kept');
-    syncHunkSummary();
+    const review = currentReview();
+    if (!review || reviewIsResolving(review)) return;
+    cancelDiscardConfirmation(review);
+    for (const editor of editors(review)) resolveProposalHunk(editor, hunk.id, 'kept');
+    syncReviewRuntime();
     void finishIfResolved();
   }
 
   function undoHunk(hunk: ReviewHunkState) {
-    if (!active || active.committing) return;
+    const review = currentReview();
+    if (!review || reviewIsResolving(review)) return;
+    cancelDiscardConfirmation(review);
     // A modified hunk reaches this path only through its explicit Restore Original control.
-    const current = (active.editor.getDocumentText?.() ?? '').slice(hunk.from, hunk.to);
+    const current = (review.editor.getDocumentText?.() ?? '').slice(hunk.from, hunk.to);
     if (hunk.status === 'pending' && current !== hunk.newText) {
-      session.setError('This proposed hunk changed; choose Keep Current or Restore Original.');
+      setReviewError(
+        review,
+        'This proposed hunk changed; choose Keep Current or Restore Original.'
+      );
       return;
     }
-    if (!active.editor.applyChanges?.(
+    if (!review.editor.applyChanges?.(
       { from: hunk.from, to: hunk.to, insert: hunk.oldText },
       proposalTransaction.of(true)
     )) {
-      session.setError('Could not restore the original text.');
+      setReviewError(review, 'Could not restore the original text.');
       return;
     }
-    for (const editor of editors(active)) resolveProposalHunk(editor, hunk.id, 'undone');
-    syncHunkSummary();
+    for (const editor of editors(review)) resolveProposalHunk(editor, hunk.id, 'undone');
+    syncReviewRuntime();
     void finishIfResolved();
   }
 
   async function start(
-    preview: ProposalPreview,
+    request: DurableProposalReviewRequest,
     document: NoteDraftState,
-    editor: EditorCapabilityAdapter,
-    durable: DurableProposalReviewRequest | null = null
+    editor: EditorCapabilityAdapter
   ) {
-    if (active) {
-      session.setError('Resolve the current proposed change first.');
+    const preview = request.preview;
+    const identity = identityFor(request);
+    if (
+      session.workflow.kind !== 'opening' ||
+      session.workflow.identity.reviewId !== identity.reviewId
+    ) {
       return false;
     }
     if (
       document.working.markdown !==
       (document.savedBaseline?.content.markdown ?? '')
     ) {
-      session.setError('Save current edits before reviewing a proposal.');
+      session.dispatchWorkflow({
+        type: 'openFailed',
+        identity,
+        error: 'Save current edits before reviewing a proposal.'
+      });
       return false;
     }
-    holds.begin(document);
+    const review: ProposalReviewRuntime = {
+      request,
+      document,
+      editor,
+      hunkSnapshot: [],
+      workingMarkdown: document.working.markdown
+    };
+    if (
+      !session.dispatchWorkflow({
+        type: 'openPrepared',
+        identity,
+        review
+      })
+    ) {
+      return false;
+    }
     try {
-      active = {
-        preview,
-        durable,
-        document,
-        editor,
-        committing: false,
-        conflicted: false,
-        reloadConfirming: false,
-        hunkSnapshot: [],
-        workingMarkdown: document.working.markdown
-      };
       enterProposalReviewView({
         preview,
         editor,
-        siblingEditors: editors(active).filter((candidate) => candidate !== editor),
+        siblingEditors: editors(review).filter((candidate) => candidate !== editor),
         onKeep: keepHunk,
         onUndo: undoHunk,
         onStateChange: (state) => {
-          if (active && state.reviewId === active.preview.reviewId) {
-            active.hunkSnapshot = cloneHunks(state.hunks);
-            active.workingMarkdown = active.editor.getDocumentText?.() ?? active.workingMarkdown;
+          if (reviewIsCurrent(review) && state.reviewId === review.request.preview.reviewId) {
+            review.hunkSnapshot = cloneHunks(state.hunks);
+            review.workingMarkdown = review.editor.getDocumentText?.() ?? review.workingMarkdown;
+            session.notifyReviewRuntimeChanged();
           }
-          syncHunkSummary();
           void finishIfResolved();
         }
       });
-      active.hunkSnapshot = cloneHunks(hunks(active));
-      active.workingMarkdown = active.editor.getDocumentText?.() ?? active.workingMarkdown;
-      session.load(
-        [{
-          kind: 'updateNote',
-          path: preview.notePath,
-          baseContentHash: preview.baseContentHash,
-          newTitle: preview.title,
-          newMarkdown: preview.proposedEditorMarkdown
-        }],
-        { [preview.notePath]: preview.baseEditorMarkdown },
-        durable ? `chat:${durable.proposalId}` : 'chat'
-      );
-      syncHunkSummary();
+      review.hunkSnapshot = cloneHunks(hunks(review));
+      review.workingMarkdown = review.editor.getDocumentText?.() ?? review.workingMarkdown;
+      session.dispatchWorkflow({
+        type: 'openSucceeded',
+        identity
+      });
       return true;
     } catch (error) {
-      active = null;
-      holds.end(document.key);
-      session.setError(proposalErrorMessage(error, 'Unable to open proposal review.'));
+      releaseReplacedReview(review);
+      session.dispatchWorkflow({
+        type: 'openFailed',
+        identity,
+        error: proposalErrorMessage(
+          error,
+          'Unable to open proposal review.'
+        )
+      });
       return false;
     }
+  }
+
+  function beginOpening(request: DurableProposalReviewRequest) {
+    const current = currentReview();
+    const identity = identityFor(request);
+    if (
+      !session.dispatchWorkflow({
+        type: 'openRequested',
+        identity
+      })
+    ) {
+      return false;
+    }
+    if (current) releaseReplacedReview(current);
+    return true;
+  }
+
+  function failOpening(
+    request: DurableProposalReviewRequest,
+    error: string
+  ) {
+    session.dispatchWorkflow({
+      type: 'openFailed',
+      identity: identityFor(request),
+      error
+    });
   }
 
   async function loadDurableProposalNow(
     request: DurableProposalReviewRequest
   ): Promise<boolean> {
-    if (active?.durable?.proposalId === request.proposalId) {
-      await deps.activateEditorPane?.(active.document);
+    const current = currentReview();
+    if (current?.request.proposalId === request.proposalId) {
+      await deps.activateEditorPane?.(current.document);
       await reviewNext();
       return true;
     }
-    if (active) {
-      if (active.preview.notePath !== request.preview.notePath) {
-        session.setError('Resolve the current proposed change before reviewing another note.');
-        return false;
-      }
-      replaceActiveReview(active);
-    }
+    if (!beginOpening(request)) return false;
 
     try {
       let document = deps.getEditorPaneDocument(request.preview.notePath);
@@ -345,20 +426,32 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         !document ||
         getDocumentPath(document) !== request.preview.notePath
       ) {
-        session.setError('The target note could not be opened for proposal review.');
+        failOpening(
+          request,
+          'The target note could not be opened for proposal review.'
+        );
         return false;
       }
       await deps.activateEditorPane?.(document);
       const editor = deps.getEditorForDocument(document);
       if (!editor) {
-        session.setError('Editor is not ready for proposal review.');
+        failOpening(
+          request,
+          'Editor is not ready for proposal review.'
+        );
         return false;
       }
-      const started = await start(request.preview, document, editor, request);
+      const started = await start(request, document, editor);
       if (started) await reviewNext();
       return started;
     } catch (error) {
-      session.setError(proposalErrorMessage(error, 'Could not open the proposal in the editor.'));
+      failOpening(
+        request,
+        proposalErrorMessage(
+          error,
+          'Could not open the proposal in the editor.'
+        )
+      );
       return false;
     }
   }
@@ -366,14 +459,8 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   async function loadDurableProposalIfOpenNow(
     request: DurableProposalReviewRequest
   ): Promise<boolean> {
-    if (active?.durable?.proposalId === request.proposalId) {
+    if (currentReview()?.request.proposalId === request.proposalId) {
       return true;
-    }
-    if (active) {
-      if (active.preview.notePath !== request.preview.notePath) {
-        return false;
-      }
-      replaceActiveReview(active);
     }
 
     const document = deps.getEditorPaneDocument(
@@ -389,10 +476,11 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
     const editor = deps.getEditorForDocument(document);
     if (!editor?.isReady()) return false;
+    if (!beginOpening(request)) return false;
 
     // Passive display is intentionally limited to an editor that already
     // exists. It must not ensure, open, activate, or focus a pane.
-    return start(request.preview, document, editor, request);
+    return start(request, document, editor);
   }
 
   function enqueueDurableLoad(
@@ -423,37 +511,40 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   }
 
   function keepAll() {
-    if (!active) return;
-    for (const hunk of hunks(active)) {
+    const review = currentReview();
+    if (!review) return;
+    for (const hunk of hunks(review)) {
       if (hunk.status === 'pending' || hunk.status === 'modified') keepHunk(hunk);
     }
   }
 
   function undoAll() {
-    if (!active) return;
-    const pending = hunks(active).filter((hunk) => hunk.status === 'pending').sort((a, b) => b.from - a.from);
+    const review = currentReview();
+    if (!review || reviewIsResolving(review)) return;
+    cancelDiscardConfirmation(review);
+    const pending = hunks(review).filter((hunk) => hunk.status === 'pending').sort((a, b) => b.from - a.from);
     const changes = pending.map((hunk) => ({ from: hunk.from, to: hunk.to, insert: hunk.oldText }));
-    if (changes.length && !active.editor.applyChanges?.(changes, proposalTransaction.of(true))) {
-      session.setError('Could not restore the remaining proposed text.');
+    if (changes.length && !review.editor.applyChanges?.(changes, proposalTransaction.of(true))) {
+      setReviewError(review, 'Could not restore the remaining proposed text.');
       return;
     }
     for (const hunk of pending) {
-      for (const editor of editors(active)) resolveProposalHunk(editor, hunk.id, 'undone');
+      for (const editor of editors(review)) resolveProposalHunk(editor, hunk.id, 'undone');
     }
-    syncHunkSummary();
+    syncReviewRuntime();
     void finishIfResolved();
   }
 
-  async function liveReviewEditor(review: ActiveReview) {
+  async function liveReviewEditor(review: ProposalReviewRuntime) {
     await deps.activateEditorPane?.(review.document);
-    if (active !== review) return null;
+    if (!reviewIsCurrent(review)) return null;
 
     let editor = deps.getEditorForDocument(review.document);
     if (!editor?.isReady()) {
       editor = await deps.reopenReviewEditor?.(review.document) ?? null;
     }
-    if (!editor?.isReady() || active !== review) {
-      session.setError('The editor could not be opened for review.');
+    if (!editor?.isReady() || !reviewIsCurrent(review)) {
+      setReviewError(review, 'The editor could not be opened for review.');
       return null;
     }
 
@@ -468,110 +559,134 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   }
 
   async function reviewNext() {
-    const review = active;
+    const review = currentReview();
     if (!review) return;
+    cancelDiscardConfirmation(review);
     try {
       const editor = await liveReviewEditor(review);
-      if (!editor || active !== review) return;
+      if (!editor || !reviewIsCurrent(review)) return;
 
       const next = hunks(review).find((hunk) => hunk.status === 'pending' || hunk.status === 'modified');
       if (next && !editor.focusProposalHunk?.(next.id)) {
-        session.setError('The next change could not be focused in the editor.');
+        setReviewError(review, 'The next change could not be focused in the editor.');
       }
     } catch (error) {
-      session.setError(proposalErrorMessage(error, 'The editor could not be opened for review.'));
+      setReviewError(
+        review,
+        proposalErrorMessage(
+          error,
+          'The editor could not be opened for review.'
+        )
+      );
     }
   }
 
   return {
     session,
-    holds,
     loadDurableProposal,
     loadDurableProposalIfOpen,
-    keep: (_changeId?: string) => keepAll(),
     keepAll,
-    undo: (_changeId?: string) => undoAll(),
     undoAll,
-    showChange: async (_change?: unknown) => reviewNext(),
     reviewNext,
     markConflict: (path: string) => {
-      if (active?.preview.notePath === path) {
-        active.conflicted = true;
-        session.setConflicted(true);
-        session.setError('Note changed on disk. Copy your working text or reload the note.');
+      const review = currentReview();
+      if (review?.request.preview.notePath === path) {
+        session.dispatchWorkflow({
+          type: 'externalConflict',
+          reviewId: review.request.preview.reviewId,
+          error:
+            'Note changed on disk. Copy your working text or reload the note.'
+        });
       }
     },
     retryCommit: () => {
-      if (!active || unresolved() > 0) return;
-      active.conflicted = false;
-      session.setConflicted(false);
-      session.setError(null);
+      const review = currentReview();
+      if (!review || unresolved() > 0) return;
       void finishIfResolved();
     },
     copyCurrent: async () => {
-      const markdown = active?.editor.getDocumentText?.();
+      const review = currentReview();
+      const markdown = review?.editor.getDocumentText?.();
       if (markdown == null) return;
       try {
         await navigator.clipboard.writeText(markdown);
-        session.setError('Current editor text copied.');
+        if (review) setReviewError(review, 'Current editor text copied.');
       } catch {
-        session.setError('Unable to copy current editor text.');
+        if (review) setReviewError(review, 'Unable to copy current editor text.');
       }
     },
     reloadDisk: async () => {
-      if (!active) return;
-      if (!active.reloadConfirming) {
-        active.reloadConfirming = true;
-        session.setError('Reloading discards the current proposed and edited text. Select Reload Disk again to confirm.');
+      const review = currentReview();
+      if (!review) return;
+      session.dispatchWorkflow({
+        type: 'discardRequested',
+        reviewId: review.request.preview.reviewId,
+        confirmationMessage:
+          'Reloading discards the current proposed and edited text. Select Reload Disk again to confirm.'
+      });
+      if (
+        session.workflow.kind !== 'dismissing' ||
+        session.workflow.reason !== 'reload'
+      ) {
         return;
       }
-      const review = active;
       try {
-        await review.durable?.dismiss();
-        await deps.reloadReviewFromDisk?.(review.preview.notePath);
+        await review.request.dismiss();
+        await deps.reloadReviewFromDisk?.(review.request.preview.notePath);
         closeReview(review);
       } catch (error) {
-        session.setError(proposalErrorMessage(error, 'Unable to reload the note from disk.'));
+        session.dispatchWorkflow({
+          type: 'completionFailed',
+          reviewId: review.request.preview.reviewId,
+          error: proposalErrorMessage(
+            error,
+            'Unable to reload the note from disk.'
+          )
+        });
       }
     },
-    isReviewingPath: (path: string) => active?.preview.notePath === path,
+    isReviewingPath: (path: string) =>
+      currentReview()?.request.preview.notePath === path,
     isReviewingProposal: (proposalId: string) =>
-      active?.durable?.proposalId === proposalId,
+      currentReview()?.request.proposalId === proposalId,
     get activeProposalId() {
-      return active?.durable?.proposalId ?? null;
+      return currentReview()?.request.proposalId ?? null;
     },
     attachEditor: (document: NoteDraftState, editor: EditorCapabilityAdapter) => {
-      if (!active || active.document.key !== document.key || !editor.isReady()) return;
-      active.editor = editor;
-      if (!editorHasReviewInstalled(active, editor)) {
-        installReviewInEditor(active, editor);
+      const review = currentReview();
+      if (!review || review.document.key !== document.key || !editor.isReady()) return;
+      review.editor = editor;
+      if (!editorHasReviewInstalled(review, editor)) {
+        installReviewInEditor(review, editor);
       }
     },
     suspendDocument: (document: NoteDraftState, editor: EditorCapabilityAdapter | null) => {
-      if (!active || active.document.key !== document.key) return;
-      captureReview(editor, active);
+      const review = currentReview();
+      if (!review || review.document.key !== document.key) return;
+      captureReview(editor, review);
       // The document state is also retained so an ordinary open path mounts
       // the same working copy even before its review extension is attached.
       updateDocumentMarkdown(
         document,
-        active.workingMarkdown
+        review.workingMarkdown
       );
       exitProposalReviewView(editor);
-      syncHunkSummary();
+      session.notifyReviewRuntimeChanged();
     },
     restoreDocument: (document: NoteDraftState) => {
+      const review = currentReview();
       if (
-        !active ||
-        active.preview.notePath !== getDocumentPath(document)
+        !review ||
+        review.request.preview.notePath !== getDocumentPath(document)
       ) return false;
-      active.document = document;
+      review.document = document;
       updateDocumentMarkdown(
         document,
-        active.workingMarkdown
+        review.workingMarkdown
       );
       return true;
     },
-    isReviewingDocument: (document: NoteDraftState) => holds.isHolding(document.key)
+    isReviewingDocument: session.isReviewingDocument
   };
 }
 

@@ -1,9 +1,10 @@
 import {
+  dispatchDocumentExternalSync,
   getDocumentMarkdown,
-  resolveConflictKeepingWorking,
   resolveConflictUsingExternal,
   type NoteDraftState
 } from './documentState';
+import { isDocumentExternalConflictCurrent } from './documentExternalSyncMachine';
 import type {
   PaneEditorOperationResult
 } from '$lib/features/notepad/pane/paneEditorLifecycle';
@@ -27,7 +28,18 @@ export function createDocumentConflictController(
   deps: DocumentConflictControllerDeps
 ) {
   async function keepMyEdits(document: NoteDraftState) {
-    if (!resolveConflictKeepingWorking(document)) {
+    if (
+      document.externalSync.kind !== 'conflict' ||
+      document.externalSync.phase !== 'awaitingChoice'
+    ) {
+      return false;
+    }
+    if (
+      !dispatchDocumentExternalSync(document, {
+        type: 'keepWorking',
+        conflictId: document.externalSync.conflictId
+      })
+    ) {
       return false;
     }
     await deps.enqueueSave(document);
@@ -35,16 +47,28 @@ export function createDocumentConflictController(
   }
 
   async function loadDiskVersion(document: NoteDraftState) {
-    if (document.externalSync.kind !== 'conflict') {
+    if (
+      document.externalSync.kind !== 'conflict' ||
+      document.externalSync.phase !== 'awaitingChoice'
+    ) {
       return false;
     }
     const conflict = document.externalSync;
+    const conflictId = conflict.conflictId;
     const originalMarkdown = getDocumentMarkdown(document);
     const originalRevision = document.operation.revision;
     const targetMarkdown =
       conflict.external.kind === 'snapshot'
         ? conflict.external.document.content.markdown
         : originalMarkdown;
+    if (
+      !dispatchDocumentExternalSync(document, {
+        type: 'beginApplyingExternal',
+        conflictId
+      })
+    ) {
+      return false;
+    }
     const result = await deps.replaceDocumentContentInPlace(
       document,
       targetMarkdown
@@ -63,13 +87,21 @@ export function createDocumentConflictController(
           getDocumentMarkdown(document)
         );
       }
+      dispatchDocumentExternalSync(document, {
+        type: 'externalApplyFailed',
+        conflictId
+      });
       return false;
     }
 
     // A concurrent edit or conflict choice wins. In that case the editor
     // already reported the newer model value through its normal callback.
     if (
-      document.externalSync !== conflict ||
+      !isDocumentExternalConflictCurrent(
+        document.externalSync,
+        conflictId,
+        'applyingExternal'
+      ) ||
       document.operation.revision !== originalRevision
     ) {
       if (getDocumentMarkdown(document) !== targetMarkdown) {
@@ -78,9 +110,15 @@ export function createDocumentConflictController(
           getDocumentMarkdown(document)
         );
       }
+      dispatchDocumentExternalSync(document, {
+        type: 'externalApplyFailed',
+        conflictId
+      });
       return false;
     }
-    if (!resolveConflictUsingExternal(document)) {
+    if (
+      !resolveConflictUsingExternal(document, conflictId)
+    ) {
       return false;
     }
     deps.refreshDerivedViews?.();

@@ -1,5 +1,5 @@
 import {
-  captureExternalDeletionConflict,
+  dispatchDocumentExternalSync,
   documentHasCleanBuffer,
   getDocumentPath,
   type ExternalRefreshSource
@@ -125,11 +125,14 @@ export function createNotepadRefreshController(
           );
         } else {
           params.suspendPersistenceForConflict(document);
-          captureExternalDeletionConflict(
-            document,
-            payload.notePath,
-            source
-          );
+          dispatchDocumentExternalSync(document, {
+            type: 'externalCaptured',
+            external: {
+              kind: 'deletion',
+              source,
+              path: payload.notePath
+            }
+          });
         }
       } else {
         await params.refreshDocumentFromDisk(document, {

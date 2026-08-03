@@ -9,10 +9,7 @@ import {
   createNoteDraftState,
   type NoteDraftState
 } from '$lib/features/notepad/state/noteStore';
-import {
-  beginDocumentOperation,
-  failDocumentOperation
-} from '$lib/features/notepad/document/documentState';
+import { dispatchDocumentOperation } from '$lib/features/notepad/document/documentState';
 import {
   createEmptySessionSnapshot,
   type SessionSnapshot
@@ -85,12 +82,8 @@ function setup(options: {
   } as unknown as NotepadChatCoordinator<PaneId>;
   const proposal = {
     session: {
-      snapshot: null,
-      pendingCount: 0
+      snapshot: null
     },
-    showChange: vi.fn(),
-    keep: vi.fn(),
-    undo: vi.fn(),
     keepAll: vi.fn(),
     undoAll: vi.fn(),
     reviewNext: vi.fn(),
@@ -180,16 +173,15 @@ describe('createNotepadChatPaneAdapter', () => {
   it('rejects a snapshot when the note save failed', async () => {
     const { adapter, documents, getNoteSaveQueue } = setup();
     getNoteSaveQueue.mockImplementation(async () => {
-      const token = beginDocumentOperation(
-        documents.chat,
-        'saving'
-      );
-      failDocumentOperation(
-        documents.chat,
-        'saving',
-        new Error('disk failed'),
-        token
-      );
+      dispatchDocumentOperation(documents.chat, {
+        type: 'start',
+        operation: 'saving'
+      });
+      dispatchDocumentOperation(documents.chat, {
+        type: 'fail',
+        error: new Error('disk failed'),
+        token: documents.chat.operation.token
+      });
     });
 
     await expect(

@@ -60,7 +60,7 @@ pub(crate) fn load_json_fixture(relative_path: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{proposals::ProposedTextEdit, semantic::SemanticSettings};
+    use crate::semantic::SemanticSettings;
 
     #[test]
     fn representative_command_payloads_use_production_serde_contracts() {
@@ -68,12 +68,6 @@ mod tests {
         let commands = fixture["commands"]
             .as_object()
             .expect("commands fixture object");
-
-        let edits: Vec<ProposedTextEdit> = serde_json::from_value(
-            commands["preview_note_change_proposal"]["args"]["edits"].clone(),
-        )
-        .expect("proposal edit arguments deserialize");
-        assert_eq!(edits.len(), 1);
 
         let settings: SemanticSettings =
             serde_json::from_value(commands["set_semantic_settings"]["args"]["settings"].clone())
@@ -85,10 +79,8 @@ mod tests {
 
         for command in [
             "save_note",
-            "remember_note",
+            "clear_last_opened_note",
             "chat_send_message",
-            "preview_note_change_proposal",
-            "commit_note_review",
             "commit_agent_proposal",
             "set_semantic_settings",
             "get_semantic_status",

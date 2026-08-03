@@ -246,10 +246,6 @@
             onOpenCitation={viewModel.chat.context.onOpenCitation}
             onSurfaceHandleChange={viewModel.chat.session.onSurfaceHandleChange}
             proposalSnapshot={viewModel.chat.proposalReview.snapshot}
-            proposalPendingCount={viewModel.chat.proposalReview.pendingCount}
-            onProposalOpenChange={viewModel.chat.proposalReview.onOpenChange}
-            onProposalKeep={viewModel.chat.proposalReview.onKeep}
-            onProposalUndo={viewModel.chat.proposalReview.onUndo}
             onProposalKeepAll={viewModel.chat.proposalReview.onKeepAll}
             onProposalUndoAll={viewModel.chat.proposalReview.onUndoAll}
             onProposalReview={viewModel.chat.proposalReview.onReview}

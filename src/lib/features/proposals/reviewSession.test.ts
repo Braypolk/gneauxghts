@@ -1,65 +1,101 @@
 import { describe, expect, it } from 'vitest';
 import { createProposalReviewSession } from './reviewSession.svelte';
-import type { NoteChange } from '$lib/types/proposals';
+import type { ProposalReviewRuntime } from './types';
+
+const identity = {
+  reviewId: 'review-1',
+  proposalId: 'proposal-1',
+  notePath: '/vault/A.md'
+};
+
+function reviewRuntime(): ProposalReviewRuntime {
+  return {
+    request: {
+      proposalId: identity.proposalId,
+      preview: {
+        reviewId: identity.reviewId,
+        notePath: identity.notePath,
+        title: 'A',
+        baseContentHash: 'hash',
+        baseEditorMarkdown: 'old',
+        proposedEditorMarkdown: 'new',
+        hunks: [
+          {
+            id: 'hunk-1',
+            baseFrom: 0,
+            baseTo: 3,
+            proposedFrom: 0,
+            proposedTo: 3,
+            oldText: 'old',
+            newText: 'new'
+          }
+        ]
+      }
+    } as ProposalReviewRuntime['request'],
+    document: {} as ProposalReviewRuntime['document'],
+    editor: {} as ProposalReviewRuntime['editor'],
+    hunkSnapshot: [
+      {
+        id: 'hunk-1',
+        baseFrom: 0,
+        baseTo: 3,
+        proposedFrom: 0,
+        proposedTo: 3,
+        oldText: 'old',
+        newText: 'new',
+        from: 0,
+        to: 3,
+        status: 'pending'
+      }
+    ],
+    workingMarkdown: 'new'
+  };
+}
 
 describe('createProposalReviewSession', () => {
-  it('loads pending changes and tracks keep/undo', () => {
+  it('projects active proposal and hunk state from the workflow runtime', () => {
     const session = createProposalReviewSession();
-    const changes: NoteChange[] = [
-      {
-        kind: 'updateNote',
-        path: '/vault/A.md',
-        baseContentHash: 'hash',
-        newTitle: 'A',
-        newMarkdown: 'new'
-      },
-      {
-        kind: 'createNote',
-        suggestedTitle: 'B',
-        markdown: '# B\n'
-      }
-    ];
+    const review = reviewRuntime();
 
-    session.load(changes, { '/vault/A.md': 'old' }, 'test');
-    expect(session.pendingCount).toBe(2);
-    expect(session.snapshot.activeChangeId).toBe('0:update:/vault/A.md');
+    session.dispatchWorkflow({ type: 'openRequested', identity });
+    session.dispatchWorkflow({ type: 'openPrepared', identity, review });
+    session.dispatchWorkflow({ type: 'openSucceeded', identity });
 
-    session.markUndone('0:update:/vault/A.md');
-    expect(session.pendingCount).toBe(1);
-    expect(session.getChange('0:update:/vault/A.md')?.status).toBe('undone');
-    expect(session.snapshot.activeChangeId).toBe('1:create:B');
+    expect(session.snapshot).toMatchObject({
+      proposalId: 'proposal-1',
+      notePath: '/vault/A.md',
+      title: 'A',
+      totalHunks: 1,
+      unresolvedHunks: 1,
+      isApplying: false,
+      isConflicted: false,
+      error: null
+    });
 
-    session.markKept('1:create:B');
-    expect(session.pendingCount).toBe(0);
-    expect(session.snapshot.activeChangeId).toBeNull();
+    review.hunkSnapshot[0] = {
+      ...review.hunkSnapshot[0],
+      status: 'kept'
+    };
+    session.notifyReviewRuntimeChanged();
+    expect(session.snapshot.unresolvedHunks).toBe(0);
   });
 
-  it('finds pending changes by path', () => {
-    const session = createProposalReviewSession();
-    session.load(
-      [
-        {
-          kind: 'deleteNote',
-          path: '/vault/Gone.md',
-          baseContentHash: 'hash'
-        }
-      ],
-      { '/vault/Gone.md': 'bye' },
-      'test'
-    );
-    expect(session.findPendingForPath('/vault/Gone.md')?.change.kind).toBe('deleteNote');
-    expect(session.findPendingForPath('/vault/Other.md')).toBeNull();
-  });
-
-  it('keeps conflict recovery separate from ordinary review errors', () => {
+  it('derives workflow errors without retaining presentation data', () => {
     const session = createProposalReviewSession();
 
-    expect(session.snapshot.isConflicted).toBe(false);
-    session.setError('Could not restore the original text.');
-    expect(session.snapshot.isConflicted).toBe(false);
-    session.setConflicted(true);
-    expect(session.snapshot.isConflicted).toBe(true);
-    session.setConflicted(false);
-    expect(session.snapshot.isConflicted).toBe(false);
+    session.dispatchWorkflow({ type: 'openRequested', identity });
+    session.dispatchWorkflow({
+      type: 'openFailed',
+      identity,
+      error: 'Could not open review.'
+    });
+
+    expect(session.snapshot).toMatchObject({
+      proposalId: null,
+      notePath: null,
+      totalHunks: 0,
+      unresolvedHunks: 0,
+      error: 'Could not open review.'
+    });
   });
 });

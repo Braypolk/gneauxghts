@@ -7,6 +7,13 @@ export type ChatRole = 'user' | 'assistant' | 'system';
 export type DocumentKind = 'note' | 'chatIndex' | 'chatTranscript';
 export type AtlasChatVisibility = 'hidden' | 'remembered' | 'all';
 export type ChatServiceTier = 'standard' | 'flex';
+export type DurableProposalStatus =
+  | 'pending'
+  | 'committing'
+  | 'committed'
+  | 'conflict'
+  | 'dismissed'
+  | 'superseded';
 
 export interface ChatSettings {
   provider: ChatProvider;
@@ -85,7 +92,7 @@ export interface ChatAgentProposal {
   baseHash: string | null;
   payload: Record<string, unknown>;
   preview: Record<string, unknown>;
-  status: 'pending' | 'committed' | 'dismissed' | 'conflict' | 'superseded';
+  status: DurableProposalStatus;
   createdAtMillis: number;
   updatedAtMillis: number;
 }

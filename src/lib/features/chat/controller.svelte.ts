@@ -20,6 +20,14 @@ import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 import { configuredChatModel } from './chatConfiguration';
+import {
+  createChatControllerMachineState,
+  isChatRequestBusy,
+  isChatSelectionBusy,
+  transitionChatControllerMachine,
+  type ChatControllerMachineEvent,
+  type ChatControllerMachineState
+} from './machines/controllerMachine';
 
 export interface ChatControllerState {
   settings: ChatSettings | null;
@@ -43,7 +51,13 @@ export interface ChatControllerState {
   modelCapabilities: ChatModelCapabilities | null;
 }
 
-const initialState: ChatControllerState = {
+const initialState: Omit<
+  ChatControllerState,
+  | 'isInitializing'
+  | 'isLoadingConversation'
+  | 'isSending'
+  | 'activity'
+> = {
   settings: null,
   conversations: [],
   conversationDraft: {
@@ -56,11 +70,7 @@ const initialState: ChatControllerState = {
   grants: [],
   policies: [],
   conversation: null,
-  isInitializing: false,
-  isLoadingConversation: false,
-  isSending: false,
   error: null,
-  activity: null,
   proposals: [],
   modelCapabilities: null
 };
@@ -191,26 +201,61 @@ export class ChatControllerStore implements ChatController {
   grants = $state<ChatNoteGrant[]>(initialState.grants);
   policies = $state<ChatNotePolicy[]>(initialState.policies);
   conversation = $state<ChatConversation | null>(initialState.conversation);
-  isInitializing = $state(initialState.isInitializing);
-  isLoadingConversation = $state(initialState.isLoadingConversation);
-  isSending = $state(initialState.isSending);
   error = $state<string | null>(initialState.error);
-  activity = $state<string | null>(initialState.activity);
   proposals = $state<ChatAgentProposal[]>(initialState.proposals);
   modelCapabilities = $state<ChatModelCapabilities | null>(initialState.modelCapabilities);
+  machine = $state<ChatControllerMachineState>(
+    createChatControllerMachineState()
+  );
 
   #api: ChatApi;
   #options: ChatControllerOptions;
   #subscribers = new Set<Subscriber<ChatControllerState>>();
   #unlisteners: Array<() => void> = [];
   #initializeSequence = 0;
-  #disposed = false;
+  #selectionOperationSequence = 0;
+  #requestOperationSequence = 0;
   #listenersReady = false;
   #modelCapabilities = new Map<string, ChatModelCapabilities>();
 
   constructor(api: ChatApi = chatApi, options: ChatControllerOptions = {}) {
     this.#api = api;
     this.#options = options;
+  }
+
+  get isInitializing() {
+    return this.machine.lifecycle.kind === 'initializing';
+  }
+
+  get isLoadingConversation() {
+    return isChatSelectionBusy(this.machine);
+  }
+
+  get isSending() {
+    return isChatRequestBusy(this.machine);
+  }
+
+  get activity() {
+    return 'activity' in this.machine.request
+      ? this.machine.request.activity
+      : null;
+  }
+
+  #isDisposed() {
+    return this.machine.lifecycle.kind === 'disposed';
+  }
+
+  #isInitializationCurrent(sequence: number) {
+    return (
+      this.machine.lifecycle.kind === 'initializing' &&
+      this.machine.lifecycle.sequence === sequence
+    );
+  }
+
+  #dispatch(event: ChatControllerMachineEvent) {
+    const previous = this.machine;
+    this.machine = transitionChatControllerMachine(previous, event);
+    return this.machine !== previous;
   }
 
   getSnapshot(): ChatControllerState {
@@ -240,7 +285,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   #notify() {
-    if (this.#disposed || this.#subscribers.size === 0) return;
+    if (this.#isDisposed() || this.#subscribers.size === 0) return;
     const snapshot = this.getSnapshot();
     for (const run of this.#subscribers) {
       run(snapshot);
@@ -248,7 +293,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   #patch(partial: Partial<ChatControllerState>) {
-    if (this.#disposed) return;
+    if (this.#isDisposed()) return;
     if (partial.settings !== undefined) this.settings = partial.settings;
     if (partial.conversations !== undefined) this.conversations = partial.conversations;
     if (partial.conversationDraft !== undefined) {
@@ -257,13 +302,7 @@ export class ChatControllerStore implements ChatController {
     if (partial.grants !== undefined) this.grants = partial.grants;
     if (partial.policies !== undefined) this.policies = partial.policies;
     if (partial.conversation !== undefined) this.conversation = partial.conversation;
-    if (partial.isInitializing !== undefined) this.isInitializing = partial.isInitializing;
-    if (partial.isLoadingConversation !== undefined) {
-      this.isLoadingConversation = partial.isLoadingConversation;
-    }
-    if (partial.isSending !== undefined) this.isSending = partial.isSending;
     if (partial.error !== undefined) this.error = partial.error;
-    if (partial.activity !== undefined) this.activity = partial.activity;
     if (partial.proposals !== undefined) this.proposals = partial.proposals;
     if (partial.modelCapabilities !== undefined) {
       this.modelCapabilities = partial.modelCapabilities;
@@ -272,7 +311,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   #updateConversation(updater: (conversation: ChatConversation) => ChatConversation) {
-    if (this.#disposed || !this.conversation) return;
+    if (this.#isDisposed() || !this.conversation) return;
     const conversation = updater(this.conversation);
     this.conversation = conversation;
     this.conversations = mergeSummary(this.conversations, conversation);
@@ -344,16 +383,36 @@ export class ChatControllerStore implements ChatController {
   #eventHandlers: { [K in keyof ChatEventMap]: (event: ChatEventMap[K]) => void } = {
     'chat://started': (event) =>
       this.#ifCurrent(event, () => {
+        if (
+          !this.#dispatch({
+            type: 'started',
+            conversationId: event.conversationId,
+            requestId: event.requestId,
+            messageId: event.messageId
+          })
+        ) {
+          return;
+        }
         this.#updateConversation((conversation) => ({
           ...conversation,
           ...(event.conversation ?? {}),
           activeRequestId: event.requestId,
           messages: upsertTerminalMessage(conversation.messages, event.message)
         }));
-        this.#patch({ isSending: true, error: null });
+        this.#patch({ error: null });
       }),
     'chat://text-delta': (event) =>
       this.#ifCurrent(event, () => {
+        if (
+          !this.#dispatch({
+            type: 'started',
+            conversationId: event.conversationId,
+            requestId: event.requestId,
+            messageId: event.messageId
+          })
+        ) {
+          return;
+        }
         this.#updateConversation((conversation) => {
           const messages = conversation.messages.map((message) =>
             message.id === event.messageId
@@ -370,6 +429,16 @@ export class ChatControllerStore implements ChatController {
       }),
     'chat://source': (event) =>
       this.#ifCurrent(event, () => {
+        if (
+          !this.#dispatch({
+            type: 'started',
+            conversationId: event.conversationId,
+            requestId: event.requestId,
+            messageId: event.messageId
+          })
+        ) {
+          return;
+        }
         this.#updateConversation((conversation) => ({
           ...conversation,
           messages: conversation.messages.map((message) =>
@@ -387,13 +456,19 @@ export class ChatControllerStore implements ChatController {
       }),
     'chat://completed': (event) =>
       this.#ifCurrent(event, () => {
+        const wasIdle = this.machine.request.kind === 'idle';
+        const accepted = this.#dispatch({
+          type: 'terminal',
+          conversationId: event.conversationId,
+          requestId: event.requestId
+        });
+        if (!wasIdle && !accepted) return;
         this.#updateConversation((conversation) => ({
           ...conversation,
           ...(event.conversation ?? {}),
           activeRequestId: null,
           messages: upsertTerminalMessage(conversation.messages, event.message)
         }));
-        this.#patch({ isSending: false, activity: null });
         const conversation = this.conversation;
         if (
           conversation &&
@@ -407,7 +482,7 @@ export class ChatControllerStore implements ChatController {
         }
       }),
     'chat://title-updated': (event) => {
-      if (this.#disposed) return;
+      if (this.#isDisposed()) return;
       this.conversations = mergeSummary(this.conversations, event.conversation);
       if (this.conversation?.id === event.conversationId) {
         this.conversation = { ...this.conversation, ...event.conversation };
@@ -416,25 +491,48 @@ export class ChatControllerStore implements ChatController {
     },
     'chat://cancelled': (event) =>
       this.#ifCurrent(event, () => {
+        const wasIdle = this.machine.request.kind === 'idle';
+        const accepted = this.#dispatch({
+          type: 'terminal',
+          conversationId: event.conversationId,
+          requestId: event.requestId
+        });
+        if (!wasIdle && !accepted) return;
         this.#updateConversation((conversation) => ({
           ...conversation,
           activeRequestId: null,
           messages: upsertTerminalMessage(conversation.messages, event.message)
         }));
-        this.#patch({ isSending: false, activity: null });
       }),
     'chat://failed': (event) =>
       this.#ifCurrent(event, () => {
+        const wasIdle = this.machine.request.kind === 'idle';
+        const accepted = this.#dispatch({
+          type: 'terminal',
+          conversationId: event.conversationId,
+          requestId: event.requestId
+        });
+        if (!wasIdle && !accepted) return;
         this.#updateConversation((conversation) => ({
           ...conversation,
           activeRequestId: null,
           messages: upsertTerminalMessage(conversation.messages, event.message)
         }));
-        this.#patch({ isSending: false, error: event.error, activity: null });
+        this.#patch({ error: event.error });
       }),
     'chat://activity': (event) =>
       this.#ifCurrent(event, () => {
-        this.#patch({ activity: event.status });
+        if (
+          this.#dispatch({
+            type: 'activity',
+            conversationId: event.conversationId,
+            requestId: event.requestId,
+            messageId: event.messageId,
+            activity: event.status
+          })
+        ) {
+          this.#notify();
+        }
       }),
     'chat://proposal': (event) =>
       this.#ifCurrent(event, () => {
@@ -466,7 +564,7 @@ export class ChatControllerStore implements ChatController {
     try {
       for (const event of Object.keys(this.#eventHandlers) as Array<keyof ChatEventMap>) {
         const off = await this.#api.on(event, this.#eventHandlers[event] as never);
-        if (this.#disposed) off();
+        if (this.#isDisposed()) off();
         else this.#unlisteners.push(off);
       }
     } catch (error) {
@@ -476,6 +574,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   async refreshList() {
+    if (this.#isDisposed()) return;
     try {
       const conversations = await this.#api.listConversations(false);
       this.#patch({ conversations, error: null });
@@ -485,42 +584,77 @@ export class ChatControllerStore implements ChatController {
   }
 
   async openConversation(conversationId: string) {
-    this.#patch({ isLoadingConversation: true, error: null });
+    const operationId = ++this.#selectionOperationSequence;
+    if (!this.#dispatch({
+      type: 'startLoading',
+      conversationId,
+      operationId
+    })) return null;
+    this.#patch({ error: null });
     try {
       const conversation = await this.#api.getConversation(conversationId);
       const [proposals, modelCapabilities] = await Promise.all([
         this.#api.listPendingProposals(conversationId),
         this.#getModelCapabilities(conversation.provider, conversation.model)
       ]);
+      if (
+        !this.#dispatch({
+          type: 'opened',
+          conversationId,
+          operationId
+        })
+      ) {
+        return null;
+      }
+      this.#dispatch({
+        type: 'restore',
+        conversationId,
+        requestId: conversation.activeRequestId
+      });
       this.#patch({
         conversation,
         proposals,
         modelCapabilities,
-        isSending: Boolean(conversation.activeRequestId),
-        activity: null
+        error: null
       });
       for (const proposal of proposals) {
         void this.#options.onProposalAvailable?.(proposal);
       }
       return conversation;
     } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to open this conversation.') });
+      if (
+        this.#dispatch({
+          type: 'failed',
+          operationId
+        })
+      ) {
+        this.#patch({
+          error: errorText(
+            error,
+            'Unable to open this conversation.'
+          )
+        });
+      }
       return null;
-    } finally {
-      this.#patch({ isLoadingConversation: false });
     }
   }
 
   async createConversation(
     input: { title?: string; vaultAccess?: VaultAccess } = {}
   ) {
+    if (this.#isDisposed()) return null;
     if (!this.settings) {
       this.#patch({
         error: 'Chat settings are still loading. Try again in a moment.'
       });
       return null;
     }
-    this.#patch({ isLoadingConversation: true, error: null });
+    const operationId = ++this.#selectionOperationSequence;
+    this.#dispatch({
+      type: 'startCreating',
+      operationId
+    });
+    this.#patch({ error: null });
     try {
       const title = input.title?.trim() || this.conversationDraft.title.trim() || undefined;
       const conversation = await this.#api.createConversation({
@@ -535,18 +669,37 @@ export class ChatControllerStore implements ChatController {
         conversation.provider,
         conversation.model
       );
+      if (
+        !this.#dispatch({
+          type: 'created',
+          operationId
+        })
+      ) {
+        return null;
+      }
+      this.#dispatch({ type: 'reset' });
       this.#patch({
         conversation,
         conversations: mergeSummary(this.conversations, conversation),
         modelCapabilities,
-        isSending: false
+        error: null
       });
       return conversation;
     } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to start a conversation.') });
+      if (
+        this.#dispatch({
+          type: 'failed',
+          operationId
+        })
+      ) {
+        this.#patch({
+          error: errorText(
+            error,
+            'Unable to start a conversation.'
+          )
+        });
+      }
       return null;
-    } finally {
-      this.#patch({ isLoadingConversation: false });
     }
   }
 
@@ -556,6 +709,7 @@ export class ChatControllerStore implements ChatController {
     const cachedCapabilities = this.#modelCapabilities.get(
       this.#modelKey(configuration.provider, configuration.model)
     ) ?? null;
+    this.#dispatch({ type: 'reset' });
     this.#patch({
       conversation: null,
       conversationDraft: {
@@ -565,8 +719,6 @@ export class ChatControllerStore implements ChatController {
       },
       proposals: [],
       modelCapabilities: cachedCapabilities,
-      isSending: false,
-      activity: null,
       error: null
     });
     void this.#loadDraftModelCapabilities(
@@ -589,6 +741,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   async renameConversation(title: string) {
+    if (this.#isDisposed()) return false;
     const conversationId = this.conversation?.id;
     const nextTitle = title.trim();
     if (!conversationId || !nextTitle) return false;
@@ -613,9 +766,16 @@ export class ChatControllerStore implements ChatController {
     conversationId = this.conversation?.id,
     retentionDays: ForgottenNoteRetentionPreference = 7
   ) {
+    if (this.#isDisposed()) return null;
     if (!conversationId || this.isSending) return null;
 
-    this.#patch({ isLoadingConversation: true, error: null });
+    const operationId = ++this.#selectionOperationSequence;
+    this.#dispatch({
+      type: 'startArchiving',
+      conversationId,
+      operationId
+    });
+    this.#patch({ error: null });
     try {
       const forgottenItem = await this.#api.archiveConversation(
         conversationId,
@@ -634,6 +794,15 @@ export class ChatControllerStore implements ChatController {
           }
         : this.conversationDraft;
 
+      if (
+        !this.#dispatch({
+          type: 'archived',
+          operationId
+        })
+      ) {
+        return forgottenItem;
+      }
+
       this.#patch({
         conversations,
         conversationDraft,
@@ -641,12 +810,13 @@ export class ChatControllerStore implements ChatController {
           ? {
               conversation: null,
               proposals: [],
-              modelCapabilities: null,
-              isSending: false,
-              activity: null
+              modelCapabilities: null
             }
           : {})
       });
+      if (archivedCurrentConversation) {
+        this.#dispatch({ type: 'reset' });
+      }
 
       if (archivedCurrentConversation && conversations[0]) {
         await this.openConversation(conversations[0].id);
@@ -659,16 +829,27 @@ export class ChatControllerStore implements ChatController {
       }
       return forgottenItem;
     } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to forget this conversation.') });
+      if (
+        this.#dispatch({
+          type: 'failed',
+          operationId
+        })
+      ) {
+        this.#patch({
+          error: errorText(
+            error,
+            'Unable to forget this conversation.'
+          )
+        });
+      }
       return null;
-    } finally {
-      this.#patch({ isLoadingConversation: false });
     }
   }
 
   async initialize(conversationId?: string | null) {
     const sequence = ++this.#initializeSequence;
-    this.#patch({ isInitializing: true, error: null });
+    if (!this.#dispatch({ type: 'initialize', sequence })) return;
+    this.#patch({ error: null });
     try {
       await this.#ensureListeners();
       const [settings, conversations, grants, policies] = await Promise.all([
@@ -677,7 +858,7 @@ export class ChatControllerStore implements ChatController {
         this.#api.listGrants(),
         this.#api.listNotePolicies()
       ]);
-      if (this.#disposed || sequence !== this.#initializeSequence) return;
+      if (!this.#isInitializationCurrent(sequence)) return;
       this.#patch({ settings, conversations, grants, policies });
       const targetId = conversationId ?? conversations[0]?.id ?? null;
       if (targetId) {
@@ -697,10 +878,21 @@ export class ChatControllerStore implements ChatController {
           configuration.model
         );
       }
+      if (this.#dispatch({ type: 'initialized', sequence })) {
+        this.#notify();
+      }
     } catch (error) {
-      this.#patch({ error: errorText(error, 'Chat is unavailable right now.') });
-    } finally {
-      if (sequence === this.#initializeSequence) this.#patch({ isInitializing: false });
+      const message = errorText(
+        error,
+        'Chat is unavailable right now.'
+      );
+      const accepted = this.#dispatch({
+        type: 'initializationFailed',
+        sequence
+      });
+      if (accepted) {
+        this.#patch({ error: message });
+      }
     }
   }
 
@@ -714,60 +906,141 @@ export class ChatControllerStore implements ChatController {
     if ((!trimmed && attachments.length === 0) || this.isSending || !this.conversation) {
       return false;
     }
-    this.#patch({ isSending: true, error: null, activity: 'Starting' });
+    const conversationId = this.conversation.id;
+    const operationId = ++this.#requestOperationSequence;
+    if (!this.#dispatch({
+      type: 'submit',
+      conversationId,
+      operationId,
+      activity: 'Starting'
+    })) return false;
+    this.#patch({ error: null });
     try {
       const receipt = await this.#api.sendMessage({
-        conversationId: this.conversation.id,
+        conversationId,
         content: trimmed,
         attachments,
         forceWebSearch,
         activeNote
       });
-      this.#updateConversation((conversation) => ({
-        ...conversation,
-        activeRequestId: receipt.requestId,
-        messages: receipt.assistantMessage
-          ? upsertMessage(
-              upsertMessage(conversation.messages, receipt.userMessage),
-              receipt.assistantMessage
-            )
-          : upsertMessage(conversation.messages, receipt.userMessage)
-      }));
+      this.#dispatch({
+        type: 'accepted',
+        conversationId,
+        requestId: receipt.requestId,
+        messageId: receipt.assistantMessage?.id ?? null,
+        operationId
+      });
+      if (this.conversation?.id === conversationId) {
+        this.#updateConversation((conversation) => ({
+          ...conversation,
+          activeRequestId: receipt.requestId,
+          messages: receipt.assistantMessage
+            ? upsertMessage(
+                upsertMessage(
+                  conversation.messages,
+                  receipt.userMessage
+                ),
+                receipt.assistantMessage
+              )
+            : upsertMessage(
+                conversation.messages,
+                receipt.userMessage
+              )
+        }));
+      }
       return true;
     } catch (error) {
-      this.#patch({ isSending: false, error: errorText(error, 'Unable to send this message.') });
+      if (
+        this.#dispatch({
+          type: 'submissionFailed',
+          conversationId,
+          operationId
+        })
+      ) {
+        this.#patch({
+          error: errorText(
+            error,
+            'Unable to send this message.'
+          )
+        });
+      }
       return false;
     }
   }
 
   async cancel() {
-    const requestId = this.conversation?.activeRequestId;
-    if (!requestId) return;
+    const request = this.machine.request;
+    if (request.kind !== 'streaming') return;
+    if (!this.#dispatch({
+      type: 'cancel',
+      conversationId: request.conversationId,
+      requestId: request.requestId
+    })) return;
+    this.#notify();
     try {
-      await this.#api.cancelRequest(requestId);
+      await this.#api.cancelRequest(request.requestId);
     } catch (error) {
+      this.#dispatch({
+        type: 'cancelFailed',
+        conversationId: request.conversationId,
+        requestId: request.requestId
+      });
       this.#patch({ error: errorText(error, 'Unable to stop the response.') });
     }
   }
 
   async retry(messageId: string) {
-    if (this.isSending) return;
-    this.#patch({ isSending: true, error: null });
+    if (this.#isDisposed()) return;
+    const conversationId = this.conversation?.id;
+    if (this.isSending || !conversationId) return;
+    const operationId = ++this.#requestOperationSequence;
+    if (!this.#dispatch({
+      type: 'submit',
+      conversationId,
+      operationId
+    })) return;
+    this.#patch({ error: null });
     try {
       const receipt = await this.#api.retryMessage(messageId);
-      this.#updateConversation((conversation) => ({
-        ...conversation,
-        activeRequestId: receipt.requestId,
-        messages: receipt.assistantMessage
-          ? upsertMessage(conversation.messages, receipt.assistantMessage)
-          : conversation.messages
-      }));
+      this.#dispatch({
+        type: 'accepted',
+        conversationId,
+        requestId: receipt.requestId,
+        messageId: receipt.assistantMessage?.id ?? null,
+        operationId
+      });
+      if (this.conversation?.id === conversationId) {
+        this.#updateConversation((conversation) => ({
+          ...conversation,
+          activeRequestId: receipt.requestId,
+          messages: receipt.assistantMessage
+            ? upsertMessage(
+                conversation.messages,
+                receipt.assistantMessage
+              )
+            : conversation.messages
+        }));
+      }
     } catch (error) {
-      this.#patch({ isSending: false, error: errorText(error, 'Unable to retry this response.') });
+      if (
+        this.#dispatch({
+          type: 'submissionFailed',
+          conversationId,
+          operationId
+        })
+      ) {
+        this.#patch({
+          error: errorText(
+            error,
+            'Unable to retry this response.'
+          )
+        });
+      }
     }
   }
 
   async setVaultAccess(vaultAccess: VaultAccess) {
+    if (this.#isDisposed()) return;
     const conversation = this.conversation;
     if (!conversation) {
       if (this.conversationDraft.vaultAccess !== vaultAccess) {
@@ -792,6 +1065,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   async setProvider(provider: ChatProvider, model: string) {
+    if (this.#isDisposed()) return;
     const conversation = this.conversation;
     if (!conversation) {
       if (
@@ -834,6 +1108,9 @@ export class ChatControllerStore implements ChatController {
   }
 
   async keepProposal(proposalId: string, markdown?: string) {
+    if (this.#isDisposed()) {
+      throw new Error('Chat controller is disposed.');
+    }
     try {
       const result = await this.#api.commitAgentProposal(proposalId, markdown);
       if (result.status === 'conflict') {
@@ -858,6 +1135,9 @@ export class ChatControllerStore implements ChatController {
   }
 
   async dismissProposal(proposalId: string) {
+    if (this.#isDisposed()) {
+      throw new Error('Chat controller is disposed.');
+    }
     try {
       await this.#api.dismissAgentProposal(proposalId);
       this.#patch({
@@ -880,6 +1160,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   async grantNote(noteId: string) {
+    if (this.#isDisposed()) return;
     try {
       const grant = await this.#api.grantNote(noteId);
       this.#patch({
@@ -904,6 +1185,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   async revokeNote(noteId: string) {
+    if (this.#isDisposed()) return;
     try {
       await this.#api.revokeNote(noteId);
       this.#patch({
@@ -921,6 +1203,7 @@ export class ChatControllerStore implements ChatController {
   }
 
   async setNoteExcluded(noteId: string, title: string, excluded: boolean) {
+    if (this.#isDisposed()) return;
     try {
       await this.#api.setNoteExcluded(noteId, title, excluded);
       this.#patch({
@@ -950,26 +1233,37 @@ export class ChatControllerStore implements ChatController {
   }
 
   dispose() {
-    this.#disposed = true;
-    this.#initializeSequence += 1;
+    this.#dispatch({ type: 'dispose' });
     this.#unlisteners.splice(0).forEach((off) => off());
     this.#subscribers.clear();
   }
 
   createExcerpt(messageId: string, text: string) {
+    if (this.#isDisposed()) {
+      return Promise.reject(new Error('Chat controller is disposed.'));
+    }
     return this.#api.createExcerpt(messageId, text);
   }
 
   rememberExcerpt(excerptId: string) {
+    if (this.#isDisposed()) {
+      return Promise.reject(new Error('Chat controller is disposed.'));
+    }
     return this.#api.rememberExcerpt(excerptId);
   }
 
   async remember(messageId: string, text: string) {
+    if (this.#isDisposed()) {
+      throw new Error('Chat controller is disposed.');
+    }
     const excerpt = await this.#api.createExcerpt(messageId, text);
     return this.#api.rememberExcerpt(excerpt.id);
   }
 
   unremember(excerptId: string) {
+    if (this.#isDisposed()) {
+      return Promise.reject(new Error('Chat controller is disposed.'));
+    }
     return this.#api.unrememberExcerpt(excerptId);
   }
 

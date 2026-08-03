@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createNoteDraftState
+  createNoteDraftState,
+  createNotepadState
 } from '$lib/features/notepad/state/noteStore';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 import { createPaneNavigationTransitionPipeline } from './paneNavigationTransitionPipeline';
 import { createWorkspacePaneController } from './workspacePaneController';
+import {
+  createPaneMembershipState,
+  transitionPaneMembership,
+  type PaneMembershipEvent
+} from '$lib/features/notepad/pane/paneLifecycleMachine';
 
 type PaneId = 'left' | 'right';
 
@@ -22,10 +28,13 @@ function document() {
 
 function harness(
   overrides: {
-    preparePaneClose?: () => Promise<void>;
+    prepareDeparture?: () => Promise<ReturnType<typeof document>>;
     disposePaneRuntime?: () => Promise<void>;
-    removeWorkspacePane?: () => unknown;
-    finalizeWorkspacePaneRemoval?: () => void;
+    retireWorkspacePane?: () => unknown;
+    completeWorkspacePaneDisposal?: () => boolean;
+    canRemoveWorkspacePane?: () => boolean;
+    getPaneOrder?: () => PaneId[];
+    loadRecentNotes?: () => Promise<unknown>;
     onDocumentLeaving?: (
       paneId: PaneId,
       note: ReturnType<typeof document>
@@ -33,8 +42,8 @@ function harness(
   } = {}
 ) {
   const note = document();
-  const removeWorkspacePane =
-    overrides.removeWorkspacePane ??
+  const retireWorkspacePane =
+    overrides.retireWorkspacePane ??
     vi.fn(() => ({
       paneId: 'left',
       kind: 'editor',
@@ -49,24 +58,83 @@ function harness(
       assertWorkspaceInvariants: vi.fn(),
       ensurePaneEditors: vi.fn(async () => undefined)
     });
+  const memberships: Record<PaneId, ReturnType<typeof createPaneMembershipState>> = {
+    left: createPaneMembershipState(true),
+    right: createPaneMembershipState()
+  };
+  const dispatchPaneMembership = vi.fn(
+    (paneId: PaneId, event: PaneMembershipEvent) => {
+      const previous = memberships[paneId];
+      memberships[paneId] = transitionPaneMembership(
+        previous,
+        event
+      );
+      return memberships[paneId] !== previous;
+    }
+  );
   const controller =
     createWorkspacePaneController<PaneId>({
-      getPaneOrder: () => ['left', 'right'],
-      canRemoveWorkspacePane: () => true,
+      state: createNotepadState(note),
+      maxVisiblePanes: 3,
+      getPaneOrder:
+        overrides.getPaneOrder ?? (() => ['left', 'right']),
+      getPaneMembership: (paneId: PaneId) =>
+        memberships[paneId],
+      dispatchPaneMembership,
+      createPane: () => 'right',
+      completeWorkspacePaneCreation: (
+        paneId: PaneId,
+        operationId: number
+      ) => {
+        dispatchPaneMembership(paneId, {
+          type: 'creationCompleted',
+          operationId
+        });
+        return {} as never;
+      },
+      canRemoveWorkspacePane:
+        overrides.canRemoveWorkspacePane ?? (() => true),
       getPaneDocument: () => note,
       getPaneKind: () => 'editor',
       getPaneConversationId: () => null,
       setStoredPaneKind: vi.fn(() => true),
       capturePaneLocation: () => null,
       getPaneCommandPaneId: () => null,
-      preparePaneClose:
-        overrides.preparePaneClose ??
-        vi.fn(async () => undefined),
+      documentDeparture: {
+        prepare:
+          overrides.prepareDeparture ??
+          vi.fn(async () => note)
+      },
       disposePaneRuntime,
-      removeWorkspacePane,
-      finalizeWorkspacePaneRemoval:
-        overrides.finalizeWorkspacePaneRemoval ??
-        vi.fn(),
+      retireWorkspacePane: (
+        paneId: PaneId,
+        operationId: number
+      ) => {
+        const result = retireWorkspacePane();
+        if (result) {
+          dispatchPaneMembership(paneId, {
+            type: 'retirementStarted',
+            operationId
+          });
+        }
+        return result as never;
+      },
+      completeWorkspacePaneDisposal: (
+        paneId: PaneId,
+        operationId: number
+      ) => {
+        const complete =
+          overrides.completeWorkspacePaneDisposal ??
+          vi.fn(() => true);
+        const result = complete();
+        if (result) {
+          dispatchPaneMembership(paneId, {
+            type: 'disposalCompleted',
+            operationId
+          });
+        }
+        return result;
+      },
       getActivePaneId: () => 'right',
       adoptClosedLocation: vi.fn(),
       activatePaneSession: vi.fn(),
@@ -76,39 +144,62 @@ function harness(
       bumpLocationHistoryEpoch: vi.fn(),
       onDocumentLeaving: overrides.onDocumentLeaving,
       focusPane: vi.fn(),
+      loadRecentNotes:
+        overrides.loadRecentNotes ??
+        vi.fn(async () => undefined),
+      ensureLocationMruSeeded: vi.fn(async () => undefined),
       transitions: pipeline
     } as never);
 
   return {
     controller,
-    removeWorkspacePane,
-    disposePaneRuntime
+    retireWorkspacePane,
+    disposePaneRuntime,
+    getMembership: (paneId: PaneId = 'left') =>
+      memberships[paneId]
   };
 }
 
 describe('workspace pane close lifecycle', () => {
+  it('returns a policy-blocked close to ready', async () => {
+    const { controller, getMembership, retireWorkspacePane } =
+      harness({ canRemoveWorkspacePane: () => false });
+
+    await controller.closePane('left');
+
+    expect(getMembership().kind).toBe('ready');
+    expect(retireWorkspacePane).not.toHaveBeenCalled();
+  });
+
   it('does not remove the pane when close preparation fails', async () => {
     const failure = new Error('save failed');
-    const preparePaneClose = vi.fn(async () => {
+    const prepareDeparture = vi.fn(async () => {
       throw failure;
     });
-    const { controller, removeWorkspacePane, disposePaneRuntime } =
-      harness({ preparePaneClose });
+    const {
+      controller,
+      retireWorkspacePane,
+      disposePaneRuntime,
+      getMembership
+    } =
+      harness({ prepareDeparture });
 
     await expect(controller.closePane('left')).rejects.toBe(
       failure
     );
-    expect(removeWorkspacePane).not.toHaveBeenCalled();
+    expect(retireWorkspacePane).not.toHaveBeenCalled();
     expect(disposePaneRuntime).not.toHaveBeenCalled();
+    expect(getMembership().kind).toBe('ready');
   });
 
   it('prepares, removes, tears down, then releases retired pane state', async () => {
     const events: string[] = [];
-    const { controller } = harness({
-      preparePaneClose: vi.fn(async () => {
+    const { controller, getMembership } = harness({
+      prepareDeparture: vi.fn(async () => {
         events.push('prepare');
+        return document();
       }),
-      removeWorkspacePane: vi.fn(() => {
+      retireWorkspacePane: vi.fn(() => {
         events.push('remove');
         return {
           paneId: 'left',
@@ -120,8 +211,9 @@ describe('workspace pane close lifecycle', () => {
       disposePaneRuntime: vi.fn(async () => {
         events.push('dispose');
       }),
-      finalizeWorkspacePaneRemoval: vi.fn(() => {
+      completeWorkspacePaneDisposal: vi.fn(() => {
         events.push('finalize');
+        return true;
       })
     });
 
@@ -133,6 +225,31 @@ describe('workspace pane close lifecycle', () => {
       'dispose',
       'finalize'
     ]);
+    expect(getMembership().kind).toBe('disposed');
+  });
+});
+
+describe('workspace pane creation lifecycle', () => {
+  it('disposes a creating runtime when split preparation fails', async () => {
+    const failure = new Error('recent notes unavailable');
+    const disposePaneRuntime = vi.fn(async () => undefined);
+    const { controller, getMembership } = harness({
+      getPaneOrder: () => ['left'],
+      loadRecentNotes: vi.fn(async () => {
+        throw failure;
+      }),
+      disposePaneRuntime
+    });
+
+    await expect(controller.splitWorkspace()).rejects.toBe(
+      failure
+    );
+
+    expect(getMembership('right').kind).toBe('disposed');
+    expect(disposePaneRuntime).toHaveBeenCalledWith(
+      'right',
+      null
+    );
   });
 });
 

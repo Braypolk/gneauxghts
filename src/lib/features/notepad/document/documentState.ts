@@ -1,4 +1,28 @@
 import type { SessionSnapshot } from '$lib/features/notepad/session/session';
+import {
+  createDocumentOperationState,
+  isDocumentOperationTokenCurrent,
+  transitionDocumentOperation,
+  type DocumentOperationEvent,
+  type DocumentOperationKind,
+  type DocumentOperationState
+} from './documentOperationMachine';
+import {
+  createDocumentExternalSyncState,
+  isDocumentExternalConflictCurrent,
+  transitionDocumentExternalSync,
+  type DocumentExternalSyncEvent,
+  type DocumentExternalSyncState
+} from './documentExternalSyncMachine';
+
+export type {
+  DocumentOperationKind,
+  DocumentOperationState
+} from './documentOperationMachine';
+export type {
+  DocumentExternalSyncEvent,
+  DocumentExternalSyncState
+} from './documentExternalSyncMachine';
 
 export type NoteKey = `path:${string}` | `draft:${string}`;
 
@@ -19,28 +43,6 @@ export interface DocumentSavedBaseline {
   content: DocumentWorkingContent;
   identity: DocumentIdentity;
 }
-
-export type DocumentOperationKind =
-  | 'saving'
-  | 'remembering'
-  | 'forgetting'
-  | 'opening';
-
-interface DocumentOperationBase {
-  token: number;
-  revision: number;
-}
-
-export type DocumentOperationState =
-  | (DocumentOperationBase & { kind: 'idle' })
-  | (DocumentOperationBase & {
-      kind: DocumentOperationKind;
-    })
-  | (DocumentOperationBase & {
-      kind: 'failed';
-      failedOperation: DocumentOperationKind;
-      message: string;
-    });
 
 export type ExternalRefreshSource =
   | 'watcher'
@@ -64,14 +66,6 @@ export type ExternalDocumentChange =
       kind: 'deletion';
       source: ExternalRefreshSource;
       path: string;
-    };
-
-export type DocumentExternalSyncState =
-  | { kind: 'inSync' }
-  | { kind: 'dirty' }
-  | {
-      kind: 'conflict';
-      external: ExternalDocumentChange;
     };
 
 export interface NoteDraftState {
@@ -160,16 +154,9 @@ export function createDocumentState(
     working: { ...external.content },
     identity: external.identity,
     savedBaseline: external.savedBaseline,
-    operation: {
-      kind: 'idle',
-      token: 0,
-      revision: 0
-    },
-    externalSync: { kind: 'inSync' }
+    operation: createDocumentOperationState(),
+    externalSync: createDocumentExternalSyncState()
   };
-  document.externalSync = documentHasCleanBuffer(document)
-    ? { kind: 'inSync' }
-    : { kind: 'dirty' };
   return document;
 }
 
@@ -242,18 +229,10 @@ export function documentHasUnresolvedConflict(
   return document.externalSync.kind === 'conflict';
 }
 
-function updateExternalDirtyState(document: NoteDraftState) {
-  if (document.externalSync.kind === 'conflict') return;
-  document.externalSync = documentHasCleanBuffer(document)
-    ? { kind: 'inSync' }
-    : { kind: 'dirty' };
-}
-
 function advanceRevision(document: NoteDraftState) {
-  document.operation = {
-    ...document.operation,
-    revision: document.operation.revision + 1
-  };
+  dispatchDocumentOperation(document, {
+    type: 'contentChanged'
+  });
 }
 
 export function updateDocumentTitle(
@@ -263,7 +242,6 @@ export function updateDocumentTitle(
   if (document.working.title === title) return false;
   document.working.title = title;
   advanceRevision(document);
-  updateExternalDirtyState(document);
   return true;
 }
 
@@ -274,75 +252,38 @@ export function updateDocumentMarkdown(
   if (document.working.markdown === markdown) return false;
   document.working.markdown = markdown;
   advanceRevision(document);
-  updateExternalDirtyState(document);
   return true;
 }
 
-export function beginDocumentOperation(
+export function dispatchDocumentOperation(
   document: NoteDraftState,
-  kind: DocumentOperationKind
+  event: DocumentOperationEvent
 ) {
-  const token = document.operation.token + 1;
-  document.operation = {
-    kind,
-    token,
-    revision: document.operation.revision
-  };
-  return token;
+  const previous = document.operation;
+  document.operation = transitionDocumentOperation(previous, event);
+  return document.operation !== previous;
 }
 
-export function invalidateDocumentOperations(
-  document: NoteDraftState
+export function dispatchDocumentExternalSync(
+  document: NoteDraftState,
+  event: DocumentExternalSyncEvent
 ) {
-  document.operation = {
-    kind: 'idle',
-    token: document.operation.token + 1,
-    revision: document.operation.revision
-  };
+  const previous = document.externalSync;
+  document.externalSync = transitionDocumentExternalSync(
+    previous,
+    event
+  );
+  return document.externalSync !== previous;
 }
 
 export function isDocumentOperationCurrent(
   document: NoteDraftState,
   token: number
 ) {
-  return document.operation.token === token;
-}
-
-export function completeDocumentOperation(
-  document: NoteDraftState,
-  token: number
-) {
-  if (!isDocumentOperationCurrent(document, token)) {
-    return false;
-  }
-  document.operation = {
-    kind: 'idle',
-    token,
-    revision: document.operation.revision
-  };
-  return true;
-}
-
-export function failDocumentOperation(
-  document: NoteDraftState,
-  failedOperation: DocumentOperationKind,
-  error: unknown,
-  token: number = document.operation.token
-) {
-  if (!isDocumentOperationCurrent(document, token)) {
-    return false;
-  }
-  document.operation = {
-    kind: 'failed',
-    failedOperation,
-    message:
-      error instanceof Error
-        ? error.message
-        : String(error),
-    token: document.operation.token,
-    revision: document.operation.revision
-  };
-  return true;
+  return isDocumentOperationTokenCurrent(
+    document.operation,
+    token
+  );
 }
 
 export function applySessionSnapshotToDocument(
@@ -370,25 +311,10 @@ export function applySessionSnapshotToDocument(
   if (titleChanged || markdownChanged) {
     advanceRevision(document);
   }
-  document.externalSync = documentHasCleanBuffer(document)
-    ? { kind: 'inSync' }
-    : { kind: 'dirty' };
+  dispatchDocumentExternalSync(document, {
+    type: 'boundaryApplied'
+  });
   return { titleChanged, markdownChanged };
-}
-
-export function captureExternalSnapshotConflict(
-  document: NoteDraftState,
-  snapshot: SessionSnapshot,
-  source: ExternalRefreshSource
-) {
-  document.externalSync = {
-    kind: 'conflict',
-    external: {
-      kind: 'snapshot',
-      source,
-      document: externalDocumentSnapshotFromSession(snapshot)
-    }
-  };
 }
 
 export function externalSnapshotMatchesSavedBaseline(
@@ -406,34 +332,22 @@ export function externalSnapshotMatchesSavedBaseline(
   );
 }
 
-export function captureExternalDeletionConflict(
-  document: NoteDraftState,
-  path: string,
-  source: ExternalRefreshSource
-) {
-  document.externalSync = {
-    kind: 'conflict',
-    external: {
-      kind: 'deletion',
-      source,
-      path
-    }
-  };
-}
-
-export function resolveConflictKeepingWorking(
-  document: NoteDraftState
-) {
-  if (document.externalSync.kind !== 'conflict') return false;
-  document.externalSync = { kind: 'dirty' };
-  return true;
-}
-
 export function resolveConflictUsingExternal(
-  document: NoteDraftState
+  document: NoteDraftState,
+  conflictId: number
 ) {
-  if (document.externalSync.kind !== 'conflict') return false;
-  const external = document.externalSync.external;
+  if (
+    !isDocumentExternalConflictCurrent(
+      document.externalSync,
+      conflictId,
+      'applyingExternal'
+    )
+  ) {
+    return false;
+  }
+  const sync = document.externalSync;
+  if (sync.kind !== 'conflict') return false;
+  const external = sync.external;
   if (external.kind === 'snapshot') {
     const previous = document.working;
     document.working = {
@@ -445,15 +359,19 @@ export function resolveConflictUsingExternal(
     if (!contentEquals(previous, document.working)) {
       advanceRevision(document);
     }
-    document.externalSync = { kind: 'inSync' };
-    return true;
+    return dispatchDocumentExternalSync(document, {
+      type: 'externalApplied',
+      conflictId
+    });
   }
 
   document.identity = { kind: 'draft' };
   document.savedBaseline = null;
   advanceRevision(document);
-  document.externalSync = { kind: 'dirty' };
-  return true;
+  return dispatchDocumentExternalSync(document, {
+    type: 'externalApplied',
+    conflictId
+  });
 }
 
 export type DocumentStatusViewModel =
@@ -489,7 +407,7 @@ export function getDocumentStatusViewModel(
       label: document.operation.kind
     };
   }
-  return document.externalSync.kind === 'dirty'
+  return !documentHasCleanBuffer(document)
     ? { kind: 'dirty', label: 'Unsaved changes' }
     : { kind: 'idle', label: 'Saved' };
 }

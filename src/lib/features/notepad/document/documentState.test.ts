@@ -1,21 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySessionSnapshotToDocument,
-  beginDocumentOperation,
-  captureExternalDeletionConflict,
-  captureExternalSnapshotConflict,
-  completeDocumentOperation,
   createDocumentState,
   documentHasCleanBuffer,
   documentToSessionSnapshot,
-  failDocumentOperation,
+  dispatchDocumentExternalSync,
+  dispatchDocumentOperation,
   getDocumentStatusViewModel,
-  resolveConflictKeepingWorking,
   resolveConflictUsingExternal,
   updateDocumentMarkdown,
   updateDocumentTitle,
   type DocumentOperationKind
 } from './documentState';
+import {
+  captureExternalDeletionForTest,
+  captureExternalSnapshotForTest
+} from './documentExternalSyncTestSupport';
 import {
   createEmptySessionSnapshot,
   type SessionSnapshot
@@ -43,9 +43,7 @@ function snapshot(
 describe('document state transitions', () => {
   it.each([
     'saving',
-    'remembering',
-    'forgetting',
-    'opening'
+    'forgetting'
   ] satisfies DocumentOperationKind[])(
     'tracks and completes a tokenized %s operation',
     (kind) => {
@@ -54,19 +52,29 @@ describe('document state transitions', () => {
         `path:${path}`
       );
 
-      const token = beginDocumentOperation(document, kind);
+      dispatchDocumentOperation(document, {
+        type: 'start',
+        operation: kind
+      });
+      const { token } = document.operation;
 
       expect(document.operation).toMatchObject({
         kind,
         token,
         revision: 0
       });
-      expect(completeDocumentOperation(document, token)).toBe(
-        true
-      );
+      expect(
+        dispatchDocumentOperation(document, {
+          type: 'succeed',
+          token
+        })
+      ).toBe(true);
       expect(document.operation.kind).toBe('idle');
       expect(
-        completeDocumentOperation(document, token - 1)
+        dispatchDocumentOperation(document, {
+          type: 'succeed',
+          token: token - 1
+        })
       ).toBe(false);
     }
   );
@@ -76,25 +84,26 @@ describe('document state transitions', () => {
       snapshot(),
       `path:${path}`
     );
-    const staleToken = beginDocumentOperation(
-      document,
-      'saving'
-    );
-    const currentToken = beginDocumentOperation(
-      document,
-      'opening'
-    );
+    dispatchDocumentOperation(document, {
+      type: 'start',
+      operation: 'saving'
+    });
+    const staleToken = document.operation.token;
+    dispatchDocumentOperation(document, {
+      type: 'start',
+      operation: 'forgetting'
+    });
+    const currentToken = document.operation.token;
 
     expect(
-      failDocumentOperation(
-        document,
-        'saving',
-        new Error('old failure'),
-        staleToken
-      )
+      dispatchDocumentOperation(document, {
+        type: 'fail',
+        error: new Error('old failure'),
+        token: staleToken
+      })
     ).toBe(false);
     expect(document.operation).toMatchObject({
-      kind: 'opening',
+      kind: 'forgetting',
       token: currentToken
     });
   });
@@ -112,7 +121,7 @@ describe('document state transitions', () => {
       updateDocumentMarkdown(document, 'local body')
     ).toBe(true);
     expect(document.operation.revision).toBe(1);
-    expect(document.externalSync.kind).toBe('dirty');
+    expect(document.externalSync.kind).toBe('noConflict');
     expect(documentHasCleanBuffer(document)).toBe(false);
   });
 
@@ -147,7 +156,7 @@ describe('external synchronization transitions', () => {
       );
       updateDocumentMarkdown(document, 'local body');
 
-      captureExternalSnapshotConflict(
+      captureExternalSnapshotForTest(
         document,
         snapshot({
           bodyMarkdown: 'external body',
@@ -181,7 +190,7 @@ describe('external synchronization transitions', () => {
       `path:${path}`
     );
     updateDocumentMarkdown(keepLocal, 'local body');
-    captureExternalSnapshotConflict(
+    const keepConflictId = captureExternalSnapshotForTest(
       keepLocal,
       snapshot({
         bodyMarkdown: 'external body',
@@ -190,18 +199,21 @@ describe('external synchronization transitions', () => {
       'watcher'
     );
 
-    expect(resolveConflictKeepingWorking(keepLocal)).toBe(
-      true
-    );
+    expect(
+      dispatchDocumentExternalSync(keepLocal, {
+        type: 'keepWorking',
+        conflictId: keepConflictId!
+      })
+    ).toBe(true);
     expect(keepLocal.working.markdown).toBe('local body');
-    expect(keepLocal.externalSync.kind).toBe('dirty');
+    expect(keepLocal.externalSync.kind).toBe('noConflict');
 
     const useExternal = createDocumentState(
       snapshot(),
       `path:${path}`
     );
     updateDocumentMarkdown(useExternal, 'local body');
-    captureExternalSnapshotConflict(
+    const externalConflictId = captureExternalSnapshotForTest(
       useExternal,
       snapshot({
         bodyMarkdown: 'external body',
@@ -210,13 +222,22 @@ describe('external synchronization transitions', () => {
       'watcher'
     );
 
-    expect(resolveConflictUsingExternal(useExternal)).toBe(
-      true
-    );
+    expect(
+      dispatchDocumentExternalSync(useExternal, {
+        type: 'beginApplyingExternal',
+        conflictId: externalConflictId!
+      })
+    ).toBe(true);
+    expect(
+      resolveConflictUsingExternal(
+        useExternal,
+        externalConflictId!
+      )
+    ).toBe(true);
     expect(useExternal.working.markdown).toBe(
       'external body'
     );
-    expect(useExternal.externalSync.kind).toBe('inSync');
+    expect(useExternal.externalSync.kind).toBe('noConflict');
   });
 
   it('turns a conflicted external deletion into a recoverable draft', () => {
@@ -225,17 +246,25 @@ describe('external synchronization transitions', () => {
       `path:${path}`
     );
     updateDocumentMarkdown(document, 'local body');
-    captureExternalDeletionConflict(
+    const conflictId = captureExternalDeletionForTest(
       document,
       path,
       'watcher'
     );
 
-    expect(resolveConflictUsingExternal(document)).toBe(true);
+    expect(
+      dispatchDocumentExternalSync(document, {
+        type: 'beginApplyingExternal',
+        conflictId: conflictId!
+      })
+    ).toBe(true);
+    expect(
+      resolveConflictUsingExternal(document, conflictId!)
+    ).toBe(true);
     expect(document.identity).toEqual({ kind: 'draft' });
     expect(document.savedBaseline).toBeNull();
     expect(document.working.markdown).toBe('local body');
-    expect(document.externalSync.kind).toBe('dirty');
+    expect(document.externalSync.kind).toBe('noConflict');
   });
 
   it('applies a clean external snapshot and advances one revision', () => {
@@ -259,6 +288,6 @@ describe('external synchronization transitions', () => {
       markdownChanged: true
     });
     expect(document.operation.revision).toBe(1);
-    expect(document.externalSync.kind).toBe('inSync');
+    expect(document.externalSync.kind).toBe('noConflict');
   });
 });

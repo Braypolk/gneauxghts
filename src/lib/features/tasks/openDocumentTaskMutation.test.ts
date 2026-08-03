@@ -6,9 +6,7 @@ import {
 import {
   createEmptySessionSnapshot
 } from '$lib/features/notepad/session/session';
-import {
-  captureExternalSnapshotConflict
-} from '$lib/features/notepad/document/documentState';
+import { captureExternalSnapshotForTest } from '$lib/features/notepad/document/documentExternalSyncTestSupport';
 import {
   createOpenDocumentTaskMutationHandler,
   sha256Text
@@ -162,7 +160,7 @@ describe('open document task mutation', () => {
   it('refuses to mutate a document with an unresolved external conflict', async () => {
     const document = persistedDocument();
     updateDocumentMarkdown(document, '- [ ] Ship it\n\nLocal work');
-    captureExternalSnapshotConflict(
+    captureExternalSnapshotForTest(
       document,
       {
         ...createEmptySessionSnapshot(),

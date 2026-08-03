@@ -24,6 +24,9 @@ import {
 import type {
   PaneNavigationTransitionPipeline
 } from './paneNavigationTransitionPipeline';
+import type {
+  DocumentDepartureController
+} from './documentDepartureController';
 import {
   canSetPaneKind,
   paneHasCapability
@@ -46,14 +49,12 @@ export interface LocationHistoryControllerDeps<TPaneId extends string> {
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   activatePaneSession: (paneId: TPaneId) => unknown;
   setPaneKind: (paneId: TPaneId, kind: PaneKind) => boolean;
-  saveCursorPosition: (document: NoteDraftState) => void;
-  cancelPendingAutosave: (document: NoteDraftState) => void;
-  enqueueSave: (document: NoteDraftState) => Promise<void>;
   loadRecentNotes: () => Promise<SearchItem[]> | SearchItem[];
   openNotePath: (
     path: string | null,
     options: {
       noteId?: string | null;
+      currentNoteAlreadySaved?: boolean;
       focusEditorAfterOpen?: boolean;
       revealEditorAfterOpen?: boolean;
     }
@@ -61,6 +62,7 @@ export interface LocationHistoryControllerDeps<TPaneId extends string> {
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
   updateSelectedRelatedText: (paneId?: TPaneId) => void;
   focusPaneAfterShortcut: (paneId: TPaneId) => void | Promise<void>;
+  documentDeparture: DocumentDepartureController<TPaneId>;
   transitions: PaneNavigationTransitionPipeline<TPaneId>;
 }
 
@@ -145,7 +147,10 @@ export function createLocationHistoryController<TPaneId extends string>(
 
   async function captureRestorablePaneLocation(
     paneId: TPaneId
-  ): Promise<NavLocation | null> {
+  ): Promise<{
+    location: NavLocation | null;
+    documentDeparted: boolean;
+  }> {
     const current = capturePaneLocation(paneId);
     if (
       current ||
@@ -154,17 +159,23 @@ export function createLocationHistoryController<TPaneId extends string>(
         'edit-document'
       )
     ) {
-      return current;
+      return {
+        location: current,
+        documentDeparted: false
+      };
     }
     const note = deps.getPaneDocument(paneId);
     if (
       note.working.title.trim() === '' &&
       note.working.markdown.trim() === ''
-    ) return null;
-    deps.saveCursorPosition(note);
-    deps.cancelPendingAutosave(note);
-    await deps.enqueueSave(note);
-    return capturePaneLocation(paneId);
+    ) {
+      return { location: null, documentDeparted: false };
+    }
+    await deps.documentDeparture.prepare(paneId, note);
+    return {
+      location: capturePaneLocation(paneId),
+      documentDeparted: true
+    };
   }
 
   function touchCurrentLocation(paneId = deps.getActivePaneId()) {
@@ -200,7 +211,13 @@ export function createLocationHistoryController<TPaneId extends string>(
     if (changed) bumpEpoch();
   }
 
-  async function restoreLocation(paneId: TPaneId, location: NavLocation) {
+  async function restoreLocation(
+    paneId: TPaneId,
+    location: NavLocation,
+    {
+      currentDocumentAlreadyDeparted = false
+    }: { currentDocumentAlreadyDeparted?: boolean } = {}
+  ) {
     suppressLocationTouch = true;
     try {
       const result = await deps.transitions.execute({
@@ -231,6 +248,8 @@ export function createLocationHistoryController<TPaneId extends string>(
           if (location.kind === 'editor') {
             await deps.openNotePath(location.notePath, {
               noteId: location.noteId,
+              currentNoteAlreadySaved:
+                currentDocumentAlreadyDeparted,
               focusEditorAfterOpen: true,
               revealEditorAfterOpen: true
             });
@@ -303,13 +322,12 @@ export function createLocationHistoryController<TPaneId extends string>(
 
   async function goToPreviousLocation(paneId = deps.getActivePaneId()) {
     blurFocusedPaneTitle(paneId);
-    const current = await captureRestorablePaneLocation(paneId);
+    const {
+      location: current,
+      documentDeparted
+    } = await captureRestorablePaneLocation(paneId);
     await ensureLocationMruSeeded(paneId);
-    const previous = previousRestorableLocation(
-      paneId,
-      paneId,
-      current
-    );
+    let previous = previousRestorableLocation(paneId, paneId, current);
     if (!previous) {
       if (
         paneHasCapability(
@@ -346,7 +364,29 @@ export function createLocationHistoryController<TPaneId extends string>(
       return;
     }
     touchLocation(paneId, current);
-    await restoreLocation(paneId, previous);
+    while (previous) {
+      try {
+        await restoreLocation(paneId, previous, {
+          currentDocumentAlreadyDeparted:
+            documentDeparted
+        });
+        return;
+      } catch (error) {
+        if (
+          previous.kind !== 'editor' ||
+          !(error instanceof Error) ||
+          error.message !== 'Missing note path'
+        ) {
+          throw error;
+        }
+        removeLocation(previous);
+        previous = previousRestorableLocation(
+          paneId,
+          paneId,
+          current
+        );
+      }
+    }
   }
 
   function findPaneCommandReferencePaneId(targetPaneId: TPaneId): TPaneId {

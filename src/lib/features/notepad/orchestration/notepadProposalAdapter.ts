@@ -41,9 +41,6 @@ export interface NotepadProposalAdapterDeps<TPaneId extends string> {
     options: { noteId: string | null; focusEditorAfterOpen: false }
   ) => Promise<void>;
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
-  cancelPendingAutosave: (document: NoteDraftState) => void;
-  enqueueSave: (document: NoteDraftState) => Promise<void>;
-  getSaveQueue: (document: NoteDraftState) => Promise<void>;
   scheduleAutosave: (document: NoteDraftState) => void;
   refreshCurrentNote: () => Promise<void>;
   acknowledgeDocumentCommit: (commit: {
@@ -141,11 +138,6 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
           (editor): editor is EditorCapabilityAdapter =>
             Boolean(editor?.isReady())
         ),
-    flushBeforePreview: async (document) => {
-      deps.cancelPendingAutosave(document);
-      await deps.enqueueSave(document);
-      await deps.getSaveQueue(document);
-    },
     ensureEditorPaneForReview: async (document) => {
       let paneId = document
         ? deps
@@ -224,7 +216,6 @@ export function createNotepadProposalAdapter<TPaneId extends string>(
         await deps.paneLifecycle.ensurePaneEditors();
       }
     },
-    cancelPendingAutosave: deps.cancelPendingAutosave,
     scheduleAutosave: deps.scheduleAutosave,
     reloadReviewFromDisk: deps.refreshCurrentNote,
     reopenReviewEditor: async (document) => {

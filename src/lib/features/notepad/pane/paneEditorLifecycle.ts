@@ -2,6 +2,12 @@ import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
 import type { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import {
+  createPaneEditorRuntimeState,
+  transitionPaneEditorRuntime,
+  type PaneEditorRuntimeEvent,
+  type PaneEditorRuntimeState
+} from './paneLifecycleMachine';
 
 type EditorLifecycleController = ReturnType<
   typeof createEditorLifecycleController
@@ -45,12 +51,47 @@ export interface PaneEditorReplaceOptions {
  */
 class PaneEditorSession<TPaneId extends string> {
   #queue: Promise<unknown> = Promise.resolve();
-  #disposed = false;
+  #state: PaneEditorRuntimeState =
+    createPaneEditorRuntimeState();
 
   constructor(
     readonly paneId: TPaneId,
     private readonly deps: PaneEditorLifecycleDeps<TPaneId>
   ) {}
+
+  #assertStableResourceInvariant(runtime: PaneRuntime) {
+    if (
+      (this.#state.kind === 'unmounted' ||
+        this.#state.kind === 'disposed') &&
+      runtime.controller
+    ) {
+      throw new Error(
+        `Pane editor session (${this.paneId}) has a controller while ${this.#state.kind}.`
+      );
+    }
+    if (
+      this.#state.kind === 'mounted' &&
+      !runtime.controller
+    ) {
+      throw new Error(
+        `Pane editor session (${this.paneId}) lost its mounted controller.`
+      );
+    }
+  }
+
+  #dispatch(event: PaneEditorRuntimeEvent) {
+    const previous = this.#state;
+    this.#state = transitionPaneEditorRuntime(previous, event);
+    return this.#state !== previous;
+  }
+
+  #isDisposalRequested() {
+    return (
+      this.#state.kind === 'disposed' ||
+      (this.#state.kind === 'unmounting' &&
+        this.#state.disposeAfter)
+    );
+  }
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.#queue.then(operation);
@@ -67,24 +108,47 @@ class PaneEditorSession<TPaneId extends string> {
 
   mount(): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
-      if (this.#disposed) return 'disposed';
+      if (this.#isDisposalRequested()) return 'disposed';
       if (!this.deps.paneShouldMountEditor(this.paneId)) {
         return 'unavailable';
       }
 
       const runtime = this.deps.getPaneRuntime(this.paneId);
-      if (runtime.controller) return 'applied';
+      this.#assertStableResourceInvariant(runtime);
+      if (runtime.controller) {
+        return 'applied';
+      }
       if (!runtime.refs.editorRoot) return 'unavailable';
 
+      if (!this.#dispatch({ type: 'mountRequested' })) {
+        return this.#isDisposalRequested()
+          ? 'disposed'
+          : 'unavailable';
+      }
+      if (this.#state.kind !== 'mounting') {
+        return 'unavailable';
+      }
       const document = this.deps.getPaneDocument(this.paneId);
       const lifecycle =
         this.deps.getEditorLifecycleController(this.paneId);
-      await lifecycle.createEditor(document.working.markdown);
-      if (!runtime.controller || this.#disposed) {
+      try {
+        await lifecycle.createEditor(document.working.markdown);
+      } catch (error) {
+        this.#dispatch({ type: 'mountFailed' });
+        throw error;
+      }
+      if (this.#state.kind !== 'mounting') {
         if (runtime.controller) await lifecycle.destroyEditor();
-        return this.#disposed ? 'disposed' : 'unavailable';
+        return this.#isDisposalRequested()
+          ? 'disposed'
+          : 'stale';
+      }
+      if (!runtime.controller) {
+        this.#dispatch({ type: 'mountFailed' });
+        return 'unavailable';
       }
 
+      this.#dispatch({ type: 'mountCompleted' });
       lifecycle.restoreCursorPositionForDocument(document);
       this.deps.onEditorMounted?.(this.paneId, document);
       return 'applied';
@@ -96,17 +160,45 @@ class PaneEditorSession<TPaneId extends string> {
   ): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
       const runtime = this.deps.getPaneRuntime(this.paneId);
-      if (!runtime.controller) return 'unavailable';
+      this.#assertStableResourceInvariant(runtime);
+      const disposing =
+        this.#state.kind === 'unmounting' &&
+        this.#state.disposeAfter;
+      if (!runtime.controller && !disposing) {
+        return this.#state.kind === 'disposed'
+          ? 'disposed'
+          : 'unavailable';
+      }
 
+      if (!disposing) {
+        if (!this.#dispatch({ type: 'unmountRequested' })) {
+          return this.#isDisposalRequested()
+            ? 'disposed'
+            : 'unavailable';
+        }
+      }
+      if (this.#state.kind !== 'unmounting') {
+        return this.#state.kind === 'disposed'
+          ? 'disposed'
+          : 'unavailable';
+      }
       const document =
         documentOverride ??
         this.deps.getPaneDocument(this.paneId);
       const lifecycle =
         this.deps.getEditorLifecycleController(this.paneId);
-      lifecycle.saveCursorPositionForDocument(document);
-      await lifecycle.destroyEditor();
+      try {
+        if (runtime.controller) {
+          lifecycle.saveCursorPositionForDocument(document);
+          await lifecycle.destroyEditor();
+        }
+      } catch (error) {
+        this.#dispatch({ type: 'unmountFailed' });
+        throw error;
+      }
       runtime.setIsEditorReady(false);
       this.deps.closeWikilinkAutocomplete(this.paneId);
+      this.#dispatch({ type: 'unmountCompleted' });
       return 'applied';
     });
   }
@@ -115,8 +207,9 @@ class PaneEditorSession<TPaneId extends string> {
     document: NoteDraftState
   ): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
-      if (this.#disposed) return 'disposed';
+      if (this.#isDisposalRequested()) return 'disposed';
       const runtime = this.deps.getPaneRuntime(this.paneId);
+      this.#assertStableResourceInvariant(runtime);
       if (!runtime.controller) return 'unavailable';
       this.deps
         .getEditorLifecycleController(this.paneId)
@@ -130,8 +223,9 @@ class PaneEditorSession<TPaneId extends string> {
     options: PaneEditorReplaceOptions = {}
   ): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
-      if (this.#disposed) return 'disposed';
+      if (this.#isDisposalRequested()) return 'disposed';
       const runtime = this.deps.getPaneRuntime(this.paneId);
+      this.#assertStableResourceInvariant(runtime);
       if (!runtime.controller) return 'unavailable';
       if (
         options.expectedDocument &&
@@ -163,7 +257,7 @@ class PaneEditorSession<TPaneId extends string> {
     flushHistory = false
   ): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
-      if (this.#disposed) return 'disposed';
+      if (this.#isDisposalRequested()) return 'disposed';
       if (
         expectedDocument &&
         this.deps.getPaneDocument(this.paneId) !==
@@ -172,6 +266,7 @@ class PaneEditorSession<TPaneId extends string> {
         return 'stale';
       }
       const runtime = this.deps.getPaneRuntime(this.paneId);
+      this.#assertStableResourceInvariant(runtime);
       if (!runtime.controller) return 'unavailable';
 
       const lifecycle =
@@ -196,11 +291,12 @@ class PaneEditorSession<TPaneId extends string> {
     { restoreCursor = false }: { restoreCursor?: boolean } = {}
   ): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
-      if (this.#disposed) return 'disposed';
+      if (this.#isDisposalRequested()) return 'disposed';
       if (this.deps.getPaneDocument(this.paneId) !== document) {
         return 'stale';
       }
       const runtime = this.deps.getPaneRuntime(this.paneId);
+      this.#assertStableResourceInvariant(runtime);
       if (!runtime.controller) return 'unavailable';
 
       const lifecycle =
@@ -236,7 +332,7 @@ class PaneEditorSession<TPaneId extends string> {
   dispose(
     documentOverride: NoteDraftState | null = null
   ): Promise<PaneEditorOperationResult> {
-    this.#disposed = true;
+    this.#dispatch({ type: 'disposeRequested' });
     return this.destroy(documentOverride);
   }
 }

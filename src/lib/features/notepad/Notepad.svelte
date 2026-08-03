@@ -7,7 +7,7 @@
     createNotepadFeatureHost,
     type NotepadFeatureHost,
   } from "$lib/features/notepad/host";
-  import { shouldSuppressAutosaveForDocument } from "$lib/features/proposals/reviewHold.svelte";
+  import { shouldSuppressAutosaveForDocument } from "$lib/features/proposals/reviewSession.svelte";
   import { focusInputAtEnd } from "$lib/features/notepad/navigation/navigation";
   import { registerPendingNoteSaveHandler } from "$lib/features/notepad/navigation/pendingNoteSave";
   import {
@@ -306,10 +306,19 @@
 
   function createPaneRuntime(): PaneId {
     const paneId = createNotepadPaneId();
-    ensurePaneRuntime(paneId);
-    chatCoordinator.ensureController(paneId);
-    ensurePaneControllers(paneId);
-    return paneId;
+    try {
+      ensurePaneRuntime(paneId);
+      chatCoordinator.ensureController(paneId);
+      ensurePaneControllers(paneId);
+      return paneId;
+    } catch (error) {
+      paneRuntimes[paneId]?.dispose();
+      delete paneControllers[paneId];
+      editorCapabilities.delete(paneId);
+      chatCoordinator.disposePane(paneId);
+      delete paneRuntimes[paneId];
+      throw error;
+    }
   }
 
   function getPaneKind(paneId: PaneId) {
@@ -552,9 +561,9 @@
   } = persistence;
 
   const documentEditing = createDocumentEditingService<PaneId>({
-    isApplyingExternalContent: (document) =>
+    isApplyingProgrammaticUpdate: (document) =>
       getPaneIdsForDocument(document).some(
-        (paneId) => getPaneRuntime(paneId).ui.isApplyingExternalContent,
+        (paneId) => getPaneRuntime(paneId).ui.isApplyingProgrammaticUpdate,
       ),
     shouldSuppressAutosave: shouldSuppressAutosaveForDocument,
     resetPaneCommandAfterBodyInput: (paneId, nextMarkdown) => {
@@ -737,24 +746,17 @@
     collapseRelatedPanelController(workspaceShell);
   }
 
-  async function preparePaneClose(
-    paneId: PaneId,
-    document: NoteDraftState,
-  ) {
-    documents.flushPaneCursorSave(paneId, document);
-    cancelPendingAutosave(document);
-    await enqueueSave(document);
-  }
-
   async function disposePaneRuntime(
     paneId: PaneId,
-    document: NoteDraftState,
+    document: NoteDraftState | null,
   ) {
     const runtime = getPaneRuntime(paneId);
-    proposalOrchestrationInstance?.suspendDocument(
-      document,
-      editorCapabilities.get(paneId) ?? null,
-    );
+    if (document) {
+      proposalOrchestrationInstance?.suspendDocument(
+        document,
+        editorCapabilities.get(paneId) ?? null,
+      );
+    }
     closeWikilinkAutocomplete(paneId);
     closeSlashMenu(paneId);
     closeSelectionMenu(paneId);
@@ -794,7 +796,6 @@
     focusPaneEditorAtEnd,
     focusPaneChat,
     createPane: createPaneRuntime,
-    preparePaneClose,
     disposePaneRuntime,
     updateSelectedRelatedText,
     closeWikilinkAutocomplete,
@@ -925,8 +926,8 @@
     },
     replaceActiveDocumentMarkdown: async (markdown) => {
       const document = getDocumentSession();
-      await documentEditing.replaceMarkdown(document, markdown, () =>
-        documents.replaceEditorContentInPlace(markdown),
+      await documentEditing.replaceMarkdown(document, markdown, (currentMarkdown) =>
+        documents.replaceEditorContentInPlace(currentMarkdown),
       );
     },
   });
@@ -950,9 +951,6 @@
     activatePane: commands.activatePane,
     openNote: commands.openNotePath,
     paneLifecycle,
-    cancelPendingAutosave,
-    enqueueSave,
-    getSaveQueue: (document) => getNoteSaveQueue(document.key),
     scheduleAutosave,
     refreshCurrentNote: async () => {
       await commands.refreshCurrentNoteIfChanged();

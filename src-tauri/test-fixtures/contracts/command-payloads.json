@@ -14,13 +14,8 @@
         "path": "/vault/Title.md"
       }
     },
-    "remember_note": {
-      "args": {
-        "title": "Remembered",
-        "markdown": "Remembered body",
-        "currentPath": null,
-        "clearLastOpened": false
-      },
+    "clear_last_opened_note": {
+      "args": null,
       "result": null
     },
     "prepare_task_document_mutation": {
@@ -68,55 +63,6 @@
         "conversationId": "conversation-1",
         "userMessageId": "message-user-1",
         "assistantMessageId": "message-assistant-1"
-      }
-    },
-    "preview_note_change_proposal": {
-      "args": {
-        "path": "/vault/Title.md",
-        "edits": [
-          {
-            "kind": "replace",
-            "oldText": "Body",
-            "newText": "Updated body",
-            "contextBefore": null,
-            "contextAfter": null
-          }
-        ]
-      },
-      "result": {
-        "reviewId": "review-1",
-        "notePath": "/vault/Title.md",
-        "title": "Title",
-        "baseContentHash": "base-hash-1",
-        "baseEditorMarkdown": "Body",
-        "proposedEditorMarkdown": "Updated body",
-        "hunks": [
-          {
-            "id": "hunk-1",
-            "baseFrom": 0,
-            "baseTo": 4,
-            "proposedFrom": 0,
-            "proposedTo": 12,
-            "oldText": "Body",
-            "newText": "Updated body"
-          }
-        ]
-      }
-    },
-    "commit_note_review": {
-      "args": {
-        "path": "/vault/Title.md",
-        "expectedBaseHash": "base-hash-1",
-        "markdown": "Updated body"
-      },
-      "result": {
-        "status": "committed",
-        "applied": {
-          "kind": "update",
-          "path": "/vault/Title.md",
-          "previousPath": null
-        },
-        "message": null
       }
     },
     "commit_agent_proposal": {

@@ -15,7 +15,7 @@ export interface NotepadTaskMutationAdapterDeps {
   replaceMarkdown: (
     document: NoteDraftState,
     markdown: string,
-    applyToRuntime: () => Promise<void>,
+    applyToRuntime: (markdown: string) => Promise<void>,
     options: { autosave: false }
   ) => Promise<unknown>;
   replaceDocumentContentInPlace: (
@@ -72,10 +72,10 @@ export function createNotepadTaskMutationHandler(
       deps.replaceMarkdown(
         document,
         markdown,
-        async () => {
+        async (currentMarkdown) => {
           await deps.replaceDocumentContentInPlace(
             document,
-            markdown
+            currentMarkdown
           );
         },
         { autosave: false }

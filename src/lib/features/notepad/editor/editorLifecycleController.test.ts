@@ -76,7 +76,7 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       // The pane-scoped accessor always returns the *current* note object.
       getDocumentSession: () => liveDocument,
       setIsEditorReady: () => {},
-      setIsApplyingExternalContent: () => {},
+      setIsApplyingProgrammaticUpdate: () => {},
       handleEditorMarkdownChange: (_paneId, document, nextMarkdown) => {
         received.push({ key: document.key, markdown: nextMarkdown });
       },
@@ -134,7 +134,7 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       getEditorRoot: () => null,
       getDocumentSession: () => liveDocument,
       setIsEditorReady: () => {},
-      setIsApplyingExternalContent: () => {},
+      setIsApplyingProgrammaticUpdate: () => {},
       handleEditorMarkdownChange: () => {},
       getSharedEditorResources: () => ({}) as never,
       getViewCallbacks: () => ({}) as never,
