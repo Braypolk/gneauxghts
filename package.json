@@ -14,7 +14,6 @@
     "tauri": "node scripts/tauri.mjs",
     "release:mac": "GNEAUXGHTS_REQUIRE_NOTARIZATION=1 node scripts/tauri.mjs build"
   },
-  "license": "MIT",
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-markdown": "^6.5.0",

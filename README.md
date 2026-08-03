@@ -192,6 +192,3 @@ SEMANTIC_BENCHMARK.md
 - "unForget" restores the most recently forgotten note from in-memory state.
 - "Remember" saves the current note and clears the editor so you can start another one.
 
-## License
-
-MIT
