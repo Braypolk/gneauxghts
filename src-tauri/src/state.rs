@@ -20,8 +20,8 @@ pub(crate) use persistence::{
     prune_recent_note_ids, prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup,
     resolve_note_id_from_path, resolve_note_path_by_id, touch_recent_note_id,
     validate_current_path, write_last_opened_and_recents, write_state, write_state_with_lookup,
-    ForgottenItemKind, NoteActivity, NoteIdLookup, PersistedForgottenNote, PersistedState,
-    OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
+    ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver, PersistedForgottenNote,
+    PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 
 #[cfg(test)]
@@ -286,7 +286,6 @@ mod tests {
     /// next call once the background prewarm has populated the index.
     #[test]
     fn read_state_with_cold_index_lookup_retains_unknown_ids() {
-        use std::path::PathBuf;
         let _guard = lock_test_env();
         let app_data_dir = TestDir::new("state-app-data-cold-retain");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
@@ -321,9 +320,9 @@ mod tests {
         // Cold index: the closure returns None for everything. Without
         // the cold-mode retain, this would walk the vault per id and
         // delete the unknown ids; with cold mode they must be retained.
-        let empty: Box<dyn Fn(&str) -> Option<PathBuf>> = Box::new(|_| None);
+        let empty = |_: &str| None;
         let cold_lookup = super::NoteIdLookup::Index {
-            lookup: &*empty,
+            resolver: &empty,
             is_warm: false,
         };
         let state = super::read_state_with_lookup(notes_dir, &cold_lookup).expect("read");
@@ -346,7 +345,6 @@ mod tests {
     /// touching the disk.
     #[test]
     fn read_state_with_warm_index_lookup_drops_unknown_ids() {
-        use std::path::PathBuf;
         let _guard = lock_test_env();
         let app_data_dir = TestDir::new("state-app-data-warm-drop");
         initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
@@ -374,15 +372,15 @@ mod tests {
 
         let live_note_owned = live_note.clone();
         let live_id_for_closure = live_note_id.clone();
-        let resolver: Box<dyn Fn(&str) -> Option<PathBuf>> = Box::new(move |id| {
+        let resolver = move |id: &str| {
             if id == live_id_for_closure {
                 Some(live_note_owned.clone())
             } else {
                 None
             }
-        });
+        };
         let warm_lookup = super::NoteIdLookup::Index {
-            lookup: &*resolver,
+            resolver: &resolver,
             is_warm: true,
         };
         let state = super::read_state_with_lookup(notes_dir, &warm_lookup).expect("read");

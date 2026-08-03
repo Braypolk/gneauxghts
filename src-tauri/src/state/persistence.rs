@@ -16,6 +16,19 @@ use std::{
 /// Hot command paths should pass [`NoteIdLookup::Index`] backed by the in-memory
 /// notes index for O(1) lookups; the disk scan remains as a safe fallback for
 /// startup or cold paths where the index has not been populated yet.
+pub(crate) trait NoteIdPathResolver {
+    fn path_for_note_id(&self, note_id: &str) -> Option<PathBuf>;
+}
+
+impl<F> NoteIdPathResolver for F
+where
+    F: Fn(&str) -> Option<PathBuf>,
+{
+    fn path_for_note_id(&self, note_id: &str) -> Option<PathBuf> {
+        self(note_id)
+    }
+}
+
 pub(crate) enum NoteIdLookup<'a> {
     Disk,
     /// Index-backed lookup. `is_warm` is true once the in-memory index has
@@ -25,7 +38,7 @@ pub(crate) enum NoteIdLookup<'a> {
     /// unknown note ids instead of doing per-id disk walks — they will
     /// be pruned by the next call after the index warms up.
     Index {
-        lookup: &'a (dyn Fn(&str) -> Option<PathBuf> + 'a),
+        resolver: &'a (dyn NoteIdPathResolver + 'a),
         is_warm: bool,
     },
 }
@@ -55,8 +68,8 @@ impl<'a> NoteIdLookup<'a> {
                 Some(_) => Ok(NoteIdLookupOutcome::Found),
                 None => Ok(NoteIdLookupOutcome::Missing),
             },
-            NoteIdLookup::Index { lookup, is_warm } => {
-                if let Some(path) = lookup(note_id) {
+            NoteIdLookup::Index { resolver, is_warm } => {
+                if let Some(path) = resolver.path_for_note_id(note_id) {
                     if is_valid_note_path(&path, notes_dir) {
                         return Ok(NoteIdLookupOutcome::Found);
                     }
@@ -78,17 +91,12 @@ pub(super) const APP_STATE_SINGLETON_ID: i64 = 1;
 const APP_STATE_DB_FILE_NAME: &str = "app-state.sqlite3";
 static NOTE_FILE_MUTATION: Mutex<()> = Mutex::new(());
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum ForgottenItemKind {
+    #[default]
     Note,
     Chat,
-}
-
-impl Default for ForgottenItemKind {
-    fn default() -> Self {
-        Self::Note
-    }
 }
 
 impl ForgottenItemKind {

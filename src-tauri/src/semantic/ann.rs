@@ -703,13 +703,13 @@ fn build_snapshot_streaming(
     let mut processed = 0usize;
 
     for_each_chunk_embedding(connection, |row| {
-        if processed % 64 == 0 {
+        if processed.is_multiple_of(64) {
             if let Some(gate) = gate {
                 gate.checkpoint_manual_pause();
             }
         }
         processed = processed.saturating_add(1);
-        if processed % 64 == 0 {
+        if processed.is_multiple_of(64) {
             if let Some(progress) = progress {
                 progress(processed, total);
             }

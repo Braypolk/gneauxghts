@@ -45,6 +45,7 @@
     draftSeed?: ChatDraftSeed | null;
     contextNote?: ChatContextNote | null;
     getActiveNoteSnapshot?: () => Promise<ChatActiveNoteSnapshot | null>;
+    configurationReady: boolean;
     openMenu: ChatMenu | null;
     actionError: string | null;
     composerElement?: HTMLTextAreaElement | null;
@@ -63,6 +64,7 @@
     draftSeed = null,
     contextNote = null,
     getActiveNoteSnapshot,
+    configurationReady,
     openMenu,
     actionError,
     composerElement = $bindable(null),
@@ -97,7 +99,8 @@
       snapshot.conversationDraft.vaultAccess
   );
   const canSend = $derived(
-    Boolean(draft.trim() || attachments.length > 0) &&
+    configurationReady &&
+      Boolean(draft.trim() || attachments.length > 0) &&
       !snapshot.isSending &&
       !snapshot.isInitializing &&
       !snapshot.isLoadingConversation &&
@@ -384,13 +387,14 @@
       rows={variant === 'inline' ? 2 : 3}
       class="block max-h-40 min-h-12 w-full resize-none bg-transparent px-2.5 py-1.5 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
       {placeholder}
-      disabled={snapshot.isInitializing ||
+      disabled={!configurationReady ||
         conversation?.status === 'projectionConflict'}
       onkeydown={onComposerKeydown}
       onpaste={onComposerPaste}
     ></textarea>
 
     <div class="flex flex-wrap items-center gap-1.5 px-1 pt-1">
+      {#if configurationReady}
           <input
             bind:this={attachmentInput}
             class="sr-only"
@@ -602,6 +606,12 @@
             <span class="hidden sm:inline">Web</span>
           </button>
         {/if}
+      {:else}
+        <span
+          class="h-[1.65rem] w-32"
+          aria-hidden="true"
+        ></span>
+      {/if}
 
       <div class="ml-auto flex items-center">
         {#if snapshot.isSending}

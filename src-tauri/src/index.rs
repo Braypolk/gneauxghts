@@ -456,7 +456,10 @@ impl AppState {
                     .collect::<HashSet<_>>(),
             )
         };
-        let (mut updates, seen_paths) = collect_refresh_updates(notes_dir, &existing_signatures)?;
+        let RefreshScan {
+            mut updates,
+            seen_paths,
+        } = collect_refresh_updates(notes_dir, &existing_signatures)?;
         // Managed chat writes update the catalog directly. If the bytes on
         // disk later diverge, the chat conflict pipeline owns that state; a
         // generic reconciliation pass must not index the external edit.
@@ -555,7 +558,10 @@ impl AppState {
                 .map(|(path, note)| (path.clone(), note.signature.clone()))
                 .collect::<HashMap<_, _>>()
         };
-        let (updates, seen_paths) = collect_refresh_updates(notes_dir, &existing_signatures)?;
+        let RefreshScan {
+            updates,
+            seen_paths,
+        } = collect_refresh_updates(notes_dir, &existing_signatures)?;
 
         // Capture payloads for the background queue before we move
         // `updates` into the in-memory swap below. The queue applies
@@ -792,10 +798,15 @@ fn collect_dirty_updates(
     Ok(updates)
 }
 
+struct RefreshScan {
+    updates: Vec<(PathBuf, IndexedNote)>,
+    seen_paths: HashSet<PathBuf>,
+}
+
 fn collect_refresh_updates(
     notes_dir: &Path,
     existing_signatures: &HashMap<PathBuf, FileSignature>,
-) -> Result<(Vec<(PathBuf, IndexedNote)>, HashSet<PathBuf>), String> {
+) -> Result<RefreshScan, String> {
     let mut seen_paths = HashSet::new();
     let mut updates = Vec::new();
 
@@ -812,7 +823,10 @@ fn collect_refresh_updates(
         }
     }
 
-    Ok((updates, seen_paths))
+    Ok(RefreshScan {
+        updates,
+        seen_paths,
+    })
 }
 
 impl IndexedNote {
@@ -1396,7 +1410,7 @@ fn toggle_task_line(line: &mut String) -> Option<()> {
 mod tests {
     use super::{
         build_indexed_note, build_tasks, collect_dirty_updates, collect_refresh_updates,
-        read_file_signature, toggle_task_in_markdown, AppState, Duration, NotesIndex,
+        read_file_signature, toggle_task_in_markdown, AppState, Duration, NotesIndex, RefreshScan,
     };
     use crate::test_support::{fixture_path, load_fixture, load_json_fixture, TestDir};
     use serde_json::json;
@@ -1511,8 +1525,10 @@ gneauxghts:
         let mut existing_signatures = HashMap::new();
         existing_signatures.insert(note_path.clone(), signature);
 
-        let (updates, seen_paths) =
-            collect_refresh_updates(temp.path(), &existing_signatures).expect("collect refresh");
+        let RefreshScan {
+            updates,
+            seen_paths,
+        } = collect_refresh_updates(temp.path(), &existing_signatures).expect("collect refresh");
 
         assert!(updates.is_empty());
         assert!(seen_paths.contains(&note_path));
@@ -1686,8 +1702,10 @@ gneauxghts:
         fs::write(&hidden_note, "# Hidden\n\nBody").expect("write hidden note");
 
         let mut index = NotesIndex::default();
-        let (updates, seen_paths) =
-            collect_refresh_updates(temp.path(), &HashMap::new()).expect("collect refresh updates");
+        let RefreshScan {
+            updates,
+            seen_paths,
+        } = collect_refresh_updates(temp.path(), &HashMap::new()).expect("collect refresh updates");
         index.apply_refresh_updates(updates, seen_paths);
 
         assert_eq!(index.entries.len(), 1);

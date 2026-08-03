@@ -718,7 +718,7 @@ pub(crate) async fn retrieve_note_context(
                 None,
                 None,
             )?;
-            return Ok(RetrievalContextResponse {
+            Ok(RetrievalContextResponse {
                 status: "ready".to_string(),
                 scope: "query".to_string(),
                 reason: None,
@@ -749,7 +749,7 @@ pub(crate) async fn retrieve_note_context(
                         block_anchor: item.block_anchor,
                     })
                     .collect(),
-            });
+            })
         }
         RetrievalContextScope::Note | RetrievalContextScope::Selection => {
             let semantic = state.semantic.clone();

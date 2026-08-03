@@ -131,3 +131,61 @@ fn dirty_document_task_prepare_contract_is_registered_and_fixture_backed() {
     assert!(registration.contains("commands::task_commands::prepare_task_document_mutation"));
     assert!(frontend.contains("'prepare_task_document_mutation'"));
 }
+
+#[test]
+fn chat_requests_use_typed_intent_and_one_correlated_run_context() {
+    let chat = repository_file("src-tauri/src/chat.rs");
+    let commands = repository_file("src-tauri/src/commands/chat_commands.rs");
+
+    assert_contains_all(
+        &chat,
+        &[
+            "pub(crate) enum ChatRequest",
+            "New {",
+            "Retry {",
+            "struct ActiveChatRun",
+            "request: ChatRequest",
+            "async fn run_request(&self, run: ActiveChatRun)",
+            "async fn run_agent_response(\n        &self,\n        run: &ActiveChatRun,",
+        ],
+    );
+    assert_contains_all(&commands, &["ChatRequest::New", "ChatRequest::Retry"]);
+    assert_contains_none(
+        &chat,
+        &[
+            "existing_user_message_id",
+            "async fn run_request(\n        &self,\n        app:",
+        ],
+    );
+}
+
+#[test]
+fn semantic_state_owns_one_work_queue_and_worker_context() {
+    let semantic = repository_file("src-tauri/src/semantic/mod.rs");
+    let indexer = repository_file("src-tauri/src/semantic/indexer.rs");
+
+    assert_contains_all(
+        &semantic,
+        &[
+            "work_queue: SemanticWorkQueue",
+            "WarmupScheduling::DeferredUntilAnnReady",
+            "WarmupScheduling::WakeImmediately",
+            "IndexingWorkerContext {",
+            ".release_initial_scan(&context.runtime, &context.debug)",
+        ],
+    );
+    assert_contains_none(
+        &semantic,
+        &["signal_tx:", "wake_pending:", "fn request_wake(&self)"],
+    );
+    assert_contains_all(
+        &indexer,
+        &[
+            "pub(crate) struct SemanticWorkQueue",
+            "pub(crate) struct IndexingWorkerContext",
+            "struct SemanticDocumentBatch",
+            "fn process_pending_jobs(context: &IndexingWorkerContext)",
+        ],
+    );
+    assert_contains_none(&indexer, &["#[allow(clippy::too_many_arguments)]"]);
+}

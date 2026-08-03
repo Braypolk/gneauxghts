@@ -649,7 +649,7 @@ fn build_snapshot_streaming(
     let mut seen = HashSet::new();
     let mut processed = 0usize;
     for_each_note_embedding(connection, |row| {
-        if processed % 64 == 0 {
+        if processed.is_multiple_of(64) {
             if let Some(gate) = gate {
                 gate.checkpoint_manual_pause();
             }
@@ -667,7 +667,7 @@ fn build_snapshot_streaming(
             .set(&vectors, row.stable_ann_label, row.embedding.as_slice())
             .map_err(|err| err.to_string())?;
         processed += 1;
-        if processed % 64 == 0 {
+        if processed.is_multiple_of(64) {
             if let Some(progress) = progress {
                 progress(processed, manifest.note_count);
             }

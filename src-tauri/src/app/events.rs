@@ -50,7 +50,7 @@ pub(crate) enum AppEvent {
     },
     /// Semantic indexer status snapshot (count of indexed notes, queue
     /// depth, etc.). Pushed instead of polled.
-    SemanticStatusChanged(SemanticStatus),
+    SemanticStatusChanged(Box<SemanticStatus>),
     /// Local save completed; carries the canonical note id, path, and
     /// optional task delta so the frontend can splice instead of refetch.
     NoteSaved {
@@ -199,7 +199,7 @@ impl EventBus {
     }
 
     pub(crate) fn semantic_status_changed(&self, status: SemanticStatus) {
-        self.emit(AppEvent::SemanticStatusChanged(status));
+        self.emit(AppEvent::SemanticStatusChanged(Box::new(status)));
     }
 
     pub(crate) fn note_saved(
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn typed_non_streaming_events_match_contract_fixture() {
         let fixture = load_json_fixture("contracts/app-events.json");
-        let events = vec![
+        let events = [
             AppEvent::VaultNoteChanged {
                 note_path: "/vault/Changed.md".to_string(),
                 deleted: false,
@@ -246,7 +246,7 @@ mod tests {
                 note_path: "/vault/Chats/conversation-1/Conversation.md".to_string(),
                 deleted: false,
             },
-            AppEvent::SemanticStatusChanged(SemanticStatus {
+            AppEvent::SemanticStatusChanged(Box::new(SemanticStatus {
                 settings: SemanticSettings::default(),
                 model: ModelInfo {
                     id: "jina-v5-nano".to_string(),
@@ -300,7 +300,7 @@ mod tests {
                 progress_current: 12,
                 progress_total: 12,
                 rebuild_reason: None,
-            }),
+            })),
             AppEvent::NoteSaved {
                 note_id: Some("note-1".to_string()),
                 note_path: Some("/vault/Title.md".to_string()),

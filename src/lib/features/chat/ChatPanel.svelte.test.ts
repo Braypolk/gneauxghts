@@ -33,6 +33,7 @@ describe('ChatPanel initial render', () => {
       grants: [],
       policies: [],
       conversation: null,
+      isInitialized: true,
       isInitializing: false,
       isLoadingConversation: false,
       isSending: false,
@@ -55,6 +56,47 @@ describe('ChatPanel initial render', () => {
     }).body;
 
     expect(body).toContain('Full vault');
+    expect(body).not.toContain('chat-composer-chip--emphasis');
+  });
+
+  it('withholds configuration controls before initialization completes', () => {
+    const snapshot: ChatControllerState = {
+      settings: null,
+      conversations: [],
+      conversationDraft: {
+        revision: 0,
+        title: '',
+        provider: 'openai',
+        model: '',
+        vaultAccess: 'approved'
+      },
+      grants: [],
+      policies: [],
+      conversation: null,
+      isInitialized: false,
+      isInitializing: false,
+      isLoadingConversation: false,
+      isSending: false,
+      error: null,
+      activity: null,
+      proposals: [],
+      modelCapabilities: null
+    };
+
+    const body = render(ChatPanel, {
+      props: {
+        controller: controllerWithSnapshot(snapshot),
+        autoInitialize: false,
+        contextNote: {
+          noteId: 'note-1',
+          notePath: '/vault/Note.md',
+          noteTitle: 'Note'
+        }
+      }
+    }).body;
+
+    expect(body).not.toContain('aria-label="Vault access"');
+    expect(body).not.toContain('Allow note');
     expect(body).not.toContain('chat-composer-chip--emphasis');
   });
 });

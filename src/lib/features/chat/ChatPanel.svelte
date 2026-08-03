@@ -90,6 +90,12 @@
   let reportedConversationId: string | null | undefined;
   let openMenu = $state<'history' | 'vault' | 'provider' | null>(null);
 
+  const configurationReady = $derived(
+    snapshot.isInitialized &&
+      !snapshot.isLoadingConversation &&
+      (!conversationId || snapshot.conversation?.id === conversationId)
+  );
+
   const visibleProposalSnapshot = $derived(
     reviewBelongsToConversation(
       proposalSnapshot,
@@ -218,6 +224,7 @@
       {draftSeed}
       {contextNote}
       {getActiveNoteSnapshot}
+      {configurationReady}
       {openMenu}
       {actionError}
       bind:composerElement

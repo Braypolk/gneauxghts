@@ -1137,7 +1137,7 @@ fn resolve_llama_parallel_slots(thread_count: usize) -> usize {
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|slots| *slots >= 1)
-        .unwrap_or_else(|| thread_count.min(4).max(1))
+        .unwrap_or_else(|| thread_count.clamp(1, 4))
 }
 
 fn find_open_port() -> Result<u16, String> {

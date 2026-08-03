@@ -216,7 +216,7 @@ pub(crate) fn vault_container_dir() -> Result<Option<PathBuf>, String> {
     if !uses_vault_container() {
         return Ok(None);
     }
-    Ok(configured_documents_dir()?)
+    configured_documents_dir()
 }
 
 /// List immediate non-hidden child directories of the vault container.

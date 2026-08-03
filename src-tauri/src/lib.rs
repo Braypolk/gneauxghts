@@ -27,6 +27,13 @@ use std::{path::PathBuf, thread};
 use tauri::{Manager, RunEvent};
 #[cfg(target_os = "ios")]
 use tauri_plugin_keyring_store::WriteAccessibility;
+#[cfg(desktop)]
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+
+#[cfg(desktop)]
+fn window_state_flags() -> StateFlags {
+    StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -36,22 +43,19 @@ pub fn run() {
     let keyring_plugin =
         keyring_plugin.ios_write_accessibility(WriteAccessibility::WhenUnlockedThisDeviceOnly);
 
-    let app = tauri::Builder::default()
-        .setup(|app| {
-            // Restore the desktop window's last size and position. On a first
-            // launch, or when no saved state exists yet, Tauri uses the larger
-            // fallback dimensions from tauri.conf.json.
-            #[cfg(desktop)]
-            app.handle().plugin(
-                tauri_plugin_window_state::Builder::default()
-                    .with_state_flags(
-                        tauri_plugin_window_state::StateFlags::SIZE
-                            | tauri_plugin_window_state::StateFlags::POSITION
-                            | tauri_plugin_window_state::StateFlags::MAXIMIZED,
-                    )
-                    .build(),
-            )?;
+    // Register before `setup` so configured windows are observed when Tauri
+    // creates them. Registering dynamically inside `setup` is too late for the
+    // initial window's ready event and leaves the plugin cache empty.
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(window_state_flags())
+            .build(),
+    );
 
+    let app = builder
+        .setup(|app| {
             let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
             initialize_app_data_dir(app_data_dir.clone())?;
             if let Ok(documents_dir) = app.path().document_dir() {
@@ -230,7 +234,22 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
-        if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+        // Persist while the window still exists. This also covers the macOS
+        // close-window path, which does not necessarily terminate the app.
+        #[cfg(desktop)]
+        if matches!(
+            &event,
+            RunEvent::WindowEvent {
+                event: tauri::WindowEvent::CloseRequested { .. },
+                ..
+            } | RunEvent::ExitRequested { .. }
+        ) {
+            if let Err(error) = app_handle.save_window_state(window_state_flags()) {
+                eprintln!("window-state save failed: {error}");
+            }
+        }
+
+        if matches!(&event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
             if let Some(state) = app_handle.try_state::<AppState>() {
                 state.semantic.shutdown();
             }

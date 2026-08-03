@@ -42,6 +42,7 @@ export interface ChatControllerState {
   grants: ChatNoteGrant[];
   policies: ChatNotePolicy[];
   conversation: ChatConversation | null;
+  isInitialized: boolean;
   isInitializing: boolean;
   isLoadingConversation: boolean;
   isSending: boolean;
@@ -53,6 +54,7 @@ export interface ChatControllerState {
 
 const initialState: Omit<
   ChatControllerState,
+  | 'isInitialized'
   | 'isInitializing'
   | 'isLoadingConversation'
   | 'isSending'
@@ -227,6 +229,10 @@ export class ChatControllerStore implements ChatController {
     return this.machine.lifecycle.kind === 'initializing';
   }
 
+  get isInitialized() {
+    return this.machine.lifecycle.kind === 'ready';
+  }
+
   get isLoadingConversation() {
     return isChatSelectionBusy(this.machine);
   }
@@ -266,6 +272,7 @@ export class ChatControllerStore implements ChatController {
       grants: this.grants,
       policies: this.policies,
       conversation: this.conversation,
+      isInitialized: this.isInitialized,
       isInitializing: this.isInitializing,
       isLoadingConversation: this.isLoadingConversation,
       isSending: this.isSending,

@@ -20,7 +20,7 @@ pub(crate) fn has_openai_api_key(_app: &AppHandle) -> Result<bool, String> {
 
     #[cfg(target_os = "macos")]
     {
-        return has_openai_api_key_macos();
+        has_openai_api_key_macos()
     }
 
     #[cfg(not(target_os = "macos"))]

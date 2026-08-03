@@ -567,17 +567,16 @@ fn request_is_superseded(
         .is_some_and(|epoch| *epoch > target_epoch)
 }
 
+struct PersistedAtlasInputs {
+    metadata: HashMap<String, AtlasNoteMetadata>,
+    hard_links: Vec<AtlasHardLink>,
+    dependencies: AtlasDependencies,
+}
+
 fn persisted_atlas_inputs(
     connection: &rusqlite::Connection,
     key: AtlasGenerationKey,
-) -> Result<
-    (
-        HashMap<String, AtlasNoteMetadata>,
-        Vec<AtlasHardLink>,
-        AtlasDependencies,
-    ),
-    String,
-> {
+) -> Result<PersistedAtlasInputs, String> {
     let rows = load_atlas_note_metadata(connection)?;
     let visible = rows
         .iter()
@@ -648,7 +647,11 @@ fn persisted_atlas_inputs(
         cloud_algorithm_version: ATLAS_CLOUD_ALGORITHM_VERSION,
         layout_algorithm_version: ATLAS_LAYOUT_ALGORITHM_VERSION,
     };
-    Ok((metadata, hard_links, dependencies))
+    Ok(PersistedAtlasInputs {
+        metadata,
+        hard_links,
+        dependencies,
+    })
 }
 
 fn atlas_row_visible(row: &StoredAtlasNoteMetadata, visibility: AtlasChatVisibilityKey) -> bool {
@@ -802,8 +805,11 @@ impl AtlasWorkerContext {
         let load_started = Instant::now();
         let mut connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
-        let (metadata, hard_links, dependencies) =
-            persisted_atlas_inputs(&connection, generation_key)?;
+        let PersistedAtlasInputs {
+            metadata,
+            hard_links,
+            dependencies,
+        } = persisted_atlas_inputs(&connection, generation_key)?;
         if dependencies.note_ann_generation.is_empty()
             || self.note_ann.generation_id().as_deref()
                 != Some(dependencies.note_ann_generation.as_str())
@@ -1005,8 +1011,8 @@ impl AtlasWorkerContext {
             clouds,
         };
         self.check_superseded(generation_key, revision)?;
-        let (_, _, current_dependencies) = persisted_atlas_inputs(&connection, generation_key)?;
-        if current_dependencies != dependencies {
+        let current_inputs = persisted_atlas_inputs(&connection, generation_key)?;
+        if current_inputs.dependencies != dependencies {
             return Err(ATLAS_SUPERSEDED.to_string());
         }
         let root = atlas_root(&self.cache_dir);
@@ -1076,7 +1082,7 @@ impl AtlasWorkerContext {
 
         let mut connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
-        let (metadata, _, _) = persisted_atlas_inputs(&connection, generation_key)?;
+        let metadata = persisted_atlas_inputs(&connection, generation_key)?.metadata;
         let note_embeddings = visible_atlas_notes(
             load_atlas_note_embeddings(&connection)?,
             &metadata,
@@ -1233,7 +1239,7 @@ impl ActiveSemanticState {
     ) -> Result<VaultAtlasResponse, String> {
         let connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
-        let (_, _, dependencies) = persisted_atlas_inputs(&connection, generation_key)?;
+        let dependencies = persisted_atlas_inputs(&connection, generation_key)?.dependencies;
         let pointer_path = ready_pointer_path(&self.atlas_cache_dir, generation_key);
         let pointer = read_json::<AtlasReadyPointer>(&pointer_path).ok();
         let mut published = pointer.as_ref().and_then(|pointer| {
@@ -1292,37 +1298,40 @@ impl ActiveSemanticState {
                 }
             }
         }
-        let mut pending = self
-            .pending
-            .lock()
-            .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
-        let building = pending
-            .atlas_building
-            .get(&generation_key)
-            .is_some_and(|epoch| *epoch >= revision);
-        let mut enqueued = false;
-        if !compatible && !building {
-            pending
-                .atlas_requests
-                .entry(generation_key)
-                .and_modify(|epoch| *epoch = (*epoch).max(revision))
-                .or_insert(revision);
-            enqueued = true;
-        }
-        let label_building = pending.atlas_label_building.contains(&generation_key);
-        // Re-run labeling when missing/incompatible, or when a partial artifact
-        // was left incomplete (e.g. interrupted progressive publish).
-        if compatible && !(label_compatible && label_complete) && !label_building {
-            if let Some(request) = label_request {
-                pending.atlas_label_requests.insert(generation_key, request);
-                enqueued = true;
-            }
-        }
-        let queued = pending.atlas_requests.contains_key(&generation_key);
-        let label_queued = pending.atlas_label_requests.contains_key(&generation_key);
-        drop(pending);
+        let (building, label_building, queued, label_queued, enqueued) =
+            self.work_queue.stage(|pending| {
+                let building = pending
+                    .atlas_building
+                    .get(&generation_key)
+                    .is_some_and(|epoch| *epoch >= revision);
+                let mut enqueued = false;
+                if !compatible && !building {
+                    pending
+                        .atlas_requests
+                        .entry(generation_key)
+                        .and_modify(|epoch| *epoch = (*epoch).max(revision))
+                        .or_insert(revision);
+                    enqueued = true;
+                }
+                let label_building = pending.atlas_label_building.contains(&generation_key);
+                // Re-run labeling when missing/incompatible, or when a partial artifact
+                // was left incomplete (e.g. interrupted progressive publish).
+                if compatible && !(label_compatible && label_complete) && !label_building {
+                    if let Some(request) = label_request {
+                        pending.atlas_label_requests.insert(generation_key, request);
+                        enqueued = true;
+                    }
+                }
+                (
+                    building,
+                    label_building,
+                    pending.atlas_requests.contains_key(&generation_key),
+                    pending.atlas_label_requests.contains_key(&generation_key),
+                    enqueued,
+                )
+            })?;
         if enqueued {
-            self.request_wake()?;
+            self.work_queue.request_wake()?;
         }
         if let Some(mut response) = published.take() {
             for node in &mut response.nodes {
@@ -1363,7 +1372,7 @@ impl ActiveSemanticState {
 
         let connection = open_database(&self.db_path)?;
         super::ensure_schema(&connection)?;
-        let (metadata, _, _) = persisted_atlas_inputs(&connection, generation_key)?;
+        let metadata = persisted_atlas_inputs(&connection, generation_key)?.metadata;
         let indexed_notes = visible_atlas_notes(
             load_atlas_note_embeddings(&connection)?,
             &metadata,
@@ -1381,7 +1390,10 @@ impl ActiveSemanticState {
 
         let query_embedding = self
             .provider
-            .embed_texts(&[trimmed_query.clone()], EmbeddingInputKind::Query)
+            .embed_texts(
+                std::slice::from_ref(&trimmed_query),
+                EmbeddingInputKind::Query,
+            )
             .ok()
             .and_then(|mut embeddings| embeddings.pop());
         let now = current_time_millis()?;
@@ -1761,8 +1773,8 @@ fn place_uncached_nodes_from_neighbors(
                 .map(|pos| (index, pos))
         })
         .collect::<HashMap<_, _>>();
-    for index in 0..nodes.len() {
-        if cached_positions.contains_key(&nodes[index].note_path) {
+    for (index, node) in nodes.iter_mut().enumerate() {
+        if cached_positions.contains_key(&node.note_path) {
             continue;
         }
         let mut weighted_x = 0.0_f32;
@@ -1780,10 +1792,10 @@ fn place_uncached_nodes_from_neighbors(
         if total_weight <= f32::EPSILON {
             continue;
         }
-        let angle = stable_angle(&nodes[index].id);
-        let jitter = 18.0 + (stable_hash(&nodes[index].id) % 700) as f32 / 100.0;
-        nodes[index].x = weighted_x / total_weight + angle.cos() * jitter;
-        nodes[index].y = weighted_y / total_weight + angle.sin() * jitter;
+        let angle = stable_angle(&node.id);
+        let jitter = 18.0 + (stable_hash(&node.id) % 700) as f32 / 100.0;
+        node.x = weighted_x / total_weight + angle.cos() * jitter;
+        node.y = weighted_y / total_weight + angle.sin() * jitter;
     }
 }
 
@@ -2776,8 +2788,13 @@ fn detect_child_communities(
         }
         groups[index] = retained;
         for loose_id in loose {
-            let target =
-                strongest_group_index(&[loose_id.clone()], &groups, nodes, edges, adjacency);
+            let target = strongest_group_index(
+                std::slice::from_ref(&loose_id),
+                &groups,
+                nodes,
+                edges,
+                adjacency,
+            );
             if node_internal_affinity(&loose_id, &groups[target], edges, adjacency) >= 0.5 {
                 groups[target].push(loose_id);
                 groups[target].sort();
@@ -2940,17 +2957,19 @@ fn apply_umap_layout(nodes: &mut [WorkingNode], knn_rows: &[Vec<KnnNeighbor>]) -
         init[(index, 1)] = node.y / 360.0;
     }
 
-    let mut config = UmapConfig::default();
-    config.n_components = 2;
-    config.graph = GraphParams {
-        n_neighbors: neighbor_count,
+    let config = UmapConfig {
+        n_components: 2,
+        graph: GraphParams {
+            n_neighbors: neighbor_count,
+            ..Default::default()
+        },
+        optimization: OptimizationParams {
+            n_epochs: Some(umap_iterations_for_note_count(n)),
+            learning_rate: 0.9,
+            negative_sample_rate: 5,
+            repulsion_strength: 1.15,
+        },
         ..Default::default()
-    };
-    config.optimization = OptimizationParams {
-        n_epochs: Some(umap_iterations_for_note_count(n)),
-        learning_rate: 0.9,
-        negative_sample_rate: 5,
-        repulsion_strength: 1.15,
     };
 
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -3959,7 +3978,7 @@ fn build_cloud(spec: &CloudSpec, nodes: &[WorkingNode], links: &[WorkingLink]) -
     let label_refs = label_notes.iter().collect::<Vec<_>>();
     let label = medoid_placeholder(&label_refs);
     let representative_node_ids = {
-        let mut ranked = members.iter().copied().collect::<Vec<_>>();
+        let mut ranked = members.to_vec();
         ranked.sort_by(|left, right| {
             right
                 .centrality

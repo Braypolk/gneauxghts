@@ -29,7 +29,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::Receiver,
+        mpsc::{self, Receiver, Sender},
         Arc, Mutex,
     },
     thread,
@@ -77,6 +77,30 @@ pub(crate) struct PendingNoteMove {
     pub(crate) modified_millis: u64,
 }
 
+struct SemanticDocumentBatch {
+    updates: HashMap<PathBuf, PendingNoteUpdate>,
+    deletes: HashSet<PathBuf>,
+    moves: HashMap<PathBuf, PendingNoteMove>,
+}
+
+impl SemanticDocumentBatch {
+    fn new(
+        updates: HashMap<PathBuf, PendingNoteUpdate>,
+        deletes: HashSet<PathBuf>,
+        moves: HashMap<PathBuf, PendingNoteMove>,
+    ) -> Self {
+        Self {
+            updates,
+            deletes,
+            moves,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.updates.len() + self.deletes.len() + self.moves.len()
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct PendingIndexState {
     pub(crate) full_scan_requested: bool,
@@ -116,59 +140,116 @@ pub(crate) enum WorkerSignal {
     SetPaused { paused: bool },
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_indexing_worker(
-    db_path: PathBuf,
-    notes_dir: PathBuf,
-    provider: Arc<dyn EmbeddingProvider + Send + Sync>,
-    ann: Arc<AnnIndexState>,
-    note_ann: Arc<NoteAnnIndexState>,
-    signal_rx: Receiver<WorkerSignal>,
+#[derive(Clone)]
+pub(crate) struct SemanticWorkQueue {
+    signal_tx: Sender<WorkerSignal>,
     pending: Arc<Mutex<PendingIndexState>>,
     wake_pending: Arc<AtomicBool>,
-    index_revision: Arc<AtomicU64>,
-    runtime: &Arc<Mutex<RuntimeState>>,
-    debug: Arc<SemanticDebugState>,
-    background_gate: Arc<BackgroundWorkGate>,
+}
+
+impl SemanticWorkQueue {
+    pub(crate) fn new(initial: PendingIndexState) -> (Self, Receiver<WorkerSignal>) {
+        let (signal_tx, signal_rx) = mpsc::channel();
+        (
+            Self {
+                signal_tx,
+                pending: Arc::new(Mutex::new(initial)),
+                wake_pending: Arc::new(AtomicBool::new(false)),
+            },
+            signal_rx,
+        )
+    }
+
+    pub(crate) fn enqueue<R>(
+        &self,
+        update: impl FnOnce(&mut PendingIndexState) -> R,
+    ) -> Result<R, String> {
+        let result = self.stage(update)?;
+        self.request_wake()?;
+        Ok(result)
+    }
+
+    pub(crate) fn stage<R>(
+        &self,
+        update: impl FnOnce(&mut PendingIndexState) -> R,
+    ) -> Result<R, String> {
+        self.pending
+            .lock()
+            .map(|mut pending| update(&mut pending))
+            .map_err(|_| "Semantic pending state lock poisoned".to_string())
+    }
+
+    pub(crate) fn set_paused(&self, paused: bool) -> Result<(), String> {
+        self.signal_tx
+            .send(WorkerSignal::SetPaused { paused })
+            .map_err(|err| err.to_string())
+    }
+
+    pub(crate) fn release_initial_scan(
+        &self,
+        runtime: &Mutex<RuntimeState>,
+        debug: &SemanticDebugState,
+    ) {
+        if let Ok(now) = current_time_millis() {
+            if let Ok(mut runtime) = runtime.lock() {
+                runtime.last_scan_requested_at_millis = Some(now);
+            }
+        }
+        debug.record_with_metrics(
+            "index",
+            "enqueue_full_scan_after_warmup",
+            None,
+            None,
+            |metrics| metrics.index_job_enqueued_count += 1,
+        );
+        let _ = self.enqueue(|pending| {
+            if !pending.rebuild_requested {
+                pending.full_scan_requested = true;
+            }
+        });
+    }
+
+    pub(crate) fn request_wake(&self) -> Result<(), String> {
+        if !self.wake_pending.swap(true, Ordering::AcqRel) {
+            self.signal_tx
+                .send(WorkerSignal::Wake)
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn clear_wake(&self) {
+        self.wake_pending.store(false, Ordering::Release);
+    }
+}
+
+pub(crate) struct IndexingWorkerContext {
+    pub(crate) db_path: PathBuf,
+    pub(crate) notes_dir: PathBuf,
+    pub(crate) provider: Arc<dyn EmbeddingProvider + Send + Sync>,
+    pub(crate) ann: Arc<AnnIndexState>,
+    pub(crate) note_ann: Arc<NoteAnnIndexState>,
+    pub(crate) queue: SemanticWorkQueue,
+    pub(crate) index_revision: Arc<AtomicU64>,
+    pub(crate) runtime: Arc<Mutex<RuntimeState>>,
+    pub(crate) debug: Arc<SemanticDebugState>,
+    pub(crate) background_gate: Arc<BackgroundWorkGate>,
+}
+
+pub(crate) fn spawn_indexing_worker(
+    context: IndexingWorkerContext,
+    signal_rx: Receiver<WorkerSignal>,
 ) -> Result<(), String> {
-    let runtime = Arc::clone(runtime);
     thread::Builder::new()
         .name("semantic-indexer".to_string())
         .spawn(move || {
-            run_worker(
-                db_path,
-                notes_dir,
-                provider,
-                ann,
-                note_ann,
-                signal_rx,
-                pending,
-                wake_pending,
-                index_revision,
-                runtime,
-                debug,
-                background_gate,
-            );
+            run_worker(context, signal_rx);
         })
         .map(|_| ())
         .map_err(|err| err.to_string())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_worker(
-    db_path: PathBuf,
-    notes_dir: PathBuf,
-    provider: Arc<dyn EmbeddingProvider + Send + Sync>,
-    ann: Arc<AnnIndexState>,
-    note_ann: Arc<NoteAnnIndexState>,
-    signal_rx: Receiver<WorkerSignal>,
-    pending: Arc<Mutex<PendingIndexState>>,
-    wake_pending: Arc<AtomicBool>,
-    index_revision: Arc<AtomicU64>,
-    runtime: Arc<Mutex<RuntimeState>>,
-    debug: Arc<SemanticDebugState>,
-    background_gate: Arc<BackgroundWorkGate>,
-) {
+fn run_worker(context: IndexingWorkerContext, signal_rx: Receiver<WorkerSignal>) {
     let mut paused = false;
 
     loop {
@@ -177,23 +258,12 @@ fn run_worker(
                 paused: next_paused,
             }) => {
                 paused = next_paused;
-                update_runtime(&runtime, |state| {
+                update_runtime(&context.runtime, |state| {
                     state.indexing_paused = next_paused;
                 });
                 if !paused {
-                    wake_pending.store(false, Ordering::Release);
-                    process_pending_jobs(
-                        &db_path,
-                        &notes_dir,
-                        &provider,
-                        &ann,
-                        &note_ann,
-                        &pending,
-                        &index_revision,
-                        &runtime,
-                        &debug,
-                        &background_gate,
-                    );
+                    context.queue.clear_wake();
+                    process_pending_jobs(&context);
                 }
             }
             Ok(WorkerSignal::Wake) => {
@@ -201,38 +271,25 @@ fn run_worker(
                     continue;
                 }
 
-                wake_pending.store(false, Ordering::Release);
-                process_pending_jobs(
-                    &db_path,
-                    &notes_dir,
-                    &provider,
-                    &ann,
-                    &note_ann,
-                    &pending,
-                    &index_revision,
-                    &runtime,
-                    &debug,
-                    &background_gate,
-                );
+                context.queue.clear_wake();
+                process_pending_jobs(&context);
             }
             Err(_) => return,
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn process_pending_jobs(
-    db_path: &Path,
-    notes_dir: &Path,
-    provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
-    ann: &Arc<AnnIndexState>,
-    note_ann: &Arc<NoteAnnIndexState>,
-    pending: &Arc<Mutex<PendingIndexState>>,
-    index_revision: &Arc<AtomicU64>,
-    runtime: &Arc<Mutex<RuntimeState>>,
-    debug: &Arc<SemanticDebugState>,
-    background_gate: &Arc<BackgroundWorkGate>,
-) {
+fn process_pending_jobs(context: &IndexingWorkerContext) {
+    let db_path = &context.db_path;
+    let notes_dir = &context.notes_dir;
+    let provider = &context.provider;
+    let ann = &context.ann;
+    let note_ann = &context.note_ann;
+    let pending = &context.queue.pending;
+    let index_revision = &context.index_revision;
+    let runtime = &context.runtime;
+    let debug = &context.debug;
+    let background_gate = &context.background_gate;
     if runtime
         .lock()
         .map(|state| state.retry_exhausted)
@@ -289,26 +346,12 @@ fn process_pending_jobs(
         let mut atlas_retry_delay = Duration::ZERO;
 
         let did_succeed = if batch.rebuild_requested {
-            let job_notes_dir = notes_dir.to_path_buf();
-            let job_provider = provider.clone();
-            let job_debug = debug.clone();
             run_job(
                 db_path,
                 runtime,
                 debug,
                 "Rebuilding semantic index",
-                move |connection| {
-                    process_rebuild(
-                        connection,
-                        &job_notes_dir,
-                        &job_provider,
-                        ann,
-                        note_ann,
-                        &job_debug,
-                        background_gate,
-                        runtime,
-                    )
-                },
+                |connection| process_rebuild(connection, context),
             )
         } else if batch.full_scan_requested {
             let job_notes_dir = notes_dir.to_path_buf();
@@ -353,9 +396,11 @@ fn process_pending_jobs(
                         &job_provider,
                         ann,
                         note_ann,
-                        batch.note_updates,
-                        batch.deleted_notes,
-                        batch.moved_notes,
+                        SemanticDocumentBatch::new(
+                            batch.note_updates,
+                            batch.deleted_notes,
+                            batch.moved_notes,
+                        ),
                         &job_debug,
                     )
                 },
@@ -1153,9 +1198,7 @@ fn process_full_scan(
         provider,
         ann,
         note_ann,
-        updates,
-        deleted_notes,
-        HashMap::new(),
+        SemanticDocumentBatch::new(updates, deleted_notes, HashMap::new()),
         debug,
     )?;
     debug.sample_rss("index", "full_scan_completed");
@@ -1191,33 +1234,35 @@ fn record_edge_rebuild(
 
 fn process_rebuild(
     connection: &mut rusqlite::Connection,
-    notes_dir: &Path,
-    provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
-    ann: &Arc<AnnIndexState>,
-    note_ann: &Arc<NoteAnnIndexState>,
-    debug: &Arc<SemanticDebugState>,
-    background_gate: &Arc<BackgroundWorkGate>,
-    runtime: &Arc<Mutex<RuntimeState>>,
+    context: &IndexingWorkerContext,
 ) -> Result<JobOutcome, String> {
     // Reconcile in place so a provider or rebuild failure cannot erase the
     // SQLite rows backing the currently loaded last-good ANN generation.
     // `force=true` still refreshes every filesystem note, and the full-scan
     // deletion set removes notes that genuinely disappeared.
-    let outcome = process_full_scan(connection, notes_dir, provider, ann, note_ann, true, debug)?;
+    let outcome = process_full_scan(
+        connection,
+        &context.notes_dir,
+        &context.provider,
+        &context.ann,
+        &context.note_ann,
+        true,
+        &context.debug,
+    )?;
     let progress = |current, total| {
-        update_runtime(runtime, |state| {
+        update_runtime(&context.runtime, |state| {
             state.progress_current = current;
             state.progress_total = total;
         });
     };
-    ann.rebuild_from_connection_with_gate(
+    context.ann.rebuild_from_connection_with_gate(
         connection,
-        Some(background_gate.as_ref()),
+        Some(context.background_gate.as_ref()),
         Some(&progress),
     )?;
-    note_ann.rebuild_from_connection_with_gate(
+    context.note_ann.rebuild_from_connection_with_gate(
         connection,
-        Some(background_gate.as_ref()),
+        Some(context.background_gate.as_ref()),
         Some(&progress),
     )?;
     Ok(outcome)
@@ -1228,16 +1273,14 @@ fn process_note_batch(
     provider: &Arc<dyn EmbeddingProvider + Send + Sync>,
     ann: &Arc<AnnIndexState>,
     note_ann: &Arc<NoteAnnIndexState>,
-    note_updates: HashMap<PathBuf, PendingNoteUpdate>,
-    deleted_notes: HashSet<PathBuf>,
-    moved_notes: HashMap<PathBuf, PendingNoteMove>,
+    batch: SemanticDocumentBatch,
     debug: &Arc<SemanticDebugState>,
 ) -> Result<JobOutcome, String> {
     let mut scanned_count = 0usize;
     let mut embedded_count = 0usize;
     let mut force_ann_rebuild = false;
     let mut force_note_ann_rebuild = false;
-    let mutation_count = note_updates.len() + deleted_notes.len() + moved_notes.len();
+    let mutation_count = batch.len();
     let mut defer_ann_updates = mutation_count > ANN_MAX_INCREMENTAL_DOCUMENTS;
     let mut changed_chunk_count = 0usize;
     if defer_ann_updates {
@@ -1250,7 +1293,7 @@ fn process_note_batch(
     // changes chunk ann_labels, so the ANN graph must rebuild afterwards. If
     // the source row is missing (never indexed), fall back to a normal index
     // of the new path so the content still gets embedded.
-    for (old_path, moved) in moved_notes {
+    for (old_path, moved) in batch.moves {
         let old_path_str = old_path.to_string_lossy().into_owned();
         let new_path_str = moved.new_path.to_string_lossy().into_owned();
         let previous_note = load_note_record(connection, &old_path_str)?;
@@ -1318,7 +1361,7 @@ fn process_note_batch(
         scanned_count += 1;
     }
 
-    for note_path in deleted_notes {
+    for note_path in batch.deletes {
         let path_str = note_path.to_string_lossy().into_owned();
         let previous_labels = load_note_chunk_labels(connection, &path_str)?;
         let previous_note = load_note_record(connection, &path_str)?;
@@ -1351,7 +1394,7 @@ fn process_note_batch(
     // whole batch so llama-server/Metal sees large HTTP requests instead of one
     // small request per note.
     let mut pending_updates = Vec::new();
-    for (note_path, update) in note_updates {
+    for (note_path, update) in batch.updates {
         let path_str = note_path.to_string_lossy().into_owned();
         let previous_labels = load_note_chunk_labels(connection, &path_str)?;
         let previous_note = load_note_record(connection, &path_str)?;
@@ -1919,15 +1962,90 @@ mod tests {
     use super::{
         atlas_failure_backoff, dirty_count_allows_incremental, merge_retry_batch,
         process_full_scan, process_note_batch, process_pending_jobs, run_label_atlas_build,
-        run_structural_atlas_build, semantic_failure_backoff, ChatRecallExcerpt, PendingIndexState,
-        PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument,
+        run_structural_atlas_build, semantic_failure_backoff, ChatRecallExcerpt,
+        IndexingWorkerContext, PendingIndexState, PendingNoteMove, PendingNoteUpdate,
+        PendingSemanticDocument, SemanticDocumentBatch, SemanticWorkQueue, WorkerSignal,
         EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
     };
+
+    #[test]
+    fn semantic_work_queue_coalesces_wakes_while_preserving_all_work() {
+        let (queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
+
+        queue
+            .enqueue(|pending| pending.edge_refresh_requested = true)
+            .expect("enqueue edge refresh");
+        queue
+            .enqueue(|pending| pending.snapshot_publish_requested = true)
+            .expect("enqueue snapshot publish");
+
+        assert!(matches!(signals.try_recv(), Ok(WorkerSignal::Wake)));
+        assert!(signals.try_recv().is_err(), "wake should be coalesced");
+        let (edges, snapshot) = queue
+            .stage(|pending| {
+                (
+                    pending.edge_refresh_requested,
+                    pending.snapshot_publish_requested,
+                )
+            })
+            .expect("inspect pending work");
+        assert!(edges);
+        assert!(snapshot);
+    }
+
+    #[test]
+    fn semantic_work_queue_defers_startup_work_until_ann_release() {
+        let (queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
+        queue
+            .stage(|pending| pending.edge_refresh_requested = true)
+            .expect("stage startup work");
+        assert!(signals.try_recv().is_err(), "staged work must not wake");
+
+        let runtime = Mutex::new(RuntimeState::default());
+        let debug = SemanticDebugState::new();
+        queue.release_initial_scan(&runtime, &debug);
+
+        assert!(matches!(signals.try_recv(), Ok(WorkerSignal::Wake)));
+        let (edges, full_scan) = queue
+            .stage(|pending| (pending.edge_refresh_requested, pending.full_scan_requested))
+            .expect("inspect released work");
+        assert!(edges);
+        assert!(full_scan);
+        assert!(runtime
+            .lock()
+            .expect("runtime")
+            .last_scan_requested_at_millis
+            .is_some());
+    }
     use crate::semantic::{
         activity::BackgroundWorkGate,
         atlas::{AtlasChatVisibilityKey, AtlasGenerationKey},
         RuntimeState, SemanticHealth, SEMANTIC_RETRY_MAX_ATTEMPTS,
     };
+
+    fn worker_context(
+        db_path: PathBuf,
+        notes_dir: PathBuf,
+        provider: Arc<dyn EmbeddingProvider + Send + Sync>,
+        ann: Arc<AnnIndexState>,
+        note_ann: Arc<NoteAnnIndexState>,
+        debug: Arc<SemanticDebugState>,
+        initial: PendingIndexState,
+    ) -> IndexingWorkerContext {
+        let (queue, _) = SemanticWorkQueue::new(initial);
+        IndexingWorkerContext {
+            db_path,
+            notes_dir,
+            provider,
+            ann,
+            note_ann,
+            queue,
+            index_revision: Arc::new(AtomicU64::new(0)),
+            runtime: Arc::new(Mutex::new(RuntimeState::default())),
+            debug,
+            background_gate: Arc::new(BackgroundWorkGate::new()),
+        }
+    }
 
     #[test]
     fn edge_dirty_threshold_forces_full_fallback() {
@@ -1977,26 +2095,20 @@ mod tests {
             .expect("build note ANN snapshot");
         drop(connection);
 
-        let pending = Arc::new(Mutex::new(PendingIndexState {
-            edge_refresh_requested: true,
-            snapshot_publish_requested: true,
-            ..PendingIndexState::default()
-        }));
-        let runtime = Arc::new(Mutex::new(RuntimeState::default()));
-        let index_revision = Arc::new(AtomicU64::new(0));
-        let background_gate = Arc::new(BackgroundWorkGate::new());
-        process_pending_jobs(
-            &db_path,
-            &notes_dir,
-            &provider,
-            &ann,
-            &note_ann,
-            &pending,
-            &index_revision,
-            &runtime,
-            &debug,
-            &background_gate,
+        let context = worker_context(
+            db_path.clone(),
+            notes_dir,
+            provider,
+            ann,
+            note_ann.clone(),
+            debug,
+            PendingIndexState {
+                edge_refresh_requested: true,
+                snapshot_publish_requested: true,
+                ..PendingIndexState::default()
+            },
         );
+        process_pending_jobs(&context);
 
         let connection = open_database(&db_path).expect("reopen database");
         let edge_generation = load_edge_generation(&connection)
@@ -2043,32 +2155,34 @@ mod tests {
         let ann =
             Arc::new(AnnIndexState::new(semantic_dir.clone(), 3, debug.clone()).expect("ann"));
         let note_ann = test_note_ann(&semantic_dir);
-        let pending = Arc::new(Mutex::new(PendingIndexState {
-            full_scan_requested: true,
-            force_full_scan: true,
-            ..PendingIndexState::default()
-        }));
-        let runtime = Arc::new(Mutex::new(RuntimeState::default()));
-
-        process_pending_jobs(
-            &db_path,
-            &notes_dir,
-            &provider,
-            &ann,
-            &note_ann,
-            &pending,
-            &Arc::new(AtomicU64::new(0)),
-            &runtime,
-            &debug,
-            &Arc::new(BackgroundWorkGate::new()),
+        let context = worker_context(
+            db_path,
+            notes_dir,
+            provider,
+            ann,
+            note_ann,
+            debug.clone(),
+            PendingIndexState {
+                full_scan_requested: true,
+                force_full_scan: true,
+                ..PendingIndexState::default()
+            },
         );
+        process_pending_jobs(&context);
 
-        let runtime = runtime.lock().expect("runtime");
+        let runtime = context.runtime.lock().expect("runtime");
         assert_eq!(runtime.retry_attempt, SEMANTIC_RETRY_MAX_ATTEMPTS);
         assert!(runtime.retry_exhausted);
         assert_eq!(runtime.health, SemanticHealth::Degraded);
         drop(runtime);
-        assert!(pending.lock().expect("pending").full_scan_requested);
+        assert!(
+            context
+                .queue
+                .pending
+                .lock()
+                .expect("pending")
+                .full_scan_requested
+        );
         assert_eq!(
             debug
                 .snapshot()
@@ -2467,9 +2581,11 @@ mod tests {
             &provider,
             &ann,
             &note_ann,
-            HashMap::from([(path.clone(), update)]),
-            HashSet::new(),
-            HashMap::new(),
+            SemanticDocumentBatch::new(
+                HashMap::from([(path.clone(), update)]),
+                HashSet::new(),
+                HashMap::new(),
+            ),
             &debug,
         )
         .expect("index recall");
@@ -2533,9 +2649,11 @@ mod tests {
             &provider,
             &ann,
             &note_ann,
-            HashMap::new(),
-            HashSet::from([path.clone()]),
-            HashMap::new(),
+            SemanticDocumentBatch::new(
+                HashMap::new(),
+                HashSet::from([path.clone()]),
+                HashMap::new(),
+            ),
             &debug,
         )
         .expect("delete final recall");
@@ -2605,21 +2723,23 @@ mod tests {
             &provider,
             &ann,
             &note_ann,
-            HashMap::from([(
-                recall_path,
-                PendingNoteUpdate {
-                    document: PendingSemanticDocument::ChatRecall {
-                        title: "One memory".to_string(),
-                        excerpts: vec![ChatRecallExcerpt {
-                            anchor: "excerpt_one".to_string(),
-                            quote: "only this passage is embedded".to_string(),
-                        }],
+            SemanticDocumentBatch::new(
+                HashMap::from([(
+                    recall_path,
+                    PendingNoteUpdate {
+                        document: PendingSemanticDocument::ChatRecall {
+                            title: "One memory".to_string(),
+                            excerpts: vec![ChatRecallExcerpt {
+                                anchor: "excerpt_one".to_string(),
+                                quote: "only this passage is embedded".to_string(),
+                            }],
+                        },
+                        modified_millis: 2,
                     },
-                    modified_millis: 2,
-                },
-            )]),
-            HashSet::new(),
-            HashMap::new(),
+                )]),
+                HashSet::new(),
+                HashMap::new(),
+            ),
             &debug,
         )
         .expect("index one recall");
@@ -2676,9 +2796,7 @@ mod tests {
             &provider,
             &ann,
             &note_ann,
-            updates,
-            HashSet::new(),
-            HashMap::new(),
+            SemanticDocumentBatch::new(updates, HashSet::new(), HashMap::new()),
             &debug,
         )
         .expect("index notes");

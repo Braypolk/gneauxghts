@@ -7,7 +7,7 @@ use crate::{
     agent_tools::ActiveNoteSnapshot,
     chat::{
         ChatAttachmentInput, ChatConversation, ChatConversationSummary, ChatExcerpt, ChatGrant,
-        ChatNotePolicy, ChatRequestAccepted, ChatService, ChatSettings, VaultAccess,
+        ChatNotePolicy, ChatRequest, ChatRequestAccepted, ChatService, ChatSettings, VaultAccess,
     },
     index::AppState,
     note::DocumentKind,
@@ -458,13 +458,13 @@ pub(crate) async fn chat_send_message(
     validate_model_accepts_attachments(&request.attachments, &capabilities)?;
     let _foreground_guard = state.foreground_guard();
     service.begin_request(
-        &request.conversation_id,
-        &request.content,
-        request.attachments,
-        request.force_web_search,
-        request.active_note,
-        None,
-        None,
+        ChatRequest::New {
+            conversation_id: request.conversation_id,
+            content: request.content,
+            attachments: request.attachments,
+            force_web_search: request.force_web_search,
+            active_note: request.active_note,
+        },
         app,
     )
 }
@@ -522,13 +522,11 @@ pub(crate) async fn chat_retry_message(
     validate_model_accepts_attachments(&retry_attachments, &capabilities)?;
     let _foreground_guard = state.foreground_guard();
     service.begin_request(
-        &conversation_id,
-        &user.content,
-        Vec::new(),
-        false,
-        None,
-        Some(user.id.clone()),
-        Some(message_id),
+        ChatRequest::Retry {
+            conversation_id,
+            user_message_id: user.id.clone(),
+            failed_assistant_message_id: message_id,
+        },
         app,
     )
 }

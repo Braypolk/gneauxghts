@@ -157,6 +157,7 @@ describe('createChatController', () => {
     const fake = fakeApi();
     const controller = createChatController(fake.api);
 
+    expect(controller.getSnapshot().isInitialized).toBe(false);
     expect(controller.getSnapshot().conversationDraft.model).toBe('');
     await expect(controller.createConversation()).resolves.toBeNull();
 
@@ -174,6 +175,7 @@ describe('createChatController', () => {
 
     expect(fake.api.getConversation).toHaveBeenCalledWith('conversation-1');
     expect(controller.getSnapshot().settings).toEqual(settings);
+    expect(controller.getSnapshot().isInitialized).toBe(true);
     expect(controller.getSnapshot().conversation?.id).toBe('conversation-1');
     expect(fake.handlers.size).toBe(10);
   });

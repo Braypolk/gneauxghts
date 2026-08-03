@@ -5,7 +5,8 @@ use crate::{
     state::{
         db_touch_note_activity, is_valid_note_path, read_state_with_lookup,
         resolve_note_path_by_id, touch_recent_note_id, validate_current_path,
-        write_last_opened_and_recents, write_state_with_lookup, NoteIdLookup, PersistedState,
+        write_last_opened_and_recents, write_state_with_lookup, NoteIdLookup, NoteIdPathResolver,
+        PersistedState,
     },
     time::current_time_millis,
 };
@@ -18,6 +19,46 @@ fn lookup_path_in_index(state: &State<'_, AppState>, note_id: &str) -> Option<Pa
         .lock()
         .ok()
         .and_then(|index| index.path_for_note_id(note_id).cloned())
+}
+
+struct AppStateNoteIdResolver<'a> {
+    state: &'a AppState,
+}
+
+impl NoteIdPathResolver for AppStateNoteIdResolver<'_> {
+    fn path_for_note_id(&self, note_id: &str) -> Option<PathBuf> {
+        self.state
+            .notes_index
+            .lock()
+            .ok()
+            .and_then(|index| index.path_for_note_id(note_id).cloned())
+    }
+}
+
+struct NoteSessionLookup<'a> {
+    resolver: Option<AppStateNoteIdResolver<'a>>,
+    is_warm: bool,
+}
+
+impl<'a> NoteSessionLookup<'a> {
+    fn new(app_state: Option<&'a State<'_, AppState>>) -> Self {
+        Self {
+            resolver: app_state.map(|state| AppStateNoteIdResolver { state }),
+            is_warm: app_state
+                .map(|state| state.has_warm_notes_index())
+                .unwrap_or(false),
+        }
+    }
+
+    fn strategy(&self) -> NoteIdLookup<'_> {
+        match self.resolver.as_ref() {
+            Some(resolver) => NoteIdLookup::Index {
+                resolver,
+                is_warm: self.is_warm,
+            },
+            None => NoteIdLookup::Disk,
+        }
+    }
 }
 
 fn resolve_note_path_by_id_with_state(
@@ -75,20 +116,8 @@ pub(crate) fn load_note_session_from_notes_dir_with_state(
     notes_dir: &Path,
     app_state: Option<&State<'_, AppState>>,
 ) -> Result<NoteSession, String> {
-    let lookup_owned: Option<Box<dyn Fn(&str) -> Option<PathBuf> + '_>> =
-        app_state.map(|state| -> Box<dyn Fn(&str) -> Option<PathBuf> + '_> {
-            Box::new(move |note_id: &str| lookup_path_in_index(state, note_id))
-        });
-    let is_warm = app_state
-        .map(|state| state.has_warm_notes_index())
-        .unwrap_or(false);
-    let lookup = match lookup_owned.as_deref() {
-        Some(closure) => NoteIdLookup::Index {
-            lookup: closure,
-            is_warm,
-        },
-        None => NoteIdLookup::Disk,
-    };
+    let lookup_owner = NoteSessionLookup::new(app_state);
+    let lookup = lookup_owner.strategy();
     let mut persisted = read_state_with_lookup(notes_dir, &lookup)?;
     let Some(last_opened_note_id) = persisted.last_opened_note_id.clone() else {
         return Ok(NoteSession::default());
@@ -140,20 +169,8 @@ pub(crate) fn open_note_from_notes_dir_with_state(
         .filter(|id| !id.trim().is_empty())
         .ok_or_else(|| "Unable to determine note id".to_string())?;
 
-    let lookup_owned: Option<Box<dyn Fn(&str) -> Option<PathBuf> + '_>> =
-        app_state.map(|state| -> Box<dyn Fn(&str) -> Option<PathBuf> + '_> {
-            Box::new(move |id: &str| lookup_path_in_index(state, id))
-        });
-    let is_warm = app_state
-        .map(|state| state.has_warm_notes_index())
-        .unwrap_or(false);
-    let lookup = match lookup_owned.as_deref() {
-        Some(closure) => NoteIdLookup::Index {
-            lookup: closure,
-            is_warm,
-        },
-        None => NoteIdLookup::Disk,
-    };
+    let lookup_owner = NoteSessionLookup::new(app_state);
+    let lookup = lookup_owner.strategy();
     let persisted = read_state_with_lookup(notes_dir, &lookup)?;
     if open_ui_state_already_primary(&persisted, &resolved_note_id) {
         return Ok(session);

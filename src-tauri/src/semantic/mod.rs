@@ -26,8 +26,9 @@ use self::{
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
     indexer::{
-        chat_recall_content_hash, spawn_indexing_worker, ChatRecallExcerpt, PendingIndexState,
-        PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument, WorkerSignal,
+        chat_recall_content_hash, spawn_indexing_worker, ChatRecallExcerpt, IndexingWorkerContext,
+        PendingIndexState, PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument,
+        SemanticWorkQueue,
     },
     note_ann::NoteAnnIndexState,
     related::{build_excerpt, related_scope_label},
@@ -39,8 +40,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, Sender},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
     thread,
@@ -263,12 +263,25 @@ struct ActiveSemanticState {
     debug: Arc<SemanticDebugState>,
     ann: Arc<AnnIndexState>,
     note_ann: Arc<NoteAnnIndexState>,
-    signal_tx: Sender<WorkerSignal>,
-    pending: Arc<Mutex<PendingIndexState>>,
-    wake_pending: Arc<AtomicBool>,
+    work_queue: SemanticWorkQueue,
     index_revision: Arc<AtomicU64>,
     related_query_cache: Mutex<Vec<(String, u64, RelatedNotesResponse)>>,
     background_gate: Arc<BackgroundWorkGate>,
+}
+
+#[derive(Clone, Copy)]
+enum WarmupScheduling {
+    DeferredUntilAnnReady,
+    WakeImmediately,
+}
+
+struct AnnStartupContext {
+    ann: Arc<AnnIndexState>,
+    note_ann: Arc<NoteAnnIndexState>,
+    db_path: PathBuf,
+    debug: Arc<SemanticDebugState>,
+    work_queue: SemanticWorkQueue,
+    runtime: Arc<Mutex<RuntimeState>>,
 }
 
 struct DisabledSemanticState {
@@ -337,29 +350,32 @@ impl SemanticState {
         // thread.
         drop(connection);
 
-        let mut initial_runtime = RuntimeState::default();
-        initial_runtime.edges_stale = initial_edges_stale;
+        let initial_runtime = RuntimeState {
+            edges_stale: initial_edges_stale,
+            ..Default::default()
+        };
         let runtime = Arc::new(Mutex::new(initial_runtime));
         let background_gate = Arc::new(BackgroundWorkGate::new());
-        let mut initial_pending = PendingIndexState::default();
-        initial_pending.edge_refresh_requested = initial_edges_stale;
-        let pending = Arc::new(Mutex::new(initial_pending));
-        let wake_pending = Arc::new(AtomicBool::new(false));
+        let initial_pending = PendingIndexState {
+            edge_refresh_requested: initial_edges_stale,
+            ..Default::default()
+        };
+        let (work_queue, signal_rx) = SemanticWorkQueue::new(initial_pending);
         let index_revision = Arc::new(AtomicU64::new(0));
-        let (signal_tx, signal_rx) = mpsc::channel();
         spawn_indexing_worker(
-            db_path.clone(),
-            notes_dir.clone(),
-            provider.clone(),
-            ann.clone(),
-            note_ann.clone(),
+            IndexingWorkerContext {
+                db_path: db_path.clone(),
+                notes_dir: notes_dir.clone(),
+                provider: provider.clone(),
+                ann: ann.clone(),
+                note_ann: note_ann.clone(),
+                queue: work_queue.clone(),
+                index_revision: index_revision.clone(),
+                runtime: runtime.clone(),
+                debug: debug.clone(),
+                background_gate: background_gate.clone(),
+            },
             signal_rx,
-            pending.clone(),
-            wake_pending.clone(),
-            index_revision.clone(),
-            &runtime,
-            debug.clone(),
-            background_gate.clone(),
         )?;
 
         let state = ActiveSemanticState {
@@ -371,30 +387,26 @@ impl SemanticState {
             debug: debug.clone(),
             ann: ann.clone(),
             note_ann: note_ann.clone(),
-            signal_tx: signal_tx.clone(),
-            pending: pending.clone(),
-            wake_pending: wake_pending.clone(),
+            work_queue: work_queue.clone(),
             index_revision,
             related_query_cache: Mutex::new(Vec::new()),
             background_gate,
         };
-        state.warmup_model_in_background();
+        state.warmup_model_in_background(WarmupScheduling::DeferredUntilAnnReady);
         // Defer the persisted ANN snapshot load AND the initial vault
         // scan onto a background thread. Running the scan only after the
         // snapshot finishes loading prevents the worker from racing
         // ahead, finding an empty in-memory ANN, and rebuilding the
         // graph from scratch in SQLite — the load was already
         // authoritative.
-        spawn_ann_initialize_and_scan_in_background(
+        spawn_ann_initialize_and_scan_in_background(AnnStartupContext {
             ann,
             note_ann,
             db_path,
             debug,
-            signal_tx,
-            wake_pending,
-            pending,
+            work_queue,
             runtime,
-        );
+        });
         Ok(Self {
             inner: SemanticStateInner::Active(state),
         })
@@ -434,13 +446,9 @@ impl SemanticState {
                     None,
                     |metrics| metrics.index_job_enqueued_count += 1,
                 );
-                {
-                    let mut pending = state
-                        .pending
-                        .lock()
-                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                state.work_queue.enqueue(|pending| {
                     if pending.rebuild_requested || pending.full_scan_requested {
-                        return Ok(());
+                        return;
                     }
                     pending.deleted_notes.remove(note_path);
                     pending.note_updates.insert(
@@ -450,8 +458,7 @@ impl SemanticState {
                             modified_millis,
                         },
                     );
-                }
-                state.request_wake()
+                })
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -550,11 +557,7 @@ impl SemanticState {
                     None,
                     |metrics| metrics.index_job_enqueued_count += 1,
                 );
-                {
-                    let mut pending = state
-                        .pending
-                        .lock()
-                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                let update = |pending: &mut PendingIndexState| {
                     pending.deleted_notes.remove(conversation_path);
                     pending.note_updates.insert(
                         conversation_path.to_path_buf(),
@@ -563,7 +566,7 @@ impl SemanticState {
                             modified_millis,
                         },
                     );
-                }
+                };
                 if wake {
                     if let Ok(mut runtime) = state.runtime.lock() {
                         runtime.indexing_in_progress = true;
@@ -574,9 +577,9 @@ impl SemanticState {
                         runtime.progress_current = 0;
                         runtime.progress_total = 1;
                     }
-                    state.request_wake()
+                    state.work_queue.enqueue(update)
                 } else {
-                    Ok(())
+                    state.work_queue.stage(update)
                 }
             }
             SemanticStateInner::Disabled(_) => Ok(()),
@@ -597,14 +600,10 @@ impl SemanticState {
                     None,
                     |metrics| metrics.index_job_enqueued_count += 1,
                 );
-                {
-                    let mut pending = state
-                        .pending
-                        .lock()
-                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                let update = |pending: &mut PendingIndexState| {
                     pending.note_updates.remove(note_path);
                     pending.deleted_notes.insert(note_path.to_path_buf());
-                }
+                };
                 if wake {
                     if let Ok(mut runtime) = state.runtime.lock() {
                         runtime.indexing_in_progress = true;
@@ -615,9 +614,9 @@ impl SemanticState {
                         runtime.progress_current = 0;
                         runtime.progress_total = 1;
                     }
-                    state.request_wake()
+                    state.work_queue.enqueue(update)
                 } else {
-                    Ok(())
+                    state.work_queue.stage(update)
                 }
             }
             SemanticStateInner::Disabled(_) => Ok(()),
@@ -648,13 +647,9 @@ impl SemanticState {
                     None,
                     |metrics| metrics.index_job_enqueued_count += 1,
                 );
-                {
-                    let mut pending = state
-                        .pending
-                        .lock()
-                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                state.work_queue.enqueue(|pending| {
                     if pending.rebuild_requested || pending.full_scan_requested {
-                        return Ok(());
+                        return;
                     }
                     // The destination is now authoritative: drop any pending
                     // delete/update that targeted either endpoint so the move
@@ -671,8 +666,7 @@ impl SemanticState {
                             modified_millis,
                         },
                     );
-                }
-                state.request_wake()
+                })
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -688,19 +682,14 @@ impl SemanticState {
                     None,
                     |metrics| metrics.index_job_enqueued_count += 1,
                 );
-                {
-                    let mut pending = state
-                        .pending
-                        .lock()
-                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                state.work_queue.enqueue(|pending| {
                     pending.rebuild_requested = true;
                     pending.full_scan_requested = false;
                     pending.force_full_scan = false;
                     pending.note_updates.clear();
                     pending.deleted_notes.clear();
                     pending.moved_notes.clear();
-                }
-                state.request_wake()
+                })
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -716,17 +705,12 @@ impl SemanticState {
                         .map_err(|_| "Semantic runtime lock poisoned".to_string())?;
                     runtime.reset_for_manual_retry();
                 }
-                {
-                    let mut pending = state
-                        .pending
-                        .lock()
-                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                state.work_queue.enqueue(|pending| {
                     queue_manual_retry_work(
-                        &mut pending,
+                        pending,
                         state.ann.needs_rebuild() || state.note_ann.needs_rebuild(),
                     );
-                }
-                state.request_wake()
+                })
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -766,7 +750,7 @@ impl SemanticState {
 
     pub(crate) fn warmup_model_in_background(&self) {
         if let SemanticStateInner::Active(state) = &self.inner {
-            state.warmup_model_in_background();
+            state.warmup_model_in_background(WarmupScheduling::WakeImmediately);
         }
     }
 
@@ -803,11 +787,7 @@ impl SemanticState {
                 if atlas_dir.exists() {
                     fs::remove_dir_all(&atlas_dir).map_err(|err| err.to_string())?;
                 }
-                {
-                    let mut pending = state
-                        .pending
-                        .lock()
-                        .map_err(|_| "Semantic pending state lock poisoned".to_string())?;
+                state.work_queue.enqueue(|pending| {
                     let revision = state.index_revision.load(Ordering::Acquire);
                     // Full rebuild: always enqueue every visibility variant.
                     for visibility in [
@@ -822,8 +802,7 @@ impl SemanticState {
                             revision,
                         );
                     }
-                }
-                state.request_wake()
+                })
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -844,10 +823,7 @@ impl SemanticState {
                     runtime.indexing_paused = true;
                     runtime.health = SemanticHealth::Paused;
                 }
-                state
-                    .signal_tx
-                    .send(WorkerSignal::SetPaused { paused: true })
-                    .map_err(|err| err.to_string())
+                state.work_queue.set_paused(true)
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -867,10 +843,7 @@ impl SemanticState {
                         SemanticHealth::Fresh
                     };
                 }
-                state
-                    .signal_tx
-                    .send(WorkerSignal::SetPaused { paused: false })
-                    .map_err(|err| err.to_string())
+                state.work_queue.set_paused(false)
             }
             SemanticStateInner::Disabled(_) => Ok(()),
         }
@@ -1047,21 +1020,12 @@ impl ActiveSemanticState {
             .map_err(|_| "Semantic settings lock poisoned".to_string())
     }
 
-    fn request_wake(&self) -> Result<(), String> {
-        if !self.wake_pending.swap(true, Ordering::AcqRel) {
-            self.signal_tx
-                .send(WorkerSignal::Wake)
-                .map_err(|err| err.to_string())?;
-        }
-        Ok(())
-    }
-
-    fn warmup_model_in_background(&self) {
+    fn warmup_model_in_background(&self, scheduling: WarmupScheduling) {
         let provider = Arc::clone(&self.provider);
         let debug = Arc::clone(&self.debug);
         let db_path = self.db_path.clone();
         let note_ann = Arc::clone(&self.note_ann);
-        let pending = Arc::clone(&self.pending);
+        let work_queue = self.work_queue.clone();
         let runtime = Arc::clone(&self.runtime);
         let _ = thread::Builder::new()
             .name("semantic-model-warmup".to_string())
@@ -1085,8 +1049,16 @@ impl ActiveSemanticState {
                             })
                             .unwrap_or(true);
                         if edges_stale {
-                            if let Ok(mut pending) = pending.lock() {
+                            let update = |pending: &mut PendingIndexState| {
                                 pending.edge_refresh_requested = true;
+                            };
+                            match scheduling {
+                                WarmupScheduling::DeferredUntilAnnReady => {
+                                    let _ = work_queue.stage(update);
+                                }
+                                WarmupScheduling::WakeImmediately => {
+                                    let _ = work_queue.enqueue(update);
+                                }
                             }
                             if let Ok(mut runtime) = runtime.lock() {
                                 runtime.edges_stale = true;
@@ -1322,14 +1294,85 @@ fn disabled_settings(mut settings: SemanticSettings) -> SemanticSettings {
     settings
 }
 
+/// Load the persisted HNSW snapshot off the startup hot path and only
+/// then queue the initial vault scan.
+///
+/// `AnnIndexState::initialize` reads the graph file, the raw vectors,
+/// and the manifest from disk and deserializes them into memory. On
+/// warm installs that snapshot can be tens of megabytes and the load
+/// alone blocked the Tauri `setup` callback long enough for the user
+/// to see a frozen window for several seconds. Moving it to a
+/// background thread lets `setup` return immediately; until the
+/// background thread finishes the ANN status reports `loaded=false,
+/// rebuild_pending=true` (the default) and search / related callers
+/// fall through to the existing "still warming up" path.
+///
+/// Holding the initial vault scan back until after the ANN snapshot
+/// has loaded prevents the indexing worker from racing ahead, finding
+/// an empty in-memory ANN, and rebuilding the graph from scratch when
+/// the saved snapshot was already authoritative.
+fn spawn_ann_initialize_and_scan_in_background(context: AnnStartupContext) {
+    let _ = thread::Builder::new()
+        .name("semantic-ann-initialize".to_string())
+        .spawn(move || {
+            let started_at = Instant::now();
+            let connection_result = open_database(&context.db_path).and_then(|connection| {
+                ensure_schema(&connection)?;
+                Ok(connection)
+            });
+            match connection_result {
+                Ok(connection) => match context
+                    .ann
+                    .initialize(&connection)
+                    .and_then(|()| context.note_ann.initialize(&connection))
+                {
+                    Ok(()) => {
+                        let elapsed =
+                            started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                        context.debug.record_timing(
+                            "ann",
+                            "background_load_completed",
+                            None,
+                            elapsed,
+                            |_| {},
+                        );
+                    }
+                    Err(error) => {
+                        context.debug.record_with_metrics(
+                            "ann",
+                            "background_load_failed",
+                            Some(error),
+                            None,
+                            |metrics| metrics.ann_load_failure_count += 1,
+                        );
+                    }
+                },
+                Err(error) => {
+                    context.debug.record_with_metrics(
+                        "ann",
+                        "background_load_open_failed",
+                        Some(error),
+                        None,
+                        |metrics| metrics.ann_load_failure_count += 1,
+                    );
+                }
+            }
+            context
+                .work_queue
+                .release_initial_scan(&context.runtime, &context.debug);
+        });
+}
+
 #[cfg(test)]
 mod health_tests {
     use super::*;
 
     #[test]
     fn query_failure_degrades_without_consuming_the_worker_retry_budget() {
-        let mut runtime = RuntimeState::default();
-        runtime.retry_attempt = 2;
+        let mut runtime = RuntimeState {
+            retry_attempt: 2,
+            ..Default::default()
+        };
 
         runtime.mark_query_failure("query embedding failed");
 
@@ -1377,120 +1420,5 @@ mod health_tests {
         assert_eq!(SemanticHealth::Stale.legacy_recovery_state(), "stale");
         assert_eq!(SemanticHealth::Degraded.legacy_recovery_state(), "stale");
         assert_eq!(SemanticHealth::Paused.legacy_recovery_state(), "paused");
-    }
-}
-
-/// Load the persisted HNSW snapshot off the startup hot path and only
-/// then queue the initial vault scan.
-///
-/// `AnnIndexState::initialize` reads the graph file, the raw vectors,
-/// and the manifest from disk and deserializes them into memory. On
-/// warm installs that snapshot can be tens of megabytes and the load
-/// alone blocked the Tauri `setup` callback long enough for the user
-/// to see a frozen window for several seconds. Moving it to a
-/// background thread lets `setup` return immediately; until the
-/// background thread finishes the ANN status reports `loaded=false,
-/// rebuild_pending=true` (the default) and search / related callers
-/// fall through to the existing "still warming up" path.
-///
-/// Holding the initial vault scan back until after the ANN snapshot
-/// has loaded prevents the indexing worker from racing ahead, finding
-/// an empty in-memory ANN, and rebuilding the graph from scratch when
-/// the saved snapshot was already authoritative.
-fn spawn_ann_initialize_and_scan_in_background(
-    ann: Arc<AnnIndexState>,
-    note_ann: Arc<NoteAnnIndexState>,
-    db_path: PathBuf,
-    debug: Arc<SemanticDebugState>,
-    signal_tx: Sender<WorkerSignal>,
-    wake_pending: Arc<AtomicBool>,
-    pending: Arc<Mutex<PendingIndexState>>,
-    runtime: Arc<Mutex<RuntimeState>>,
-) {
-    let _ = thread::Builder::new()
-        .name("semantic-ann-initialize".to_string())
-        .spawn(move || {
-            let started_at = Instant::now();
-            let connection_result = open_database(&db_path).and_then(|connection| {
-                ensure_schema(&connection)?;
-                Ok(connection)
-            });
-            match connection_result {
-                Ok(connection) => match ann
-                    .initialize(&connection)
-                    .and_then(|()| note_ann.initialize(&connection))
-                {
-                    Ok(()) => {
-                        let elapsed =
-                            started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-                        debug.record_timing(
-                            "ann",
-                            "background_load_completed",
-                            None,
-                            elapsed,
-                            |_| {},
-                        );
-                    }
-                    Err(error) => {
-                        debug.record_with_metrics(
-                            "ann",
-                            "background_load_failed",
-                            Some(error),
-                            None,
-                            |metrics| metrics.ann_load_failure_count += 1,
-                        );
-                    }
-                },
-                Err(error) => {
-                    debug.record_with_metrics(
-                        "ann",
-                        "background_load_open_failed",
-                        Some(error),
-                        None,
-                        |metrics| metrics.ann_load_failure_count += 1,
-                    );
-                }
-            }
-            enqueue_initial_scan_after_warmup(
-                &signal_tx,
-                &wake_pending,
-                &pending,
-                &runtime,
-                &debug,
-            );
-        });
-}
-
-/// Enqueue a full scan using only the wake/pending handles.
-///
-/// Used by the indexer worker and the background ANN-load thread without a
-/// full `ActiveSemanticState` borrow. Errors are logged to the semantic debug
-/// stream rather than propagated, since the caller has nowhere to surface them.
-fn enqueue_initial_scan_after_warmup(
-    signal_tx: &Sender<WorkerSignal>,
-    wake_pending: &AtomicBool,
-    pending: &Mutex<PendingIndexState>,
-    runtime: &Mutex<RuntimeState>,
-    debug: &SemanticDebugState,
-) {
-    if let Ok(now) = current_time_millis() {
-        if let Ok(mut runtime_guard) = runtime.lock() {
-            runtime_guard.last_scan_requested_at_millis = Some(now);
-        }
-    }
-    debug.record_with_metrics(
-        "index",
-        "enqueue_full_scan_after_warmup",
-        None,
-        None,
-        |metrics| metrics.index_job_enqueued_count += 1,
-    );
-    if let Ok(mut pending_guard) = pending.lock() {
-        if !pending_guard.rebuild_requested {
-            pending_guard.full_scan_requested = true;
-        }
-    }
-    if !wake_pending.swap(true, Ordering::AcqRel) {
-        let _ = signal_tx.send(WorkerSignal::Wake);
     }
 }

@@ -49,17 +49,12 @@ pub(crate) enum ChatServiceTier {
     Flex,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum WebAccess {
     Off,
+    #[default]
     Auto,
-}
-
-impl Default for WebAccess {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl WebAccess {
@@ -200,6 +195,22 @@ pub(crate) struct ChatAttachmentInput {
     pub(crate) data_base64: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum ChatRequest {
+    New {
+        conversation_id: String,
+        content: String,
+        attachments: Vec<ChatAttachmentInput>,
+        force_web_search: bool,
+        active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
+    },
+    Retry {
+        conversation_id: String,
+        user_message_id: String,
+        failed_assistant_message_id: String,
+    },
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatAttachment {
@@ -294,6 +305,19 @@ pub(crate) struct ChatRequestAccepted {
     pub(crate) user_message_id: String,
     pub(crate) assistant_message_id: String,
     #[serde(skip_serializing)]
+    automatic_title_fallback: Option<String>,
+}
+
+struct ActiveChatRun {
+    app: AppHandle,
+    request_id: String,
+    conversation_id: String,
+    user_message_id: String,
+    assistant_message_id: String,
+    run_id: String,
+    force_web_search: bool,
+    active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
+    cancelled: Arc<AtomicBool>,
     automatic_title_fallback: Option<String>,
 }
 
@@ -1193,21 +1217,18 @@ impl ChatService {
 
     pub(crate) fn begin_request(
         &self,
-        conversation_id: &str,
-        content: &str,
-        attachments: Vec<ChatAttachmentInput>,
-        force_web_search: bool,
-        active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
-        existing_user_message_id: Option<String>,
-        retry_of_message_id: Option<String>,
+        request: ChatRequest,
         app: AppHandle,
     ) -> Result<ChatRequestAccepted, String> {
-        let content = content.trim();
-        let attachments = validate_attachments(attachments)?;
-        if content.is_empty() && attachments.is_empty() {
-            return Err("A message or attachment is required".to_string());
-        }
-        let conversation = self.get_conversation(conversation_id)?;
+        let conversation_id = match &request {
+            ChatRequest::New {
+                conversation_id, ..
+            }
+            | ChatRequest::Retry {
+                conversation_id, ..
+            } => conversation_id.clone(),
+        };
+        let conversation = self.get_conversation(&conversation_id)?;
         if conversation.summary.detached {
             return Err(
                 "Resolve the externally edited transcript before continuing this chat".to_string(),
@@ -1216,17 +1237,69 @@ impl ChatService {
         if conversation.summary.status == "archived" {
             return Err("Restore this archived conversation before continuing".to_string());
         }
+        let (content, attachments, force_web_search, active_note, retry) = match request {
+            ChatRequest::New {
+                content,
+                attachments,
+                force_web_search,
+                active_note,
+                ..
+            } => {
+                let content = content.trim().to_string();
+                let attachments = validate_attachments(attachments)?;
+                if content.is_empty() && attachments.is_empty() {
+                    return Err("A message or attachment is required".to_string());
+                }
+                (content, attachments, force_web_search, active_note, None)
+            }
+            ChatRequest::Retry {
+                user_message_id,
+                failed_assistant_message_id,
+                ..
+            } => {
+                let assistant = conversation
+                    .messages
+                    .iter()
+                    .find(|message| {
+                        message.id == failed_assistant_message_id && message.role == "assistant"
+                    })
+                    .ok_or_else(|| {
+                        "Only failed or interrupted assistant messages can be retried".to_string()
+                    })?;
+                if assistant.status != "error" && assistant.status != "cancelled" {
+                    return Err(
+                        "Only failed or interrupted assistant messages can be retried".to_string(),
+                    );
+                }
+                let user = conversation
+                    .messages
+                    .iter()
+                    .find(|message| {
+                        message.id == user_message_id
+                            && message.role == "user"
+                            && message.ordinal < assistant.ordinal
+                    })
+                    .ok_or_else(|| "The original user message is missing".to_string())?;
+                (
+                    user.content.clone(),
+                    Vec::new(),
+                    false,
+                    None,
+                    Some((user_message_id, failed_assistant_message_id)),
+                )
+            }
+        };
         let connection = self.connection()?;
-        let part = choose_part(&connection, conversation_id)?;
+        let part = choose_part(&connection, &conversation_id)?;
         let next_ordinal: i64 = connection
             .query_row(
                 "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM chat_messages WHERE conversation_id = ?1",
-                [conversation_id],
+                [&conversation_id],
                 |row| row.get(0),
             )
             .map_err(|error| error.to_string())?;
         let now = now_millis();
-        let user_message_id = if let Some(existing_id) = existing_user_message_id {
+        let user_message_id = if let Some((existing_id, _)) = retry.as_ref() {
             connection
                 .query_row(
                     "SELECT id FROM chat_messages
@@ -1239,7 +1312,7 @@ impl ChatService {
             generate_id("msg")
         };
         let assistant_message_id = generate_id("msg");
-        let assistant_ordinal = if retry_of_message_id.is_some() {
+        let assistant_ordinal = if retry.is_some() {
             next_ordinal
         } else {
             connection
@@ -1279,7 +1352,7 @@ impl ChatService {
             }
             next_ordinal + 1
         };
-        let automatic_title_fallback = if retry_of_message_id.is_none()
+        let automatic_title_fallback = if retry.is_none()
             && conversation
                 .summary
                 .title
@@ -1290,7 +1363,7 @@ impl ChatService {
                 .iter()
                 .map(|attachment| attachment.name.clone())
                 .collect::<Vec<_>>();
-            let title = automatic_conversation_title(content, &attachment_names);
+            let title = automatic_conversation_title(&content, &attachment_names);
             connection
                 .execute(
                     "UPDATE chat_conversations
@@ -1326,7 +1399,7 @@ impl ChatService {
                 params![conversation_id, part, to_i64(now)?],
             )
             .map_err(|error| error.to_string())?;
-        self.write_projection(conversation_id, false)?;
+        self.write_projection(&conversation_id, false)?;
 
         let request_id = generate_id("req");
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -1337,119 +1410,121 @@ impl ChatService {
             .insert(request_id.clone(), Arc::clone(&cancelled));
         let accepted = ChatRequestAccepted {
             request_id: request_id.clone(),
-            conversation_id: conversation_id.to_string(),
+            conversation_id: conversation_id.clone(),
             user_message_id,
             assistant_message_id: assistant_message_id.clone(),
             automatic_title_fallback,
         };
         let run_id = self.create_agent_run(
-            conversation_id,
+            &conversation_id,
             &accepted.user_message_id,
             &assistant_message_id,
-            retry_of_message_id.as_deref(),
+            retry
+                .as_ref()
+                .map(|(_, assistant_id)| assistant_id.as_str()),
             &conversation.summary.provider,
             &conversation.summary.model,
         )?;
         let service = self.clone();
-        let conversation_id = conversation_id.to_string();
-        let run_user_message_id = accepted.user_message_id.clone();
         let automatic_title_fallback = accepted
             .automatic_title_fallback
             .clone()
             .filter(|_| supports_background_title_refinement(&conversation.summary.provider));
+        let run = ActiveChatRun {
+            app,
+            request_id,
+            conversation_id,
+            user_message_id: accepted.user_message_id.clone(),
+            assistant_message_id,
+            run_id,
+            force_web_search,
+            active_note,
+            cancelled,
+            automatic_title_fallback,
+        };
         tauri::async_runtime::spawn(async move {
-            service
-                .run_request(
-                    app,
-                    request_id,
-                    conversation_id,
-                    run_user_message_id,
-                    assistant_message_id,
-                    run_id,
-                    force_web_search,
-                    active_note,
-                    cancelled,
-                    automatic_title_fallback,
-                )
-                .await;
+            service.run_request(run).await;
         });
         Ok(accepted)
     }
 
-    async fn run_request(
-        &self,
-        app: AppHandle,
-        request_id: String,
-        conversation_id: String,
-        user_message_id: String,
-        message_id: String,
-        run_id: String,
-        force_web_search: bool,
-        active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
-        cancelled: Arc<AtomicBool>,
-        automatic_title_fallback: Option<String>,
-    ) {
+    async fn run_request(&self, run: ActiveChatRun) {
         let event = |name: &str, payload: ChatStreamEvent| {
-            let _ = app.emit(name, payload);
+            let _ = run.app.emit(name, payload);
         };
-        let mut started_payload = stream_payload(&request_id, &conversation_id, &message_id);
+        let mut started_payload = stream_payload(
+            &run.request_id,
+            &run.conversation_id,
+            &run.assistant_message_id,
+        );
         started_payload.conversation = self
-            .get_conversation(&conversation_id)
+            .get_conversation(&run.conversation_id)
             .ok()
             .map(|conversation| conversation.summary);
         event("chat://started", started_payload);
 
-        let result = self
-            .run_agent_response(
-                &request_id,
-                &conversation_id,
-                &user_message_id,
-                &message_id,
-                &run_id,
-                force_web_search,
-                active_note,
-                &cancelled,
-                &app,
-            )
-            .await;
+        let result = self.run_agent_response(&run).await;
         let completed = match result {
-            Ok((content, _, usage)) if cancelled.load(Ordering::Acquire) => {
-                let _ = self.finish_message(&message_id, "cancelled", &content, None, &[]);
+            Ok((content, _, usage)) if run.cancelled.load(Ordering::Acquire) => {
+                let _ = self.finish_message(
+                    &run.assistant_message_id,
+                    "cancelled",
+                    &content,
+                    None,
+                    &[],
+                );
                 let _ = self.finish_agent_run(
-                    &run_id,
+                    &run.run_id,
                     "cancelled",
                     usage.input_tokens,
                     usage.output_tokens,
                 );
-                let mut payload = stream_payload(&request_id, &conversation_id, &message_id);
+                let mut payload = stream_payload(
+                    &run.request_id,
+                    &run.conversation_id,
+                    &run.assistant_message_id,
+                );
                 payload.content = Some(content);
                 payload.conversation = self
-                    .get_conversation(&conversation_id)
+                    .get_conversation(&run.conversation_id)
                     .ok()
                     .map(|conversation| conversation.summary);
                 event("chat://cancelled", payload);
                 false
             }
             Ok((content, all_sources, usage)) => {
-                let _ = self.finish_message(&message_id, "complete", &content, None, &all_sources);
+                let _ = self.finish_message(
+                    &run.assistant_message_id,
+                    "complete",
+                    &content,
+                    None,
+                    &all_sources,
+                );
                 let _ = self.finish_agent_run(
-                    &run_id,
+                    &run.run_id,
                     "completed",
                     usage.input_tokens,
                     usage.output_tokens,
                 );
-                let _ = self.refresh_continuation_summary(&conversation_id);
-                let _ = self.write_projection(&conversation_id, false);
+                let _ = self.refresh_continuation_summary(&run.conversation_id);
+                let _ = self.write_projection(&run.conversation_id, false);
                 for source in &all_sources {
-                    let mut source_payload =
-                        stream_payload(&request_id, &conversation_id, &message_id);
+                    let mut source_payload = stream_payload(
+                        &run.request_id,
+                        &run.conversation_id,
+                        &run.assistant_message_id,
+                    );
                     source_payload.source = Some(source.clone());
                     event("chat://source", source_payload);
                 }
-                let mut payload = stream_payload(&request_id, &conversation_id, &message_id);
+                let mut payload = stream_payload(
+                    &run.request_id,
+                    &run.conversation_id,
+                    &run.assistant_message_id,
+                );
                 payload.content = Some(content);
                 payload.conversation = self
-                    .get_conversation(&conversation_id)
+                    .get_conversation(&run.conversation_id)
                     .ok()
                     .map(|conversation| conversation.summary);
                 event("chat://completed", payload);
@@ -1462,25 +1537,35 @@ impl ChatService {
                         connection
                             .query_row(
                                 "SELECT content FROM chat_messages WHERE id = ?1",
-                                [&message_id],
+                                [&run.assistant_message_id],
                                 |row| row.get::<_, String>(0),
                             )
                             .map_err(|value| value.to_string())
                     })
                     .unwrap_or_default();
-                let status = if cancelled.load(Ordering::Acquire) {
+                let status = if run.cancelled.load(Ordering::Acquire) {
                     "cancelled"
                 } else {
                     "error"
                 };
-                let _ = self.finish_message(&message_id, status, &partial, Some(&error), &[]);
-                let _ = self.finish_agent_run(&run_id, status, 0, 0);
-                let _ = self.write_projection(&conversation_id, false);
-                let mut payload = stream_payload(&request_id, &conversation_id, &message_id);
+                let _ = self.finish_message(
+                    &run.assistant_message_id,
+                    status,
+                    &partial,
+                    Some(&error),
+                    &[],
+                );
+                let _ = self.finish_agent_run(&run.run_id, status, 0, 0);
+                let _ = self.write_projection(&run.conversation_id, false);
+                let mut payload = stream_payload(
+                    &run.request_id,
+                    &run.conversation_id,
+                    &run.assistant_message_id,
+                );
                 payload.content = Some(partial);
                 payload.error = Some(error);
                 payload.conversation = self
-                    .get_conversation(&conversation_id)
+                    .get_conversation(&run.conversation_id)
                     .ok()
                     .map(|conversation| conversation.summary);
                 event(
@@ -1495,12 +1580,12 @@ impl ChatService {
             }
         };
         if completed {
-            if let Some(fallback) = automatic_title_fallback {
+            if let Some(fallback) = run.automatic_title_fallback.clone() {
                 let service = self.clone();
-                let title_app = app.clone();
-                let title_conversation_id = conversation_id.clone();
-                let title_user_message_id = user_message_id.clone();
-                let title_cancelled = Arc::clone(&cancelled);
+                let title_app = run.app.clone();
+                let title_conversation_id = run.conversation_id.clone();
+                let title_user_message_id = run.user_message_id.clone();
+                let title_cancelled = Arc::clone(&run.cancelled);
                 tauri::async_runtime::spawn(async move {
                     let _ = service
                         .generate_model_conversation_title(
@@ -1515,47 +1600,38 @@ impl ChatService {
             }
         }
         if let Ok(mut requests) = self.inner.active_requests.lock() {
-            requests.remove(&request_id);
+            requests.remove(&run.request_id);
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn run_agent_response(
         &self,
-        request_id: &str,
-        conversation_id: &str,
-        user_message_id: &str,
-        message_id: &str,
-        run_id: &str,
-        force_web_search: bool,
-        active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
-        cancelled: &Arc<AtomicBool>,
-        app: &AppHandle,
+        run: &ActiveChatRun,
     ) -> Result<(String, Vec<ChatSource>, rig_core::completion::Usage), String> {
-        if cancelled.load(Ordering::Acquire) {
+        if run.cancelled.load(Ordering::Acquire) {
             return Err("Request cancelled".to_string());
         }
-        let conversation = self.get_conversation(conversation_id)?;
+        let conversation = self.get_conversation(&run.conversation_id)?;
         let provider = crate::agent_runtime::AgentProvider::parse(&conversation.summary.provider)?;
         let settings = self.get_settings()?;
-        if provider == crate::agent_runtime::AgentProvider::Local && force_web_search {
+        if provider == crate::agent_runtime::AgentProvider::Local && run.force_web_search {
             return Err("Web search is unavailable with local models".to_string());
         }
         let latest_user = conversation
             .messages
             .iter()
-            .find(|message| message.id == user_message_id && message.role == "user")
+            .find(|message| message.id == run.user_message_id && message.role == "user")
             .ok_or_else(|| "The user message is missing".to_string())?;
         let history = normalized_rig_history(&conversation.messages, &latest_user.id)?;
         let tools = crate::agent_tools::AgentToolContext::new(
-            app.clone(),
+            run.app.clone(),
             self.clone(),
-            request_id.to_string(),
-            run_id.to_string(),
-            conversation_id.to_string(),
-            message_id.to_string(),
+            run.request_id.clone(),
+            run.run_id.clone(),
+            run.conversation_id.clone(),
+            run.assistant_message_id.clone(),
             conversation.summary.access.clone(),
-            active_note,
+            run.active_note.clone(),
             provider == crate::agent_runtime::AgentProvider::Local,
         );
         let active_context = tools.active_note_context()?;
@@ -1572,12 +1648,12 @@ impl ChatService {
         let streamed_content = Arc::new(Mutex::new(String::new()));
         let streamed_content_for_event = Arc::clone(&streamed_content);
         let stream_service = self.clone();
-        let stream_app = app.clone();
-        let stream_request_id = request_id.to_string();
-        let stream_conversation_id = conversation_id.to_string();
-        let stream_message_id = message_id.to_string();
+        let stream_app = run.app.clone();
+        let stream_request_id = run.request_id.clone();
+        let stream_conversation_id = run.conversation_id.clone();
+        let stream_message_id = run.assistant_message_id.clone();
         let observer = crate::agent_runtime::AgentRuntimeObserver {
-            cancelled: Arc::clone(cancelled),
+            cancelled: Arc::clone(&run.cancelled),
             on_text: Arc::new(move |delta| {
                 let full_content = if let Ok(mut content) = streamed_content_for_event.lock() {
                     content.push_str(delta);
@@ -1601,7 +1677,7 @@ impl ChatService {
                 provider: provider.clone(),
                 model: conversation.summary.model.clone(),
                 api_key: if provider == crate::agent_runtime::AgentProvider::Openai {
-                    secrets::read_openai_api_key(app)?
+                    secrets::read_openai_api_key(&run.app)?
                 } else {
                     None
                 },
@@ -1610,8 +1686,8 @@ impl ChatService {
                 prompt,
                 history,
                 enable_web: provider == crate::agent_runtime::AgentProvider::Openai
-                    && (force_web_search || settings.web_access == WebAccess::Auto),
-                require_web: force_web_search,
+                    && (run.force_web_search || settings.web_access == WebAccess::Auto),
+                require_web: run.force_web_search,
                 flex: provider == crate::agent_runtime::AgentProvider::Openai
                     && settings.service_tier == ChatServiceTier::Flex,
             },
@@ -3252,7 +3328,7 @@ fn web_sources_from_text(content: &str) -> Vec<ChatSource> {
             })
             .unwrap_or(tail.len());
         let url = tail[..end]
-            .trim_end_matches(|ch: char| matches!(ch, ',' | '.' | ';' | ':' | '!'))
+            .trim_end_matches([',', '.', ';', ':', '!'])
             .to_string();
         cursor = start + end.max(1);
         if seen.insert(url.clone()) {

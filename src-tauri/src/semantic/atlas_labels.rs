@@ -1518,7 +1518,7 @@ mod tests {
         let (labels, _) = generate_labels_progressive(
             &mut connection,
             &MockProvider::new(),
-            &[cloud.clone()],
+            std::slice::from_ref(&cloud),
             &[node],
             &HashMap::from([("a".to_string(), embedding)]),
             |_, _| Ok(()),
@@ -1661,7 +1661,7 @@ mod tests {
         let (labels, metrics) = generate_labels_progressive(
             &mut connection,
             &MockProvider::new(),
-            &[cloud.clone()],
+            std::slice::from_ref(&cloud),
             &[node],
             &HashMap::from([("a".to_string(), embedding)]),
             |_, _| Ok(()),

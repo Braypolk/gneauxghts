@@ -43,7 +43,7 @@ use std::time::Duration;
 const FOREGROUND_BACKOFF: Duration = Duration::from_millis(25);
 
 enum BackgroundJob {
-    Apply(DeferredCatalogProjection),
+    Apply(Box<DeferredCatalogProjection>),
     Shutdown,
 }
 
@@ -89,7 +89,7 @@ impl BackgroundIndexQueue {
     }
 
     pub(crate) fn enqueue(&self, projection: DeferredCatalogProjection) {
-        self.push(BackgroundJob::Apply(projection));
+        self.push(BackgroundJob::Apply(Box::new(projection)));
     }
 
     fn push(&self, job: BackgroundJob) {
