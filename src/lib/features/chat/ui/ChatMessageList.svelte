@@ -278,7 +278,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   bind:this={messagesElement}
-  class="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5"
+  class="min-h-0 flex-1 overflow-y-auto py-4 sm:py-5"
   role="log"
   aria-live="polite"
   onpointerup={captureSelection}
@@ -299,7 +299,7 @@
       </p>
     </div>
   {:else if conversation}
-    <div class="mx-auto flex w-full max-w-3xl flex-col gap-5">
+    <div class="chat-content-lane flex flex-col gap-5">
       {#each conversation.messages as message (message.id)}
         <ChatMessage
           {message}

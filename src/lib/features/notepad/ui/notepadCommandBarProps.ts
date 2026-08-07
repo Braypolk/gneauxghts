@@ -46,5 +46,9 @@ export interface NotepadCommandBarSearchProps {
   onRecentLocationShortcut: (index: number) => void | Promise<void>;
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
   onSearchOpen: () => void;
+  /** Search closed without a destination; return the user to where they were. */
+  onSearchDismiss?: () => void;
+  /** A destination was chosen; it now owns focus. */
+  onSearchCommit?: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;
 }

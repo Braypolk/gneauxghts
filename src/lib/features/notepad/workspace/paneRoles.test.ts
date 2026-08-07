@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  adoptChatContextFromLeavingEditor,
+  getChatContextPaneId,
   getNavigationPaneId,
-  getNearestEditorPaneId,
-  getRetainedPaneContext
+  getNearestEditorPaneId
 } from './paneRoles';
 import type { PaneKind } from './paneTypes';
+import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
+import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 
 type PaneId = 'left' | 'middle' | 'right';
 
@@ -54,18 +57,81 @@ describe('paneRoles', () => {
     ).toBe('left');
   });
 
-  it('uses a chat pane explicit retained note as its context', () => {
-    const retainedNotes = {
-      left: 'left-note',
-      middle: 'chat-context-note',
-      right: 'right-note'
-    } as const;
+  it('draws chat context from the nearest editor pane', () => {
+    const getPaneKind = kinds({
+      left: 'editor',
+      middle: 'chat',
+      right: 'editor'
+    });
 
     expect(
-      getRetainedPaneContext(
-        'middle' as PaneId,
-        (paneId) => retainedNotes[paneId]
+      getChatContextPaneId(
+        ['middle', 'right', 'left'],
+        getPaneKind,
+        'middle'
       )
-    ).toBe('chat-context-note');
+    ).toBe('right');
+  });
+
+  it('falls back to the chat pane retained note when no editor is visible', () => {
+    const getPaneKind = kinds({
+      left: 'chat',
+      middle: 'chat',
+      right: 'chat'
+    });
+
+    expect(
+      getChatContextPaneId(
+        ['left', 'middle', 'right'],
+        getPaneKind,
+        'middle'
+      )
+    ).toBe('middle');
+  });
+
+  it('copies a leaving editor note onto chat panes that were following it', () => {
+    const getPaneKind = kinds({
+      left: 'editor',
+      middle: 'chat',
+      right: 'editor'
+    });
+    const leaving = createNoteDraftState({
+      ...createEmptySessionSnapshot(),
+      currentNoteId: 'note-recent',
+      currentNotePath: 'Notes/Recent.md',
+      title: 'Recent'
+    });
+    const setPaneDocument = vi.fn();
+
+    adoptChatContextFromLeavingEditor(
+      ['left', 'middle', 'right'],
+      getPaneKind,
+      'left',
+      leaving,
+      setPaneDocument
+    );
+
+    expect(setPaneDocument).toHaveBeenCalledOnce();
+    expect(setPaneDocument).toHaveBeenCalledWith('middle', leaving);
+  });
+
+  it('does not rewrite chat context when a non-context editor leaves', () => {
+    const getPaneKind = kinds({
+      left: 'editor',
+      middle: 'chat',
+      right: 'editor'
+    });
+    const setPaneDocument = vi.fn();
+
+    adoptChatContextFromLeavingEditor(
+      ['left', 'middle', 'right'],
+      getPaneKind,
+      'right',
+      createNoteDraftState(createEmptySessionSnapshot()),
+      setPaneDocument
+    );
+
+    // middle's nearest editor is left, so closing right is irrelevant.
+    expect(setPaneDocument).not.toHaveBeenCalled();
   });
 });

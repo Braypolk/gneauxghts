@@ -85,6 +85,50 @@ describe('createNotepadCommandBarState', () => {
     });
   }
 
+  it('returns the user to where they were when Escape dismisses search', () => {
+    const calls: string[] = [];
+    const state = createState({
+      onSearchDismiss: () => calls.push('dismiss'),
+      closeSearch: () => calls.push('close')
+    });
+
+    state.handleSearchKeydown({
+      key: 'Escape',
+      preventDefault: () => {}
+    } as unknown as KeyboardEvent);
+
+    // Closing blurs the input, so the restore has to happen first.
+    expect(calls).toEqual(['dismiss', 'close']);
+  });
+
+  it('clears a pending query on the first Escape instead of returning focus', () => {
+    const onSearchDismiss = vi.fn();
+    const onSearchInput = vi.fn();
+    const state = createState({
+      getSearchQuery: () => 'meeting',
+      onSearchDismiss,
+      onSearchInput
+    });
+
+    state.handleSearchKeydown({
+      key: 'Escape',
+      preventDefault: () => {}
+    } as unknown as KeyboardEvent);
+
+    expect(onSearchInput).toHaveBeenCalledWith('');
+    expect(onSearchDismiss).not.toHaveBeenCalled();
+  });
+
+  it('hands focus to the destination when a result is chosen', () => {
+    const onSearchCommit = vi.fn();
+    const item = locationEntry();
+    const state = createState({ onSearchCommit });
+
+    state.selectItem({ kind: 'location', item });
+
+    expect(onSearchCommit).toHaveBeenCalledOnce();
+  });
+
   it('uses raw navigation results for next and previous search buttons', () => {
     const visibleResults = [searchItem({ matchText: 'line grouped result' })];
     const rawResults = [

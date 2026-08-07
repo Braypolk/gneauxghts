@@ -30,7 +30,7 @@ export {
 } from './editorDocumentResources';
 export { markdownEnter } from './editorShortcuts';
 export {
-  focusEditorSearchRange,
+  focusEditorSelection,
   setEditorCurrentSearchHighlightQuery
 } from './searchHighlightExtension';
 export {

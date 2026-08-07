@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Columns2, FileText, History, MessagesSquare } from '@lucide/svelte';
+  import { Columns2, CornerUpLeft, FileText, MessagesSquare } from '@lucide/svelte';
   import { PANE_COMMAND_OPTIONS, type PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
   import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
   import {
@@ -33,7 +33,7 @@
   const optionIcons = {
     typing: Columns2,
     current: FileText,
-    previous: History,
+    previous: CornerUpLeft,
     thoughtPartner: MessagesSquare
   } as const;
 

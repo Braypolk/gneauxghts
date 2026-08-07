@@ -51,6 +51,13 @@ interface NotepadCommandBarStateDeps {
   onRecentLocationShortcut: (index: number) => void | Promise<void>;
   onRecentTaskShortcut: (index: number) => void | Promise<void>;
   closeSearch: () => void;
+  /**
+   * Dismissing search with no destination chosen should put the user back where
+   * they were working, since browsing matches moved the editor selection.
+   */
+  onSearchDismiss?: () => void;
+  /** A destination was chosen, so it owns focus from here on. */
+  onSearchCommit?: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;
   onForget: () => void;
 }
@@ -134,6 +141,7 @@ class NotepadCommandBarController {
   };
 
   selectItem = (item: NotepadCommandBarVisibleItem) => {
+    this.#deps.onSearchCommit?.();
     this.#closeSearchPanel();
 
     if (item.kind === 'task') {
@@ -218,6 +226,9 @@ class NotepadCommandBarController {
         return;
       }
 
+      // Restore before closing: closing the panel blurs the input and reports
+      // the dismissal, which drops the remembered location.
+      this.#deps.onSearchDismiss?.();
       this.#closeSearchPanel();
       return;
     }

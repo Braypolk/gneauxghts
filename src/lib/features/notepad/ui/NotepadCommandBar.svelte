@@ -73,6 +73,8 @@
   const onRecentLocationShortcut = $derived(search.onRecentLocationShortcut);
   const onRecentTaskShortcut = $derived(search.onRecentTaskShortcut);
   const onSearchOpen = $derived(search.onSearchOpen);
+  const onSearchDismiss = $derived(search.onSearchDismiss);
+  const onSearchCommit = $derived(search.onSearchCommit);
   const onCommand = $derived(search.onCommand);
   const searchScopeTitle = $derived(
     searchMode === 'current'
@@ -144,6 +146,8 @@
     onRecentLocationShortcut: (index) => onRecentLocationShortcut(index),
     onRecentTaskShortcut: (index) => onRecentTaskShortcut(index),
     closeSearch: () => searchBar?.closeSearch(),
+    onSearchDismiss: () => onSearchDismiss?.(),
+    onSearchCommit: () => onSearchCommit?.(),
     onCommand: (command) => onCommand?.(command) ?? false,
     onForget: () => onForget()
   });

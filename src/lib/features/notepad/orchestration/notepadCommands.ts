@@ -18,6 +18,8 @@ import type { NotepadCommandsDeps } from './notepadCommandFacades';
 import {
   clearLastOpenedNote
 } from '$lib/features/notepad/session/session';
+import { createPaneCloseAnimation } from '$lib/features/notepad/workspace/paneCloseAnimation';
+import { tick } from 'svelte';
 
 export type { NotepadCommandsDeps } from './notepadCommandFacades';
 export type {
@@ -114,6 +116,17 @@ export function createNotepadCommands<TPaneId extends string>(
     transitions
   });
 
+  const paneCloseAnimation = createPaneCloseAnimation<TPaneId>({
+    beginCollapse: workspace.beginPaneCollapse,
+    endCollapse: workspace.endPaneCollapse,
+    settle: () => tick(),
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    prefersReducedMotion: () =>
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  });
+
   const workspacePaneCommands = createWorkspacePaneController({
     state,
     maxVisiblePanes,
@@ -123,6 +136,7 @@ export function createNotepadCommands<TPaneId extends string>(
     completeWorkspacePaneCreation:
       workspace.completePaneCreation,
     canRemoveWorkspacePane: workspace.canRemovePane,
+    paneCloseAnimation,
     retireWorkspacePane: workspace.retirePane,
     completeWorkspacePaneDisposal:
       workspace.completePaneDisposal,
@@ -133,6 +147,7 @@ export function createNotepadCommands<TPaneId extends string>(
       workspace.getPaneState(paneId).chatConversationId,
     setStoredPaneKind: workspace.setPaneKind,
     getPaneDocument: panes.getPaneDocument,
+    setPaneDocument: panes.setPaneDocumentSession,
     getPaneTitleInput: panes.getPaneTitleInput,
     focusPaneEditorAtEnd: panes.focusPaneEditorAtEnd,
     createPane: panes.createPane,
@@ -184,6 +199,8 @@ export function createNotepadCommands<TPaneId extends string>(
     touchLocation: locationHistory.touchLocation,
     touchCurrentLocation:
       locationHistory.touchCurrentLocation,
+    bindChatContextToNote:
+      locationHistory.bindChatContextToNote,
     removeLocation: locationHistory.removeLocation,
     isLocationTouchSuppressed:
       locationHistory.isTouchSuppressed,

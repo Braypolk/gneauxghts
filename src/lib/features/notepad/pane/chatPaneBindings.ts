@@ -4,7 +4,6 @@ import type {
   ChatCitation,
   ChatContextNote,
   ChatController,
-  ChatDraftSeed,
   ChatSelectionActions,
   ChatSurfaceHandle
 } from '$lib/features/chat';
@@ -15,7 +14,8 @@ import type {
 export interface ChatPaneSessionBindings {
   controller: ChatController;
   conversationId: string | null;
-  draftSeed: ChatDraftSeed | null;
+  /** Keeps unsent composer text with the pane until a conversation exists. */
+  draftSlot: string;
   targetAnchor: string | null;
   onConversationChange: (conversationId: string | null) => void;
   onSurfaceHandleChange: (handle: ChatSurfaceHandle | null) => void;

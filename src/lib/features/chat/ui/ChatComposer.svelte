@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import {
     AlertCircle,
     Check,
@@ -11,7 +11,6 @@
     Square,
     X
   } from '@lucide/svelte';
-  import { mergeDiscussionDraft, type ChatDraftSeed } from '../discussionContext';
   import type {
     ChatController,
     ChatControllerState
@@ -30,8 +29,10 @@
     VaultAccess
   } from '../types';
   import {
+    chatComposerDraftSlot,
     chatConversationContextKey
   } from './chatPanelHelpers';
+  import { createComposerDraftPersistence } from './composerDraftPersistence';
   import { configuredChatModel } from '../chatConfiguration';
 
   type ChatMenu = 'history' | 'vault' | 'provider';
@@ -42,7 +43,8 @@
     variant?: 'pane' | 'focused' | 'inline';
     placeholder?: string;
     titleDraft: string;
-    draftSeed?: ChatDraftSeed | null;
+    /** Durable identity for unsent text before a conversation exists. */
+    draftSlot?: string | null;
     contextNote?: ChatContextNote | null;
     getActiveNoteSnapshot?: () => Promise<ChatActiveNoteSnapshot | null>;
     configurationReady: boolean;
@@ -61,7 +63,7 @@
     variant = 'pane',
     placeholder = 'What are you thinking about?',
     titleDraft,
-    draftSeed = null,
+    draftSlot = null,
     contextNote = null,
     getActiveNoteSnapshot,
     configurationReady,
@@ -86,7 +88,6 @@
   let forceWebSearch = $state(false);
   let attachmentInput = $state<HTMLInputElement | null>(null);
   let contextAccessBusy = $state(false);
-  let appliedDraftSeedId: string | null = null;
   let composerContextKey: string | null = null;
   let creatingConversationFromDraft = false;
 
@@ -138,30 +139,46 @@
     return 'Approved only';
   });
 
-  $effect(() => {
-    const nextContextKey = chatConversationContextKey(
-      snapshot.conversation?.id,
-      snapshot.conversationDraft.revision
-    );
-    if (nextContextKey === composerContextKey) return;
-    composerContextKey = nextContextKey;
-    if (!creatingConversationFromDraft) {
-      draft = '';
-      attachments = [];
-      forceWebSearch = false;
+  const draftPersistence = createComposerDraftPersistence({
+    getDraft: (slot) => controller.getComposerDraft(slot),
+    setDraft: (slot, body) => controller.setComposerDraft(slot, body),
+    applyDraft: (body) => {
+      draft = body;
     }
   });
 
+  onDestroy(() => draftPersistence.dispose());
+
   $effect(() => {
-    const seed = draftSeed;
-    if (!seed || seed.id === appliedDraftSeedId) return;
-    appliedDraftSeedId = seed.id;
-    const merged = mergeDiscussionDraft(untrack(() => draft), seed.text);
-    draft = merged;
-    requestAnimationFrame(() => {
-      composerElement?.focus();
-      composerElement?.setSelectionRange(merged.length, merged.length);
-    });
+    const conversationId = snapshot.conversation?.id ?? null;
+    const nextContextKey = chatConversationContextKey(
+      conversationId,
+      snapshot.conversationDraft.revision
+    );
+    if (nextContextKey === composerContextKey) return;
+    const hadContext = composerContextKey !== null;
+    composerContextKey = nextContextKey;
+    if (creatingConversationFromDraft) return;
+
+    // Attachments are per-message and deliberately not carried across contexts.
+    attachments = [];
+    forceWebSearch = false;
+    draft = '';
+
+    const nextSlot = chatComposerDraftSlot(conversationId, draftSlot);
+    if (!nextSlot) return;
+
+    // Reaching a fresh draft from somewhere else means the user asked to start
+    // over, so there is nothing to restore. Everything else is navigation.
+    if (hadContext && !conversationId) {
+      draftPersistence.resetSlot(nextSlot);
+      return;
+    }
+    void draftPersistence.openSlot(nextSlot);
+  });
+
+  $effect(() => {
+    draftPersistence.record(draft);
   });
 
   async function submit() {
@@ -205,6 +222,15 @@
       draft = '';
       attachments = [];
       forceWebSearch = false;
+      // The text is now a real message. Clear it from the pane slot it may have
+      // been typed into as well as the conversation slot it graduated to.
+      const sentSlot = chatComposerDraftSlot(
+        controller.getSnapshot().conversation?.id ?? null,
+        draftSlot
+      );
+      if (sentSlot) {
+        draftPersistence.resetSlot(sentSlot);
+      }
     }
   }
 
@@ -331,21 +357,26 @@
   }
 </script>
 
-<footer class="px-4 pb-3 pt-2 sm:px-6 sm:pb-4">
+<footer class="pb-3 pt-2 sm:pb-4">
   {#if snapshot.error || actionError}
-    <div
-      class="mb-2 flex items-start gap-2 rounded-[1.1rem] bg-destructive/10 px-3 py-2 text-xs text-destructive"
-      role="alert"
-    >
-      <AlertCircle class="mt-0.5 h-3.5 w-3.5 shrink-0" />
-      <span class="min-w-0 flex-1">{actionError ?? snapshot.error}</span>
-      <button type="button" class="font-semibold" onclick={onDismissError}>
-        Dismiss
-      </button>
+    <div class="chat-content-lane mb-2">
+      <div
+        class="flex items-start gap-2 rounded-[1.1rem] bg-destructive/10 px-3 py-2 text-xs text-destructive"
+        role="alert"
+      >
+        <AlertCircle class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span class="min-w-0 flex-1">{actionError ?? snapshot.error}</span>
+        <button type="button" class="font-semibold" onclick={onDismissError}>
+          Dismiss
+        </button>
+      </div>
     </div>
   {/if}
 
-  <div class="mx-auto max-w-3xl rounded-[1.1rem] border border-border/80 bg-background/80 p-2 shadow-sm focus-within:border-foreground/25 focus-within:ring-2 focus-within:ring-ring/10">
+  <div class="chat-content-lane">
+    <div
+      class="rounded-[1.1rem] border border-border/80 bg-background/80 p-2 shadow-sm focus-within:border-foreground/25 focus-within:ring-2 focus-within:ring-ring/10"
+    >
     {#if attachments.length > 0}
       <div class="flex flex-wrap gap-2 px-2 pb-2" aria-label="Pending attachments">
         {#each attachments as attachment, index (`${attachment.name}-${index}`)}
@@ -439,7 +470,7 @@
               role="menu"
               aria-label="AI provider"
             >
-              {#each PROVIDERS as provider}
+              {#each PROVIDERS as provider (provider)}
                 <button
                   type="button"
                   class="chat-menu-item"
@@ -638,6 +669,7 @@
           </button>
         {/if}
       </div>
+    </div>
     </div>
   </div>
 </footer>

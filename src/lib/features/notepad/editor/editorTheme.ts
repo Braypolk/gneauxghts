@@ -32,9 +32,17 @@ export function createLayoutTheme() {
         boxSizing: 'border-box',
         minHeight: '100%',
         minWidth: '0',
-        maxWidth: '100%',
+        /*
+         * Cap the column at the readable measure. CodeMirror's base theme sets
+         * flex-grow: 2 on .cm-content, which otherwise stretches past `width`
+         * up to max-width: 100% and makes note prose wider than chat.
+         */
+        flexGrow: '0',
+        flexShrink: '1',
         width:
-          'min(100%, calc(var(--editor-readable-width) + var(--editor-left-padding) + var(--editor-handle-lane-width) + var(--editor-right-padding)))',
+          'min(100%, calc(var(--content-readable-width) + var(--editor-left-padding) + var(--editor-handle-lane-width) + var(--editor-right-padding)))',
+        maxWidth:
+          'min(100%, calc(var(--content-readable-width) + var(--editor-left-padding) + var(--editor-handle-lane-width) + var(--editor-right-padding)))',
         margin: '0 auto',
         paddingTop: 'var(--editor-top-padding)',
         paddingLeft: '0',
@@ -48,8 +56,7 @@ export function createLayoutTheme() {
         overflowAnchor: 'auto',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
-        overflowWrap: 'anywhere',
-        flexShrink: '1'
+        overflowWrap: 'anywhere'
       },
     '&.cm-editor.cm-gn .cm-selectionBackground': {
       backgroundColor: 'var(--gn-editor-selection-background) !important'

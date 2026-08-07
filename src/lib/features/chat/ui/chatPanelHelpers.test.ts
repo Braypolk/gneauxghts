@@ -87,3 +87,4 @@ describe('chat panel helpers', () => {
     );
   });
 });
+

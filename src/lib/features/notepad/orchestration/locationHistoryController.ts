@@ -192,6 +192,17 @@ export function createLocationHistoryController<TPaneId extends string>(
     bumpEpoch();
   }
 
+  /** Keep the thought-partner stack entry pointed at the note now in the editor. */
+  function bindChatContextToNote(
+    paneId: TPaneId,
+    noteId: string | null,
+    notePath: string | null
+  ) {
+    if (locationMru.bindChatContextToNote(paneId, noteId, notePath)) {
+      bumpEpoch();
+    }
+  }
+
   async function ensureLocationMruSeeded(paneId: TPaneId) {
     if (locationMru.isSeeded(paneId)) return;
     const recentNotes = await deps.loadRecentNotes();
@@ -480,6 +491,7 @@ export function createLocationHistoryController<TPaneId extends string>(
     blurFocusedPaneTitle,
     touchCurrentLocation,
     touchLocation,
+    bindChatContextToNote,
     ensureLocationMruSeeded,
     restoreLocation,
     goToPreviousLocation,

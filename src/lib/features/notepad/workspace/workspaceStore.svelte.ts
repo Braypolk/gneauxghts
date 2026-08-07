@@ -57,6 +57,13 @@ export class WorkspaceStore {
     highlightedIndex: 0,
     focusEl: null
   });
+  /**
+   * The pane currently playing its close animation. It is still a member of
+   * `paneOrder` — the workspace only mutates once the collapse finishes — but
+   * the workspace already lays itself out as if the pane were gone, so the
+   * surviving pane keeps its width instead of snapping.
+   */
+  collapsingPaneId = $state<NotepadPaneId | null>(null);
 
   constructor(
     initialPaneId: NotepadPaneId = INITIAL_PANE_ID,
@@ -168,6 +175,16 @@ export class WorkspaceStore {
       },
       paneId
     );
+  }
+
+  beginPaneCollapse(paneId: NotepadPaneId): void {
+    if (!this.paneOrder.includes(paneId)) return;
+    this.collapsingPaneId = paneId;
+  }
+
+  endPaneCollapse(paneId: NotepadPaneId): void {
+    if (this.collapsingPaneId !== paneId) return;
+    this.collapsingPaneId = null;
   }
 
   retirePane(

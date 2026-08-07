@@ -2,13 +2,18 @@ import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
 
 const cmContentInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
 
+function findCmScrollerElement(editorRoot: HTMLElement) {
+  const scroller = editorRoot.querySelector('.cm-scroller');
+  return scroller instanceof HTMLElement ? scroller : null;
+}
+
 export interface PaneSelectionTrackingDeps<TPaneId extends string> {
   paneId: TPaneId;
   isEditorReady: boolean;
   editorRoot: HTMLDivElement | null;
   /** True when this pane is the active pane in editor mode. */
   isActivePaneInEditorMode: () => boolean;
-  /** Persist the current cursor position. */
+  /** Persist the current cursor position and scroll offset (debounced). */
   persistCursorPosition: () => void;
   /** Push current selection's text upstream (for related-notes drawer). */
   updateSelectedRelatedText: () => void;
@@ -69,6 +74,11 @@ export function attachPaneSelectionTracking<TPaneId extends string>({
   }
   cmContent.addEventListener('keyup', handleKeyboardSelectionChange);
 
+  // Reading position is scroll, not cursor: someone can read a whole note
+  // without ever moving the caret, and reopening should land where they read.
+  const scroller = findCmScrollerElement(editorRoot);
+  scroller?.addEventListener('scroll', persistCursorPosition, { passive: true });
+
   return () => {
     if (selectionFrameId !== null) {
       window.cancelAnimationFrame(selectionFrameId);
@@ -79,5 +89,6 @@ export function attachPaneSelectionTracking<TPaneId extends string>({
       cmContent.removeEventListener(eventName, handleSelectionChange);
     }
     cmContent.removeEventListener('keyup', handleKeyboardSelectionChange);
+    scroller?.removeEventListener('scroll', persistCursorPosition);
   };
 }

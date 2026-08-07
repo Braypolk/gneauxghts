@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Capture the onMarkdownChange callback the controller installs, and stub the
 // rest of the heavy CodeMirror editor stack so the lifecycle controller can run
@@ -37,9 +37,11 @@ vi.mock('$lib/features/notepad/navigation/navigation', () => ({
 
 import { createEditorLifecycleController } from './editorLifecycleController';
 import {
+  readCursorPosition,
   replaceEditorContent,
   restoreCursorPosition
 } from '$lib/features/notepad/editor/editor';
+import { loadEditorViewState, saveEditorViewState } from './editorViewState';
 import {
   createNoteDraftState,
   type NoteDraftState
@@ -153,5 +155,133 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       { anchor: 0, head: 0 },
       { scrollIntoView: true }
     );
+  });
+});
+
+describe('editorLifecycleController reading-position persistence', () => {
+  const notePath = '/vault/Long.md';
+  let storage: Map<string, string>;
+
+  function scrollerStub(scrollTop: number) {
+    return {
+      scrollTop,
+      scrollHeight: 4000,
+      clientHeight: 800,
+      getBoundingClientRect: () => ({ top: 0 })
+    };
+  }
+
+  function harness(scrollTop: number) {
+    const scrollDOM = scrollerStub(scrollTop);
+    const editor = {
+      runtime: { markdown: 'body' },
+      view: { scrollDOM, requestMeasure: vi.fn() }
+    } as never;
+    const document = createNoteDraftState({
+      title: 'Long',
+      bodyMarkdown: 'body',
+      currentNoteId: 'long-id',
+      currentNotePath: notePath,
+      lastSavedTitle: 'Long',
+      lastSavedMarkdown: 'body',
+      lastSavedNoteId: 'long-id',
+      lastSavedPath: notePath
+    });
+    const controller = createEditorLifecycleController({
+      getController: () => editor,
+      getPaneId: () => 'primary',
+      setController: () => {},
+      getEditorShell: () => null,
+      getEditorRoot: () => null,
+      getDocumentSession: () => document,
+      setIsEditorReady: () => {},
+      setIsApplyingProgrammaticUpdate: () => {},
+      handleEditorMarkdownChange: () => {},
+      getSharedEditorResources: () => ({}) as never,
+      getViewCallbacks: () => ({}) as never,
+      closeTransientUi: () => {}
+    });
+
+    return { controller, document, editor, scrollDOM };
+  }
+
+  beforeEach(() => {
+    storage = new Map<string, string>();
+    vi.clearAllMocks();
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          storage.set(key, value);
+        }
+      }
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('saves how far the reader had scrolled alongside the cursor', () => {
+    vi.mocked(readCursorPosition).mockReturnValue({ anchor: 12, head: 12 });
+    const h = harness(1850);
+
+    h.controller.saveCursorPositionForDocument(h.document);
+
+    expect(loadEditorViewState(notePath, 'primary', 'long-id')).toEqual({
+      anchor: 12,
+      head: 12,
+      scrollTop: 1850
+    });
+  });
+
+  it('reopens at the saved scroll offset rather than snapping to the cursor', () => {
+    saveEditorViewState(
+      notePath,
+      { anchor: 12, head: 12, scrollTop: 1850 },
+      'primary',
+      'long-id'
+    );
+    vi.mocked(restoreCursorPosition).mockReturnValue(true);
+    const h = harness(0);
+
+    h.controller.restoreCursorPositionForDocument(h.document);
+
+    expect(restoreCursorPosition).toHaveBeenCalledWith(
+      h.editor,
+      { anchor: 12, head: 12, scrollTop: 1850 },
+      { scrollIntoView: false }
+    );
+    expect(h.scrollDOM.scrollTop).toBe(1850);
+  });
+
+  it('still reveals the cursor for notes saved before scroll was tracked', () => {
+    saveEditorViewState(notePath, { anchor: 12, head: 12 }, 'primary', 'long-id');
+    vi.mocked(restoreCursorPosition).mockReturnValue(true);
+    const h = harness(0);
+
+    h.controller.restoreCursorPositionForDocument(h.document);
+
+    expect(restoreCursorPosition).toHaveBeenCalledWith(
+      h.editor,
+      { anchor: 12, head: 12 },
+      { scrollIntoView: true }
+    );
+    expect(h.scrollDOM.scrollTop).toBe(0);
+  });
+
+  it('clamps a saved offset that no longer fits a shortened note', () => {
+    saveEditorViewState(
+      notePath,
+      { anchor: 0, head: 0, scrollTop: 99_000 },
+      'primary',
+      'long-id'
+    );
+    vi.mocked(restoreCursorPosition).mockReturnValue(true);
+    const h = harness(0);
+
+    h.controller.restoreCursorPositionForDocument(h.document);
+
+    expect(h.scrollDOM.scrollTop).toBe(4000 - 800);
   });
 });

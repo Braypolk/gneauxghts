@@ -5,6 +5,5 @@ export {
   type ChatControllerState,
   type ChatControllerOptions
 } from './controller.svelte';
-export { formatDiscussionDraft, mergeDiscussionDraft, type ChatDraftSeed } from './discussionContext';
 export * from './types';
 // Import ChatPanel from './ChatPanel.svelte' directly — barrel re-export caused TDZ with Notepad.

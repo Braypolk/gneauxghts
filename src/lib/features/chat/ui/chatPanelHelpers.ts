@@ -19,6 +19,19 @@ export function chatConversationContextKey(
     : `draft:${draftRevision}`;
 }
 
+/**
+ * Where unsent composer text is stored. A conversation owns its own draft; a
+ * chat pane that has not created a conversation yet owns the draft itself.
+ * Returns null when the host did not give the pane a durable identity.
+ */
+export function chatComposerDraftSlot(
+  conversationId: string | null | undefined,
+  paneDraftSlot: string | null | undefined
+) {
+  if (conversationId) return `conversation:${conversationId}`;
+  return paneDraftSlot ?? null;
+}
+
 export function resolveTargetMessageId(
   targetAnchor: string | null | undefined,
   conversation: ChatConversation | null

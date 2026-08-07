@@ -1,6 +1,12 @@
 import { tick } from 'svelte';
-import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
-import { loadCursorPosition, saveCursorPosition } from '$lib/features/notepad/editor/cursorState';
+import type {
+  CursorPosition,
+  EditorViewState
+} from '$lib/features/notepad/editor/editorViewState';
+import {
+  loadEditorViewState,
+  saveEditorViewState
+} from '$lib/features/notepad/editor/editorViewState';
 import {
   createEditor as createEditorInstance,
   destroyEditor as destroyEditorInstance,
@@ -29,10 +35,20 @@ import {
   getDocumentPath
 } from '$lib/features/notepad/document/documentState';
 
+function nextAnimationFrame() {
+  return new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+      return;
+    }
+    resolve();
+  });
+}
+
 interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
   restoreCursor?: boolean;
-  cursorPosition?: CursorPosition | null | undefined;
+  cursorPosition?: EditorViewState | null | undefined;
   expectedDocument?: NoteDraftState | null;
   /** When true, do not flip the pane to a loading state while the editor is torn down and recreated. */
   suppressReadyReset?: boolean;
@@ -153,37 +169,101 @@ export function createEditorLifecycleController({
       return;
     }
 
-    saveCursorPosition(
+    // Scroll is a live viewport fact rather than something callers know, so it
+    // is always read from the editor even when the selection was passed in.
+    const scrollTop = getController()?.view.scrollDOM.scrollTop;
+
+    saveEditorViewState(
       path,
-      position,
+      {
+        anchor: position.anchor,
+        head: position.head,
+        ...(typeof scrollTop === 'number' ? { scrollTop } : {})
+      },
       getPaneId(),
       getDocumentNoteId(document)
     );
   }
 
-  function restoreEditorScrollTop(scrollTop: number) {
+  function applyEditorScrollTop(scrollTop: number) {
     const scrollEl = getController()?.view.scrollDOM;
     if (!scrollEl) {
-      return;
+      return null;
     }
 
     const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
     scrollEl.scrollTop = Math.max(0, Math.min(scrollTop, maxScrollTop));
+    return {
+      maxScrollTop,
+      reached: Math.abs(scrollEl.scrollTop - scrollTop) < 1
+    };
+  }
+
+  function restoreEditorScrollTop(scrollTop: number) {
+    return applyEditorScrollTop(scrollTop)?.reached ?? false;
+  }
+
+  /**
+   * Content height is not final until CodeMirror has measured the new document
+   * and overlay chrome has published its inset, so a single assignment can land
+   * a few pixels off. Re-apply across a few frames after the target is reached.
+   */
+  async function settleEditorScrollTop(scrollTop: number) {
+    let previousMaxScrollTop = -1;
+    let stableReachedFrames = 0;
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const applied = applyEditorScrollTop(scrollTop);
+      if (!applied) {
+        return false;
+      }
+
+      if (applied.reached) {
+        stableReachedFrames += 1;
+        // Keep confirming while measure/chrome inset can still shift height.
+        if (stableReachedFrames >= 5 && applied.maxScrollTop <= previousMaxScrollTop) {
+          return true;
+        }
+      } else {
+        stableReachedFrames = 0;
+      }
+
+      previousMaxScrollTop = Math.max(previousMaxScrollTop, applied.maxScrollTop);
+      await nextAnimationFrame();
+      getController()?.view.requestMeasure();
+    }
+
+    return applyEditorScrollTop(scrollTop)?.reached ?? false;
+  }
+
+  function loadViewStateForDocument(document: NoteDraftState) {
+    return loadEditorViewState(
+      getDocumentPath(document),
+      getPaneId(),
+      getDocumentNoteId(document)
+    );
   }
 
   function restoreCursorPositionForDocument(
     document: NoteDraftState = getDocumentSession(),
-    position: CursorPosition | null = loadCursorPosition(
-      getDocumentPath(document),
-      getPaneId(),
-      getDocumentNoteId(document)
-    )
+    position: EditorViewState | null = loadViewStateForDocument(document)
   ) {
     if (!getDocumentPath(document) || !position) {
       return false;
     }
 
-    return restoreCursorPosition(getController(), position, { scrollIntoView: true });
+    // A saved scroll offset is the more faithful restore: the reader may have
+    // scrolled well away from the cursor before leaving.
+    const hasSavedScroll = typeof position.scrollTop === 'number';
+    const restored = restoreCursorPosition(getController(), position, {
+      scrollIntoView: !hasSavedScroll
+    });
+
+    if (restored && typeof position.scrollTop === 'number') {
+      void settleEditorScrollTop(position.scrollTop);
+    }
+
+    return restored;
   }
 
   async function replaceEditorContent(
@@ -220,14 +300,10 @@ export function createEditorLifecycleController({
         return;
       }
 
-      const positionToRestore =
+      const positionToRestore: EditorViewState | null =
         cursorPosition !== undefined
           ? cursorPosition
-          : (loadCursorPosition(
-              getDocumentPath(document),
-              getPaneId(),
-              getDocumentNoteId(document)
-            ) ?? null);
+          : (loadViewStateForDocument(document) ?? null);
 
       const shell = getEditorShell();
       const hideForCursorScroll = Boolean(
@@ -249,13 +325,15 @@ export function createEditorLifecycleController({
         if (positionToRestore) {
           restoreCursorPosition(getController(), positionToRestore, { scrollIntoView: false });
           if (!preserveScroll) {
-            let aligned = alignEditorScrollToSelection(getController(), 0.25);
-            for (let attempt = 0; !aligned && attempt < 8; attempt++) {
-              await new Promise<void>((resolve) => {
-                requestAnimationFrame(() => resolve());
-              });
-              getController()?.view.requestMeasure();
-              aligned = alignEditorScrollToSelection(getController(), 0.25);
+            if (typeof positionToRestore.scrollTop === 'number') {
+              await settleEditorScrollTop(positionToRestore.scrollTop);
+            } else {
+              let aligned = alignEditorScrollToSelection(getController(), 0.25);
+              for (let attempt = 0; !aligned && attempt < 8; attempt++) {
+                await nextAnimationFrame();
+                getController()?.view.requestMeasure();
+                aligned = alignEditorScrollToSelection(getController(), 0.25);
+              }
             }
           }
         }
@@ -297,7 +375,7 @@ export function createEditorLifecycleController({
     }: {
       expectedDocument?: NoteDraftState | null;
       flushHistory?: boolean;
-      cursorPosition?: CursorPosition | null;
+      cursorPosition?: EditorViewState | null;
       preserveScroll?: boolean;
       scrollSelectionIntoView?: boolean;
     } = {}
@@ -346,11 +424,16 @@ export function createEditorLifecycleController({
       }
 
       closeTransientUi();
+      const savedScrollTop = cursorPosition?.scrollTop;
       restoreCursorPosition(controller, cursorPosition, {
-        scrollIntoView: scrollSelectionIntoView
+        scrollIntoView: scrollSelectionIntoView && typeof savedScrollTop !== 'number'
       });
       await tick();
-      if (preserveScroll) restoreEditorScrollTop(scrollTop);
+      if (preserveScroll) {
+        restoreEditorScrollTop(scrollTop);
+      } else if (typeof savedScrollTop === 'number') {
+        await settleEditorScrollTop(savedScrollTop);
+      }
     } finally {
       setIsApplyingProgrammaticUpdate(false);
     }
@@ -368,12 +451,8 @@ export function createEditorLifecycleController({
     nextMarkdown: string,
     document: NoteDraftState
   ) {
-    const cursorPosition =
-      loadCursorPosition(
-        getDocumentPath(document),
-        getPaneId(),
-        getDocumentNoteId(document)
-      ) ?? { anchor: 0, head: 0 };
+    const cursorPosition: EditorViewState =
+      loadViewStateForDocument(document) ?? { anchor: 0, head: 0 };
     const controller = getController();
     if (controller?.runtime.markdown === nextMarkdown) {
       // The pane may have just remounted onto a document runtime that is
@@ -382,9 +461,13 @@ export function createEditorLifecycleController({
       // only this pane's cursor and leave the shared runtime and sibling
       // viewports untouched.
       closeTransientUi();
+      const savedScrollTop = cursorPosition.scrollTop;
       restoreCursorPosition(controller, cursorPosition, {
-        scrollIntoView: true
+        scrollIntoView: typeof savedScrollTop !== 'number'
       });
+      if (typeof savedScrollTop === 'number') {
+        void settleEditorScrollTop(savedScrollTop);
+      }
       return;
     }
     await replaceEditorContentInPlaceInternal(nextMarkdown, {

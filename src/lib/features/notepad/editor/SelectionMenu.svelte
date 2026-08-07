@@ -2,7 +2,6 @@
   import * as floatingUi from '@floating-ui/dom';
   import type { VirtualElement } from '@floating-ui/dom';
   import type { EditorView } from '@codemirror/view';
-  import { MessageCircleMore } from '@lucide/svelte';
   import { blockTypeIcons } from '$lib/features/notepad/editor/blockTypes';
   import {
     inlineFormatActions,
@@ -15,7 +14,6 @@
     selectionMenuActivateGroupFromUi,
     selectionMenuApplyInlineFromUi,
     selectionMenuHandleKeydownFromUi,
-    selectionMenuHideFromUi,
     selectionMenuPickBlockFromUi,
     selectionMenuSetHoverFromUi,
     selectionMenuToggleBlockPanelFromUi
@@ -24,10 +22,9 @@
   interface Props {
     menu: PaneSelectionMenuModel;
     boundsElement: HTMLElement | null;
-    onThoughtPartner?: (selection: { text: string }) => void;
   }
 
-  let { menu, boundsElement, onThoughtPartner }: Props = $props();
+  let { menu, boundsElement }: Props = $props();
 
   let bodyEl = $state<HTMLDivElement | null>(null);
   let panelEl = $state<HTMLDivElement | null>(null);
@@ -158,14 +155,6 @@
     }
     selectionMenuApplyInlineFromUi(menu.view, id);
   }
-
-  function openThoughtPartner() {
-    if (!menu.open || !onThoughtPartner) return;
-    const text = menu.view.state.sliceDoc(menu.selectionFrom, menu.selectionTo).trim();
-    if (!text) return;
-    onThoughtPartner({ text });
-    selectionMenuHideFromUi(menu.view);
-  }
 </script>
 
 <svelte:window onkeydowncapture={handleWindowKeydownCapture} />
@@ -200,21 +189,6 @@
       {/each}
 
       <span class="selection-divider" aria-hidden="true"></span>
-
-      {#if onThoughtPartner}
-        <button
-          type="button"
-          class="selection-action selection-action--thought-partner"
-          title="Discuss selection"
-          aria-label="Discuss selection with thought partner"
-          onpointerdown={(event) => event.preventDefault()}
-          onclick={openThoughtPartner}
-        >
-          <MessageCircleMore class="h-4 w-4" />
-          <span>Discuss</span>
-        </button>
-        <span class="selection-divider" aria-hidden="true"></span>
-      {/if}
 
       <button
         type="button"
@@ -348,14 +322,6 @@
     gap: 0.25rem;
     padding-inline: 0.55rem 0.4rem;
     margin-inline-start: 0.1rem;
-  }
-
-  .selection-action--thought-partner {
-    width: auto;
-    gap: 0.35rem;
-    padding-inline: 0.55rem;
-    font-size: 0.72rem;
-    font-weight: 600;
   }
 
   .selection-action-icon :global(svg) {

@@ -1,4 +1,4 @@
-import type { CursorPosition } from '$lib/features/notepad/editor/cursorState';
+import type { CursorPosition } from '$lib/features/notepad/editor/editorViewState';
 import type { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';

@@ -584,6 +584,13 @@ impl ChatService {
                    path TEXT NOT NULL,
                    content_hash TEXT NOT NULL,
                    PRIMARY KEY(conversation_id, path)
+                 );
+                 -- Unsent composer text. `slot` is a conversation or an unsent
+                 -- pane draft, so it is deliberately not a foreign key.
+                 CREATE TABLE IF NOT EXISTS chat_composer_drafts (
+                   slot TEXT PRIMARY KEY,
+                   body TEXT NOT NULL,
+                   updated_at_millis INTEGER NOT NULL
                  );",
             )
             .map_err(|error| error.to_string())?;
@@ -884,6 +891,45 @@ impl ChatService {
             )
             .map_err(|error| error.to_string())?;
         self.get_settings()
+    }
+
+    /// Unsent composer text for a slot. A slot is either a conversation or a
+    /// pane that has not created its conversation yet.
+    pub(crate) fn get_composer_draft(&self, slot: &str) -> Result<String, String> {
+        let slot = normalize_composer_draft_slot(slot)?;
+        self.connection()?
+            .query_row(
+                "SELECT body FROM chat_composer_drafts WHERE slot = ?1",
+                [&slot],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|body| body.unwrap_or_default())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn set_composer_draft(&self, slot: &str, body: &str) -> Result<(), String> {
+        let slot = normalize_composer_draft_slot(slot)?;
+        let connection = self.connection()?;
+
+        // An empty draft is an absence, not a value worth keeping around.
+        if body.is_empty() {
+            connection
+                .execute("DELETE FROM chat_composer_drafts WHERE slot = ?1", [&slot])
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        } else {
+            connection
+                .execute(
+                    "INSERT INTO chat_composer_drafts (slot, body, updated_at_millis)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(slot) DO UPDATE SET body = excluded.body,
+                       updated_at_millis = excluded.updated_at_millis",
+                    params![slot, body, to_i64(now_millis())?],
+                )
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -2888,12 +2934,39 @@ fn delete_archived_conversation_from_database(
         .map_err(|error| error.to_string())?;
     match status.as_deref() {
         None => Ok(()),
-        Some("archived") => connection
-            .execute("DELETE FROM chat_conversations WHERE id = ?1", [id])
-            .map(|_| ())
-            .map_err(|error| error.to_string()),
+        Some("archived") => {
+            connection
+                .execute(
+                    "DELETE FROM chat_composer_drafts WHERE slot = ?1",
+                    [composer_draft_slot_for_conversation(id)],
+                )
+                .map_err(|error| error.to_string())?;
+            connection
+                .execute("DELETE FROM chat_conversations WHERE id = ?1", [id])
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        }
         Some(_) => Err("Only archived conversations can be permanently deleted".to_string()),
     }
+}
+
+/// Mirrors the frontend slot naming so a deleted conversation takes its
+/// unsent composer text with it.
+fn composer_draft_slot_for_conversation(conversation_id: &str) -> String {
+    format!("conversation:{conversation_id}")
+}
+
+const MAX_COMPOSER_DRAFT_SLOT_LEN: usize = 200;
+
+fn normalize_composer_draft_slot(slot: &str) -> Result<String, String> {
+    let slot = slot.trim();
+    if slot.is_empty() {
+        return Err("Composer draft slot is required".to_string());
+    }
+    if slot.len() > MAX_COMPOSER_DRAFT_SLOT_LEN {
+        return Err("Composer draft slot is too long".to_string());
+    }
+    Ok(slot.to_string())
 }
 
 fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatConversationSummary> {
@@ -5210,5 +5283,64 @@ mod tests {
         assert!(!fs::read_to_string(projection)
             .unwrap()
             .contains("User-added thought"));
+    }
+
+    #[test]
+    fn composer_drafts_round_trip_per_slot_and_clear_when_emptied() {
+        let (_root, service) = service("chat-composer-drafts");
+
+        assert_eq!(service.get_composer_draft("pane:left").unwrap(), "");
+
+        service
+            .set_composer_draft("pane:left", "half a thought")
+            .unwrap();
+        service
+            .set_composer_draft("pane:right", "another thought")
+            .unwrap();
+        assert_eq!(
+            service.get_composer_draft("pane:left").unwrap(),
+            "half a thought"
+        );
+        assert_eq!(
+            service.get_composer_draft("pane:right").unwrap(),
+            "another thought"
+        );
+
+        service.set_composer_draft("pane:left", "").unwrap();
+        assert_eq!(service.get_composer_draft("pane:left").unwrap(), "");
+        assert_eq!(
+            service.get_composer_draft("pane:right").unwrap(),
+            "another thought"
+        );
+    }
+
+    #[test]
+    fn composer_draft_slots_must_be_named() {
+        let (_root, service) = service("chat-composer-draft-slot-validation");
+
+        assert!(service.get_composer_draft("   ").is_err());
+        assert!(service.set_composer_draft("", "text").is_err());
+        assert!(service
+            .set_composer_draft(&"s".repeat(MAX_COMPOSER_DRAFT_SLOT_LEN + 1), "text")
+            .is_err());
+    }
+
+    #[test]
+    fn deleting_an_archived_conversation_takes_its_draft_with_it() {
+        let (_root, service) = service("chat-composer-draft-cleanup");
+        let conversation = service.create_conversation(None, None).unwrap();
+        let slot = composer_draft_slot_for_conversation(&conversation.summary.id);
+        service.set_composer_draft(&slot, "unsent reply").unwrap();
+
+        let forgotten_path = _root.path().join(".forgotten").join("conversation");
+        fs::create_dir_all(_root.path().join(".forgotten")).unwrap();
+        service
+            .archive_conversation_folder(&conversation.summary.id, &forgotten_path)
+            .unwrap();
+        service
+            .delete_archived_conversation(&conversation.summary.id)
+            .unwrap();
+
+        assert_eq!(service.get_composer_draft(&slot).unwrap(), "");
     }
 }

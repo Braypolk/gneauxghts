@@ -95,6 +95,19 @@
   --spacing: 0.25rem;
   --app-shell-height: 100dvh;
   --keyboard-inset-height: 0px;
+  /*
+   * Text measure inside the editor (cm-content width minus cm-line side
+   * insets). Chat uses the same outer width + insets so its column lines
+   * up with note prose, not the wider cm-content box.
+   */
+  --content-readable-width: 100%;
+  /*
+   * Workspace pane motion. The duration is mirrored by
+   * PANE_TRANSITION_DURATION_MS so the close sequence can wait for the
+   * collapse before the pane leaves the DOM.
+   */
+  --pane-transition-duration: 220ms;
+  --pane-transition-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --selection-background: color-mix(in oklab, var(--foreground) 15%, var(--background));
   --selection-color: var(--foreground);
   /* Editor typography (medium preset defaults; overridden by editorTextSize.ts) */
@@ -160,6 +173,39 @@
   --shadow-2xl: 0px 1px 2px 0px hsl(0 0% 0% / 0.45);
   --selection-background: color-mix(in oklab, var(--foreground) 45%, var(--background));
   --selection-color: var(--foreground);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --content-readable-width: 48rem;
+  }
+}
+
+/*
+ * Mirror the editor column: same outer width as `.cm-content`, same side
+ * padding as `.cm-line`. Children then share the note's text measure.
+ * (`--editor-*-padding` / handle lane come from `.notepad-shell`.)
+ */
+.chat-content-lane {
+  box-sizing: border-box;
+  width: min(
+    100%,
+    calc(
+      var(--content-readable-width) + var(--editor-left-padding, 0rem) +
+        var(--editor-handle-lane-width, 0rem) + var(--editor-right-padding, 0rem)
+    )
+  );
+  margin-inline: auto;
+  padding-left: calc(
+    var(--editor-left-padding, 0rem) + var(--editor-handle-lane-width, 0rem)
+  );
+  padding-right: var(--editor-right-padding, 0rem);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --pane-transition-duration: 0ms;
+  }
 }
 
 html,

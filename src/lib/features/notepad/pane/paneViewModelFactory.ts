@@ -22,6 +22,7 @@ import type {
 export interface PaneViewModelFactoryDeps {
   getPaneOrder: () => NotepadPaneId[];
   getActivePaneId: () => NotepadPaneId;
+  getCollapsingPaneId: () => NotepadPaneId | null;
   getPaneKind: (paneId: NotepadPaneId) => PaneKind;
   getPaneDocument: (paneId: NotepadPaneId) => NoteDraftState;
   getPaneRuntime: (paneId: NotepadPaneId) => PaneRuntime;
@@ -53,10 +54,14 @@ export function createPaneViewModelFactory(
     const paneIndex = paneOrder.indexOf(paneId);
     const stackClass =
       deps.getActivePaneId() === paneId ? 'z-10' : 'z-0';
+    const collapsingClass =
+      deps.getCollapsingPaneId() === paneId
+        ? 'notepad-pane--collapsing'
+        : '';
     const common = {
       paneId,
       ariaLabel: `Pane ${paneIndex + 1}`,
-      bodyClass: `relative flex min-h-0 min-w-0 flex-1 flex-col ${stackClass}`,
+      bodyClass: `notepad-pane relative flex min-h-0 min-w-0 flex-1 flex-col ${stackClass} ${collapsingClass}`.trim(),
       frameClass: `relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${stackClass}`,
       showCloseButton: canRemovePane(
         {

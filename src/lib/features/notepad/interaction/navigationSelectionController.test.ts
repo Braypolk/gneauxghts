@@ -127,6 +127,21 @@ describe('navigation selection controller', () => {
     ).toHaveBeenCalledOnce();
   });
 
+  it('previews a match without persisting the cursor the user came from', async () => {
+    const harness = setup();
+    harness.setSearchMode('current');
+
+    await harness.controller.handleSearchResultNavigate(
+      searchResult({ currentMatchRange: { from: 4, to: 9 } })
+    );
+
+    expect(harness.focusSearchRange).toHaveBeenCalledWith(
+      paneId,
+      { from: 4, to: 9 }
+    );
+    expect(harness.saveCursorPosition).not.toHaveBeenCalled();
+  });
+
   it('maps a related note into the shared search-result navigation shape', async () => {
     const harness = setup();
     const item = {

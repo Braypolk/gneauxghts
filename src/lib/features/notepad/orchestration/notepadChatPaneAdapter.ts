@@ -3,8 +3,8 @@ import type { ChatContextNote } from '$lib/features/chat/types';
 import type { ChatPaneBindings } from '$lib/features/notepad/pane/chatPaneBindings';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import {
-  getNearestEditorPaneId,
-  getRetainedPaneContext
+  getChatContextPaneId,
+  getNearestEditorPaneId
 } from '$lib/features/notepad/workspace/paneRoles';
 import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
 import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
@@ -25,13 +25,14 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
   getPaneOrder: () => TPaneId[];
   getPaneKind: (paneId: TPaneId) => PaneKind;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
+  setPaneDocument: (paneId: TPaneId, document: NoteDraftState) => void;
   getPaneConversationId: (paneId: TPaneId) => string | null;
   setPaneConversationId: (
     paneId: TPaneId,
     conversationId: string | null
   ) => void;
   touchPaneLocation: (paneId: TPaneId) => void;
-  getSelectedRelatedText: () => string | null;
+  getPaneSelectedText: (paneId: TPaneId) => string | null;
   getEditorPaneIds: () => TPaneId[];
   setActivePane: (paneId: TPaneId) => void;
   openNote: (
@@ -54,11 +55,43 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
 export function createNotepadChatPaneAdapter<TPaneId extends string>(
   deps: NotepadChatPaneAdapterDeps<TPaneId>
 ) {
-  function getContextDocument(paneId: TPaneId) {
-    return getRetainedPaneContext(
-      paneId,
-      deps.getPaneDocument
+  function getContextPaneId(paneId: TPaneId) {
+    return getChatContextPaneId(
+      deps.getPaneOrder(),
+      deps.getPaneKind,
+      paneId
     );
+  }
+
+  function getContextDocument(paneId: TPaneId) {
+    return deps.getPaneDocument(getContextPaneId(paneId));
+  }
+
+  /**
+   * While a chat follows a sibling editor, keep this pane's retained document
+   * aligned with that editor. Closing the editor then leaves the chat on the
+   * most recent note instead of a stale pre-split retain.
+   */
+  function syncRetainedContext(paneId: TPaneId) {
+    if (!paneHasCapability(deps.getPaneKind(paneId), 'host-chat')) {
+      return;
+    }
+    const contextPaneId = getContextPaneId(paneId);
+    if (contextPaneId === paneId) {
+      return;
+    }
+    const contextDocument = deps.getPaneDocument(contextPaneId);
+    const retained = deps.getPaneDocument(paneId);
+    if (contextDocument.key === retained.key) {
+      return;
+    }
+    deps.setPaneDocument(paneId, contextDocument);
+  }
+
+  function syncRetainedContexts() {
+    for (const paneId of deps.getPaneOrder()) {
+      syncRetainedContext(paneId);
+    }
   }
 
   function getContextNote(document: NoteDraftState): ChatContextNote | null {
@@ -77,7 +110,7 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
       session: {
         controller: deps.coordinator.getController(paneId),
         conversationId: deps.getPaneConversationId(paneId),
-        draftSeed: deps.coordinator.getDraftSeed(paneId),
+        draftSlot: `pane:${paneId}`,
         targetAnchor: deps.coordinator.getTargetAnchor(paneId),
         onConversationChange: (conversationId) => {
           deps.setPaneConversationId(paneId, conversationId);
@@ -97,7 +130,10 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
       context: {
         note: getContextNote(contextDocument),
         getActiveNoteSnapshot: async () => {
-          const active = getContextDocument(paneId);
+          // Body, path, and selection all come from the same pane so a message
+          // can never quote one note while describing another.
+          const contextPaneId = getContextPaneId(paneId);
+          const active = deps.getPaneDocument(contextPaneId);
           const notePath = getDocumentPath(active);
           const noteId = getDocumentNoteId(active);
           if (!notePath || !noteId) return null;
@@ -116,7 +152,7 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
             bodyHash: computeDraftHash(
               getDocumentMarkdown(active)
             ),
-            selection: deps.getSelectedRelatedText()
+            selection: deps.getPaneSelectedText(contextPaneId)
           };
         },
         selectionActions: deps.coordinator.selectionActions,
@@ -157,7 +193,8 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
   }
 
   return {
-    getBindings
+    getBindings,
+    syncRetainedContexts
   };
 }
 

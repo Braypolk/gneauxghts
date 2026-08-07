@@ -16,15 +16,28 @@ Invariants:
 - Only the invoking pane is rebound to a fresh draft.
 - Other panes retain the saved document identity and content.
 
-## 2. Chat context and generic note navigation have different targets
+## 2. Chat context follows the visible editor; note navigation targets an editor
 
-Chat-specific context comes from the chat pane's retained context note. Generic
-note navigation targets the nearest editor pane when one is visible; otherwise
-it reuses the active retained-context pane and reveals its editor.
+Chat context is the note shown in the editor pane nearest the chat pane, so what
+the user reads and what the chat reasons about cannot disagree. A chat pane with
+no visible editor falls back to its own retained context note. Generic note
+navigation targets the nearest editor pane when one is visible; otherwise it
+reuses the active retained-context pane and reveals its editor.
 
 Invariants:
 
-- A chat pane does not borrow context from whichever editor happens to be active.
+- A chat pane beside an editor draws its context from that editor's current
+  note, and follows it as the editor navigates. Its retained document stays
+  aligned with that live context so closing the editor leaves the chat on the
+  most recent note.
+- A chat pane with no visible editor uses its retained context note, which is
+  also its route back to editing. That retain is the pane location stack's
+  thought-partner slot: it tracks the most recent editor note visited on the
+  pane (Previous, Recent, shortcuts, and in-editor navigation all update it).
+- The note body, path, and selection sent with a message all come from the same
+  resolved context pane, so they can never describe different notes.
+- The resolved context note is named in the chat header, so the binding is never
+  ambiguous.
 - Generic note navigation never repurposes a chat pane while an editor target is
   available.
 - A single pane can switch directly between editor and chat while retaining its

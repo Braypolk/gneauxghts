@@ -88,6 +88,8 @@ export interface ChatController extends Readable<ChatControllerState> {
   }): Promise<ChatConversation | null>;
   startNewConversation(input?: { title?: string }): void;
   setConversationDraftTitle(title: string): void;
+  getComposerDraft(slot: string): Promise<string>;
+  setComposerDraft(slot: string, body: string): Promise<void>;
   renameConversation(title: string): Promise<boolean>;
   archiveConversation(
     conversationId?: string,
@@ -745,6 +747,15 @@ export class ChatControllerStore implements ChatController {
         title: nextTitle
       }
     });
+  }
+
+  /** Unsent composer text for a slot; empty when nothing was left behind. */
+  getComposerDraft(slot: string) {
+    return this.#api.getComposerDraft(slot);
+  }
+
+  setComposerDraft(slot: string, body: string) {
+    return this.#api.setComposerDraft(slot, body);
   }
 
   async renameConversation(title: string) {

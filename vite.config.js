@@ -45,10 +45,6 @@ export default defineConfig(async () => ({
             return;
           }
 
-          if (id.includes("node_modules/mermaid")) {
-            return "mermaid-vendor";
-          }
-
           if (id.includes("node_modules/@codemirror/view")) {
             return "codemirror-vendor";
           }

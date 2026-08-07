@@ -348,6 +348,7 @@ describe('open-note persistence barrier', () => {
           notePath: '/vault/previous.md'
         }),
         touchLocation: vi.fn(),
+        bindChatContextToNote: vi.fn(),
         isLocationTouchSuppressed: () => false,
         bumpLocationHistoryEpoch: vi.fn(),
         documentDeparture: {
@@ -443,6 +444,7 @@ describe('open-note persistence barrier', () => {
       blurFocusedPaneTitle: vi.fn(),
       capturePaneLocation: () => null,
       touchLocation: vi.fn(),
+      bindChatContextToNote: vi.fn(),
       isLocationTouchSuppressed: () => false,
       bumpLocationHistoryEpoch: vi.fn(),
       documentDeparture: {

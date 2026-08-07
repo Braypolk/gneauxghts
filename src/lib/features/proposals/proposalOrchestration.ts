@@ -124,8 +124,31 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     );
   }
 
+  /**
+   * Resolves the editor presenting the review's own document. A pane adapter
+   * outlives the document it was bound to, so the cached `review.editor` is
+   * only trusted while a pane still displays that document. Everything that
+   * reads or writes review text must go through here.
+   */
+  function reviewEditor(
+    review: ProposalReviewRuntime
+  ): EditorCapabilityAdapter | null {
+    const editor = deps.getEditorForDocument(review.document);
+    if (editor?.isReady()) {
+      review.editor = editor;
+      return editor;
+    }
+    review.editor = null;
+    return null;
+  }
+
   function editors(review: ProposalReviewRuntime) {
-    return deps.getEditorsForDocument?.(review.document).filter((editor) => editor.isReady()) ?? [review.editor];
+    const forDocument = deps
+      .getEditorsForDocument?.(review.document)
+      .filter((editor) => editor.isReady());
+    if (forDocument) return forDocument;
+    const editor = reviewEditor(review);
+    return editor ? [editor] : [];
   }
 
   function cloneHunks(hunks: readonly ReviewHunkState[]) {
@@ -175,6 +198,10 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         if (!reviewIsCurrent(review) || state.reviewId !== review.request.preview.reviewId) return;
         const live = editor.readProposalReviewState?.();
         if (live?.reviewId !== review.request.preview.reviewId) return;
+        // The pane hosting this adapter may have rebound to another note since
+        // the extension was installed. Only the editor still presenting this
+        // review's document may refresh its working copy.
+        if (reviewEditor(review) !== editor) return;
         review.hunkSnapshot = cloneHunks(state.hunks);
         review.workingMarkdown = editor.getDocumentText?.() ?? review.workingMarkdown;
         session.notifyReviewRuntimeChanged();
@@ -203,7 +230,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     if (!review) return;
     review.hunkSnapshot = cloneHunks(hunks(review));
     review.workingMarkdown =
-      review.editor.getDocumentText?.() ??
+      reviewEditor(review)?.getDocumentText?.() ??
       review.workingMarkdown;
     session.notifyReviewRuntimeChanged();
   }
@@ -234,7 +261,8 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       }
       // The captured working copy remains authoritative if the editor remounts
       // while the final hunk resolves.
-      const markdown = review.editor.getDocumentText?.() ?? review.workingMarkdown;
+      const markdown =
+        reviewEditor(review)?.getDocumentText?.() ?? review.workingMarkdown;
       const result = await review.request.commit(markdown);
       if (result.status === 'conflict') {
         session.dispatchWorkflow({
@@ -276,9 +304,14 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   function undoHunk(hunk: ReviewHunkState) {
     const review = currentReview();
     if (!review || reviewIsResolving(review)) return;
+    const editor = reviewEditor(review);
+    if (!editor) {
+      setReviewError(review, 'Open the proposed note to restore this text.');
+      return;
+    }
     cancelDiscardConfirmation(review);
     // A modified hunk reaches this path only through its explicit Restore Original control.
-    const current = (review.editor.getDocumentText?.() ?? '').slice(hunk.from, hunk.to);
+    const current = (editor.getDocumentText?.() ?? '').slice(hunk.from, hunk.to);
     if (hunk.status === 'pending' && current !== hunk.newText) {
       setReviewError(
         review,
@@ -286,7 +319,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       );
       return;
     }
-    if (!review.editor.applyChanges?.(
+    if (!editor.applyChanges?.(
       { from: hunk.from, to: hunk.to, insert: hunk.oldText },
       proposalTransaction.of(true)
     )) {
@@ -327,7 +360,8 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       document,
       editor,
       hunkSnapshot: [],
-      workingMarkdown: document.working.markdown
+      workingMarkdown: document.working.markdown,
+      suspendedMarkdown: null
     };
     if (
       !session.dispatchWorkflow({
@@ -348,14 +382,19 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         onStateChange: (state) => {
           if (reviewIsCurrent(review) && state.reviewId === review.request.preview.reviewId) {
             review.hunkSnapshot = cloneHunks(state.hunks);
-            review.workingMarkdown = review.editor.getDocumentText?.() ?? review.workingMarkdown;
+            // Only the editor still bound to this review's document may refresh
+            // its working copy; a rebound pane now holds a different note.
+            if (reviewEditor(review) === editor) {
+              review.workingMarkdown =
+                editor.getDocumentText?.() ?? review.workingMarkdown;
+            }
             session.notifyReviewRuntimeChanged();
           }
           void finishIfResolved();
         }
       });
       review.hunkSnapshot = cloneHunks(hunks(review));
-      review.workingMarkdown = review.editor.getDocumentText?.() ?? review.workingMarkdown;
+      review.workingMarkdown = editor.getDocumentText?.() ?? review.workingMarkdown;
       session.dispatchWorkflow({
         type: 'openSucceeded',
         identity
@@ -521,10 +560,15 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   function undoAll() {
     const review = currentReview();
     if (!review || reviewIsResolving(review)) return;
+    const editor = reviewEditor(review);
+    if (!editor) {
+      setReviewError(review, 'Open the proposed note to restore this text.');
+      return;
+    }
     cancelDiscardConfirmation(review);
     const pending = hunks(review).filter((hunk) => hunk.status === 'pending').sort((a, b) => b.from - a.from);
     const changes = pending.map((hunk) => ({ from: hunk.from, to: hunk.to, insert: hunk.oldText }));
-    if (changes.length && !review.editor.applyChanges?.(changes, proposalTransaction.of(true))) {
+    if (changes.length && !editor.applyChanges?.(changes, proposalTransaction.of(true))) {
       setReviewError(review, 'Could not restore the remaining proposed text.');
       return;
     }
@@ -549,12 +593,19 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
 
     if (editor !== review.editor) {
-      captureReview(review.editor, review);
+      // A suspended review has no live editor to capture from; its snapshot is
+      // already authoritative and must win over any later working-copy write.
+      if (review.suspendedMarkdown !== null) {
+        review.workingMarkdown = review.suspendedMarkdown;
+      } else {
+        captureReview(review.editor, review);
+      }
       review.editor = editor;
     }
     if (!editorHasReviewInstalled(review, editor)) {
       installReviewInEditor(review, editor);
     }
+    review.suspendedMarkdown = null;
     return editor;
   }
 
@@ -606,7 +657,9 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     },
     copyCurrent: async () => {
       const review = currentReview();
-      const markdown = review?.editor.getDocumentText?.();
+      const markdown = review
+        ? reviewEditor(review)?.getDocumentText?.() ?? review.workingMarkdown
+        : null;
       if (markdown == null) return;
       try {
         await navigator.clipboard.writeText(markdown);
@@ -659,6 +712,8 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       if (!editorHasReviewInstalled(review, editor)) {
         installReviewInEditor(review, editor);
       }
+      // A live editor now owns the working copy again.
+      review.suspendedMarkdown = null;
     },
     suspendDocument: (document: NoteDraftState, editor: EditorCapabilityAdapter | null) => {
       const review = currentReview();
@@ -671,6 +726,13 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         review.workingMarkdown
       );
       exitProposalReviewView(editor);
+      // Snapshot the text that belongs to *this* document before releasing the
+      // editor, so restore cannot resurrect a value written from another note.
+      review.suspendedMarkdown = review.workingMarkdown;
+      // The adapter is pane-scoped and that pane is about to present a
+      // different document. Holding it would let review reads and writes land
+      // on the wrong note.
+      review.editor = null;
       session.notifyReviewRuntimeChanged();
     },
     restoreDocument: (document: NoteDraftState) => {
@@ -680,10 +742,9 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         review.request.preview.notePath !== getDocumentPath(document)
       ) return false;
       review.document = document;
-      updateDocumentMarkdown(
-        document,
-        review.workingMarkdown
-      );
+      const restored = review.suspendedMarkdown ?? review.workingMarkdown;
+      review.workingMarkdown = restored;
+      updateDocumentMarkdown(document, restored);
       return true;
     },
     isReviewingDocument: session.isReviewingDocument

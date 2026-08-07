@@ -89,6 +89,21 @@ describe('locationMru', () => {
     expect(current).toEqual(chatA);
   });
 
+  it('retargets the thought-partner slot when a newer note is visited', () => {
+    const mru = createLocationMruStore<'p1'>();
+    mru.touch('p1', noteA);
+    mru.touch('p1', chatA);
+    mru.touch('p1', noteB);
+
+    expect(mru.previousExcluding('p1', noteB)).toEqual({
+      kind: 'chat',
+      conversationId: 'conv-a',
+      contextNoteId: 'b',
+      contextNotePath: '/vault/B.md'
+    });
+    expect(mru.bindChatContextToNote('p1', 'b', '/vault/B.md')).toBe(false);
+  });
+
   it('treats all chat locations as one MRU slot', () => {
     expect(
       locationsEqual(chatFresh, {
@@ -206,7 +221,15 @@ describe('locationMru', () => {
     expect(mru.list('p1')).toEqual([noteB, noteA]);
     expect(mru.historyExcluding('p1', noteB)).toEqual([
       { location: noteA, label: 'A' },
-      { location: chatA, label: 'Thought partner' }
+      {
+        location: {
+          kind: 'chat',
+          conversationId: 'conv-a',
+          contextNoteId: 'b',
+          contextNotePath: '/vault/B.md'
+        },
+        label: 'Thought partner'
+      }
     ]);
   });
 
@@ -228,7 +251,15 @@ describe('locationMru', () => {
     mru.touch('p1', noteB);
 
     expect(mru.historyExcluding('p1', noteB)).toEqual([
-      { location: chatA, label: 'Thought partner' },
+      {
+        location: {
+          kind: 'chat',
+          conversationId: 'conv-a',
+          contextNoteId: 'b',
+          contextNotePath: '/vault/B.md'
+        },
+        label: 'Thought partner'
+      },
       { location: noteA, label: 'A' }
     ]);
   });

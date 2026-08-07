@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, History } from '@lucide/svelte';
+  import { Check, FileText, History } from '@lucide/svelte';
   import type {
     ChatController,
     ChatControllerState
@@ -13,6 +13,8 @@
     snapshot: ChatControllerState;
     showConversationPicker?: boolean;
     titleDraft?: string;
+    /** Note this chat reasons about, shown so the binding is never ambiguous. */
+    contextNoteTitle?: string | null;
     openMenu: ChatMenu | null;
     onOpenMenu: (menu: ChatMenu | null) => void;
     onFocusComposer: () => void;
@@ -23,6 +25,7 @@
     snapshot,
     showConversationPicker = true,
     titleDraft = $bindable(''),
+    contextNoteTitle = null,
     openMenu,
     onOpenMenu,
     onFocusComposer
@@ -98,7 +101,10 @@
   }
 </script>
 
-<header class="chat-panel-header relative flex min-h-[3.25rem] shrink-0 items-center gap-1 px-4 pt-4 pb-1 sm:px-5">
+<header
+  class="chat-panel-header relative flex shrink-0 items-center gap-1 px-4 pt-4 pb-1 sm:px-5"
+  class:chat-panel-header--with-context={Boolean(contextNoteTitle)}
+>
   <div class="flex min-w-0 items-center gap-0.5">
     {#if showConversationPicker}
       <div class="relative" data-chat-menu>
@@ -142,7 +148,7 @@
     {/if}
   </div>
 
-  <div class="pointer-events-none absolute inset-x-14 top-3 flex justify-center sm:inset-x-16 sm:top-4">
+  <div class="pointer-events-none absolute inset-x-14 top-3 flex flex-col items-center sm:inset-x-16 sm:top-4">
     <div class="pointer-events-auto w-full max-w-[24rem] min-w-0">
       <input
         bind:this={titleInput}
@@ -156,5 +162,14 @@
         onkeydown={onTitleKeydown}
       />
     </div>
+    {#if contextNoteTitle}
+      <p
+        class="flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground"
+        title={`Chat context: ${contextNoteTitle}`}
+      >
+        <FileText class="h-3 w-3 shrink-0" aria-hidden="true" />
+        <span class="truncate">{contextNoteTitle}</span>
+      </p>
+    {/if}
   </div>
 </header>

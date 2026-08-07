@@ -57,6 +57,7 @@
   } from "$lib/features/notepad/orchestration/notepadCommandFacades";
   import { createRelatedNotesStore } from "$lib/features/notepad/related/store.svelte";
   import { createNotepadSearchStore } from "$lib/features/notepad/search/store.svelte";
+  import { createSearchReturnFocus } from "$lib/features/notepad/search/searchReturnFocus";
   import { attachPaneSelectionTracking } from "$lib/features/notepad/editor/paneSelectionTracking";
   import {
     createPaneControllers as createPaneControllersFn,
@@ -117,6 +118,7 @@
   import "$lib/features/notepad/editor/editorTypography.css";
   import "$lib/features/notepad/markdown/inlineFormatting.css";
 
+
   type PaneId = NotepadPaneId;
   const MAX_VISIBLE_PANES = 2;
 
@@ -128,6 +130,7 @@
   // workspaceStore owns pane order, active pane, and pane command chrome.
   let paneOrder = $derived(workspaceStore.paneOrder);
   let activePaneId = $derived(workspaceStore.activePaneId);
+  let collapsingPaneId = $derived(workspaceStore.collapsingPaneId);
 
   // Pane runtimes own pane-local state (refs, editor controller, readiness, slash menu, wikilink)
   const initialPaneId = workspaceStore.activePaneId;
@@ -234,7 +237,6 @@
   }
 
   const chatCoordinator = new NotepadChatCoordinator<PaneId>(initialPaneIds, {
-    maxVisiblePanes: MAX_VISIBLE_PANES,
     getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
     getPaneKind,
@@ -251,7 +253,6 @@
     splitWorkspace: () => commands.splitWorkspace(),
     resolvePaneCommandChoice: (paneId, choice) =>
       commands.resolvePaneCommandChoice(paneId, choice),
-    setPaneKind: (paneId, kind) => commands.setPaneKind(paneId, kind),
     focusPane: (paneId) => commands.focusPaneAfterShortcut(paneId),
     insertMarkdown: (request) => featureHost.insertMarkdown(request),
     getProposalOrchestration,
@@ -970,17 +971,33 @@
     getPaneOrder: () => paneOrder,
     getPaneKind,
     getPaneDocument: getPaneDocumentSession,
+    setPaneDocument: setPaneDocumentSession,
     getPaneConversationId: (paneId) =>
       workspaceStore.getPaneState(paneId).chatConversationId,
     setPaneConversationId: (paneId, conversationId) =>
       workspaceStore.setPaneConversationId(paneId, conversationId),
     touchPaneLocation: (paneId) => touchPaneLocationForHistory(paneId),
-    getSelectedRelatedText: () => relatedState.selectedText,
+    getPaneSelectedText: (paneId) =>
+      editorCapabilities.get(paneId)?.readSelection()?.selectedText?.trim() ||
+      null,
     getEditorPaneIds,
     setActivePane: workspaceStore.setActivePaneId,
     openNote: commands.openNotePath,
     flushPendingAutosave,
     getNoteSaveQueue: (document) => getNoteSaveQueue(document.key),
+  });
+
+  // Live-follow updates the chat header from the sibling editor, but the chat
+  // pane's retained document is what remains after that editor closes. Keep
+  // them aligned whenever the workspace layout or editor note changes.
+  $effect(() => {
+    for (const paneId of paneOrder) {
+      getPaneKind(paneId);
+      getPaneDocumentSession(paneId).key;
+    }
+    untrack(() => {
+      chatPaneAdapter.syncRetainedContexts();
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1043,6 +1060,22 @@
       focusPaneEditorAtEnd,
     });
 
+  const searchReturnFocus = createSearchReturnFocus<PaneId>({
+    getActivePaneId: () => activePaneId,
+    readPaneSelection: (paneId) => {
+      const selection = editorCapabilities.get(paneId)?.readSelection();
+      return selection
+        ? { anchor: selection.anchor, head: selection.head }
+        : null;
+    },
+    activatePane: activatePaneSession,
+    focusPaneSelection: (paneId, selection) =>
+      editorCapabilities
+        .get(paneId)
+        ?.focusSelection(selection, { scrollIntoView: false }) ?? false,
+    focusPaneComposer: focusPaneChat,
+  });
+
   const {
     handleSearchResultSelect,
     handleSearchResultNavigate,
@@ -1094,6 +1127,7 @@
   const getPaneViewModel = createPaneViewModelFactory({
     getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
+    getCollapsingPaneId: () => collapsingPaneId,
     getPaneKind,
     getPaneDocument: getPaneDocumentSession,
     getPaneRuntime,
@@ -1275,9 +1309,9 @@
 
       {#if paneOrder.length === 2}
         <div
-          class={`pointer-events-none absolute top-0 bottom-0 z-20 hidden w-1/2 border-2 border-border rounded-t-4xl sm:block ${
+          class={`notepad-split-border pointer-events-none absolute top-0 bottom-0 z-20 hidden w-1/2 border-2 border-border rounded-t-4xl sm:block ${
             paneOrder.indexOf(activePaneId) === 0 ? "left-0" : "right-0"
-          }`}
+          } ${collapsingPaneId ? "notepad-split-border--hiding" : ""}`}
         ></div>
       {/if}
 
@@ -1353,8 +1387,15 @@
             },
             onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
             onSearchOpen: () => {
+              searchReturnFocus.capture();
               handleSearchOpen();
               void refreshLocationHistory();
+            },
+            onSearchDismiss: () => {
+              searchReturnFocus.restore();
+            },
+            onSearchCommit: () => {
+              searchReturnFocus.forget();
             },
             onCommand: (command) =>
               commands.handleNotepadCommandBarCommand(command),
@@ -1417,11 +1458,6 @@
     <SelectionMenu
       menu={getPaneRuntime(selectionPaneId).ui.selectionMenu}
       boundsElement={getPaneRuntime(selectionPaneId).refs.paneCard}
-      onThoughtPartner={({ text }) => {
-        void chatCoordinator.discussSelection(selectionPaneId, text).catch((error) => {
-          console.error("Failed to discuss selection:", error);
-        });
-      }}
     />
   {:else if activeTransientUi.kind === "wikilink-autocomplete"}
     {@const wikilinkPaneId = activeTransientUi.paneId}
@@ -1443,12 +1479,25 @@
     --editor-left-padding: 0rem;
     --editor-handle-lane-width: 2.75rem;
     --editor-right-padding: 1rem;
-    --editor-readable-width: 100%;
-    --editor-top-padding: 4.1rem;
-    --editor-bottom-padding: calc(
-      7rem + env(safe-area-inset-bottom, 0px) +
+    /*
+     * Height of the chrome floating over the top of a pane (title row, and on
+     * narrow widths the absolutely positioned nav pill). The editorChromeInset
+     * action measures the real thing onto each editor shell; this value only
+     * covers the frame before the first measurement lands.
+     */
+    --editor-overlay-inset: 3.75rem;
+    --editor-top-breathing-room: 1.1rem;
+    /* Vertical room the bottom command bar occupies over a pane. */
+    --command-bar-clearance: calc(
+      5rem + env(safe-area-inset-bottom, 0px) +
         var(--keyboard-inset-height, 0px)
     );
+    --editor-chrome-clearance: calc(var(--command-bar-clearance) + 2rem);
+    /*
+     * Scroll-past-end slack. Viewport-relative on purpose: it must not depend
+     * on the pane's width, which is what the old `padding-bottom: 100%` did.
+     */
+    --editor-scroll-past-end: 55svh;
     --related-drawer-gap: 0.5rem;
     --related-drawer-peek-width: 1.75rem;
     --related-bottom-offset: calc(
@@ -1556,13 +1605,42 @@
     --gn-code-invalid: var(--destructive);
   }
 
+  .notepad-pane {
+    flex: 1 1 0;
+    min-width: 0;
+    opacity: 1;
+    transition:
+      flex-grow var(--pane-transition-duration) var(--pane-transition-ease),
+      flex-basis var(--pane-transition-duration) var(--pane-transition-ease),
+      opacity var(--pane-transition-duration) var(--pane-transition-ease);
+  }
+
+  .notepad-pane--collapsing {
+    flex-grow: 0;
+    flex-basis: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .notepad-split-border {
+    transition: opacity var(--pane-transition-duration) var(--pane-transition-ease);
+  }
+
+  .notepad-split-border--hiding {
+    opacity: 0;
+  }
+
   @media (min-width: 640px) {
     .notepad-shell {
       --editor-handle-lane-width: 3rem;
       --editor-right-padding: 1.4rem;
-      --editor-readable-width: 40rem;
-      --editor-top-padding: 5.3rem;
-      --editor-bottom-padding: 100%;
+      --editor-overlay-inset: 4rem;
+      --editor-top-breathing-room: 1.3rem;
+      --command-bar-clearance: calc(
+        6rem + env(safe-area-inset-bottom, 0px) +
+          var(--keyboard-inset-height, 0px)
+      );
     }
   }
 
@@ -1576,17 +1654,6 @@
     .notepad-shell {
       --editor-handle-lane-width: 3.1rem;
       --editor-right-padding: 1.8rem;
-      --editor-readable-width: 42rem;
-    }
-  }
-
-  @media (max-height: 559px) {
-    .notepad-shell {
-      --editor-top-padding: 4.1rem;
-      --editor-bottom-padding: calc(
-        7rem + env(safe-area-inset-bottom, 0px) +
-          var(--keyboard-inset-height, 0px)
-      );
     }
   }
 </style>

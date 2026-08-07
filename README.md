@@ -81,8 +81,8 @@ a conversation.
 
 ## Keyboard Shortcuts
 
-- `Cmd+1` opens the main note view
-- `Cmd+2` opens Inbox
+- `Cmd+1` opens Map
+- `Cmd+2` opens the main note view
 - `Cmd+3` opens List
 - `Cmd+,` opens Settings
 - `Cmd+F` focuses search in the current note
@@ -182,8 +182,8 @@ SEMANTIC_BENCHMARK.md
 
 - `/` main note editor
 - `/list` master task list
+- `/map` note atlas
 - `/settings` theme, forget button, and semantic controls
-- `/inbox` placeholder route
 
 ## Notes On Behavior
 

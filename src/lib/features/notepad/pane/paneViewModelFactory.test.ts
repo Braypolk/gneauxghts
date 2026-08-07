@@ -43,6 +43,7 @@ describe('pane view model document status', () => {
     const getPaneViewModel = createPaneViewModelFactory({
       getPaneOrder: () => [INITIAL_PANE_ID],
       getActivePaneId: () => INITIAL_PANE_ID,
+      getCollapsingPaneId: () => null,
       getPaneKind: () => 'editor',
       getPaneDocument: () => document,
       getPaneRuntime: () =>

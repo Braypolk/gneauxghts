@@ -178,11 +178,52 @@ export function createLocationMruStore<TPaneId extends string>() {
     void persistChatLocation(location);
   }
 
+  /**
+   * Point the pane's thought-partner slot at a note. Chat is one MRU slot; its
+   * context must follow the most recent editor note on that pane so returning
+   * to chat (via Previous / Recent) does not revive a stale retain.
+   */
+  function bindChatContextToNote(
+    paneId: TPaneId,
+    noteId: string | null,
+    notePath: string | null
+  ): boolean {
+    const previous = lastChatByPane.get(paneId);
+    if (!previous) return false;
+    if (
+      previous.contextNoteId === noteId &&
+      previous.contextNotePath === notePath
+    ) {
+      return false;
+    }
+
+    const updated: ChatNavLocation = {
+      ...previous,
+      contextNoteId: noteId,
+      contextNotePath: notePath
+    };
+    lastChatByPane.set(paneId, updated);
+    void persistChatLocation(updated);
+
+    const list = listFor(paneId);
+    const index = list.findIndex((entry) => entry.kind === 'chat');
+    if (index !== -1) {
+      const next = list.slice();
+      next[index] = updated;
+      lists.set(paneId, next);
+    }
+    return true;
+  }
+
   function touch(paneId: TPaneId, location: NavLocation): void {
     if (!isRestorableLocation(location)) {
       return;
     }
-    rememberChat(paneId, location);
+    if (location.kind === 'chat') {
+      rememberChat(paneId, location);
+    } else {
+      bindChatContextToNote(paneId, location.noteId, location.notePath);
+    }
     const list = listFor(paneId);
     const next = list.filter((entry) => !locationsEqual(entry, location));
     next.unshift(location);
@@ -324,6 +365,7 @@ export function createLocationMruStore<TPaneId extends string>() {
   return {
     touch,
     rememberChat,
+    bindChatContextToNote,
     previousExcluding,
     historyExcluding,
     isSeeded,

@@ -40,6 +40,8 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
     kind?: PaneKind
   ) => WorkspacePaneState<TPaneId>;
   canRemovePane: (paneId: TPaneId) => boolean;
+  beginPaneCollapse: (paneId: TPaneId) => void;
+  endPaneCollapse: (paneId: TPaneId) => void;
   retirePane: (
     paneId: TPaneId,
     operationId: number
@@ -180,6 +182,10 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
       ) as WorkspacePaneState<TPaneId>,
     canRemovePane: (paneId) =>
       workspace.canRemovePane(paneId as NotepadPaneId),
+    beginPaneCollapse: (paneId) =>
+      workspace.beginPaneCollapse(paneId as NotepadPaneId),
+    endPaneCollapse: (paneId) =>
+      workspace.endPaneCollapse(paneId as NotepadPaneId),
     retirePane: (paneId, operationId) =>
       workspace.retirePane(
         paneId as NotepadPaneId,

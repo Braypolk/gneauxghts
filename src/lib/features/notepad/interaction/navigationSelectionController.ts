@@ -105,11 +105,12 @@ export function createNavigationSelectionController<
     const paneId = deps.getNavigationPaneId();
     deps.activatePane(paneId);
     await afterRender();
+    // Browsing matches is a preview, not a commit: persisting each previewed
+    // position would destroy the cursor the user wants to return to on Escape.
     deps.focusSearchRange(
       paneId,
       result.currentMatchRange
     );
-    deps.saveCursorPosition();
   }
 
   async function handleRecentTaskSelect(

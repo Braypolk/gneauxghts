@@ -409,7 +409,7 @@
         class="list-search-backdrop pointer-events-none absolute inset-x-0 bottom-0 z-20 min-h-12 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
       ></div>
 
-      <SearchDock insetVariable="--list-search-bottom-inset">
+      <SearchDock>
         <SearchBar
           value={searchQuery}
           placeholder="Find tasks"

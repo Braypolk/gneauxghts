@@ -2,7 +2,7 @@ import { describeBlockAt, type BlockDescriptor } from '$lib/features/notepad/edi
 import {
   readEditorState,
   replaceEditorDocument,
-  focusEditorSearchRange,
+  focusEditorSelection,
   setEditorCurrentSearchHighlightQuery,
   setProposalReviewExtensions,
   type EditorController,
@@ -76,6 +76,11 @@ export interface EditorCapabilityAdapter {
   ) => boolean;
   focusSearchRange: (
     range: { from: number; to: number } | null | undefined
+  ) => boolean;
+  /** Restores an arbitrary saved selection and takes focus. */
+  focusSelection: (
+    selection: { anchor: number; head: number } | null | undefined,
+    options?: { scrollIntoView?: boolean }
   ) => boolean;
   closeSlashMenu: () => void;
   closeSelectionMenu: () => void;
@@ -196,7 +201,12 @@ export function createEditorCapabilityAdapter(
     setSearchHighlight: (query) =>
       setEditorCurrentSearchHighlightQuery(getController(), query),
     focusSearchRange: (range) =>
-      focusEditorSearchRange(getController(), range),
+      focusEditorSelection(
+        getController(),
+        range ? { anchor: range.from, head: range.to } : range
+      ),
+    focusSelection: (selection, options) =>
+      focusEditorSelection(getController(), selection, options),
     closeSlashMenu: () => {
       const controller = getController();
       if (controller) slashMenuHideFromUi(controller.view);

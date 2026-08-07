@@ -721,7 +721,7 @@
     class={`absolute inset-0 transition-opacity duration-100 ${isDeckVisible ? 'opacity-100' : 'opacity-0'} ${isHoveringNote ? 'cursor-pointer' : 'cursor-grab'}`}
   ></div>
 
-  <SearchDock insetVariable="--atlas-search-dock-inset" class="atlas-search-dock">
+  <SearchDock class="atlas-search-dock">
     <SearchBar
       class="atlas-search-bar"
       value={atlas.searchQuery}
@@ -833,7 +833,7 @@
 
   {#if atlas.selectedNode}
     <aside
-      class="atlas-node-inspector absolute inset-x-2 bottom-[calc(var(--atlas-search-dock-inset)+7rem)] z-20 flex max-h-[min(66%,34rem)] flex-col overflow-hidden rounded-[1.5rem] border border-border/80 bg-card/94 p-3 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:top-14 sm:right-5 sm:bottom-auto sm:max-h-[calc(100vh-5.5rem)] sm:w-[min(23rem,calc(100vw-2rem))] sm:rounded-2xl sm:bg-card/90 sm:p-4 sm:shadow-lg"
+      class="atlas-node-inspector absolute inset-x-2 bottom-[calc(var(--search-dock-bottom-inset)+7rem)] z-20 flex max-h-[min(66%,34rem)] flex-col overflow-hidden rounded-[1.5rem] border border-border/80 bg-card/94 p-3 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:top-14 sm:right-5 sm:bottom-auto sm:max-h-[calc(100vh-5.5rem)] sm:w-[min(23rem,calc(100vw-2rem))] sm:rounded-2xl sm:bg-card/90 sm:p-4 sm:shadow-lg"
       aria-label={`Selected note: ${atlas.selectedNode.title}`}
     >
       <div class="flex items-start justify-between gap-3">
@@ -1016,7 +1016,7 @@
     </aside>
   {:else if atlas.selectedCloud}
     <aside
-      class="atlas-cloud-inspector absolute inset-x-2 bottom-[calc(var(--atlas-search-dock-inset)+7rem)] z-20 rounded-[1.5rem] border border-border/80 bg-card/94 p-4 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:right-4 sm:bottom-24 sm:w-[min(22rem,calc(100vw-2rem))] sm:bg-card/90 sm:shadow-lg"
+      class="atlas-cloud-inspector absolute inset-x-2 bottom-[calc(var(--search-dock-bottom-inset)+7rem)] z-20 rounded-[1.5rem] border border-border/80 bg-card/94 p-4 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:right-4 sm:bottom-24 sm:w-[min(22rem,calc(100vw-2rem))] sm:bg-card/90 sm:shadow-lg"
       aria-label={`Selected cloud: ${formatCloudLabelText(atlas.selectedCloud)}`}
     >
       <div class="flex items-start justify-between gap-3">
@@ -1064,7 +1064,6 @@
 
 <style>
   .atlas-surface {
-    --atlas-search-dock-inset: env(safe-area-inset-bottom, 0px);
     background: var(--background);
   }
 
@@ -1095,9 +1094,4 @@
     }
   }
 
-  @media (min-width: 640px) {
-    .atlas-surface {
-      --atlas-search-dock-inset: calc(1rem + 1px);
-    }
-  }
 </style>

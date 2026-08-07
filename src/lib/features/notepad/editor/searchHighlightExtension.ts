@@ -137,19 +137,26 @@ export function setEditorCurrentSearchHighlightQuery(
   return true;
 }
 
-export function focusEditorSearchRange(
+export interface FocusEditorSelectionOptions {
+  /** When false, keep the current viewport (used when dismissing search). */
+  scrollIntoView?: boolean;
+}
+
+/** Moves the selection to a document range and takes focus. */
+export function focusEditorSelection(
   controller: EditorController | null,
-  range: { from: number; to: number } | null | undefined
+  selection: { anchor: number; head: number } | null | undefined,
+  { scrollIntoView = true }: FocusEditorSelectionOptions = {}
 ) {
-  if (!controller || !range) {
+  if (!controller || !selection) {
     return false;
   }
 
-  const from = clampPos(controller.view.state.doc, range.from);
-  const to = clampPos(controller.view.state.doc, range.to);
+  const anchor = clampPos(controller.view.state.doc, selection.anchor);
+  const head = clampPos(controller.view.state.doc, selection.head);
   controller.view.dispatch({
-    selection: { anchor: from, head: to },
-    scrollIntoView: true
+    selection: { anchor, head },
+    ...(scrollIntoView ? { scrollIntoView: true } : {})
   });
   controller.view.focus();
   return true;

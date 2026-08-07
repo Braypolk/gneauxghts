@@ -189,6 +189,8 @@ pub fn run() {
             commands::atlas_commands::clear_atlas_cache,
             commands::chat_commands::chat_get_settings,
             commands::chat_commands::chat_set_settings,
+            commands::chat_commands::chat_get_composer_draft,
+            commands::chat_commands::chat_set_composer_draft,
             commands::chat_commands::chat_get_key_status,
             commands::chat_commands::chat_set_api_key,
             commands::chat_commands::chat_create_conversation,

@@ -4,7 +4,6 @@
     ChatController,
     ChatControllerState
   } from './controller.svelte';
-  import type { ChatDraftSeed } from './discussionContext';
   import type {
     ChatActiveNoteSnapshot,
     ChatAgentProposal,
@@ -36,7 +35,11 @@
       citation: Extract<ChatCitation, { kind: 'note' }>
     ) => void | Promise<void>;
     placeholder?: string;
-    draftSeed?: ChatDraftSeed | null;
+    /**
+     * Durable identity for this surface, used to keep unsent composer text
+     * before a conversation exists. Omit to disable draft persistence.
+     */
+    draftSlot?: string | null;
     contextNote?: ChatContextNote | null;
     getActiveNoteSnapshot?: () => Promise<ChatActiveNoteSnapshot | null>;
     targetAnchor?: string | null;
@@ -63,7 +66,7 @@
     onSurfaceHandleChange,
     onOpenCitation,
     placeholder = 'What are you thinking about?',
-    draftSeed = null,
+    draftSlot = null,
     contextNote = null,
     getActiveNoteSnapshot,
     targetAnchor = null,
@@ -182,6 +185,7 @@
     {snapshot}
     {showConversationPicker}
     bind:titleDraft
+    contextNoteTitle={contextNote?.noteTitle ?? null}
     {openMenu}
     onOpenMenu={(menu) => (openMenu = menu)}
     onFocusComposer={() => composerElement?.focus()}
@@ -221,7 +225,7 @@
       {variant}
       {placeholder}
       {titleDraft}
-      {draftSeed}
+      {draftSlot}
       {contextNote}
       {getActiveNoteSnapshot}
       {configurationReady}

@@ -158,6 +158,9 @@ function normalizeExcerpt(raw: RawExcerpt, linkTarget = `#^${raw.anchor}`): Chat
 export interface ChatApi {
   getSettings(): Promise<ChatSettings>;
   setSettings(settings: ChatSettings): Promise<ChatSettings>;
+  /** Unsent composer text for a conversation or an unsent pane draft. */
+  getComposerDraft(slot: string): Promise<string>;
+  setComposerDraft(slot: string, body: string): Promise<void>;
   getKeyStatus(provider?: string): Promise<ChatKeyStatus>;
   setApiKey(provider: string, apiKey: string): Promise<ChatKeyStatus>;
   createConversation(input?: {
@@ -210,6 +213,8 @@ export interface ChatApi {
 export const CHAT_COMMANDS = {
   getSettings: 'chat_get_settings',
   setSettings: 'chat_set_settings',
+  getComposerDraft: 'chat_get_composer_draft',
+  setComposerDraft: 'chat_set_composer_draft',
   getKeyStatus: 'chat_get_key_status',
   setApiKey: 'chat_set_api_key',
   createConversation: 'chat_create_conversation',
@@ -261,6 +266,12 @@ export class TauriChatApi implements ChatApi {
       }
     });
     return normalizeSettings(raw);
+  }
+  getComposerDraft(slot: string) {
+    return invoke<string>(CHAT_COMMANDS.getComposerDraft, { slot });
+  }
+  setComposerDraft(slot: string, body: string) {
+    return invoke<void>(CHAT_COMMANDS.setComposerDraft, { slot, body });
   }
   async getKeyStatus(provider = 'openai') {
     const raw = await invoke<{ configured: boolean }>(CHAT_COMMANDS.getKeyStatus);

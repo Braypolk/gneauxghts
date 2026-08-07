@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { History, MessagesSquare, X } from '@lucide/svelte';
+  import { CornerUpLeft, MessagesSquare, X } from '@lucide/svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
   import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
   import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
   import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
+  import { editorChromeInset } from '$lib/features/notepad/editor/editorChromeInset';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import type {
     PaneViewModel,
@@ -44,7 +45,7 @@
 
   const splitPaneActionIcons = {
     'open-chat': MessagesSquare,
-    'open-previous': History,
+    'open-previous': CornerUpLeft,
     close: X
   } as const;
 
@@ -166,7 +167,7 @@
               aria-label="Open previous location"
               title="Open previous location"
             >
-              <History class="h-4 w-4" />
+              <CornerUpLeft class="h-4 w-4" />
             </button>
           </div>
         {/if}
@@ -183,11 +184,12 @@
         />
         <div
           bind:this={pane.refs.editorShell}
+          use:editorChromeInset
           class={`notepad-editor-shell relative h-full min-h-0 min-w-0 flex-1 overflow-hidden overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
             viewModel.isSlashMenuOpen ? 'overscroll-none touch-none' : ''
           } ${
             viewModel.isPaneCommandOpen
-              ? '[--editor-bottom-padding:calc(7rem+env(safe-area-inset-bottom,0px)+var(--keyboard-inset-height,0px))]'
+              ? '[--editor-scroll-past-end:0px]'
               : ''
           }`}
         >
@@ -207,7 +209,7 @@
 
           {#if viewModel.isPaneCommandOpen}
             <div class="pointer-events-none absolute inset-0 z-20">
-              <div class="pointer-events-auto absolute top-[calc(var(--editor-top-padding)+5.25rem)] left-1/2 box-border w-[min(calc(100%-2rem),var(--editor-readable-width))] max-w-md -translate-x-1/2 cursor-default">
+              <div class="pointer-events-auto absolute top-[calc(var(--editor-top-padding)+5.25rem)] left-1/2 box-border w-[min(calc(100%-2rem),var(--content-readable-width))] max-w-md -translate-x-1/2 cursor-default">
                 <div class="w-full flex items-center pb-6 gap-3">
                   <div class="flex-1 h-[1px] rounded-full bg-border/70"></div>
                   <span class="text-base md:text-lg text-muted-foreground/80 select-none">or</span>
@@ -231,12 +233,12 @@
         </div>
       </div>
     {:else}
-      <div class="chat-pane-shell flex min-h-0 flex-1 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] sm:pb-24">
+      <div class="chat-pane-shell flex min-h-0 flex-1 pb-(--command-bar-clearance)">
         {#if viewModel.chat.session.controller}
           <ChatPanel
             controller={viewModel.chat.session.controller}
             conversationId={viewModel.chat.session.conversationId}
-            draftSeed={viewModel.chat.session.draftSeed}
+            draftSlot={viewModel.chat.session.draftSlot}
             contextNote={viewModel.chat.context.note}
             getActiveNoteSnapshot={viewModel.chat.context.getActiveNoteSnapshot}
             targetAnchor={viewModel.chat.session.targetAnchor}
@@ -261,6 +263,23 @@
 </div>
 
 <style>
+  /*
+   * The editor's vertical padding is composed here rather than on
+   * `.notepad-shell` because both inputs are overridden on this element: the
+   * measured overlay inset by `editorChromeInset`, and the scroll slack by the
+   * pane command picker. A custom property substitutes its own `var()`
+   * references where it is declared, so the composition has to sit alongside
+   * the overrides to see them.
+   */
+  .notepad-editor-shell {
+    --editor-top-padding: calc(
+      var(--editor-overlay-inset) + var(--editor-top-breathing-room)
+    );
+    --editor-bottom-padding: calc(
+      var(--editor-chrome-clearance) + var(--editor-scroll-past-end)
+    );
+  }
+
   /* SplitPaneButton fans its quick actions left from a w-9 anchor. */
   .chat-pane-split-slot {
     width: 11.75rem;

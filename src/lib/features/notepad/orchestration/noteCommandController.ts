@@ -64,6 +64,11 @@ export interface NoteCommandControllerDeps<
     location: NavLocation
   ) => void;
   touchCurrentLocation: (paneId: TPaneId) => void;
+  bindChatContextToNote: (
+    paneId: TPaneId,
+    noteId: string | null,
+    notePath: string | null
+  ) => void;
   removeLocation: (location: NavLocation) => void;
   isLocationTouchSuppressed: () => boolean;
   bumpLocationHistoryEpoch: () => void;
@@ -665,6 +670,20 @@ export function createNoteCommandController<
           );
         }
         if (!isOpenCurrent()) return;
+        // Opened notes are not always MRU-touched as destinations; still keep
+        // the thought-partner slot on this pane pointed at the note now shown.
+        if (
+          paneHasCapability(
+            panes.getPaneKind(paneId),
+            'edit-document'
+          )
+        ) {
+          deps.bindChatContextToNote(
+            paneId,
+            getDocumentNoteId(nextDocument),
+            getDocumentPath(nextDocument)
+          );
+        }
         panes.updateSelectedRelatedText();
         deps.base.onDocumentPresented?.(nextDocument);
         if (!panes.getNoteByKey(previousDocument.key)) {

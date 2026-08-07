@@ -6,9 +6,9 @@ import {
   createNoteDraftState
 } from '$lib/features/notepad/state/noteStore';
 import {
-  loadCursorPosition,
-  saveCursorPosition
-} from '$lib/features/notepad/editor/cursorState';
+  loadEditorViewState,
+  saveEditorViewState
+} from '$lib/features/notepad/editor/editorViewState';
 import { createDocumentDepartureController } from './documentDepartureController';
 
 describe('document departure controller', () => {
@@ -60,7 +60,7 @@ describe('document departure controller', () => {
         if (document.identity.kind !== 'persisted') {
           throw new Error('Expected a persisted identity');
         }
-        saveCursorPosition(
+        saveEditorViewState(
           document.identity.path,
           { anchor: 9, head: 9 },
           'pane-1',
@@ -87,7 +87,7 @@ describe('document departure controller', () => {
       'clear-last-opened'
     ]);
     expect(
-      loadCursorPosition(
+      loadEditorViewState(
         '/vault/Draft.md',
         'pane-1',
         'note-1'

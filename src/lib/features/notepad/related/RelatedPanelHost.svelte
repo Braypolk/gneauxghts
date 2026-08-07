@@ -71,9 +71,9 @@
         title={collapsed ? 'Expand related notes' : 'Collapse related notes'}
         onclick={onToggle}
       >
-        <span class="flex h-28 w-7 items-center justify-center rounded-full border border-border/70 bg-card/92 p-1 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground shadow-lg backdrop-blur-md [writing-mode:horizontal-tb]">
-          <span class="flex h-full w-full items-center justify-center rounded-full transition-colors group-hover:bg-accent group-hover:text-accent-foreground">
-            <span class="-rotate-90">RELATED</span>
+        <span class="flex h-28 w-7 items-center justify-center rounded-full border border-border/70 bg-card p-1 text-[11px] font-medium text-muted-foreground shadow-sm [writing-mode:horizontal-tb]">
+          <span class="flex h-full w-full items-center justify-center rounded-full transition-colors group-hover:bg-muted group-hover:text-foreground">
+            <span class="-rotate-90">Related</span>
           </span>
         </span>
       </button>
@@ -112,14 +112,14 @@
 
       <button
         type="button"
-        class="pointer-events-auto absolute right-0 bottom-0 inline-flex h-11 items-center gap-2 rounded-full border border-border/70 bg-card/92 px-4 py-2 text-[11px] font-semibold tracking-[0.16em] text-muted-foreground shadow-lg backdrop-blur-md transition hover:text-foreground"
+        class="pointer-events-auto absolute right-0 bottom-0 inline-flex h-11 items-center gap-2 rounded-full border border-border/70 bg-card px-4 py-2 text-xs font-medium text-muted-foreground shadow-sm transition hover:bg-muted hover:text-foreground"
         aria-expanded={!collapsed}
         aria-controls="related-drawer-panel"
         aria-label={collapsed ? 'Expand related notes' : 'Collapse related notes'}
         title={collapsed ? 'Expand related notes' : 'Collapse related notes'}
         onclick={onToggle}
       >
-        RELATED
+        Related
       </button>
     </div>
   </div>

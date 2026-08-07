@@ -48,7 +48,8 @@ function reviewRuntime(): ProposalReviewRuntime {
         status: 'pending'
       }
     ],
-    workingMarkdown: 'new'
+    workingMarkdown: 'new',
+    suspendedMarkdown: null
   };
 }
 

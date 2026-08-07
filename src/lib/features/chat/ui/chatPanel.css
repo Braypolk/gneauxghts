@@ -1,6 +1,15 @@
+/* `.chat-content-lane` width lives in `src/app.css` next to the token. */
+
 .chat-panel-header {
   /* History on the left + reserved split fan and close/split chrome on the right. */
   padding-right: 15.5rem;
+  /* The title block is absolutely positioned so it can center across the whole
+     header, so the header has to reserve the height its content needs. */
+  min-height: 3.25rem;
+}
+
+.chat-panel-header--with-context {
+  min-height: 4.5rem;
 }
 
 .chat-panel-bottom {
@@ -49,7 +58,7 @@
   align-items: center;
   gap: 0.35rem;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--radius);
   background: color-mix(in oklab, var(--muted) 65%, transparent);
   padding: 0.4rem 0.55rem;
   font-size: 0.75rem;
@@ -66,7 +75,7 @@
   display: block;
   overflow: hidden;
   border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
-  border-radius: 0.75rem;
+  border-radius: var(--radius);
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 .chat-attachment-image:hover,
@@ -87,7 +96,7 @@
   align-items: center;
   gap: 0.4rem;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--radius);
   background: color-mix(in oklab, var(--muted) 65%, transparent);
   padding: 0.3rem 0.4rem;
   font-size: 0.72rem;
@@ -234,11 +243,14 @@
 }
 
 .chat-message {
-  max-width: min(94%, 44rem);
+  width: 100%;
+  max-width: 100%;
   padding: 0.15rem 0;
 }
 .chat-message--user {
   align-self: flex-end;
+  width: fit-content;
+  max-width: 100%;
   border-radius: 1.1rem;
   background: color-mix(in oklab, var(--muted) 78%, transparent);
   padding: 0.7rem 1rem;

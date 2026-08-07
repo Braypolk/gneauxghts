@@ -5,10 +5,6 @@ import {
   createChatController,
   type ChatController
 } from '$lib/features/chat/controller.svelte';
-import {
-  formatDiscussionDraft,
-  type ChatDraftSeed
-} from '$lib/features/chat/discussionContext';
 import type {
   ChatAgentProposal,
   ChatSelection,
@@ -35,7 +31,6 @@ interface RecentlyForgottenChat<TPaneId extends string> {
 }
 
 export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
-  maxVisiblePanes: number;
   getPaneOrder: () => TPaneId[];
   getActivePaneId: () => TPaneId;
   getPaneKind: (paneId: TPaneId) => PaneKind;
@@ -57,10 +52,6 @@ export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
     paneId: TPaneId,
     choice: 'thoughtPartner'
   ) => Promise<void>;
-  setPaneKind: (
-    paneId: TPaneId,
-    kind: PaneKind
-  ) => Promise<void>;
   focusPane: (paneId: TPaneId) => void;
   insertMarkdown: NotepadFeatureHost['insertMarkdown'];
   getProposalOrchestration: () => ReturnType<
@@ -79,9 +70,6 @@ export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
  * capabilities, but does not retain chat-controller or archive bookkeeping.
  */
 export class NotepadChatCoordinator<TPaneId extends string> {
-  readonly draftSeeds = $state<
-    Partial<Record<TPaneId, ChatDraftSeed>>
-  >({});
   readonly targetAnchors = $state<
     Partial<Record<TPaneId, string | null>>
   >({});
@@ -94,8 +82,6 @@ export class NotepadChatCoordinator<TPaneId extends string> {
   private readonly controllers = new Map<TPaneId, ChatController>();
   private readonly surfaceHandles = new Map<TPaneId, ChatSurfaceHandle>();
   private readonly api: ChatApi;
-  private discussionSeedCounter = 0;
-  private discussionInProgress = false;
 
   constructor(
     initialPaneIds: TPaneId[],
@@ -132,10 +118,6 @@ export class NotepadChatCoordinator<TPaneId extends string> {
       );
     }
     return controller;
-  }
-
-  getDraftSeed(paneId: TPaneId) {
-    return this.draftSeeds[paneId] ?? null;
   }
 
   getTargetAnchor(paneId: TPaneId) {
@@ -323,101 +305,6 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     return true;
   }
 
-  async discussSelection(sourcePaneId: TPaneId, selectedText: string) {
-    const text = selectedText.trim();
-    if (!text || this.discussionInProgress) return;
-    this.discussionInProgress = true;
-
-    try {
-      const order = [...this.deps.getPaneOrder()];
-      let chatPaneId =
-        order.find(
-          (paneId) => this.paneHostsChat(paneId)
-        ) ?? null;
-      let openedNewChatSurface = false;
-      let createdSplitPane = false;
-
-      if (!chatPaneId && order.length < this.deps.maxVisiblePanes) {
-        const previousPaneIds = new Set(order);
-        await this.deps.splitWorkspace();
-        chatPaneId =
-          this.deps
-            .getPaneOrder()
-            .find((paneId) => !previousPaneIds.has(paneId)) ?? null;
-        openedNewChatSurface = Boolean(chatPaneId);
-        createdSplitPane = Boolean(chatPaneId);
-      }
-
-      if (!chatPaneId) {
-        chatPaneId =
-          order.find((paneId) => paneId !== sourcePaneId) ?? null;
-        openedNewChatSurface = Boolean(
-          chatPaneId &&
-            !this.paneHostsChat(chatPaneId)
-        );
-      }
-      if (!chatPaneId) return;
-
-      const controller = this.getController(chatPaneId);
-      let conversation = controller.getSnapshot().conversation;
-
-      if (openedNewChatSurface) {
-        await controller.initialize();
-        const label = text.replace(/\s+/g, ' ').slice(0, 48);
-        controller.startNewConversation({
-          title: label ? `About: ${label}` : 'Selection discussion'
-        });
-        conversation = null;
-      } else {
-        const conversationId =
-          this.deps.getPaneConversationId(chatPaneId);
-        if (
-          !conversation ||
-          (conversationId && conversation.id !== conversationId)
-        ) {
-          await controller.initialize(conversationId);
-          conversation = controller.getSnapshot().conversation;
-        }
-        if (!conversation) {
-          controller.startNewConversation({
-            title: 'Selection discussion'
-          });
-        }
-      }
-
-      if (conversation) {
-        this.deps.setPaneConversationId(
-          chatPaneId,
-          conversation.id
-        );
-      }
-
-      const sourceDocument = this.deps.getPaneDocument(sourcePaneId);
-      this.discussionSeedCounter += 1;
-      this.draftSeeds[chatPaneId] = {
-        id: `${Date.now()}-${this.discussionSeedCounter}`,
-        text: formatDiscussionDraft(
-          text,
-          sourceDocument.working.title
-        )
-      };
-
-      if (createdSplitPane) {
-        await this.deps.resolvePaneCommandChoice(
-          chatPaneId,
-          'thoughtPartner'
-        );
-      } else if (!this.paneHostsChat(chatPaneId)) {
-        await this.deps.setPaneKind(chatPaneId, 'chat');
-      } else {
-        this.deps.setActivePane(chatPaneId);
-      }
-      await tick();
-    } finally {
-      this.discussionInProgress = false;
-    }
-  }
-
   async startNewActiveItem() {
     const paneId = this.deps.getActivePaneId();
     if (!this.paneHostsChat(paneId)) {
@@ -499,7 +386,6 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     if (this.recentlyForgotten?.paneId === paneId) {
       this.recentlyForgotten = null;
     }
-    delete this.draftSeeds[paneId];
     delete this.targetAnchors[paneId];
   }
 

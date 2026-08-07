@@ -12,17 +12,17 @@ import {
   type PaneMembershipEvent
 } from '$lib/features/notepad/pane/paneLifecycleMachine';
 
-type PaneId = 'left' | 'right';
+type PaneId = 'left' | 'right' | 'extra';
 
-function document() {
+function document(name = 'note') {
   return createNoteDraftState({
     ...createEmptySessionSnapshot(),
     title: 'Note',
-    currentNoteId: 'note',
-    currentNotePath: '/vault/note.md',
+    currentNoteId: name,
+    currentNotePath: `/vault/${name}.md`,
     lastSavedTitle: 'Note',
-    lastSavedNoteId: 'note',
-    lastSavedPath: '/vault/note.md'
+    lastSavedNoteId: name,
+    lastSavedPath: `/vault/${name}.md`
   });
 }
 
@@ -34,6 +34,9 @@ function harness(
     completeWorkspacePaneDisposal?: () => boolean;
     canRemoveWorkspacePane?: () => boolean;
     getPaneOrder?: () => PaneId[];
+    getActivePaneId?: () => PaneId;
+    createPane?: () => PaneId;
+    getPaneDocument?: (paneId: PaneId) => ReturnType<typeof document>;
     loadRecentNotes?: () => Promise<unknown>;
     onDocumentLeaving?: (
       paneId: PaneId,
@@ -42,6 +45,7 @@ function harness(
   } = {}
 ) {
   const note = document();
+  const beginPaneCommand = vi.fn();
   const retireWorkspacePane =
     overrides.retireWorkspacePane ??
     vi.fn(() => ({
@@ -60,7 +64,8 @@ function harness(
     });
   const memberships: Record<PaneId, ReturnType<typeof createPaneMembershipState>> = {
     left: createPaneMembershipState(true),
-    right: createPaneMembershipState()
+    right: createPaneMembershipState(),
+    extra: createPaneMembershipState()
   };
   const dispatchPaneMembership = vi.fn(
     (paneId: PaneId, event: PaneMembershipEvent) => {
@@ -81,7 +86,7 @@ function harness(
       getPaneMembership: (paneId: PaneId) =>
         memberships[paneId],
       dispatchPaneMembership,
-      createPane: () => 'right',
+      createPane: overrides.createPane ?? (() => 'right'),
       completeWorkspacePaneCreation: (
         paneId: PaneId,
         operationId: number
@@ -94,7 +99,12 @@ function harness(
       },
       canRemoveWorkspacePane:
         overrides.canRemoveWorkspacePane ?? (() => true),
-      getPaneDocument: () => note,
+      paneCloseAnimation: {
+        collapse: vi.fn(async () => undefined),
+        release: vi.fn()
+      },
+      getPaneDocument: overrides.getPaneDocument ?? (() => note),
+      setPaneDocument: vi.fn(),
       getPaneKind: () => 'editor',
       getPaneConversationId: () => null,
       setStoredPaneKind: vi.fn(() => true),
@@ -135,7 +145,8 @@ function harness(
         }
         return result;
       },
-      getActivePaneId: () => 'right',
+      getActivePaneId: overrides.getActivePaneId ?? (() => 'right'),
+      beginPaneCommand,
       adoptClosedLocation: vi.fn(),
       activatePaneSession: vi.fn(),
       updateSelectedRelatedText: vi.fn(),
@@ -155,6 +166,7 @@ function harness(
     controller,
     retireWorkspacePane,
     disposePaneRuntime,
+    beginPaneCommand,
     getMembership: (paneId: PaneId = 'left') =>
       memberships[paneId]
   };
@@ -249,6 +261,31 @@ describe('workspace pane creation lifecycle', () => {
     expect(disposePaneRuntime).toHaveBeenCalledWith(
       'right',
       null
+    );
+  });
+});
+
+describe('workspace pane split source', () => {
+  it('inherits the split from the active pane, not the first pane in order', async () => {
+    const notes: Record<PaneId, ReturnType<typeof document>> = {
+      left: document('left-note'),
+      right: document('right-note'),
+      extra: document('extra-note')
+    };
+    const { controller, beginPaneCommand } = harness({
+      getPaneOrder: () => ['left', 'right'],
+      getActivePaneId: () => 'right',
+      createPane: () => 'extra',
+      getPaneDocument: (paneId) => notes[paneId]
+    });
+
+    await controller.splitWorkspace();
+
+    expect(beginPaneCommand).toHaveBeenCalledWith(
+      'extra',
+      notes.right.key,
+      'split',
+      'right'
     );
   });
 });

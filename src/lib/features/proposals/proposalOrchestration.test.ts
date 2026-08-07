@@ -73,6 +73,7 @@ function fakeEditor(initialMarkdown = 'Before') {
     insertMarkdown: () => null,
     setSearchHighlight: () => false,
     focusSearchRange: () => false,
+    focusSelection: () => false,
     closeSlashMenu: () => {},
     closeSelectionMenu: () => {},
     addReadOnlyOverlay: () => ({ dispose: () => undefined }),
@@ -150,6 +151,9 @@ function setup(options: { opened?: boolean } = {}) {
   const session = createProposalReviewSession();
   let opened = options.opened ?? false;
   let currentEditor = firstEditor;
+  // Mirrors the real adapter, which resolves an editor only from panes that
+  // currently display the requested document.
+  let editorDocument: ReturnType<typeof note> | null = document;
   const commit = vi.fn<() => Promise<CommitNoteReviewResult>>(
     async () => ({
       status: 'committed',
@@ -173,7 +177,8 @@ function setup(options: { opened?: boolean } = {}) {
   const orchestration = createProposalOrchestration({
     getEditorPaneDocument: (requestedPath) =>
       opened && requestedPath === path ? document : null,
-    getEditorForDocument: () => currentEditor.adapter,
+    getEditorForDocument: (requested) =>
+      requested === editorDocument ? currentEditor.adapter : null,
     ensureEditorPaneForReview,
     openNoteForReview,
     activateEditorPane,
@@ -197,6 +202,10 @@ function setup(options: { opened?: boolean } = {}) {
     orchestration,
     setCurrentEditor: (editor: ReturnType<typeof fakeEditor>) => {
       currentEditor = editor;
+    },
+    /** Rebinds the editor pane to another document, or to none. */
+    setEditorDocument: (next: ReturnType<typeof note> | null) => {
+      editorDocument = next;
     },
     request: {
       proposalId: 'proposal-1',
@@ -290,6 +299,38 @@ describe('durable proposal editor review', () => {
       updatesAfterInitialInstall
     );
     expect(test.firstEditor.installed).toBe(true);
+  });
+
+  it('keeps a suspended review bound to its own note while the pane shows another note', async () => {
+    const test = setup();
+    await test.orchestration.loadDurableProposal(test.request);
+    expect(test.firstEditor.markdown).toBe('After');
+
+    // Leaving the proposed note releases the review's editor.
+    test.orchestration.suspendDocument(test.document, test.firstEditor.adapter);
+
+    // The same pane now presents an unrelated note through the same adapter.
+    test.firstEditor.adapter.replaceDocument('Unrelated note body');
+    test.setEditorDocument(null);
+
+    // A review action arriving while the pane shows another note must not adopt
+    // that note's text as the proposed working copy.
+    test.orchestration.keepAll();
+    test.orchestration.undoAll();
+
+    // Returning to the proposed note restores the proposal, not the other note.
+    const remounted = fakeEditor('Before');
+    test.setCurrentEditor(remounted);
+    test.setEditorDocument(test.document);
+
+    expect(test.orchestration.restoreDocument(test.document)).toBe(true);
+    expect(test.document.working.markdown).toBe('After');
+
+    test.orchestration.attachEditor(test.document, remounted.adapter);
+
+    expect(remounted.markdown).toBe('After');
+    expect(remounted.installed).toBe(true);
+    expect(test.commit).not.toHaveBeenCalled();
   });
 
   it('reactivates a remounted editor before focusing the next hunk', async () => {

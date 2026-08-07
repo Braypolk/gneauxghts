@@ -64,6 +64,9 @@ function setup(options: {
       })
     };
   const setPaneConversationId = vi.fn();
+  const setPaneDocument = vi.fn((paneId: PaneId, document: NoteDraftState) => {
+    documents[paneId] = document;
+  });
   const touchPaneLocation = vi.fn();
   const setActivePane = vi.fn();
   const openNote = vi.fn(async () => {});
@@ -74,7 +77,6 @@ function setup(options: {
   const controller = {} as ChatController;
   const coordinator = {
     getController: vi.fn(() => controller),
-    getDraftSeed: vi.fn(() => null),
     getTargetAnchor: vi.fn(() => null),
     selectionActions: {},
     setSurfaceHandle,
@@ -97,10 +99,11 @@ function setup(options: {
     getPaneOrder: () => paneOrder,
     getPaneKind: (paneId) => paneKinds[paneId],
     getPaneDocument: (paneId) => documents[paneId],
+    setPaneDocument,
     getPaneConversationId: () => 'conversation-1',
     setPaneConversationId,
     touchPaneLocation,
-    getSelectedRelatedText: () => 'selected text',
+    getPaneSelectedText: (paneId) => `${paneId} selection`,
     getEditorPaneIds: () => options.editorPaneIds ?? ['editor'],
     setActivePane,
     openNote,
@@ -110,6 +113,7 @@ function setup(options: {
   return {
     adapter,
     documents,
+    setPaneDocument,
     setPaneConversationId,
     touchPaneLocation,
     setActivePane,
@@ -117,7 +121,9 @@ function setup(options: {
     flushPendingAutosave,
     getNoteSaveQueue,
     setSurfaceHandle,
-    reviewAgentProposal
+    reviewAgentProposal,
+    paneOrder,
+    paneKinds
   };
 }
 
@@ -141,13 +147,40 @@ describe('createNotepadChatPaneAdapter', () => {
     );
   });
 
-  it('uses the chat pane retained note and waits for its save before snapshotting', async () => {
+  it('follows the sibling editor note and waits for its save before snapshotting', async () => {
     const {
       adapter,
       documents,
       flushPendingAutosave,
       getNoteSaveQueue
     } = setup();
+
+    const bindings = adapter.getBindings('chat');
+    expect(bindings.context.note).toEqual({
+      noteId: 'note-1',
+      notePath: 'Notes/Project.md',
+      noteTitle: 'Project'
+    });
+
+    const snapshot = await bindings.context.getActiveNoteSnapshot();
+
+    expect(flushPendingAutosave).toHaveBeenCalledWith(documents.editor);
+    expect(getNoteSaveQueue).toHaveBeenCalledWith(documents.editor);
+    expect(snapshot).toMatchObject({
+      noteId: 'note-1',
+      title: 'Project',
+      path: 'Notes/Project.md',
+      body: '# Project\n\nCurrent draft',
+      selection: 'editor selection'
+    });
+    expect(snapshot?.bodyHash).toBeTruthy();
+  });
+
+  it('uses the chat pane retained note when no editor pane is visible', async () => {
+    const { adapter, documents, getNoteSaveQueue } = setup({
+      paneOrder: ['chat'],
+      paneKinds: { chat: 'chat', editor: 'chat' }
+    });
 
     const bindings = adapter.getBindings('chat');
     expect(bindings.context.note).toEqual({
@@ -158,29 +191,48 @@ describe('createNotepadChatPaneAdapter', () => {
 
     const snapshot = await bindings.context.getActiveNoteSnapshot();
 
-    expect(flushPendingAutosave).toHaveBeenCalledWith(documents.chat);
     expect(getNoteSaveQueue).toHaveBeenCalledWith(documents.chat);
     expect(snapshot).toMatchObject({
       noteId: 'context-note',
-      title: 'Chat Context',
       path: 'Notes/Chat Context.md',
       body: '# Chat Context\n\nRetained draft',
-      selection: 'selected text'
+      selection: 'chat selection'
     });
-    expect(snapshot?.bodyHash).toBeTruthy();
+  });
+
+  it('aligns the chat retained note with the sibling editor it follows', () => {
+    const { adapter, documents, setPaneDocument, paneOrder, paneKinds } =
+      setup();
+
+    adapter.syncRetainedContexts();
+
+    expect(setPaneDocument).toHaveBeenCalledWith('chat', documents.editor);
+    expect(documents.chat).toBe(documents.editor);
+
+    // After the editor closes, context falls back to the aligned retain.
+    paneOrder.length = 0;
+    paneOrder.push('chat');
+    paneKinds.chat = 'chat';
+    paneKinds.editor = 'chat';
+
+    expect(adapter.getBindings('chat').context.note).toEqual({
+      noteId: 'note-1',
+      notePath: 'Notes/Project.md',
+      noteTitle: 'Project'
+    });
   });
 
   it('rejects a snapshot when the note save failed', async () => {
     const { adapter, documents, getNoteSaveQueue } = setup();
     getNoteSaveQueue.mockImplementation(async () => {
-      dispatchDocumentOperation(documents.chat, {
+      dispatchDocumentOperation(documents.editor, {
         type: 'start',
         operation: 'saving'
       });
-      dispatchDocumentOperation(documents.chat, {
+      dispatchDocumentOperation(documents.editor, {
         type: 'fail',
         error: new Error('disk failed'),
-        token: documents.chat.operation.token
+        token: documents.editor.operation.token
       });
     });
 

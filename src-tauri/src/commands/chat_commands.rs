@@ -182,6 +182,23 @@ pub(crate) fn chat_set_settings(
 }
 
 #[tauri::command]
+pub(crate) fn chat_get_composer_draft(
+    service: State<'_, ChatService>,
+    slot: String,
+) -> Result<String, String> {
+    service.get_composer_draft(&slot)
+}
+
+#[tauri::command]
+pub(crate) fn chat_set_composer_draft(
+    service: State<'_, ChatService>,
+    slot: String,
+    body: String,
+) -> Result<(), String> {
+    service.set_composer_draft(&slot, &body)
+}
+
+#[tauri::command]
 pub(crate) fn chat_get_key_status(app: AppHandle) -> Result<ChatKeyStatus, String> {
     Ok(ChatKeyStatus {
         configured: crate::secrets::has_openai_api_key(&app)?,

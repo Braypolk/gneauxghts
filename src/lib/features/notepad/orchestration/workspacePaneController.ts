@@ -14,6 +14,7 @@ import {
   canSetPaneKind,
   paneHasCapability
 } from '$lib/features/notepad/workspace/paneCapabilities';
+import { adoptChatContextFromLeavingEditor } from '$lib/features/notepad/workspace/paneRoles';
 import {
   getDocumentNoteId,
   getDocumentPath
@@ -28,6 +29,9 @@ import type {
   PaneMembershipEvent,
   PaneMembershipState
 } from '$lib/features/notepad/pane/paneLifecycleMachine';
+import type {
+  PaneCloseAnimation
+} from '$lib/features/notepad/workspace/paneCloseAnimation';
 
 export interface WorkspacePaneControllerDeps<
   TPaneId extends string
@@ -47,6 +51,7 @@ export interface WorkspacePaneControllerDeps<
     kind?: PaneKind
   ) => WorkspacePaneState<TPaneId>;
   canRemoveWorkspacePane: (paneId: TPaneId) => boolean;
+  paneCloseAnimation: PaneCloseAnimation<TPaneId>;
   retireWorkspacePane: (
     paneId: TPaneId,
     operationId: number
@@ -67,6 +72,7 @@ export interface WorkspacePaneControllerDeps<
     kind: PaneKind
   ) => boolean;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
+  setPaneDocument: (paneId: TPaneId, document: NoteDraftState) => void;
   getPaneTitleInput: (
     paneId: TPaneId
   ) => HTMLInputElement | null;
@@ -168,7 +174,12 @@ export function createWorkspacePaneController<
       return;
     }
 
-    const sourcePaneId = order[0] ?? deps.getActivePaneId();
+    // The new pane inherits from the pane the user is working in, not from
+    // whichever pane happens to sit first in the layout.
+    const activePaneId = deps.getActivePaneId();
+    const sourcePaneId = order.includes(activePaneId)
+      ? activePaneId
+      : order[0] ?? activePaneId;
     const targetPaneId = deps.createPane();
     const sharedDocument = deps.getPaneDocument(sourcePaneId);
     let creationOperationId: number | null = null;
@@ -358,6 +369,11 @@ export function createWorkspacePaneController<
       captureHistory: () => {
         closingLocation = deps.capturePaneLocation(paneId);
       },
+      // Collapse after the guards and the save have cleared, so a blocked or
+      // failed close never animates a pane that is staying.
+      prepare: async () => {
+        await deps.paneCloseAnimation.collapse(paneId);
+      },
       mutateWorkspace: () => {
         const wasPaneCommand =
           deps.getPaneCommandPaneId() === paneId;
@@ -365,6 +381,14 @@ export function createWorkspacePaneController<
           ? closingDocument.key
           : null;
         if (wasPaneCommand) deps.resetPaneCommand();
+        // Capture live chat context before this editor leaves paneOrder.
+        adoptChatContextFromLeavingEditor(
+          deps.getPaneOrder(),
+          deps.getPaneKind,
+          paneId,
+          closingDocument,
+          deps.setPaneDocument
+        );
         if (
           closeOperationId === null ||
           !deps.retireWorkspacePane(
@@ -382,6 +406,7 @@ export function createWorkspacePaneController<
         deps.getActivePaneId() === remainingPaneId,
       complete: async () => {
         await teardownRemovedPane();
+        deps.paneCloseAnimation.release(paneId);
         if (orphanPlaceholderKey) {
           deps.removeUnreferencedNote(orphanPlaceholderKey);
           cleanupNoteRuntime(orphanPlaceholderKey);
@@ -407,6 +432,7 @@ export function createWorkspacePaneController<
             operationId: closeOperationId
           });
         }
+        deps.paneCloseAnimation.release(paneId);
         await teardownRemovedPane();
       },
       onFailed: async () => {
@@ -416,6 +442,7 @@ export function createWorkspacePaneController<
             operationId: closeOperationId
           });
         }
+        deps.paneCloseAnimation.release(paneId);
         try {
           await teardownRemovedPane();
         } catch {
@@ -507,6 +534,17 @@ export function createWorkspacePaneController<
         }
       },
       mutateWorkspace: () => {
+        if (kind === 'chat') {
+          // Sibling chats that were following this editor need its note before
+          // the kind flip makes getChatContextPaneId fall back to stale retains.
+          adoptChatContextFromLeavingEditor(
+            deps.getPaneOrder(),
+            deps.getPaneKind,
+            paneId,
+            paneDocument,
+            deps.setPaneDocument
+          );
+        }
         if (!deps.setStoredPaneKind(paneId, kind)) {
           throw new Error(
             'Workspace rejected an allowed pane-kind transition.'
