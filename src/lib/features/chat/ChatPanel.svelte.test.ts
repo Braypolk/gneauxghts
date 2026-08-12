@@ -56,6 +56,7 @@ describe('ChatPanel initial render', () => {
     }).body;
 
     expect(body).toContain('Full vault');
+    expect(body).toContain('min-w-0 w-full max-w-full');
     expect(body).not.toContain('chat-composer-chip--emphasis');
   });
 

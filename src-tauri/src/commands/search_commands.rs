@@ -26,7 +26,7 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 /// Phase 5: short-lived cache of search/related results. Keys include the
 /// query text, current path, and current draft hash so that
@@ -671,6 +671,7 @@ pub(crate) async fn get_related_notes(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn retrieve_note_context(
+    app: AppHandle,
     state: State<'_, AppState>,
     scope: RetrievalContextScope,
     query: Option<String>,
@@ -709,15 +710,22 @@ pub(crate) async fn retrieve_note_context(
                     items: Vec::new(),
                 });
             };
-            let merged = crate::services::retrieval::retrieve_vault_notes(
-                &state,
-                &query,
-                effective_limit,
-                None,
-                &HashSet::new(),
-                None,
-                None,
-            )?;
+            let merged = tauri::async_runtime::spawn_blocking(move || {
+                let state = app
+                    .try_state::<AppState>()
+                    .ok_or_else(|| "The notes index is unavailable".to_string())?;
+                crate::services::retrieval::retrieve_vault_notes(
+                    &state,
+                    &query,
+                    effective_limit,
+                    None,
+                    &HashSet::new(),
+                    None,
+                    None,
+                )
+            })
+            .await
+            .map_err(|err| err.to_string())??;
             Ok(RetrievalContextResponse {
                 status: "ready".to_string(),
                 scope: "query".to_string(),

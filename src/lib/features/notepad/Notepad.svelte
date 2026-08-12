@@ -983,6 +983,7 @@
     getEditorPaneIds,
     setActivePane: workspaceStore.setActivePaneId,
     openNote: commands.openNotePath,
+    openWikilink,
     flushPendingAutosave,
     getNoteSaveQueue: (document) => getNoteSaveQueue(document.key),
   });
@@ -1547,62 +1548,6 @@
       var(--background)
     );
     --gn-editor-selection-color: var(--background);
-    --gn-task-checkbox-border: color-mix(
-      in oklab,
-      var(--foreground) 20%,
-      var(--card) 80%
-    );
-    --gn-task-checkbox-bg: color-mix(
-      in oklab,
-      var(--card) 92%,
-      var(--muted) 8%
-    );
-    --gn-task-checkbox-checked-border: color-mix(
-      in oklab,
-      var(--foreground) 28%,
-      var(--card) 72%
-    );
-    --gn-task-checkbox-checked-bg: color-mix(
-      in oklab,
-      var(--foreground) 18%,
-      var(--card) 82%
-    );
-    --gn-task-checkbox-check: color-mix(
-      in oklab,
-      var(--foreground) 88%,
-      white 12%
-    );
-    --gn-code-keyword: color-mix(
-      in oklab,
-      var(--accent) 70%,
-      var(--foreground) 30%
-    );
-    --gn-code-name: var(--foreground);
-    --gn-code-property: color-mix(
-      in oklab,
-      var(--accent) 60%,
-      var(--foreground) 40%
-    );
-    --gn-code-variable: var(--foreground);
-    --gn-code-function: color-mix(
-      in oklab,
-      var(--accent) 80%,
-      var(--foreground) 20%
-    );
-    --gn-code-constant: var(--destructive);
-    --gn-code-type: color-mix(
-      in oklab,
-      var(--accent) 50%,
-      var(--foreground) 50%
-    );
-    --gn-code-operator: color-mix(
-      in oklab,
-      var(--foreground) 60%,
-      var(--accent) 40%
-    );
-    --gn-code-string: color-mix(in oklab, var(--foreground) 55%, green 45%);
-    --gn-code-comment: var(--muted-foreground);
-    --gn-code-invalid: var(--destructive);
   }
 
   .notepad-pane {

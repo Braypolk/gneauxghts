@@ -14,7 +14,11 @@ import type { ChatModelCapabilities } from './types';
 const multimodal: ChatModelCapabilities = {
   images: true,
   files: true,
-  acceptedMimeTypes: ['image/png', 'text/plain', 'application/pdf']
+  acceptedMimeTypes: ['image/png', 'text/plain', 'application/pdf'],
+  tools: true,
+  webSearch: true,
+  reasoningSummaries: false,
+  contextWindow: null
 };
 
 describe('chat attachments', () => {

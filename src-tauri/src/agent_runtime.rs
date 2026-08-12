@@ -1,18 +1,18 @@
-use futures_util::StreamExt;
+use futures_util::{future::Either, StreamExt};
+use rig_agent::agent::{
+    run::AgentRun, Agent, AgentBuilder, AgentHook, HookContext, MultiTurnStreamItem, NoToolConfig,
+    ToolCall as HookToolCall, ToolCallAction, ToolResultAction, ToolResultEvent,
+};
 use rig_core::{
-    agent::{run::AgentRun, AgentBuilder, MultiTurnStreamItem},
     client::CompletionClient,
     completion::{CompletionModel, GetTokenUsage, Message, Usage},
     providers::openai,
     streaming::StreamedAssistantContent,
-    tool::ToolDyn,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 pub(crate) const MAX_MODEL_CALLS: usize = 6;
@@ -54,10 +54,124 @@ pub(crate) struct AgentRuntimeResponse {
     pub(crate) usage: Usage,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentUsage {
+    pub(crate) input_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) total_tokens: u64,
+    pub(crate) cached_input_tokens: u64,
+    pub(crate) cache_creation_input_tokens: u64,
+    pub(crate) tool_use_prompt_tokens: u64,
+    pub(crate) reasoning_tokens: u64,
+}
+
+impl From<Usage> for AgentUsage {
+    fn from(value: Usage) -> Self {
+        Self {
+            input_tokens: value.input_tokens,
+            output_tokens: value.output_tokens,
+            total_tokens: value.total_tokens,
+            cached_input_tokens: value.cached_input_tokens,
+            cache_creation_input_tokens: value.cache_creation_input_tokens,
+            tool_use_prompt_tokens: value.tool_use_prompt_tokens,
+            reasoning_tokens: value.reasoning_tokens,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentPlanEntry {
+    pub(crate) id: String,
+    pub(crate) text: String,
+    pub(crate) status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub(crate) enum AgentEvent {
+    TextDelta {
+        delta: String,
+    },
+    ToolCallUpdated {
+        call_id: String,
+        name: String,
+        title: String,
+        status: String,
+    },
+    PlanUpdated {
+        entries: Vec<AgentPlanEntry>,
+    },
+    UsageUpdated {
+        call_index: usize,
+        aggregate: AgentUsage,
+    },
+    ModelTurnRetried {
+        turn: usize,
+    },
+    ReasoningUpdated {
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentRuntimeObserver {
-    pub(crate) cancelled: Arc<AtomicBool>,
-    pub(crate) on_text: Arc<dyn Fn(&str) + Send + Sync>,
+    pub(crate) cancelled: CancellationToken,
+    pub(crate) on_event: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+}
+
+#[derive(Clone)]
+struct RuntimeEventHook {
+    on_event: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+}
+
+impl AgentHook for RuntimeEventHook {
+    async fn on_tool_call(
+        &self,
+        _context: &HookContext,
+        event: HookToolCall<'_>,
+    ) -> ToolCallAction {
+        (self.on_event)(AgentEvent::ToolCallUpdated {
+            call_id: event.internal_call_id.to_string(),
+            name: event.tool_name.to_string(),
+            title: tool_title(event.tool_name),
+            status: "running".to_string(),
+        });
+        ToolCallAction::run()
+    }
+
+    async fn on_tool_result(
+        &self,
+        _context: &HookContext,
+        event: ToolResultEvent<'_>,
+    ) -> ToolResultAction {
+        (self.on_event)(AgentEvent::ToolCallUpdated {
+            call_id: event.internal_call_id.to_string(),
+            name: event.tool_name.to_string(),
+            title: tool_title(event.tool_name),
+            status: event.raw_result.status_name().to_string(),
+        });
+        ToolResultAction::keep()
+    }
+}
+
+fn tool_title(name: &str) -> String {
+    match name {
+        "get_active_note" => "Read active note",
+        "search_notes" => "Search notes",
+        "read_note" => "Read note",
+        "propose_note_edits" => "Prepare note changes",
+        "propose_note_rewrite" => "Prepare note rewrite",
+        "propose_create_note" => "Prepare new note",
+        "update_plan" => "Update plan",
+        other => return other.replace('_', " "),
+    }
+    .to_string()
 }
 
 /// The application-owned boundary around Rig. Provider-specific model types,
@@ -74,7 +188,7 @@ impl AgentRuntime {
 
     pub(crate) async fn run(
         mut request: AgentRuntimeRequest,
-        tools: Vec<Box<dyn ToolDyn>>,
+        tools: Option<crate::agent_tools::AgentToolContext>,
         observer: AgentRuntimeObserver,
     ) -> Result<AgentRuntimeResponse, String> {
         // Construct this explicitly as the stable, testable execution contract.
@@ -121,7 +235,7 @@ impl AgentRuntime {
 async fn run_model<M>(
     model: M,
     request: AgentRuntimeRequest,
-    tools: Vec<Box<dyn ToolDyn>>,
+    tools: Option<crate::agent_tools::AgentToolContext>,
     additional_params: Option<Value>,
     observer: AgentRuntimeObserver,
 ) -> Result<AgentRuntimeResponse, String>
@@ -129,17 +243,50 @@ where
     M: CompletionModel + 'static,
     M::StreamingResponse: Send + Unpin + GetTokenUsage,
 {
+    let builder =
+        configured_builder(model, &request, additional_params).add_hook(RuntimeEventHook {
+            on_event: Arc::clone(&observer.on_event),
+        });
+    let agent = match tools {
+        Some(tools) => tools.build_agent(builder),
+        None => builder.build(),
+    };
+    drive_agent(agent, request, observer).await
+}
+
+fn configured_builder<M>(
+    model: M,
+    request: &AgentRuntimeRequest,
+    additional_params: Option<Value>,
+) -> AgentBuilder<M, NoToolConfig>
+where
+    M: CompletionModel,
+{
     let mut builder = AgentBuilder::new(model)
         .name("gneauxghts-vault-agent")
         .description("Searches and reads the local vault and prepares reviewed note changes")
         .preamble(&request.preamble)
-        .default_max_turns(MAX_MODEL_CALLS)
-        .tools(tools);
+        .default_max_turns(MAX_MODEL_CALLS);
     if let Some(params) = additional_params {
         builder = builder.additional_params(params);
     }
-    let mut stream = builder
-        .build()
+    builder
+}
+
+async fn drive_agent<M>(
+    agent: Agent<M>,
+    request: AgentRuntimeRequest,
+    observer: AgentRuntimeObserver,
+) -> Result<AgentRuntimeResponse, String>
+where
+    M: CompletionModel + 'static,
+    M::StreamingResponse: Send + Unpin + GetTokenUsage,
+{
+    (observer.on_event)(AgentEvent::ReasoningUpdated {
+        status: "running".to_string(),
+        summary: None,
+    });
+    let mut stream = agent
         .runner(request.prompt)
         .history(request.history)
         .max_turns(MAX_MODEL_CALLS)
@@ -148,13 +295,45 @@ where
         .stream()
         .await;
     let mut response = None;
-    while let Some(item) = stream.next().await {
-        if observer.cancelled.load(Ordering::Acquire) {
-            return Err("Request cancelled".to_string());
-        }
-        match item.map_err(|error| format!("Agent run failed: {error}"))? {
+    let mut aggregate_usage = Usage::new();
+    loop {
+        let next = stream.next();
+        let cancelled = observer.cancelled.cancelled();
+        futures_util::pin_mut!(next, cancelled);
+        let item = match futures_util::future::select(next, cancelled).await {
+            Either::Left((item, _)) => item,
+            Either::Right(_) => {
+                (observer.on_event)(AgentEvent::ReasoningUpdated {
+                    status: "cancelled".to_string(),
+                    summary: None,
+                });
+                return Err("Request cancelled".to_string());
+            }
+        };
+        let Some(item) = item else { break };
+        let item = match item {
+            Ok(item) => item,
+            Err(error) => {
+                (observer.on_event)(AgentEvent::ReasoningUpdated {
+                    status: "error".to_string(),
+                    summary: None,
+                });
+                return Err(format!("Agent run failed: {error}"));
+            }
+        };
+        match item {
             MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(text)) => {
-                (observer.on_text)(&text.text);
+                (observer.on_event)(AgentEvent::TextDelta { delta: text.text });
+            }
+            MultiTurnStreamItem::CompletionCall(call) => {
+                aggregate_usage += call.usage;
+                (observer.on_event)(AgentEvent::UsageUpdated {
+                    call_index: call.call_index,
+                    aggregate: aggregate_usage.into(),
+                });
+            }
+            MultiTurnStreamItem::ModelTurnRetried { turn } => {
+                (observer.on_event)(AgentEvent::ModelTurnRetried { turn });
             }
             MultiTurnStreamItem::FinalResponse(final_response) => {
                 response = Some(final_response);
@@ -163,8 +342,17 @@ where
             _ => {}
         }
     }
-    let response =
-        response.ok_or_else(|| "Agent run ended without a final response".to_string())?;
+    let Some(response) = response else {
+        (observer.on_event)(AgentEvent::ReasoningUpdated {
+            status: "error".to_string(),
+            summary: None,
+        });
+        return Err("Agent run ended without a final response".to_string());
+    };
+    (observer.on_event)(AgentEvent::ReasoningUpdated {
+        status: "completed".to_string(),
+        summary: None,
+    });
     Ok(AgentRuntimeResponse {
         output: response.output().to_string(),
         usage: response.usage(),
@@ -215,10 +403,8 @@ pub(crate) fn validate_local_base_url(value: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_core::{
-        test_utils::{MockCompletionModel, MockStreamEvent},
-        tool::Tool,
-    };
+    use rig_agent::tool::{Tool, ToolContext};
+    use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
     use std::sync::Mutex;
 
     #[derive(Clone)]
@@ -252,7 +438,11 @@ mod tests {
             })
         }
 
-        async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        async fn call(
+            &self,
+            _context: &mut ToolContext,
+            args: Self::Args,
+        ) -> Result<Self::Output, Self::Error> {
             Ok(json!({"value": args.value}))
         }
     }
@@ -316,14 +506,20 @@ mod tests {
             ]);
             let observed = Arc::new(Mutex::new(String::new()));
             let observed_text = Arc::clone(&observed);
-            let response = run_model(
-                model.clone(),
-                fake_request("Find and update it"),
-                vec![Box::new(EchoTool)],
-                None,
+            let request = fake_request("Find and update it");
+            let agent = configured_builder(model.clone(), &request, None)
+                .tool(EchoTool)
+                .build();
+            let response = drive_agent(
+                agent,
+                request,
                 AgentRuntimeObserver {
-                    cancelled: Arc::new(AtomicBool::new(false)),
-                    on_text: Arc::new(move |delta| observed_text.lock().unwrap().push_str(delta)),
+                    cancelled: CancellationToken::new(),
+                    on_event: Arc::new(move |event| {
+                        if let AgentEvent::TextDelta { delta } = event {
+                            observed_text.lock().unwrap().push_str(&delta);
+                        }
+                    }),
                 },
             )
             .await

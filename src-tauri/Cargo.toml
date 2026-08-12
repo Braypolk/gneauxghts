@@ -36,9 +36,11 @@ umap-rs = "0.4.5"
 tantivy = "0.25"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
 futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["rt"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 notify = "6.1"
-rig-core = { version = "=0.40.0", default-features = false, features = ["derive", "reqwest", "rustls"] }
+rig-core = { version = "=0.41.0", default-features = false, features = ["derive", "reqwest", "rustls"] }
+rig-agent = { version = "=0.41.0", default-features = false }
 thiserror = "2"
 url = "2"
 
@@ -50,7 +52,8 @@ security-framework-sys = "2.17"
 tauri-plugin-window-state = "2"
 
 [dev-dependencies]
-rig-core = { version = "=0.40.0", default-features = false, features = ["test-utils"] }
+rig-core = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
+rig-agent = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
 
 [patch.crates-io]
 corenn-kernels = { path = "vendor/corenn-kernels" }

@@ -56,6 +56,11 @@ const markdownResetStyle = HighlightStyle.define([
 export function createMarkdownHighlight(): Extension {
   return [
     syntaxHighlighting(markdownResetStyle, { fallback: false }),
-    syntaxHighlighting(codeHighlightStyle)
+    createCodeHighlight()
   ];
+}
+
+/** Syntax colors shared by editable note fences and read-only chat code. */
+export function createCodeHighlight(): Extension {
+  return syntaxHighlighting(codeHighlightStyle);
 }

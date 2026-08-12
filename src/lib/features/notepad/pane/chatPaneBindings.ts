@@ -28,6 +28,7 @@ export interface ChatPaneContextBindings {
   onOpenCitation: (
     citation: Extract<ChatCitation, { kind: 'note' }>
   ) => void | Promise<void>;
+  onOpenWikilink: (rawTarget: string) => void | Promise<void>;
 }
 
 export interface ChatPaneProposalBindings {

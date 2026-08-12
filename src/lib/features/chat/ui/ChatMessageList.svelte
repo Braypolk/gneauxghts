@@ -6,12 +6,14 @@
     ChatCitation,
     ChatConversation,
     ChatExcerpt,
+    ChatMessage as ChatMessageModel,
     ChatSelection,
     ChatSelectionActions
   } from '../types';
   import ChatMessage from './ChatMessage.svelte';
   import { resolveTargetMessageId } from './chatPanelHelpers';
   import { positionInitialChatScroll } from './chatMessageScroll';
+  import { chatSelectionToMarkdown } from './chatSelectionMarkdown';
 
   interface Props {
     controller: ChatController;
@@ -25,6 +27,7 @@
     onOpenCitation?: (
       citation: Extract<ChatCitation, { kind: 'note' }>
     ) => void | Promise<void>;
+    onOpenWikilink?: (rawTarget: string) => void | Promise<void>;
     onPreviewAttachment: (attachment: ChatAttachmentInput) => void;
     onActionError: (message: string | null) => void;
   }
@@ -39,12 +42,14 @@
     targetAnchor = null,
     selectionActions = {},
     onOpenCitation,
+    onOpenWikilink,
     onPreviewAttachment,
     onActionError
   }: Props = $props();
 
   let messagesElement = $state<HTMLElement | null>(null);
   let selected = $state<ChatSelection | null>(null);
+  let selectedMarkdown = $state<string | null>(null);
   let selectedExcerpt = $state<ChatExcerpt | null>(null);
   // One-shot guards are deliberately non-reactive to avoid effect↔state loops.
   let positionedConversationId: string | null = null;
@@ -161,6 +166,7 @@
       const anchor = browserSelection?.anchorNode;
       if (!text || !anchor || !root.contains(anchor)) {
         selected = null;
+        selectedMarkdown = null;
         selectedExcerpt = null;
         return;
       }
@@ -171,7 +177,11 @@
       const messageId = messageElement?.dataset.chatMessageId;
       const current = controller.getSnapshot().conversation;
       const message = current?.messages.find((item) => item.id === messageId);
-      if (!current || !message) return;
+      if (!current || !message || !messageElement) return;
+      selectedMarkdown = chatSelectionToMarkdown(
+        browserSelection,
+        messageElement
+      ) ?? text;
       selected = {
         conversationId: current.id,
         messageId: message.id,
@@ -186,13 +196,39 @@
   async function copySelection() {
     if (!selected) return;
     try {
-      await navigator.clipboard.writeText(selected.text);
+      await navigator.clipboard.writeText(selectedMarkdown ?? selected.text);
       await selectionActions.onCopy?.(selected);
     } catch (error) {
       onActionError(
         error instanceof Error ? error.message : 'Unable to copy selection.'
       );
     }
+  }
+
+  async function copyMessage(message: ChatMessageModel) {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      onActionError(null);
+    } catch (error) {
+      onActionError(
+        error instanceof Error ? error.message : 'Unable to copy message.'
+      );
+    }
+  }
+
+  function copyNativeSelection(event: ClipboardEvent) {
+    const browserSelection = window.getSelection();
+    const anchor = browserSelection?.anchorNode;
+    if (!browserSelection || !anchor || !messagesElement?.contains(anchor)) return;
+    const element = anchor instanceof Element ? anchor : anchor.parentElement;
+    const messageElement = element?.closest<HTMLElement>('[data-chat-message-id]');
+    if (!messageElement) return;
+    const markdown = chatSelectionToMarkdown(browserSelection, messageElement);
+    if (!markdown || !event.clipboardData) return;
+
+    event.preventDefault();
+    event.clipboardData.setData('text/plain', markdown);
+    event.clipboardData.setData('text/markdown', markdown);
   }
 
   async function ensureExcerpt() {
@@ -255,6 +291,19 @@
     }
   }
 
+  async function openWikilink(rawTarget: string) {
+    try {
+      await onOpenWikilink?.(rawTarget);
+      onActionError(null);
+    } catch (error) {
+      onActionError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to open the linked note.'
+      );
+    }
+  }
+
   async function toggleRemember() {
     if (!selected) return;
     try {
@@ -278,11 +327,12 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   bind:this={messagesElement}
-  class="min-h-0 flex-1 overflow-y-auto py-4 sm:py-5"
+  class="min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto py-4 sm:py-5"
   role="log"
   aria-live="polite"
   onpointerup={captureSelection}
   onkeyup={captureSelection}
+  oncopy={copyNativeSelection}
 >
   {#if isInitializing || isLoadingConversation}
     <div class="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -309,7 +359,10 @@
           canInsertSelection={Boolean(selectionActions.onInsertIntoNote)}
           {onPreviewAttachment}
           onOpenCitation={openCitation}
+          onOpenWikilink={openWikilink}
           onRetry={() => controller.retry(message.id)}
+          onBranch={async () => { await controller.branchFromMessage(message.id); }}
+          onCopyMessage={() => copyMessage(message)}
           onCopySelection={copySelection}
           onCopyLink={copyLink}
           onInsertSelection={insertSelection}

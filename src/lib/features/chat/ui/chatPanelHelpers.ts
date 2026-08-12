@@ -1,14 +1,7 @@
-import MarkdownIt from 'markdown-it';
 import type {
   ChatAgentProposal,
   ChatConversation
 } from '../types';
-
-const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
-
-export function renderChatMarkdown(content: string) {
-  return markdown.render(content);
-}
 
 export function chatConversationContextKey(
   conversationId: string | null | undefined,

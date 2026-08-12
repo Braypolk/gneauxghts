@@ -34,6 +34,7 @@
     onOpenCitation?: (
       citation: Extract<ChatCitation, { kind: 'note' }>
     ) => void | Promise<void>;
+    onOpenWikilink?: (rawTarget: string) => void | Promise<void>;
     placeholder?: string;
     /**
      * Durable identity for this surface, used to keep unsent composer text
@@ -65,6 +66,7 @@
     onConversationChange,
     onSurfaceHandleChange,
     onOpenCitation,
+    onOpenWikilink,
     placeholder = 'What are you thinking about?',
     draftSlot = null,
     contextNote = null,
@@ -177,7 +179,7 @@
 </script>
 
 <section
-  class={`chat-panel chat-panel--${variant} flex h-full min-h-0 w-full flex-col overflow-hidden`}
+  class={`chat-panel chat-panel--${variant} flex h-full min-h-0 min-w-0 w-full max-w-full flex-col overflow-hidden`}
   aria-label="Thought partner chat"
 >
   <ChatHeader
@@ -201,6 +203,7 @@
     {targetAnchor}
     {selectionActions}
     {onOpenCitation}
+    {onOpenWikilink}
     onPreviewAttachment={(attachment) => (previewAttachment = attachment)}
     onActionError={(message) => (actionError = message)}
   />

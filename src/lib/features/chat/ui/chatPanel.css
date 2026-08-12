@@ -247,6 +247,11 @@
   max-width: 100%;
   padding: 0.15rem 0;
 }
+.chat-message-content {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
 .chat-message--user {
   align-self: flex-end;
   width: fit-content;
@@ -255,36 +260,9 @@
   background: color-mix(in oklab, var(--muted) 78%, transparent);
   padding: 0.7rem 1rem;
 }
-.chat-message-content p {
-  margin: 0 0 0.65rem;
-}
-.chat-message-content p:last-child {
-  margin-bottom: 0;
-}
-.chat-message-content ul,
-.chat-message-content ol {
-  margin: 0.45rem 0;
-  padding-left: 1.35rem;
-}
-.chat-message-content pre {
-  overflow-x: auto;
-  border-radius: 0.5rem;
-  background: var(--muted);
-  padding: 0.75rem;
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  line-height: 1.5;
-}
-.chat-message-content code:not(pre code) {
-  border-radius: 0.4rem;
-  background: var(--muted);
-  padding: 0.1rem 0.3rem;
-  font-family: var(--font-mono);
-  font-size: 0.85em;
-}
-.chat-message-content a {
-  text-decoration: underline;
-  text-underline-offset: 2px;
+.chat-user-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .chat-citation {

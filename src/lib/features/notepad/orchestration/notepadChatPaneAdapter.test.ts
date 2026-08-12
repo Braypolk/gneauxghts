@@ -70,6 +70,7 @@ function setup(options: {
   const touchPaneLocation = vi.fn();
   const setActivePane = vi.fn();
   const openNote = vi.fn(async () => {});
+  const openWikilink = vi.fn(async () => {});
   const flushPendingAutosave = vi.fn();
   const getNoteSaveQueue = vi.fn(async () => {});
   const setSurfaceHandle = vi.fn();
@@ -107,6 +108,7 @@ function setup(options: {
     getEditorPaneIds: () => options.editorPaneIds ?? ['editor'],
     setActivePane,
     openNote,
+    openWikilink,
     flushPendingAutosave,
     getNoteSaveQueue
   });
@@ -118,6 +120,7 @@ function setup(options: {
     touchPaneLocation,
     setActivePane,
     openNote,
+    openWikilink,
     flushPendingAutosave,
     getNoteSaveQueue,
     setSurfaceHandle,
@@ -268,6 +271,31 @@ describe('createNotepadChatPaneAdapter', () => {
       revealEditorAfterOpen: true,
       focusEditorAfterOpen: true
     });
+  });
+
+  it('opens chat wikilinks through the nearest editor context', async () => {
+    const { adapter, openWikilink } = setup();
+
+    await adapter.getBindings('chat').context.onOpenWikilink(
+      'Notes/Referenced.md#Details'
+    );
+
+    expect(openWikilink).toHaveBeenCalledWith(
+      'editor',
+      'Notes/Referenced.md#Details'
+    );
+  });
+
+  it('uses the chat pane context for wikilinks when no editor exists', async () => {
+    const { adapter, openWikilink } = setup({
+      paneOrder: ['chat'],
+      paneKinds: { chat: 'chat', editor: 'editor' },
+      editorPaneIds: []
+    });
+
+    await adapter.getBindings('chat').context.onOpenWikilink('Referenced');
+
+    expect(openWikilink).toHaveBeenCalledWith('chat', 'Referenced');
   });
 
   it('owns conversation and mounted-surface bookkeeping for the pane', () => {

@@ -1,0 +1,296 @@
+/* Shared visual contract for editable note Markdown and rendered chat Markdown. */
+:root {
+  --gn-markdown-line-height: 1.75;
+  --gn-markdown-quote-border: color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
+  --gn-markdown-code-bg: color-mix(in oklab, var(--muted) 76%, var(--background));
+  --gn-markdown-inline-code-bg: color-mix(in oklab, var(--muted) 80%, var(--background));
+  --gn-markdown-link: color-mix(in oklab, var(--accent) 78%, var(--foreground) 22%);
+  --gn-task-checkbox-border: color-mix(in oklab, var(--foreground) 20%, var(--card) 80%);
+  --gn-task-checkbox-bg: color-mix(in oklab, var(--card) 92%, var(--muted) 8%);
+  --gn-task-checkbox-checked-border: color-mix(in oklab, var(--foreground) 28%, var(--card) 72%);
+  --gn-task-checkbox-checked-bg: color-mix(in oklab, var(--foreground) 18%, var(--card) 82%);
+  --gn-task-checkbox-check: color-mix(in oklab, var(--foreground) 88%, white 12%);
+  --gn-code-keyword: color-mix(in oklab, var(--accent) 70%, var(--foreground) 30%);
+  --gn-code-name: var(--foreground);
+  --gn-code-property: color-mix(in oklab, var(--accent) 60%, var(--foreground) 40%);
+  --gn-code-variable: var(--foreground);
+  --gn-code-function: color-mix(in oklab, var(--accent) 80%, var(--foreground) 20%);
+  --gn-code-constant: var(--destructive);
+  --gn-code-type: color-mix(in oklab, var(--accent) 50%, var(--foreground) 50%);
+  --gn-code-operator: color-mix(in oklab, var(--foreground) 60%, var(--accent) 40%);
+  --gn-code-string: color-mix(in oklab, var(--foreground) 55%, green 45%);
+  --gn-code-comment: var(--muted-foreground);
+  --gn-code-invalid: var(--destructive);
+}
+
+.gn-markdown-surface {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 0.65rem;
+  color: var(--foreground);
+  font-size: var(--gn-editor-font-size, 1rem);
+  line-height: var(--gn-markdown-line-height);
+  overflow-wrap: anywhere;
+}
+
+.gn-markdown-html {
+  min-width: 0;
+}
+
+.gn-markdown-html > :first-child {
+  margin-top: 0;
+}
+
+.gn-markdown-html > :last-child {
+  margin-bottom: 0;
+}
+
+.gn-markdown-surface p {
+  margin: 0 0 0.65rem;
+}
+
+.gn-markdown-surface h1,
+.gn-markdown-surface h2,
+.gn-markdown-surface h3,
+.gn-markdown-surface h4,
+.gn-markdown-surface h5,
+.gn-markdown-surface h6 {
+  margin: 0;
+  font-weight: 700;
+}
+
+.gn-markdown-surface h1 {
+  padding-top: 1.15rem;
+  padding-bottom: 0.45rem;
+  font-size: var(--gn-editor-h1-size, 1.75rem);
+  line-height: 1.3;
+}
+
+.gn-markdown-surface h2 {
+  padding-top: 1.05rem;
+  padding-bottom: 0.4rem;
+  font-size: var(--gn-editor-h2-size, 1.375rem);
+  line-height: 1.35;
+}
+
+.gn-markdown-surface h3,
+.gn-markdown-surface h4,
+.gn-markdown-surface h5,
+.gn-markdown-surface h6 {
+  padding-top: 0.9rem;
+  padding-bottom: 0.35rem;
+  line-height: 1.45;
+}
+
+.gn-markdown-surface h3 { font-size: var(--gn-editor-h3-size, 1.125rem); }
+.gn-markdown-surface h4 { font-size: var(--gn-editor-h4-size, 1rem); }
+.gn-markdown-surface h5 { font-size: var(--gn-editor-h5-size, 0.875rem); }
+.gn-markdown-surface h6 { font-size: var(--gn-editor-h6-size, 0.8125rem); }
+
+.gn-markdown-surface ul,
+.gn-markdown-surface ol {
+  margin: 0.45rem 0;
+  padding-left: 1.35rem;
+}
+
+.gn-markdown-surface li {
+  padding-block: 0.12rem;
+}
+
+.gn-markdown-surface li > ul,
+.gn-markdown-surface li > ol {
+  margin-block: 0.1rem;
+}
+
+.gn-markdown-surface blockquote {
+  margin: 0.4rem 0;
+  padding: 0.65rem 0 0.65rem 1rem;
+  border-left: 3px solid var(--gn-markdown-quote-border);
+  color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
+  font-style: italic;
+}
+
+.gn-markdown-surface blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.gn-markdown-surface code:not(pre code) {
+  border-radius: 0.4rem;
+  background: var(--gn-markdown-inline-code-bg);
+  padding: 0.12rem 0.35rem;
+  color: var(--destructive);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.gn-markdown-surface pre {
+  overflow-x: auto;
+  border-radius: 0.75rem;
+  background: var(--gn-markdown-code-bg);
+  padding: 0.75rem 0.85rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.gn-markdown-surface a,
+.gn-markdown-wikilink {
+  color: var(--gn-markdown-link);
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.14em;
+}
+
+.gn-markdown-surface a:hover,
+.gn-markdown-wikilink:hover {
+  color: var(--accent);
+}
+
+.gn-markdown-wikilink {
+  display: inline;
+  min-height: 0 !important;
+  border: 0;
+  border-radius: 0.35rem;
+  background: color-mix(in oklab, var(--accent) 54%, transparent);
+  padding: 0 0.12rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.gn-markdown-surface mark {
+  border-radius: 0.2rem;
+  background: color-mix(in oklab, oklch(0.86 0.16 84) 55%, transparent);
+  color: inherit;
+  padding-inline: 0.08em;
+}
+
+.gn-markdown-surface hr {
+  height: 2px;
+  margin: 0.75em 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--border) 70%, var(--foreground) 30%);
+}
+
+.gn-markdown-surface table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.gn-markdown-surface th,
+.gn-markdown-surface td {
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.gn-markdown-surface th {
+  background: color-mix(in oklab, var(--card) 88%, var(--foreground) 4%);
+  font-weight: 650;
+}
+
+.gn-markdown-task-item {
+  list-style: none;
+}
+
+.gn-markdown-task-checkbox {
+  appearance: none;
+  position: relative;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 0.42em 0 -1.35em;
+  vertical-align: -0.12em;
+  border: 1px solid var(--gn-task-checkbox-border);
+  border-radius: 0.28em;
+  background: var(--gn-task-checkbox-bg);
+  opacity: 1;
+}
+
+.gn-markdown-task-checkbox:checked {
+  border-color: var(--gn-task-checkbox-checked-border);
+  background: var(--gn-task-checkbox-checked-bg);
+}
+
+.gn-markdown-task-checkbox:checked::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gn-task-checkbox-check);
+  font-size: 0.8em;
+  line-height: 1;
+}
+
+.gn-markdown-image-reference {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.chat-code-block {
+  contain: inline-size;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 0.75rem;
+  background: var(--gn-markdown-code-bg);
+}
+
+.chat-code-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 2rem;
+  padding: 0.25rem 0.55rem 0.25rem 0.85rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.chat-code-block__copy {
+  display: inline-flex;
+  min-height: 0 !important;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 0.4rem;
+  padding: 0.25rem 0.4rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+}
+
+.chat-code-block__copy:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.chat-code-block__editor {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.chat-code-block__editor .cm-editor {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-code-block__editor .cm-scroller {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}

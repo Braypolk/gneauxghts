@@ -34,6 +34,9 @@
   } from './chatPanelHelpers';
   import { createComposerDraftPersistence } from './composerDraftPersistence';
   import { configuredChatModel } from '../chatConfiguration';
+  import ModelSelector, {
+    type ModelOption
+  } from '$lib/components/ai-elements/model-selector/model-selector.svelte';
 
   type ChatMenu = 'history' | 'vault' | 'provider';
 
@@ -81,7 +84,6 @@
     { value: 'approved', label: 'Approved only', hint: 'Approved notes only' },
     { value: 'full', label: 'Full vault', hint: 'All notes available' }
   ];
-  const PROVIDERS: ChatProvider[] = ['openai', 'local'];
 
   let draft = $state('');
   let attachments = $state<ChatAttachmentInput[]>([]);
@@ -95,6 +97,23 @@
   const effectiveProvider = $derived(
     conversation?.provider ?? snapshot.conversationDraft.provider
   );
+  const effectiveModel = $derived(
+    conversation?.model ?? snapshot.conversationDraft.model
+  );
+  const modelOptions = $derived<ModelOption[]>([
+    {
+      provider: 'openai',
+      model: configuredChatModel(snapshot.settings, 'openai'),
+      label: 'OpenAI',
+      configured: Boolean(configuredChatModel(snapshot.settings, 'openai'))
+    },
+    {
+      provider: 'local',
+      model: configuredChatModel(snapshot.settings, 'local'),
+      label: 'Local',
+      configured: Boolean(configuredChatModel(snapshot.settings, 'local'))
+    }
+  ]);
   const effectiveVaultAccess = $derived(
     conversation?.vaultAccess ??
       snapshot.conversationDraft.vaultAccess
@@ -311,6 +330,10 @@
     if (provider === 'local') forceWebSearch = false;
   }
 
+  async function updateModel(option: ModelOption) {
+    await updateProvider(option.provider);
+  }
+
   async function updateAccess(vaultAccess: VaultAccess) {
     onOpenMenu(null);
     await controller.setVaultAccess(vaultAccess);
@@ -451,50 +474,14 @@
             <Paperclip class="h-3.5 w-3.5" />
           </button>
 
-        <div class="relative" data-chat-menu>
-          <button
-            type="button"
-            class="chat-composer-chip"
-            aria-label="AI provider"
-            aria-expanded={openMenu === 'provider'}
-            aria-haspopup="menu"
-            onclick={() =>
-              onOpenMenu(openMenu === 'provider' ? null : 'provider')}
-          >
-            <span>{effectiveProvider === 'local' ? 'Local' : 'OpenAI'}</span>
-            <ChevronDown class="h-3 w-3 opacity-60" />
-          </button>
-          {#if openMenu === 'provider'}
-            <div
-              class="chat-menu chat-menu--up"
-              role="menu"
-              aria-label="AI provider"
-            >
-              {#each PROVIDERS as provider (provider)}
-                <button
-                  type="button"
-                  class="chat-menu-item"
-                  class:chat-menu-item--active={provider === effectiveProvider}
-                  role="menuitem"
-                  onclick={() => void updateProvider(provider)}
-                >
-                  <span class="min-w-0 flex-1">
-                    <span class="block font-medium">
-                      {provider === 'local' ? 'Local' : 'OpenAI'}
-                    </span>
-                    <span class="block max-w-48 truncate text-[11px] font-normal text-muted-foreground">
-                      {configuredChatModel(snapshot.settings, provider) ||
-                        'Configure in Settings'}
-                    </span>
-                  </span>
-                  {#if provider === effectiveProvider}
-                    <Check class="h-3.5 w-3.5 shrink-0" />
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+        <ModelSelector
+          options={modelOptions}
+          provider={effectiveProvider}
+          model={effectiveModel}
+          open={openMenu === 'provider'}
+          onOpenChange={(open) => onOpenMenu(open ? 'provider' : null)}
+          onSelect={updateModel}
+        />
 
         <div class="relative" data-chat-menu>
           <button

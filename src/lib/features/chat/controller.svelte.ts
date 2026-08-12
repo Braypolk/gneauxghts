@@ -20,6 +20,7 @@ import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 import { configuredChatModel } from './chatConfiguration';
+import { reduceAgentEvent, replaceTextPart } from './agentEvents';
 import {
   createChatControllerMachineState,
   isChatRequestBusy,
@@ -96,6 +97,7 @@ export interface ChatController extends Readable<ChatControllerState> {
     retentionDays?: ForgottenNoteRetentionPreference
   ): Promise<ForgottenNoteSummary | null>;
   openConversation(conversationId: string): Promise<ChatConversation | null>;
+  branchFromMessage(messageId: string): Promise<ChatConversation | null>;
   send(
     content: string,
     attachments?: ChatAttachmentInput[],
@@ -142,7 +144,10 @@ function upsertTerminalMessage(messages: ChatMessage[], message: ChatMessage): C
   return upsertMessage(messages, {
     ...message,
     citations: message.citations.length > 0 ? message.citations : previous.citations,
-    linkTarget: message.linkTarget ?? previous.linkTarget
+    linkTarget: message.linkTarget ?? previous.linkTarget,
+    parts: replaceTextPart(previous.parts, message.content),
+    agentRunId: previous.agentRunId,
+    agentSequence: previous.agentSequence
   });
 }
 
@@ -423,16 +428,17 @@ export class ChatControllerStore implements ChatController {
           return;
         }
         this.#updateConversation((conversation) => {
-          const messages = conversation.messages.map((message) =>
-            message.id === event.messageId
-              ? {
-                  ...message,
-                  content: message.content + event.delta,
-                  status: 'streaming' as const,
-                  updatedAtMillis: Date.now()
-                }
-              : message
-          );
+          const messages = conversation.messages.map((message) => {
+            if (message.id !== event.messageId) return message;
+            const content = message.content + event.delta;
+            return {
+              ...message,
+              content,
+              parts: replaceTextPart(message.parts, content),
+              status: 'streaming' as const,
+              updatedAtMillis: Date.now()
+            };
+          });
           return { ...conversation, activeRequestId: event.requestId, messages };
         });
       }),
@@ -543,6 +549,41 @@ export class ChatControllerStore implements ChatController {
           this.#notify();
         }
       }),
+    'chat://agent-event': (event) =>
+      this.#ifCurrent(event, () => {
+        if (
+          !this.#dispatch({
+            type: 'started',
+            conversationId: event.conversationId,
+            requestId: event.requestId,
+            messageId: event.messageId
+          })
+        ) {
+          return;
+        }
+        this.#updateConversation((conversation) => ({
+          ...conversation,
+          activeRequestId: event.requestId,
+          messages: conversation.messages.map((message) => {
+            if (message.id !== event.messageId) return message;
+            const next = reduceAgentEvent(
+              {
+                parts: message.parts,
+                runId: message.agentRunId,
+                sequence: message.agentSequence
+              },
+              event,
+              { applyText: false }
+            );
+            return {
+              ...message,
+              parts: next.parts,
+              agentRunId: next.runId,
+              agentSequence: next.sequence
+            };
+          })
+        }));
+      }),
     'chat://proposal': (event) =>
       this.#ifCurrent(event, () => {
         this.#patch({
@@ -644,6 +685,30 @@ export class ChatControllerStore implements ChatController {
           )
         });
       }
+      return null;
+    }
+  }
+
+  async branchFromMessage(messageId: string) {
+    if (this.#isDisposed() || this.isSending) return null;
+    this.#patch({ error: null });
+    try {
+      const conversation = await this.#api.branchFromMessage(messageId);
+      const modelCapabilities = await this.#getModelCapabilities(
+        conversation.provider,
+        conversation.model
+      );
+      this.#dispatch({ type: 'reset' });
+      this.#patch({
+        conversation,
+        conversations: mergeSummary(this.conversations, conversation),
+        proposals: [],
+        modelCapabilities,
+        error: null
+      });
+      return conversation;
+    } catch (error) {
+      this.#patch({ error: errorText(error, 'Unable to create checkpoint branch.') });
       return null;
     }
   }

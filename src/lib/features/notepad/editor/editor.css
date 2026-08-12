@@ -80,14 +80,14 @@
   padding-top: 0.65rem;
   padding-bottom: 0.65rem;
   padding-left: 1rem;
-  border-left: 3px solid color-mix(in oklab, var(--border) 82%, var(--foreground) 18%);
+  border-left: 3px solid var(--gn-markdown-quote-border);
   color: color-mix(in oklab, var(--foreground) 78%, var(--muted-foreground) 22%);
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-inline {
   padding: 0.12rem 0.35rem;
   border-radius: 0.4rem;
-  background: color-mix(in oklab, var(--muted) 80%, var(--background));
+  background: var(--gn-markdown-inline-code-bg);
   color: var(--destructive);
   font-family: var(--font-mono);
 }
@@ -98,7 +98,7 @@
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-block-line {
   font-family: var(--font-mono);
   font-size: 0.92rem;
-  background: color-mix(in oklab, var(--muted) 76%, var(--background));
+  background: var(--gn-markdown-code-bg);
   padding-left: 0.85rem;
   padding-right: 0.85rem;
 }
@@ -242,7 +242,7 @@
 /* Link: styled clickable text when not editing; raw markers tinted when editing.
    The URL is carried in a hidden tooltip element read by the click handler. */
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-styled {
-  color: color-mix(in oklab, var(--accent) 78%, var(--foreground) 22%);
+  color: var(--gn-markdown-link);
   text-decoration: underline;
   text-decoration-thickness: 0.08em;
   text-underline-offset: 0.14em;
@@ -255,7 +255,7 @@
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-text {
-  color: color-mix(in oklab, var(--accent) 78%, var(--foreground) 22%);
+  color: var(--gn-markdown-link);
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-link-marker {

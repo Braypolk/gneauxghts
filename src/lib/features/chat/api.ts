@@ -18,10 +18,12 @@ import type {
   ChatModelCapabilities,
   ChatProvider,
   ChatSettings,
+  ChatAgentEventEnvelope,
   LocalModel,
   ProjectionConflictResolution,
   VaultAccess
 } from './types';
+import { initialAgentEventState, replayAgentEvents } from './agentEvents';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
@@ -50,6 +52,7 @@ interface RawMessage {
   id: string; conversationId: string; ordinal: number; role: string; status: string; content: string;
   error?: string | null; part: number; createdAtMillis: number; sources: RawSource[];
   attachments?: ChatAttachment[];
+  agentEvents?: ChatAgentEventEnvelope[];
 }
 interface RawExcerpt {
   id: string; conversationId: string; messageId: string; startOffset: number; endOffset: number;
@@ -120,6 +123,7 @@ function normalizeSource(raw: RawSource, index = 0) {
 }
 
 function normalizeMessage(raw: RawMessage) {
+  const agentState = replayAgentEvents(raw.content, raw.agentEvents ?? []);
   return {
     id: raw.id,
     conversationId: raw.conversationId,
@@ -132,7 +136,10 @@ function normalizeMessage(raw: RawMessage) {
     errorMessage: raw.error ?? null,
     citations: (raw.sources ?? []).map(normalizeSource),
     attachments: raw.attachments ?? [],
-    linkTarget: null
+    linkTarget: null,
+    parts: agentState.parts,
+    agentRunId: agentState.runId,
+    agentSequence: agentState.sequence
   };
 }
 
@@ -171,6 +178,7 @@ export interface ChatApi {
   }): Promise<ChatConversation>;
   listConversations(includeArchived?: boolean): Promise<ChatConversationSummary[]>;
   getConversation(conversationId: string): Promise<ChatConversation>;
+  branchFromMessage(messageId: string): Promise<ChatConversation>;
   findConversationByProjectionPath(notePath: string): Promise<string | null>;
   renameConversation(conversationId: string, title: string): Promise<ChatConversationSummary>;
   archiveConversation(
@@ -220,6 +228,7 @@ export const CHAT_COMMANDS = {
   createConversation: 'chat_create_conversation',
   listConversations: 'chat_list_conversations',
   getConversation: 'chat_get_conversation',
+  branchFromMessage: 'chat_branch_from_message',
   findConversationByProjectionPath: 'chat_find_conversation_by_projection_path',
   renameConversation: 'chat_rename_conversation',
   archiveConversation: 'chat_archive_conversation',
@@ -302,6 +311,10 @@ export class TauriChatApi implements ChatApi {
   }
   getConversation(conversationId: string) {
     return invoke<RawConversation>(CHAT_COMMANDS.getConversation, { conversationId })
+      .then((raw) => this.#normalizeConversation(raw));
+  }
+  branchFromMessage(messageId: string) {
+    return invoke<RawConversation>(CHAT_COMMANDS.branchFromMessage, { messageId })
       .then((raw) => this.#normalizeConversation(raw));
   }
   findConversationByProjectionPath(notePath: string) {
@@ -459,12 +472,16 @@ export class TauriChatApi implements ChatApi {
     return this.getConversation(conversationId);
   }
   on<K extends keyof ChatEventMap>(event: K, handler: (payload: ChatEventMap[K]) => void) {
-    return listen<RawStreamEvent | RawTitleUpdatedEvent | RawProjectionConflictEvent | ChatAgentProposal>(event, ({ payload }) => {
+    return listen<RawStreamEvent | RawTitleUpdatedEvent | RawProjectionConflictEvent | ChatAgentProposal | ChatAgentEventEnvelope>(event, ({ payload }) => {
       if (event === 'chat://projection-conflict') {
         handler(payload as ChatEventMap[K]);
         return;
       }
       if (event === 'chat://proposal' || event === 'chat://activity') {
+        handler(payload as ChatEventMap[K]);
+        return;
+      }
+      if (event === 'chat://agent-event') {
         handler(payload as ChatEventMap[K]);
         return;
       }
@@ -536,9 +553,11 @@ export class TauriChatApi implements ChatApi {
     attachments: ChatAttachment[] = []
   ): ChatMessage {
     this.#messageConversations.set(id, conversationId);
+    const agentState = initialAgentEventState(content);
     return {
       id, conversationId, role, content, status, createdAtMillis, updatedAtMillis: createdAtMillis,
-      requestId: null, errorMessage: null, citations: [], attachments, linkTarget: null
+      requestId: null, errorMessage: null, citations: [], attachments, linkTarget: null,
+      parts: agentState.parts, agentRunId: null, agentSequence: 0
     };
   }
 }

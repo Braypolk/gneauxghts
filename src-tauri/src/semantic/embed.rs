@@ -101,7 +101,10 @@ pub(crate) trait EmbeddingProvider {
 
 pub(crate) struct JinaLlamaEmbeddingProvider {
     settings: Arc<Mutex<SemanticSettings>>,
-    client: Client,
+    // `reqwest::blocking::Client` owns an internal Tokio runtime. Its final
+    // drop must not happen on a Tokio worker, so Drop moves it to a plain OS
+    // thread. Keep this optional solely to permit that ownership transfer.
+    client: Option<Client>,
     model_dir: PathBuf,
     bundled_runtime_path: Option<PathBuf>,
     debug: Arc<SemanticDebugState>,
@@ -156,7 +159,7 @@ impl JinaLlamaEmbeddingProvider {
             .map_err(|err| err.to_string())?;
         Ok(Self {
             settings,
-            client,
+            client: Some(client),
             model_dir: app_data_dir.join("semantic").join("models"),
             bundled_runtime_path,
             debug,
@@ -513,7 +516,7 @@ impl JinaLlamaEmbeddingProvider {
         ];
 
         health_urls.iter().any(|url| {
-            self.client
+            self.client()
                 .get(url)
                 .send()
                 .map(|response| response.status().is_success())
@@ -598,6 +601,12 @@ impl JinaLlamaEmbeddingProvider {
             ),
         }
     }
+
+    fn client(&self) -> &Client {
+        self.client
+            .as_ref()
+            .expect("embedding HTTP client is available until provider drop")
+    }
 }
 
 impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
@@ -626,7 +635,7 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             .collect::<Vec<_>>();
         let url = format!("http://127.0.0.1:{port}/v1/embeddings");
         let response_text = self
-            .client
+            .client()
             .post(&url)
             .json(&serde_json::json!({ "input": input }))
             .send()
@@ -922,6 +931,18 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
 impl Drop for JinaLlamaEmbeddingProvider {
     fn drop(&mut self) {
         self.shutdown_server();
+        if let Some(client) = self.client.take() {
+            // Tokio rejects dropping a runtime from one of its async workers.
+            // A blocking reqwest client owns such a runtime internally. Always
+            // perform its final drop on an ordinary thread; joining keeps app
+            // shutdown deterministic and prevents a detached cleanup thread.
+            if let Ok(drop_thread) = thread::Builder::new()
+                .name("embedding-http-drop".to_string())
+                .spawn(move || drop(client))
+            {
+                let _ = drop_thread.join();
+            }
+        }
     }
 }
 
@@ -1255,6 +1276,21 @@ fn _debug_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocking_http_client_can_be_released_from_async_context() {
+        let provider = JinaLlamaEmbeddingProvider::new(
+            std::env::temp_dir().join("gneauxghts-embedding-drop-test"),
+            Arc::new(Mutex::new(SemanticSettings::default())),
+            None,
+            Arc::new(SemanticDebugState::new()),
+        )
+        .expect("provider");
+
+        tauri::async_runtime::block_on(async move {
+            drop(provider);
+        });
+    }
 
     #[test]
     fn resolve_llama_ctx_size_honors_valid_override_and_floors_typos() {

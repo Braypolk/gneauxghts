@@ -8,11 +8,12 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
 };
 use tauri::{AppHandle, Emitter, Manager};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     proposals::{canonical_agent_commit_target, editor_visible_content_hash},
@@ -183,6 +184,7 @@ pub(crate) struct ChatMessage {
     pub(crate) created_at_millis: u64,
     pub(crate) sources: Vec<ChatSource>,
     pub(crate) attachments: Vec<ChatAttachment>,
+    pub(crate) agent_events: Vec<ChatAgentEventEnvelope>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -317,8 +319,45 @@ struct ActiveChatRun {
     run_id: String,
     force_web_search: bool,
     active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: CancellationToken,
     automatic_title_fallback: Option<String>,
+}
+
+struct RetryRunContext {
+    force_web_search: bool,
+    active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
+}
+
+struct AgentResponseFailure {
+    error: String,
+    sources: Vec<ChatSource>,
+}
+
+impl From<String> for AgentResponseFailure {
+    fn from(error: String) -> Self {
+        Self {
+            error,
+            sources: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChatAgentEventEnvelope {
+    #[serde(default = "agent_event_schema_version")]
+    pub(crate) schema_version: u16,
+    pub(crate) request_id: String,
+    pub(crate) conversation_id: String,
+    pub(crate) message_id: String,
+    pub(crate) run_id: String,
+    pub(crate) sequence: u64,
+    pub(crate) created_at_millis: u64,
+    pub(crate) event: crate::agent_runtime::AgentEvent,
+}
+
+fn agent_event_schema_version() -> u16 {
+    2
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -380,7 +419,7 @@ pub(crate) struct ChatService {
 struct ChatServiceInner {
     db_path: PathBuf,
     notes_root: PathBuf,
-    active_requests: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    active_requests: Mutex<HashMap<String, CancellationToken>>,
     projection_sink: Arc<dyn ChatProjectionSink>,
 }
 
@@ -489,7 +528,9 @@ impl ChatService {
                    updated_at_millis INTEGER NOT NULL,
                    current_part INTEGER NOT NULL DEFAULT 1,
                    detached INTEGER NOT NULL DEFAULT 0,
-                   continuation_summary TEXT NOT NULL DEFAULT ''
+                   continuation_summary TEXT NOT NULL DEFAULT '',
+                   branched_from_conversation_id TEXT,
+                   branched_from_message_id TEXT
                  );
                  CREATE TABLE IF NOT EXISTS chat_messages (
                    id TEXT PRIMARY KEY,
@@ -554,12 +595,26 @@ impl ChatService {
                    retry_of_message_id TEXT,
                    provider TEXT NOT NULL,
                    model TEXT NOT NULL,
+                   force_web_search INTEGER NOT NULL DEFAULT 0,
+                   active_note_json TEXT,
                    status TEXT NOT NULL,
                    input_tokens INTEGER NOT NULL DEFAULT 0,
                    output_tokens INTEGER NOT NULL DEFAULT 0,
                    created_at_millis INTEGER NOT NULL,
                    updated_at_millis INTEGER NOT NULL
                  );
+                 CREATE TABLE IF NOT EXISTS chat_agent_events (
+                   run_id TEXT NOT NULL REFERENCES chat_agent_runs(id) ON DELETE CASCADE,
+                   sequence INTEGER NOT NULL,
+                   request_id TEXT NOT NULL,
+                   conversation_id TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+                   message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+                   event_json TEXT NOT NULL,
+                   created_at_millis INTEGER NOT NULL,
+                   PRIMARY KEY(run_id, sequence)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_chat_agent_events_message
+                   ON chat_agent_events(message_id, created_at_millis, run_id, sequence);
                  CREATE TABLE IF NOT EXISTS chat_agent_proposals (
                    id TEXT PRIMARY KEY,
                    run_id TEXT NOT NULL REFERENCES chat_agent_runs(id) ON DELETE CASCADE,
@@ -611,6 +666,14 @@ impl ChatService {
             "ALTER TABLE chat_settings ADD COLUMN web_access TEXT NOT NULL DEFAULT 'auto'",
             [],
         );
+        let _ = connection.execute(
+            "ALTER TABLE chat_conversations ADD COLUMN branched_from_conversation_id TEXT",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE chat_conversations ADD COLUMN branched_from_message_id TEXT",
+            [],
+        );
         let openai_model_added = connection.execute(
             "ALTER TABLE chat_settings ADD COLUMN openai_model TEXT NOT NULL DEFAULT 'gpt-5.6-terra'",
             [],
@@ -645,6 +708,14 @@ impl ChatService {
         ).is_ok();
         let _ = connection.execute("ALTER TABLE chat_messages ADD COLUMN provider TEXT", []);
         let _ = connection.execute("ALTER TABLE chat_messages ADD COLUMN model TEXT", []);
+        let _ = connection.execute(
+            "ALTER TABLE chat_agent_runs ADD COLUMN force_web_search INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE chat_agent_runs ADD COLUMN active_note_json TEXT",
+            [],
+        );
         let _ = connection.execute(
             "ALTER TABLE chat_agent_proposals ADD COLUMN commit_target_path TEXT",
             [],
@@ -990,6 +1061,180 @@ impl ChatService {
         self.get_conversation(&id)
     }
 
+    /// Creates a durable transcript branch ending at a completed assistant
+    /// message. Branching copies user-visible history and source/attachment
+    /// evidence; future runs receive that history as normal conversation input.
+    pub(crate) fn branch_from_message(&self, message_id: &str) -> Result<ChatConversation, String> {
+        let connection = self.connection()?;
+        let source_conversation_id: String = connection
+            .query_row(
+                "SELECT conversation_id FROM chat_messages WHERE id = ?1",
+                [message_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "Checkpoint message was not found".to_string())?;
+        let source = self.get_conversation(&source_conversation_id)?;
+        let checkpoint = source
+            .messages
+            .iter()
+            .find(|message| message.id == message_id)
+            .ok_or_else(|| "Checkpoint message was not found".to_string())?;
+        if checkpoint.role != "assistant" || checkpoint.status != "complete" {
+            return Err("Only completed assistant messages can become checkpoints".to_string());
+        }
+        let messages = source
+            .messages
+            .iter()
+            .filter(|message| message.ordinal <= checkpoint.ordinal)
+            .cloned()
+            .collect::<Vec<_>>();
+        drop(connection);
+
+        let branch_id = generate_id("chat");
+        let now = now_millis();
+        let title = format!("{} (branch)", source.summary.title.trim());
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        transaction
+            .execute(
+                "INSERT INTO chat_conversations
+                 (id, title, mode, access, provider, model, created_at_millis,
+                  updated_at_millis, current_part, branched_from_conversation_id,
+                  branched_from_message_id)
+                 VALUES (?1, ?2, 'auto', ?3, ?4, ?5, ?6, ?6, ?7, ?8, ?9)",
+                params![
+                    branch_id,
+                    title,
+                    source.summary.access.as_str(),
+                    source.summary.provider,
+                    source.summary.model,
+                    to_i64(now)?,
+                    checkpoint.part,
+                    source_conversation_id,
+                    message_id,
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        let mut last_user_message_id: Option<String> = None;
+        for message in messages {
+            let copied_message_id = generate_id("msg");
+            let is_assistant = message.role == "assistant";
+            transaction
+                .execute(
+                    "INSERT INTO chat_messages
+                     (id, conversation_id, ordinal, role, status, content, error,
+                      part, created_at_millis, provider, model)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![
+                        copied_message_id,
+                        branch_id,
+                        message.ordinal,
+                        message.role,
+                        message.status,
+                        message.content,
+                        message.error,
+                        message.part,
+                        to_i64(message.created_at_millis)?,
+                        (message.role == "assistant").then_some(source.summary.provider.as_str()),
+                        (message.role == "assistant").then_some(source.summary.model.as_str()),
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+            for attachment in message.attachments {
+                transaction
+                    .execute(
+                        "INSERT INTO chat_message_attachments
+                         (id, message_id, kind, name, mime_type, size_bytes,
+                          data_base64, created_at_millis)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        params![
+                            generate_id("attachment"),
+                            copied_message_id,
+                            attachment.kind,
+                            attachment.name,
+                            attachment.mime_type,
+                            to_i64(attachment.size_bytes as u64)?,
+                            attachment.data_base64,
+                            to_i64(message.created_at_millis)?,
+                        ],
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            for source in message.sources {
+                transaction
+                    .execute(
+                        "INSERT INTO chat_sources
+                         (message_id, kind, note_id, note_path, title, excerpt, url, anchor)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        params![
+                            copied_message_id,
+                            source.kind,
+                            source.note_id,
+                            source.note_path,
+                            source.title,
+                            source.excerpt,
+                            source.url,
+                            source.anchor,
+                        ],
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+            if is_assistant && !message.agent_events.is_empty() {
+                let copied_user_id = last_user_message_id.as_deref().ok_or_else(|| {
+                    "Checkpoint assistant message has no preceding user message".to_string()
+                })?;
+                let copied_run_id = generate_id("run");
+                transaction
+                    .execute(
+                        "INSERT INTO chat_agent_runs
+                         (id, conversation_id, user_message_id, assistant_message_id,
+                          retry_of_message_id, provider, model, status,
+                          input_tokens, output_tokens, created_at_millis, updated_at_millis)
+                         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, 'completed', 0, 0, ?7, ?7)",
+                        params![
+                            copied_run_id,
+                            branch_id,
+                            copied_user_id,
+                            copied_message_id,
+                            source.summary.provider,
+                            source.summary.model,
+                            to_i64(message.created_at_millis)?,
+                        ],
+                    )
+                    .map_err(|error| error.to_string())?;
+                for envelope in message.agent_events {
+                    let event_json = serde_json::to_string(&envelope.event)
+                        .map_err(|error| error.to_string())?;
+                    transaction
+                        .execute(
+                            "INSERT INTO chat_agent_events
+                             (run_id, sequence, request_id, conversation_id,
+                              message_id, event_json, created_at_millis)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                            params![
+                                copied_run_id,
+                                to_i64(envelope.sequence)?,
+                                envelope.request_id,
+                                branch_id,
+                                copied_message_id,
+                                event_json,
+                                to_i64(envelope.created_at_millis)?,
+                            ],
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            if !is_assistant {
+                last_user_message_id = Some(copied_message_id);
+            }
+        }
+        transaction.commit().map_err(|error| error.to_string())?;
+        self.write_projection(&branch_id, true)?;
+        self.get_conversation(&branch_id)
+    }
+
     pub(crate) fn list_conversations(&self) -> Result<Vec<ChatConversationSummary>, String> {
         let connection = self.connection()?;
         let mut statement = connection
@@ -1326,11 +1571,13 @@ impl ChatService {
                             && message.ordinal < assistant.ordinal
                     })
                     .ok_or_else(|| "The original user message is missing".to_string())?;
+                let original_context =
+                    self.retry_run_context(&conversation_id, &failed_assistant_message_id)?;
                 (
                     user.content.clone(),
                     Vec::new(),
-                    false,
-                    None,
+                    original_context.force_web_search,
+                    original_context.active_note,
                     Some((user_message_id, failed_assistant_message_id)),
                 )
             }
@@ -1448,12 +1695,12 @@ impl ChatService {
         self.write_projection(&conversation_id, false)?;
 
         let request_id = generate_id("req");
-        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled = CancellationToken::new();
         self.inner
             .active_requests
             .lock()
             .map_err(|_| "Chat request lock poisoned".to_string())?
-            .insert(request_id.clone(), Arc::clone(&cancelled));
+            .insert(request_id.clone(), cancelled.clone());
         let accepted = ChatRequestAccepted {
             request_id: request_id.clone(),
             conversation_id: conversation_id.clone(),
@@ -1461,7 +1708,7 @@ impl ChatService {
             assistant_message_id: assistant_message_id.clone(),
             automatic_title_fallback,
         };
-        let run_id = self.create_agent_run(
+        let run_id = self.create_agent_run_with_context(
             &conversation_id,
             &accepted.user_message_id,
             &assistant_message_id,
@@ -1470,6 +1717,8 @@ impl ChatService {
                 .map(|(_, assistant_id)| assistant_id.as_str()),
             &conversation.summary.provider,
             &conversation.summary.model,
+            force_web_search,
+            active_note.as_ref(),
         )?;
         let service = self.clone();
         let automatic_title_fallback = accepted
@@ -1511,13 +1760,13 @@ impl ChatService {
 
         let result = self.run_agent_response(&run).await;
         let completed = match result {
-            Ok((content, _, usage)) if run.cancelled.load(Ordering::Acquire) => {
+            Ok((content, all_sources, usage)) if run.cancelled.is_cancelled() => {
                 let _ = self.finish_message(
                     &run.assistant_message_id,
                     "cancelled",
                     &content,
                     None,
-                    &[],
+                    &all_sources,
                 );
                 let _ = self.finish_agent_run(
                     &run.run_id,
@@ -1535,6 +1784,15 @@ impl ChatService {
                     .get_conversation(&run.conversation_id)
                     .ok()
                     .map(|conversation| conversation.summary);
+                for source in all_sources {
+                    let mut source_payload = stream_payload(
+                        &run.request_id,
+                        &run.conversation_id,
+                        &run.assistant_message_id,
+                    );
+                    source_payload.source = Some(source);
+                    event("chat://source", source_payload);
+                }
                 event("chat://cancelled", payload);
                 false
             }
@@ -1576,7 +1834,7 @@ impl ChatService {
                 event("chat://completed", payload);
                 true
             }
-            Err(error) => {
+            Err(failure) => {
                 let partial = self
                     .connection()
                     .and_then(|connection| {
@@ -1589,7 +1847,9 @@ impl ChatService {
                             .map_err(|value| value.to_string())
                     })
                     .unwrap_or_default();
-                let status = if run.cancelled.load(Ordering::Acquire) {
+                let mut sources = failure.sources;
+                sources.extend(web_sources_from_text(&partial));
+                let status = if run.cancelled.is_cancelled() {
                     "cancelled"
                 } else {
                     "error"
@@ -1598,8 +1858,8 @@ impl ChatService {
                     &run.assistant_message_id,
                     status,
                     &partial,
-                    Some(&error),
-                    &[],
+                    Some(&failure.error),
+                    &sources,
                 );
                 let _ = self.finish_agent_run(&run.run_id, status, 0, 0);
                 let _ = self.write_projection(&run.conversation_id, false);
@@ -1609,11 +1869,20 @@ impl ChatService {
                     &run.assistant_message_id,
                 );
                 payload.content = Some(partial);
-                payload.error = Some(error);
+                payload.error = Some(failure.error);
                 payload.conversation = self
                     .get_conversation(&run.conversation_id)
                     .ok()
                     .map(|conversation| conversation.summary);
+                for source in sources {
+                    let mut source_payload = stream_payload(
+                        &run.request_id,
+                        &run.conversation_id,
+                        &run.assistant_message_id,
+                    );
+                    source_payload.source = Some(source);
+                    event("chat://source", source_payload);
+                }
                 event(
                     if status == "cancelled" {
                         "chat://cancelled"
@@ -1631,7 +1900,7 @@ impl ChatService {
                 let title_app = run.app.clone();
                 let title_conversation_id = run.conversation_id.clone();
                 let title_user_message_id = run.user_message_id.clone();
-                let title_cancelled = Arc::clone(&run.cancelled);
+                let title_cancelled = run.cancelled.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = service
                         .generate_model_conversation_title(
@@ -1653,15 +1922,17 @@ impl ChatService {
     async fn run_agent_response(
         &self,
         run: &ActiveChatRun,
-    ) -> Result<(String, Vec<ChatSource>, rig_core::completion::Usage), String> {
-        if run.cancelled.load(Ordering::Acquire) {
-            return Err("Request cancelled".to_string());
+    ) -> Result<(String, Vec<ChatSource>, rig_core::completion::Usage), AgentResponseFailure> {
+        if run.cancelled.is_cancelled() {
+            return Err("Request cancelled".to_string().into());
         }
         let conversation = self.get_conversation(&run.conversation_id)?;
         let provider = crate::agent_runtime::AgentProvider::parse(&conversation.summary.provider)?;
         let settings = self.get_settings()?;
         if provider == crate::agent_runtime::AgentProvider::Local && run.force_web_search {
-            return Err("Web search is unavailable with local models".to_string());
+            return Err("Web search is unavailable with local models"
+                .to_string()
+                .into());
         }
         let latest_user = conversation
             .messages
@@ -1698,27 +1969,53 @@ impl ChatService {
         let stream_request_id = run.request_id.clone();
         let stream_conversation_id = run.conversation_id.clone();
         let stream_message_id = run.assistant_message_id.clone();
-        let observer = crate::agent_runtime::AgentRuntimeObserver {
-            cancelled: Arc::clone(&run.cancelled),
-            on_text: Arc::new(move |delta| {
-                let full_content = if let Ok(mut content) = streamed_content_for_event.lock() {
-                    content.push_str(delta);
-                    content.clone()
-                } else {
-                    return;
+        let stream_run_id = run.run_id.clone();
+        let sequence = Arc::new(AtomicU64::new(1));
+        let event_sink: Arc<dyn Fn(crate::agent_runtime::AgentEvent) + Send + Sync> =
+            Arc::new(move |event| {
+                let event_sequence = sequence.fetch_add(1, Ordering::Relaxed);
+                if let crate::agent_runtime::AgentEvent::TextDelta { delta } = &event {
+                    let full_content = if let Ok(mut content) = streamed_content_for_event.lock() {
+                        content.push_str(delta);
+                        content.clone()
+                    } else {
+                        return;
+                    };
+                    let _ =
+                        stream_service.update_streaming_content(&stream_message_id, &full_content);
+                    let mut payload = stream_payload(
+                        &stream_request_id,
+                        &stream_conversation_id,
+                        &stream_message_id,
+                    );
+                    payload.delta = Some(delta.clone());
+                    let _ = stream_app.emit("chat://text-delta", payload);
+                }
+                let envelope = ChatAgentEventEnvelope {
+                    schema_version: 2,
+                    request_id: stream_request_id.clone(),
+                    conversation_id: stream_conversation_id.clone(),
+                    message_id: stream_message_id.clone(),
+                    run_id: stream_run_id.clone(),
+                    sequence: event_sequence,
+                    created_at_millis: now_millis(),
+                    event,
                 };
-                let _ = stream_service.update_streaming_content(&stream_message_id, &full_content);
-                let mut payload = stream_payload(
-                    &stream_request_id,
-                    &stream_conversation_id,
-                    &stream_message_id,
-                );
-                payload.delta = Some(delta.to_string());
-                let _ = stream_app.emit("chat://text-delta", payload);
-            }),
+                if !matches!(
+                    envelope.event,
+                    crate::agent_runtime::AgentEvent::TextDelta { .. }
+                ) {
+                    let _ = stream_service.append_agent_event(&envelope);
+                }
+                let _ = stream_app.emit("chat://agent-event", envelope);
+            });
+        tools.set_event_sink(Arc::clone(&event_sink));
+        let observer = crate::agent_runtime::AgentRuntimeObserver {
+            cancelled: run.cancelled.clone(),
+            on_event: event_sink,
         };
         let prompt = rig_user_message(prompt, &latest_user.attachments)?;
-        let response = crate::agent_runtime::AgentRuntime::run(
+        let response = match crate::agent_runtime::AgentRuntime::run(
             crate::agent_runtime::AgentRuntimeRequest {
                 provider: provider.clone(),
                 model: conversation.summary.model.clone(),
@@ -1737,10 +2034,19 @@ impl ChatService {
                 flex: provider == crate::agent_runtime::AgentProvider::Openai
                     && settings.service_tier == ChatServiceTier::Flex,
             },
-            tools.tools(),
+            Some(tools.clone()),
             observer,
         )
-        .await?;
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return Err(AgentResponseFailure {
+                    error,
+                    sources: tools.sources(),
+                });
+            }
+        };
         let mut sources = tools.sources();
         sources.extend(web_sources_from_text(&response.output));
         Ok((response.output, sources, response.usage))
@@ -1752,7 +2058,7 @@ impl ChatService {
         conversation_id: &str,
         user_message_id: &str,
         fallback: &str,
-        cancelled: Arc<AtomicBool>,
+        cancelled: CancellationToken,
     ) -> Result<(), String> {
         let conversation = self.get_conversation(conversation_id)?;
         let provider = crate::agent_runtime::AgentProvider::parse(&conversation.summary.provider)?;
@@ -1786,10 +2092,10 @@ impl ChatService {
                 flex: provider == crate::agent_runtime::AgentProvider::Openai
                     && settings.service_tier == ChatServiceTier::Flex,
             },
-            Vec::new(),
+            None,
             crate::agent_runtime::AgentRuntimeObserver {
                 cancelled,
-                on_text: Arc::new(|_| {}),
+                on_event: Arc::new(|_| {}),
             },
         )
         .await?;
@@ -1826,6 +2132,28 @@ impl ChatService {
             .execute(
                 "UPDATE chat_messages SET content = ?2 WHERE id = ?1 AND status = 'streaming'",
                 params![message_id, content],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn append_agent_event(&self, envelope: &ChatAgentEventEnvelope) -> Result<(), String> {
+        let event_json =
+            serde_json::to_string(&envelope.event).map_err(|error| error.to_string())?;
+        self.connection()?
+            .execute(
+                "INSERT OR IGNORE INTO chat_agent_events
+                 (run_id, sequence, request_id, conversation_id, message_id, event_json, created_at_millis)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    envelope.run_id,
+                    to_i64(envelope.sequence)?,
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    envelope.message_id,
+                    event_json,
+                    to_i64(envelope.created_at_millis)?,
+                ],
             )
             .map_err(|error| error.to_string())?;
         Ok(())
@@ -1887,14 +2215,14 @@ impl ChatService {
         let token = requests
             .get(request_id)
             .ok_or_else(|| "That chat request is no longer active".to_string())?;
-        token.store(true, Ordering::Release);
+        token.cancel();
         Ok(())
     }
 
     fn cancel_active_requests(&self) {
         if let Ok(requests) = self.inner.active_requests.lock() {
             for token in requests.values() {
-                token.store(true, Ordering::Release);
+                token.cancel();
             }
         }
     }
@@ -2207,6 +2535,7 @@ impl ChatService {
         &self.inner.notes_root
     }
 
+    #[cfg(test)]
     pub(crate) fn create_agent_run(
         &self,
         conversation_id: &str,
@@ -2216,15 +2545,44 @@ impl ChatService {
         provider: &str,
         model: &str,
     ) -> Result<String, String> {
+        self.create_agent_run_with_context(
+            conversation_id,
+            user_message_id,
+            assistant_message_id,
+            retry_of_message_id,
+            provider,
+            model,
+            false,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_agent_run_with_context(
+        &self,
+        conversation_id: &str,
+        user_message_id: &str,
+        assistant_message_id: &str,
+        retry_of_message_id: Option<&str>,
+        provider: &str,
+        model: &str,
+        force_web_search: bool,
+        active_note: Option<&crate::agent_tools::ActiveNoteSnapshot>,
+    ) -> Result<String, String> {
         let id = generate_id("run");
         let now = to_i64(now_millis())?;
+        let active_note_json = active_note
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| error.to_string())?;
         self.connection()?
             .execute(
                 "INSERT INTO chat_agent_runs
                  (id, conversation_id, user_message_id, assistant_message_id,
-                  retry_of_message_id, provider, model, status,
+                  retry_of_message_id, provider, model, force_web_search,
+                  active_note_json, status,
                   created_at_millis, updated_at_millis)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, ?8)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'running', ?10, ?10)",
                 params![
                     id,
                     conversation_id,
@@ -2233,11 +2591,39 @@ impl ChatService {
                     retry_of_message_id,
                     provider,
                     model,
+                    force_web_search,
+                    active_note_json,
                     now
                 ],
             )
             .map_err(|error| error.to_string())?;
         Ok(id)
+    }
+
+    fn retry_run_context(
+        &self,
+        conversation_id: &str,
+        assistant_message_id: &str,
+    ) -> Result<RetryRunContext, String> {
+        let (force_web_search, active_note_json) = self
+            .connection()?
+            .query_row(
+                "SELECT force_web_search, active_note_json
+                 FROM chat_agent_runs
+                 WHERE conversation_id = ?1 AND assistant_message_id = ?2
+                 ORDER BY created_at_millis DESC LIMIT 1",
+                params![conversation_id, assistant_message_id],
+                |row| Ok((row.get::<_, i64>(0)? != 0, row.get::<_, Option<String>>(1)?)),
+            )
+            .map_err(|_| "The original agent run context is missing".to_string())?;
+        let active_note = active_note_json
+            .map(|value| serde_json::from_str(&value))
+            .transpose()
+            .map_err(|error| format!("Stored retry context is invalid: {error}"))?;
+        Ok(RetryRunContext {
+            force_web_search,
+            active_note,
+        })
     }
 
     pub(crate) fn finish_agent_run(
@@ -3029,6 +3415,7 @@ fn load_messages(
                 created_at_millis: row.get::<_, i64>(8)?.max(0) as u64,
                 sources: Vec::new(),
                 attachments: Vec::new(),
+                agent_events: Vec::new(),
             })
         })
         .map_err(|error| error.to_string())?;
@@ -3038,8 +3425,46 @@ fn load_messages(
     for message in &mut messages {
         message.sources = load_sources(connection, &message.id)?;
         message.attachments = load_attachments(connection, &message.id)?;
+        message.agent_events = load_agent_events(connection, &message.id)?;
     }
     Ok(messages)
+}
+
+fn load_agent_events(
+    connection: &Connection,
+    message_id: &str,
+) -> Result<Vec<ChatAgentEventEnvelope>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT request_id, conversation_id, message_id, run_id, sequence, created_at_millis, event_json
+             FROM chat_agent_events WHERE message_id = ?1
+             ORDER BY created_at_millis, run_id, sequence",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map([message_id], |row| {
+            let event_json: String = row.get(6)?;
+            let event = serde_json::from_str(&event_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    6,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(ChatAgentEventEnvelope {
+                schema_version: 2,
+                request_id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                message_id: row.get(2)?,
+                run_id: row.get(3)?,
+                sequence: row.get::<_, i64>(4)?.max(0) as u64,
+                created_at_millis: row.get::<_, i64>(5)?.max(0) as u64,
+                event,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
 }
 
 fn load_attachments(
@@ -3355,7 +3780,9 @@ When the user asks to update a note or create one, call the appropriate proposal
 tool. Use propose_note_rewrite when most or all of a note should be cleaned up, \
 restructured, translated, or rewritten, and include the complete replacement body. \
 Read the complete current note before rewriting it. Use propose_note_edits for \
-localized changes. Proposals never write directly and \
+localized changes. For work needing three or more meaningful steps, call \
+update_plan before acting and re-send the full plan as steps progress. Plans are \
+brief user-visible status, never private reasoning. Proposals never write directly and \
 the user will review them. Do not encode \
 proposals in Markdown fences. A note tool may return pendingChanges=true; in that \
 case its body is the current unapproved working copy, and new changes should be \
@@ -3984,6 +4411,142 @@ mod tests {
     }
 
     #[test]
+    fn structured_agent_events_are_durable_and_idempotent() {
+        let (_root, service) = service("chat-agent-events");
+        let conversation = service.create_conversation(None, None).unwrap();
+        let (run_id, assistant_id) =
+            seed_agent_run(&service, &conversation.summary.id, "events", 1);
+        let plan = ChatAgentEventEnvelope {
+            schema_version: 2,
+            request_id: "request-events".to_string(),
+            conversation_id: conversation.summary.id.clone(),
+            message_id: assistant_id.clone(),
+            run_id: run_id.clone(),
+            sequence: 2,
+            created_at_millis: 10,
+            event: crate::agent_runtime::AgentEvent::PlanUpdated {
+                entries: vec![crate::agent_runtime::AgentPlanEntry {
+                    id: "step-1".to_string(),
+                    text: "Inspect the note".to_string(),
+                    status: "inProgress".to_string(),
+                    detail: None,
+                }],
+            },
+        };
+        service.append_agent_event(&plan).unwrap();
+        service.append_agent_event(&plan).unwrap();
+        service
+            .append_agent_event(&ChatAgentEventEnvelope {
+                schema_version: 2,
+                request_id: "request-events".to_string(),
+                conversation_id: conversation.summary.id.clone(),
+                message_id: assistant_id.clone(),
+                run_id,
+                sequence: 4,
+                created_at_millis: 11,
+                event: crate::agent_runtime::AgentEvent::UsageUpdated {
+                    call_index: 1,
+                    aggregate: crate::agent_runtime::AgentUsage {
+                        input_tokens: 8,
+                        output_tokens: 5,
+                        total_tokens: 13,
+                        cached_input_tokens: 2,
+                        cache_creation_input_tokens: 0,
+                        tool_use_prompt_tokens: 0,
+                        reasoning_tokens: 1,
+                    },
+                },
+            })
+            .unwrap();
+
+        let reloaded = service.get_conversation(&conversation.summary.id).unwrap();
+        let assistant = reloaded
+            .messages
+            .iter()
+            .find(|message| message.id == assistant_id)
+            .unwrap();
+        assert_eq!(assistant.agent_events.len(), 2);
+        assert_eq!(assistant.agent_events[0], plan);
+        assert!(matches!(
+            assistant.agent_events[1].event,
+            crate::agent_runtime::AgentEvent::UsageUpdated { call_index: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn checkpoint_branch_copies_history_and_records_lineage() {
+        let (_root, service) = service("chat-checkpoint-branch");
+        let conversation = service
+            .create_conversation(Some("Research".to_string()), None)
+            .unwrap();
+        let connection = service.connection().unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_messages
+                 (id, conversation_id, ordinal, role, status, content, part, created_at_millis)
+                 VALUES ('checkpoint-user', ?1, 1, 'user', 'complete', 'Question', 1, 1),
+                        ('checkpoint-assistant', ?1, 2, 'assistant', 'complete', 'Answer', 1, 2),
+                        ('after-checkpoint', ?1, 3, 'user', 'complete', 'Later', 1, 3)",
+                [&conversation.summary.id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO chat_sources
+                 (message_id, kind, note_id, note_path, title, excerpt, url, anchor)
+                 VALUES ('checkpoint-assistant', 'note', 'note-1', 'Notes/One.md',
+                         'One', 'Evidence', NULL, 'section')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let run_id = service
+            .create_agent_run(
+                &conversation.summary.id,
+                "checkpoint-user",
+                "checkpoint-assistant",
+                None,
+                "openai",
+                "test-model",
+            )
+            .unwrap();
+        service
+            .append_agent_event(&ChatAgentEventEnvelope {
+                schema_version: 2,
+                request_id: "checkpoint-request".to_string(),
+                conversation_id: conversation.summary.id.clone(),
+                message_id: "checkpoint-assistant".to_string(),
+                run_id,
+                sequence: 1,
+                created_at_millis: 2,
+                event: crate::agent_runtime::AgentEvent::ReasoningUpdated {
+                    status: "completed".to_string(),
+                    summary: Some("Safe summary".to_string()),
+                },
+            })
+            .unwrap();
+
+        let branch = service.branch_from_message("checkpoint-assistant").unwrap();
+        assert_eq!(branch.summary.title, "Research (branch)");
+        assert_eq!(branch.messages.len(), 2);
+        assert_eq!(branch.messages[1].content, "Answer");
+        assert_eq!(branch.messages[1].sources.len(), 1);
+        assert_eq!(branch.messages[1].agent_events.len(), 1);
+        let lineage = service
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT branched_from_conversation_id, branched_from_message_id
+                 FROM chat_conversations WHERE id = ?1",
+                [&branch.summary.id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(lineage.0, conversation.summary.id);
+        assert_eq!(lineage.1, "checkpoint-assistant");
+    }
+
+    #[test]
     fn interrupted_chat_startup_recovery_is_idempotent() {
         let (root, service) = service("chat-interrupted-idempotent");
         let data = root.path().join(".gneauxghts");
@@ -4193,6 +4756,54 @@ mod tests {
             .unwrap();
         assert_eq!(retry_of.as_deref(), Some(interrupted_assistant_id.as_str()));
         assert_eq!(run_status, "cancelled");
+    }
+
+    #[test]
+    fn retry_run_context_survives_restart() {
+        let (root, service) = service("chat-retry-context");
+        let data = root.path().join(".gneauxghts");
+        let conversation = service.create_conversation(None, None).unwrap();
+        let (_, user_id, assistant_id) =
+            seed_streaming_agent_run(&service, &conversation.summary.id, "context", "Partial");
+        let active_note = crate::agent_tools::ActiveNoteSnapshot {
+            note_id: Some("note-1".to_string()),
+            title: "Current note".to_string(),
+            path: Some("Current note.md".to_string()),
+            body: "Important context".to_string(),
+            body_hash: "hash-1".to_string(),
+            selection: Some("selected context".to_string()),
+        };
+        service
+            .connection()
+            .unwrap()
+            .execute(
+                "DELETE FROM chat_agent_runs WHERE assistant_message_id = ?1",
+                [&assistant_id],
+            )
+            .unwrap();
+        service
+            .create_agent_run_with_context(
+                &conversation.summary.id,
+                &user_id,
+                &assistant_id,
+                None,
+                "openai",
+                "test-model",
+                true,
+                Some(&active_note),
+            )
+            .unwrap();
+        drop(service);
+
+        let reopened = ChatService::new(root.path().to_path_buf(), data).unwrap();
+        let context = reopened
+            .retry_run_context(&conversation.summary.id, &assistant_id)
+            .unwrap();
+        let restored = context.active_note.expect("active note context");
+        assert!(context.force_web_search);
+        assert_eq!(restored.note_id.as_deref(), Some("note-1"));
+        assert_eq!(restored.title, "Current note");
+        assert_eq!(restored.selection.as_deref(), Some("selected context"));
     }
 
     #[test]
@@ -4446,6 +5057,7 @@ mod tests {
                 created_at_millis: 1,
                 sources: Vec::new(),
                 attachments: Vec::new(),
+                agent_events: Vec::new(),
             },
             ChatMessage {
                 id: "m2".to_string(),
@@ -4459,6 +5071,7 @@ mod tests {
                 created_at_millis: 2,
                 sources: Vec::new(),
                 attachments: Vec::new(),
+                agent_events: Vec::new(),
             },
         ];
         let history = normalized_rig_history(&conversation.messages, "m2").unwrap();

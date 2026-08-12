@@ -15,6 +15,76 @@ export type DurableProposalStatus =
   | 'dismissed'
   | 'superseded';
 
+export type AgentToolStatus =
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'denied'
+  | 'skipped';
+
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cachedInputTokens: number;
+  cacheCreationInputTokens: number;
+  toolUsePromptTokens: number;
+  reasoningTokens: number;
+}
+
+export interface AgentPlanEntry {
+  id: string;
+  text: string;
+  status: 'pending' | 'inProgress' | 'completed';
+  detail?: string;
+}
+
+export type AgentReasoningStatus = 'running' | 'completed' | 'cancelled' | 'error';
+
+export type AgentEvent =
+  | { type: 'textDelta'; delta: string }
+  | {
+      type: 'toolCallUpdated';
+      callId: string;
+      name: string;
+      title: string;
+      status: AgentToolStatus;
+    }
+  | { type: 'planUpdated'; entries: AgentPlanEntry[] }
+  | { type: 'usageUpdated'; callIndex: number; aggregate: AgentUsage }
+  | { type: 'modelTurnRetried'; turn: number }
+  | { type: 'reasoningUpdated'; status: AgentReasoningStatus; summary?: string };
+
+export interface ChatAgentEventEnvelope {
+  schemaVersion?: number;
+  requestId: string;
+  conversationId: string;
+  messageId: string;
+  runId: string;
+  sequence: number;
+  createdAtMillis: number;
+  event: AgentEvent;
+}
+
+export type ChatPart =
+  | { id: 'text'; type: 'text'; text: string }
+  | {
+      id: string;
+      type: 'tool';
+      callId: string;
+      name: string;
+      title: string;
+      status: AgentToolStatus;
+    }
+  | { id: 'plan'; type: 'plan'; entries: AgentPlanEntry[] }
+  | { id: 'usage'; type: 'usage'; callIndex: number; usage: AgentUsage }
+  | {
+      id: 'reasoning';
+      type: 'reasoning';
+      status: AgentReasoningStatus;
+      summary?: string;
+    };
+
 export interface ChatSettings {
   provider: ChatProvider;
   model: string;
@@ -78,6 +148,10 @@ export interface ChatModelCapabilities {
   images: boolean;
   files: boolean;
   acceptedMimeTypes: string[];
+  tools: boolean;
+  webSearch: boolean;
+  reasoningSummaries: boolean;
+  contextWindow: number | null;
 }
 
 export interface ChatAgentProposal {
@@ -148,6 +222,9 @@ export interface ChatMessage {
   citations: ChatCitation[];
   attachments: ChatAttachment[];
   linkTarget: string | null;
+  parts: ChatPart[];
+  agentRunId: string | null;
+  agentSequence: number;
 }
 
 export interface ChatConversation extends ChatConversationSummary {
@@ -270,6 +347,7 @@ export interface ChatEventMap {
   'chat://cancelled': ChatCancelledEvent;
   'chat://failed': ChatFailedEvent;
   'chat://activity': ChatActivityEvent;
+  'chat://agent-event': ChatAgentEventEnvelope;
   'chat://proposal': ChatAgentProposal;
   'chat://projection-conflict': ChatProjectionConflictEvent;
 }

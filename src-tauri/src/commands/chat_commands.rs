@@ -84,6 +84,10 @@ pub(crate) struct ChatModelCapabilities {
     images: bool,
     files: bool,
     accepted_mime_types: Vec<String>,
+    tools: bool,
+    web_search: bool,
+    reasoning_summaries: bool,
+    context_window: Option<u64>,
 }
 
 const IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -130,6 +134,10 @@ async fn model_capabilities(
                 images: multimodal,
                 files: multimodal,
                 accepted_mime_types: accepted_mime_types(multimodal, multimodal, multimodal),
+                tools: true,
+                web_search: true,
+                reasoning_summaries: false,
+                context_window: None,
             })
         }
         "local" => {
@@ -141,6 +149,10 @@ async fn model_capabilities(
                 // Text files are decoded locally and supplied as text content.
                 files: true,
                 accepted_mime_types: accepted_mime_types(false, true, false),
+                tools: true,
+                web_search: false,
+                reasoning_summaries: false,
+                context_window: None,
             })
         }
         other => Err(format!("Unsupported chat provider '{other}'")),
@@ -239,6 +251,14 @@ pub(crate) fn chat_get_conversation(
 ) -> Result<ChatConversation, String> {
     service.mark_projection_detached_if_needed(&conversation_id)?;
     service.get_conversation(&conversation_id)
+}
+
+#[tauri::command]
+pub(crate) fn chat_branch_from_message(
+    service: State<'_, ChatService>,
+    message_id: String,
+) -> Result<ChatConversation, String> {
+    service.branch_from_message(&message_id)
 }
 
 #[tauri::command]
@@ -707,6 +727,10 @@ mod attachment_capability_tests {
             images: false,
             files: true,
             accepted_mime_types: accepted_mime_types(false, true, false),
+            tools: true,
+            web_search: false,
+            reasoning_summaries: false,
+            context_window: None,
         };
         let attachment = ChatAttachmentInput {
             kind: "image".to_string(),

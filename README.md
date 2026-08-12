@@ -102,8 +102,13 @@ a conversation.
 - Rust
 - CodeMirror 6 editor
 - SQLite + HNSW-based ANN index for semantic retrieval
+- Rig 0.41 agent runtime
+- Svelte AI Elements primitives for structured chat UI
 
 ## Development
+
+The chat runtime boundary, event protocol, provider strategy, and ACP decision
+are documented in [docs/architecture/chat-agent-runtime.md](docs/architecture/chat-agent-runtime.md).
 
 ### Prerequisites
 
@@ -191,4 +196,3 @@ SEMANTIC_BENCHMARK.md
 - "Forget" deletes the current saved note either immediately or after a configurable hold-to-confirm interaction.
 - "unForget" restores the most recently forgotten note from in-memory state.
 - "Remember" saves the current note and clears the editor so you can start another one.
-

@@ -43,6 +43,10 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
       focusEditorAfterOpen: true;
     }
   ) => Promise<void>;
+  openWikilink: (
+    paneId: TPaneId,
+    rawTarget: string
+  ) => void | Promise<void>;
   flushPendingAutosave: (document: NoteDraftState) => void;
   getNoteSaveQueue: (document: NoteDraftState) => Promise<void>;
 }
@@ -176,6 +180,14 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
             revealEditorAfterOpen: true,
             focusEditorAfterOpen: true
           });
+        },
+        onOpenWikilink: async (rawTarget) => {
+          const editorPaneId = getNearestEditorPaneId(
+            deps.getPaneOrder(),
+            deps.getPaneKind,
+            paneId
+          );
+          await deps.openWikilink(editorPaneId ?? paneId, rawTarget);
         }
       },
       proposalReview: {

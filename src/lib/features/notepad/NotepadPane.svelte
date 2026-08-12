@@ -233,7 +233,7 @@
         </div>
       </div>
     {:else}
-      <div class="chat-pane-shell flex min-h-0 flex-1 pb-(--command-bar-clearance)">
+      <div class="chat-pane-shell flex min-h-0 min-w-0 max-w-full flex-1 overflow-hidden pb-(--command-bar-clearance)">
         {#if viewModel.chat.session.controller}
           <ChatPanel
             controller={viewModel.chat.session.controller}
@@ -246,6 +246,7 @@
             selectionActions={viewModel.chat.context.selectionActions}
             onConversationChange={viewModel.chat.session.onConversationChange}
             onOpenCitation={viewModel.chat.context.onOpenCitation}
+            onOpenWikilink={viewModel.chat.context.onOpenWikilink}
             onSurfaceHandleChange={viewModel.chat.session.onSurfaceHandleChange}
             proposalSnapshot={viewModel.chat.proposalReview.snapshot}
             onProposalKeepAll={viewModel.chat.proposalReview.onKeepAll}

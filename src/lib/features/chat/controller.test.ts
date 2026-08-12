@@ -35,6 +35,9 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     citations: [],
     attachments: [],
     linkTarget: 'Chats/Test/Part 001#^msg_message-1',
+    parts: [{ id: 'text', type: 'text', text: '' }],
+    agentRunId: null,
+    agentSequence: 0,
     ...overrides
   };
 }
@@ -101,6 +104,7 @@ function fakeApi() {
     createConversation: vi.fn(async () => conversation()),
     listConversations: vi.fn(async () => [conversation()]),
     getConversation: vi.fn(async () => conversation()),
+    branchFromMessage: vi.fn(async () => conversation({ id: 'chat-branch' })),
     renameConversation: vi.fn(),
     archiveConversation: vi.fn(async () => forgottenChat),
     setConversationVaultAccess: vi.fn(async (_id, vaultAccess) => {
@@ -117,7 +121,11 @@ function fakeApi() {
     getModelCapabilities: vi.fn(async () => ({
       images: true,
       files: true,
-      acceptedMimeTypes: ['image/png', 'text/plain', 'application/pdf']
+      acceptedMimeTypes: ['image/png', 'text/plain', 'application/pdf'],
+      tools: true,
+      webSearch: true,
+      reasoningSummaries: false,
+      contextWindow: null
     })),
     sendMessage: vi.fn(),
     cancelRequest: vi.fn(),
@@ -177,7 +185,20 @@ describe('createChatController', () => {
     expect(controller.getSnapshot().settings).toEqual(settings);
     expect(controller.getSnapshot().isInitialized).toBe(true);
     expect(controller.getSnapshot().conversation?.id).toBe('conversation-1');
-    expect(fake.handlers.size).toBe(10);
+    expect(fake.handlers.size).toBe(11);
+  });
+
+  it('opens a durable checkpoint branch as the active conversation', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    const branch = await controller.branchFromMessage('assistant-1');
+
+    expect(fake.api.branchFromMessage).toHaveBeenCalledWith('assistant-1');
+    expect(branch?.id).toBe('chat-branch');
+    expect(controller.getSnapshot().conversation?.id).toBe('chat-branch');
+    expect(controller.getSnapshot().conversations[0]?.id).toBe('chat-branch');
   });
 
   it('reconciles streaming deltas, citations, and completion', async () => {
@@ -200,6 +221,54 @@ describe('createChatController', () => {
     fake.emit('chat://text-delta', {
       requestId: 'request-1', conversationId: 'conversation-1', messageId: streamingMessage.id, delta: 'Hello'
     });
+    fake.emit('chat://agent-event', {
+      requestId: 'request-1',
+      conversationId: 'conversation-1',
+      messageId: streamingMessage.id,
+      runId: 'run-1',
+      sequence: 2,
+      createdAtMillis: 2,
+      event: {
+        type: 'toolCallUpdated',
+        callId: 'call-1',
+        name: 'search_notes',
+        title: 'Search notes',
+        status: 'running'
+      }
+    });
+    fake.emit('chat://agent-event', {
+      requestId: 'request-1',
+      conversationId: 'conversation-1',
+      messageId: streamingMessage.id,
+      runId: 'run-1',
+      sequence: 3,
+      createdAtMillis: 3,
+      event: {
+        type: 'planUpdated',
+        entries: [{ id: 'step-1', text: 'Inspect notes', status: 'inProgress' }]
+      }
+    });
+    fake.emit('chat://agent-event', {
+      requestId: 'request-1',
+      conversationId: 'conversation-1',
+      messageId: streamingMessage.id,
+      runId: 'run-1',
+      sequence: 4,
+      createdAtMillis: 4,
+      event: {
+        type: 'usageUpdated',
+        callIndex: 1,
+        aggregate: {
+          inputTokens: 8,
+          outputTokens: 5,
+          totalTokens: 13,
+          cachedInputTokens: 2,
+          cacheCreationInputTokens: 0,
+          toolUsePromptTokens: 0,
+          reasoningTokens: 1
+        }
+      }
+    });
     fake.emit('chat://source', {
       requestId: 'request-1', conversationId: 'conversation-1', messageId: streamingMessage.id,
       citation: { id: 'source-1', kind: 'web', label: 'Source', url: 'https://example.com', excerpt: null }
@@ -209,6 +278,13 @@ describe('createChatController', () => {
     expect(controller.getSnapshot().conversation?.title).toBe('Login redirect bug');
     expect(controller.getSnapshot().conversations[0].title).toBe('Login redirect bug');
     expect(controller.getSnapshot().conversation?.messages[0].citations).toHaveLength(1);
+    expect(controller.getSnapshot().conversation?.messages[0].parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'tool', status: 'running' }),
+        expect.objectContaining({ type: 'plan' }),
+        expect.objectContaining({ type: 'usage' })
+      ])
+    );
     expect(controller.getSnapshot().isSending).toBe(true);
 
     fake.emit('chat://completed', {
@@ -217,6 +293,13 @@ describe('createChatController', () => {
     });
 
     expect(controller.getSnapshot().conversation?.messages[0].content).toBe('Hello there');
+    expect(controller.getSnapshot().conversation?.messages[0].parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'tool' }),
+        expect.objectContaining({ type: 'plan' }),
+        expect.objectContaining({ type: 'usage' })
+      ])
+    );
     expect(controller.getSnapshot().conversation?.activeRequestId).toBeNull();
     expect(controller.getSnapshot().isSending).toBe(false);
   });
@@ -263,7 +346,11 @@ describe('createChatController', () => {
         'image/png',
         'text/plain',
         'application/pdf'
-      ]
+      ],
+      tools: true,
+      webSearch: true,
+      reasoningSummaries: false,
+      contextWindow: null
     });
   });
 

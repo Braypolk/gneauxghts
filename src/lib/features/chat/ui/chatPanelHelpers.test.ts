@@ -6,7 +6,6 @@ import type {
 import {
   chatConversationContextKey,
   proposalInitialMarkdown,
-  renderChatMarkdown,
   resolveTargetMessageId,
   safeWebCitationHref
 } from './chatPanelHelpers';
@@ -79,12 +78,4 @@ describe('chat panel helpers', () => {
     expect(safeWebCitationHref('/relative')).toBe('#');
     expect(safeWebCitationHref('not a url')).toBe('#');
   });
-
-  it('renders Markdown while escaping raw HTML', () => {
-    expect(renderChatMarkdown('**Bold**')).toContain('<strong>Bold</strong>');
-    expect(renderChatMarkdown('<script>alert(1)</script>')).toContain(
-      '&lt;script&gt;alert(1)&lt;/script&gt;'
-    );
-  });
 });
-

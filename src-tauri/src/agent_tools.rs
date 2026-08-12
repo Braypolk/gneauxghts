@@ -1,4 +1,5 @@
 use crate::{
+    agent_runtime::{AgentEvent, AgentPlanEntry},
     chat::{ChatAgentProposal, ChatService, ChatSource, VaultAccess},
     index::AppState,
     note::{self, DocumentKind},
@@ -8,7 +9,11 @@ use crate::{
     },
     semantic::db::content_hash,
 };
-use rig_core::tool::Tool;
+use rig_agent::{
+    agent::{Agent, AgentBuilder, NoToolConfig},
+    tool::{Tool, ToolContext},
+};
+use rig_core::completion::CompletionModel;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -114,6 +119,7 @@ pub(crate) struct AgentToolContext {
     proposal_lock: Arc<Mutex<()>>,
     local_model: bool,
     proposal_failures: Arc<AtomicUsize>,
+    event_sink: Arc<Mutex<Option<Arc<dyn Fn(AgentEvent) + Send + Sync>>>>,
 }
 
 impl AgentToolContext {
@@ -144,18 +150,37 @@ impl AgentToolContext {
             proposal_lock: Arc::new(Mutex::new(())),
             local_model,
             proposal_failures: Arc::new(AtomicUsize::new(0)),
+            event_sink: Arc::new(Mutex::new(None)),
         }
     }
 
-    pub(crate) fn tools(&self) -> Vec<Box<dyn rig_core::tool::ToolDyn>> {
-        vec![
-            Box::new(GetActiveNoteTool(self.clone())),
-            Box::new(SearchNotesTool(self.clone())),
-            Box::new(ReadNoteTool(self.clone())),
-            Box::new(ProposeNoteEditsTool(self.clone())),
-            Box::new(ProposeNoteRewriteTool(self.clone())),
-            Box::new(ProposeCreateNoteTool(self.clone())),
-        ]
+    pub(crate) fn build_agent<M>(&self, builder: AgentBuilder<M, NoToolConfig>) -> Agent<M>
+    where
+        M: CompletionModel,
+    {
+        builder
+            .tool(GetActiveNoteTool(self.clone()))
+            .tool(SearchNotesTool(self.clone()))
+            .tool(ReadNoteTool(self.clone()))
+            .tool(ProposeNoteEditsTool(self.clone()))
+            .tool(ProposeNoteRewriteTool(self.clone()))
+            .tool(ProposeCreateNoteTool(self.clone()))
+            .tool(UpdatePlanTool(self.clone()))
+            .build()
+    }
+
+    pub(crate) fn set_event_sink(&self, sink: Arc<dyn Fn(AgentEvent) + Send + Sync>) {
+        if let Ok(mut current) = self.event_sink.lock() {
+            *current = Some(sink);
+        }
+    }
+
+    fn emit_agent_event(&self, event: AgentEvent) {
+        if let Ok(sink) = self.event_sink.lock() {
+            if let Some(sink) = sink.as_ref() {
+                sink(event);
+            }
+        }
     }
 
     pub(crate) fn sources(&self) -> Vec<ChatSource> {
@@ -507,7 +532,11 @@ impl Tool for GetActiveNoteTool {
         json!({"type":"object","properties":{},"additionalProperties":false})
     }
 
-    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        _args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         self.0.activity("Reading active note");
         self.0.active_note_payload()
     }
@@ -572,7 +601,11 @@ impl Tool for SearchNotesTool {
         })
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         self.0.activity("Searching notes");
         if self.0.access == VaultAccess::None {
             return Ok(json!({"status":"ready","items":[]}));
@@ -582,27 +615,29 @@ impl Tool for SearchNotesTool {
             return Err(AgentToolError("Search query cannot be empty".to_string()));
         }
         let limit = args.limit.unwrap_or(8).clamp(1, 20);
-        let state = self
-            .0
-            .app
-            .try_state::<AppState>()
-            .ok_or_else(|| AgentToolError("The notes index is unavailable".to_string()))?;
         let approved = if self.0.access == VaultAccess::Approved {
             Some(self.0.service.granted_note_ids().map_err(AgentToolError)?)
         } else {
             None
         };
         let excluded = self.0.service.excluded_note_ids().map_err(AgentToolError)?;
-        let retrieved = crate::services::retrieval::retrieve_vault_notes(
-            &state,
-            query,
-            limit,
-            approved.as_ref(),
-            &excluded,
-            args.modified_after,
-            args.modified_before,
-        )
-        .map_err(AgentToolError)?;
+        let app = self.0.app.clone();
+        let query = query.to_string();
+        let retrieved = run_blocking_tool(move || {
+            let state = app
+                .try_state::<AppState>()
+                .ok_or_else(|| "The notes index is unavailable".to_string())?;
+            crate::services::retrieval::retrieve_vault_notes(
+                &state,
+                &query,
+                limit,
+                approved.as_ref(),
+                &excluded,
+                args.modified_after,
+                args.modified_before,
+            )
+        })
+        .await?;
         let items = retrieved
             .iter()
             .map(|item| SearchItem {
@@ -634,6 +669,17 @@ impl Tool for SearchNotesTool {
         }
         Ok(json!({"status":"ready","items":items}))
     }
+}
+
+async fn run_blocking_tool<T, F>(operation: F) -> Result<T, AgentToolError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|error| AgentToolError(format!("Tool worker failed: {error}")))?
+        .map_err(AgentToolError)
 }
 
 #[derive(Clone)]
@@ -669,7 +715,11 @@ impl Tool for ReadNoteTool {
         })
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         self.0.activity("Reading note");
         if !self.0.allowed(&args.note_id)? {
             return Ok(
@@ -789,7 +839,11 @@ impl Tool for ProposeNoteEditsTool {
         })
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         self.0.activity("Preparing changes");
         if !self.0.allowed(&args.note_id)? || !self.0.was_surfaced(&args.note_id) {
             return Ok(
@@ -905,7 +959,11 @@ impl Tool for ProposeNoteRewriteTool {
         })
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         self.0.activity("Preparing rewrite");
         if !self.0.allowed(&args.note_id)? || !self.0.was_surfaced(&args.note_id) {
             return Ok(
@@ -1010,7 +1068,11 @@ impl Tool for ProposeCreateNoteTool {
         })
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         self.0.activity("Preparing new note");
         if self.0.access == VaultAccess::None {
             return Ok(
@@ -1055,6 +1117,104 @@ impl Tool for ProposeCreateNoteTool {
     }
 }
 
+#[derive(Clone)]
+struct UpdatePlanTool(AgentToolContext);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdatePlanArgs {
+    entries: Vec<UpdatePlanEntryArgs>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdatePlanEntryArgs {
+    id: Option<String>,
+    text: String,
+    status: String,
+    detail: Option<String>,
+}
+
+impl Tool for UpdatePlanTool {
+    const NAME: &'static str = "update_plan";
+    type Error = AgentToolError;
+    type Args = UpdatePlanArgs;
+    type Output = Value;
+
+    fn description(&self) -> String {
+        "Publish or update a concise user-visible plan for multi-step work. Do not include hidden reasoning. Re-send the full plan whenever a step changes.".to_string()
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "text": {"type": "string"},
+                            "detail": {"type": "string"},
+                            "status": {"type": "string", "enum": ["pending", "inProgress", "completed"]}
+                        },
+                        "required": ["text", "status"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["entries"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
+        if args.entries.is_empty() || args.entries.len() > 12 {
+            return Err(AgentToolError(
+                "Plan must contain 1 to 12 steps".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(args.entries.len());
+        for (index, entry) in args.entries.into_iter().enumerate() {
+            let text = entry.text.trim();
+            if text.is_empty() || text.chars().count() > 240 {
+                return Err(AgentToolError(
+                    "Each plan step must contain 1 to 240 characters".to_string(),
+                ));
+            }
+            if !matches!(
+                entry.status.as_str(),
+                "pending" | "inProgress" | "completed"
+            ) {
+                return Err(AgentToolError("Invalid plan step status".to_string()));
+            }
+            entries.push(AgentPlanEntry {
+                id: entry
+                    .id
+                    .filter(|id| !id.trim().is_empty())
+                    .unwrap_or_else(|| format!("step-{}", index + 1)),
+                text: text.to_string(),
+                status: entry.status,
+                detail: entry
+                    .detail
+                    .map(|detail| detail.trim().chars().take(500).collect())
+                    .filter(|detail: &String| !detail.is_empty()),
+            });
+        }
+        self.0.emit_agent_event(AgentEvent::PlanUpdated {
+            entries: entries.clone(),
+        });
+        Ok(json!({"status":"ok","steps":entries.len()}))
+    }
+}
+
 fn relative_path(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
@@ -1087,6 +1247,21 @@ fn wikilink_titles(message: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocking_tool_work_does_not_run_on_async_worker() {
+        tauri::async_runtime::block_on(async {
+            run_blocking_tool(|| {
+                let client = reqwest::blocking::Client::builder()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                drop(client);
+                Ok(())
+            })
+            .await
+            .expect("blocking client lifecycle stays off Tokio worker");
+        });
+    }
 
     #[test]
     fn read_coverage_requires_contiguous_pages_from_the_current_content() {
