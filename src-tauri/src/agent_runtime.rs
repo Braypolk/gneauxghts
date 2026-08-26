@@ -15,7 +15,9 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-pub(crate) const MAX_MODEL_CALLS: usize = 6;
+// High enough for long research/editing runs while retaining a final guard
+// against a provider getting stuck in an unbounded tool-call loop.
+pub(crate) const MAX_MODEL_CALLS: usize = 64;
 pub(crate) const MAX_INVALID_TOOL_RETRIES: usize = 2;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -216,12 +218,16 @@ impl AgentRuntime {
             AgentProvider::Local => {
                 ensure_local_desktop()?;
                 validate_local_base_url(&request.local_base_url)?;
-                // LM Studio ignores this placeholder bearer token by default.
-                // Supplying one lets us reuse Rig's OpenAI-compatible Chat
-                // Completions client without coupling local chat to the user's
-                // hosted OpenAI credential.
+                // Rig requires a bearer token even when the compatible server
+                // does not. Use the provider's credential when configured and
+                // retain a harmless placeholder for unauthenticated servers.
+                let key = request
+                    .api_key
+                    .take()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "lm-studio".to_string());
                 let client = openai::CompletionsClient::builder()
-                    .api_key("lm-studio")
+                    .api_key(key)
                     .base_url(&request.local_base_url)
                     .build()
                     .map_err(|error| format!("Local model setup failed: {error}"))?;
@@ -466,7 +472,8 @@ mod tests {
     fn runtime_contract_uses_product_turn_budgets() {
         let run = AgentRuntime::configured_run(Message::user("hello"), vec![]);
         let encoded = serde_json::to_value(run).unwrap();
-        assert_eq!(encoded["max_turns"], MAX_MODEL_CALLS);
+        assert_eq!(MAX_MODEL_CALLS, 64);
+        assert_eq!(encoded["max_turns"], 64);
         assert_eq!(
             encoded["max_invalid_tool_call_retries"],
             MAX_INVALID_TOOL_RETRIES

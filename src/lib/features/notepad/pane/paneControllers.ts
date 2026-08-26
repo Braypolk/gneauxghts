@@ -36,6 +36,7 @@ export interface PaneControllerSetupDeps<TPaneId extends string> {
   ) => Promise<void>;
   openWikilink: (paneId: TPaneId, rawTarget: string) => void | Promise<void>;
   handleActiveWikilinkChange: (paneId: TPaneId, next: ActiveWikilink | null) => void;
+  persistEditorViewState: (paneId: TPaneId) => void;
   setWikilinkAutocomplete: (paneId: TPaneId, value: WikilinkAutocompleteState) => void;
 }
 
@@ -74,6 +75,9 @@ export function createPaneControllers<TPaneId extends string>(
       },
       onActiveWikilinkChange: (activeWikilink) => {
         deps.handleActiveWikilinkChange(paneId, activeWikilink);
+      },
+      onViewStateChange: () => {
+        deps.persistEditorViewState(paneId);
       }
     }),
     closeTransientUi: () => deps.closeEditorTransientUi(paneId)

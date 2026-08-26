@@ -38,6 +38,7 @@
   import {
     safeWebCitationHref
   } from './chatPanelHelpers';
+  import { materializeDurableChatParts } from '../agentEvents';
 
   interface Props {
     message: ChatMessageModel;
@@ -78,9 +79,16 @@
   }: Props = $props();
 
   const visibleParts = $derived<ChatPart[]>(
-    message.parts.length > 0
-      ? message.parts
-      : [{ id: 'text', type: 'text', text: message.content }]
+    materializeDurableChatParts(
+      message.parts.length > 0
+        ? message.parts
+        : [{ id: 'text', type: 'text', text: message.content }],
+      {
+        text: message.content,
+        citations: message.citations,
+        checkpoint: message.role === 'assistant' && message.status === 'completed'
+      }
+    )
   );
   const usagePart = $derived(
     visibleParts.find((part) => part.type === 'usage')
@@ -227,6 +235,28 @@
             </ol>
           </PlanContent>
         </PlanRoot>
+      {:else if part.type === 'status'}
+        <div
+          class="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/15 px-3 py-2 text-xs text-muted-foreground"
+          role="status"
+          aria-label={part.label}
+        >
+          <RotateCcw class="h-3.5 w-3.5" />
+          <span>{part.label}</span>
+        </div>
+      {:else if part.type === 'sources'}
+        <Sources count={part.citations.length}>
+          {#each part.citations as citation, index (citation.id)}
+            <InlineCitation
+              {citation}
+              index={index + 1}
+              href={citation.kind === 'web' ? safeWebCitationHref(citation.url) : undefined}
+              onOpen={citation.kind === 'note' ? () => onOpenCitation?.(citation) : undefined}
+            />
+          {/each}
+        </Sources>
+      {:else if part.type === 'checkpoint'}
+        <Checkpoint label={part.label} onBranch={onBranch} />
       {/if}
     {/each}
   </div>
@@ -258,23 +288,6 @@
         {/if}
       {/each}
     </div>
-  {/if}
-
-  {#if message.citations.length > 0}
-    <Sources count={message.citations.length}>
-      {#each message.citations as citation, index (citation.id)}
-        <InlineCitation
-          {citation}
-          index={index + 1}
-          href={citation.kind === 'web' ? safeWebCitationHref(citation.url) : undefined}
-          onOpen={citation.kind === 'note' ? () => onOpenCitation?.(citation) : undefined}
-        />
-      {/each}
-    </Sources>
-  {/if}
-
-  {#if message.role === 'assistant' && message.status === 'completed'}
-    <Checkpoint label="Branch from here" onBranch={onBranch} />
   {/if}
 
   {#if (message.status === 'error' || message.status === 'cancelled') && message.role === 'assistant'}

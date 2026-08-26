@@ -51,6 +51,7 @@ export class PaneRuntime {
   });
   private _controller: EditorController | null = null;
   private _cursorSaveTimer: number | null = null;
+  private _cursorSaveCallback: (() => void) | null = null;
 
   constructor(paneId: NotepadPaneId) {
     this.paneId = paneId;
@@ -64,21 +65,26 @@ export class PaneRuntime {
     this._controller = value;
   }
 
-  flushCursorSave(callback: () => void): void {
+  flushCursorSave(callback?: () => void): void {
     if (this._cursorSaveTimer) {
       window.clearTimeout(this._cursorSaveTimer);
       this._cursorSaveTimer = null;
     }
-    callback();
+    const pendingCallback = this._cursorSaveCallback;
+    this._cursorSaveCallback = null;
+    (pendingCallback ?? callback)?.();
   }
 
   scheduleCursorSave(callback: () => void): void {
     if (this._cursorSaveTimer) {
       window.clearTimeout(this._cursorSaveTimer);
     }
+    this._cursorSaveCallback = callback;
     this._cursorSaveTimer = window.setTimeout(() => {
       this._cursorSaveTimer = null;
-      callback();
+      const pendingCallback = this._cursorSaveCallback;
+      this._cursorSaveCallback = null;
+      pendingCallback?.();
     }, 220);
   }
 
@@ -107,5 +113,6 @@ export class PaneRuntime {
       window.clearTimeout(this._cursorSaveTimer);
       this._cursorSaveTimer = null;
     }
+    this._cursorSaveCallback = null;
   }
 }

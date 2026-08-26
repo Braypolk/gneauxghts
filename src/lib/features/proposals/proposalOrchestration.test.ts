@@ -51,6 +51,7 @@ function fakeEditor(initialMarkdown = 'Before') {
   let installed = false;
   let reviewExtensionUpdates = 0;
   let documentAvailable = true;
+  let staleReviewReader = false;
 
   function applyChange(change: { from: number; to: number; insert: string }) {
     markdown =
@@ -93,8 +94,15 @@ function fakeEditor(initialMarkdown = 'Before') {
         : null;
       return true;
     },
-    setProposalReviewStateReader: () => undefined,
-    readProposalReviewState: () => review,
+    setProposalReviewStateReader: (reader) => {
+      if (reader === null) staleReviewReader = false;
+    },
+    readProposalReviewState: () => {
+      if (staleReviewReader) {
+        throw new RangeError('Field is not present in this state');
+      }
+      return review;
+    },
     focusProposalHunk: () => true,
     applyChanges: (changes) => {
       const all = (Array.isArray(changes) ? changes : [changes]) as Array<{
@@ -141,6 +149,13 @@ function fakeEditor(initialMarkdown = 'Before') {
     },
     setDocumentAvailable(available: boolean) {
       documentAvailable = available;
+    },
+    replaceEditorStateWithoutReview() {
+      // Mirrors swapEditorRuntime: document text survives through the shared
+      // runtime, while the new EditorState starts without the review field.
+      installed = false;
+      review = null;
+      staleReviewReader = true;
     }
   };
 }
@@ -282,6 +297,28 @@ describe('durable proposal editor review', () => {
     expect(remounted.adapter.readProposalReviewState?.()?.hunks[0].status).toBe(
       'pending'
     );
+  });
+
+  it('reattaches controls when navigation replaces the editor state but preserves proposed text', async () => {
+    const test = setup({ opened: true });
+    await test.orchestration.loadDurableProposalIfOpen(test.request);
+    expect(test.firstEditor.markdown).toBe('After');
+
+    test.firstEditor.replaceEditorStateWithoutReview();
+    expect(test.firstEditor.installed).toBe(false);
+
+    expect(() =>
+      test.orchestration.attachEditor(
+        test.document,
+        test.firstEditor.adapter
+      )
+    ).not.toThrow();
+
+    expect(test.firstEditor.markdown).toBe('After');
+    expect(test.firstEditor.installed).toBe(true);
+    expect(
+      test.firstEditor.adapter.readProposalReviewState?.()?.hunks[0]
+    ).toMatchObject({ status: 'pending' });
   });
 
   it('does not reinstall a review in a pane that already presents it', async () => {

@@ -214,10 +214,17 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     review: ProposalReviewRuntime,
     editor: EditorCapabilityAdapter
   ) {
-    return (
-      editor.readProposalReviewState?.()?.reviewId ===
-      review.request.preview.reviewId
-    );
+    try {
+      return (
+        editor.readProposalReviewState?.()?.reviewId ===
+        review.request.preview.reviewId
+      );
+    } catch {
+      // A pane swap can leave a capability adapter holding a reader for a
+      // StateField that belonged to the previous EditorState. It is not an
+      // installed review in the new state and must be reattached below.
+      return false;
+    }
   }
 
   function unresolved() {

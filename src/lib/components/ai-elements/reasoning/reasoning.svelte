@@ -8,7 +8,7 @@
   let {
     status,
     summary,
-    open = false,
+    open = $bindable(false),
     class: className
   }: {
     status: AgentReasoningStatus;
@@ -16,10 +16,14 @@
     open?: boolean;
     class?: string;
   } = $props();
+
 </script>
 
-<Collapsible {open} class={cn('rounded-lg border border-border/70 bg-muted/15', className)}>
-  <CollapsibleTrigger class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs">
+<Collapsible bind:open class={cn('rounded-lg border border-border/70 bg-muted/15', className)}>
+  <CollapsibleTrigger
+    class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs"
+    aria-label={`Reasoning ${status}. Toggle safe summary`}
+  >
     {#if status === 'running'}
       <LoaderCircle class="h-3.5 w-3.5 animate-spin" />
       <Shimmer>Reasoning</Shimmer>

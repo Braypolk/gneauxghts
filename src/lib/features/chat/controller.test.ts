@@ -38,6 +38,8 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     parts: [{ id: 'text', type: 'text', text: '' }],
     agentRunId: null,
     agentSequence: 0,
+    agentEventCreatedAtMillis: 0,
+    agentRetiredRunIds: [],
     ...overrides
   };
 }
@@ -269,6 +271,15 @@ describe('createChatController', () => {
         }
       }
     });
+    fake.emit('chat://agent-event', {
+      requestId: 'request-1',
+      conversationId: 'conversation-1',
+      messageId: streamingMessage.id,
+      runId: 'run-1',
+      sequence: 5,
+      createdAtMillis: 5,
+      event: { type: 'modelTurnRetried', turn: 2 }
+    });
     fake.emit('chat://source', {
       requestId: 'request-1', conversationId: 'conversation-1', messageId: streamingMessage.id,
       citation: { id: 'source-1', kind: 'web', label: 'Source', url: 'https://example.com', excerpt: null }
@@ -282,7 +293,9 @@ describe('createChatController', () => {
       expect.arrayContaining([
         expect.objectContaining({ type: 'tool', status: 'running' }),
         expect.objectContaining({ type: 'plan' }),
-        expect.objectContaining({ type: 'usage' })
+        expect.objectContaining({ type: 'usage' }),
+        expect.objectContaining({ type: 'status', turn: 2 }),
+        expect.objectContaining({ type: 'sources' })
       ])
     );
     expect(controller.getSnapshot().isSending).toBe(true);
@@ -297,11 +310,50 @@ describe('createChatController', () => {
       expect.arrayContaining([
         expect.objectContaining({ type: 'tool' }),
         expect.objectContaining({ type: 'plan' }),
-        expect.objectContaining({ type: 'usage' })
+        expect.objectContaining({ type: 'usage' }),
+        expect.objectContaining({ type: 'status' }),
+        expect.objectContaining({ type: 'sources' }),
+        expect.objectContaining({ type: 'checkpoint' })
       ])
     );
     expect(controller.getSnapshot().conversation?.activeRequestId).toBeNull();
     expect(controller.getSnapshot().isSending).toBe(false);
+  });
+
+  it('accepts a correlated resumed run with a sequence gap and rejects the retired run', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    const streamingMessage = message();
+    fake.emit('chat://started', {
+      requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: streamingMessage.id, message: streamingMessage
+    });
+    fake.emit('chat://agent-event', {
+      requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: streamingMessage.id, runId: 'run-a', sequence: 2,
+      createdAtMillis: 10,
+      event: { type: 'planUpdated', entries: [{ id: 'old', text: 'Old', status: 'inProgress' }] }
+    });
+    fake.emit('chat://agent-event', {
+      requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: streamingMessage.id, runId: 'run-b', sequence: 3,
+      createdAtMillis: 20,
+      event: { type: 'planUpdated', entries: [{ id: 'new', text: 'Resumed', status: 'completed' }] }
+    });
+    fake.emit('chat://agent-event', {
+      requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: streamingMessage.id, runId: 'run-a', sequence: 4,
+      createdAtMillis: 30,
+      event: { type: 'modelTurnRetried', turn: 4 }
+    });
+
+    const restored = controller.getSnapshot().conversation?.messages[0];
+    expect(restored?.agentRunId).toBe('run-b');
+    expect(restored?.parts.find((part) => part.type === 'plan')).toMatchObject({
+      entries: [expect.objectContaining({ id: 'new' })]
+    });
+    expect(restored?.parts.find((part) => part.type === 'status')).toBeUndefined();
   });
 
   it('applies a background conversation title without changing response state', async () => {

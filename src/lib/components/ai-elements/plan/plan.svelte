@@ -4,11 +4,17 @@
 	import { cn } from "$lib/utils";
 	import type { PlanProps } from "./types.js";
 
-	let { class: className, isStreaming: _isStreaming = false, children, ...restProps }: PlanProps = $props();
+	let {
+		class: className,
+		isStreaming: _isStreaming = false,
+		open = $bindable(false),
+		children,
+		...restProps
+	}: PlanProps = $props();
 	// indexing
 </script>
 
-<Collapsible data-slot="plan" {...restProps}>
+<Collapsible data-slot="plan" bind:open {...restProps}>
 	<Card class={cn("shadow-none", className)}>
 		{@render children?.()}
 	</Card>

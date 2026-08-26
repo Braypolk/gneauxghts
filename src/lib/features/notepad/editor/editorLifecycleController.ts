@@ -162,7 +162,7 @@ export function createEditorLifecycleController({
 
   function saveCursorPositionForDocument(
     document: NoteDraftState = getDocumentSession(),
-    position: CursorPosition | null = readCursorPosition(getController())
+    position: EditorViewState | null = captureEditorViewState()
   ) {
     const path = getDocumentPath(document);
     if (!path || !position) {
@@ -171,7 +171,7 @@ export function createEditorLifecycleController({
 
     // Scroll is a live viewport fact rather than something callers know, so it
     // is always read from the editor even when the selection was passed in.
-    const scrollTop = getController()?.view.scrollDOM.scrollTop;
+    const scrollTop = position.scrollTop ?? getController()?.view.scrollDOM.scrollTop;
 
     saveEditorViewState(
       path,
@@ -183,6 +183,16 @@ export function createEditorLifecycleController({
       getPaneId(),
       getDocumentNoteId(document)
     );
+  }
+
+  function captureEditorViewState(): EditorViewState | null {
+    const controller = getController();
+    const position = readCursorPosition(controller);
+    if (!controller || !position) return null;
+    return {
+      ...position,
+      scrollTop: controller.view.scrollDOM.scrollTop
+    };
   }
 
   function applyEditorScrollTop(scrollTop: number) {
@@ -482,6 +492,7 @@ export function createEditorLifecycleController({
     destroyEditor,
     createEditor,
     swapEditorBuffer,
+    captureEditorViewState,
     saveCursorPositionForDocument,
     restoreCursorPositionForDocument,
     replaceEditorContent,

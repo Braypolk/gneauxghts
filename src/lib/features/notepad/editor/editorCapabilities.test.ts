@@ -1,8 +1,17 @@
-import { Compartment, EditorState, Transaction, type TransactionSpec } from '@codemirror/state';
+import {
+  Compartment,
+  EditorState,
+  StateField,
+  Transaction,
+  type TransactionSpec
+} from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { describe, expect, it, vi } from 'vitest';
 
-import { insertEditorMarkdown } from './editorCapabilities';
+import {
+  createEditorCapabilityAdapter,
+  insertEditorMarkdown
+} from './editorCapabilities';
 import type { EditorController } from './editor';
 
 function createController(markdown: string, anchor: number, head = anchor) {
@@ -66,5 +75,38 @@ describe('insertEditorMarkdown', () => {
 
   it('does nothing when the editor is unavailable', () => {
     expect(insertEditorMarkdown(null, 'text')).toBeNull();
+  });
+});
+
+describe('proposal review editor capability', () => {
+  it('treats a review reader from a replaced editor state as detached', () => {
+    const reviewField = StateField.define({
+      create: () => ({ reviewId: 'review-1', hunks: [] }),
+      update: (value) => value
+    });
+    let state = EditorState.create({ extensions: [reviewField] });
+    const controller = {
+      ...createController('', 0).controller,
+      view: {
+        get state() {
+          return state;
+        },
+        dispatch: vi.fn(),
+        focus: vi.fn()
+      } as unknown as EditorView
+    } satisfies EditorController;
+    const adapter = createEditorCapabilityAdapter(() => controller);
+    adapter.setProposalReviewStateReader?.((editorState) =>
+      editorState.field(reviewField)
+    );
+
+    expect(adapter.readProposalReviewState?.()).toMatchObject({
+      reviewId: 'review-1'
+    });
+
+    state = EditorState.create();
+
+    expect(adapter.readProposalReviewState?.()).toBeNull();
+    expect(adapter.focusProposalHunk?.('missing')).toBe(false);
   });
 });

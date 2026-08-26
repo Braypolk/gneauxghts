@@ -9,7 +9,8 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-.pnpm-store
+.pnpm-store/
+.pnpm-store-v11/
 
 # Rust
 target/

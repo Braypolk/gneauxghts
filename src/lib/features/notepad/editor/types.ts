@@ -28,6 +28,7 @@ export interface EditorController {
 export interface EditorViewCallbacks {
   onOpenLink: (rawTarget: string) => void;
   onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
+  onViewStateChange: () => void;
 }
 
 export interface SearchHighlightOptions {

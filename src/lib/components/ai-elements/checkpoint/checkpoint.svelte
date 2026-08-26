@@ -21,6 +21,7 @@
     type="button"
     class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
     {disabled}
+    aria-label={label}
     title="Create a new conversation from this point"
     onclick={() => void onBranch()}
   >

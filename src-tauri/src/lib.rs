@@ -22,7 +22,11 @@ use app::EventBus;
 use chat::ChatService;
 use index::AppState;
 use semantic::SemanticState;
-use state::{initialize_app_data_dir, initialize_documents_dir, notes_root};
+use state::{
+    initialize_app_data_dir, initialize_documents_dir, notes_root, set_notes_root_override,
+};
+#[cfg(feature = "e2e-wdio")]
+use std::ffi::OsString;
 use std::{path::PathBuf, thread};
 use tauri::{Manager, RunEvent};
 #[cfg(target_os = "ios")]
@@ -35,10 +39,49 @@ fn window_state_flags() -> StateFlags {
     StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED
 }
 
+#[derive(Clone, Default)]
+struct StartupPathOverrides {
+    app_data_dir: Option<PathBuf>,
+    documents_dir: Option<PathBuf>,
+    notes_root: Option<PathBuf>,
+}
+
+#[cfg(feature = "e2e-wdio")]
+fn e2e_path_argument(args: &[OsString], flag: &str) -> Result<Option<PathBuf>, String> {
+    let Some(index) = args.iter().position(|argument| argument == flag) else {
+        return Ok(None);
+    };
+    let raw_path = args
+        .get(index + 1)
+        .ok_or_else(|| format!("Missing path after {flag}"))?;
+    let path = PathBuf::from(raw_path);
+    if !path.is_absolute() {
+        return Err(format!("{flag} must be an absolute path"));
+    }
+    Ok(Some(path))
+}
+
+fn startup_path_overrides() -> Result<StartupPathOverrides, String> {
+    #[cfg(feature = "e2e-wdio")]
+    {
+        let args = std::env::args_os().collect::<Vec<_>>();
+        return Ok(StartupPathOverrides {
+            app_data_dir: e2e_path_argument(&args, "--e2e-app-data-root")?,
+            documents_dir: e2e_path_argument(&args, "--e2e-documents-root")?,
+            notes_root: e2e_path_argument(&args, "--e2e-vault-root")?,
+        });
+    }
+
+    #[cfg(not(feature = "e2e-wdio"))]
+    Ok(StartupPathOverrides::default())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let startup_paths =
+        startup_path_overrides().expect("invalid debug-only E2E path configuration");
     let keyring_plugin =
-        tauri_plugin_keyring_store::Builder::new().service(secrets::KEYRING_SERVICE);
+        tauri_plugin_keyring_store::Builder::new().service(secrets::keyring_service());
     #[cfg(target_os = "ios")]
     let keyring_plugin =
         keyring_plugin.ios_write_accessibility(WriteAccessibility::WhenUnlockedThisDeviceOnly);
@@ -53,12 +96,26 @@ pub fn run() {
             .with_state_flags(window_state_flags())
             .build(),
     );
+    // The WebDriver surface is deliberately feature-gated so release builds do
+    // not expose test execution or an embedded automation server.
+    #[cfg(feature = "e2e-wdio")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
 
     let app = builder
-        .setup(|app| {
-            let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+        .setup(move |app| {
+            if let Some(notes_root) = startup_paths.notes_root.clone() {
+                set_notes_root_override(Some(notes_root))?;
+            }
+            let app_data_dir = match startup_paths.app_data_dir.clone() {
+                Some(path) => path,
+                None => app.path().app_data_dir().map_err(|err| err.to_string())?,
+            };
             initialize_app_data_dir(app_data_dir.clone())?;
-            if let Ok(documents_dir) = app.path().document_dir() {
+            if let Some(documents_dir) = startup_paths.documents_dir.clone() {
+                initialize_documents_dir(documents_dir)?;
+            } else if let Ok(documents_dir) = app.path().document_dir() {
                 initialize_documents_dir(documents_dir)?;
             }
 

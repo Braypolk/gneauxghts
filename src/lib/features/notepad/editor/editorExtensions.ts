@@ -36,6 +36,7 @@ import { createPassiveTableExtension } from './passiveTableExtension';
 import { createExternalLinkClickExtension } from './externalLinkExtension';
 import { createExternalSearchHighlightExtension } from './searchHighlightExtension';
 import { createBlockHandleExtension } from './blockHandleExtension';
+import { createViewStateTrackingExtension } from './viewStateTrackingExtension';
 
 const unavailableImagesConfig: ImagesConfig = {
   assetRootPath: null,
@@ -112,6 +113,7 @@ export function createPaneExtensions(
     ...slashMenuApi.extension,
     ...selectionMenuApi.extension,
     createBlockHandleExtension(editorRoot, slashMenuApi.show),
+    createViewStateTrackingExtension(sharedResources),
     createEditorShortcuts(controller),
     createPlatformNavigationKeymap(),
     EditorView.domEventHandlers({

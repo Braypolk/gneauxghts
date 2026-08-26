@@ -1,21 +1,61 @@
 import type {
   AgentEvent,
   ChatAgentEventEnvelope,
+  ChatCitation,
   ChatPart
 } from './types';
 
 export interface AgentEventState {
   parts: ChatPart[];
+  requestId: string | null;
+  conversationId: string | null;
+  messageId: string | null;
   runId: string | null;
   sequence: number;
+  createdAtMillis: number;
+  retiredRunIds: string[];
 }
 
-export function initialAgentEventState(text = ''): AgentEventState {
+export function initialAgentEventState(
+  text = '',
+  target: { conversationId?: string; messageId?: string } = {}
+): AgentEventState {
   return {
     parts: [{ id: 'text', type: 'text', text }],
+    requestId: null,
+    conversationId: target.conversationId ?? null,
+    messageId: target.messageId ?? null,
     runId: null,
-    sequence: 0
+    sequence: 0,
+    createdAtMillis: 0,
+    retiredRunIds: []
   };
+}
+
+export function materializeDurableChatParts(
+  parts: ChatPart[],
+  options: {
+    text: string;
+    citations?: ChatCitation[];
+    checkpoint?: boolean;
+  }
+): ChatPart[] {
+  const runtimeParts = parts
+    .filter((part) => part.type !== 'sources' && part.type !== 'checkpoint')
+    .map((part) => part.type === 'text' ? { ...part, text: options.text } : part);
+  const withText = runtimeParts.some((part) => part.type === 'text')
+    ? runtimeParts
+    : [{ id: 'text' as const, type: 'text' as const, text: options.text }, ...runtimeParts];
+  const citations = options.citations ?? [];
+  return [
+    ...withText,
+    ...(citations.length > 0
+      ? [{ id: 'sources' as const, type: 'sources' as const, citations }]
+      : []),
+    ...(options.checkpoint
+      ? [{ id: 'checkpoint' as const, type: 'checkpoint' as const, label: 'Branch from here' }]
+      : [])
+  ];
 }
 
 function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
@@ -61,7 +101,13 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
       return next;
     }
     case 'modelTurnRetried':
-      return parts;
+      return upsertPart(parts, {
+        id: 'retry',
+        type: 'status',
+        status: 'retrying',
+        turn: event.turn,
+        label: `Model turn ${event.turn} retried`
+      });
     case 'reasoningUpdated': {
       const reasoning = {
         id: 'reasoning' as const,
@@ -78,34 +124,107 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
   }
 }
 
+function upsertPart(parts: ChatPart[], part: ChatPart): ChatPart[] {
+  const index = parts.findIndex((candidate) => candidate.id === part.id);
+  if (index < 0) return [...parts, part];
+  const next = parts.slice();
+  next[index] = part;
+  return next;
+}
+
+function hasSupportedSchema(envelope: ChatAgentEventEnvelope): boolean {
+  return envelope.schemaVersion === undefined || envelope.schemaVersion === 2;
+}
+
+function targetsCurrentMessage(
+  state: AgentEventState,
+  envelope: ChatAgentEventEnvelope
+): boolean {
+  return (!state.conversationId || state.conversationId === envelope.conversationId)
+    && (!state.messageId || state.messageId === envelope.messageId);
+}
+
+function isRunHandoff(
+  state: AgentEventState,
+  envelope: ChatAgentEventEnvelope,
+  allowObservedRunHandoff: boolean
+): boolean {
+  return state.runId !== null
+    && state.runId !== envelope.runId
+    && (
+      allowObservedRunHandoff
+      || (envelope.sequence === 1 && envelope.createdAtMillis > state.createdAtMillis)
+    )
+    && !state.retiredRunIds.includes(envelope.runId);
+}
+
 export function reduceAgentEvent(
   state: AgentEventState,
   envelope: ChatAgentEventEnvelope,
-  options: { applyText?: boolean } = {}
+  options: { applyText?: boolean; allowObservedRunHandoff?: boolean } = {}
 ): AgentEventState {
+  if (!hasSupportedSchema(envelope) || !targetsCurrentMessage(state, envelope)) return state;
   const sameRun = state.runId === envelope.runId;
-  if (sameRun && envelope.sequence <= state.sequence) return state;
-  const base = sameRun || state.runId === null
-    ? state.parts
-    : state.parts.filter((part) => part.type === 'text');
+  if (sameRun) {
+    if (state.requestId && state.requestId !== envelope.requestId) return state;
+    if (envelope.sequence <= state.sequence) return state;
+  } else if (
+    state.runId !== null
+    && !isRunHandoff(state, envelope, options.allowObservedRunHandoff === true)
+  ) {
+    return state;
+  }
+  const handoff = state.runId !== null && !sameRun;
+  const base = handoff
+    ? state.parts.filter((part) =>
+        part.type === 'text' || part.type === 'sources' || part.type === 'checkpoint'
+      )
+    : state.parts;
   const event = !options.applyText && envelope.event.type === 'textDelta'
     ? null
     : envelope.event;
   return {
     parts: event ? applyEvent(base, event) : base,
+    requestId: envelope.requestId,
+    conversationId: envelope.conversationId,
+    messageId: envelope.messageId,
     runId: envelope.runId,
-    sequence: envelope.sequence
+    sequence: envelope.sequence,
+    createdAtMillis: sameRun
+      ? Math.max(state.createdAtMillis, envelope.createdAtMillis)
+      : envelope.createdAtMillis,
+    retiredRunIds: handoff && state.runId
+      ? [...state.retiredRunIds, state.runId]
+      : state.retiredRunIds
   };
 }
 
 export function replayAgentEvents(
   text: string,
-  events: ChatAgentEventEnvelope[]
+  events: ChatAgentEventEnvelope[],
+  target: { conversationId?: string; messageId?: string } = {}
 ): AgentEventState {
-  return events.reduce(
-    (state, event) => reduceAgentEvent(state, event),
-    initialAgentEventState(text)
-  );
+  const byRun = new Map<string, ChatAgentEventEnvelope[]>();
+  for (const event of events) {
+    const run = byRun.get(event.runId) ?? [];
+    run.push(event);
+    byRun.set(event.runId, run);
+  }
+  const orderedRuns = [...byRun.values()]
+    .sort((left, right) =>
+      Math.min(...left.map((event) => event.createdAtMillis))
+        - Math.min(...right.map((event) => event.createdAtMillis))
+      || left[0].runId.localeCompare(right[0].runId)
+    )
+    .map((run) => run.sort((left, right) =>
+      left.sequence - right.sequence
+        || left.createdAtMillis - right.createdAtMillis
+    ));
+  return orderedRuns.reduce((state, run) =>
+    run.reduce((runState, event, index) => reduceAgentEvent(runState, event, {
+      applyText: false,
+      allowObservedRunHandoff: index === 0
+    }), state), initialAgentEventState(text, target));
 }
 
 export function replaceTextPart(parts: ChatPart[], text: string): ChatPart[] {

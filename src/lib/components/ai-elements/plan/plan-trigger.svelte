@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { CollapsibleTrigger } from "$lib/components/ui/collapsible/index.js";
-	import { Button } from "$lib/components/ui/button/index.js";
 	import { cn } from "$lib/utils";
 	import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
 	import type { PlanTriggerProps } from "./types.js";
@@ -9,12 +8,15 @@
 </script>
 
 <CollapsibleTrigger {...restProps}>
-	<Button class={cn("size-8", className)} data-slot="plan-trigger" size="icon" variant="ghost">
+	<span
+		class={cn("inline-flex size-8 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground", className)}
+		data-slot="plan-trigger"
+	>
 		{#if children}
 			{@render children()}
 		{:else}
 			<ChevronsUpDownIcon class="size-4" />
 			<span class="sr-only">Toggle plan</span>
 		{/if}
-	</Button>
+	</span>
 </CollapsibleTrigger>

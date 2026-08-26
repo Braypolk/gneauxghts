@@ -42,6 +42,7 @@
     value: string;
     placeholder: string;
     ariaLabel: string;
+    testId?: string;
     matchCase?: boolean;
     matchWholeWord?: boolean;
     showMatchOptions?: boolean;
@@ -72,6 +73,7 @@
     value,
     placeholder,
     ariaLabel,
+    testId,
     matchCase = false,
     matchWholeWord = false,
     showMatchOptions = false,
@@ -243,6 +245,7 @@
       enterkeyhint="search"
       class="shared-search-bar-input w-full bg-transparent py-1.5 text-base text-foreground outline-none placeholder:text-muted-foreground min-[700px]:text-sm sm:py-2"
       aria-label={ariaLabel}
+      data-testid={testId}
       placeholder={isOpen || showPlaceholderWhenIdle ? placeholder : ''}
       value={value}
       oninput={handleInput}

@@ -8,6 +8,7 @@ import type {
   NoteDraftState,
   NoteKey
 } from '$lib/features/notepad/state/noteStore';
+import type { EditorViewState } from '$lib/features/notepad/editor/editorViewState';
 import {
   getPaneIdsWithCapability,
   paneHasCapability
@@ -38,23 +39,31 @@ export interface DocumentPaneCoordinatorDeps<
 export function createDocumentPaneCoordinator<
   TPaneId extends string
 >(deps: DocumentPaneCoordinatorDeps<TPaneId>) {
+  const latestViewStateByPane = new Map<
+    TPaneId,
+    { noteKey: NoteKey; position: EditorViewState }
+  >();
+
   function flushPaneCursorSave(
-    paneId: TPaneId,
-    document: NoteDraftState = deps.getPaneDocument(paneId)
+    paneId: TPaneId
   ): void {
-    deps.getPaneRuntime(paneId).flushCursorSave(() => {
-      void deps.paneLifecycle.saveCursorPosition(
-        paneId,
-        document
-      );
-    });
+    deps.getPaneRuntime(paneId).flushCursorSave();
   }
 
   function schedulePaneCursorSave(paneId: TPaneId): void {
+    const position = deps.paneLifecycle.captureViewState(paneId);
+    const document = deps.getPaneDocument(paneId);
+    if (position) {
+      latestViewStateByPane.set(paneId, {
+        noteKey: document.key,
+        position
+      });
+    }
     deps.getPaneRuntime(paneId).scheduleCursorSave(() => {
       void deps.paneLifecycle.saveCursorPosition(
         paneId,
-        deps.getPaneDocument(paneId)
+        document,
+        position
       );
     });
   }
@@ -80,6 +89,22 @@ export function createDocumentPaneCoordinator<
         return save;
       })
     );
+  }
+
+  async function saveCursorPositionForPane(
+    paneId: TPaneId,
+    document: NoteDraftState = deps.getPaneDocument(paneId)
+  ): Promise<void> {
+    const captured = latestViewStateByPane.get(paneId);
+    const position = captured?.noteKey === document.key
+      ? captured.position
+      : undefined;
+    await deps.paneLifecycle.saveCursorPosition(
+      paneId,
+      document,
+      position
+    );
+    latestViewStateByPane.delete(paneId);
   }
 
   function preferredEditorPane(
@@ -229,6 +254,7 @@ export function createDocumentPaneCoordinator<
     schedulePaneCursorSave,
     flushAllPendingCursorSaves,
     saveCursorPositionForDocument,
+    saveCursorPositionForPane,
     replaceEditorContent,
     replaceEditorContentInPlace,
     replaceDocumentContentInPlace,

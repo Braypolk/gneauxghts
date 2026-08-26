@@ -6,7 +6,7 @@
 
   let {
     steps,
-    open = false,
+    open = $bindable(false),
     class: className
   }: {
     steps: Array<Extract<ChatPart, { type: 'tool' }>>;
@@ -15,10 +15,16 @@
   } = $props();
 
   const running = $derived(steps.some((step) => step.status === 'running'));
+  const completed = $derived(
+    steps.filter((step) => step.status === 'success' || step.status === 'skipped').length
+  );
 </script>
 
-<Collapsible {open} class={cn('rounded-lg border border-border/70 bg-muted/15', className)}>
-  <CollapsibleTrigger class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs">
+<Collapsible bind:open class={cn('rounded-lg border border-border/70 bg-muted/15', className)}>
+  <CollapsibleTrigger
+    class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs"
+    aria-label={`Activity, ${completed} of ${steps.length} steps complete. Toggle details`}
+  >
     <Wrench class="h-3.5 w-3.5 text-muted-foreground" />
     <span>Activity</span>
     <span class="text-muted-foreground">{steps.length} {steps.length === 1 ? 'step' : 'steps'}</span>
@@ -37,6 +43,7 @@
             <Circle class="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
           {/if}
           <span>{step.title}</span>
+          <span class="sr-only">{step.status}</span>
         </li>
       {/each}
     </ol>

@@ -55,7 +55,8 @@ describe('document departure controller', () => {
         events.push('persist');
         paneDocument = saved;
       },
-      saveCursorPositionForDocument: async (document) => {
+      saveCursorPositionForPane: async (paneId, document) => {
+        expect(paneId).toBe('pane-1');
         expect(document).toBe(saved);
         if (document.identity.kind !== 'persisted') {
           throw new Error('Expected a persisted identity');

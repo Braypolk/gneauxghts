@@ -4,13 +4,15 @@
   import ExcludedNotesSettings from './ExcludedNotesSettings.svelte';
   import { onMount } from 'svelte';
   import { TauriChatApi } from '$lib/features/chat/api';
-  import type { ChatSettings, LocalModel } from '$lib/features/chat/types';
+  import type { ChatProvider, ChatSettings, LocalModel } from '$lib/features/chat/types';
 
   const api = new TauriChatApi();
 
   let settings = $state<ChatSettings | null>(null);
+  let credentialProvider = $state<ChatProvider>('openai');
   let apiKey = $state('');
-  let keyConfigured = $state(false);
+  let keyStatuses = $state<Record<ChatProvider, boolean>>({ openai: false, local: false });
+  let keyConfigured = $derived(keyStatuses[credentialProvider]);
   let revealKey = $state(false);
   let isLoading = $state(true);
   let isSavingKey = $state(false);
@@ -24,12 +26,15 @@
     isLoading = true;
     error = null;
     try {
-      const [loadedSettings, keyStatus] = await Promise.all([
+      const [loadedSettings, openaiKeyStatus, localKeyStatus] = await Promise.all([
         api.getSettings(),
-        api.getKeyStatus('openai')
+        api.getKeyStatus('openai'),
+        api.getKeyStatus('local')
       ]);
       settings = loadedSettings;
-      keyConfigured = keyStatus.configured;
+      credentialProvider = loadedSettings.provider;
+      keyStatuses.openai = openaiKeyStatus.configured;
+      keyStatuses.local = localKeyStatus.configured;
     } catch (loadError) {
       error = String(loadError);
     } finally {
@@ -47,11 +52,11 @@
     error = null;
     message = null;
     try {
-      const status = await api.setApiKey('openai', value);
-      keyConfigured = status.configured;
+      const status = await api.setApiKey(credentialProvider, value);
+      keyStatuses[credentialProvider] = status.configured;
       apiKey = '';
       revealKey = false;
-      message = 'API key saved securely on this machine.';
+      message = `${credentialProvider === 'openai' ? 'OpenAI' : 'Local provider'} API key saved securely on this machine.`;
     } catch (saveError) {
       error = String(saveError);
     } finally {
@@ -64,10 +69,11 @@
     error = null;
     message = null;
     try {
-      const status = await api.setApiKey('openai', '');
-      keyConfigured = status.configured;
+      const status = await api.setApiKey(credentialProvider, '');
+      keyStatuses[credentialProvider] = status.configured;
       apiKey = '';
-      message = 'Stored API key removed.';
+      revealKey = false;
+      message = `${credentialProvider === 'openai' ? 'OpenAI' : 'Local provider'} API key removed.`;
     } catch (removeError) {
       error = String(removeError);
     } finally {
@@ -128,29 +134,49 @@
       <div class="flex items-start gap-3">
         <div class="rounded-xl bg-muted p-2 text-muted-foreground"><KeyRound class="h-4 w-4" /></div>
         <div>
-          <h3 class="text-sm font-medium">OpenAI API key</h3>
+          <h3 class="text-sm font-medium">Provider API keys</h3>
           <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-            The key is stored in your operating system credential store and is never written to the vault or shown again.
+            Each provider has its own key in your operating system credential store. Keys are never written to the vault or shown again.
           </p>
         </div>
       </div>
 
+      <div class="mt-4 max-w-sm">
+        <SettingsField label="Credential provider">
+          <select
+            class="settings-control"
+            bind:value={credentialProvider}
+            onchange={() => {
+              apiKey = '';
+              revealKey = false;
+              error = null;
+              message = null;
+            }}
+          >
+            <option value="openai">OpenAI Responses API</option>
+            <option value="local">Local OpenAI-compatible</option>
+          </select>
+        </SettingsField>
+      </div>
+
       <div class="mt-4 flex items-center gap-2 text-xs">
         <span class={`h-2 w-2 rounded-full ${keyConfigured ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-        <span class="font-medium">{keyConfigured ? 'Key configured' : 'No key configured'}</span>
+        <span class="font-medium">
+          {keyConfigured ? 'Key configured' : credentialProvider === 'local' ? 'No key configured (optional)' : 'No key configured'}
+        </span>
       </div>
 
       <div class="mt-4 flex flex-col gap-2 sm:flex-row">
         <div class="relative min-w-0 flex-1">
-          <label class="sr-only" for="openai-api-key">OpenAI API key</label>
+          <label class="sr-only" for="provider-api-key">{credentialProvider === 'openai' ? 'OpenAI' : 'Local provider'} API key</label>
           <input
-            id="openai-api-key"
+            id="provider-api-key"
             class="h-10 w-full rounded-xl border border-border bg-background px-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-ring"
             type={revealKey ? 'text' : 'password'}
             bind:value={apiKey}
             autocomplete="off"
             spellcheck="false"
-            placeholder={keyConfigured ? 'Enter a replacement key' : 'sk-…'}
+            placeholder={keyConfigured ? 'Enter a replacement key' : credentialProvider === 'openai' ? 'sk-…' : 'Optional bearer token'}
             onkeydown={(event) => {
               if (event.key === 'Enter') void saveKey();
             }}
@@ -181,6 +207,11 @@
           >Remove</button>
         {/if}
       </div>
+      {#if credentialProvider === 'local'}
+        <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
+          Leave this unset for LM Studio or another unauthenticated local server. When set, it is sent as the bearer token for model discovery and chat requests.
+        </p>
+      {/if}
     </section>
 
     {#if settings}

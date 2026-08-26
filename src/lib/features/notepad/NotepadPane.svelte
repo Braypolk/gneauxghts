@@ -89,6 +89,9 @@
   class={viewModel.bodyClass}
   role="group"
   aria-label={viewModel.ariaLabel}
+  data-testid="workspace-pane"
+  data-pane-id={viewModel.paneId}
+  data-pane-kind={viewModel.paneKind}
   onpointerdown={() => actions.onActivate(viewModel.paneId)}
   onfocusin={() => actions.onActivate(viewModel.paneId)}
 >
@@ -103,6 +106,7 @@
               <input
                 bind:this={pane.refs.titleInput}
                 type="text"
+                data-testid="note-title"
                 class={viewModel.titleClass}
                 placeholder={viewModel.titlePlaceholder}
                 value={displayedTitle}
@@ -138,6 +142,7 @@
             <button
               type="button"
               class="mobile-touch-target mobile-pane-top-action mobile-thought-partner-button inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:hidden"
+              onmousedown={(event) => event.preventDefault()}
               onclick={() => void actions.onOpenPaneChoice('thoughtPartner')}
               aria-label="Open thought partner"
               title="Open thought partner"
@@ -203,6 +208,7 @@
 
           <div
             bind:this={pane.refs.editorRoot}
+            data-testid="note-editor"
             class="relative h-full min-h-full w-full min-w-0 max-w-full overflow-x-clip"
             use:editorAction={viewModel.editorLifecycle}
           ></div>

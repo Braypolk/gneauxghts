@@ -1,4 +1,7 @@
-import type { CursorPosition } from '$lib/features/notepad/editor/editorViewState';
+import type {
+  CursorPosition,
+  EditorViewState
+} from '$lib/features/notepad/editor/editorViewState';
 import type { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
 import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
@@ -155,9 +158,7 @@ class PaneEditorSession<TPaneId extends string> {
     });
   }
 
-  destroy(
-    documentOverride: NoteDraftState | null = null
-  ): Promise<PaneEditorOperationResult> {
+  destroy(): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
       const runtime = this.deps.getPaneRuntime(this.paneId);
       this.#assertStableResourceInvariant(runtime);
@@ -182,14 +183,13 @@ class PaneEditorSession<TPaneId extends string> {
           ? 'disposed'
           : 'unavailable';
       }
-      const document =
-        documentOverride ??
-        this.deps.getPaneDocument(this.paneId);
       const lifecycle =
         this.deps.getEditorLifecycleController(this.paneId);
       try {
         if (runtime.controller) {
-          lifecycle.saveCursorPositionForDocument(document);
+          // DocumentDepartureController owns the final cursor snapshot. By the
+          // time Svelte requests DOM teardown, layout may already have reset
+          // the scroller, so saving here would overwrite that snapshot.
           await lifecycle.destroyEditor();
         }
       } catch (error) {
@@ -204,7 +204,8 @@ class PaneEditorSession<TPaneId extends string> {
   }
 
   saveCursorPosition(
-    document: NoteDraftState
+    document: NoteDraftState,
+    position?: EditorViewState | null
   ): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
       if (this.#isDisposalRequested()) return 'disposed';
@@ -213,7 +214,7 @@ class PaneEditorSession<TPaneId extends string> {
       if (!runtime.controller) return 'unavailable';
       this.deps
         .getEditorLifecycleController(this.paneId)
-        .saveCursorPositionForDocument(document);
+        .saveCursorPositionForDocument(document, position);
       return 'applied';
     });
   }
@@ -329,11 +330,9 @@ class PaneEditorSession<TPaneId extends string> {
       : this.destroy();
   }
 
-  dispose(
-    documentOverride: NoteDraftState | null = null
-  ): Promise<PaneEditorOperationResult> {
+  dispose(): Promise<PaneEditorOperationResult> {
     this.#dispatch({ type: 'disposeRequested' });
-    return this.destroy(documentOverride);
+    return this.destroy();
   }
 }
 
@@ -359,20 +358,26 @@ export function createPaneEditorLifecycle<
   }
 
   function destroyPaneEditor(
-    paneId: TPaneId,
-    document: NoteDraftState | null = null
+    paneId: TPaneId
   ): Promise<PaneEditorOperationResult> {
     const session = sessions.get(paneId);
     return session
-      ? session.destroy(document)
+      ? session.destroy()
       : Promise.resolve('disposed');
   }
 
   function saveCursorPosition(
     paneId: TPaneId,
-    document: NoteDraftState
+    document: NoteDraftState,
+    position?: EditorViewState | null
   ) {
-    return getSession(paneId).saveCursorPosition(document);
+    return getSession(paneId).saveCursorPosition(document, position);
+  }
+
+  function captureViewState(paneId: TPaneId) {
+    return deps
+      .getEditorLifecycleController(paneId)
+      .captureEditorViewState();
   }
 
   function replaceContent(
@@ -413,12 +418,11 @@ export function createPaneEditorLifecycle<
   }
 
   async function disposePane(
-    paneId: TPaneId,
-    document: NoteDraftState | null = null
+    paneId: TPaneId
   ): Promise<void> {
     const session = sessions.get(paneId);
     if (!session) return;
-    await session.dispose(document);
+    await session.dispose();
     sessions.delete(paneId);
   }
 
@@ -432,6 +436,7 @@ export function createPaneEditorLifecycle<
   return {
     mountPaneEditor,
     destroyPaneEditor,
+    captureViewState,
     saveCursorPosition,
     replaceContent,
     replaceContentInPlace,

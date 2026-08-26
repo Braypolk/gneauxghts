@@ -20,7 +20,11 @@ import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 import { configuredChatModel } from './chatConfiguration';
-import { reduceAgentEvent, replaceTextPart } from './agentEvents';
+import {
+  materializeDurableChatParts,
+  reduceAgentEvent,
+  replaceTextPart
+} from './agentEvents';
 import {
   createChatControllerMachineState,
   isChatRequestBusy,
@@ -140,14 +144,31 @@ function upsertMessage(messages: ChatMessage[], message: ChatMessage): ChatMessa
 
 function upsertTerminalMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
   const previous = messages.find((candidate) => candidate.id === message.id);
-  if (!previous) return upsertMessage(messages, message);
+  if (!previous) {
+    return upsertMessage(messages, {
+      ...message,
+      parts: materializeDurableChatParts(message.parts, {
+        text: message.content,
+        citations: message.citations,
+        checkpoint: message.role === 'assistant' && message.status === 'completed'
+      })
+    });
+  }
+  const citations = message.citations.length > 0 ? message.citations : previous.citations;
   return upsertMessage(messages, {
     ...message,
-    citations: message.citations.length > 0 ? message.citations : previous.citations,
+    citations,
     linkTarget: message.linkTarget ?? previous.linkTarget,
-    parts: replaceTextPart(previous.parts, message.content),
+    parts: materializeDurableChatParts(previous.parts, {
+      text: message.content,
+      citations,
+      checkpoint: message.role === 'assistant' && message.status === 'completed'
+    }),
+    requestId: previous.requestId,
     agentRunId: previous.agentRunId,
-    agentSequence: previous.agentSequence
+    agentSequence: previous.agentSequence,
+    agentEventCreatedAtMillis: previous.agentEventCreatedAtMillis,
+    agentRetiredRunIds: previous.agentRetiredRunIds
   });
 }
 
@@ -456,17 +477,22 @@ export class ChatControllerStore implements ChatController {
         }
         this.#updateConversation((conversation) => ({
           ...conversation,
-          messages: conversation.messages.map((message) =>
-            message.id === event.messageId
-              ? {
-                  ...message,
-                  citations: [
-                    ...message.citations.filter((citation) => citation.id !== event.citation.id),
-                    event.citation
-                  ]
-                }
-              : message
-          )
+          messages: conversation.messages.map((message) => {
+            if (message.id !== event.messageId) return message;
+            const citations = [
+              ...message.citations.filter((citation) => citation.id !== event.citation.id),
+              event.citation
+            ];
+            return {
+              ...message,
+              citations,
+              parts: materializeDurableChatParts(message.parts, {
+                text: message.content,
+                citations,
+                checkpoint: message.role === 'assistant' && message.status === 'completed'
+              })
+            };
+          })
         }));
       }),
     'chat://completed': (event) =>
@@ -569,17 +595,32 @@ export class ChatControllerStore implements ChatController {
             const next = reduceAgentEvent(
               {
                 parts: message.parts,
+                requestId: message.requestId,
+                conversationId: message.conversationId,
+                messageId: message.id,
                 runId: message.agentRunId,
-                sequence: message.agentSequence
+                sequence: message.agentSequence,
+                createdAtMillis: message.agentEventCreatedAtMillis,
+                retiredRunIds: message.agentRetiredRunIds
               },
               event,
-              { applyText: false }
+              {
+                applyText: false,
+                // The controller machine has already correlated this event to
+                // the active request, so a newer run may safely resume a
+                // message even if earlier envelopes were missed.
+                allowObservedRunHandoff: message.agentRunId !== null
+                  && message.agentRunId !== event.runId
+              }
             );
             return {
               ...message,
               parts: next.parts,
+              requestId: next.requestId,
               agentRunId: next.runId,
-              agentSequence: next.sequence
+              agentSequence: next.sequence,
+              agentEventCreatedAtMillis: next.createdAtMillis,
+              agentRetiredRunIds: next.retiredRunIds
             };
           })
         }));

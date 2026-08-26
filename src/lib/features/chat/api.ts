@@ -23,7 +23,11 @@ import type {
   ProjectionConflictResolution,
   VaultAccess
 } from './types';
-import { initialAgentEventState, replayAgentEvents } from './agentEvents';
+import {
+  initialAgentEventState,
+  materializeDurableChatParts,
+  replayAgentEvents
+} from './agentEvents';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
@@ -123,23 +127,41 @@ function normalizeSource(raw: RawSource, index = 0) {
 }
 
 function normalizeMessage(raw: RawMessage) {
-  const agentState = replayAgentEvents(raw.content, raw.agentEvents ?? []);
+  const agentState = replayAgentEvents(raw.content, raw.agentEvents ?? [], {
+    conversationId: raw.conversationId,
+    messageId: raw.id
+  });
+  const citations = (raw.sources ?? []).map(normalizeSource);
+  const role = raw.role === 'user'
+    ? 'user' as const
+    : raw.role === 'system'
+      ? 'system' as const
+      : 'assistant' as const;
+  const status = raw.status === 'complete'
+    ? 'completed' as const
+    : raw.status as ChatMessage['status'];
   return {
     id: raw.id,
     conversationId: raw.conversationId,
-    role: raw.role === 'user' ? 'user' as const : raw.role === 'system' ? 'system' as const : 'assistant' as const,
+    role,
     content: raw.content,
-    status: raw.status === 'complete' ? 'completed' as const : raw.status as ChatMessage['status'],
+    status,
     createdAtMillis: raw.createdAtMillis,
     updatedAtMillis: raw.createdAtMillis,
-    requestId: null,
+    requestId: agentState.requestId,
     errorMessage: raw.error ?? null,
-    citations: (raw.sources ?? []).map(normalizeSource),
+    citations,
     attachments: raw.attachments ?? [],
     linkTarget: null,
-    parts: agentState.parts,
+    parts: materializeDurableChatParts(agentState.parts, {
+      text: raw.content,
+      citations,
+      checkpoint: role === 'assistant' && status === 'completed'
+    }),
     agentRunId: agentState.runId,
-    agentSequence: agentState.sequence
+    agentSequence: agentState.sequence,
+    agentEventCreatedAtMillis: agentState.createdAtMillis,
+    agentRetiredRunIds: agentState.retiredRunIds
   };
 }
 
@@ -283,12 +305,12 @@ export class TauriChatApi implements ChatApi {
     return invoke<void>(CHAT_COMMANDS.setComposerDraft, { slot, body });
   }
   async getKeyStatus(provider = 'openai') {
-    const raw = await invoke<{ configured: boolean }>(CHAT_COMMANDS.getKeyStatus);
-    return { provider, configured: raw.configured, displayHint: null };
+    const raw = await invoke<{ provider: string; configured: boolean }>(CHAT_COMMANDS.getKeyStatus, { provider });
+    return { provider: raw.provider, configured: raw.configured, displayHint: null };
   }
   async setApiKey(provider: string, apiKey: string) {
-    const raw = await invoke<{ configured: boolean }>(CHAT_COMMANDS.setApiKey, { apiKey });
-    return { provider, configured: raw.configured, displayHint: null };
+    const raw = await invoke<{ provider: string; configured: boolean }>(CHAT_COMMANDS.setApiKey, { provider, apiKey });
+    return { provider: raw.provider, configured: raw.configured, displayHint: null };
   }
   createConversation(input: {
     title?: string;
@@ -557,7 +579,8 @@ export class TauriChatApi implements ChatApi {
     return {
       id, conversationId, role, content, status, createdAtMillis, updatedAtMillis: createdAtMillis,
       requestId: null, errorMessage: null, citations: [], attachments, linkTarget: null,
-      parts: agentState.parts, agentRunId: null, agentSequence: 0
+      parts: agentState.parts, agentRunId: null, agentSequence: 0,
+      agentEventCreatedAtMillis: 0, agentRetiredRunIds: []
     };
   }
 }

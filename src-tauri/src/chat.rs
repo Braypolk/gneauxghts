@@ -2019,11 +2019,7 @@ impl ChatService {
             crate::agent_runtime::AgentRuntimeRequest {
                 provider: provider.clone(),
                 model: conversation.summary.model.clone(),
-                api_key: if provider == crate::agent_runtime::AgentProvider::Openai {
-                    secrets::read_openai_api_key(&run.app)?
-                } else {
-                    None
-                },
+                api_key: secrets::read_provider_api_key(&run.app, &conversation.summary.provider)?,
                 local_base_url: settings.local_base_url,
                 preamble: agent_preamble(&provider),
                 prompt,
@@ -2076,11 +2072,7 @@ impl ChatService {
             crate::agent_runtime::AgentRuntimeRequest {
                 provider: provider.clone(),
                 model: conversation.summary.model,
-                api_key: if provider == crate::agent_runtime::AgentProvider::Openai {
-                    secrets::read_openai_api_key(app)?
-                } else {
-                    None
-                },
+                api_key: secrets::read_provider_api_key(app, &conversation.summary.provider)?,
                 local_base_url: settings.local_base_url,
                 preamble: "Create concise, descriptive conversation titles. Return only the title, without quotes, Markdown, or ending punctuation.".to_string(),
                 prompt: rig_core::completion::Message::user(format!(
@@ -4441,6 +4433,18 @@ mod tests {
                 request_id: "request-events".to_string(),
                 conversation_id: conversation.summary.id.clone(),
                 message_id: assistant_id.clone(),
+                run_id: run_id.clone(),
+                sequence: 3,
+                created_at_millis: 10,
+                event: crate::agent_runtime::AgentEvent::ModelTurnRetried { turn: 2 },
+            })
+            .unwrap();
+        service
+            .append_agent_event(&ChatAgentEventEnvelope {
+                schema_version: 2,
+                request_id: "request-events".to_string(),
+                conversation_id: conversation.summary.id.clone(),
+                message_id: assistant_id.clone(),
                 run_id,
                 sequence: 4,
                 created_at_millis: 11,
@@ -4465,10 +4469,14 @@ mod tests {
             .iter()
             .find(|message| message.id == assistant_id)
             .unwrap();
-        assert_eq!(assistant.agent_events.len(), 2);
+        assert_eq!(assistant.agent_events.len(), 3);
         assert_eq!(assistant.agent_events[0], plan);
         assert!(matches!(
             assistant.agent_events[1].event,
+            crate::agent_runtime::AgentEvent::ModelTurnRetried { turn: 2 }
+        ));
+        assert!(matches!(
+            assistant.agent_events[2].event,
             crate::agent_runtime::AgentEvent::UsageUpdated { call_index: 1, .. }
         ));
     }

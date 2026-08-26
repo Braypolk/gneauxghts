@@ -19,15 +19,17 @@ function message(role: 'assistant' | 'user'): ChatMessageModel {
     linkTarget: null,
     parts: [{ id: 'text', type: 'text', text: '**Visible text**' }],
     agentRunId: null,
-    agentSequence: 0
+    agentSequence: 0,
+    agentEventCreatedAtMillis: 0,
+    agentRetiredRunIds: []
   };
 }
 
-function renderMessage(role: 'assistant' | 'user') {
+function renderMessage(role: 'assistant' | 'user', overrides: Partial<ChatMessageModel> = {}) {
   const noop = () => undefined;
   return render(ChatMessage, {
     props: {
-      message: message(role),
+      message: { ...message(role), ...overrides },
       activity: null,
       selected: null,
       selectedExcerpt: null,
@@ -57,5 +59,50 @@ describe('ChatMessage text rendering', () => {
     const body = renderMessage('user');
     expect(body).toContain('**Visible text**');
     expect(body).not.toContain('<strong>Visible text</strong>');
+  });
+
+  it('renders observable runtime states with accessible labels and no private reasoning', () => {
+    const body = renderMessage('assistant', {
+      status: 'streaming',
+      parts: [
+        { id: 'text', type: 'text', text: '**Visible text**' },
+        {
+          id: 'tool:read', type: 'tool', callId: 'read', name: 'read_note',
+          title: 'Read note', status: 'running'
+        },
+        {
+          id: 'reasoning', type: 'reasoning', status: 'completed',
+          summary: 'Compared the available note evidence.'
+        },
+        {
+          id: 'plan', type: 'plan',
+          entries: [{ id: 'step-1', text: 'Inspect notes', status: 'inProgress' }]
+        },
+        {
+          id: 'retry', type: 'status', status: 'retrying', turn: 2,
+          label: 'Model turn 2 retried'
+        }
+      ]
+    });
+
+    expect(body).toContain('aria-label="Activity, 0 of 1 steps complete. Toggle details"');
+    expect(body).toContain('aria-label="Reasoning completed. Toggle safe summary"');
+    expect(body).toContain('Compared the available note evidence.');
+    expect(body).toContain('Model turn 2 retried');
+    expect(body).toContain('Inspect notes');
+    expect(body).not.toContain('private reasoning payload');
+  });
+
+  it('derives durable sources and the branch checkpoint from message evidence and status', () => {
+    const body = renderMessage('assistant', {
+      citations: [{
+        id: 'web:example', kind: 'web', label: 'Example',
+        url: 'https://example.com', excerpt: 'Evidence'
+      }]
+    });
+
+    expect(body).toContain('1 source');
+    expect(body).toContain('Example');
+    expect(body).toContain('aria-label="Branch from here"');
   });
 });

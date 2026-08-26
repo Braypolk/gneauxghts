@@ -83,6 +83,19 @@ export type ChatPart =
       type: 'reasoning';
       status: AgentReasoningStatus;
       summary?: string;
+    }
+  | {
+      id: 'retry';
+      type: 'status';
+      status: 'retrying';
+      turn: number;
+      label: string;
+    }
+  | { id: 'sources'; type: 'sources'; citations: ChatCitation[] }
+  | {
+      id: 'checkpoint';
+      type: 'checkpoint';
+      label: string;
     };
 
 export interface ChatSettings {
@@ -225,6 +238,8 @@ export interface ChatMessage {
   parts: ChatPart[];
   agentRunId: string | null;
   agentSequence: number;
+  agentEventCreatedAtMillis: number;
+  agentRetiredRunIds: string[];
 }
 
 export interface ChatConversation extends ChatConversationSummary {

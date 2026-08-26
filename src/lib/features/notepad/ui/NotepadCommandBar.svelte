@@ -734,6 +734,7 @@
       value={searchQuery}
       placeholder={searchMode === 'current' ? 'Search this note' : 'Search all notes'}
       ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search the selected scope'}`}
+      testId="note-search-input"
       matchCase={matchCase}
       matchWholeWord={matchWholeWord}
       showMatchOptions={true}

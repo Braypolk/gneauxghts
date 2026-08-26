@@ -477,6 +477,16 @@
       commands.openNotePath(notePath, options),
     openWikilink,
     handleActiveWikilinkChange,
+    persistEditorViewState: (paneId) => {
+      const runtime = getPaneRuntime(paneId);
+      if (
+        runtime.ui.isEditorReady &&
+        !runtime.ui.isApplyingProgrammaticUpdate &&
+        paneHasCapability(getPaneKind(paneId), "edit-document")
+      ) {
+        documents.schedulePaneCursorSave(paneId);
+      }
+    },
     setWikilinkAutocomplete: updatePaneWikilinkState,
   };
 
@@ -761,7 +771,7 @@
     closeWikilinkAutocomplete(paneId);
     closeSlashMenu(paneId);
     closeSelectionMenu(paneId);
-    await paneLifecycle.disposePane(paneId, document);
+    await paneLifecycle.disposePane(paneId);
     runtime.dispose();
     delete paneControllers[paneId];
     editorCapabilities.delete(paneId);
@@ -1252,7 +1262,6 @@
 
   // Selection tracking per pane (cursor save scheduling + related text update).
   function trackPaneSelection(paneId: PaneId) {
-    const trackedDocument = getPaneDocumentSession(paneId);
     return attachPaneSelectionTracking({
       paneId,
       isEditorReady: getPaneRuntime(paneId).ui.isEditorReady,
@@ -1260,10 +1269,8 @@
       isActivePaneInEditorMode: () =>
         activePaneId === paneId &&
         paneHasCapability(getPaneKind(paneId), "edit-document"),
-      persistCursorPosition: () => documents.schedulePaneCursorSave(paneId),
       updateSelectedRelatedText: () => updateSelectedRelatedText(paneId),
-      flushPendingCursorSave: () =>
-        documents.flushPaneCursorSave(paneId, trackedDocument),
+      flushPendingCursorSave: () => documents.flushPaneCursorSave(paneId),
     });
   }
 

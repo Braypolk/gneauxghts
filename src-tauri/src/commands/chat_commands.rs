@@ -20,6 +20,7 @@ use tauri::{AppHandle, State};
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatKeyStatus {
+    provider: String,
     configured: bool,
 }
 
@@ -211,17 +212,28 @@ pub(crate) fn chat_set_composer_draft(
 }
 
 #[tauri::command]
-pub(crate) fn chat_get_key_status(app: AppHandle) -> Result<ChatKeyStatus, String> {
+pub(crate) fn chat_get_key_status(
+    app: AppHandle,
+    provider: String,
+) -> Result<ChatKeyStatus, String> {
     Ok(ChatKeyStatus {
-        configured: crate::secrets::has_openai_api_key(&app)?,
+        configured: crate::secrets::has_provider_api_key(&app, &provider)?,
+        provider,
     })
 }
 
 #[tauri::command]
-pub(crate) fn chat_set_api_key(app: AppHandle, api_key: String) -> Result<ChatKeyStatus, String> {
+pub(crate) fn chat_set_api_key(
+    app: AppHandle,
+    provider: String,
+    api_key: String,
+) -> Result<ChatKeyStatus, String> {
     let configured = !api_key.trim().is_empty();
-    crate::secrets::set_openai_api_key(&app, &api_key)?;
-    Ok(ChatKeyStatus { configured })
+    crate::secrets::set_provider_api_key(&app, &provider, &api_key)?;
+    Ok(ChatKeyStatus {
+        provider,
+        configured,
+    })
 }
 
 #[tauri::command]
@@ -345,15 +357,21 @@ pub(crate) fn chat_update_conversation_provider(
 }
 
 #[tauri::command]
-pub(crate) async fn chat_list_local_models(base_url: String) -> Result<Vec<LocalModel>, String> {
+pub(crate) async fn chat_list_local_models(
+    app: AppHandle,
+    base_url: String,
+) -> Result<Vec<LocalModel>, String> {
     crate::agent_runtime::ensure_local_desktop()?;
     crate::agent_runtime::validate_local_base_url(&base_url)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|error| format!("Unable to configure local model client: {error}"))?;
-    let models = client
-        .get(format!("{}/models", base_url.trim_end_matches('/')))
+    let mut request = client.get(format!("{}/models", base_url.trim_end_matches('/')));
+    if let Some(api_key) = crate::secrets::read_provider_api_key(&app, "local")? {
+        request = request.bearer_auth(api_key);
+    }
+    let models = request
         .send()
         .await
         .map_err(|error| format!("Unable to reach the local model server: {error}"))?;

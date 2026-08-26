@@ -10,6 +10,12 @@
   import { page } from '$app/state';
   import { invoke } from '@tauri-apps/api/core';
   import { getAppShellViewGeneration } from '$lib/ui/appShellNavigation.svelte';
+  import { installBrowserE2eBackend } from '$lib/e2e/browserBackend';
+
+  installBrowserE2eBackend();
+  if (import.meta.env.DEV && import.meta.env.VITE_E2E_NATIVE === 'true') {
+    void import('@wdio/tauri-plugin');
+  }
 
   let { children } = $props();
   let shellViewKey = $derived(`${page.url.pathname}::${getAppShellViewGeneration()}`);

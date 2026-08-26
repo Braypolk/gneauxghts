@@ -263,15 +263,27 @@ describe('TauriChatApi', () => {
   });
 
   it('stores and removes provider keys without requesting the key back', async () => {
-    invokeMock.mockResolvedValueOnce({ configured: true }).mockResolvedValueOnce({ configured: false });
+    invokeMock
+      .mockResolvedValueOnce({ provider: 'openai', configured: true })
+      .mockResolvedValueOnce({ provider: 'local', configured: false });
     const { TauriChatApi } = await import('./api');
     const api = new TauriChatApi();
 
     await expect(api.setApiKey('openai', 'sk-test')).resolves.toMatchObject({ configured: true });
-    await expect(api.setApiKey('openai', '')).resolves.toMatchObject({ configured: false });
+    await expect(api.setApiKey('local', '')).resolves.toMatchObject({ configured: false });
 
-    expect(invokeMock).toHaveBeenNthCalledWith(1, 'chat_set_api_key', { apiKey: 'sk-test' });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_set_api_key', { apiKey: '' });
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'chat_set_api_key', { provider: 'openai', apiKey: 'sk-test' });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_set_api_key', { provider: 'local', apiKey: '' });
+  });
+
+  it('checks key status for the requested provider', async () => {
+    invokeMock.mockResolvedValueOnce({ provider: 'local', configured: true });
+    const { TauriChatApi } = await import('./api');
+
+    await expect(new TauriChatApi().getKeyStatus('local')).resolves.toMatchObject({
+      provider: 'local', configured: true
+    });
+    expect(invokeMock).toHaveBeenCalledWith('chat_get_key_status', { provider: 'local' });
   });
 
   it('creates excerpts from rendered Markdown selections', async () => {
@@ -306,6 +318,48 @@ describe('TauriChatApi', () => {
       selectedText: 'bold and linked text'
     });
     expect(excerpt.text).toBe('bold and linked text');
+  });
+
+  it('reconstructs durable runtime, source, and checkpoint parts without replaying text deltas', async () => {
+    invokeMock.mockResolvedValueOnce({
+      id: 'chat-1', title: 'Replay', access: 'approved', status: 'active',
+      createdAtMillis: 1, updatedAtMillis: 4, messageCount: 1, detached: false,
+      provider: 'openai', model: 'test-model', excerpts: [],
+      messages: [{
+        id: 'assistant-1', conversationId: 'chat-1', ordinal: 1, role: 'assistant',
+        status: 'complete', content: 'Canonical answer', part: 1, createdAtMillis: 1,
+        sources: [{
+          kind: 'web', title: 'Evidence', excerpt: 'Supporting excerpt',
+          url: 'https://example.com'
+        }],
+        agentEvents: [
+          {
+            schemaVersion: 2, requestId: 'request-1', conversationId: 'chat-1',
+            messageId: 'assistant-1', runId: 'run-1', sequence: 2, createdAtMillis: 2,
+            event: { type: 'modelTurnRetried', turn: 2 }
+          },
+          {
+            schemaVersion: 2, requestId: 'request-1', conversationId: 'chat-1',
+            messageId: 'assistant-1', runId: 'run-1', sequence: 1, createdAtMillis: 1,
+            event: { type: 'textDelta', delta: 'Canonical answer' }
+          }
+        ]
+      }]
+    });
+    const { TauriChatApi } = await import('./api');
+
+    const conversation = await new TauriChatApi().getConversation('chat-1');
+    const restored = conversation.messages[0];
+
+    expect(restored.content).toBe('Canonical answer');
+    expect(restored.parts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'text', text: 'Canonical answer' }),
+      expect.objectContaining({ type: 'status', turn: 2 }),
+      expect.objectContaining({ type: 'sources' }),
+      expect.objectContaining({ type: 'checkpoint' })
+    ]));
+    expect(restored.agentRunId).toBe('run-1');
+    expect(restored.agentSequence).toBe(2);
   });
 
   it('switches the next run to a local model through the conversation command', async () => {

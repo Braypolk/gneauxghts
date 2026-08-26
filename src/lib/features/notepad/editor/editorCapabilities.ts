@@ -142,6 +142,21 @@ export function createEditorCapabilityAdapter(
   getController: () => EditorController | null
 ): EditorCapabilityAdapter {
   let reviewStateReader: ((state: import('@codemirror/state').EditorState) => ProposalReviewState) | null = null;
+
+  function readProposalReviewState(): ProposalReviewState | null {
+    const controller = getController();
+    if (!controller || !reviewStateReader) return null;
+    try {
+      return reviewStateReader(controller.view.state);
+    } catch {
+      // Rebinding a pane replaces its EditorState and therefore removes the
+      // old proposal StateField before orchestration has a chance to attach
+      // the review to the new document. Treat that stale reader as an absent
+      // review so the extension can be installed again.
+      return null;
+    }
+  }
+
   return {
     isReady: () => {
       const controller = getController();
@@ -235,13 +250,10 @@ export function createEditorCapabilityAdapter(
     setProposalReviewStateReader: (reader) => {
       reviewStateReader = reader;
     },
-    readProposalReviewState: () => {
-      const controller = getController();
-      return controller && reviewStateReader ? reviewStateReader(controller.view.state) : null;
-    },
+    readProposalReviewState,
     focusProposalHunk: (id) => {
       const controller = getController();
-      const hunk = controller && reviewStateReader?.(controller.view.state).hunks.find((item) => item.id === id);
+      const hunk = readProposalReviewState()?.hunks.find((item) => item.id === id);
       if (!controller || !hunk) return false;
       controller.view.dispatch(controller.view.state.update({
         selection: { anchor: hunk.from, head: hunk.to },

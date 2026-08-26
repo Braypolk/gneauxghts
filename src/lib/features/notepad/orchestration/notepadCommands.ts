@@ -73,8 +73,8 @@ export function createNotepadCommands<TPaneId extends string>(
       getPaneDocument: panes.getPaneDocument,
       flushAllPendingCursorSaves:
         documents.flushAllPendingCursorSaves,
-      saveCursorPositionForDocument:
-        documents.saveCursorPositionForDocument,
+      saveCursorPositionForPane:
+        documents.saveCursorPositionForPane,
       cancelPendingAutosave:
         persistence.cancelPendingAutosave,
       enqueueSave: persistence.enqueueSave,

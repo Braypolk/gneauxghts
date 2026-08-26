@@ -48,8 +48,20 @@ Envelopes carry `schemaVersion: 2`. Tool, plan, reasoning-status, and usage
 events are stored in `chat_agent_events`. Text remains
 durable in `chat_messages.content`, avoiding duplicate token storage. Reopening
 a conversation reconstructs `ChatPart[]` by replaying the structured events on
-top of the canonical message text. Sequence numbers make duplicate live events
-idempotent.
+top of the canonical message text. Persisted text deltas are ignored during
+replay, so legacy or partially migrated rows cannot duplicate the canonical
+answer. Envelope target identity, schema version, run identity, and sequence
+make duplicate or stale live events idempotent. A correlated live request or
+ordered durable replay may explicitly hand a message to a demonstrably newer
+run even when omitted text events mean its first observed durable sequence is
+greater than one. Once that happens, later events from the retired run are
+ignored.
+
+`modelTurnRetried` becomes a user-visible status part. Durable sources are
+materialized as a source part from `chat_sources`, and a completed assistant
+message derives its checkpoint part from message status. Those two parts are
+projections of their existing durable records rather than duplicate event
+payloads, keeping live and reopened messages structurally equivalent.
 
 Cancellation uses a `CancellationToken` and races the next provider stream item,
 so Stop aborts the active run instead of merely ignoring later output.

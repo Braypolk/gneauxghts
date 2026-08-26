@@ -85,6 +85,7 @@
       style={`--split-pane-position: ${quickOptions.length - index}; --current-pane-position: ${quickOptions.length - index - 1}`}
       aria-label={optionLabel(option.choice)}
       title={optionLabel(option.choice)}
+      onmousedown={(event) => event.preventDefault()}
       onclick={() => void handleOptionClick(option.choice)}
     >
       <OptionIcon class="h-4 w-4" />
@@ -98,6 +99,7 @@
     type="button"
     class="relative z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
     onclick={() => void onSplit()}
+    onmousedown={(event) => event.preventDefault()}
     onpointerenter={() => (splitMode = true)}
     onfocus={() => (splitMode = true)}
     aria-label={optionLabels.typing}

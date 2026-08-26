@@ -8,7 +8,8 @@ export interface DocumentDepartureControllerDeps<
 > {
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   flushAllPendingCursorSaves: () => void;
-  saveCursorPositionForDocument: (
+  saveCursorPositionForPane: (
+    paneId: TPaneId,
     document: NoteDraftState
   ) => void | Promise<void>;
   cancelPendingAutosave: (document: NoteDraftState) => void;
@@ -49,7 +50,8 @@ export function createDocumentDepartureController<
 
     const authoritativeDocument =
       deps.getPaneDocument(paneId);
-    await deps.saveCursorPositionForDocument(
+    await deps.saveCursorPositionForPane(
+      paneId,
       authoritativeDocument
     );
 

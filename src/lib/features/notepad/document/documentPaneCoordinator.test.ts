@@ -17,6 +17,48 @@ function note(key: NoteKey, bodyMarkdown: string) {
 }
 
 describe('documentPaneCoordinator', () => {
+  it('flushes only a pending cursor snapshot during pane teardown', () => {
+    const document = note('path:/vault/shared.md', 'body');
+    const position = { anchor: 4, head: 4, scrollTop: 720 };
+    const saveCursorPosition = vi.fn(async () => 'applied');
+    let pending: (() => void) | null = null;
+    const runtime = {
+      scheduleCursorSave: (callback: () => void) => {
+        pending = callback;
+      },
+      flushCursorSave: (fallback?: () => void) => {
+        const callback = pending ?? fallback ?? null;
+        pending = null;
+        callback?.();
+      }
+    };
+    const coordinator = createDocumentPaneCoordinator({
+      paneLifecycle: {
+        captureViewState: () => position,
+        saveCursorPosition
+      } as never,
+      getPaneRuntime: () => runtime as never,
+      getVisiblePaneIds: () => ['left'],
+      getPaneIdsForDocument: () => ['left'],
+      getPaneKind: () => 'editor',
+      getNavigationDocument: () => document,
+      getNavigationPaneId: () => 'left',
+      getPaneDocument: () => document,
+      getNoteByKey: () => document
+    });
+
+    coordinator.schedulePaneCursorSave('left');
+    coordinator.flushPaneCursorSave('left');
+    coordinator.flushPaneCursorSave('left');
+
+    expect(saveCursorPosition).toHaveBeenCalledOnce();
+    expect(saveCursorPosition).toHaveBeenCalledWith(
+      'left',
+      document,
+      position
+    );
+  });
+
   it('uses one pane-session replacement for same-document runtime fanout', async () => {
     const document = note('path:/vault/shared.md', 'updated');
     const replaceContentInPlace = vi.fn(async () => 'applied');

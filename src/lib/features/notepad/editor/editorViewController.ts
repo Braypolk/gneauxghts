@@ -24,7 +24,8 @@ import type {
 
 const defaultViewCallbacks: EditorViewCallbacks = {
   onOpenLink: () => {},
-  onActiveWikilinkChange: () => {}
+  onActiveWikilinkChange: () => {},
+  onViewStateChange: () => {}
 };
 
 function readSelection(view: EditorView): EditorSelection {

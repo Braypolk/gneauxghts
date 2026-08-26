@@ -2,19 +2,12 @@ import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
 
 const cmContentInteractionEvents = ['mouseup', 'touchend', 'focusout'] as const;
 
-function findCmScrollerElement(editorRoot: HTMLElement) {
-  const scroller = editorRoot.querySelector('.cm-scroller');
-  return scroller instanceof HTMLElement ? scroller : null;
-}
-
 export interface PaneSelectionTrackingDeps<TPaneId extends string> {
   paneId: TPaneId;
   isEditorReady: boolean;
   editorRoot: HTMLDivElement | null;
   /** True when this pane is the active pane in editor mode. */
   isActivePaneInEditorMode: () => boolean;
-  /** Persist the current cursor position and scroll offset (debounced). */
-  persistCursorPosition: () => void;
   /** Push current selection's text upstream (for related-notes drawer). */
   updateSelectedRelatedText: () => void;
   /** Synchronous flush of any pending cursor save (called on teardown). */
@@ -33,7 +26,6 @@ export function attachPaneSelectionTracking<TPaneId extends string>({
   isEditorReady,
   editorRoot,
   isActivePaneInEditorMode,
-  persistCursorPosition,
   updateSelectedRelatedText,
   flushPendingCursorSave
 }: PaneSelectionTrackingDeps<TPaneId>): (() => void) | undefined {
@@ -69,15 +61,9 @@ export function attachPaneSelectionTracking<TPaneId extends string>({
   };
 
   for (const eventName of cmContentInteractionEvents) {
-    cmContent.addEventListener(eventName, persistCursorPosition);
     cmContent.addEventListener(eventName, handleSelectionChange);
   }
   cmContent.addEventListener('keyup', handleKeyboardSelectionChange);
-
-  // Reading position is scroll, not cursor: someone can read a whole note
-  // without ever moving the caret, and reopening should land where they read.
-  const scroller = findCmScrollerElement(editorRoot);
-  scroller?.addEventListener('scroll', persistCursorPosition, { passive: true });
 
   return () => {
     if (selectionFrameId !== null) {
@@ -85,10 +71,8 @@ export function attachPaneSelectionTracking<TPaneId extends string>({
     }
     flushPendingCursorSave();
     for (const eventName of cmContentInteractionEvents) {
-      cmContent.removeEventListener(eventName, persistCursorPosition);
       cmContent.removeEventListener(eventName, handleSelectionChange);
     }
     cmContent.removeEventListener('keyup', handleKeyboardSelectionChange);
-    scroller?.removeEventListener('scroll', persistCursorPosition);
   };
 }
