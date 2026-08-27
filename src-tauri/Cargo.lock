@@ -2116,6 +2116,7 @@ dependencies = [
  "tauri-plugin-wdio-webdriver",
  "tauri-plugin-window-state",
  "thiserror 2.0.18",
+ "tokio",
  "tokio-util",
  "umap-rs",
  "url",

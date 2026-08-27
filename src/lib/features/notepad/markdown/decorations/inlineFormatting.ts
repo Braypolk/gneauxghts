@@ -3,6 +3,7 @@ import {
   emphasisWrapFormats
 } from '../inlineFormatSpec';
 import type { MarkdownDecorationContext, MarkdownNodeDecorator } from './types';
+import { nonEmptySelectionOverlaps } from '../conceal';
 
 // Inline emphasis nodes → in-place styling. Content gets a mark decoration; the
 // surrounding markers (**, *, _, ~~, ==) are concealed with a replace decoration
@@ -20,6 +21,9 @@ const MARKER_NAMES = Object.fromEntries(
 ) as Record<string, string>;
 
 const concealMark = Decoration.replace({});
+const selectedHighlightMark = Decoration.mark({
+  class: 'cm-gn-highlight cm-gn-selection-overlap'
+});
 
 function concealMarkers(
   ctx: MarkdownDecorationContext,
@@ -51,7 +55,13 @@ export const decorateInlineFormatting: MarkdownNodeDecorator = (
     return;
   }
 
-  ctx.decorations.push(contentMark.range(from, to));
+  ctx.decorations.push(
+    (node.name === 'Highlight' &&
+    nonEmptySelectionOverlaps(ctx.view, from, to)
+      ? selectedHighlightMark
+      : contentMark
+    ).range(from, to)
+  );
 
   if (ctx.selectionOverlaps(from, to)) {
     return;

@@ -123,6 +123,13 @@ export async function openSearchResult(
   });
   openContext.clearSearch();
 
+  // A title-only result identifies the note, not a body destination. Keep the
+  // note's remembered cursor/scroll state instead of manufacturing an editor
+  // anchor from the title match.
+  if (result.sectionLabel === 'Title') {
+    return;
+  }
+
   await navigateToSectionTarget(
     navigationContext,
     result.sectionLabel,

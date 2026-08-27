@@ -1,3 +1,4 @@
+mod agent_permissions;
 mod agent_runtime;
 mod agent_tools;
 mod app;
@@ -228,6 +229,7 @@ pub fn run() {
             commands::search_commands::list_recent_focus,
             commands::search_commands::get_last_chat_location,
             commands::search_commands::set_last_chat_location,
+            commands::search_commands::set_note_pinned,
             commands::list_recent_tasks,
             commands::list_tasks,
             commands::get_task_group,
@@ -267,6 +269,7 @@ pub fn run() {
             commands::chat_commands::chat_list_pending_proposals,
             commands::chat_commands::chat_send_message,
             commands::chat_commands::chat_cancel_request,
+            commands::chat_commands::chat_decide_permission,
             commands::chat_commands::chat_retry_message,
             commands::chat_commands::chat_create_excerpt,
             commands::chat_commands::chat_remember_excerpt,

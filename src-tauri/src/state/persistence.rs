@@ -137,6 +137,8 @@ pub(crate) struct PersistedState {
     #[serde(default)]
     pub(crate) recent_note_ids: Vec<String>,
     #[serde(default)]
+    pub(crate) pinned_note_ids: Vec<String>,
+    #[serde(default)]
     pub(crate) hidden_note_ids: Vec<String>,
     #[serde(default)]
     pub(crate) note_order_note_ids: Vec<String>,
@@ -479,6 +481,7 @@ pub(crate) fn derive_file_stem_from_title_and_markdown(title: &str, markdown: &s
 fn prune_state_in_place(state: &mut PersistedState, notes_dir: &Path, lookup: &NoteIdLookup<'_>) {
     let resolver = PruneResolver::new(lookup, notes_dir);
     prune_recent_note_ids_with_resolver(state, &resolver);
+    prune_note_id_list_with_resolver(&mut state.pinned_note_ids, &resolver);
     prune_note_id_list_with_resolver(&mut state.hidden_note_ids, &resolver);
     prune_note_id_list_with_resolver(&mut state.note_order_note_ids, &resolver);
     prune_note_id_list_with_resolver(&mut state.collapsed_note_ids, &resolver);
@@ -696,6 +699,10 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
                 position INTEGER PRIMARY KEY,
                 note_id TEXT NOT NULL UNIQUE
             );
+            CREATE TABLE IF NOT EXISTS app_state_pinned_note_ids (
+                position INTEGER PRIMARY KEY,
+                note_id TEXT NOT NULL UNIQUE
+            );
             CREATE TABLE IF NOT EXISTS app_state_hidden_note_ids (
                 note_id TEXT PRIMARY KEY
             );
@@ -857,6 +864,7 @@ fn database_has_persisted_state(connection: &Connection) -> Result<bool, String>
 
     for table in [
         "app_state_recent_note_ids",
+        "app_state_pinned_note_ids",
         "app_state_hidden_note_ids",
         "app_state_note_order_note_ids",
         "app_state_collapsed_note_ids",
@@ -907,6 +915,10 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
         connection,
         "SELECT note_id FROM app_state_recent_note_ids ORDER BY position",
     )?;
+    let pinned_note_ids = read_ordered_string_column(
+        connection,
+        "SELECT note_id FROM app_state_pinned_note_ids ORDER BY position",
+    )?;
     let hidden_note_ids = read_string_column(
         connection,
         "SELECT note_id FROM app_state_hidden_note_ids ORDER BY note_id",
@@ -949,6 +961,7 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
     Ok(PersistedState {
         last_opened_note_id,
         recent_note_ids,
+        pinned_note_ids,
         hidden_note_ids,
         note_order_note_ids,
         collapsed_note_ids,
@@ -1014,6 +1027,18 @@ fn write_state_to_connection(
         transaction
             .execute(
                 "INSERT INTO app_state_recent_note_ids (position, note_id) VALUES (?1, ?2)",
+                params![to_i64(index)?, note_id],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+
+    transaction
+        .execute("DELETE FROM app_state_pinned_note_ids", [])
+        .map_err(|err| err.to_string())?;
+    for (index, note_id) in state.pinned_note_ids.iter().enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO app_state_pinned_note_ids (position, note_id) VALUES (?1, ?2)",
                 params![to_i64(index)?, note_id],
             )
             .map_err(|err| err.to_string())?;
@@ -1138,6 +1163,33 @@ pub(crate) fn db_set_note_hidden(note_id: &str, hidden: bool) -> Result<(), Stri
             )
         };
         result.map(|_| ()).map_err(|err| err.to_string())
+    })
+}
+
+pub(crate) fn db_set_note_pinned(note_id: &str, pinned: bool) -> Result<(), String> {
+    with_state_database(|connection| {
+        let mut note_ids = read_ordered_string_column(
+            connection,
+            "SELECT note_id FROM app_state_pinned_note_ids ORDER BY position",
+        )?;
+        note_ids.retain(|existing| existing != note_id);
+        if pinned {
+            note_ids.insert(0, note_id.to_string());
+        }
+
+        let transaction = connection.transaction().map_err(|err| err.to_string())?;
+        transaction
+            .execute("DELETE FROM app_state_pinned_note_ids", [])
+            .map_err(|err| err.to_string())?;
+        for (index, pinned_note_id) in note_ids.iter().enumerate() {
+            transaction
+                .execute(
+                    "INSERT INTO app_state_pinned_note_ids (position, note_id) VALUES (?1, ?2)",
+                    params![to_i64(index)?, pinned_note_id],
+                )
+                .map_err(|err| err.to_string())?;
+        }
+        transaction.commit().map_err(|err| err.to_string())
     })
 }
 

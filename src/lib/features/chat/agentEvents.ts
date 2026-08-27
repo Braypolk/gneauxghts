@@ -121,7 +121,34 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
       next[index] = reasoning;
       return next;
     }
+    case 'permissionRequested':
+      return upsertPart(parts, {
+        id: `permission:${event.request.permissionId}`,
+        type: 'permission',
+        request: event.request,
+        status: 'pending'
+      });
+    case 'permissionResolved': {
+      const id = `permission:${event.permissionId}`;
+      const index = parts.findIndex((part) => part.id === id && part.type === 'permission');
+      if (index < 0) return parts;
+      const part = parts[index];
+      if (part.type !== 'permission') return parts;
+      const next = parts.slice();
+      next[index] = {
+        ...part,
+        status: 'resolved',
+        resolution: event.resolution
+      };
+      return next;
+    }
   }
+}
+
+export function settlePendingPermissions(parts: ChatPart[]): ChatPart[] {
+  return parts.map((part) => part.type === 'permission' && part.status === 'pending'
+    ? { ...part, status: 'resolved' as const, resolution: 'cancelled' as const }
+    : part);
 }
 
 function upsertPart(parts: ChatPart[], part: ChatPart): ChatPart[] {
@@ -164,6 +191,15 @@ export function reduceAgentEvent(
   options: { applyText?: boolean; allowObservedRunHandoff?: boolean } = {}
 ): AgentEventState {
   if (!hasSupportedSchema(envelope) || !targetsCurrentMessage(state, envelope)) return state;
+  if (
+    envelope.event.type === 'permissionRequested' &&
+    (
+      envelope.event.request.requestId !== envelope.requestId ||
+      envelope.event.request.conversationId !== envelope.conversationId ||
+      envelope.event.request.messageId !== envelope.messageId ||
+      envelope.event.request.runId !== envelope.runId
+    )
+  ) return state;
   const sameRun = state.runId === envelope.runId;
   if (sameRun) {
     if (state.requestId && state.requestId !== envelope.requestId) return state;
@@ -206,6 +242,11 @@ export function replayAgentEvents(
 ): AgentEventState {
   const byRun = new Map<string, ChatAgentEventEnvelope[]>();
   for (const event of events) {
+    // Permission waiters and run grants are intentionally ephemeral. Even if a
+    // stale row exists from a development build, reopening must not recreate it.
+    if (event.event.type === 'permissionRequested' || event.event.type === 'permissionResolved') {
+      continue;
+    }
     const run = byRun.get(event.runId) ?? [];
     run.push(event);
     byRun.set(event.runId, run);

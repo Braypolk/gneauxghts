@@ -10,7 +10,7 @@ use super::{
     },
     debug::SemanticDebugState,
     embed::{EmbeddingInputKind, EmbeddingProvider},
-    indexer::PendingIndexState,
+    indexer::{PendingIndexState, NOTE_PRESENTATION_ALGORITHM_VERSION},
     note_ann::NoteAnnIndexState,
     ActiveSemanticState,
 };
@@ -594,7 +594,11 @@ fn persisted_atlas_inputs(
                     file_name,
                     title: row.title.clone(),
                     preview: row.preview.clone(),
-                    tags: row.tags.clone(),
+                    tags: atlas_searchable_tags(
+                        row.document_kind,
+                        &row.presentation_hash,
+                        &row.tags,
+                    ),
                     document_kind: row.document_kind,
                     modified_millis: row.modified_millis,
                 },
@@ -1358,6 +1362,7 @@ impl ActiveSemanticState {
         generation_key: AtlasGenerationKey,
         query: String,
         activity_by_note_id: HashMap<String, NoteActivity>,
+        notes_dir: &Path,
     ) -> Result<AtlasSearchResponse, String> {
         let trimmed_query = query.trim().to_string();
         if trimmed_query.is_empty() {
@@ -1416,6 +1421,7 @@ impl ActiveSemanticState {
                 let file_name = meta
                     .map(|item| item.file_name.as_str())
                     .unwrap_or(fallback_file_name.as_str());
+                let relative_path = atlas_searchable_note_path(&note.note_path, notes_dir);
                 let preview = meta.map(|item| item.preview.as_str()).unwrap_or("");
                 let tags = meta.map_or(&[] as &[String], |item| item.tags.as_slice());
                 let semantic_score = if note
@@ -1431,7 +1437,7 @@ impl ActiveSemanticState {
                 };
                 let lexical_score = lexical_note_score(
                     &terms,
-                    &[title, file_name, note.note_path.as_str(), preview],
+                    &[title, file_name, relative_path.as_str(), preview],
                     tags,
                 );
                 let structural_score = title_tag_path_score(
@@ -1439,7 +1445,7 @@ impl ActiveSemanticState {
                     &terms,
                     title,
                     file_name,
-                    &note.note_path,
+                    &relative_path,
                     tags,
                 );
                 let note_id = meta.and_then(|item| item.note_id.clone());
@@ -4400,6 +4406,32 @@ fn file_name_for_path(note_path: &str) -> String {
         .into_owned()
 }
 
+fn atlas_searchable_note_path(note_path: &str, notes_dir: &Path) -> String {
+    let path = Path::new(note_path);
+    path.strip_prefix(notes_dir)
+        .ok()
+        .filter(|relative| !relative.as_os_str().is_empty())
+        .unwrap_or_else(|| path.file_name().map(Path::new).unwrap_or(path))
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn atlas_searchable_tags(
+    document_kind: DocumentKind,
+    presentation_hash: &str,
+    tags: &[String],
+) -> Vec<String> {
+    if document_kind == DocumentKind::Note
+        && !presentation_hash.starts_with(NOTE_PRESENTATION_ALGORITHM_VERSION)
+    {
+        // Rows created before body-only tag extraction may contain frontmatter
+        // keys. Ignore them while the versioned background reconciliation
+        // refreshes the metadata without re-embedding unchanged content.
+        return Vec::new();
+    }
+    tags.to_vec()
+}
+
 fn parent_folder(note_path: &str) -> String {
     Path::new(note_path)
         .parent()
@@ -4451,6 +4483,47 @@ mod tests {
             cloud_algorithm_version: ATLAS_CLOUD_ALGORITHM_VERSION,
             layout_algorithm_version: ATLAS_LAYOUT_ALGORITHM_VERSION,
         }
+    }
+
+    #[test]
+    fn atlas_search_does_not_match_the_shared_vault_root() {
+        let notes_dir = Path::new("/Users/example/Gneauxghts/Notes");
+        let note_path = "/Users/example/Gneauxghts/Notes/Projects/Launch.md";
+        let searchable_path = atlas_searchable_note_path(note_path, notes_dir);
+        let terms = vec!["gneauxghts".to_string()];
+
+        assert_eq!(searchable_path, "Projects/Launch.md");
+        assert_eq!(
+            lexical_note_score(
+                &terms,
+                &["Launch", "Launch.md", &searchable_path, "Project details"],
+                &[],
+            ),
+            0.0,
+        );
+        assert_eq!(
+            title_tag_path_score(
+                "gneauxghts",
+                &terms,
+                "Launch",
+                "Launch.md",
+                &searchable_path,
+                &[],
+            ),
+            0.0,
+        );
+    }
+
+    #[test]
+    fn atlas_search_ignores_legacy_frontmatter_derived_tags() {
+        let stale = vec!["gneauxghts".to_string()];
+        assert!(atlas_searchable_tags(DocumentKind::Note, "legacy", &stale).is_empty());
+
+        let current_hash = format!("{NOTE_PRESENTATION_ALGORITHM_VERSION}:hash");
+        assert_eq!(
+            atlas_searchable_tags(DocumentKind::Note, &current_hash, &stale),
+            stale,
+        );
     }
 
     #[test]

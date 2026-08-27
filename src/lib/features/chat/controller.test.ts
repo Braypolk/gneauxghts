@@ -130,7 +130,8 @@ function fakeApi() {
       contextWindow: null
     })),
     sendMessage: vi.fn(),
-    cancelRequest: vi.fn(),
+    cancelRequest: vi.fn(async () => undefined),
+    decidePermission: vi.fn(async () => 'allowedOnce'),
     retryMessage: vi.fn(),
     createExcerpt: vi.fn(),
     rememberExcerpt: vi.fn(),
@@ -354,6 +355,55 @@ describe('createChatController', () => {
       entries: [expect.objectContaining({ id: 'new' })]
     });
     expect(restored?.parts.find((part) => part.type === 'status')).toBeUndefined();
+  });
+
+  it('decides only the active correlated permission and preserves its live resolution at terminal', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    const streamingMessage = message();
+    fake.emit('chat://started', {
+      requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: streamingMessage.id, message: streamingMessage
+    });
+    const permission = {
+      permissionId: 'permission-1', requestId: 'request-1',
+      conversationId: 'conversation-1', messageId: 'message-1', runId: 'run-1',
+      toolCallId: 'call-1', toolName: 'fake_side_effect',
+      title: 'Run fake side effect', kind: 'processExecution' as const,
+      scope: 'command:echo'
+    };
+    fake.emit('chat://agent-event', {
+      schemaVersion: 2, requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: 'message-1', runId: 'run-1', sequence: 1, createdAtMillis: 1,
+      event: { type: 'permissionRequested', request: permission }
+    });
+
+    await expect(controller.decidePermission(
+      { ...permission, toolCallId: 'wrong-call' }, 'allowOnce'
+    )).resolves.toBe(false);
+    expect(fake.api.decidePermission).not.toHaveBeenCalled();
+    controller.clearError();
+    await expect(controller.decidePermission(permission, 'allowOnce')).resolves.toBe(true);
+    expect(fake.api.decidePermission).toHaveBeenCalledWith(permission, 'allowOnce');
+
+    fake.emit('chat://agent-event', {
+      schemaVersion: 2, requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: 'message-1', runId: 'run-1', sequence: 2, createdAtMillis: 2,
+      event: {
+        type: 'permissionResolved', permissionId: 'permission-1', resolution: 'allowedOnce'
+      }
+    });
+    fake.emit('chat://completed', {
+      requestId: 'request-1', conversationId: 'conversation-1', messageId: 'message-1',
+      message: message({ content: 'Done', status: 'completed' })
+    });
+    expect(controller.getSnapshot().conversation?.messages[0].parts)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'permission', status: 'resolved', resolution: 'allowedOnce'
+        })
+      ]));
   });
 
   it('applies a background conversation title without changing response state', async () => {
@@ -628,6 +678,33 @@ describe('createChatController', () => {
     await controller.initialize();
     controller.dispose();
     expect(fake.handlers.size).toBe(0);
+  });
+
+  it('cancels an active run when disposal would orphan a permission waiter', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    const streamingMessage = message();
+    fake.emit('chat://started', {
+      requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: streamingMessage.id, message: streamingMessage
+    });
+    fake.emit('chat://agent-event', {
+      schemaVersion: 2, requestId: 'request-1', conversationId: 'conversation-1',
+      messageId: 'message-1', runId: 'run-1', sequence: 1, createdAtMillis: 1,
+      event: {
+        type: 'permissionRequested',
+        request: {
+          permissionId: 'permission-1', requestId: 'request-1',
+          conversationId: 'conversation-1', messageId: 'message-1', runId: 'run-1',
+          toolCallId: 'call-1', toolName: 'fake', title: 'Fake',
+          kind: 'fileMutation', scope: 'file:test'
+        }
+      }
+    });
+    controller.dispose();
+    await Promise.resolve();
+    expect(fake.api.cancelRequest).toHaveBeenCalledWith('request-1');
   });
 
   it('does not invoke chat APIs after disposal', async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { history, undo } from '@codemirror/commands';
 import { EditorState, Transaction, type TransactionSpec } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 
@@ -30,7 +31,14 @@ function runFormat(doc: string, from: number, to: number, id: InlineFormatId) {
   const selection =
     handled && dispatched.length === 1 ? dispatched[0].state.selection.main : state.selection.main;
 
-  return { handled, doc: result, from: selection.from, to: selection.to };
+  return {
+    handled,
+    doc: result,
+    from: selection.from,
+    to: selection.to,
+    anchor: selection.anchor,
+    head: selection.head
+  };
 }
 
 function activeFormats(doc: string, from: number, to: number) {
@@ -90,6 +98,63 @@ describe('applyInlineFormat toggle', () => {
     expect(doc).toBe('hello');
     expect(from).toBe(0);
     expect(to).toBe(3);
+  });
+});
+
+describe('link formatting command', () => {
+  it('wraps selected text and places the caret in the URL', () => {
+    expect(runFormat('hello world', 0, 5, 'link')).toMatchObject({
+      handled: true,
+      doc: '[hello]() world',
+      anchor: 8,
+      head: 8
+    });
+  });
+
+  it('supports reverse and multiline selections', () => {
+    expect(runFormat('one\ntwo', 7, 0, 'link')).toMatchObject({
+      handled: true,
+      doc: '[one\ntwo]()',
+      anchor: 10,
+      head: 10
+    });
+  });
+
+  it('unwraps an enclosing Markdown link', () => {
+    expect(
+      runFormat('[label](https://example.com)', 2, 5, 'link')
+    ).toMatchObject({ handled: true, doc: 'label', from: 1, to: 4 });
+  });
+
+  it('uses the existing no-op convention for an empty selection', () => {
+    expect(runFormat('hello', 2, 2, 'link')).toMatchObject({
+      handled: false,
+      doc: 'hello'
+    });
+  });
+
+  it('is a single undoable editor transaction', () => {
+    let state = EditorState.create({
+      doc: 'hello',
+      selection: { anchor: 0, head: 5 },
+      extensions: [history(), createMarkdownLanguage()]
+    });
+    const view = {
+      get state() {
+        return state;
+      },
+      dispatch(spec: Transaction | TransactionSpec) {
+        const transaction =
+          spec instanceof Transaction ? spec : state.update(spec);
+        state = transaction.state;
+      },
+      focus() {}
+    } as unknown as EditorView;
+
+    expect(applyInlineFormat(view, 'link')).toBe(true);
+    expect(state.doc.toString()).toBe('[hello]()');
+    expect(undo(view)).toBe(true);
+    expect(state.doc.toString()).toBe('hello');
   });
 });
 

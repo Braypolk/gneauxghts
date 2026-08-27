@@ -420,6 +420,7 @@ struct ChatServiceInner {
     db_path: PathBuf,
     notes_root: PathBuf,
     active_requests: Mutex<HashMap<String, CancellationToken>>,
+    permission_broker: crate::agent_permissions::AgentPermissionBroker,
     projection_sink: Arc<dyn ChatProjectionSink>,
 }
 
@@ -491,6 +492,7 @@ impl ChatService {
                 db_path: vault_data_dir.join("ai.sqlite3"),
                 notes_root,
                 active_requests: Mutex::new(HashMap::new()),
+                permission_broker: crate::agent_permissions::AgentPermissionBroker::default(),
                 projection_sink: Arc::new(FilesystemChatProjectionSink { app_handle }),
             }),
         };
@@ -1759,6 +1761,9 @@ impl ChatService {
         event("chat://started", started_payload);
 
         let result = self.run_agent_response(&run).await;
+        // Run-scoped grants and any unresolved waiters are strictly ephemeral.
+        // Resolve them before terminal UI events so no control remains actionable.
+        self.inner.permission_broker.finish_run(&run.run_id);
         let completed = match result {
             Ok((content, all_sources, usage)) if run.cancelled.is_cancelled() => {
                 let _ = self.finish_message(
@@ -2001,10 +2006,7 @@ impl ChatService {
                     created_at_millis: now_millis(),
                     event,
                 };
-                if !matches!(
-                    envelope.event,
-                    crate::agent_runtime::AgentEvent::TextDelta { .. }
-                ) {
+                if envelope.event.is_durable() {
                     let _ = stream_service.append_agent_event(&envelope);
                 }
                 let _ = stream_app.emit("chat://agent-event", envelope);
@@ -2013,6 +2015,15 @@ impl ChatService {
         let observer = crate::agent_runtime::AgentRuntimeObserver {
             cancelled: run.cancelled.clone(),
             on_event: event_sink,
+            permissions: Some(crate::agent_permissions::AgentPermissionBoundary::for_run(
+                self.inner.permission_broker.clone(),
+                crate::agent_permissions::AgentPermissionRunContext {
+                    request_id: run.request_id.clone(),
+                    conversation_id: run.conversation_id.clone(),
+                    message_id: run.assistant_message_id.clone(),
+                    run_id: run.run_id.clone(),
+                },
+            )),
         };
         let prompt = rig_user_message(prompt, &latest_user.attachments)?;
         let response = match crate::agent_runtime::AgentRuntime::run(
@@ -2088,6 +2099,7 @@ impl ChatService {
             crate::agent_runtime::AgentRuntimeObserver {
                 cancelled,
                 on_event: Arc::new(|_| {}),
+                permissions: None,
             },
         )
         .await?;
@@ -2209,6 +2221,13 @@ impl ChatService {
             .ok_or_else(|| "That chat request is no longer active".to_string())?;
         token.cancel();
         Ok(())
+    }
+
+    pub(crate) fn decide_agent_permission(
+        &self,
+        command: crate::agent_permissions::AgentPermissionDecisionCommand,
+    ) -> Result<crate::agent_permissions::AgentPermissionResolution, String> {
+        self.inner.permission_broker.decide(command)
     }
 
     fn cancel_active_requests(&self) {

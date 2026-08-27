@@ -412,6 +412,21 @@ describe('TauriChatApi', () => {
     });
   });
 
+  it('passes the complete permission identity through the decision command', async () => {
+    invokeMock.mockResolvedValue('allowedForSession');
+    const { TauriChatApi } = await import('./api');
+    const identity = {
+      permissionId: 'permission-1', requestId: 'request-1',
+      conversationId: 'chat-1', messageId: 'assistant-1', runId: 'run-1',
+      toolCallId: 'call-1'
+    };
+    await expect(new TauriChatApi().decidePermission(identity, 'allowForSession'))
+      .resolves.toBe('allowedForSession');
+    expect(invokeMock).toHaveBeenCalledWith('chat_decide_permission', {
+      command: { ...identity, decision: 'allowForSession' }
+    });
+  });
+
   it('sends the complete active-note snapshot to the backend', async () => {
     invokeMock.mockResolvedValue({
       requestId: 'request-1',

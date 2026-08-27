@@ -16,6 +16,7 @@ export type KeyboardShortcutId =
   | 'switchPane'
   | 'goToPreviousNote'
   | 'toggleRelatedPanel'
+  | 'togglePinCurrentNote'
   | 'rememberCurrentNote'
   | 'forgetCurrentNote'
   | 'searchCurrent'
@@ -29,15 +30,6 @@ export type KeyboardShortcutId =
   | 'recentNote7'
   | 'recentNote8'
   | 'recentNote9'
-  | 'recentTask1'
-  | 'recentTask2'
-  | 'recentTask3'
-  | 'recentTask4'
-  | 'recentTask5'
-  | 'recentTask6'
-  | 'recentTask7'
-  | 'recentTask8'
-  | 'recentTask9'
   | 'editorUndo'
   | 'editorRedo'
   | 'editorRedoAlternate'
@@ -199,6 +191,13 @@ const shortcutDefinitionsBase = [
     defaultBinding: 'Meta+r'
   },
   {
+    id: 'togglePinCurrentNote',
+    label: 'Pin or Unpin Note',
+    description: 'Toggle whether the current saved note is pinned.',
+    group: 'workspace',
+    defaultBinding: 'Meta+p'
+  },
+  {
     id: 'rememberCurrentNote',
     label: 'New Idea',
     description: 'Save the current note if needed, then start a fresh note.',
@@ -316,21 +315,9 @@ const recentNoteDefinitions = Array.from({ length: 9 }, (_, index) => {
   } satisfies KeyboardShortcutDefinition;
 });
 
-const recentTaskDefinitions = Array.from({ length: 9 }, (_, index) => {
-  const slot = (index + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-  return {
-    id: `recentTask${slot}` as const,
-    label: `Open Recent Task ${slot}`,
-    description: `Open recent task slot ${slot} from search bar.`,
-    group: 'search',
-    defaultBinding: `Ctrl+Shift+${slot}`
-  } satisfies KeyboardShortcutDefinition;
-});
-
 export const keyboardShortcutDefinitions = [
   ...shortcutDefinitionsBase,
-  ...recentNoteDefinitions,
-  ...recentTaskDefinitions
+  ...recentNoteDefinitions
 ] as const satisfies readonly KeyboardShortcutDefinition[];
 
 export const keyboardShortcutDefinitionsById = keyboardShortcutDefinitions.reduce(
@@ -387,6 +374,35 @@ export function getKeyboardShortcutBinding(id: KeyboardShortcutId) {
   return keyboardShortcuts.bindings[id];
 }
 
+function currentPlatform() {
+  return typeof navigator === 'undefined' ? '' : navigator.platform;
+}
+
+export function getEffectiveKeyboardShortcutBinding(
+  id: KeyboardShortcutId,
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
+  platform = currentPlatform()
+) {
+  const binding = bindings[id];
+  // Keep the persisted/default registry stable while presenting the familiar
+  // primary modifier on each platform. Any actual remapping still wins.
+  if (
+    id === 'editorLink' &&
+    binding === defaultKeyboardShortcutBindings.editorLink &&
+    !/Mac|iPhone|iPad|iPod/i.test(platform)
+  ) {
+    return 'Ctrl+k';
+  }
+  return binding;
+}
+
+export function getEffectiveDefaultKeyboardShortcutBinding(
+  id: KeyboardShortcutId,
+  platform = currentPlatform()
+) {
+  return getEffectiveKeyboardShortcutBinding(id, defaultKeyboardShortcutBindings, platform);
+}
+
 export function setKeyboardShortcutBinding(id: KeyboardShortcutId, binding: string) {
   keyboardShortcuts.setBinding(id, binding);
 }
@@ -437,9 +453,13 @@ export function recordShortcutBindingFromEvent(event: KeyboardEvent) {
 export function keyboardShortcutMatchesEvent(
   event: KeyboardEvent,
   id: KeyboardShortcutId,
-  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
+  platform = currentPlatform()
 ) {
-  return shortcutBindingMatchesEvent(event, bindings[id]);
+  return shortcutBindingMatchesEvent(
+    event,
+    getEffectiveKeyboardShortcutBinding(id, bindings, platform)
+  );
 }
 
 export function shortcutBindingMatchesEvent(event: KeyboardEvent, binding: string) {
@@ -471,12 +491,13 @@ export function usesNativeCutShortcut(
 }
 
 export function getKeyboardShortcutConflicts(
-  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings
+  bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
+  platform = currentPlatform()
 ) {
   const idsByBinding = new Map<string, KeyboardShortcutId[]>();
 
   for (const definition of keyboardShortcutDefinitions) {
-    const binding = bindings[definition.id];
+    const binding = getEffectiveKeyboardShortcutBinding(definition.id, bindings, platform);
     if (!binding) {
       continue;
     }
@@ -488,7 +509,8 @@ export function getKeyboardShortcutConflicts(
 
   return keyboardShortcutDefinitions.reduce(
     (accumulator, definition) => {
-      const ids = idsByBinding.get(bindings[definition.id]) ?? [];
+      const binding = getEffectiveKeyboardShortcutBinding(definition.id, bindings, platform);
+      const ids = idsByBinding.get(binding) ?? [];
       accumulator[definition.id] = ids.filter((id) => id !== definition.id);
       return accumulator;
     },

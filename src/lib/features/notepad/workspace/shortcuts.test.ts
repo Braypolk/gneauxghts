@@ -29,6 +29,7 @@ function createDeps() {
     switchActivePane: vi.fn().mockResolvedValue(undefined),
     startNewNoteFlow: vi.fn().mockResolvedValue(undefined),
     toggleRelatedPanel: vi.fn(),
+    togglePinCurrentNote: vi.fn(),
     goToPreviousLocation: vi.fn(),
     focusPaneAfterShortcut: vi.fn(),
     handlePaneCommandGlobalKeydown: () => false,
@@ -74,6 +75,16 @@ describe('workspace shortcuts', () => {
 
     expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(deps.goToPreviousLocation).toHaveBeenCalledOnce();
+  });
+
+  it('toggles the current note pin with Cmd+P', async () => {
+    const deps = createDeps();
+    const event = shortcutEvent('p');
+
+    await createWorkspaceShortcutHandler(deps)(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(deps.togglePinCurrentNote).toHaveBeenCalledOnce();
   });
 
   it('commits a focused title draft before Cmd+L changes the pane document', async () => {

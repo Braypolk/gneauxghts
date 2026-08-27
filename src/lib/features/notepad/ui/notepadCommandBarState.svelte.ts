@@ -11,13 +11,12 @@ import {
   type ListNavigationMode
 } from '$lib/ui/listSelection';
 import type { SearchItem } from '$lib/types/semantic';
-import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 
 export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }
-  | { kind: 'location'; item: LocationHistoryEntry }
-  | { kind: 'task'; item: RecentTaskItem };
+  | { kind: 'pinned'; item: SearchItem }
+  | { kind: 'location'; item: LocationHistoryEntry };
 
 interface TextRange {
   start: number;
@@ -36,8 +35,8 @@ interface NotepadCommandBarStateDeps {
   getSearchQuery: () => string;
   getSearchResults: () => SearchItem[];
   getSearchNavigationResults?: () => SearchItem[];
+  getPinnedNotes: () => SearchItem[];
   getRecentLocations: () => LocationHistoryEntry[];
-  getRecentTasks: () => RecentTaskItem[];
   getVisibleItems: () => NotepadCommandBarVisibleItem[];
   getForgetHoldDurationMs: () => number;
   isForgetHoldEnabled: () => boolean;
@@ -46,10 +45,9 @@ interface NotepadCommandBarStateDeps {
   onSearchInput: (value: string) => void;
   onSearchSelect: (result: SearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
+  onPinnedNoteSelect: (result: SearchItem) => void;
   onRecentLocationSelect: (entry: LocationHistoryEntry) => void;
-  onRecentTaskSelect: (task: RecentTaskItem) => void;
   onRecentLocationShortcut: (index: number) => void | Promise<void>;
-  onRecentTaskShortcut: (index: number) => void | Promise<void>;
   closeSearch: () => void;
   /**
    * Dismissing search with no destination chosen should put the user back where
@@ -67,12 +65,12 @@ const FORGET_HOLD_COMPLETION_DELAY_MS = 100;
 export function deriveNotepadCommandBarVisibleItems(
   searchQuery: string,
   searchResults: SearchItem[],
-  recentLocations: LocationHistoryEntry[],
-  recentTasks: RecentTaskItem[]
+  pinnedNotes: SearchItem[],
+  recentLocations: LocationHistoryEntry[]
 ): NotepadCommandBarVisibleItem[] {
   if (searchQuery.trim() === '') {
     return [
-      ...recentTasks.map((item) => ({ kind: 'task' as const, item })),
+      ...pinnedNotes.map((item) => ({ kind: 'pinned' as const, item })),
       ...recentLocations.map((item) => ({ kind: 'location' as const, item }))
     ];
   }
@@ -144,8 +142,8 @@ class NotepadCommandBarController {
     this.#deps.onSearchCommit?.();
     this.#closeSearchPanel();
 
-    if (item.kind === 'task') {
-      this.#deps.onRecentTaskSelect(item.item);
+    if (item.kind === 'pinned') {
+      this.#deps.onPinnedNoteSelect(item.item);
       return;
     }
 
@@ -160,20 +158,6 @@ class NotepadCommandBarController {
   #handleRecentItemShortcut = (event: KeyboardEvent) => {
     for (let shortcutIndex = 0; shortcutIndex < 9; shortcutIndex += 1) {
       const slot = shortcutIndex + 1;
-      const taskShortcutId = `recentTask${slot}` as KeyboardShortcutId;
-      if (keyboardShortcutMatchesEvent(event, taskShortcutId)) {
-        event.preventDefault();
-
-        const task = this.#deps.getRecentTasks()[shortcutIndex];
-        if (task) {
-          this.selectItem({ kind: 'task', item: task });
-          return true;
-        }
-
-        void this.#deps.onRecentTaskShortcut(shortcutIndex);
-        return true;
-      }
-
       const noteShortcutId = `recentNote${slot}` as KeyboardShortcutId;
       if (keyboardShortcutMatchesEvent(event, noteShortcutId)) {
         event.preventDefault();
@@ -216,8 +200,8 @@ class NotepadCommandBarController {
     const items = this.#deps.getVisibleItems();
     const isPanelVisible =
       this.#deps.getSearchQuery().trim() !== '' ||
-      this.#deps.getRecentLocations().length > 0 ||
-      this.#deps.getRecentTasks().length > 0;
+      this.#deps.getPinnedNotes().length > 0 ||
+      this.#deps.getRecentLocations().length > 0;
 
     if (event.key === 'Escape') {
       event.preventDefault();

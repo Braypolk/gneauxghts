@@ -57,7 +57,7 @@ pub(crate) async fn search_vault_atlas(
     let semantic = state.semantic.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        semantic.search_vault_atlas(generation_key, query, activity_by_note_id)
+        semantic.search_vault_atlas(generation_key, query, activity_by_note_id, &notes_dir)
     })
     .await
     .map_err(|err| err.to_string())?

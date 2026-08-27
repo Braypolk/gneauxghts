@@ -24,6 +24,14 @@
   color: inherit;
 }
 
+/* CodeMirror paints multiline selection behind text. Suppress competing
+   semantic fills only where a non-empty selection overlaps, so the selection
+   reads as one continuous layer while the highlight remains semantic. */
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-highlight.cm-gn-selection-overlap,
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-highlight.cm-gn-selection-overlap * {
+  background: transparent;
+}
+
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-comment,
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-comment * {
   color: color-mix(in oklab, var(--foreground) 42%, var(--muted) 58%);

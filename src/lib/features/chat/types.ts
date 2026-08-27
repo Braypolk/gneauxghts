@@ -41,6 +41,34 @@ export interface AgentPlanEntry {
 
 export type AgentReasoningStatus = 'running' | 'completed' | 'cancelled' | 'error';
 
+export type AgentPermissionKind =
+  | 'processExecution'
+  | 'fileMutation'
+  | 'networkMutation'
+  | 'destructiveAction';
+export type AgentPermissionDecision = 'allowOnce' | 'allowForSession' | 'deny';
+export type AgentPermissionResolution =
+  | 'allowedOnce'
+  | 'allowedForSession'
+  | 'denied'
+  | 'cancelled';
+
+export interface AgentPermissionIdentity {
+  permissionId: string;
+  requestId: string;
+  conversationId: string;
+  messageId: string;
+  runId: string;
+  toolCallId: string;
+}
+
+export interface AgentPermissionRequest extends AgentPermissionIdentity {
+  toolName: string;
+  title: string;
+  kind: AgentPermissionKind;
+  scope: string;
+}
+
 export type AgentEvent =
   | { type: 'textDelta'; delta: string }
   | {
@@ -53,7 +81,13 @@ export type AgentEvent =
   | { type: 'planUpdated'; entries: AgentPlanEntry[] }
   | { type: 'usageUpdated'; callIndex: number; aggregate: AgentUsage }
   | { type: 'modelTurnRetried'; turn: number }
-  | { type: 'reasoningUpdated'; status: AgentReasoningStatus; summary?: string };
+  | { type: 'reasoningUpdated'; status: AgentReasoningStatus; summary?: string }
+  | { type: 'permissionRequested'; request: AgentPermissionRequest }
+  | {
+      type: 'permissionResolved';
+      permissionId: string;
+      resolution: AgentPermissionResolution;
+    };
 
 export interface ChatAgentEventEnvelope {
   schemaVersion?: number;
@@ -96,6 +130,13 @@ export type ChatPart =
       id: 'checkpoint';
       type: 'checkpoint';
       label: string;
+    }
+  | {
+      id: string;
+      type: 'permission';
+      request: AgentPermissionRequest;
+      status: 'pending' | 'resolved';
+      resolution?: AgentPermissionResolution;
     };
 
 export interface ChatSettings {

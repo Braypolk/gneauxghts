@@ -119,17 +119,38 @@ pub(crate) enum AgentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary: Option<String>,
     },
+    PermissionRequested {
+        request: crate::agent_permissions::AgentPermissionRequest,
+    },
+    PermissionResolved {
+        permission_id: String,
+        resolution: crate::agent_permissions::AgentPermissionResolution,
+    },
+}
+
+impl AgentEvent {
+    pub(crate) fn is_durable(&self) -> bool {
+        !matches!(
+            self,
+            Self::TextDelta { .. }
+                | Self::PermissionRequested { .. }
+                | Self::PermissionResolved { .. }
+        )
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct AgentRuntimeObserver {
     pub(crate) cancelled: CancellationToken,
     pub(crate) on_event: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    pub(crate) permissions: Option<crate::agent_permissions::AgentPermissionBoundary>,
 }
 
 #[derive(Clone)]
 struct RuntimeEventHook {
     on_event: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    cancelled: CancellationToken,
+    permissions: Option<crate::agent_permissions::AgentPermissionBoundary>,
 }
 
 impl AgentHook for RuntimeEventHook {
@@ -138,6 +159,35 @@ impl AgentHook for RuntimeEventHook {
         _context: &HookContext,
         event: HookToolCall<'_>,
     ) -> ToolCallAction {
+        let permission = match &self.permissions {
+            Some(boundary) => {
+                boundary
+                    .request_for_tool(
+                        &event.internal_call_id.to_string(),
+                        event.tool_name,
+                        self.cancelled.clone(),
+                        Arc::clone(&self.on_event),
+                    )
+                    .await
+            }
+            None => Ok(None),
+        };
+        match permission {
+            Ok(Some(crate::agent_permissions::AgentPermissionResolution::Denied)) => {
+                (self.on_event)(AgentEvent::ToolCallUpdated {
+                    call_id: event.internal_call_id.to_string(),
+                    name: event.tool_name.to_string(),
+                    title: tool_title(event.tool_name),
+                    status: "denied".to_string(),
+                });
+                return ToolCallAction::skip("The user denied this permission request");
+            }
+            Ok(Some(crate::agent_permissions::AgentPermissionResolution::Cancelled)) => {
+                return ToolCallAction::stop("Request cancelled");
+            }
+            Err(error) => return ToolCallAction::stop(error),
+            _ => {}
+        }
         (self.on_event)(AgentEvent::ToolCallUpdated {
             call_id: event.internal_call_id.to_string(),
             name: event.tool_name.to_string(),
@@ -252,6 +302,8 @@ where
     let builder =
         configured_builder(model, &request, additional_params).add_hook(RuntimeEventHook {
             on_event: Arc::clone(&observer.on_event),
+            cancelled: observer.cancelled.clone(),
+            permissions: observer.permissions.clone(),
         });
     let agent = match tools {
         Some(tools) => tools.build_agent(builder),
@@ -411,10 +463,16 @@ mod tests {
     use super::*;
     use rig_agent::tool::{Tool, ToolContext};
     use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
-    use std::sync::Mutex;
+    use std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Mutex,
+        },
+    };
 
     #[derive(Clone)]
-    struct EchoTool;
+    struct EchoTool(Arc<AtomicUsize>);
 
     #[derive(Deserialize)]
     struct EchoArgs {
@@ -449,6 +507,7 @@ mod tests {
             _context: &mut ToolContext,
             args: Self::Args,
         ) -> Result<Self::Output, Self::Error> {
+            self.0.fetch_add(1, Ordering::Relaxed);
             Ok(json!({"value": args.value}))
         }
     }
@@ -498,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn fake_completion_drives_tool_then_final_answer_without_reasoning_output() {
+    fn fake_completion_waits_at_permission_boundary_then_drives_tool_without_reasoning_output() {
         tauri::async_runtime::block_on(async {
             let model = MockCompletionModel::from_stream_turns([
                 vec![
@@ -513,20 +572,63 @@ mod tests {
             ]);
             let observed = Arc::new(Mutex::new(String::new()));
             let observed_text = Arc::clone(&observed);
+            let permission_broker = crate::agent_permissions::AgentPermissionBroker::default();
+            let permission_boundary =
+                crate::agent_permissions::AgentPermissionBoundary::with_requirements(
+                    permission_broker.clone(),
+                    crate::agent_permissions::AgentPermissionRunContext {
+                        request_id: "request-1".to_string(),
+                        conversation_id: "conversation-1".to_string(),
+                        message_id: "message-1".to_string(),
+                        run_id: "run-1".to_string(),
+                    },
+                    HashMap::from([(
+                        "echo".to_string(),
+                        crate::agent_permissions::AgentPermissionRequirement {
+                            title: "Run fake side effect".to_string(),
+                            kind: crate::agent_permissions::AgentPermissionKind::ProcessExecution,
+                            scope: "test:echo".to_string(),
+                        },
+                    )]),
+                );
+            let saw_permission = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let saw_permission_event = Arc::clone(&saw_permission);
+            let decision_broker = permission_broker.clone();
+            let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync> =
+                Arc::new(move |event| match event {
+                    AgentEvent::TextDelta { delta } => {
+                        observed_text.lock().unwrap().push_str(&delta);
+                    }
+                    AgentEvent::PermissionRequested { request } => {
+                        saw_permission_event.store(true, std::sync::atomic::Ordering::Relaxed);
+                        decision_broker
+                            .decide(crate::agent_permissions::AgentPermissionDecisionCommand {
+                                identity: request.identity,
+                                decision:
+                                    crate::agent_permissions::AgentPermissionDecision::AllowOnce,
+                            })
+                            .unwrap();
+                    }
+                    _ => {}
+                });
+            let cancelled = CancellationToken::new();
+            let tool_calls = Arc::new(AtomicUsize::new(0));
             let request = fake_request("Find and update it");
             let agent = configured_builder(model.clone(), &request, None)
-                .tool(EchoTool)
+                .add_hook(RuntimeEventHook {
+                    on_event: Arc::clone(&event_sink),
+                    cancelled: cancelled.clone(),
+                    permissions: Some(permission_boundary.clone()),
+                })
+                .tool(EchoTool(Arc::clone(&tool_calls)))
                 .build();
             let response = drive_agent(
                 agent,
                 request,
                 AgentRuntimeObserver {
-                    cancelled: CancellationToken::new(),
-                    on_event: Arc::new(move |event| {
-                        if let AgentEvent::TextDelta { delta } = event {
-                            observed_text.lock().unwrap().push_str(&delta);
-                        }
-                    }),
+                    cancelled,
+                    on_event: event_sink,
+                    permissions: Some(permission_boundary),
                 },
             )
             .await
@@ -536,6 +638,107 @@ mod tests {
             assert_eq!(response.output, "Prepared the change.");
             assert_eq!(response.usage.total_tokens, 7);
             assert_eq!(&*observed.lock().unwrap(), "Prepared the change.");
+            assert!(saw_permission.load(std::sync::atomic::Ordering::Relaxed));
+            assert_eq!(tool_calls.load(Ordering::Relaxed), 1);
+        });
+    }
+
+    #[test]
+    fn denied_permission_skips_fake_tool_body_and_emits_denied_lifecycle() {
+        tauri::async_runtime::block_on(async {
+            let model = MockCompletionModel::from_stream_turns([
+                vec![
+                    MockStreamEvent::tool_call("call-1", "echo", json!({"value":"blocked"})),
+                    MockStreamEvent::final_response_with_default_usage(),
+                ],
+                vec![
+                    MockStreamEvent::reasoning("private denial reasoning"),
+                    MockStreamEvent::text("Permission denied."),
+                    MockStreamEvent::final_response_with_default_usage(),
+                ],
+            ]);
+            let permission_broker = crate::agent_permissions::AgentPermissionBroker::default();
+            let permission_boundary =
+                crate::agent_permissions::AgentPermissionBoundary::with_requirements(
+                    permission_broker.clone(),
+                    crate::agent_permissions::AgentPermissionRunContext {
+                        request_id: "request-denied".to_string(),
+                        conversation_id: "conversation-1".to_string(),
+                        message_id: "message-1".to_string(),
+                        run_id: "run-denied".to_string(),
+                    },
+                    HashMap::from([(
+                        "echo".to_string(),
+                        crate::agent_permissions::AgentPermissionRequirement {
+                            title: "Run fake side effect".to_string(),
+                            kind: crate::agent_permissions::AgentPermissionKind::ProcessExecution,
+                            scope: "test:echo".to_string(),
+                        },
+                    )]),
+                );
+            let observed = Arc::new(Mutex::new(Vec::<AgentEvent>::new()));
+            let captured = Arc::clone(&observed);
+            let decision_broker = permission_broker.clone();
+            let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync> = Arc::new(move |event| {
+                let decision = match &event {
+                    AgentEvent::PermissionRequested { request } => {
+                        Some(crate::agent_permissions::AgentPermissionDecisionCommand {
+                            identity: request.identity.clone(),
+                            decision: crate::agent_permissions::AgentPermissionDecision::Deny,
+                        })
+                    }
+                    _ => None,
+                };
+                captured.lock().unwrap().push(event);
+                if let Some(decision) = decision {
+                    decision_broker.decide(decision).unwrap();
+                }
+            });
+            let cancelled = CancellationToken::new();
+            let tool_calls = Arc::new(AtomicUsize::new(0));
+            let request = fake_request("Try the fake side effect");
+            let agent = configured_builder(model.clone(), &request, None)
+                .add_hook(RuntimeEventHook {
+                    on_event: Arc::clone(&event_sink),
+                    cancelled: cancelled.clone(),
+                    permissions: Some(permission_boundary.clone()),
+                })
+                .tool(EchoTool(Arc::clone(&tool_calls)))
+                .build();
+            let response = drive_agent(
+                agent,
+                request,
+                AgentRuntimeObserver {
+                    cancelled,
+                    on_event: event_sink,
+                    permissions: Some(permission_boundary),
+                },
+            )
+            .await
+            .unwrap();
+
+            let events = observed.lock().unwrap();
+            assert_eq!(tool_calls.load(Ordering::Relaxed), 0);
+            assert_eq!(model.request_count(), 2);
+            assert_eq!(response.output, "Permission denied.");
+            assert!(events.iter().any(|event| matches!(
+                event,
+                AgentEvent::PermissionResolved {
+                    resolution: crate::agent_permissions::AgentPermissionResolution::Denied,
+                    ..
+                }
+            )));
+            assert!(events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ToolCallUpdated { status, .. } if status == "denied"
+            )));
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ReasoningUpdated {
+                    summary: Some(summary),
+                    ..
+                } if summary.contains("private denial reasoning")
+            )));
         });
     }
 }

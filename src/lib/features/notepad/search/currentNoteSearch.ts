@@ -17,6 +17,27 @@ const DEFAULT_CURRENT_NOTE_SEARCH_LIMIT = 200;
 const CURRENT_NOTE_EXCERPT_LENGTH = 130;
 const CURRENT_NOTE_EXCERPT_CONTEXT = 24;
 
+function searchableBodyStart(markdown: string) {
+  const normalizedStart = markdown.startsWith('\uFEFF') ? 1 : 0;
+  const firstLineEnd = markdown.indexOf('\n', normalizedStart);
+  if (firstLineEnd < 0 || markdown.slice(normalizedStart, firstLineEnd).trim() !== '---') {
+    return 0;
+  }
+
+  let lineStart = firstLineEnd + 1;
+  while (lineStart <= markdown.length) {
+    const lineEnd = markdown.indexOf('\n', lineStart);
+    const effectiveEnd = lineEnd < 0 ? markdown.length : lineEnd;
+    if (markdown.slice(lineStart, effectiveEnd).trim() === '---') {
+      return lineEnd < 0 ? markdown.length : lineEnd + 1;
+    }
+    if (lineEnd < 0) break;
+    lineStart = lineEnd + 1;
+  }
+
+  return 0;
+}
+
 function cropLineAroundMatch(lineText: string, matchStart: number, matchEnd: number) {
   const contextStart = Math.max(0, matchStart - CURRENT_NOTE_EXCERPT_CONTEXT);
   const maxStart = Math.max(0, lineText.length - CURRENT_NOTE_EXCERPT_LENGTH);
@@ -62,6 +83,7 @@ export function buildCurrentNoteSearchResults({
   });
   const cursor = searchQuery.getCursor(state);
   const results: SearchItem[] = [];
+  const bodyStart = searchableBodyStart(markdown);
 
   while (results.length < limit) {
     const next = cursor.next();
@@ -70,6 +92,9 @@ export function buildCurrentNoteSearchResults({
     }
 
     const { from, to } = next.value;
+    if (to <= bodyStart) {
+      continue;
+    }
     const line = state.doc.lineAt(from);
     const lineMatchStart = Math.max(0, from - line.from);
     const lineMatchEnd = Math.max(lineMatchStart, Math.min(line.text.length, to - line.from));

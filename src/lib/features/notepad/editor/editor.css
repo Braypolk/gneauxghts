@@ -212,6 +212,11 @@
     0 0 0 1px color-mix(in oklab, oklch(0.88 0.18 84) 18%, transparent);
 }
 
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-searchMatch.cm-gn-selection-overlap {
+  background: transparent;
+  box-shadow: inset 0 -2px 0 color-mix(in oklab, oklch(0.72 0.16 80) 74%, transparent);
+}
+
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-wikilink {
   border-radius: 0.35rem;
   background: color-mix(in oklab, var(--accent) 54%, transparent);
@@ -364,4 +369,18 @@
 
 .notepad-editor-shell .gn-editor-root .notepad-block-drop-indicator[data-show='true'] {
   opacity: 1;
+}
+
+.notepad-editor-shell .gn-editor-root .notepad-block-extent-indicator {
+  z-index: 6;
+  width: 2px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  background: color-mix(in oklab, var(--accent) 48%, var(--border) 52%);
+  transition: opacity 90ms ease;
+}
+
+.notepad-editor-shell .gn-editor-root .notepad-block-extent-indicator[data-show='true'] {
+  opacity: 0.72;
 }

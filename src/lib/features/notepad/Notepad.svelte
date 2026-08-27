@@ -274,7 +274,6 @@
   let canForgetActiveItem = $derived(
     !isActivePaneChat || chatCoordinator.canForget(activePaneId),
   );
-
   function ensurePaneControllers(paneId: PaneId) {
     if (!paneControllers[paneId]) {
       paneControllers[paneId] = createPaneControllersFn(
@@ -676,8 +675,6 @@
     clearSearch,
     scheduleSearch,
     loadRecentNotes,
-    loadRecentTasks,
-    openRecentTaskByIndex,
     handleSearchInput,
     handleSearchModeChange,
     handleSearchOpen,
@@ -1016,7 +1013,6 @@
   // ---------------------------------------------------------------------------
   function refreshDerivedViews() {
     void loadRecentNotes();
-    void loadRecentTasks();
     scheduleSearch();
     scheduleRelated({ immediate: true });
   }
@@ -1126,6 +1122,12 @@
     switchActivePane: commands.switchActivePane,
     startNewNoteFlow: () => chatCoordinator.startNewActiveItem(),
     toggleRelatedPanel,
+    togglePinCurrentNote: async () => {
+      const noteId = getDocumentNoteId(getPaneDocumentSession(activePaneId));
+      if (!noteId) return;
+      const isPinned = searchState.pinnedNotes.some((item) => item.noteId === noteId);
+      await searchState.setPinned(noteId, !isPinned);
+    },
     goToPreviousLocation: commands.goToPreviousLocation,
     focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
     handlePaneCommandGlobalKeydown: commands.handlePaneCommandGlobalKeydown,
@@ -1144,6 +1146,8 @@
     getPaneRuntime,
     getChatBindings: chatPaneAdapter.getBindings,
     isReviewingDocument: proposalOrchestration.isReviewingDocument,
+    isNotePinned: (noteId) =>
+      searchState.pinnedNotes.some((item) => item.noteId === noteId),
     paneTitleInputClass,
     getTransientUiState: () => activeTransientUi,
     getPaneCommandPaneId: () => paneCommandPaneId,
@@ -1166,6 +1170,12 @@
     onTitleInput: titleInteractions.handleInput,
     onTitleBlur: titleInteractions.handleBlur,
     onTitleKeydown: titleInteractions.handleKeydown,
+    onTogglePin: async (paneId) => {
+      const noteId = getDocumentNoteId(getPaneDocumentSession(paneId));
+      if (!noteId) return;
+      const isPinned = searchState.pinnedNotes.some((item) => item.noteId === noteId);
+      await searchState.setPinned(noteId, !isPinned);
+    },
     onKeepMyEdits: async (paneId) => {
       await documentConflicts.keepMyEdits(
         getPaneDocumentSession(paneId),
@@ -1358,8 +1368,8 @@
             matchCase: searchState.matchCase,
             matchWholeWord: searchState.matchWholeWord,
             searchResults: searchState.searchResults,
+            pinnedNotes: searchState.pinnedNotes,
             recentLocations: locationHistoryItems,
-            recentTasks: searchState.recentTasks,
             isSearching: searchState.isSearching,
             onSearchInput: handleSearchInput,
             onSearchModeChange: handleSearchModeChange,
@@ -1373,16 +1383,20 @@
               void handleSearchResultNavigate(result).catch((error) => {
                 console.error("Failed to navigate search result:", error);
               }),
+            onPinnedNoteSelect: (result) =>
+              void searchState.openRecentNoteItem(result).catch((error) => {
+                console.error("Failed to open pinned note:", error);
+              }),
+            onSetNotePinned: (noteId, pinned) =>
+              searchState.setPinned(noteId, pinned).catch((error) => {
+                console.error("Failed to update pinned note:", error);
+              }),
             onRecentLocationSelect: (entry) =>
               void commands
                 .openLocationFromHistory(entry.location)
                 .catch((error) => {
                   console.error("Failed to open recent location:", error);
                 }),
-            onRecentTaskSelect: (task) =>
-              void handleRecentTaskSelect(task).catch((error) => {
-                console.error("Failed to open recent task:", error);
-              }),
             onRecentLocationShortcut: (index) => {
               const entry = locationHistoryItems[index];
               if (entry) {
@@ -1393,7 +1407,6 @@
                   });
               }
             },
-            onRecentTaskShortcut: (index) => void openRecentTaskByIndex(index),
             onSearchOpen: () => {
               searchReturnFocus.capture();
               handleSearchOpen();
@@ -1549,12 +1562,6 @@
       var(--muted) 80%,
       var(--background)
     );
-    --gn-editor-selection-background: color-mix(
-      in oklab,
-      var(--foreground) 42%,
-      var(--background)
-    );
-    --gn-editor-selection-color: var(--background);
   }
 
   .notepad-pane {

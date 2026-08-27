@@ -26,6 +26,27 @@ const searchMatchMark = Decoration.mark({ class: 'cm-searchMatch' });
 const selectedSearchMatchMark = Decoration.mark({
   class: 'cm-searchMatch cm-searchMatch-selected'
 });
+const overlappingSearchMatchMark = Decoration.mark({
+  class: 'cm-searchMatch cm-gn-selection-overlap'
+});
+const selectedOverlappingSearchMatchMark = Decoration.mark({
+  class:
+    'cm-searchMatch cm-searchMatch-selected cm-gn-selection-overlap'
+});
+
+export function searchMatchDecorationClass(
+  match: { from: number; to: number },
+  selections: readonly { from: number; to: number; empty: boolean }[]
+) {
+  const selected = selections.some(
+    (range) => range.from === match.from && range.to === match.to
+  );
+  const overlaps = selections.some(
+    (range) =>
+      !range.empty && range.from < match.to && range.to > match.from
+  );
+  return { selected, overlaps };
+}
 
 function clampPos(
   doc: EditorState['doc'],
@@ -102,13 +123,20 @@ export function createExternalSearchHighlightExtension() {
             result = cursor.next()
           ) {
             const { from, to } = result.value;
-            const selected = view.state.selection.ranges.some(
-              (range) => range.from === from && range.to === to
+            const { selected, overlaps } = searchMatchDecorationClass(
+              { from, to },
+              view.state.selection.ranges
             );
             builder.add(
               from,
               to,
-              selected ? selectedSearchMatchMark : searchMatchMark
+              selected && overlaps
+                ? selectedOverlappingSearchMatchMark
+                : selected
+                  ? selectedSearchMatchMark
+                  : overlaps
+                    ? overlappingSearchMatchMark
+                    : searchMatchMark
             );
           }
         }

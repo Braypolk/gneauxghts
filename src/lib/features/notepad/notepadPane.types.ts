@@ -24,6 +24,8 @@ interface PaneViewModelBase {
 
 export interface EditorPaneViewModel extends PaneViewModelBase {
   paneKind: 'editor';
+  canPin: boolean;
+  isPinned: boolean;
   documentStatus: DocumentStatusViewModel;
   isEditorReady: boolean;
   isSlashMenuOpen: boolean;
@@ -59,6 +61,7 @@ export interface PaneWorkspaceActions {
   onTitleInput: (paneId: NotepadPaneId) => void;
   onTitleBlur: (paneId: NotepadPaneId, rawTitle: string) => void;
   onTitleKeydown: (paneId: NotepadPaneId, event: KeyboardEvent) => void;
+  onTogglePin: (paneId: NotepadPaneId) => void | Promise<void>;
   onKeepMyEdits: (paneId: NotepadPaneId) => void | Promise<void>;
   onLoadDiskVersion: (paneId: NotepadPaneId) => void | Promise<void>;
   onCopyMyEdits: (paneId: NotepadPaneId) => void | Promise<void>;

@@ -1071,6 +1071,7 @@ fn build_current_override_with_signature(
     signature: FileSignature,
 ) -> IndexedNote {
     let modified_millis = signature.modified_millis;
+    let searchable_body = note::strip_frontmatter(markdown);
     let file_name = if current_title.trim().is_empty() {
         path.and_then(|path| path.file_stem())
             .and_then(|file_name| file_name.to_str())
@@ -1098,7 +1099,7 @@ fn build_current_override_with_signature(
         title: effective_title.clone(),
         title_lower: effective_title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
-        paragraphs: build_paragraphs(&effective_title, markdown),
+        paragraphs: build_paragraphs(&effective_title, &searchable_body),
         tasks: if note::document_kind(markdown) == DocumentKind::Note {
             build_tasks(markdown)
         } else {
@@ -1439,6 +1440,22 @@ mod tests {
         });
 
         assert_eq!(actual, load_json_fixture("project-atlas.index.json"));
+    }
+
+    #[test]
+    fn indexed_note_excludes_arbitrary_frontmatter_from_search_paragraphs() {
+        let markdown =
+            "---\ntags: [private-index-term]\nowner: private-index-term\n---\n# Note\n\nBody text";
+        let note = build_indexed_note(&fixture_path("frontmatter.md"), markdown, 42);
+        let searchable_text = note
+            .paragraphs
+            .iter()
+            .map(|paragraph| paragraph.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(!searchable_text.contains("private-index-term"));
+        assert!(searchable_text.contains("Body text"));
     }
 
     #[test]

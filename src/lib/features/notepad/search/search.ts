@@ -56,13 +56,17 @@ export async function listRecentTasks() {
 }
 
 export interface RecentFocusBundle {
+  pinnedNotes: SearchItem[];
   recentNotes: SearchItem[];
-  recentTasks: RecentTaskItem[];
   lastChat: {
     conversationId: string;
     contextNoteId: string | null;
     contextNotePath: string | null;
   } | null;
+}
+
+export async function setNotePinned(noteId: string, pinned: boolean) {
+  return invoke<void>('set_note_pinned', { noteId, pinned });
 }
 
 export async function listRecentFocus(context: Pick<SearchContext, 'currentPath'>) {

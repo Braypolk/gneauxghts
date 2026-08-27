@@ -1,7 +1,8 @@
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { history, undo } from '@codemirror/commands';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
-import { EditorState, type Range } from '@codemirror/state';
-import type { Decoration } from '@codemirror/view';
+import { EditorState, Transaction, type Range, type TransactionSpec } from '@codemirror/state';
+import type { Decoration, EditorView } from '@codemirror/view';
 import { describe, expect, it } from 'vitest';
 
 import { decorateBlockquote } from './decorations/blockquote';
@@ -10,7 +11,7 @@ import { decorateHeading } from './decorations/headings';
 import { decorateHorizontalRule } from './decorations/horizontalRule';
 import { decorateInlineFormatting } from './decorations/inlineFormatting';
 import { decorateLink } from './decorations/links';
-import { decorateList } from './decorations/lists';
+import { decorateList, toggleTaskMarker } from './decorations/lists';
 import type { MarkdownNodeDecorator } from './decorations/types';
 import { markdownDecorationsNeedRebuild } from './markdownExtensions';
 import { obsidianMarkdownExtensions } from './obsidianMarkdownExtensions';
@@ -28,16 +29,20 @@ interface DecorationSpec {
   class?: string;
   isReplace: boolean;
   hasWidget: boolean;
+  widgetChecked?: boolean;
   isAtomicIndent: boolean;
+  style?: string;
 }
 
 function collect(
   doc: string,
   decorator: MarkdownNodeDecorator,
-  overlap: (from: number, to: number) => boolean = () => false
+  overlap: (from: number, to: number) => boolean = () => false,
+  selection?: { anchor: number; head: number }
 ): DecorationSpec[] {
   const state = EditorState.create({
     doc,
+    selection,
     extensions: [markdown({ base: markdownLanguage, extensions: obsidianMarkdownExtensions })]
   });
 
@@ -72,6 +77,11 @@ function collect(
       // the documented startSide of replace decorations.
       isReplace: spec.class === undefined,
       hasWidget: spec.widget !== undefined,
+      widgetChecked:
+        spec.widget && typeof spec.widget === 'object' && 'checked' in spec.widget
+          ? Boolean(spec.widget.checked)
+          : undefined,
+      style: (spec as { attributes?: { style?: string } }).attributes?.style,
       isAtomicIndent: spec.gnAtomicIndent === true
     };
   });
@@ -167,6 +177,29 @@ describe('inline formatting decorator', () => {
     expect(specs.filter((s) => s.isReplace)).toHaveLength(2);
   });
 
+  it('lets a non-empty selection own the highlight fill', () => {
+    const selected = collect(
+      '==Highlighted text==',
+      decorateInlineFormatting,
+      () => true,
+      { anchor: 2, head: 10 }
+    );
+    const caretOnly = collect(
+      '==Highlighted text==',
+      decorateInlineFormatting,
+      () => true,
+      { anchor: 5, head: 5 }
+    );
+
+    expect(classes(selected)).toContain(
+      'cm-gn-highlight cm-gn-selection-overlap'
+    );
+    expect(classes(caretOnly)).toContain('cm-gn-highlight');
+    expect(classes(caretOnly)).not.toContain(
+      'cm-gn-highlight cm-gn-selection-overlap'
+    );
+  });
+
   it('handles Obsidian comment markers', () => {
     const specs = collect('Visible %%hidden note%% text', decorateInlineFormatting);
     expect(classes(specs)).toContain('cm-gn-comment');
@@ -206,14 +239,21 @@ describe('list decorator', () => {
   });
 
   it('renders a task checkbox widget when not editing', () => {
+    const unchecked = collect('- [ ] todo', decorateList);
     const specs = collect('- [x] done', decorateList);
     expect(classes(specs)).toContain('cm-gn-task-line');
-    expect(specs.some((s) => s.hasWidget)).toBe(true);
+    expect(specs).toContainEqual(
+      expect.objectContaining({ from: 0, to: 2, isReplace: true, hasWidget: false })
+    );
+    expect(classes(specs)).not.toContain('cm-gn-list-mark-ul');
+    expect(unchecked.find((s) => s.hasWidget)?.widgetChecked).toBe(false);
+    expect(specs.find((s) => s.hasWidget)?.widgetChecked).toBe(true);
   });
 
   it('shows the raw task marker when the selection overlaps', () => {
     const specs = collect('- [ ] todo', decorateList, () => true);
     expect(classes(specs)).toContain('cm-gn-task-marker');
+    expect(classes(specs)).toContain('cm-gn-list-mark-ul cm-gn-active');
     expect(specs.some((s) => s.hasWidget)).toBe(false);
   });
 
@@ -227,6 +267,35 @@ describe('list decorator', () => {
     const indent = specs.find((spec) => spec.isAtomicIndent);
 
     expect(indent).toMatchObject({ from: 9, to: 11, isReplace: true });
+  });
+
+  it('keeps nested tasks visually identified as list items', () => {
+    const specs = collect('- parent\n  - [ ] nested task', decorateList);
+
+    expect(classes(specs)).toContain('cm-gn-task-line');
+    expect(specs.some((spec) => spec.style === '--gn-depth: 1')).toBe(true);
+    expect(specs).toContainEqual(
+      expect.objectContaining({ from: 11, to: 13, isReplace: true, hasWidget: false })
+    );
+  });
+
+  it('toggles a task marker as one undoable source edit', () => {
+    let state = EditorState.create({ doc: '- [ ] todo', extensions: [history()] });
+    const view = {
+      get state() {
+        return state;
+      },
+      dispatch(spec: Transaction | TransactionSpec) {
+        const transaction =
+          spec instanceof Transaction ? spec : state.update(spec);
+        state = transaction.state;
+      }
+    } as unknown as EditorView;
+
+    expect(toggleTaskMarker(view, 4, false)).toBe(true);
+    expect(state.doc.toString()).toBe('- [x] todo');
+    expect(undo(view)).toBe(true);
+    expect(state.doc.toString()).toBe('- [ ] todo');
   });
 });
 

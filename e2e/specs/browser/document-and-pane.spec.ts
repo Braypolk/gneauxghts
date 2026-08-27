@@ -90,4 +90,176 @@ describe('document and pane state-machine boundaries', () => {
       { timeoutMsg: 'Expected the editor scroll position to be restored' }
     );
   });
+
+  it('pins notes above recents and reveals search shortcuts on modifier hold', async () => {
+    const pinCurrent = await $('button[aria-label="Pin note"]');
+    await pinCurrent.waitForClickable();
+    const title = await $('[data-testid="note-title"]');
+    const titleGeometry = await browser.execute(() => {
+      const pin = document.querySelector<HTMLElement>('button[aria-label="Pin note"]')!;
+      const field = document.querySelector<HTMLElement>('[data-testid="note-title"]')!;
+      const text = document.querySelector<HTMLElement>('[data-testid="note-title-measure"]')!;
+      const pinRect = pin.getBoundingClientRect();
+      const fieldRect = field.getBoundingClientRect();
+      const textRect = text.getBoundingClientRect();
+      return {
+        pinRight: pinRect.right,
+        fieldLeft: fieldRect.left,
+        fieldWidth: fieldRect.width,
+        textLeft: textRect.left,
+        textWidth: textRect.width
+      };
+    });
+    expect(titleGeometry.pinRight).toBeLessThanOrEqual(titleGeometry.textLeft);
+    expect(titleGeometry.textLeft - titleGeometry.pinRight).toBeLessThan(12);
+    expect(Math.abs(titleGeometry.fieldWidth - titleGeometry.textWidth)).toBeLessThan(4);
+    await browser.execute(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'p',
+          code: 'KeyP',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      );
+    });
+    await $('button[aria-label="Unpin note"]').waitForExist();
+
+    const search = await $('[data-testid="note-search-input"]');
+    await search.click();
+    await $('button[aria-label="Open pinned note: Alpha note.md"]').waitForExist();
+    expect(await $('//*[normalize-space()="Pinned"]')).toExist();
+    expect(await $('//*[normalize-space()="Recent Tasks"]')).not.toExist();
+
+    const currentScope = await $('button[aria-label="Search this note only"]');
+    await browser.execute(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta', metaKey: true }));
+    });
+    await browser.pause(240);
+    expect(await currentScope.getText()).toContain('Cmd + F');
+
+    await browser.execute(() => {
+      window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta' }));
+    });
+    await browser.waitUntil(async () => (await currentScope.getText()).includes('This note'));
+  });
+
+  it('keeps Markdown fidelity stable in the real editor DOM', async () => {
+    await openRecentNote('Beta note');
+
+    const taskCheckbox = await $('.cm-gn-task-checkbox input');
+    await taskCheckbox.waitForExist();
+    expect(await $('.cm-gn-task-line .cm-gn-list-mark-ul').isExisting()).toBe(
+      false
+    );
+
+    const tableRows = await $$('.gn-markdown-table-line');
+    expect(tableRows).toHaveLength(3);
+    const tableLayout = await browser.execute(() => {
+      const rows = [
+        ...document.querySelectorAll<HTMLElement>(
+          '.gn-markdown-table-line'
+        )
+      ];
+      rows[0]!.scrollLeft = 72;
+      rows[0]!.dispatchEvent(new Event('scroll', { bubbles: false }));
+      return {
+        widths: rows.map((row) => ({
+          client: row.clientWidth,
+          scroll: row.scrollWidth
+        })),
+        scrollLefts: rows.map((row) => row.scrollLeft),
+        groups: rows.map((row) => row.dataset.gnTableGroup)
+      };
+    });
+    expect(new Set(tableLayout.groups)).toEqual(new Set(['0']));
+    expect(tableLayout.widths.some((width) => width.scroll > width.client)).toBe(
+      true
+    );
+    expect(new Set(tableLayout.scrollLefts).size).toBe(1);
+
+    const content = await $('[data-testid="note-editor"] .cm-content');
+    await content.click();
+    await browser.keys(['Meta', 'a']);
+    await browser.waitUntil(
+      async () =>
+        (await $('.cm-gn-highlight.cm-gn-selection-overlap').isExisting()) &&
+        (await browser.execute(() =>
+          (window.getSelection()?.toString().length ?? 0) > 0
+        )),
+      {
+        timeoutMsg:
+          'Expected multiline selection to own the semantic highlight layer'
+      }
+    );
+    const selectionGeometry = await browser.execute(() => {
+      const selection = window.getSelection();
+      const content = document.querySelector<HTMLElement>(
+        '[data-testid="note-editor"] .cm-content'
+      )!;
+      const rects = selection?.rangeCount
+        ? [...selection.getRangeAt(0).getClientRects()].filter(
+            (rect) => rect.width > 1 && rect.height > 1
+          )
+        : [];
+      const last = rects.at(-1);
+      return {
+        rectCount: rects.length,
+        trailingGap: last
+          ? content.getBoundingClientRect().right - last.right
+          : 0,
+        syntheticRectCount: document.querySelectorAll(
+          '.cm-selectionBackground'
+        ).length
+      };
+    });
+    expect(selectionGeometry.rectCount).toBeGreaterThan(1);
+    expect(selectionGeometry.trailingGap).toBeGreaterThan(40);
+    expect(selectionGeometry.syntheticRectCount).toBe(0);
+
+    await browser.keys(['Meta', 'ArrowLeft']);
+    const editorLines = await $$('[data-testid="note-editor"] .cm-line');
+    const wrappedLine = editorLines.at(-1)!;
+    await browser.execute((line: HTMLElement) => {
+      line.scrollIntoView({ block: 'center' });
+    }, wrappedLine);
+    await browser.pause(100);
+    await browser.execute((line: HTMLElement) => {
+      const rect = line.getBoundingClientRect();
+      const root = line.closest<HTMLElement>('.gn-editor-root')!;
+      root.dispatchEvent(
+        new MouseEvent('mousemove', {
+          bubbles: true,
+          clientX: rect.left + Math.min(120, rect.width / 2),
+          clientY: Math.max(rect.top + 8, 8)
+        })
+      );
+    }, wrappedLine);
+    const extent = await $('.notepad-block-extent-indicator[data-show="true"]');
+    await extent.waitForExist();
+    const extentGeometry = await browser.execute(() => {
+      const lines = [
+        ...document.querySelectorAll<HTMLElement>(
+          '[data-testid="note-editor"] .cm-line'
+        )
+      ];
+      const indicator = document.querySelector<HTMLElement>(
+        '.notepad-block-extent-indicator[data-show="true"]'
+      )!;
+      const wrapped = lines.at(-1)!.getBoundingClientRect();
+      const visual = indicator.getBoundingClientRect();
+      return {
+        expectedHeight: wrapped.height,
+        actualHeight: visual.height,
+        pointerEvents: getComputedStyle(indicator).pointerEvents,
+        position: getComputedStyle(indicator).position
+      };
+    });
+    expect(
+      Math.abs(extentGeometry.actualHeight - extentGeometry.expectedHeight)
+    ).toBeLessThanOrEqual(2);
+    expect(extentGeometry.pointerEvents).toBe('none');
+    expect(extentGeometry.position).toBe('fixed');
+  });
 });

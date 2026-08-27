@@ -1,4 +1,3 @@
-import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 import type { SearchItem } from '$lib/types/semantic';
 import type { SearchMode } from '$lib/features/notepad/search/search';
@@ -32,8 +31,8 @@ export interface NotepadCommandBarSearchProps {
   matchCase: boolean;
   matchWholeWord: boolean;
   searchResults: SearchItem[];
+  pinnedNotes: SearchItem[];
   recentLocations: LocationHistoryEntry[];
-  recentTasks: RecentTaskItem[];
   isSearching: boolean;
   onSearchInput: (value: string) => void;
   onSearchModeChange: (mode: SearchMode) => void | Promise<void>;
@@ -41,10 +40,10 @@ export interface NotepadCommandBarSearchProps {
   onMatchWholeWordChange: (enabled: boolean) => void | Promise<void>;
   onSearchSelect: (result: SearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
+  onPinnedNoteSelect: (result: SearchItem) => void;
+  onSetNotePinned: (noteId: string, pinned: boolean) => void | Promise<void>;
   onRecentLocationSelect: (entry: LocationHistoryEntry) => void;
-  onRecentTaskSelect: (task: RecentTaskItem) => void;
   onRecentLocationShortcut: (index: number) => void | Promise<void>;
-  onRecentTaskShortcut: (index: number) => void | Promise<void>;
   onSearchOpen: () => void;
   /** Search closed without a destination; return the user to where they were. */
   onSearchDismiss?: () => void;

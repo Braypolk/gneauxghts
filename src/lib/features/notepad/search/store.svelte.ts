@@ -10,6 +10,7 @@ import {
   listRecentNotes,
   listRecentTasks,
   searchNotes,
+  setNotePinned,
   type SearchMode
 } from '$lib/features/notepad/search/search';
 import type { RecentTaskItem } from '$lib/features/notepad/model/types';
@@ -21,6 +22,7 @@ export interface NotepadSearchState {
   matchCase: boolean;
   matchWholeWord: boolean;
   searchResults: SearchItem[];
+  pinnedNotes: SearchItem[];
   recentNotes: SearchItem[];
   recentTasks: RecentTaskItem[];
   isSearching: boolean;
@@ -57,6 +59,7 @@ export class NotepadSearchStore {
   matchCase = $state(false);
   matchWholeWord = $state(false);
   searchResults = $state<SearchItem[]>([]);
+  pinnedNotes = $state<SearchItem[]>([]);
   recentNotes = $state<SearchItem[]>([]);
   recentTasks = $state<RecentTaskItem[]>([]);
   isSearching = $state(false);
@@ -345,32 +348,30 @@ export class NotepadSearchStore {
 
   #loadRecentFocus = async () => {
     const notesRequestId = ++this.#activeRecentNotesRequest;
-    const tasksRequestId = ++this.#activeRecentTasksRequest;
     try {
       const bundle = await listRecentFocus({ currentPath: this.#deps.getCurrentPath() });
       const notesIsLatest = notesRequestId === this.#activeRecentNotesRequest;
-      const tasksIsLatest = tasksRequestId === this.#activeRecentTasksRequest;
       if (notesIsLatest) {
+        this.pinnedNotes = bundle.pinnedNotes;
         this.recentNotes = bundle.recentNotes;
-      }
-      if (tasksIsLatest) {
-        this.recentTasks = bundle.recentTasks;
       }
     } catch (error) {
       console.error('Failed to load recent focus:', error);
       const notesIsLatest = notesRequestId === this.#activeRecentNotesRequest;
-      const tasksIsLatest = tasksRequestId === this.#activeRecentTasksRequest;
       if (notesIsLatest) {
+        this.pinnedNotes = [];
         this.recentNotes = [];
-      }
-      if (tasksIsLatest) {
-        this.recentTasks = [];
       }
     }
   };
 
   handleSearchOpen = () => {
     void this.#loadRecentFocus();
+  };
+
+  setPinned = async (noteId: string, pinned: boolean) => {
+    await setNotePinned(noteId, pinned);
+    await this.#loadRecentFocus();
   };
 
   dispose = () => {

@@ -357,6 +357,11 @@
           {selected}
           {selectedExcerpt}
           canInsertSelection={Boolean(selectionActions.onInsertIntoNote)}
+          canDecidePermission={Boolean(
+            conversation.activeRequestId &&
+            conversation.activeRequestId === message.requestId &&
+            message.status === 'streaming'
+          )}
           {onPreviewAttachment}
           onOpenCitation={openCitation}
           onOpenWikilink={openWikilink}
@@ -367,6 +372,9 @@
           onCopyLink={copyLink}
           onInsertSelection={insertSelection}
           onToggleRemember={toggleRemember}
+          onDecidePermission={async (request, decision) => {
+            await controller.decidePermission(request, decision);
+          }}
         />
       {/each}
     </div>

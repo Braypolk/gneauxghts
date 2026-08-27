@@ -3,7 +3,6 @@ import {
   createNotepadCommandBarState,
   deriveNotepadCommandBarVisibleItems
 } from './notepadCommandBarState.svelte';
-import type { RecentTaskItem } from '$lib/features/notepad/model/types';
 import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 import type { SearchItem } from '$lib/types/semantic';
 
@@ -38,24 +37,16 @@ function locationEntry(
   };
 }
 
-function taskItem(overrides: Partial<RecentTaskItem> = {}): RecentTaskItem {
-  return {
-    noteId: 'note-id',
-    taskKey: 'task-key',
-    notePath: '/vault/Note.md',
-    noteTitle: 'Note',
-    text: 'Task',
-    lineNumber: 1,
-    updatedAtMillis: 0,
-    ...overrides
-  };
-}
-
 describe('deriveNotepadCommandBarVisibleItems', () => {
-  it('orders recent tasks before recent locations for empty search', () => {
-    const items = deriveNotepadCommandBarVisibleItems('', [], [locationEntry()], [taskItem()]);
+  it('orders pinned notes before recent locations for empty search', () => {
+    const items = deriveNotepadCommandBarVisibleItems(
+      '',
+      [],
+      [searchItem({ noteId: 'pinned' })],
+      [locationEntry()]
+    );
 
-    expect(items.map((item) => item.kind)).toEqual(['task', 'location']);
+    expect(items.map((item) => item.kind)).toEqual(['pinned', 'location']);
   });
 });
 
@@ -66,8 +57,8 @@ describe('createNotepadCommandBarState', () => {
     return createNotepadCommandBarState({
       getSearchQuery: () => '',
       getSearchResults: () => [],
+      getPinnedNotes: () => [],
       getRecentLocations: () => [],
-      getRecentTasks: () => [],
       getVisibleItems: () => [],
       getForgetHoldDurationMs: () => 0,
       isForgetHoldEnabled: () => false,
@@ -75,10 +66,9 @@ describe('createNotepadCommandBarState', () => {
       onSearchInput: () => {},
       onSearchSelect: () => {},
       onSearchNavigate: () => {},
+      onPinnedNoteSelect: () => {},
       onRecentLocationSelect: () => {},
-      onRecentTaskSelect: () => {},
       onRecentLocationShortcut: () => {},
-      onRecentTaskShortcut: () => {},
       closeSearch: () => {},
       onForget: () => {},
       ...overrides

@@ -19,6 +19,9 @@ import type {
   ChatProvider,
   ChatSettings,
   ChatAgentEventEnvelope,
+  AgentPermissionDecision,
+  AgentPermissionIdentity,
+  AgentPermissionResolution,
   LocalModel,
   ProjectionConflictResolution,
   VaultAccess
@@ -220,6 +223,10 @@ export interface ChatApi {
     activeNote?: ChatActiveNoteSnapshot | null;
   }): Promise<ChatSendReceipt>;
   cancelRequest(requestId: string): Promise<void>;
+  decidePermission(
+    identity: AgentPermissionIdentity,
+    decision: AgentPermissionDecision
+  ): Promise<AgentPermissionResolution>;
   retryMessage(messageId: string): Promise<ChatSendReceipt>;
   createExcerpt(messageId: string, text: string): Promise<ChatExcerpt>;
   rememberExcerpt(excerptId: string): Promise<ChatExcerpt>;
@@ -260,6 +267,7 @@ export const CHAT_COMMANDS = {
   getModelCapabilities: 'chat_get_model_capabilities',
   sendMessage: 'chat_send_message',
   cancelRequest: 'chat_cancel_request',
+  decidePermission: 'chat_decide_permission',
   retryMessage: 'chat_retry_message',
   createExcerpt: 'chat_create_excerpt',
   rememberExcerpt: 'chat_remember_excerpt',
@@ -414,6 +422,11 @@ export class TauriChatApi implements ChatApi {
     };
   }
   async cancelRequest(requestId: string) { await invoke(CHAT_COMMANDS.cancelRequest, { requestId }); }
+  decidePermission(identity: AgentPermissionIdentity, decision: AgentPermissionDecision) {
+    return invoke<AgentPermissionResolution>(CHAT_COMMANDS.decidePermission, {
+      command: { ...identity, decision }
+    });
+  }
   async retryMessage(messageId: string) {
     const conversationId = this.#messageConversations.get(messageId);
     if (!conversationId) throw new Error('Reopen the conversation before retrying this message.');

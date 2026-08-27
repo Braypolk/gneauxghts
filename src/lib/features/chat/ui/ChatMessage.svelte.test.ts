@@ -25,7 +25,11 @@ function message(role: 'assistant' | 'user'): ChatMessageModel {
   };
 }
 
-function renderMessage(role: 'assistant' | 'user', overrides: Partial<ChatMessageModel> = {}) {
+function renderMessage(
+  role: 'assistant' | 'user',
+  overrides: Partial<ChatMessageModel> = {},
+  canDecidePermission = false
+) {
   const noop = () => undefined;
   return render(ChatMessage, {
     props: {
@@ -34,6 +38,7 @@ function renderMessage(role: 'assistant' | 'user', overrides: Partial<ChatMessag
       selected: null,
       selectedExcerpt: null,
       canInsertSelection: false,
+      canDecidePermission,
       onPreviewAttachment: noop,
       onRetry: noop,
       onBranch: noop,
@@ -41,7 +46,8 @@ function renderMessage(role: 'assistant' | 'user', overrides: Partial<ChatMessag
       onCopySelection: noop,
       onCopyLink: noop,
       onInsertSelection: noop,
-      onToggleRemember: noop
+      onToggleRemember: noop,
+      onDecidePermission: noop
     }
   }).body;
 }
@@ -104,5 +110,27 @@ describe('ChatMessage text rendering', () => {
     expect(body).toContain('1 source');
     expect(body).toContain('Example');
     expect(body).toContain('aria-label="Branch from here"');
+  });
+
+  it('renders accessible permission controls and a clear run-scoped grant label', () => {
+    const body = renderMessage('assistant', {
+      status: 'streaming',
+      requestId: 'request-1',
+      agentRunId: 'run-1',
+      parts: [{
+        id: 'permission:permission-1', type: 'permission', status: 'pending',
+        request: {
+          permissionId: 'permission-1', requestId: 'request-1',
+          conversationId: 'conversation-1', messageId: 'assistant-message', runId: 'run-1',
+          toolCallId: 'call-1', toolName: 'fake_side_effect',
+          title: 'Run fake side effect', kind: 'processExecution', scope: 'command:echo'
+        }
+      }]
+    }, true);
+    expect(body).toContain('aria-label="Permission required: Run fake side effect"');
+    expect(body).toContain('aria-label="Decide permission for Run fake side effect"');
+    expect(body).toContain('Allow once');
+    expect(body).toContain('Allow for this run');
+    expect(body).not.toContain('disabled=""');
   });
 });

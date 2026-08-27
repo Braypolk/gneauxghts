@@ -33,6 +33,18 @@ describe('chat Markdown', () => {
     expect(html).toContain('>Project</button>');
   });
 
+  it('keeps checked, unchecked, and nested tasks in list structure', () => {
+    const html = renderChatMarkdown(
+      '- [ ] parent\n  - [x] nested\n- [x] complete'
+    );
+
+    expect(html.match(/class="gn-markdown-task-item"/g)).toHaveLength(3);
+    expect(html.match(/type="checkbox" disabled/g)).toHaveLength(3);
+    expect(html.match(/ checked/g)).toHaveLength(2);
+    expect(html).toContain('<ul>\n<li class="gn-markdown-task-item">');
+    expect(html.match(/<ul>/g)).toHaveLength(2);
+  });
+
   it('escapes raw HTML and does not load Markdown images', () => {
     const html = renderChatMarkdown(
       '<script>alert(1)</script>\n\n![private](https://example.com/private.png)'

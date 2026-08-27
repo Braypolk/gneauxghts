@@ -1,19 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNotepadSearchStore } from './store.svelte';
 
-const { searchNotesMock, listRecentFocusMock, listRecentNotesMock, listRecentTasksMock } =
+const { searchNotesMock, listRecentFocusMock, listRecentNotesMock, listRecentTasksMock, setNotePinnedMock } =
   vi.hoisted(() => ({
     searchNotesMock: vi.fn(),
     listRecentFocusMock: vi.fn(),
     listRecentNotesMock: vi.fn(),
-    listRecentTasksMock: vi.fn()
+    listRecentTasksMock: vi.fn(),
+    setNotePinnedMock: vi.fn()
   }));
 
 vi.mock('$lib/features/notepad/search/search', () => ({
   searchNotes: searchNotesMock,
   listRecentFocus: listRecentFocusMock,
   listRecentNotes: listRecentNotesMock,
-  listRecentTasks: listRecentTasksMock
+  listRecentTasks: listRecentTasksMock,
+  setNotePinned: setNotePinnedMock
 }));
 
 describe('NotepadSearchStore', () => {
@@ -36,6 +38,7 @@ describe('NotepadSearchStore', () => {
     listRecentFocusMock.mockReset();
     listRecentNotesMock.mockReset();
     listRecentTasksMock.mockReset();
+    setNotePinnedMock.mockReset();
   });
 
   afterEach(() => {
@@ -58,6 +61,7 @@ describe('NotepadSearchStore', () => {
     expect(store.searchMode).toBe('all');
     expect(store.searchQuery).toBe('');
     expect(store.searchResults).toEqual([]);
+    expect(store.pinnedNotes).toEqual([]);
     expect(store.recentNotes).toEqual([]);
     expect(store.recentTasks).toEqual([]);
     expect(store.isSearching).toBe(false);
@@ -149,26 +153,31 @@ describe('NotepadSearchStore', () => {
     expect(searchNotesMock).toHaveBeenCalledTimes(1);
   });
 
-  it('updates recentNotes/recentTasks via shared focus loader', async () => {
+  it('updates pinned and recent notes via the shared search-focus loader', async () => {
     const store = createStore();
     listRecentFocusMock.mockResolvedValue({
+      pinnedNotes: [
+        {
+          noteId: 'pinned-1',
+          notePath: '/vault/pinned.md',
+          fileName: 'Pinned',
+          sectionLabel: 'Recent',
+          excerpt: '',
+          highlightRanges: [],
+          matchText: '',
+          reasonLabels: ['recent'],
+          lexicalScore: null,
+          semanticScore: null,
+          startLine: null,
+          endLine: null
+        }
+      ],
       recentNotes: [
         {
           notePath: '/vault/recent.md',
           noteTitle: 'Recent',
           sectionLabel: '',
           snippets: []
-        }
-      ],
-      recentTasks: [
-        {
-          noteId: 'note-1',
-          taskKey: 'note-1::3::::pay bills',
-          notePath: '/vault/recent.md',
-          noteTitle: 'Recent',
-          text: 'Pay bills',
-          lineNumber: 3,
-          updatedAtMillis: 1
         }
       ],
       lastChat: null
@@ -179,10 +188,10 @@ describe('NotepadSearchStore', () => {
     await Promise.resolve();
     await Promise.resolve();
 
+    expect(store.pinnedNotes).toHaveLength(1);
+    expect(store.pinnedNotes[0].noteId).toBe('pinned-1');
     expect(store.recentNotes).toHaveLength(1);
     expect(store.recentNotes[0].notePath).toBe('/vault/recent.md');
-    expect(store.recentTasks).toHaveLength(1);
-    expect(store.recentTasks[0].text).toBe('Pay bills');
   });
 
   it('clearSearch wipes the query, results, and clears any pending timer', () => {
@@ -196,5 +205,16 @@ describe('NotepadSearchStore', () => {
     expect(store.searchResults).toEqual([]);
     expect(store.isSearching).toBe(false);
     expect(clearTimeoutMock).toHaveBeenCalled();
+  });
+
+  it('persists a pin and refreshes the search-focus collection', async () => {
+    const store = createStore();
+    setNotePinnedMock.mockResolvedValue(undefined);
+    listRecentFocusMock.mockResolvedValue({ pinnedNotes: [], recentNotes: [], lastChat: null });
+
+    await store.setPinned('note-1', true);
+
+    expect(setNotePinnedMock).toHaveBeenCalledWith('note-1', true);
+    expect(listRecentFocusMock).toHaveBeenCalledOnce();
   });
 });

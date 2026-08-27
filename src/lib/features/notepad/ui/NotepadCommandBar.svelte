@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import {
     Eraser,
     Undo2,
     SquarePen,
-    Circle,
-    ChevronDown,
-    ChevronRight,
-    MessagesSquare
+    MessagesSquare,
+    Pin,
+    PinOff
   } from '@lucide/svelte';
   import {
     appSettings,
@@ -24,11 +23,12 @@
     NotepadCommandBarRememberProps,
     NotepadCommandBarSearchProps
   } from '$lib/features/notepad/ui/notepadCommandBarProps';
-  import SearchBar, { type SearchBarHandle } from '$lib/ui/search/SearchBar.svelte';
+  import SearchBar, {
+    type SearchBarHandle,
+    type SearchChoice
+  } from '$lib/ui/search/SearchBar.svelte';
   import type { SearchItem } from '$lib/types/semantic';
   import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
-
-  const RECENT_TASKS_COLLAPSED_STORAGE_KEY = 'gneauxghts:bottom-bar:recent-tasks-collapsed';
 
   interface Props {
     forget: NotepadCommandBarForgetProps;
@@ -59,8 +59,8 @@
   const matchCase = $derived(search.matchCase);
   const matchWholeWord = $derived(search.matchWholeWord);
   const searchResults = $derived(search.searchResults);
+  const pinnedNotes = $derived(search.pinnedNotes);
   const recentLocations = $derived(search.recentLocations);
-  const recentTasks = $derived(search.recentTasks);
   const isSearching = $derived(search.isSearching);
   const onSearchInput = $derived(search.onSearchInput);
   const onSearchModeChange = $derived(search.onSearchModeChange);
@@ -68,10 +68,10 @@
   const onMatchWholeWordChange = $derived(search.onMatchWholeWordChange);
   const onSearchSelect = $derived(search.onSearchSelect);
   const onSearchNavigate = $derived(search.onSearchNavigate);
+  const onPinnedNoteSelect = $derived(search.onPinnedNoteSelect);
+  const onSetNotePinned = $derived(search.onSetNotePinned);
   const onRecentLocationSelect = $derived(search.onRecentLocationSelect);
-  const onRecentTaskSelect = $derived(search.onRecentTaskSelect);
   const onRecentLocationShortcut = $derived(search.onRecentLocationShortcut);
-  const onRecentTaskShortcut = $derived(search.onRecentTaskShortcut);
   const onSearchOpen = $derived(search.onSearchOpen);
   const onSearchDismiss = $derived(search.onSearchDismiss);
   const onSearchCommit = $derived(search.onSearchCommit);
@@ -85,6 +85,7 @@
     {
       id: 'current',
       label: 'This note',
+      shortcutId: 'searchCurrent',
       ariaLabel: 'Search this note only',
       title: 'Search this note only'
     },
@@ -92,11 +93,12 @@
       id: 'all',
       label: 'All notes',
       shortLabel: 'All notes',
+      shortcutId: 'searchAll',
       ariaLabel: 'Search all notes',
       title: 'Search all notes',
       tone: 'all'
     }
-  ];
+  ] satisfies SearchChoice[];
 
   let searchBar = $state<SearchBarHandle | null>(null);
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
@@ -104,22 +106,13 @@
   let forgetCancelButton = $state<HTMLButtonElement | null>(null);
   let forgetHoldDurationMs = $derived(resolveForgetButtonDurationMs(appSettings.forgetButtonDurationPreference));
   let isForgetHoldEnabled = $derived(forgetHoldDurationMs > 0);
-  let areRecentTasksCollapsed = $state(loadRecentTasksCollapsedPreference());
-  let isAtLeastSmWidth = $state(false);
-  const areRecentTasksVisuallyCollapsed = $derived(
-    !isAtLeastSmWidth && areRecentTasksCollapsed
-  );
-
   const visibleSearchResults = $derived.by<SearchItem[]>(() =>
     searchMode === 'current' ? dedupeCurrentSearchResults(searchResults) : searchResults
   );
-  const visibleRecentTasks = $derived(
-    searchQuery.trim() === '' && !areRecentTasksVisuallyCollapsed ? recentTasks : []
-  );
   const visibleItems = $derived.by<NotepadCommandBarVisibleItem[]>(() =>
-    deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, recentLocations, visibleRecentTasks)
+    deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, pinnedNotes, recentLocations)
   );
-  const hasRecentContent = $derived(recentLocations.length > 0 || recentTasks.length > 0);
+  const hasRecentContent = $derived(pinnedNotes.length > 0 || recentLocations.length > 0);
   const hasVisibleSearchContent = $derived(
     searchQuery.trim() === '' ? hasRecentContent : visibleItems.length > 0
   );
@@ -131,8 +124,8 @@
     getSearchQuery: () => searchQuery,
     getSearchResults: () => visibleSearchResults,
     getSearchNavigationResults: () => (searchMode === 'current' ? searchResults : visibleSearchResults),
+    getPinnedNotes: () => pinnedNotes,
     getRecentLocations: () => recentLocations,
-    getRecentTasks: () => visibleRecentTasks,
     getVisibleItems: () => visibleItems,
     getForgetHoldDurationMs: () => forgetHoldDurationMs,
     isForgetHoldEnabled: () => isForgetHoldEnabled,
@@ -141,10 +134,9 @@
     onSearchInput: (value) => onSearchInput(value),
     onSearchSelect: (result) => onSearchSelect(result),
     onSearchNavigate: (result) => onSearchNavigate?.(result),
+    onPinnedNoteSelect: (result) => onPinnedNoteSelect(result),
     onRecentLocationSelect: (entry) => onRecentLocationSelect(entry),
-    onRecentTaskSelect: (task) => onRecentTaskSelect(task),
     onRecentLocationShortcut: (index) => onRecentLocationShortcut(index),
-    onRecentTaskShortcut: (index) => onRecentTaskShortcut(index),
     closeSearch: () => searchBar?.closeSearch(),
     onSearchDismiss: () => onSearchDismiss?.(),
     onSearchCommit: () => onSearchCommit?.(),
@@ -158,11 +150,9 @@
   const visibleItemsFingerprint = $derived(
     `${searchQuery.trim() === '' ? 'recents' : 'search'}|${visibleItems.length}|${visibleSearchResults.length}|${
       visibleItems[0]
-        ? visibleItems[0].kind === 'task'
-          ? `t:${visibleItems[0].item.taskKey}`
-          : visibleItems[0].kind === 'location'
+        ? visibleItems[0].kind === 'location'
             ? `l:${visibleItems[0].item.location.kind}:${visibleItems[0].item.label}`
-            : `s:${visibleItems[0].item.notePath ?? ''}|${visibleItems[0].item.fileName}|${visibleItems[0].item.sectionLabel ?? ''}|${visibleItems[0].item.matchText ?? ''}`
+            : `${visibleItems[0].kind === 'pinned' ? 'p' : 's'}:${visibleItems[0].item.notePath ?? ''}|${visibleItems[0].item.fileName}|${visibleItems[0].item.sectionLabel ?? ''}|${visibleItems[0].item.matchText ?? ''}`
         : ''
     }`
   );
@@ -225,26 +215,8 @@
     commandBarState.dispose();
   });
 
-  onMount(() => {
-    const mediaQuery = window.matchMedia('(min-width: 640px)');
-    const updateWidthState = () => {
-      isAtLeastSmWidth = mediaQuery.matches;
-    };
-
-    updateWidthState();
-    mediaQuery.addEventListener('change', updateWidthState);
-
-    return () => {
-      mediaQuery.removeEventListener('change', updateWidthState);
-    };
-  });
-
   function getRecentNotesViewportClass() {
     return 'h-[13.75rem] overflow-y-auto';
-  }
-
-  function getRecentTasksViewportClass() {
-    return 'h-[15rem] overflow-y-auto';
   }
 
   function locationHistoryKey(item: LocationHistoryEntry, index: number) {
@@ -256,27 +228,6 @@
 
   function getRecentNoteItemClass() {
     return 'search-result-item flex h-[2.75rem] w-full items-center gap-2 rounded-[1.1rem] px-4 py-1.5 text-left transition-colors';
-  }
-
-  function getRecentTaskItemClass() {
-    return 'search-result-item flex h-[3rem] w-full items-center gap-3 rounded-[1.1rem] px-4 py-1.5 text-left transition-colors';
-  }
-
-  function loadRecentTasksCollapsedPreference() {
-    if (typeof window === 'undefined') {
-      return false;
-    }
-    return window.localStorage.getItem(RECENT_TASKS_COLLAPSED_STORAGE_KEY) === 'true';
-  }
-
-  function toggleRecentTasksCollapsed() {
-    areRecentTasksCollapsed = !areRecentTasksCollapsed;
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(
-        RECENT_TASKS_COLLAPSED_STORAGE_KEY,
-        String(areRecentTasksCollapsed)
-      );
-    }
   }
 
   function getSearchResultItemClass(mode: 'current' | 'all') {
@@ -579,7 +530,7 @@
             bind:this={searchResultsViewport}
             class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
           >
-            {#if recentTasks.length > 0}
+            {#if pinnedNotes.length > 0}
               <section
                 class={`min-w-0 flex-1 lg:order-2 ${
                   recentLocations.length > 0
@@ -587,50 +538,40 @@
                     : ''
                 }`}
               >
-                <div
-                  class="flex w-full items-center justify-between gap-3 px-4 pb-2 pt-3 text-left text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground"
-                >
-                  <span>Recent Tasks</span>
-                  <button
-                    type="button"
-                    class="inline-flex items-center rounded-full transition-colors hover:text-foreground sm:hidden"
-                    aria-label={areRecentTasksCollapsed ? 'Show recent tasks' : 'Hide recent tasks'}
-                    aria-expanded={!areRecentTasksCollapsed}
-                    onmousedown={(event) => event.preventDefault()}
-                    onclick={toggleRecentTasksCollapsed}
-                  >
-                    {#if areRecentTasksCollapsed}
-                      <ChevronRight class="h-3.5 w-3.5" />
-                    {:else}
-                      <ChevronDown class="h-3.5 w-3.5" />
-                    {/if}
-                  </button>
+                <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Pinned
                 </div>
-                {#if !areRecentTasksVisuallyCollapsed}
-                  <div class={getRecentTasksViewportClass()}>
-                    {#each recentTasks as item, index (`task-${item.taskKey}-${index}`)}
+                <div class={getRecentNotesViewportClass()}>
+                  {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
+                    <div class="group flex items-center gap-1">
                       <button
                         type="button"
                         data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
-                        class={getRecentTaskItemClass()}
+                        class={getRecentNoteItemClass()}
                         class:bg-accent={index === commandBarState.activeIndex}
-                        aria-label={`Open recent task: ${item.text}`}
-                        title={`${item.text} - ${item.noteTitle}`}
+                        aria-label={`Open pinned note: ${item.fileName}`}
+                        title={item.fileName}
                         onmousedown={(event) => event.preventDefault()}
                         onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
-                        onclick={() => commandBarState.selectItem({ kind: 'task', item })}
+                        onclick={() => commandBarState.selectItem({ kind: 'pinned', item })}
                       >
-                        <Circle class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span class="min-w-0 flex-1 truncate text-sm font-medium text-popover-foreground">
-                          {item.text}
-                        </span>
-                        <span class="max-w-32 shrink-0 truncate text-xs font-medium text-muted-foreground">
-                          {item.noteTitle}
-                        </span>
+                        <Pin class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
                       </button>
+                      <button
+                        type="button"
+                        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-70 transition hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                        aria-label={`Unpin ${item.fileName}`}
+                        title={`Unpin ${item.fileName}`}
+                        data-search-focus-independent
+                        onmousedown={(event) => event.preventDefault()}
+                        onclick={() => item.noteId && void onSetNotePinned(item.noteId, false)}
+                      >
+                        <PinOff class="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                     {/each}
-                  </div>
-                {/if}
+                </div>
               </section>
             {/if}
 
@@ -641,7 +582,7 @@
                 </div>
                 <div class={getRecentNotesViewportClass()}>
                   {#each recentLocations as item, index (locationHistoryKey(item, index))}
-                    {@const globalIndex = visibleRecentTasks.length + index}
+                    {@const globalIndex = pinnedNotes.length + index}
                     <button
                       type="button"
                       data-search-result-active={globalIndex === commandBarState.activeIndex ? 'true' : 'false'}

@@ -14,6 +14,17 @@ export function selectionOverlaps(view: EditorView, from: number, to: number): b
   return false;
 }
 
+/** True only for painted selection ranges, not a caret touching the range. */
+export function nonEmptySelectionOverlaps(
+  view: EditorView,
+  from: number,
+  to: number
+): boolean {
+  return view.state.selection.ranges.some(
+    (range) => !range.empty && range.from < to && range.to > from
+  );
+}
+
 // Whether the cursor (or any selection range) touches the given line range.
 // Used by list/quote line-level decorations where reveal is keyed to the line
 // rather than an inline node.

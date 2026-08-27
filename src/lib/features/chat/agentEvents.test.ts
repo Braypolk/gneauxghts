@@ -3,7 +3,8 @@ import {
   initialAgentEventState,
   materializeDurableChatParts,
   reduceAgentEvent,
-  replayAgentEvents
+  replayAgentEvents,
+  settlePendingPermissions
 } from './agentEvents';
 import type { ChatAgentEventEnvelope } from './types';
 
@@ -203,5 +204,59 @@ describe('agent event reducer', () => {
     expect(twice).toEqual(once);
     expect(twice.filter((part) => part.type === 'sources')).toHaveLength(1);
     expect(twice.filter((part) => part.type === 'checkpoint')).toHaveLength(1);
+  });
+
+  it('projects a live permission pending to resolved and never replays it after reopen', () => {
+    const request = {
+      permissionId: 'permission-1', requestId: 'request',
+      conversationId: 'conversation', messageId: 'message', runId: 'run',
+      toolCallId: 'call-1', toolName: 'fake_side_effect',
+      title: 'Run fake side effect', kind: 'processExecution' as const,
+      scope: 'command:echo'
+    };
+    const pendingEvent = envelope(1, { type: 'permissionRequested', request });
+    const pending = reduceAgentEvent(initialAgentEventState(), pendingEvent);
+    expect(pending.parts.find((part) => part.type === 'permission')).toMatchObject({
+      status: 'pending', request
+    });
+    const resolvedEvent = envelope(2, {
+      type: 'permissionResolved', permissionId: 'permission-1', resolution: 'allowedOnce'
+    });
+    const resolved = reduceAgentEvent(pending, resolvedEvent);
+    expect(resolved.parts.find((part) => part.type === 'permission')).toMatchObject({
+      status: 'resolved', resolution: 'allowedOnce'
+    });
+    expect(replayAgentEvents('', [pendingEvent, resolvedEvent]).parts).toEqual([
+      { id: 'text', type: 'text', text: '' }
+    ]);
+    expect(settlePendingPermissions(pending.parts).find((part) => part.type === 'permission'))
+      .toMatchObject({ status: 'resolved', resolution: 'cancelled' });
+  });
+
+  it('rejects a permission request for another message target', () => {
+    const state = initialAgentEventState('', {
+      conversationId: 'conversation', messageId: 'message'
+    });
+    const wrong = envelope(1, {
+      type: 'permissionRequested',
+      request: {
+        permissionId: 'permission-1', requestId: 'request',
+        conversationId: 'other', messageId: 'other', runId: 'run',
+        toolCallId: 'call-1', toolName: 'fake', title: 'Fake',
+        kind: 'fileMutation', scope: 'file:test'
+      }
+    }, { conversationId: 'other', messageId: 'other' });
+    expect(reduceAgentEvent(state, wrong)).toBe(state);
+
+    const mismatchedPayload = envelope(1, {
+      type: 'permissionRequested',
+      request: {
+        permissionId: 'permission-2', requestId: 'different-request',
+        conversationId: 'conversation', messageId: 'message', runId: 'run',
+        toolCallId: 'call-2', toolName: 'fake', title: 'Fake',
+        kind: 'fileMutation', scope: 'file:test'
+      }
+    });
+    expect(reduceAgentEvent(state, mismatchedPayload)).toBe(state);
   });
 });

@@ -780,6 +780,7 @@ mod tests {
             &PersistedState {
                 last_opened_note_id: Some(other.note_id.clone()),
                 recent_note_ids: vec![other.note_id.clone()],
+                pinned_note_ids: vec![pinned.note_id.clone()],
                 hidden_note_ids: vec![pinned.note_id.clone()],
                 note_order_note_ids: vec![pinned.note_id.clone()],
                 collapsed_note_ids: vec![pinned.note_id.clone()],
@@ -802,6 +803,7 @@ mod tests {
             vec![switch_target.note_id, other.note_id]
         );
         // Unrelated fields must be preserved by the row-scoped write.
+        assert_eq!(state.pinned_note_ids, vec![pinned.note_id.clone()]);
         assert_eq!(state.hidden_note_ids, vec![pinned.note_id.clone()]);
         assert_eq!(state.note_order_note_ids, vec![pinned.note_id.clone()]);
         assert_eq!(state.collapsed_note_ids, vec![pinned.note_id]);

@@ -1126,6 +1126,9 @@ const EDGE_MIN_SCORE: f32 = 0.42;
 pub(crate) const EDGE_MAX_INCREMENTAL_DIRTY_NOTES: usize = 32;
 /// Search wider than the emitted top-K to catch reverse-neighbor changes.
 const EDGE_INCREMENTAL_CANDIDATE_K: usize = EDGE_NEIGHBORS_PER_NOTE * 8;
+/// Bump when derived, non-embedding metadata changes so existing vault rows are
+/// refreshed without paying to regenerate unchanged chunk embeddings.
+pub(super) const NOTE_PRESENTATION_ALGORITHM_VERSION: &str = "note-presentation-v2-body-tags";
 
 fn dirty_count_allows_incremental(dirty_count: usize) -> bool {
     dirty_count > 0 && dirty_count <= EDGE_MAX_INCREMENTAL_DIRTY_NOTES
@@ -1778,16 +1781,19 @@ fn note_semantic_metadata(
         .map(str::to_string)
         .chain(wikilink_targets.iter().cloned()),
     );
-    let presentation_hash = hash_parts([
-        note::DocumentKind::Note.as_frontmatter_value().to_string(),
-        chunked_note.title.clone(),
-        preview.clone(),
-        tags_json.clone(),
-        note_id.to_string(),
-        created_at.to_string(),
-        updated_at.to_string(),
-        modified_millis.to_string(),
-    ]);
+    let presentation_hash = format!(
+        "{NOTE_PRESENTATION_ALGORITHM_VERSION}:{}",
+        hash_parts([
+            note::DocumentKind::Note.as_frontmatter_value().to_string(),
+            chunked_note.title.clone(),
+            preview.clone(),
+            tags_json.clone(),
+            note_id.to_string(),
+            created_at.to_string(),
+            updated_at.to_string(),
+            modified_millis.to_string(),
+        ])
+    );
 
     SemanticNoteMetadata {
         semantic_input_hash,
@@ -1821,45 +1827,12 @@ where
     hasher.finalize().to_hex().to_string()
 }
 
-fn extract_tags(parsed_note: &note::ParsedNote, chunked_note: &ChunkedNote) -> Vec<String> {
+fn extract_tags(_parsed_note: &note::ParsedNote, chunked_note: &ChunkedNote) -> Vec<String> {
     let mut tags = Vec::new();
-    if let Some(frontmatter) = parsed_note.frontmatter.raw_other.as_deref() {
-        collect_frontmatter_tags(frontmatter, &mut tags);
-    }
     for chunk in &chunked_note.chunks {
         collect_hashtags(&chunk.text, &mut tags);
     }
     tags
-}
-
-fn collect_frontmatter_tags(frontmatter: &str, tags: &mut Vec<String>) {
-    let mut in_tag_list = false;
-    for line in frontmatter.lines() {
-        let trimmed = line.trim();
-        if let Some(raw) = trimmed.strip_prefix("tags:") {
-            in_tag_list = raw.trim().is_empty();
-            collect_tag_values(raw, tags);
-        } else if in_tag_list {
-            if let Some(raw) = trimmed.strip_prefix('-') {
-                collect_tag_values(raw, tags);
-            } else if !trimmed.is_empty() {
-                in_tag_list = false;
-            }
-        }
-    }
-}
-
-fn collect_tag_values(raw: &str, tags: &mut Vec<String>) {
-    for value in raw.trim().trim_matches(['[', ']']).split(',') {
-        let tag = value
-            .trim()
-            .trim_matches(['"', '\''])
-            .trim_start_matches('#')
-            .trim();
-        if !tag.is_empty() && tag.chars().all(is_tag_char) {
-            tags.push(tag.to_lowercase());
-        }
-    }
 }
 
 fn collect_hashtags(text: &str, tags: &mut Vec<String>) {
@@ -1960,13 +1933,23 @@ struct PreparedNoteContent {
 #[cfg(test)]
 mod tests {
     use super::{
-        atlas_failure_backoff, dirty_count_allows_incremental, merge_retry_batch,
+        atlas_failure_backoff, dirty_count_allows_incremental, extract_tags, merge_retry_batch,
         process_full_scan, process_note_batch, process_pending_jobs, run_label_atlas_build,
         run_structural_atlas_build, semantic_failure_backoff, ChatRecallExcerpt,
         IndexingWorkerContext, PendingIndexState, PendingNoteMove, PendingNoteUpdate,
         PendingSemanticDocument, SemanticDocumentBatch, SemanticWorkQueue, WorkerSignal,
         EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
     };
+    use crate::{note, semantic::chunking::chunk_markdown};
+
+    #[test]
+    fn semantic_metadata_tags_ignore_frontmatter_but_keep_body_hashtags() {
+        let markdown = "---\ntags: [frontmatter-only]\n---\nBody #body-tag";
+        let parsed = note::parse_note(markdown);
+        let chunked = chunk_markdown(markdown, "Note");
+
+        assert_eq!(extract_tags(&parsed, &chunked), vec!["body-tag"]);
+    }
 
     #[test]
     fn semantic_work_queue_coalesces_wakes_while_preserving_all_work() {

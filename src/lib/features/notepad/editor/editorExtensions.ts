@@ -2,7 +2,6 @@ import { history, historyKeymap } from '@codemirror/commands';
 import { EditorState, type Extension } from '@codemirror/state';
 import {
   EditorView,
-  drawSelection,
   dropCursor,
   keymap,
   placeholder
@@ -101,7 +100,6 @@ export function createPaneExtensions(
     search(),
     createExternalSearchHighlightExtension(),
     createLayoutTheme(),
-    drawSelection(),
     dropCursor(),
     createOverlayScrollMargins(editorRoot),
     placeholder('Start typing here.'),

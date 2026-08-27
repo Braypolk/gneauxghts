@@ -14,6 +14,12 @@ export interface PassiveTableRange {
   endFrom: number;
 }
 
+export interface PassiveTableLineSpec {
+  from: number;
+  className: string;
+  groupId: string;
+}
+
 export function isMarkdownTableLine(text: string) {
   const trimmed = text.trim();
   return trimmed.includes('|') && trimmed !== '|';
@@ -49,6 +55,14 @@ export function collectPassiveTableRanges(doc: {
       if (!isMarkdownTableLine(bodyLine.text)) {
         break;
       }
+      // Two tables may be adjacent with no blank line. If this table-looking
+      // row is immediately followed by a delimiter, it is the next header.
+      if (
+        bodyLineNumber < doc.lines &&
+        isMarkdownTableDelimiterLine(doc.line(bodyLineNumber + 1).text)
+      ) {
+        break;
+      }
       bodyFroms.push(bodyLine.from);
       bodyLineNumber += 1;
     }
@@ -71,24 +85,38 @@ export function collectPassiveTableRanges(doc: {
   return ranges;
 }
 
-function buildPassiveTableDecorations(view: EditorView): DecorationSet {
+export function buildPassiveTableDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  const ranges = collectPassiveTableRanges(view.state.doc);
-
-  for (const range of ranges) {
+  for (const spec of collectPassiveTableLineSpecs(view.state.doc)) {
     builder.add(
-      range.headerFrom,
-      range.headerFrom,
+      spec.from,
+      spec.from,
       Decoration.line({
-        class:
-          'gn-markdown-table-line gn-markdown-table-header gn-markdown-table-line-start'
+        class: spec.className,
+        attributes: { 'data-gn-table-group': spec.groupId }
       })
     );
-    builder.add(
-      range.delimiterFrom,
-      range.delimiterFrom,
-      Decoration.line({
-        class: [
+  }
+
+  return builder.finish();
+}
+
+export function collectPassiveTableLineSpecs(doc: {
+  lines: number;
+  line: (n: number) => { from: number; text: string };
+}): PassiveTableLineSpec[] {
+  return collectPassiveTableRanges(doc).flatMap((range, groupIndex) => {
+    const groupId = String(groupIndex);
+    return [
+      {
+        from: range.headerFrom,
+        className:
+          'gn-markdown-table-line gn-markdown-table-header gn-markdown-table-line-start',
+        groupId
+      },
+      {
+        from: range.delimiterFrom,
+        className: [
           'gn-markdown-table-line',
           'gn-markdown-table-delimiter',
           range.endFrom === range.delimiterFrom
@@ -96,32 +124,33 @@ function buildPassiveTableDecorations(view: EditorView): DecorationSet {
             : ''
         ]
           .filter(Boolean)
-          .join(' ')
-      })
-    );
-
-    for (const bodyFrom of range.bodyFroms) {
-      builder.add(
-        bodyFrom,
-        bodyFrom,
-        Decoration.line({
-          class: [
-            'gn-markdown-table-line',
-            range.endFrom === bodyFrom ? 'gn-markdown-table-line-end' : ''
-          ]
-            .filter(Boolean)
-            .join(' ')
-        })
-      );
-    }
-  }
-
-  return builder.finish();
+          .join(' '),
+        groupId
+      },
+      ...range.bodyFroms.map((from) => ({
+        from,
+        className: [
+          'gn-markdown-table-line',
+          range.endFrom === from ? 'gn-markdown-table-line-end' : ''
+        ]
+          .filter(Boolean)
+          .join(' '),
+        groupId
+      }))
+    ];
+  });
 }
 
 function tableGroupForRow(source: HTMLElement) {
   const content = source.parentElement;
   if (!content) return null;
+
+  const groupId = source.dataset.gnTableGroup;
+  if (groupId !== undefined) {
+    return [
+      ...content.querySelectorAll<HTMLElement>('.gn-markdown-table-line')
+    ].filter((row) => row.dataset.gnTableGroup === groupId);
+  }
 
   const rows = [
     ...content.querySelectorAll<HTMLElement>('.gn-markdown-table-line')
@@ -174,23 +203,53 @@ function findTableLineElement(
   return null;
 }
 
-function ensureTableCaretVisible(view: EditorView) {
+export interface TableCaretScrollInput {
+  scrollLeft: number;
+  rowLeft: number;
+  rowRight: number;
+  caretLeft: number;
+  padding?: number;
+}
+
+export function nextTableRowScrollLeft({
+  scrollLeft,
+  rowLeft,
+  rowRight,
+  caretLeft,
+  padding = 24
+}: TableCaretScrollInput) {
+  if (caretLeft > rowRight - 8) {
+    return Math.max(0, scrollLeft + caretLeft - rowRight + padding);
+  }
+  if (caretLeft < rowLeft + 8) {
+    return Math.max(0, scrollLeft - (rowLeft - caretLeft + padding));
+  }
+  return scrollLeft;
+}
+
+interface TableCaretMeasurement {
+  row: HTMLElement;
+  scrollLeft: number;
+}
+
+function measureTableCaret(view: EditorView): TableCaretMeasurement | null {
   const head = view.state.selection.main.head;
   const row = findTableLineElement(view, head);
-  if (!row) return;
+  if (!row) return null;
 
   const coords = view.coordsAtPos(head);
-  if (!coords) return;
+  if (!coords) return null;
 
   const visible = row.getBoundingClientRect();
-  const pad = 24;
-  if (coords.left > visible.right - 8) {
-    row.scrollLeft += coords.left - visible.right + pad;
-    syncTableRowScroll(row);
-  } else if (coords.left < visible.left + 8) {
-    row.scrollLeft -= visible.left - coords.left + pad;
-    syncTableRowScroll(row);
-  }
+  return {
+    row,
+    scrollLeft: nextTableRowScrollLeft({
+      scrollLeft: row.scrollLeft,
+      rowLeft: visible.left,
+      rowRight: visible.right,
+      caretLeft: coords.left
+    })
+  };
 }
 
 export function createPassiveTableExtension() {
@@ -199,6 +258,8 @@ export function createPassiveTableExtension() {
       decorations: DecorationSet;
       #onScroll: (event: Event) => void;
       #dom: HTMLElement;
+      #destroyed = false;
+      #caretMeasureQueued = false;
 
       constructor(view: EditorView) {
         this.decorations = buildPassiveTableDecorations(view);
@@ -210,18 +271,40 @@ export function createPassiveTableExtension() {
           syncTableRowScroll(target);
         };
         this.#dom.addEventListener('scroll', this.#onScroll, true);
+        this.#scheduleCaretVisibility(view);
       }
 
       update(update: ViewUpdate) {
         if (update.docChanged || update.viewportChanged) {
           this.decorations = buildPassiveTableDecorations(update.view);
         }
-        if (update.selectionSet || update.docChanged) {
-          queueMicrotask(() => ensureTableCaretVisible(update.view));
+        if (
+          update.selectionSet ||
+          update.docChanged ||
+          update.viewportChanged
+        ) {
+          this.#scheduleCaretVisibility(update.view);
         }
       }
 
+      #scheduleCaretVisibility(view: EditorView) {
+        if (this.#destroyed || this.#caretMeasureQueued) return;
+        this.#caretMeasureQueued = true;
+        view.requestMeasure({
+          read: () => measureTableCaret(view),
+          write: (measurement) => {
+            this.#caretMeasureQueued = false;
+            if (this.#destroyed || !measurement) return;
+            if (measurement.row.scrollLeft !== measurement.scrollLeft) {
+              measurement.row.scrollLeft = measurement.scrollLeft;
+              syncTableRowScroll(measurement.row);
+            }
+          }
+        });
+      }
+
       destroy() {
+        this.#destroyed = true;
         this.#dom.removeEventListener('scroll', this.#onScroll, true);
       }
     },

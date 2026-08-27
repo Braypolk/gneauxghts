@@ -28,7 +28,25 @@ const notes = new Map<string, NoteFixture>([
     {
       noteId: 'note-beta',
       title: 'Beta note',
-      markdown: 'Beta body is independent from Alpha.\n\n- [ ] Beta task',
+      markdown: [
+        'Beta body is independent from Alpha.',
+        '',
+        '- [ ] Beta task',
+        '  - [x] Nested completed task',
+        '',
+        '==Highlighted words remain selectable==',
+        '',
+        '| Column A | Column B |',
+        '| --- | --- |',
+        `| ${'wide '.repeat(36)}| synchronized row |`,
+        '',
+        '```text',
+        'first line in one multiline block',
+        'second line in one multiline block',
+        '```',
+        '',
+        `Wrapped block extent ${'continues across the narrow pane '.repeat(18)}`
+      ].join('\n'),
       path: '/e2e/beta.md'
     }
   ]
@@ -133,6 +151,7 @@ export function installBrowserE2eBackend() {
   const invocations: InvokeRecord[] = [];
   let callbackId = 0;
   let activeNote = notes.get('note-alpha')!;
+  const pinnedNoteIds = new Set<string>();
 
   const invoke = async (command: string, rawArgs: unknown = {}) => {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
@@ -180,7 +199,20 @@ export function installBrowserE2eBackend() {
     }
     if (command === 'list_recent_notes') return [...notes.values()].map(searchItem);
     if (command === 'list_recent_focus') {
-      return { recentNotes: [...notes.values()].map(searchItem), recentTasks: [], lastChat: null };
+      return {
+        pinnedNotes: [...pinnedNoteIds]
+          .map((noteId) => notes.get(noteId))
+          .filter((note): note is NoteFixture => Boolean(note))
+          .map(searchItem),
+        recentNotes: [...notes.values()].map(searchItem),
+        lastChat: null
+      };
+    }
+    if (command === 'set_note_pinned') {
+      const noteId = String(args.noteId ?? '');
+      if (args.pinned) pinnedNoteIds.add(noteId);
+      else pinnedNoteIds.delete(noteId);
+      return null;
     }
     if (command === 'get_related_notes') {
       return { status: 'ready', scope: 'note', reason: null, items: [] };

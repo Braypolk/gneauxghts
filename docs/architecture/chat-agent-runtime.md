@@ -43,6 +43,8 @@ and timestamp identity. The payload is one of:
 - `usageUpdated`
 - `modelTurnRetried`
 - `reasoningUpdated`
+- `permissionRequested` (transient)
+- `permissionResolved` (transient)
 
 Envelopes carry `schemaVersion: 2`. Tool, plan, reasoning-status, and usage
 events are stored in `chat_agent_events`. Text remains
@@ -56,6 +58,12 @@ ordered durable replay may explicitly hand a message to a demonstrably newer
 run even when omitted text events mean its first observed durable sequence is
 greater than one. Once that happens, later events from the retired run are
 ignored.
+
+Permission interactions deliberately are not written to `chat_agent_events`.
+They represent an in-memory waiter in the current run, so reopening a
+conversation must not fabricate an actionable request. The resolved outcome is
+kept in the mounted message projection for the rest of that live UI session;
+reopening reconstructs only the durable parts and omits it.
 
 `modelTurnRetried` becomes a user-visible status part. Durable sources are
 materialized as a source part from `chat_sources`, and a completed assistant
@@ -93,8 +101,24 @@ Current tools are permission-safe by construction:
 
 Do not add a generic confirmation prompt to harmless reads. Before adding a
 tool with a new side effect (shell, network mutation, destructive file action,
-or direct write), add an explicit permission event and scoped decision broker
-with allow-once, allow-for-session, and deny outcomes.
+or direct write), classify it at the explicit permission boundary described
+below.
+
+The permission broker is now the app-owned pre-tool boundary for those future
+capabilities. A request is correlated to permission, chat request,
+conversation, message, run, and tool-call identity. The backend validates the
+entire identity before accepting a decision and resumes a waiter exactly once.
+“Allow for session” is intentionally presented as **Allow for this run**: the
+grant key also includes the permission kind, tool, and declared scope, and is
+discarded on run completion or cancellation. It is never persisted or shared
+with another conversation or run. Cancellation and run cleanup resolve pending
+waiters as cancelled; duplicate, late, or mismatched decisions are rejected.
+
+No production tool is permission-gated yet. Existing vault reads retain their
+conversation access policy, and note changes retain the durable proposal
+Keep/Dismiss workflow. A fake test tool proves that Rig's pre-tool hook waits on
+the broker before execution without introducing a shell, direct-write, network
+mutation, or destructive capability.
 
 ## ACP compatibility
 

@@ -58,9 +58,6 @@ export function createLayoutTheme() {
         wordBreak: 'break-word',
         overflowWrap: 'anywhere'
       },
-    '&.cm-editor.cm-gn .cm-selectionBackground': {
-      backgroundColor: 'var(--gn-editor-selection-background) !important'
-    },
     '&.cm-editor.cm-gn .cm-line': {
       paddingLeft: 'var(--gn-editor-side-inset-left)',
       paddingRight: 'var(--gn-editor-side-inset-right)',

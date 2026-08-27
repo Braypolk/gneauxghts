@@ -14,7 +14,9 @@ import type {
   ChatModelCapabilities,
   ChatProvider,
   VaultAccess,
-  ChatSettings
+  ChatSettings,
+  AgentPermissionDecision,
+  AgentPermissionIdentity
 } from './types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
@@ -23,7 +25,8 @@ import { configuredChatModel } from './chatConfiguration';
 import {
   materializeDurableChatParts,
   reduceAgentEvent,
-  replaceTextPart
+  replaceTextPart,
+  settlePendingPermissions
 } from './agentEvents';
 import {
   createChatControllerMachineState,
@@ -109,6 +112,10 @@ export interface ChatController extends Readable<ChatControllerState> {
     activeNote?: ChatActiveNoteSnapshot | null
   ): Promise<boolean>;
   cancel(): Promise<void>;
+  decidePermission(
+    identity: AgentPermissionIdentity,
+    decision: AgentPermissionDecision
+  ): Promise<boolean>;
   retry(messageId: string): Promise<void>;
   setVaultAccess(vaultAccess: VaultAccess): Promise<void>;
   setProvider(provider: ChatProvider, model: string): Promise<void>;
@@ -159,11 +166,13 @@ function upsertTerminalMessage(messages: ChatMessage[], message: ChatMessage): C
     ...message,
     citations,
     linkTarget: message.linkTarget ?? previous.linkTarget,
-    parts: materializeDurableChatParts(previous.parts, {
-      text: message.content,
-      citations,
-      checkpoint: message.role === 'assistant' && message.status === 'completed'
-    }),
+    parts: settlePendingPermissions(
+      materializeDurableChatParts(previous.parts, {
+        text: message.content,
+        citations,
+        checkpoint: message.role === 'assistant' && message.status === 'completed'
+      })
+    ),
     requestId: previous.requestId,
     agentRunId: previous.agentRunId,
     agentSequence: previous.agentSequence,
@@ -1113,6 +1122,48 @@ export class ChatControllerStore implements ChatController {
     }
   }
 
+  async decidePermission(
+    identity: AgentPermissionIdentity,
+    decision: AgentPermissionDecision
+  ) {
+    if (this.#isDisposed()) return false;
+    const request = this.machine.request;
+    const conversation = this.conversation;
+    const message = conversation?.messages.find(
+      (candidate) => candidate.id === identity.messageId
+    );
+    const permission = message?.parts.find(
+      (part) =>
+        part.type === 'permission' &&
+        part.request.permissionId === identity.permissionId
+    );
+    if (
+      request.kind !== 'streaming' ||
+      request.requestId !== identity.requestId ||
+      request.conversationId !== identity.conversationId ||
+      conversation?.id !== identity.conversationId ||
+      conversation.activeRequestId !== identity.requestId ||
+      message?.requestId !== identity.requestId ||
+      message.agentRunId !== identity.runId ||
+      !permission ||
+      permission.type !== 'permission' ||
+      permission.status !== 'pending' ||
+      permission.request.toolCallId !== identity.toolCallId
+    ) {
+      this.#patch({ error: 'That permission request is no longer active.' });
+      return false;
+    }
+    try {
+      await this.#api.decidePermission(identity, decision);
+      return true;
+    } catch (error) {
+      this.#patch({
+        error: errorText(error, 'Unable to decide this permission request.')
+      });
+      return false;
+    }
+  }
+
   async retry(messageId: string) {
     if (this.#isDisposed()) return;
     const conversationId = this.conversation?.id;
@@ -1357,6 +1408,16 @@ export class ChatControllerStore implements ChatController {
   }
 
   dispose() {
+    const request = this.machine.request;
+    const hasPendingPermission = this.conversation?.messages.some((message) =>
+      message.parts.some((part) => part.type === 'permission' && part.status === 'pending')
+    ) ?? false;
+    if (
+      hasPendingPermission &&
+      (request.kind === 'streaming' || request.kind === 'cancelling')
+    ) {
+      void this.#api.cancelRequest(request.requestId).catch(() => undefined);
+    }
     this.#dispatch({ type: 'dispose' });
     this.#unlisteners.splice(0).forEach((off) => off());
     this.#subscribers.clear();

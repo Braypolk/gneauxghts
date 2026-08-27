@@ -15,13 +15,13 @@ pub(crate) use config::{
 pub(crate) use persistence::{
     atomic_write_note, db_clear_last_opened_note, db_load_note_activity, db_mark_note_opened,
     db_set_last_chat_location, db_set_note_collapsed, db_set_note_hidden, db_set_note_order,
-    db_touch_note_activity, derive_file_stem, derive_file_stem_from_title_and_markdown,
-    effective_open_count, is_forgotten_note_path, is_valid_note_path, persist_note,
-    prune_recent_note_ids, prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup,
-    resolve_note_id_from_path, resolve_note_path_by_id, touch_recent_note_id,
-    validate_current_path, write_last_opened_and_recents, write_state, write_state_with_lookup,
-    ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver, PersistedForgottenNote,
-    PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
+    db_set_note_pinned, db_touch_note_activity, derive_file_stem,
+    derive_file_stem_from_title_and_markdown, effective_open_count, is_forgotten_note_path,
+    is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
+    read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
+    touch_recent_note_id, validate_current_path, write_last_opened_and_recents, write_state,
+    write_state_with_lookup, ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver,
+    PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 
 #[cfg(test)]
@@ -211,6 +211,11 @@ mod tests {
                     live_note_id.clone(),
                     live_note_id.clone(),
                 ],
+                pinned_note_ids: vec![
+                    "missing-note".to_string(),
+                    live_note_id.clone(),
+                    live_note_id.clone(),
+                ],
                 hidden_note_ids: vec![
                     "missing-note".to_string(),
                     live_note_id.clone(),
@@ -305,6 +310,7 @@ mod tests {
         super::write_last_opened_and_recents(&PersistedState {
             last_opened_note_id: Some(live_note_id.clone()),
             recent_note_ids: vec![live_note_id.clone(), "unknown-id".to_string()],
+            pinned_note_ids: Vec::new(),
             hidden_note_ids: Vec::new(),
             note_order_note_ids: Vec::new(),
             collapsed_note_ids: Vec::new(),
@@ -358,6 +364,7 @@ mod tests {
         super::write_last_opened_and_recents(&PersistedState {
             last_opened_note_id: Some("missing-id".to_string()),
             recent_note_ids: vec![live_note_id.clone(), "missing-id".to_string()],
+            pinned_note_ids: Vec::new(),
             hidden_note_ids: Vec::new(),
             note_order_note_ids: Vec::new(),
             collapsed_note_ids: Vec::new(),
@@ -388,6 +395,38 @@ mod tests {
         assert!(state.hidden_note_ids.is_empty());
         assert!(state.note_order_note_ids.is_empty());
         assert_eq!(state.last_opened_note_id, None);
+    }
+
+    #[test]
+    fn pinned_note_ids_round_trip_in_stable_order() {
+        let _guard = lock_test_env();
+        let app_data_dir = TestDir::new("state-app-data-pins");
+        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
+        let temp = TestDir::new("state-pins");
+        let notes_dir = temp.path();
+        super::set_notes_root_override(Some(notes_dir.to_path_buf())).expect("override notes root");
+
+        let first_path = notes_dir.join("First.md");
+        let second_path = notes_dir.join("Second.md");
+        fs::write(&first_path, "# First\n\nBody").expect("write first");
+        fs::write(&second_path, "# Second\n\nBody").expect("write second");
+        let first_id = resolve_note_id_from_path(&first_path).expect("first id");
+        let second_id = resolve_note_id_from_path(&second_path).expect("second id");
+
+        super::db_set_note_pinned(&first_id, true).expect("pin first");
+        super::db_set_note_pinned(&second_id, true).expect("pin second");
+        assert_eq!(
+            read_state(notes_dir).expect("read pins").pinned_note_ids,
+            vec![second_id.clone(), first_id.clone()]
+        );
+
+        super::db_set_note_pinned(&second_id, false).expect("unpin second");
+        assert_eq!(
+            read_state(notes_dir)
+                .expect("read unpinned")
+                .pinned_note_ids,
+            vec![first_id]
+        );
     }
 
     #[test]

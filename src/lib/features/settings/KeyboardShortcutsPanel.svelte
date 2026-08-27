@@ -1,7 +1,8 @@
 <script lang="ts">
   import {
     formatShortcutBinding,
-    getDefaultKeyboardShortcutBinding,
+    getEffectiveDefaultKeyboardShortcutBinding,
+    getEffectiveKeyboardShortcutBinding,
     getKeyboardShortcutConflicts,
     getShortcutDefinition,
     isKeyboardShortcutCustomized,
@@ -107,8 +108,10 @@
     const haystack = [
       definition.label,
       definition.description,
-      formatShortcutBinding(keyboardShortcuts.bindings[definition.id]),
-      formatShortcutBinding(getDefaultKeyboardShortcutBinding(definition.id)),
+      formatShortcutBinding(
+        getEffectiveKeyboardShortcutBinding(definition.id, keyboardShortcuts.bindings)
+      ),
+      formatShortcutBinding(getEffectiveDefaultKeyboardShortcutBinding(definition.id)),
       definition.group
     ]
       .join(' ')
@@ -177,7 +180,10 @@
 
       <div class="space-y-2">
         {#each group.items as definition}
-          {@const currentBinding = keyboardShortcuts.bindings[definition.id]}
+          {@const currentBinding = getEffectiveKeyboardShortcutBinding(
+            definition.id,
+            keyboardShortcuts.bindings
+          )}
           {@const isCustomized = isKeyboardShortcutCustomized(definition.id, keyboardShortcuts.bindings)}
           {@const conflictDescription = describeConflicts(definition)}
           <div class="rounded-xl border border-border/60 bg-background/60 px-3 py-3">
@@ -198,7 +204,7 @@
                 </div>
                 <p class="mt-1 text-xs text-muted-foreground">{definition.description}</p>
                 <p class="mt-1 text-[11px] text-muted-foreground">
-                  Default: <ShortcutBinding binding={getDefaultKeyboardShortcutBinding(definition.id)} />
+                  Default: <ShortcutBinding binding={getEffectiveDefaultKeyboardShortcutBinding(definition.id)} />
                 </p>
                 {#if conflictDescription}
                   <p class="mt-1 text-[11px] text-amber-700 dark:text-amber-300">

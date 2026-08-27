@@ -47,4 +47,13 @@ describe('buildCurrentNoteSearchResults', () => {
     expect(searchCurrent('  ', 'body')).toEqual([]);
     expect(searchCurrent('missing', 'body')).toEqual([]);
   });
+
+  it('ignores YAML frontmatter while preserving body offsets', () => {
+    const markdown = '---\ntags: [private-search-term]\n---\nbody private-search-term';
+    const results = searchCurrent('private-search-term', markdown);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].startLine).toBe(4);
+    expect(results[0].currentMatchRange).toEqual({ from: 41, to: 60 });
+  });
 });

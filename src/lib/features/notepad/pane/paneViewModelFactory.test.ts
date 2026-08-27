@@ -52,6 +52,7 @@ describe('pane view model document status', () => {
         throw new Error('chat bindings are not used for an editor');
       },
       isReviewingDocument: () => false,
+      isNotePinned: (noteId) => noteId === 'note-1',
       paneTitleInputClass: 'title',
       getTransientUiState: () => ({ kind: 'none' }),
       getPaneCommandPaneId: () => null,
@@ -73,6 +74,8 @@ describe('pane view model document status', () => {
         label: 'Changed outside the app',
         externalKind: 'snapshot'
       });
+      expect(viewModel.canPin).toBe(true);
+      expect(viewModel.isPinned).toBe(true);
     }
   });
 });

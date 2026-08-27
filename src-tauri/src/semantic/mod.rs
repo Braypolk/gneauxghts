@@ -996,10 +996,11 @@ impl SemanticState {
         generation_key: AtlasGenerationKey,
         query: String,
         activity_by_note_id: std::collections::HashMap<String, crate::state::NoteActivity>,
+        notes_dir: &Path,
     ) -> Result<AtlasSearchResponse, String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
-                state.search_vault_atlas(generation_key, query, activity_by_note_id)
+                state.search_vault_atlas(generation_key, query, activity_by_note_id, notes_dir)
             }
             SemanticStateInner::Disabled(state) => Ok(AtlasSearchResponse {
                 status: "unavailable".to_string(),

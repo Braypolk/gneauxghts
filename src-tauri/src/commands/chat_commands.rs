@@ -533,6 +533,14 @@ pub(crate) fn chat_cancel_request(
 }
 
 #[tauri::command]
+pub(crate) fn chat_decide_permission(
+    service: State<'_, ChatService>,
+    command: crate::agent_permissions::AgentPermissionDecisionCommand,
+) -> Result<crate::agent_permissions::AgentPermissionResolution, String> {
+    service.decide_agent_permission(command)
+}
+
+#[tauri::command]
 pub(crate) async fn chat_retry_message(
     app: AppHandle,
     service: State<'_, ChatService>,

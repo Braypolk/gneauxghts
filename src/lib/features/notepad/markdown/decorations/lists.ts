@@ -1,4 +1,5 @@
 import { Decoration, EditorView, WidgetType } from '@codemirror/view';
+import { isolateHistory } from '@codemirror/commands';
 import type { SyntaxNodeRef } from '@lezer/common';
 import type { MarkdownNodeDecorator } from './types';
 
@@ -17,6 +18,10 @@ const TASK_MARKER_RE = /^(\s*(?:[-*+]|\d+\.)\s*)\[([ xX])\]/;
 // `gnAtomicIndent` lets markdownExtensions also expose these exact ranges via
 // EditorView.atomicRanges, preventing caret motion into the hidden characters.
 const concealedListIndent = Decoration.replace({ gnAtomicIndent: true });
+// In the rendered task state the checkbox is the marker. Conceal the persisted
+// `- ` / `* ` / `+ ` prefix without reserving a second marker column. It is
+// revealed again whenever the caret or selection touches the task line.
+const concealedTaskListMark = Decoration.replace({});
 
 // Interactive checkbox shown in place of the raw `[ ]`/`[x]` task marker when
 // the line is not being edited. Clicking toggles the marker char in the doc.
@@ -53,16 +58,31 @@ class TaskCheckboxWidget extends WidgetType {
 
   private toggle(view: EditorView, wrap: HTMLElement): void {
     const pos = view.posAtDOM(wrap);
-    const line = view.state.doc.lineAt(pos);
-    const match = line.text.match(TASK_MARKER_RE);
-    if (!match) {
-      return;
-    }
-    const markerStart = line.from + match[1].length + 1;
-    view.dispatch({
-      changes: { from: markerStart, to: markerStart + 1, insert: this.checked ? ' ' : 'x' }
-    });
+    toggleTaskMarker(view, pos, this.checked);
   }
+}
+
+/** Toggle the persisted task marker at `pos` as one ordinary, undoable edit. */
+export function toggleTaskMarker(
+  view: EditorView,
+  pos: number,
+  checked: boolean
+): boolean {
+  const line = view.state.doc.lineAt(pos);
+  const match = line.text.match(TASK_MARKER_RE);
+  if (!match) return false;
+
+  const markerStart = line.from + match[1].length + 1;
+  view.dispatch({
+    changes: {
+      from: markerStart,
+      to: markerStart + 1,
+      insert: checked ? ' ' : 'x'
+    },
+    userEvent: 'input',
+    annotations: [isolateHistory.of('full')]
+  });
+  return true;
 }
 
 function listItemDepth(node: SyntaxNodeRef): number {
@@ -123,13 +143,22 @@ export const decorateList: MarkdownNodeDecorator = (ctx, node) => {
       const line = view.state.doc.lineAt(node.from);
       const active = ctx.selectionOverlaps(line.from, line.to);
       const listType = node.node.parent?.parent?.name;
-      const markClass = listType === 'OrderedList' ? 'cm-gn-list-mark-ol' : 'cm-gn-list-mark-ul';
+      const isTask = TASK_MARKER_RE.test(line.text);
+      const markClass =
+        listType === 'OrderedList'
+          ? 'cm-gn-list-mark-ol'
+          : 'cm-gn-list-mark-ul';
       const activeSuffix = active ? ' cm-gn-active' : '';
 
-      // Include the trailing space so the bullet/number column has consistent
-      // width whether revealed or concealed.
+      // Paint the trailing space with ordinary list markers and reveal it with
+      // active task syntax. Inactive tasks replace the full prefix so the
+      // checkbox owns the marker column without leaving a hidden gap.
       const markEnd = Math.min(node.to + 1, line.to);
-      decorations.push(Decoration.mark({ class: markClass + activeSuffix }).range(node.from, markEnd));
+      decorations.push(
+        isTask && !active
+          ? concealedTaskListMark.range(node.from, markEnd)
+          : Decoration.mark({ class: markClass + activeSuffix }).range(node.from, markEnd)
+      );
       break;
     }
 

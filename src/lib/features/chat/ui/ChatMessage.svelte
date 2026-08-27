@@ -4,7 +4,8 @@
     Copy,
     FileInput,
     Link,
-    RotateCcw
+    RotateCcw,
+    ShieldAlert
   } from '@lucide/svelte';
   import ChainOfThought from '$lib/components/ai-elements/chain-of-thought/chain-of-thought.svelte';
   import Checkpoint from '$lib/components/ai-elements/checkpoint/checkpoint.svelte';
@@ -29,6 +30,8 @@
   import { attachmentDataUrl } from '../attachments';
   import type {
     ChatAttachmentInput,
+    AgentPermissionDecision,
+    AgentPermissionRequest,
     ChatCitation,
     ChatExcerpt,
     ChatMessage as ChatMessageModel,
@@ -46,6 +49,7 @@
     selected: ChatSelection | null;
     selectedExcerpt: ChatExcerpt | null;
     canInsertSelection: boolean;
+    canDecidePermission: boolean;
     onPreviewAttachment: (attachment: ChatAttachmentInput) => void;
     onOpenCitation?: (
       citation: Extract<ChatCitation, { kind: 'note' }>
@@ -58,6 +62,10 @@
     onCopyLink: () => void | Promise<void>;
     onInsertSelection: () => void | Promise<void>;
     onToggleRemember: () => void | Promise<void>;
+    onDecidePermission: (
+      request: AgentPermissionRequest,
+      decision: AgentPermissionDecision
+    ) => void | Promise<void>;
   }
 
   let {
@@ -66,6 +74,7 @@
     selected,
     selectedExcerpt,
     canInsertSelection,
+    canDecidePermission,
     onPreviewAttachment,
     onOpenCitation,
     onOpenWikilink,
@@ -75,7 +84,8 @@
     onCopySelection,
     onCopyLink,
     onInsertSelection,
-    onToggleRemember
+    onToggleRemember,
+    onDecidePermission
   }: Props = $props();
 
   const visibleParts = $derived<ChatPart[]>(
@@ -100,6 +110,26 @@
   function planSummary(entries: Extract<ChatPart, { type: 'plan' }>['entries']) {
     const completed = entries.filter((entry) => entry.status === 'completed').length;
     return `${completed} of ${entries.length} steps complete`;
+  }
+
+  function permissionResolutionLabel(
+    resolution: Extract<ChatPart, { type: 'permission' }>['resolution']
+  ) {
+    switch (resolution) {
+      case 'allowedOnce': return 'Allowed once';
+      case 'allowedForSession': return 'Allowed for this run';
+      case 'denied': return 'Denied';
+      default: return 'Cancelled';
+    }
+  }
+
+  function permissionIsActionable(part: Extract<ChatPart, { type: 'permission' }>) {
+    return canDecidePermission &&
+      part.status === 'pending' &&
+      part.request.conversationId === message.conversationId &&
+      part.request.messageId === message.id &&
+      part.request.requestId === message.requestId &&
+      part.request.runId === message.agentRunId;
   }
 </script>
 
@@ -244,6 +274,52 @@
           <RotateCcw class="h-3.5 w-3.5" />
           <span>{part.label}</span>
         </div>
+      {:else if part.type === 'permission'}
+        <section
+          class="rounded-lg border border-amber-500/35 bg-amber-500/5 px-3 py-2.5 text-xs"
+          aria-label={`Permission required: ${part.request.title}`}
+        >
+          <div class="flex items-start gap-2">
+            <ShieldAlert class="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div class="min-w-0 flex-1">
+              <div class="font-medium text-foreground">{part.request.title}</div>
+              <div class="mt-0.5 break-words text-muted-foreground">
+                Scope: {part.request.scope}
+              </div>
+              {#if part.status === 'pending'}
+                <div
+                  class="mt-2 flex flex-wrap gap-1.5"
+                  role="group"
+                  aria-label={`Decide permission for ${part.request.title}`}
+                >
+                  <button
+                    type="button"
+                    class="rounded-md border border-border px-2 py-1 font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!permissionIsActionable(part)}
+                    onclick={() => void onDecidePermission(part.request, 'deny')}
+                  >Deny</button>
+                  <button
+                    type="button"
+                    class="rounded-md border border-border px-2 py-1 font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!permissionIsActionable(part)}
+                    onclick={() => void onDecidePermission(part.request, 'allowOnce')}
+                  >Allow once</button>
+                  <button
+                    type="button"
+                    class="rounded-md bg-foreground px-2 py-1 font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!permissionIsActionable(part)}
+                    aria-label="Allow for this agent run"
+                    onclick={() => void onDecidePermission(part.request, 'allowForSession')}
+                  >Allow for this run</button>
+                </div>
+              {:else}
+                <div class="mt-2 text-muted-foreground" role="status">
+                  {permissionResolutionLabel(part.resolution)}
+                </div>
+              {/if}
+            </div>
+          </div>
+        </section>
       {:else if part.type === 'sources'}
         <Sources count={part.citations.length}>
           {#each part.citations as citation, index (citation.id)}

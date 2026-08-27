@@ -15,6 +15,7 @@ export interface WorkspaceShortcutDeps<TPaneId extends string> {
   switchActivePane: () => Promise<void>;
   startNewNoteFlow: () => Promise<void>;
   toggleRelatedPanel: () => void;
+  togglePinCurrentNote: () => void | Promise<void>;
   goToPreviousLocation: () => void | Promise<void>;
   focusPaneAfterShortcut: (paneId: TPaneId, options?: { preferTitle?: boolean }) => void;
   /** Pane content-picker keydown branch — return true if handled. */
@@ -153,6 +154,14 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
     if (keyboardShortcutMatchesEvent(event, 'toggleRelatedPanel')) {
       event.preventDefault();
       deps.toggleRelatedPanel();
+      return;
+    }
+
+    if (keyboardShortcutMatchesEvent(event, 'togglePinCurrentNote')) {
+      event.preventDefault();
+      if (!event.repeat) {
+        await deps.togglePinCurrentNote();
+      }
       return;
     }
 

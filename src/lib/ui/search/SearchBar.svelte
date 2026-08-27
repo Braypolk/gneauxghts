@@ -1,5 +1,6 @@
 <script module lang="ts">
   import type { Component } from 'svelte';
+  import type { KeyboardShortcutId } from '$lib/keyboardShortcuts.svelte';
 
   export interface SearchChoice {
     id: string;
@@ -10,6 +11,7 @@
     icon?: Component<{ class?: string }>;
     disabled?: boolean;
     tone?: string;
+    shortcutId?: KeyboardShortcutId;
   }
 
   export interface SearchBarHandle {
@@ -30,7 +32,12 @@
     WholeWord,
     X
   } from '@lucide/svelte';
-  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts.svelte';
+  import {
+    formatShortcutBinding,
+    getEffectiveKeyboardShortcutBinding,
+    keyboardShortcutMatchesEvent
+  } from '$lib/keyboardShortcuts.svelte';
+  import { modifierHints } from '$lib/ui/modifierHints.svelte';
 
   interface SearchShortcutOptions {
     enabled: boolean;
@@ -222,9 +229,22 @@
     if (choice.id === 'all') return BookOpen;
     return StickyNote;
   }
+
+  function choiceShortcutLabel(choice: SearchChoice) {
+    return choice.shortcutId
+      ? formatShortcutBinding(getEffectiveKeyboardShortcutBinding(choice.shortcutId))
+      : null;
+  }
 </script>
 
-<svelte:window onkeydowncapture={handleWindowKeydown} />
+<svelte:window
+  onkeydowncapture={(event) => {
+    modifierHints.handleKeydown(event);
+    handleWindowKeydown(event);
+  }}
+  onkeyupcapture={modifierHints.handleKeyup}
+  onblur={modifierHints.reset}
+/>
 
 <div
   bind:this={shellEl}
@@ -321,6 +341,7 @@
 
     {#each searchTypeOptions as choice (choice.id)}
       {@const ChoiceIcon = choice.icon}
+      {@const shortcutLabel = choiceShortcutLabel(choice)}
       <button
         type="button"
         class="mobile-dense-touch-target shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -335,12 +356,20 @@
         {#if ChoiceIcon}
           <ChoiceIcon class="h-4 w-4" />
         {/if}
-        <span class="shared-search-mode-label hidden min-[900px]:inline-block">{choice.shortLabel ?? choice.label}</span>
+        <span class="shared-search-mode-label hidden min-[900px]:grid">
+          <span class:invisible={modifierHints.visible && Boolean(choiceShortcutLabel(choice))} class="col-start-1 row-start-1">
+            {choice.shortLabel ?? choice.label}
+          </span>
+          {#if shortcutLabel}
+            <span class:invisible={!modifierHints.visible} class="col-start-1 row-start-1">{shortcutLabel}</span>
+          {/if}
+        </span>
       </button>
     {/each}
 
     {#each scopeOptions as choice (choice.id)}
       {@const ChoiceIcon = getScopeIcon(choice)}
+      {@const shortcutLabel = choiceShortcutLabel(choice)}
       <button
         type="button"
         class="mobile-dense-touch-target shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -353,7 +382,14 @@
         onclick={() => void selectScope(choice.id)}
       >
         <ChoiceIcon class="h-4 w-4" />
-        <span class="shared-search-mode-label hidden min-[900px]:inline-block">{choice.shortLabel ?? choice.label}</span>
+        <span class="shared-search-mode-label hidden min-[900px]:grid">
+          <span class:invisible={modifierHints.visible && Boolean(choiceShortcutLabel(choice))} class="col-start-1 row-start-1">
+            {choice.shortLabel ?? choice.label}
+          </span>
+          {#if shortcutLabel}
+            <span class:invisible={!modifierHints.visible} class="col-start-1 row-start-1">{shortcutLabel}</span>
+          {/if}
+        </span>
       </button>
     {/each}
 
@@ -433,7 +469,7 @@
   }
 
   .shared-search-bar-shell[data-search-expanded='true'] .shared-search-mode-label {
-    max-width: 5rem;
+    max-width: 7.5rem;
     opacity: 1;
     transform: translateX(0);
     transition-delay: 90ms, 110ms, 90ms;

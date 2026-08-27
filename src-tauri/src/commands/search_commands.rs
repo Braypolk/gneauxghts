@@ -1,4 +1,4 @@
-use super::{prepare_notes_dir, RecentTaskItem, INTERACTIVE_INDEX_REFRESH_MAX_AGE};
+use super::{prepare_notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE};
 use crate::{
     index::{
         build_current_override, normalize_search_text, AppState, DraftRef, IndexedNote, NotesIndex,
@@ -12,9 +12,9 @@ use crate::{
     },
     services::{resolve_current_document, CurrentDocumentRequest},
     state::{
-        db_load_note_activity, db_set_last_chat_location, effective_open_count,
-        prune_recent_note_ids, read_state, resolve_note_id_from_path,
-        task_projection::list_recent_open_tasks, validate_current_path, write_state, NoteActivity,
+        db_load_note_activity, db_set_last_chat_location, db_set_note_pinned, effective_open_count,
+        prune_recent_note_ids, read_state, resolve_note_id_from_path, validate_current_path,
+        write_state, NoteActivity,
     },
     time::current_time_millis,
 };
@@ -258,8 +258,8 @@ pub(crate) struct LastChatLocation {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecentFocusBundle {
+    pinned_notes: Vec<NoteSearchResult>,
     recent_notes: Vec<NoteSearchResult>,
-    recent_tasks: Vec<RecentTaskItem>,
     last_chat: Option<LastChatLocation>,
 }
 
@@ -336,26 +336,13 @@ pub(crate) fn list_recent_focus(
         &index,
         limit,
     );
+    let pinned_notes =
+        collect_recent_note_results(&persisted_state.pinned_note_ids, None, &index, limit);
 
     drop(index);
     if prune_changed {
         write_state(&notes_dir, &persisted_state)?;
     }
-
-    let hidden_note_ids: HashSet<String> =
-        persisted_state.hidden_note_ids.iter().cloned().collect();
-    let recent_tasks: Vec<RecentTaskItem> = list_recent_open_tasks(limit, &hidden_note_ids)?
-        .into_iter()
-        .map(|record| RecentTaskItem {
-            note_id: record.note_id,
-            task_key: record.task_key,
-            note_path: record.note_path,
-            note_title: record.note_title,
-            text: record.text,
-            line_number: record.line_number,
-            updated_at_millis: record.updated_at_millis,
-        })
-        .collect();
 
     let last_chat = persisted_state
         .last_chat_conversation_id
@@ -367,10 +354,19 @@ pub(crate) fn list_recent_focus(
         });
 
     Ok(RecentFocusBundle {
+        pinned_notes,
         recent_notes,
-        recent_tasks,
         last_chat,
     })
+}
+
+#[tauri::command]
+pub(crate) fn set_note_pinned(note_id: String, pinned: bool) -> Result<(), String> {
+    let note_id = note_id.trim();
+    if note_id.is_empty() {
+        return Err("note_id is required".to_string());
+    }
+    db_set_note_pinned(note_id, pinned)
 }
 
 #[tauri::command]

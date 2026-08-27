@@ -10,7 +10,7 @@ import {
 } from '$lib/features/notepad/markdown/inlineFormatSpec';
 import {
   formatShortcutBinding,
-  getKeyboardShortcutBinding,
+  getEffectiveKeyboardShortcutBinding,
   type KeyboardShortcutId
 } from '$lib/keyboardShortcuts.svelte';
 
@@ -434,7 +434,7 @@ export function getInlineFormatShortcutLabel(id: InlineFormatId): string | undef
     return undefined;
   }
 
-  const binding = getKeyboardShortcutBinding(shortcutId);
+  const binding = getEffectiveKeyboardShortcutBinding(shortcutId);
   if (!binding) {
     return undefined;
   }

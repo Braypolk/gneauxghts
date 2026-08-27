@@ -33,6 +33,40 @@ interface DropSlot {
   indicatorDocY: number;
 }
 
+export interface BlockExtentGeometryInput {
+  blockTop: number;
+  blockBottom: number;
+  viewportTop: number;
+  viewportBottom: number;
+  left: number;
+}
+
+export interface BlockExtentGeometry {
+  top: number;
+  left: number;
+  height: number;
+}
+
+/** Clip a fixed-position block extent indicator to the editor viewport. */
+export function computeBlockExtentGeometry({
+  blockTop,
+  blockBottom,
+  viewportTop,
+  viewportBottom,
+  left
+}: BlockExtentGeometryInput): BlockExtentGeometry | null {
+  const top = Math.max(blockTop, viewportTop);
+  const bottom = Math.min(blockBottom, viewportBottom);
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) {
+    return null;
+  }
+  return {
+    top: Math.round(top),
+    left: Math.round(left),
+    height: Math.max(1, Math.round(bottom - top))
+  };
+}
+
 /** Resolve a CSS length, including rem/calc/custom properties, to pixels. */
 export function resolveCssLength(host: Element, value: string): number {
   if (!value) {
@@ -59,6 +93,7 @@ export function createBlockHandleExtension(
       readonly #editorRoot: HTMLDivElement;
       readonly #scrollRoot: HTMLElement | null;
       readonly #dropIndicator: HTMLDivElement;
+      readonly #extentIndicator: HTMLDivElement;
       readonly #unmountBlockHandle: () => void;
       #destroyed = false;
       #measureQueued = false;
@@ -97,6 +132,11 @@ export function createBlockHandleExtension(
         this.#dropIndicator.dataset.show = 'false';
         this.#dropIndicator.style.position = 'fixed';
         this.#editorRoot.appendChild(this.#dropIndicator);
+        this.#extentIndicator = document.createElement('div');
+        this.#extentIndicator.className = 'notepad-block-extent-indicator';
+        this.#extentIndicator.dataset.show = 'false';
+        this.#extentIndicator.style.position = 'fixed';
+        this.#editorRoot.appendChild(this.#extentIndicator);
 
         this.#unmountBlockHandle = mountBlockHandle(
           this.#editorRoot,
@@ -137,6 +177,7 @@ export function createBlockHandleExtension(
           this.#handleScroll,
           true
         );
+        window.addEventListener('resize', this.#handleResize);
       }
 
       update(update: ViewUpdate) {
@@ -170,6 +211,7 @@ export function createBlockHandleExtension(
           this.#handleScroll,
           true
         );
+        window.removeEventListener('resize', this.#handleResize);
         window.removeEventListener(
           'pointermove',
           this.#handleWindowPointerMove,
@@ -186,6 +228,7 @@ export function createBlockHandleExtension(
           true
         );
         this.#dropIndicator.remove();
+        this.#extentIndicator.remove();
         this.#content?.removeEventListener(
           'pointerenter',
           this.#handleHandlePointerEnter
@@ -266,6 +309,11 @@ export function createBlockHandleExtension(
         }
       };
 
+      #handleResize = () => {
+        this.#laneDirty = true;
+        if (this.#currentBlock) this.#syncCurrentBlock();
+      };
+
       #handleAddClick = () => {
         if (this.#currentBlock) {
           insertParagraphBelow(this.#view, this.#currentBlock);
@@ -276,6 +324,7 @@ export function createBlockHandleExtension(
         if (!this.#currentBlock || !this.#dragButton) return;
 
         event.preventDefault();
+        this.#hideExtentIndicator();
         this.#drag = {
           pointerId: event.pointerId,
           startX: event.clientX,
@@ -359,6 +408,7 @@ export function createBlockHandleExtension(
           }
           showSlashMenu(this.#view, drag.source.from);
           this.#drag = null;
+          this.#syncCurrentBlock();
           return;
         }
 
@@ -375,6 +425,7 @@ export function createBlockHandleExtension(
           );
         }
         this.#drag = null;
+        this.#syncCurrentBlock();
       };
 
       #focusBlock(block: BlockDescriptor) {
@@ -412,7 +463,12 @@ export function createBlockHandleExtension(
               anchor,
               this.#readHandleLaneMetrics()
             );
-            return placement ? { anchor, ...placement } : null;
+            if (!placement) return null;
+            return {
+              anchor,
+              ...placement,
+              extent: this.#measureExtentPlacement(anchor, placement.textLeft)
+            };
           },
           write: (measurement) => {
             this.#measureQueued = false;
@@ -425,6 +481,7 @@ export function createBlockHandleExtension(
               measurement.top,
               measurement.anchor.block.from
             );
+            this.#renderExtentIndicator(measurement.extent);
           }
         });
       }
@@ -432,7 +489,10 @@ export function createBlockHandleExtension(
       #syncCurrentBlock() {
         if (!this.#currentBlock) return;
         const anchor = this.#resolveAnchorAtClientY(this.#pointerY);
-        if (!anchor) return;
+        if (!anchor) {
+          this.#hideHandle();
+          return;
+        }
 
         this.#pendingAnchor = anchor;
         this.#scheduleCurrentBlockSync();
@@ -453,6 +513,7 @@ export function createBlockHandleExtension(
         if (!lane) return null;
         return {
           left: Math.round(lane.left),
+          textLeft: lane.textLeft,
           top: Math.round(
             this.#view.documentTop +
               anchor.centerDocY -
@@ -466,6 +527,36 @@ export function createBlockHandleExtension(
         if (!this.#content) return;
         this.#currentBlock = null;
         this.#content.dataset.show = 'false';
+        this.#hideExtentIndicator();
+      }
+
+      #measureExtentPlacement(
+        anchor: VisualLineAnchor,
+        textLeft: number
+      ) {
+        const viewport = this.#view.scrollDOM.getBoundingClientRect();
+        return computeBlockExtentGeometry({
+          blockTop: this.#view.documentTop + anchor.docTop,
+          blockBottom: this.#view.documentTop + anchor.docBottom,
+          viewportTop: viewport.top,
+          viewportBottom: viewport.bottom,
+          left: textLeft - 9
+        });
+      }
+
+      #renderExtentIndicator(geometry: BlockExtentGeometry | null) {
+        if (!geometry || this.#drag) {
+          this.#hideExtentIndicator();
+          return;
+        }
+        this.#extentIndicator.dataset.show = 'true';
+        this.#extentIndicator.style.left = `${geometry.left}px`;
+        this.#extentIndicator.style.top = `${geometry.top}px`;
+        this.#extentIndicator.style.height = `${geometry.height}px`;
+      }
+
+      #hideExtentIndicator() {
+        this.#extentIndicator.dataset.show = 'false';
       }
 
       #renderDropIndicator() {
@@ -521,14 +612,18 @@ export function createBlockHandleExtension(
       }
 
       #resolveAnchorForBlock(block: BlockDescriptor) {
-        const lineBlock = this.#view.lineBlockAt(block.from);
-        if (!lineBlock) return null;
+        const firstLineBlock = this.#view.lineBlockAt(block.from);
+        const lastLineBlock = this.#view.lineBlockAt(
+          Math.max(block.from, block.to - 1)
+        );
+        if (!firstLineBlock || !lastLineBlock) return null;
 
         return {
           block,
-          docTop: lineBlock.top,
-          docBottom: lineBlock.top + lineBlock.height,
-          centerDocY: lineBlock.top + lineBlock.height / 2
+          docTop: firstLineBlock.top,
+          docBottom: lastLineBlock.top + lastLineBlock.height,
+          centerDocY:
+            firstLineBlock.top + firstLineBlock.height / 2
         };
       }
 

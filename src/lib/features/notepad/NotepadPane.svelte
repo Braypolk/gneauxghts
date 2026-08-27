@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { CornerUpLeft, MessagesSquare, X } from '@lucide/svelte';
+  import { CornerUpLeft, MessagesSquare, Pin, X } from '@lucide/svelte';
+  import {
+    formatShortcutBinding,
+    getEffectiveKeyboardShortcutBinding
+  } from '$lib/keyboardShortcuts.svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
   import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
   import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
@@ -41,6 +45,9 @@
   );
   const splitPaneTopActions = $derived(
     getPaneTopActions(viewModel.paneKind, 'split')
+  );
+  const pinShortcutLabel = $derived(
+    formatShortcutBinding(getEffectiveKeyboardShortcutBinding('togglePinCurrentNote'))
   );
 
   const splitPaneActionIcons = {
@@ -102,12 +109,32 @@
         <div class="notepad-editor-top-row relative z-10 flex items-center justify-between gap-2 px-3 pt-3 pb-2 sm:gap-3 sm:px-4 sm:pt-4 sm:pb-3">
           <div class="h-10 w-10 shrink-0 sm:h-9 sm:w-9" aria-hidden="true"></div>
           <div class="notepad-editor-title-wrap pointer-events-none absolute inset-x-14 top-3 flex justify-center sm:inset-x-16 sm:top-4">
-            <div bind:this={pane.refs.titleShell} class="pointer-events-auto w-full max-w-[24rem] min-w-0">
+            <div
+              bind:this={pane.refs.titleShell}
+              class="pointer-events-auto relative grid w-fit min-w-[4rem] max-w-[min(24rem,calc(100%-2.75rem))]"
+            >
+              <button
+                type="button"
+                disabled={!viewModel.canPin}
+                class={`mobile-touch-target absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'bg-accent/70 text-accent-foreground' : ''}`}
+                aria-label={viewModel.isPinned ? 'Unpin note' : 'Pin note'}
+                aria-pressed={viewModel.isPinned}
+                title={`${viewModel.isPinned ? 'Unpin note' : 'Pin note'} (${pinShortcutLabel})`}
+                onmousedown={(event) => event.preventDefault()}
+                onclick={() => void actions.onTogglePin(viewModel.paneId)}
+              >
+                <Pin class="h-4 w-4" fill={viewModel.isPinned ? 'currentColor' : 'none'} />
+              </button>
+              <span
+                aria-hidden="true"
+                class="invisible col-start-1 row-start-1 overflow-hidden whitespace-pre text-lg font-semibold tracking-tight sm:text-2xl"
+              ><span data-testid="note-title-measure">{displayedTitle || viewModel.titlePlaceholder}</span></span>
               <input
                 bind:this={pane.refs.titleInput}
                 type="text"
+                size="1"
                 data-testid="note-title"
-                class={viewModel.titleClass}
+                class={`${viewModel.titleClass} col-start-1 row-start-1 min-w-0`}
                 placeholder={viewModel.titlePlaceholder}
                 value={displayedTitle}
                 readonly={viewModel.titleReadonly}

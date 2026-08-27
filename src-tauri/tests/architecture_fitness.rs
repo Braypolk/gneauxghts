@@ -160,6 +160,46 @@ fn chat_requests_use_typed_intent_and_one_correlated_run_context() {
 }
 
 #[test]
+fn agent_permissions_stay_product_owned_transient_and_pre_tool() {
+    let permissions = repository_file("src-tauri/src/agent_permissions.rs");
+    let runtime = repository_file("src-tauri/src/agent_runtime.rs");
+    let chat = repository_file("src-tauri/src/chat.rs");
+    let registration = repository_file("src-tauri/src/lib.rs");
+
+    assert_contains_all(
+        &permissions,
+        &[
+            "pub(crate) struct AgentPermissionBroker",
+            "pub(crate) fn for_run",
+            "fn production_requirements()",
+            "pub(crate) async fn request_for_tool",
+            "AgentPermissionDecision::AllowForSession",
+            "state.run_grants.retain(|grant| grant.run_id != run_id)",
+        ],
+    );
+    assert_contains_all(
+        &runtime,
+        &[
+            "async fn on_tool_call",
+            ".request_for_tool(",
+            "Self::PermissionRequested { .. }",
+            "Self::PermissionResolved { .. }",
+        ],
+    );
+    assert_contains_all(
+        &chat,
+        &[
+            "envelope.event.is_durable()",
+            "permission_broker.finish_run(&run.run_id)",
+            "AgentPermissionBoundary::for_run(",
+            "pub(crate) fn decide_agent_permission",
+        ],
+    );
+    assert!(registration.contains("commands::chat_commands::chat_decide_permission"));
+    assert_contains_none(&permissions, &["rig_agent", "rig_core", "fs::write"]);
+}
+
+#[test]
 fn semantic_state_owns_one_work_queue_and_worker_context() {
     let semantic = repository_file("src-tauri/src/semantic/mod.rs");
     let indexer = repository_file("src-tauri/src/semantic/indexer.rs");

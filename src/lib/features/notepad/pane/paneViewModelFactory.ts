@@ -13,6 +13,7 @@ import {
   getPaneCapabilityPolicy
 } from '$lib/features/notepad/workspace/paneCapabilities';
 import {
+  getDocumentNoteId,
   getDocumentStatusViewModel
 } from '$lib/features/notepad/document/documentState';
 import type {
@@ -28,6 +29,7 @@ export interface PaneViewModelFactoryDeps {
   getPaneRuntime: (paneId: NotepadPaneId) => PaneRuntime;
   getChatBindings: (paneId: NotepadPaneId) => ChatPaneBindings;
   isReviewingDocument: (document: NoteDraftState) => boolean;
+  isNotePinned: (noteId: string) => boolean;
   paneTitleInputClass: string;
   getTransientUiState: () => PaneTransientUiState<NotepadPaneId>;
   getPaneCommandPaneId: () => NotepadPaneId | null;
@@ -86,9 +88,12 @@ export function createPaneViewModelFactory(
     };
 
     if (paneKind === 'editor') {
+      const noteId = getDocumentNoteId(document);
       return {
         ...common,
         paneKind,
+        canPin: noteId !== null,
+        isPinned: noteId !== null && deps.isNotePinned(noteId),
         documentStatus: getDocumentStatusViewModel(document),
         isEditorReady: deps.getPaneRuntime(paneId).ui.isEditorReady,
         isSlashMenuOpen:
