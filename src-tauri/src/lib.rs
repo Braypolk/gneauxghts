@@ -1,4 +1,6 @@
+mod agent_guardrails;
 mod agent_permissions;
+mod agent_run_coordinator;
 mod agent_runtime;
 mod agent_tools;
 mod app;
@@ -262,10 +264,13 @@ pub fn run() {
             commands::chat_commands::chat_update_conversation_policy,
             commands::chat_commands::chat_update_conversation_provider,
             commands::chat_commands::chat_list_local_models,
+            commands::chat_commands::chat_list_openai_models,
             commands::chat_commands::chat_get_model_capabilities,
+            commands::chat_commands::chat_set_local_model_capabilities,
             commands::chat_commands::chat_set_note_excluded,
             commands::chat_commands::chat_list_note_policies,
             commands::chat_commands::chat_search_notes,
+            commands::chat_commands::chat_suggest_context,
             commands::chat_commands::chat_list_pending_proposals,
             commands::chat_commands::chat_send_message,
             commands::chat_commands::chat_cancel_request,

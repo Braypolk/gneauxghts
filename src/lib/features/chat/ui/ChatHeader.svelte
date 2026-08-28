@@ -6,7 +6,7 @@
   } from '../controller.svelte';
   import { chatConversationContextKey } from './chatPanelHelpers';
 
-  type ChatMenu = 'history' | 'vault' | 'provider';
+  type ChatMenu = 'history' | 'vault' | 'provider' | 'model' | 'reasoning';
 
   interface Props {
     controller: ChatController;

@@ -252,7 +252,6 @@ mod tests {
                     id: "jina-v5-nano".to_string(),
                     label: "Jina embeddings v5 nano".to_string(),
                     dimensions: 768,
-                    local_only: true,
                     runtime_binary_path: Some("/app/llama-server".to_string()),
                     model_path: Some("/app/models/jina.gguf".to_string()),
                     model_repo_id: "jinaai/jina-embeddings-v5-text-nano-retrieval".to_string(),

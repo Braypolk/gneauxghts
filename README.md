@@ -161,12 +161,7 @@ Gneauxghts will look for `llama-server` in this order:
 4. `/opt/homebrew/bin/llama-server`
 5. `/usr/local/bin/llama-server`
 
-By default, semantic settings start in a conservative mode:
-
-- `localOnlyMode = true`
-- `autoDownloadModel = false`
-
-That means semantic indexing will not download a model automatically unless you change the setting. If you keep local-only mode enabled, place the GGUF model in the app's semantic model cache first. The current implementation is wired for:
+Semantic indexing does not download a model automatically. Use Download embedding model in Settings, or place the GGUF model in the app's semantic model cache. The current implementation is wired for:
 
 - Model repo: `jinaai/jina-embeddings-v5-text-nano-retrieval`
 - Expected file: `jina-embeddings-v5-text-nano-retrieval-Q6_K.gguf`

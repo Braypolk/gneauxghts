@@ -4,6 +4,7 @@ import {
   materializeDurableChatParts,
   reduceAgentEvent,
   replayAgentEvents,
+  settleAgentActivity,
   settlePendingPermissions
 } from './agentEvents';
 import type { ChatAgentEventEnvelope } from './types';
@@ -56,31 +57,61 @@ describe('agent event reducer', () => {
       .toBe(complete);
   });
 
-  it('keeps provider-safe reasoning lifecycle separate from answer text', () => {
-    const running = reduceAgentEvent(
-      initialAgentEventState(''),
-      envelope(1, { type: 'reasoningUpdated', status: 'running' })
-    );
-    const completed = reduceAgentEvent(
-      running,
+  it('keeps model steps internal while projecting tool detail, context, proposals, and guards', () => {
+    const events: ChatAgentEventEnvelope[] = [
+      envelope(1, { type: 'stepUpdated', index: 1, status: 'running' }),
       envelope(2, {
-        type: 'reasoningUpdated',
-        status: 'completed',
-        summary: 'Compared the available note evidence.'
+        type: 'toolCallUpdated', callId: 'call', name: 'read_note',
+        title: 'Read note', status: 'success', stepIndex: 1,
+        inputSummary: 'Project plan', outputSummary: 'Read 24 lines', durationMillis: 12
+      }),
+      envelope(3, {
+        type: 'contextUpdated', compacted: true, selectedNoteTitles: ['Project plan']
+      }),
+      envelope(4, {
+        type: 'proposalLinked', proposalId: 'proposal-1',
+        title: 'Project plan', kind: 'update'
+      }),
+      envelope(5, {
+        type: 'runGuardTriggered', reason: 'toolBudgetExceeded',
+        message: 'The agent stopped after reaching its tool limit.'
       })
-    );
-    expect(completed.parts.find((part) => part.type === 'reasoning')).toEqual({
-      id: 'reasoning',
-      type: 'reasoning',
-      status: 'completed',
-      summary: 'Compared the available note evidence.'
+    ];
+    const state = replayAgentEvents('', events);
+
+    expect(state.parts.some((part) => part.id.startsWith('step:'))).toBe(false);
+    expect(state.parts.find((part) => part.type === 'tool')).toMatchObject({
+      inputSummary: 'Project plan', outputSummary: 'Read 24 lines', durationMillis: 12
+    });
+    expect(state.parts.find((part) => part.type === 'context')).toMatchObject({
+      compacted: true, selectedNoteTitles: ['Project plan']
+    });
+    expect(state.parts.find((part) => part.type === 'proposalRef')).toMatchObject({
+      proposalId: 'proposal-1'
+    });
+    expect(state.parts.find((part) => part.id === 'run-guard')).toMatchObject({
+      reason: 'toolBudgetExceeded'
+    });
+  });
+
+  it('settles a running tool when its message reaches a terminal state', () => {
+    const settled = settleAgentActivity([
+      { id: 'text', type: 'text', text: 'Done' },
+      {
+        id: 'tool:read', type: 'tool', callId: 'read', name: 'read_note',
+        title: 'Read note', status: 'running'
+      }
+    ], 'completed');
+
+    expect(settled.find((part) => part.type === 'tool')).toMatchObject({
+      status: 'success'
     });
   });
 
   it('rejects wrong-target, unsupported, duplicate, and stale-run events', () => {
     const current = reduceAgentEvent(
       initialAgentEventState('answer'),
-      envelope(1, { type: 'reasoningUpdated', status: 'running' })
+      envelope(1, { type: 'stepUpdated', index: 0, status: 'running' })
     );
     expect(reduceAgentEvent(current, envelope(2, { type: 'textDelta', delta: 'wrong' }, {
       messageId: 'other-message'
@@ -90,7 +121,7 @@ describe('agent event reducer', () => {
     }))).toBe(current);
 
     const handoff = reduceAgentEvent(current, envelope(1, {
-      type: 'reasoningUpdated', status: 'running'
+      type: 'stepUpdated', index: 0, status: 'running'
     }, {
       requestId: 'request-2',
       runId: 'run-2',
@@ -110,10 +141,10 @@ describe('agent event reducer', () => {
       initialAgentEventState(),
       envelope(3, { type: 'planUpdated', entries: [] }, { createdAtMillis: 30 })
     );
-    expect(reduceAgentEvent(current, envelope(4, { type: 'reasoningUpdated', status: 'running' }, {
+    expect(reduceAgentEvent(current, envelope(4, { type: 'stepUpdated', index: 1, status: 'running' }, {
       runId: 'run-2', createdAtMillis: 40
     }))).toBe(current);
-    expect(reduceAgentEvent(current, envelope(1, { type: 'reasoningUpdated', status: 'running' }, {
+    expect(reduceAgentEvent(current, envelope(1, { type: 'stepUpdated', index: 0, status: 'running' }, {
       runId: 'run-2', requestId: 'request-2', createdAtMillis: 20
     }))).toBe(current);
   });

@@ -1,6 +1,7 @@
-use futures_util::{future::Either, StreamExt};
+use futures_util::StreamExt;
 use rig_agent::agent::{
-    run::AgentRun, Agent, AgentBuilder, AgentHook, HookContext, MultiTurnStreamItem, NoToolConfig,
+    Agent, AgentBuilder, AgentHook, CompletionCallAction,
+    CompletionCallEvent as HookCompletionCall, HookContext, MultiTurnStreamItem, NoToolConfig,
     ToolCall as HookToolCall, ToolCallAction, ToolResultAction, ToolResultEvent,
 };
 use rig_core::{
@@ -48,13 +49,17 @@ pub(crate) struct AgentRuntimeRequest {
     pub(crate) enable_web: bool,
     pub(crate) require_web: bool,
     pub(crate) flex: bool,
+    pub(crate) reasoning_effort: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct AgentRuntimeResponse {
     pub(crate) output: String,
     pub(crate) usage: Usage,
+    pub(crate) stats: crate::agent_guardrails::AgentRunStats,
 }
+
+pub(crate) type AgentEventSink = Arc<dyn Fn(AgentEvent) + Send + Sync>;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -103,6 +108,33 @@ pub(crate) enum AgentEvent {
         name: String,
         title: String,
         status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        step_index: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input_summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_millis: Option<u64>,
+    },
+    StepUpdated {
+        index: usize,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<AgentUsage>,
+    },
+    RunGuardTriggered {
+        reason: String,
+        message: String,
+    },
+    ProposalLinked {
+        proposal_id: String,
+        title: String,
+        kind: String,
+    },
+    ContextUpdated {
+        compacted: bool,
+        selected_note_titles: Vec<String>,
     },
     PlanUpdated {
         entries: Vec<AgentPlanEntry>,
@@ -113,11 +145,6 @@ pub(crate) enum AgentEvent {
     },
     ModelTurnRetried {
         turn: usize,
-    },
-    ReasoningUpdated {
-        status: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        summary: Option<String>,
     },
     PermissionRequested {
         request: crate::agent_permissions::AgentPermissionRequest,
@@ -142,28 +169,60 @@ impl AgentEvent {
 #[derive(Clone)]
 pub(crate) struct AgentRuntimeObserver {
     pub(crate) cancelled: CancellationToken,
-    pub(crate) on_event: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    pub(crate) on_event: AgentEventSink,
     pub(crate) permissions: Option<crate::agent_permissions::AgentPermissionBoundary>,
 }
 
 #[derive(Clone)]
 struct RuntimeEventHook {
-    on_event: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    on_event: AgentEventSink,
     cancelled: CancellationToken,
     permissions: Option<crate::agent_permissions::AgentPermissionBoundary>,
+    guard: crate::agent_guardrails::AgentRunGuard,
+    tools: Option<crate::agent_tools::AgentToolContext>,
 }
 
 impl AgentHook for RuntimeEventHook {
-    async fn on_tool_call(
+    async fn on_completion_call(
         &self,
         _context: &HookContext,
-        event: HookToolCall<'_>,
-    ) -> ToolCallAction {
+        event: HookCompletionCall<'_>,
+    ) -> CompletionCallAction {
+        if let Err(violation) = self.guard.begin_model_call(event.turn) {
+            emit_guard_violation(&self.on_event, &violation);
+            return CompletionCallAction::stop(violation.message);
+        }
+        (self.on_event)(AgentEvent::StepUpdated {
+            index: product_step_index(event.turn),
+            status: "running".to_string(),
+            usage: None,
+        });
+        CompletionCallAction::continue_run()
+    }
+
+    async fn on_tool_call(&self, context: &HookContext, event: HookToolCall<'_>) -> ToolCallAction {
+        if let Err(violation) =
+            self.guard
+                .begin_tool(event.internal_call_id, event.tool_name, event.args)
+        {
+            emit_guard_violation(&self.on_event, &violation);
+            (self.on_event)(AgentEvent::ToolCallUpdated {
+                call_id: event.internal_call_id.to_string(),
+                name: event.tool_name.to_string(),
+                title: tool_title(event.tool_name, event.args, self.tools.as_ref()),
+                status: "error".to_string(),
+                step_index: Some(product_step_index(context.turn())),
+                input_summary: tool_input_summary(event.tool_name, event.args),
+                output_summary: Some(violation.message.clone()),
+                duration_millis: self.guard.finish_tool(event.internal_call_id),
+            });
+            return ToolCallAction::stop(violation.message);
+        }
         let permission = match &self.permissions {
             Some(boundary) => {
                 boundary
                     .request_for_tool(
-                        &event.internal_call_id.to_string(),
+                        event.internal_call_id,
                         event.tool_name,
                         self.cancelled.clone(),
                         Arc::clone(&self.on_event),
@@ -177,8 +236,12 @@ impl AgentHook for RuntimeEventHook {
                 (self.on_event)(AgentEvent::ToolCallUpdated {
                     call_id: event.internal_call_id.to_string(),
                     name: event.tool_name.to_string(),
-                    title: tool_title(event.tool_name),
+                    title: tool_title(event.tool_name, event.args, self.tools.as_ref()),
                     status: "denied".to_string(),
+                    step_index: Some(product_step_index(context.turn())),
+                    input_summary: tool_input_summary(event.tool_name, event.args),
+                    output_summary: Some("Permission denied".to_string()),
+                    duration_millis: self.guard.finish_tool(event.internal_call_id),
                 });
                 return ToolCallAction::skip("The user denied this permission request");
             }
@@ -191,39 +254,242 @@ impl AgentHook for RuntimeEventHook {
         (self.on_event)(AgentEvent::ToolCallUpdated {
             call_id: event.internal_call_id.to_string(),
             name: event.tool_name.to_string(),
-            title: tool_title(event.tool_name),
+            title: tool_title(event.tool_name, event.args, self.tools.as_ref()),
             status: "running".to_string(),
+            step_index: Some(product_step_index(context.turn())),
+            input_summary: tool_input_summary(event.tool_name, event.args),
+            output_summary: None,
+            duration_millis: None,
         });
         ToolCallAction::run()
     }
 
     async fn on_tool_result(
         &self,
-        _context: &HookContext,
+        context: &HookContext,
         event: ToolResultEvent<'_>,
     ) -> ToolResultAction {
+        let status = presented_tool_status(event.raw_result);
         (self.on_event)(AgentEvent::ToolCallUpdated {
             call_id: event.internal_call_id.to_string(),
             name: event.tool_name.to_string(),
-            title: tool_title(event.tool_name),
-            status: event.raw_result.status_name().to_string(),
+            title: tool_title(event.tool_name, event.args, self.tools.as_ref()),
+            status: status.to_string(),
+            step_index: Some(product_step_index(context.turn())),
+            input_summary: tool_input_summary(event.tool_name, event.args),
+            output_summary: Some(tool_output_summary(event.tool_name, event.raw_result)),
+            duration_millis: self.guard.finish_tool(event.internal_call_id),
         });
         ToolResultAction::keep()
     }
 }
 
-fn tool_title(name: &str) -> String {
+fn emit_guard_violation(
+    on_event: &AgentEventSink,
+    violation: &crate::agent_guardrails::AgentGuardViolation,
+) {
+    on_event(AgentEvent::RunGuardTriggered {
+        reason: violation.reason.to_string(),
+        message: violation.message.clone(),
+    });
+}
+
+/// Rig hook turns are one-based while streamed completion-call indices are
+/// zero-based. The app protocol uses the latter consistently.
+fn product_step_index(rig_turn: usize) -> usize {
+    rig_turn.saturating_sub(1)
+}
+
+fn tool_input_summary(name: &str, args: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(args).ok();
     match name {
-        "get_active_note" => "Read active note",
-        "search_notes" => "Search notes",
-        "read_note" => "Read note",
-        "propose_note_edits" => "Prepare note changes",
-        "propose_note_rewrite" => "Prepare note rewrite",
-        "propose_create_note" => "Prepare new note",
-        "update_plan" => "Update plan",
-        other => return other.replace('_', " "),
+        "search_notes" => value
+            .as_ref()
+            .and_then(|value| value.get("limit"))
+            .and_then(Value::as_u64)
+            .map(|limit| format!("Up to {limit} results")),
+        "read_note" => value
+            .as_ref()
+            .and_then(|value| value.get("start_line"))
+            .and_then(Value::as_u64)
+            .filter(|line| *line > 1)
+            .map(|line| format!("Continue from line {line}"))
+            .or_else(|| Some("From the beginning".to_string())),
+        "get_active_note" => Some("Adjacent to this chat".to_string()),
+        "propose_note_edits" => value
+            .as_ref()
+            .and_then(|value| value.get("edits"))
+            .and_then(Value::as_array)
+            .map(|edits| {
+                let count = edits.len();
+                format!(
+                    "{count} targeted {}",
+                    if count == 1 { "edit" } else { "edits" }
+                )
+            }),
+        "propose_note_rewrite" => Some("Complete note rewrite".to_string()),
+        "propose_create_note" => Some("Review required before creation".to_string()),
+        "update_plan" => value
+            .as_ref()
+            .and_then(|value| value.get("entries"))
+            .and_then(Value::as_array)
+            .map(|entries| {
+                let count = entries.len();
+                format!("{count} plan {}", if count == 1 { "item" } else { "items" })
+            }),
+        _ => None,
     }
-    .to_string()
+}
+
+fn presented_tool_status(result: &rig_core::tool::ToolResult) -> &str {
+    let app_status = result
+        .output()
+        .as_json()
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str);
+    if matches!(app_status, Some("error" | "unavailable")) {
+        "error"
+    } else {
+        result.status_name()
+    }
+}
+
+fn tool_output_summary(name: &str, result: &rig_core::tool::ToolResult) -> String {
+    let output = result.output().as_json();
+    if presented_tool_status(result) == "error" {
+        return output
+            .and_then(|value| value.get("message").or_else(|| value.get("reason")))
+            .and_then(Value::as_str)
+            .map(short_activity_text)
+            .unwrap_or_else(|| "Could not complete this action".to_string());
+    }
+    match (name, output) {
+        ("search_notes", Some(value)) => value
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|items| {
+                let count = items.len();
+                format!(
+                    "Found {count} {}",
+                    if count == 1 { "note" } else { "notes" }
+                )
+            })
+            .unwrap_or_else(|| "Search completed".to_string()),
+        ("read_note", Some(value)) => {
+            let start = value.get("startLine").and_then(Value::as_u64);
+            let end = value.get("endLine").and_then(Value::as_u64);
+            match (start, end) {
+                (Some(start), Some(end))
+                    if value.get("hasMore").and_then(Value::as_bool) == Some(true) =>
+                {
+                    format!("Read lines {start}–{end}; more remains")
+                }
+                (Some(start), Some(end)) => format!("Read lines {start}–{end}"),
+                _ => "Note read".to_string(),
+            }
+        }
+        ("get_active_note", Some(value))
+            if value.get("truncated").and_then(Value::as_bool) == Some(true) =>
+        {
+            "Loaded a shortened view of the note".to_string()
+        }
+        ("get_active_note", _) => "Loaded the note".to_string(),
+        ("propose_note_edits" | "propose_note_rewrite" | "propose_create_note", _) => {
+            "Ready for review".to_string()
+        }
+        ("update_plan", Some(value)) => value
+            .get("steps")
+            .and_then(Value::as_u64)
+            .map(|count| {
+                format!(
+                    "Updated {count} plan {}",
+                    if count == 1 { "item" } else { "items" }
+                )
+            })
+            .unwrap_or_else(|| "Plan updated".to_string()),
+        (_, _) => match result.status_name() {
+            "success" => "Completed".to_string(),
+            "skipped" => "Skipped".to_string(),
+            "denied" => "Permission denied".to_string(),
+            _ => "Tool failed".to_string(),
+        },
+    }
+}
+
+fn short_activity_text(value: &str) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = normalized.chars();
+    let shortened = chars.by_ref().take(120).collect::<String>();
+    if chars.next().is_some() {
+        format!("{shortened}…")
+    } else {
+        shortened
+    }
+}
+
+fn quoted_activity_text(value: &str) -> Option<String> {
+    let value = short_activity_text(value.trim());
+    (!value.is_empty()).then(|| format!("“{value}”"))
+}
+
+fn tool_title(
+    name: &str,
+    args: &str,
+    tools: Option<&crate::agent_tools::AgentToolContext>,
+) -> String {
+    let value = serde_json::from_str::<Value>(args).ok();
+    let argument = |key: &str| {
+        value
+            .as_ref()
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_str)
+    };
+    let note_title = || {
+        argument("note_id")
+            .and_then(|note_id| tools.and_then(|tools| tools.activity_note_title(note_id)))
+            .and_then(|title| quoted_activity_text(&title))
+    };
+    match name {
+        "get_active_note" => tools
+            .and_then(crate::agent_tools::AgentToolContext::active_note_title)
+            .and_then(quoted_activity_text)
+            .map(|title| format!("Read {title}"))
+            .unwrap_or_else(|| "Read adjacent note".to_string()),
+        "search_notes" => argument("query")
+            .and_then(quoted_activity_text)
+            .map(|query| format!("Search notes for {query}"))
+            .unwrap_or_else(|| "Search notes".to_string()),
+        "read_note" => note_title()
+            .map(|title| format!("Read {title}"))
+            .unwrap_or_else(|| "Read selected note".to_string()),
+        "propose_note_edits" => note_title()
+            .map(|title| format!("Prepare changes to {title}"))
+            .unwrap_or_else(|| "Prepare note changes".to_string()),
+        "propose_note_rewrite" => note_title()
+            .map(|title| format!("Prepare rewrite of {title}"))
+            .unwrap_or_else(|| "Prepare note rewrite".to_string()),
+        "propose_create_note" => argument("title")
+            .and_then(quoted_activity_text)
+            .map(|title| format!("Prepare new note {title}"))
+            .unwrap_or_else(|| "Prepare new note".to_string()),
+        "update_plan" => value
+            .as_ref()
+            .and_then(|value| value.get("entries"))
+            .and_then(Value::as_array)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.get("status").and_then(Value::as_str) == Some("inProgress"))
+                    .or_else(|| entries.first())
+            })
+            .and_then(|entry| entry.get("text"))
+            .and_then(Value::as_str)
+            .map(short_activity_text)
+            .filter(|text| !text.is_empty())
+            .map(|text| format!("Update plan: {text}"))
+            .unwrap_or_else(|| "Update plan".to_string()),
+        other => other.replace('_', " "),
+    }
 }
 
 /// The application-owned boundary around Rig. Provider-specific model types,
@@ -231,22 +497,12 @@ fn tool_title(name: &str) -> String {
 pub(crate) struct AgentRuntime;
 
 impl AgentRuntime {
-    pub(crate) fn configured_run(prompt: impl Into<Message>, history: Vec<Message>) -> AgentRun {
-        AgentRun::new(prompt)
-            .with_history(history)
-            .max_turns(MAX_MODEL_CALLS)
-            .max_invalid_tool_call_retries(MAX_INVALID_TOOL_RETRIES)
-    }
-
     pub(crate) async fn run(
         mut request: AgentRuntimeRequest,
         tools: Option<crate::agent_tools::AgentToolContext>,
         observer: AgentRuntimeObserver,
+        guard: crate::agent_guardrails::AgentRunGuard,
     ) -> Result<AgentRuntimeResponse, String> {
-        // Construct this explicitly as the stable, testable execution contract.
-        // Rig's AgentRunner drives the same AgentRun state machine internally.
-        let _run_contract = Self::configured_run(request.prompt.clone(), request.history.clone());
-
         match request.provider {
             AgentProvider::Openai => {
                 let key = request
@@ -261,9 +517,13 @@ impl AgentRuntime {
                     model = model
                         .with_tool(openai::responses_api::ResponsesToolDefinition::web_search());
                 }
-                let params =
-                    openai_parameters(request.enable_web, request.require_web, request.flex);
-                run_model(model, request, tools, params, observer).await
+                let params = openai_parameters(
+                    request.enable_web,
+                    request.require_web,
+                    request.flex,
+                    request.reasoning_effort.as_deref(),
+                );
+                run_model(model, request, tools, params, observer, guard).await
             }
             AgentProvider::Local => {
                 ensure_local_desktop()?;
@@ -282,7 +542,8 @@ impl AgentRuntime {
                     .build()
                     .map_err(|error| format!("Local model setup failed: {error}"))?;
                 let model = client.completion_model(&request.model);
-                run_model(model, request, tools, None, observer).await
+                let params = local_parameters(request.reasoning_effort.as_deref());
+                run_model(model, request, tools, params, observer, guard).await
             }
         }
     }
@@ -294,22 +555,26 @@ async fn run_model<M>(
     tools: Option<crate::agent_tools::AgentToolContext>,
     additional_params: Option<Value>,
     observer: AgentRuntimeObserver,
+    guard: crate::agent_guardrails::AgentRunGuard,
 ) -> Result<AgentRuntimeResponse, String>
 where
     M: CompletionModel + 'static,
     M::StreamingResponse: Send + Unpin + GetTokenUsage,
 {
+    let hook_tools = tools.clone();
     let builder =
         configured_builder(model, &request, additional_params).add_hook(RuntimeEventHook {
             on_event: Arc::clone(&observer.on_event),
             cancelled: observer.cancelled.clone(),
             permissions: observer.permissions.clone(),
+            guard: guard.clone(),
+            tools: hook_tools,
         });
     let agent = match tools {
         Some(tools) => tools.build_agent(builder),
         None => builder.build(),
     };
-    drive_agent(agent, request, observer).await
+    drive_agent(agent, request, observer, guard).await
 }
 
 fn configured_builder<M>(
@@ -323,8 +588,7 @@ where
     let mut builder = AgentBuilder::new(model)
         .name("gneauxghts-vault-agent")
         .description("Searches and reads the local vault and prepares reviewed note changes")
-        .preamble(&request.preamble)
-        .default_max_turns(MAX_MODEL_CALLS);
+        .preamble(&request.preamble);
     if let Some(params) = additional_params {
         builder = builder.additional_params(params);
     }
@@ -335,15 +599,12 @@ async fn drive_agent<M>(
     agent: Agent<M>,
     request: AgentRuntimeRequest,
     observer: AgentRuntimeObserver,
+    guard: crate::agent_guardrails::AgentRunGuard,
 ) -> Result<AgentRuntimeResponse, String>
 where
     M: CompletionModel + 'static,
     M::StreamingResponse: Send + Unpin + GetTokenUsage,
 {
-    (observer.on_event)(AgentEvent::ReasoningUpdated {
-        status: "running".to_string(),
-        summary: None,
-    });
     let mut stream = agent
         .runner(request.prompt)
         .history(request.history)
@@ -355,29 +616,31 @@ where
     let mut response = None;
     let mut aggregate_usage = Usage::new();
     loop {
-        let next = stream.next();
-        let cancelled = observer.cancelled.cancelled();
-        futures_util::pin_mut!(next, cancelled);
-        let item = match futures_util::future::select(next, cancelled).await {
-            Either::Left((item, _)) => item,
-            Either::Right(_) => {
-                (observer.on_event)(AgentEvent::ReasoningUpdated {
-                    status: "cancelled".to_string(),
-                    summary: None,
-                });
-                return Err("Request cancelled".to_string());
+        let remaining = match guard.deadline_remaining() {
+            Ok(remaining) => remaining,
+            Err(violation) => {
+                emit_guard_violation(&observer.on_event, &violation);
+                return Err(violation.message);
             }
+        };
+        let item = tokio::select! {
+            item = stream.next() => item,
+            _ = observer.cancelled.cancelled() => {
+                return Err("Request cancelled".to_string());
+            },
+            _ = tokio::time::sleep(remaining) => {
+                let violation = crate::agent_guardrails::AgentGuardViolation {
+                    reason: "timeBudgetExceeded",
+                    message: "The agent stopped after reaching its time limit.".to_string(),
+                };
+                emit_guard_violation(&observer.on_event, &violation);
+                return Err(violation.message);
+            },
         };
         let Some(item) = item else { break };
         let item = match item {
             Ok(item) => item,
-            Err(error) => {
-                (observer.on_event)(AgentEvent::ReasoningUpdated {
-                    status: "error".to_string(),
-                    summary: None,
-                });
-                return Err(format!("Agent run failed: {error}"));
-            }
+            Err(error) => return Err(format!("Agent run failed: {error}")),
         };
         match item {
             MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(text)) => {
@@ -385,10 +648,19 @@ where
             }
             MultiTurnStreamItem::CompletionCall(call) => {
                 aggregate_usage += call.usage;
+                (observer.on_event)(AgentEvent::StepUpdated {
+                    index: call.call_index,
+                    status: "completed".to_string(),
+                    usage: Some(call.usage.into()),
+                });
                 (observer.on_event)(AgentEvent::UsageUpdated {
                     call_index: call.call_index,
                     aggregate: aggregate_usage.into(),
                 });
+                if let Err(violation) = guard.check_tokens(aggregate_usage.total_tokens) {
+                    emit_guard_violation(&observer.on_event, &violation);
+                    return Err(violation.message);
+                }
             }
             MultiTurnStreamItem::ModelTurnRetried { turn } => {
                 (observer.on_event)(AgentEvent::ModelTurnRetried { turn });
@@ -401,23 +673,21 @@ where
         }
     }
     let Some(response) = response else {
-        (observer.on_event)(AgentEvent::ReasoningUpdated {
-            status: "error".to_string(),
-            summary: None,
-        });
         return Err("Agent run ended without a final response".to_string());
     };
-    (observer.on_event)(AgentEvent::ReasoningUpdated {
-        status: "completed".to_string(),
-        summary: None,
-    });
     Ok(AgentRuntimeResponse {
         output: response.output().to_string(),
         usage: response.usage(),
+        stats: guard.stats(),
     })
 }
 
-fn openai_parameters(enable_web: bool, require_web: bool, flex: bool) -> Option<Value> {
+fn openai_parameters(
+    enable_web: bool,
+    require_web: bool,
+    flex: bool,
+    reasoning_effort: Option<&str>,
+) -> Option<Value> {
     let mut values = Map::new();
     if enable_web && require_web {
         values.insert("tool_choice".to_string(), json!({"type": "web_search"}));
@@ -425,7 +695,46 @@ fn openai_parameters(enable_web: bool, require_web: bool, flex: bool) -> Option<
     if flex {
         values.insert("service_tier".to_string(), json!("flex"));
     }
+    if let Some(effort) = reasoning_effort {
+        values.insert("reasoning".to_string(), json!({ "effort": effort }));
+    }
     (!values.is_empty()).then_some(Value::Object(values))
+}
+
+fn local_parameters(reasoning_effort: Option<&str>) -> Option<Value> {
+    reasoning_effort.map(|effort| {
+        json!({
+            "chat_template_kwargs": {
+                "reasoning_effort": effort
+            }
+        })
+    })
+}
+
+fn local_model_supports_reasoning_effort(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    normalized.contains("qwen3.8") || normalized.contains("qwen-3.8")
+}
+
+pub(crate) fn supported_reasoning_effort(
+    provider: &AgentProvider,
+    model: &str,
+    effort: &str,
+) -> Option<String> {
+    let model = model.trim().to_ascii_lowercase();
+    let supported = match provider {
+        AgentProvider::Openai if model.starts_with("gpt-5.6") => {
+            matches!(effort, "low" | "medium" | "high" | "xhigh" | "max")
+        }
+        AgentProvider::Openai if model.starts_with("gpt-5") => {
+            matches!(effort, "low" | "medium" | "high" | "xhigh")
+        }
+        AgentProvider::Local if local_model_supports_reasoning_effort(&model) => {
+            matches!(effort, "low" | "medium" | "xhigh")
+        }
+        _ => false,
+    };
+    supported.then(|| effort.to_string())
 }
 
 pub(crate) fn ensure_local_desktop() -> Result<(), String> {
@@ -445,13 +754,9 @@ pub(crate) fn validate_local_base_url(value: &str) -> Result<(), String> {
     if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err("Local model URLs cannot contain a query or fragment".to_string());
     }
-    let host = parsed
+    parsed
         .host_str()
         .ok_or_else(|| "Local model URL must include a host".to_string())?;
-    let loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
-    if parsed.scheme() == "http" && !loopback {
-        return Err("Plain HTTP is only allowed for a loopback local model server".to_string());
-    }
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("Local model URL must use HTTP or HTTPS".to_string());
     }
@@ -524,36 +829,99 @@ mod tests {
             enable_web: false,
             require_web: false,
             flex: false,
+            reasoning_effort: Some("medium".to_string()),
         }
     }
 
     #[test]
-    fn runtime_contract_uses_product_turn_budgets() {
-        let run = AgentRuntime::configured_run(Message::user("hello"), vec![]);
-        let encoded = serde_json::to_value(run).unwrap();
-        assert_eq!(MAX_MODEL_CALLS, 64);
-        assert_eq!(encoded["max_turns"], 64);
+    fn rig_hook_turns_share_the_streamed_completion_index() {
+        assert_eq!(product_step_index(1), 0);
+        assert_eq!(product_step_index(2), 1);
+        assert_eq!(product_step_index(0), 0);
+    }
+
+    #[test]
+    fn activity_titles_describe_search_create_and_plan_targets() {
         assert_eq!(
-            encoded["max_invalid_tool_call_retries"],
-            MAX_INVALID_TOOL_RETRIES
+            tool_title(
+                "search_notes",
+                r#"{"query":"quarterly budget","limit":8}"#,
+                None
+            ),
+            "Search notes for “quarterly budget”"
+        );
+        assert_eq!(
+            tool_title(
+                "propose_create_note",
+                r#"{"title":"Q3 planning","markdown":"body"}"#,
+                None
+            ),
+            "Prepare new note “Q3 planning”"
+        );
+        assert_eq!(
+            tool_title(
+                "update_plan",
+                r#"{"entries":[{"text":"Review research","status":"completed"},{"text":"Draft the summary","status":"inProgress"}]}"#,
+                None
+            ),
+            "Update plan: Draft the summary"
         );
     }
 
     #[test]
-    fn local_url_policy_allows_loopback_http_and_credential_free_https() {
+    fn activity_outcomes_summarize_known_tool_results() {
+        let search = rig_core::tool::ToolResult::success(rig_core::tool::ToolOutput::json(
+            json!({"status":"ready","items":[{"title":"One"},{"title":"Two"}]}),
+        ));
+        assert_eq!(
+            tool_output_summary("search_notes", &search),
+            "Found 2 notes"
+        );
+
+        let unavailable = rig_core::tool::ToolResult::success(rig_core::tool::ToolOutput::json(
+            json!({"status":"unavailable","reason":"The note is outside the allowed vault."}),
+        ));
+        assert_eq!(presented_tool_status(&unavailable), "error");
+        assert_eq!(
+            tool_output_summary("read_note", &unavailable),
+            "The note is outside the allowed vault."
+        );
+    }
+
+    #[test]
+    fn local_url_policy_allows_http_and_credential_free_https() {
         assert!(validate_local_base_url("http://localhost:1234/v1").is_ok());
         assert!(validate_local_base_url("http://127.0.0.1:1234/v1").is_ok());
+        assert!(validate_local_base_url("http://models.example.com/v1").is_ok());
         assert!(validate_local_base_url("https://models.example.com/v1").is_ok());
-        assert!(validate_local_base_url("http://models.example.com/v1").is_err());
         assert!(validate_local_base_url("https://user@example.com/v1").is_err());
         assert!(validate_local_base_url("https://example.com/v1?q=1").is_err());
     }
 
     #[test]
     fn forced_openai_web_selects_the_hosted_tool_and_flex_tier() {
-        let params = openai_parameters(true, true, true).unwrap();
+        let params = openai_parameters(true, true, true, Some("high")).unwrap();
         assert_eq!(params["tool_choice"], json!({"type": "web_search"}));
         assert_eq!(params["service_tier"], "flex");
+        assert_eq!(params["reasoning"], json!({"effort": "high"}));
+    }
+
+    #[test]
+    fn qwen_local_reasoning_uses_chat_template_kwargs() {
+        assert_eq!(
+            supported_reasoning_effort(&AgentProvider::Local, "qwen/Qwen3.8-27B", "xhigh"),
+            Some("xhigh".to_string())
+        );
+        assert_eq!(
+            supported_reasoning_effort(&AgentProvider::Local, "qwen3-8b", "medium"),
+            None
+        );
+        assert_eq!(
+            supported_reasoning_effort(&AgentProvider::Openai, "gpt-5.4", "max"),
+            None
+        );
+        let params = local_parameters(Some("medium")).unwrap();
+        assert_eq!(params["chat_template_kwargs"]["reasoning_effort"], "medium");
     }
 
     #[test]
@@ -612,6 +980,7 @@ mod tests {
                     _ => {}
                 });
             let cancelled = CancellationToken::new();
+            let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
             let tool_calls = Arc::new(AtomicUsize::new(0));
             let request = fake_request("Find and update it");
             let agent = configured_builder(model.clone(), &request, None)
@@ -619,6 +988,8 @@ mod tests {
                     on_event: Arc::clone(&event_sink),
                     cancelled: cancelled.clone(),
                     permissions: Some(permission_boundary.clone()),
+                    guard: guard.clone(),
+                    tools: None,
                 })
                 .tool(EchoTool(Arc::clone(&tool_calls)))
                 .build();
@@ -630,6 +1001,7 @@ mod tests {
                     on_event: event_sink,
                     permissions: Some(permission_boundary),
                 },
+                guard,
             )
             .await
             .unwrap();
@@ -695,6 +1067,7 @@ mod tests {
                 }
             });
             let cancelled = CancellationToken::new();
+            let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
             let tool_calls = Arc::new(AtomicUsize::new(0));
             let request = fake_request("Try the fake side effect");
             let agent = configured_builder(model.clone(), &request, None)
@@ -702,6 +1075,8 @@ mod tests {
                     on_event: Arc::clone(&event_sink),
                     cancelled: cancelled.clone(),
                     permissions: Some(permission_boundary.clone()),
+                    guard: guard.clone(),
+                    tools: None,
                 })
                 .tool(EchoTool(Arc::clone(&tool_calls)))
                 .build();
@@ -713,6 +1088,7 @@ mod tests {
                     on_event: event_sink,
                     permissions: Some(permission_boundary),
                 },
+                guard,
             )
             .await
             .unwrap();
@@ -732,13 +1108,11 @@ mod tests {
                 event,
                 AgentEvent::ToolCallUpdated { status, .. } if status == "denied"
             )));
-            assert!(!events.iter().any(|event| matches!(
-                event,
-                AgentEvent::ReasoningUpdated {
-                    summary: Some(summary),
-                    ..
-                } if summary.contains("private denial reasoning")
-            )));
+            assert!(events.iter().all(|event| {
+                serde_json::to_string(event)
+                    .map(|payload| !payload.contains("private denial reasoning"))
+                    .unwrap_or(false)
+            }));
         });
     }
 }

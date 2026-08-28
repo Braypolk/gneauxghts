@@ -8,6 +8,7 @@
     Globe,
     Paperclip,
     Send,
+    Sparkles,
     Square,
     X
   } from '@lucide/svelte';
@@ -24,8 +25,12 @@
   import type {
     ChatActiveNoteSnapshot,
     ChatAttachmentInput,
+    ChatContextSelectionInput,
+    ChatContextSuggestion,
     ChatContextNote,
     ChatProvider,
+    ChatReasoningEffort,
+    LocalModel,
     VaultAccess
   } from '../types';
   import {
@@ -33,12 +38,15 @@
     chatConversationContextKey
   } from './chatPanelHelpers';
   import { createComposerDraftPersistence } from './composerDraftPersistence';
-  import { configuredChatModel } from '../chatConfiguration';
-  import ModelSelector, {
-    type ModelOption
-  } from '$lib/components/ai-elements/model-selector/model-selector.svelte';
+  import {
+    chatModelChoices,
+    type ChatModelChoice,
+    chatReasoningChoices,
+    configuredChatModel
+  } from '../chatConfiguration';
+  import ModelSelector from '$lib/components/ai-elements/model-selector/model-selector.svelte';
 
-  type ChatMenu = 'history' | 'vault' | 'provider';
+  type ChatMenu = 'history' | 'vault' | 'provider' | 'model' | 'reasoning';
 
   interface Props {
     controller: ChatController;
@@ -90,8 +98,17 @@
   let forceWebSearch = $state(false);
   let attachmentInput = $state<HTMLInputElement | null>(null);
   let contextAccessBusy = $state(false);
+  let contextSuggestions = $state<ChatContextSuggestion[]>([]);
+  let selectedContext = $state<ChatContextSuggestion[]>([]);
+  let contextSuggestionsLoading = $state(false);
+  let contextSuggestionTimer: number | null = null;
+  let contextSuggestionRequest = 0;
   let composerContextKey: string | null = null;
   let creatingConversationFromDraft = false;
+  let localModels = $state<LocalModel[]>([]);
+  let openAiModels = $state<LocalModel[] | undefined>(undefined);
+  let isDiscoveringLocalModels = $state(false);
+  let isDiscoveringOpenAiModels = $state(false);
 
   const conversation = $derived(snapshot.conversation);
   const effectiveProvider = $derived(
@@ -100,20 +117,21 @@
   const effectiveModel = $derived(
     conversation?.model ?? snapshot.conversationDraft.model
   );
-  const modelOptions = $derived<ModelOption[]>([
-    {
-      provider: 'openai',
-      model: configuredChatModel(snapshot.settings, 'openai'),
-      label: 'OpenAI',
-      configured: Boolean(configuredChatModel(snapshot.settings, 'openai'))
-    },
-    {
-      provider: 'local',
-      model: configuredChatModel(snapshot.settings, 'local'),
-      label: 'Local',
-      configured: Boolean(configuredChatModel(snapshot.settings, 'local'))
-    }
-  ]);
+  const effectiveReasoningEffort = $derived(
+    conversation?.reasoningEffort ?? snapshot.conversationDraft.reasoningEffort
+  );
+  const modelOptions = $derived<ChatModelChoice[]>(
+    chatModelChoices({
+      settings: snapshot.settings,
+      current: { provider: effectiveProvider, model: effectiveModel },
+      conversations: snapshot.conversations,
+      localModels,
+      openaiModels: openAiModels
+    })
+  );
+  const reasoningOptions = $derived(
+    chatReasoningChoices(effectiveProvider, effectiveModel)
+  );
   const effectiveVaultAccess = $derived(
     conversation?.vaultAccess ??
       snapshot.conversationDraft.vaultAccess
@@ -128,9 +146,25 @@
   );
   const canAttach = $derived(
     Boolean(
-      snapshot.modelCapabilities?.images || snapshot.modelCapabilities?.files
+      snapshot.modelCapabilities?.images ||
+      snapshot.modelCapabilities?.audio ||
+      snapshot.modelCapabilities?.video ||
+      snapshot.modelCapabilities?.files
     )
   );
+  const attachmentButtonTitle = $derived.by(() => {
+    const capabilities = snapshot.modelCapabilities;
+    if (!capabilities) return 'Attachment support is loading';
+    const kinds = [
+      capabilities.files ? 'files' : null,
+      capabilities.images ? 'images' : null,
+      capabilities.audio ? 'audio' : null,
+      capabilities.video ? 'video' : null
+    ].filter((value): value is string => value !== null);
+    return kinds.length
+      ? `Add ${kinds.join(', ')}${capabilities.images ? '; you can also paste images' : ''}`
+      : 'Attachments are unavailable for the selected model';
+  });
   const acceptedAttachmentTypes = $derived(
     attachmentAccept(snapshot.modelCapabilities)
   );
@@ -166,7 +200,11 @@
     }
   });
 
-  onDestroy(() => draftPersistence.dispose());
+  onDestroy(() => {
+    draftPersistence.dispose();
+    if (contextSuggestionTimer !== null) window.clearTimeout(contextSuggestionTimer);
+    contextSuggestionRequest += 1;
+  });
 
   $effect(() => {
     const conversationId = snapshot.conversation?.id ?? null;
@@ -182,6 +220,8 @@
     // Attachments are per-message and deliberately not carried across contexts.
     attachments = [];
     forceWebSearch = false;
+    contextSuggestions = [];
+    selectedContext = [];
     draft = '';
 
     const nextSlot = chatComposerDraftSlot(conversationId, draftSlot);
@@ -199,6 +239,58 @@
   $effect(() => {
     draftPersistence.record(draft);
   });
+
+  $effect(() => {
+    const prompt = draft.trim();
+    const access = effectiveVaultAccess;
+    const activeNoteId = contextNote?.noteId ?? null;
+    if (contextSuggestionTimer !== null) {
+      window.clearTimeout(contextSuggestionTimer);
+      contextSuggestionTimer = null;
+    }
+    const requestId = ++contextSuggestionRequest;
+    if (access === 'none' || prompt.split(/\s+/).filter(Boolean).length < 2) {
+      contextSuggestions = [];
+      if (access === 'none') selectedContext = [];
+      contextSuggestionsLoading = false;
+      return;
+    }
+    contextSuggestionsLoading = true;
+    contextSuggestionTimer = window.setTimeout(() => {
+      contextSuggestionTimer = null;
+      void controller.suggestContext({
+        query: prompt,
+        vaultAccess: access,
+        excludeNoteId: activeNoteId,
+        limit: 4
+      }).then((response) => {
+        if (requestId !== contextSuggestionRequest) return;
+        contextSuggestions = response.items;
+      }).catch(() => {
+        if (requestId !== contextSuggestionRequest) return;
+        contextSuggestions = [];
+      }).finally(() => {
+        if (requestId === contextSuggestionRequest) contextSuggestionsLoading = false;
+      });
+    }, 350);
+  });
+
+  function toggleSuggestedContext(suggestion: ChatContextSuggestion) {
+    selectedContext = selectedContext.some((item) => item.noteId === suggestion.noteId)
+      ? selectedContext.filter((item) => item.noteId !== suggestion.noteId)
+      : [...selectedContext, suggestion];
+  }
+
+  function selectedContextInput(): ChatContextSelectionInput[] {
+    return selectedContext.map((item) => ({
+      noteId: item.noteId,
+      sectionLabel: item.sectionLabel,
+      startLine: item.startLine,
+      endLine: item.endLine,
+      blockAnchor: item.blockAnchor,
+      reason: item.reason
+    }));
+  }
 
   async function submit() {
     const content = draft.trim();
@@ -235,12 +327,15 @@
       content,
       attachments,
       forceWebSearch,
-      activeNote
+      activeNote,
+      selectedContextInput()
     );
     if (sent) {
       draft = '';
       attachments = [];
       forceWebSearch = false;
+      contextSuggestions = [];
+      selectedContext = [];
       // The text is now a real message. Clear it from the pane slot it may have
       // been typed into as well as the conversation slot it graduated to.
       const sentSlot = chatComposerDraftSlot(
@@ -319,19 +414,75 @@
     void submit();
   }
 
-  async function updateProvider(provider: ChatProvider) {
+  async function updateModel(option: ChatModelChoice) {
     onOpenMenu(null);
-    const model = configuredChatModel(snapshot.settings, provider);
+    const model = option.model.trim();
     if (!model) {
-      onActionError('Choose a tool-capable local model in Settings first.');
+      onActionError('Enter a model ID before changing models.');
       return;
     }
+    onActionError(null);
+    await controller.setProvider(option.provider, model);
+    if (option.provider === 'local') forceWebSearch = false;
+  }
+
+  async function updateProvider(provider: ChatProvider) {
+    onOpenMenu(null);
+    if (provider === effectiveProvider) return;
+    const model =
+      configuredChatModel(snapshot.settings, provider) ||
+      modelOptions.find((option) => option.provider === provider)?.model ||
+      '';
+    if (!model) {
+      const label = provider === 'openai' ? 'ChatGPT' : 'Local';
+      onActionError(`Configure a default model for ${label} first.`);
+      return;
+    }
+    onActionError(null);
     await controller.setProvider(provider, model);
     if (provider === 'local') forceWebSearch = false;
   }
 
-  async function updateModel(option: ModelOption) {
-    await updateProvider(option.provider);
+  async function discoverLocalModels() {
+    if (isDiscoveringLocalModels) return;
+    isDiscoveringLocalModels = true;
+    onActionError(null);
+    try {
+      localModels = await controller.listLocalModels();
+      if (localModels.length === 0) {
+        onActionError('The local endpoint returned no available models.');
+      }
+    } catch (error) {
+      onActionError(
+        error instanceof Error ? error.message : 'Unable to discover local models.'
+      );
+    } finally {
+      isDiscoveringLocalModels = false;
+    }
+  }
+
+  async function discoverOpenAiModels() {
+    if (isDiscoveringOpenAiModels) return;
+    isDiscoveringOpenAiModels = true;
+    onActionError(null);
+    try {
+      openAiModels = await controller.listOpenAiModels();
+      if (openAiModels.length === 0) {
+        onActionError('No supported ChatGPT models are available to this API key.');
+      }
+    } catch (error) {
+      onActionError(
+        error instanceof Error ? error.message : 'Unable to check available ChatGPT models.'
+      );
+    } finally {
+      isDiscoveringOpenAiModels = false;
+    }
+  }
+
+  async function updateReasoningEffort(reasoningEffort: ChatReasoningEffort) {
+    onOpenMenu(null);
+    onActionError(null);
+    await controller.setReasoningEffort(reasoningEffort);
   }
 
   async function updateAccess(vaultAccess: VaultAccess) {
@@ -435,6 +586,32 @@
       </div>
     {/if}
 
+    {#if selectedContext.length > 0 || contextSuggestions.length > 0 || contextSuggestionsLoading}
+      <div class="flex flex-wrap items-center gap-1.5 px-2 pb-1" aria-label="Related note context">
+        <span class="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <Sparkles class="h-3 w-3" /> Related
+        </span>
+        {#each [...selectedContext, ...contextSuggestions.filter((item) => !selectedContext.some((selected) => selected.noteId === item.noteId))] as suggestion (suggestion.noteId)}
+          <button
+            type="button"
+            class="chat-composer-chip"
+            class:chat-composer-chip--on={selectedContext.some((item) => item.noteId === suggestion.noteId)}
+            aria-pressed={selectedContext.some((item) => item.noteId === suggestion.noteId)}
+            title={`${suggestion.title}: ${suggestion.excerpt}`}
+            onclick={() => toggleSuggestedContext(suggestion)}
+          >
+            {#if selectedContext.some((item) => item.noteId === suggestion.noteId)}
+              <Check class="h-3 w-3" />
+            {/if}
+            <span class="max-w-36 truncate">{suggestion.title}</span>
+          </button>
+        {/each}
+        {#if contextSuggestionsLoading && contextSuggestions.length === 0}
+          <span class="text-[11px] text-muted-foreground">Finding notes…</span>
+        {/if}
+      </div>
+    {/if}
+
     <textarea
       bind:this={composerElement}
       bind:value={draft}
@@ -463,13 +640,7 @@
             class="chat-composer-chip"
             onclick={chooseAttachments}
             aria-label="Add files or images"
-            title={!snapshot.modelCapabilities
-              ? 'Attachment support is loading'
-              : snapshot.modelCapabilities.images
-                ? 'Add files or images; you can also paste images'
-                : snapshot.modelCapabilities.files
-                  ? 'Add files'
-                  : 'Attachments are unavailable for the selected model'}
+            title={attachmentButtonTitle}
           >
             <Paperclip class="h-3.5 w-3.5" />
           </button>
@@ -478,9 +649,22 @@
           options={modelOptions}
           provider={effectiveProvider}
           model={effectiveModel}
-          open={openMenu === 'provider'}
-          onOpenChange={(open) => onOpenMenu(open ? 'provider' : null)}
-          onSelect={updateModel}
+          reasoningEffort={effectiveReasoningEffort}
+          {reasoningOptions}
+          disabled={snapshot.isSending || snapshot.isLoadingConversation}
+          isDiscoveringLocal={isDiscoveringLocalModels}
+          isDiscoveringOpenAi={isDiscoveringOpenAiModels}
+          providerOpen={openMenu === 'provider'}
+          modelOpen={openMenu === 'model'}
+          reasoningOpen={openMenu === 'reasoning'}
+          onProviderOpenChange={(open) => onOpenMenu(open ? 'provider' : null)}
+          onModelOpenChange={(open) => onOpenMenu(open ? 'model' : null)}
+          onReasoningOpenChange={(open) => onOpenMenu(open ? 'reasoning' : null)}
+          onSelectProvider={updateProvider}
+          onSelectModel={updateModel}
+          onSelectReasoning={updateReasoningEffort}
+          onDiscoverLocal={discoverLocalModels}
+          onDiscoverOpenAi={discoverOpenAiModels}
         />
 
         <div class="relative" data-chat-menu>

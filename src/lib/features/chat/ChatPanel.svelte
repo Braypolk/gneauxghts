@@ -93,7 +93,7 @@
   let previewAttachment = $state<ChatAttachmentInput | null>(null);
   let composerElement = $state<HTMLTextAreaElement | null>(null);
   let reportedConversationId: string | null | undefined;
-  let openMenu = $state<'history' | 'vault' | 'provider' | null>(null);
+  let openMenu = $state<'history' | 'vault' | 'provider' | 'model' | 'reasoning' | null>(null);
 
   const configurationReady = $derived(
     snapshot.isInitialized &&
@@ -206,6 +206,10 @@
     {onOpenWikilink}
     onPreviewAttachment={(attachment) => (previewAttachment = attachment)}
     onActionError={(message) => (actionError = message)}
+    onReviewProposal={async (proposalId) => {
+      const proposal = snapshot.proposals.find((item) => item.id === proposalId);
+      if (proposal) await onReviewAgentProposal?.(proposal);
+    }}
   />
 
   <div class="chat-panel-bottom shrink-0">

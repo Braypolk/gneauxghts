@@ -2837,7 +2837,6 @@ mod tests {
                 id: "mock".to_string(),
                 label: "Mock".to_string(),
                 dimensions: 3,
-                local_only: true,
                 runtime_binary_path: None,
                 model_path: None,
                 model_repo_id: "mock".to_string(),

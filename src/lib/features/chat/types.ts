@@ -1,5 +1,6 @@
 export type VaultAccess = 'none' | 'approved' | 'full';
 export type ChatProvider = 'openai' | 'local';
+export type ChatReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type WebAccess = 'off' | 'auto';
 export type ChatStatus = 'active' | 'archived' | 'projectionConflict';
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'cancelled' | 'error';
@@ -39,8 +40,6 @@ export interface AgentPlanEntry {
   detail?: string;
 }
 
-export type AgentReasoningStatus = 'running' | 'completed' | 'cancelled' | 'error';
-
 export type AgentPermissionKind =
   | 'processExecution'
   | 'fileMutation'
@@ -77,11 +76,23 @@ export type AgentEvent =
       name: string;
       title: string;
       status: AgentToolStatus;
+      stepIndex?: number;
+      inputSummary?: string;
+      outputSummary?: string;
+      durationMillis?: number;
     }
+  | {
+      type: 'stepUpdated';
+      index: number;
+      status: 'running' | 'completed' | 'error';
+      usage?: AgentUsage;
+    }
+  | { type: 'runGuardTriggered'; reason: string; message: string }
+  | { type: 'proposalLinked'; proposalId: string; title: string; kind: 'update' | 'create' }
+  | { type: 'contextUpdated'; compacted: boolean; selectedNoteTitles: string[] }
   | { type: 'planUpdated'; entries: AgentPlanEntry[] }
   | { type: 'usageUpdated'; callIndex: number; aggregate: AgentUsage }
   | { type: 'modelTurnRetried'; turn: number }
-  | { type: 'reasoningUpdated'; status: AgentReasoningStatus; summary?: string }
   | { type: 'permissionRequested'; request: AgentPermissionRequest }
   | {
       type: 'permissionResolved';
@@ -109,21 +120,39 @@ export type ChatPart =
       name: string;
       title: string;
       status: AgentToolStatus;
+      stepIndex?: number;
+      inputSummary?: string;
+      outputSummary?: string;
+      durationMillis?: number;
     }
   | { id: 'plan'; type: 'plan'; entries: AgentPlanEntry[] }
   | { id: 'usage'; type: 'usage'; callIndex: number; usage: AgentUsage }
-  | {
-      id: 'reasoning';
-      type: 'reasoning';
-      status: AgentReasoningStatus;
-      summary?: string;
-    }
   | {
       id: 'retry';
       type: 'status';
       status: 'retrying';
       turn: number;
       label: string;
+    }
+  | {
+      id: 'run-guard';
+      type: 'status';
+      status: 'stopped';
+      reason: string;
+      label: string;
+    }
+  | {
+      id: string;
+      type: 'proposalRef';
+      proposalId: string;
+      title: string;
+      kind: 'update' | 'create';
+    }
+  | {
+      id: 'context';
+      type: 'context';
+      compacted: boolean;
+      selectedNoteTitles: string[];
     }
   | { id: 'sources'; type: 'sources'; citations: ChatCitation[] }
   | {
@@ -145,6 +174,7 @@ export interface ChatSettings {
   openaiModel: string;
   localModel: string;
   localBaseUrl: string;
+  reasoningEffort: ChatReasoningEffort;
   serviceTier: ChatServiceTier;
   webAccess: WebAccess;
   defaultVaultAccess: VaultAccess;
@@ -168,6 +198,7 @@ export interface ChatConversationSummary {
   lastMessagePreview: string | null;
   provider: ChatProvider;
   model: string;
+  reasoningEffort: ChatReasoningEffort;
 }
 
 export interface ChatActiveNoteSnapshot {
@@ -200,12 +231,20 @@ export interface ChatAttachment extends ChatAttachmentInput {
 
 export interface ChatModelCapabilities {
   images: boolean;
+  audio: boolean;
+  video: boolean;
   files: boolean;
   acceptedMimeTypes: string[];
   tools: boolean;
-  webSearch: boolean;
-  reasoningSummaries: boolean;
-  contextWindow: number | null;
+  defaultReasoningEffort?: ChatReasoningEffort | null;
+}
+
+export interface LocalModelCapabilitySelection {
+  images: boolean;
+  tools: boolean;
+  audio: boolean;
+  video: boolean;
+  reasoningEffort: ChatReasoningEffort;
 }
 
 export interface ChatAgentProposal {
@@ -311,6 +350,32 @@ export interface ChatContextNote {
   noteId: string | null;
   notePath: string | null;
   noteTitle: string;
+}
+
+export interface ChatContextSuggestion {
+  noteId: string;
+  title: string;
+  sectionLabel: string | null;
+  excerpt: string;
+  startLine: number | null;
+  endLine: number | null;
+  blockAnchor: string | null;
+  reason: 'related' | 'explicit';
+}
+
+export interface ChatContextSuggestionResponse {
+  status: 'ready' | 'insufficientContent' | 'unavailable';
+  reason: string | null;
+  items: ChatContextSuggestion[];
+}
+
+export interface ChatContextSelectionInput {
+  noteId: string;
+  sectionLabel?: string | null;
+  startLine?: number | null;
+  endLine?: number | null;
+  blockAnchor?: string | null;
+  reason?: 'related' | 'explicit';
 }
 
 export type ProjectionConflictResolution = 'convertToNote' | 'restoreTranscript';

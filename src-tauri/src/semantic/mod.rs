@@ -53,7 +53,6 @@ pub(crate) const SEMANTIC_RETRY_MAX_ATTEMPTS: u32 = 3;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SemanticSettings {
     pub(crate) semantic_search_enabled: bool,
-    pub(crate) local_only_mode: bool,
     pub(crate) lexical_weight: f32,
     pub(crate) semantic_weight: f32,
 }
@@ -62,7 +61,6 @@ impl Default for SemanticSettings {
     fn default() -> Self {
         Self {
             semantic_search_enabled: true,
-            local_only_mode: true,
             lexical_weight: 0.5,
             semantic_weight: 0.4,
         }
@@ -319,13 +317,9 @@ impl SemanticState {
         }
         let settings = Arc::new(Mutex::new(initial_settings));
         let debug = Arc::new(SemanticDebugState::new());
-        let provider: Arc<dyn EmbeddingProvider + Send + Sync> =
-            Arc::new(JinaLlamaEmbeddingProvider::new(
-                app_data_dir,
-                settings.clone(),
-                bundled_runtime_path,
-                debug.clone(),
-            )?);
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(
+            JinaLlamaEmbeddingProvider::new(app_data_dir, bundled_runtime_path, debug.clone())?,
+        );
         let ann = Arc::new(AnnIndexState::new(
             semantic_dir.clone(),
             provider.model_info().dimensions,
@@ -1246,7 +1240,6 @@ impl DisabledSemanticState {
                 id: "semantic-disabled".to_string(),
                 label: "Semantic Search Disabled".to_string(),
                 dimensions: 0,
-                local_only: true,
                 runtime_binary_path: None,
                 model_path: None,
                 model_repo_id: String::new(),
@@ -1367,6 +1360,20 @@ fn spawn_ann_initialize_and_scan_in_background(context: AnnStartupContext) {
 #[cfg(test)]
 mod health_tests {
     use super::*;
+
+    #[test]
+    fn legacy_local_only_setting_is_ignored_when_loading_saved_settings() {
+        let settings: SemanticSettings = serde_json::from_value(serde_json::json!({
+            "semanticSearchEnabled": true,
+            "localOnlyMode": true,
+            "lexicalWeight": 0.5,
+            "semanticWeight": 0.4
+        }))
+        .expect("legacy semantic settings should still load");
+
+        let saved = serde_json::to_value(settings).expect("semantic settings should serialize");
+        assert!(saved.get("localOnlyMode").is_none());
+    }
 
     #[test]
     fn query_failure_degrades_without_consuming_the_worker_retry_budget() {

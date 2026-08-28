@@ -55,7 +55,17 @@
             "body": "Body",
             "bodyHash": "body-hash-1",
             "selection": "Body"
-          }
+          },
+          "selectedContext": [
+            {
+              "noteId": "note-2",
+              "sectionLabel": "Decisions",
+              "startLine": 4,
+              "endLine": 9,
+              "blockAnchor": "decision-1",
+              "reason": "related"
+            }
+          ]
         }
       },
       "result": {
@@ -84,14 +94,12 @@
       "args": {
         "settings": {
           "semanticSearchEnabled": true,
-          "localOnlyMode": true,
           "lexicalWeight": 0.5,
           "semanticWeight": 0.4000000059604645
         }
       },
       "result": {
         "semanticSearchEnabled": true,
-        "localOnlyMode": true,
         "lexicalWeight": 0.5,
         "semanticWeight": 0.4000000059604645
       }

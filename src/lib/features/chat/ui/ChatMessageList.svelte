@@ -12,7 +12,11 @@
   } from '../types';
   import ChatMessage from './ChatMessage.svelte';
   import { resolveTargetMessageId } from './chatPanelHelpers';
-  import { positionInitialChatScroll } from './chatMessageScroll';
+  import {
+    followLatestChatContent,
+    isNearLatestChatContent,
+    positionInitialChatScroll
+  } from './chatMessageScroll';
   import { chatSelectionToMarkdown } from './chatSelectionMarkdown';
 
   interface Props {
@@ -30,6 +34,7 @@
     onOpenWikilink?: (rawTarget: string) => void | Promise<void>;
     onPreviewAttachment: (attachment: ChatAttachmentInput) => void;
     onActionError: (message: string | null) => void;
+    onReviewProposal?: (proposalId: string) => void | Promise<void>;
   }
 
   let {
@@ -44,7 +49,8 @@
     onOpenCitation,
     onOpenWikilink,
     onPreviewAttachment,
-    onActionError
+    onActionError,
+    onReviewProposal
   }: Props = $props();
 
   let messagesElement = $state<HTMLElement | null>(null);
@@ -55,6 +61,7 @@
   let positionedConversationId: string | null = null;
   let appliedTargetAnchor: string | null = null;
   let previousScrollKey: string | null = null;
+  let isFollowingLatest = $state(true);
 
   const isEmpty = $derived(!conversation || conversation.messages.length === 0);
 
@@ -93,6 +100,7 @@
       positionedConversationId = null;
       appliedTargetAnchor = null;
       previousScrollKey = null;
+      isFollowingLatest = true;
       return;
     }
     if (
@@ -105,6 +113,7 @@
     positionInitialConversation(root, current);
     positionedConversationId = current.id;
     previousScrollKey = scrollKeyFor(current);
+    isFollowingLatest = isNearLatestChatContent(root);
 
     // Correct for layout completed later in the frame (for example message
     // components with measured content) without introducing animation.
@@ -150,13 +159,26 @@
       !current ||
       !root ||
       positionedConversationId !== current.id ||
-      (scrollKey === previousScrollKey && !isSending)
+      (scrollKey === previousScrollKey && !isSending) ||
+      !isFollowingLatest
     ) return;
     previousScrollKey = scrollKey;
     requestAnimationFrame(() => {
-      root.scrollTo({ top: root.scrollHeight, behavior: 'smooth' });
+      if (
+        messagesElement === root &&
+        positionedConversationId === current.id &&
+        isFollowingLatest
+      ) {
+        followLatestChatContent(root);
+      }
     });
   });
+
+  function updateScrollFollowing(event: Event) {
+    isFollowingLatest = isNearLatestChatContent(
+      event.currentTarget as HTMLElement
+    );
+  }
 
   function captureSelection(event: Event) {
     const root = event.currentTarget as HTMLElement;
@@ -330,6 +352,7 @@
   class="min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto py-4 sm:py-5"
   role="log"
   aria-live="polite"
+  onscroll={updateScrollFollowing}
   onpointerup={captureSelection}
   onkeyup={captureSelection}
   oncopy={copyNativeSelection}
@@ -375,6 +398,7 @@
           onDecidePermission={async (request, decision) => {
             await controller.decidePermission(request, decision);
           }}
+          onReviewProposal={(proposalId) => onReviewProposal?.(proposalId)}
         />
       {/each}
     </div>

@@ -1,10 +1,16 @@
 <script lang="ts">
-  import { Eye, EyeOff, KeyRound, LoaderCircle, RefreshCw } from '@lucide/svelte';
+  import { Eye, EyeOff, KeyRound, LoaderCircle } from '@lucide/svelte';
   import SettingsField from './SettingsField.svelte';
   import ExcludedNotesSettings from './ExcludedNotesSettings.svelte';
+  import LocalModelSettings from './LocalModelSettings.svelte';
   import { onMount } from 'svelte';
   import { TauriChatApi } from '$lib/features/chat/api';
-  import type { ChatProvider, ChatSettings, LocalModel } from '$lib/features/chat/types';
+  import type { ChatProvider, ChatSettings } from '$lib/features/chat/types';
+  import {
+    chatReasoningChoices,
+    normalizeChatReasoningEffort,
+    OPENAI_CHAT_MODELS
+  } from '$lib/features/chat/chatConfiguration';
 
   const api = new TauriChatApi();
 
@@ -19,8 +25,9 @@
   let isSavingSettings = $state(false);
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
-  let localModels = $state<LocalModel[]>([]);
-  let isDiscoveringLocal = $state(false);
+  const defaultReasoningOptions = $derived(
+    settings ? chatReasoningChoices('openai', settings.openaiModel) : []
+  );
 
   async function load() {
     isLoading = true;
@@ -88,33 +95,19 @@
     message = null;
     try {
       settings.model = settings.provider === 'local' ? settings.localModel : settings.openaiModel;
+      if (settings.provider === 'openai') {
+        settings.reasoningEffort = normalizeChatReasoningEffort(
+          settings.provider,
+          settings.model,
+          settings.reasoningEffort
+        );
+      }
       settings = await api.setSettings(settings);
       message = 'Chat defaults saved in this vault.';
     } catch (saveError) {
       error = String(saveError);
     } finally {
       isSavingSettings = false;
-    }
-  }
-
-  async function discoverLocalModels() {
-    if (!settings) return;
-    isDiscoveringLocal = true;
-    error = null;
-    try {
-      localModels = await api.listLocalModels(settings.localBaseUrl);
-      if (!localModels.length) {
-        message = 'The local endpoint is reachable, but it returned no models.';
-      } else {
-        if (!localModels.some((model) => model.id === settings?.localModel)) {
-          settings.localModel = localModels[0].id;
-        }
-        message = `Found ${localModels.length} local model${localModels.length === 1 ? '' : 's'}.`;
-      }
-    } catch (discoverError) {
-      error = String(discoverError);
-    } finally {
-      isDiscoveringLocal = false;
     }
   }
 
@@ -228,8 +221,22 @@
           </SettingsField>
           {#if settings.provider === 'openai'}
             <SettingsField label="OpenAI model">
-              <input class="settings-control" bind:value={settings.openaiModel} spellcheck="false" />
+              <input class="settings-control" bind:value={settings.openaiModel} list="openai-chat-models" spellcheck="false" />
+              <datalist id="openai-chat-models">
+                {#each OPENAI_CHAT_MODELS as model (model.id)}
+                  <option value={model.id}>{model.label}</option>
+                {/each}
+              </datalist>
             </SettingsField>
+            {#if defaultReasoningOptions.length > 0}
+              <SettingsField label="Reasoning">
+                <select class="settings-control" bind:value={settings.reasoningEffort}>
+                  {#each defaultReasoningOptions as option (option.value)}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              </SettingsField>
+            {/if}
             <SettingsField label="Processing">
               <select class="settings-control" bind:value={settings.serviceTier}>
                 <option value="standard">Standard</option>
@@ -246,22 +253,18 @@
             <SettingsField label="Local endpoint">
               <input class="settings-control" bind:value={settings.localBaseUrl} spellcheck="false" placeholder="http://localhost:1234/v1" />
             </SettingsField>
-            <SettingsField label="Local model">
-              <div class="flex gap-2">
-                {#if localModels.length}
-                  <select class="settings-control min-w-0" bind:value={settings.localModel}>
-                    {#each localModels as model (model.id)}
-                      <option value={model.id}>{model.id}</option>
-                    {/each}
-                  </select>
-                {:else}
-                  <input class="settings-control min-w-0" bind:value={settings.localModel} placeholder="Load a model in LM Studio, then discover" spellcheck="false" />
-                {/if}
-                <button type="button" class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border" disabled={isDiscoveringLocal} onclick={() => void discoverLocalModels()} aria-label="Discover local models" title="Discover models from the OpenAI-compatible endpoint">
-                  {#if isDiscoveringLocal}<LoaderCircle class="h-4 w-4 animate-spin" />{:else}<RefreshCw class="h-4 w-4" />{/if}
-                </button>
-              </div>
-            </SettingsField>
+            <div class="sm:col-span-2">
+              <LocalModelSettings
+                baseUrl={settings.localBaseUrl}
+                selectedModel={settings.localModel}
+                onSelect={(model) => {
+                  if (!settings) return;
+                  settings.localModel = model;
+                }}
+                onStatus={(status) => { error = null; message = status; }}
+                onError={(detail) => { message = null; error = detail; }}
+              />
+            </div>
           {/if}
           <SettingsField label="Default vault access">
             <select class="settings-control" bind:value={settings.defaultVaultAccess}>

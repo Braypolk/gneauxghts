@@ -21,6 +21,7 @@ describe('TauriChatApi', () => {
     const settings = await new TauriChatApi().getSettings();
 
     expect(settings.webAccess).toBe('auto');
+    expect(settings.reasoningEffort).toBe('medium');
   });
 
   it('normalizes legacy Ollama settings to the local provider', async () => {
@@ -49,6 +50,7 @@ describe('TauriChatApi', () => {
       openaiModel: 'test-model',
       localModel: '',
       localBaseUrl: 'http://localhost:1234/v1',
+      reasoningEffort: 'medium' as const,
       serviceTier: 'standard' as const,
       webAccess: 'off' as const,
       defaultVaultAccess: 'approved' as const,
@@ -69,6 +71,7 @@ describe('TauriChatApi', () => {
         openaiModel: 'test-model',
         localModel: '',
         localBaseUrl: 'http://localhost:1234/v1',
+        reasoningEffort: 'medium',
         serviceTier: 'standard',
         webAccess: 'off',
         defaultAccess: 'approved',
@@ -162,7 +165,8 @@ describe('TauriChatApi', () => {
         content: 'Hello',
         attachments: [],
         forceWebSearch: true,
-        activeNote: null
+        activeNote: null,
+        selectedContext: []
       }
     });
     expect(receipt.userMessage.content).toBe('Hello');
@@ -197,7 +201,8 @@ describe('TauriChatApi', () => {
         content: 'What is this?',
         attachments: [attachment],
         forceWebSearch: undefined,
-        activeNote: null
+        activeNote: null,
+        selectedContext: []
       }
     });
     expect(receipt.userMessage.attachments).toEqual([
@@ -373,12 +378,13 @@ describe('TauriChatApi', () => {
     const summary = await new TauriChatApi().setConversationProvider(
       'chat-1',
       'local',
-      'qwen3-8b'
+      'qwen3-8b',
+      'high'
     );
 
     expect(invokeMock).toHaveBeenCalledWith('chat_update_conversation_provider', {
       conversationId: 'chat-1',
-      request: { provider: 'local', model: 'qwen3-8b' }
+      request: { provider: 'local', model: 'qwen3-8b', reasoningEffort: 'high' }
     });
     expect(summary).toMatchObject({ provider: 'local', model: 'qwen3-8b' });
   });
@@ -393,6 +399,36 @@ describe('TauriChatApi', () => {
     expect(invokeMock).toHaveBeenCalledWith('chat_list_local_models', {
       baseUrl: 'http://localhost:1234/v1'
     });
+  });
+
+  it('persists capability selections for a specific local model', async () => {
+    const capabilities = {
+      images: true,
+      tools: true,
+      audio: false,
+      video: true,
+      reasoningEffort: 'xhigh' as const
+    };
+    invokeMock.mockResolvedValue(capabilities);
+    const { TauriChatApi } = await import('./api');
+
+    await expect(
+      new TauriChatApi().setLocalModelCapabilities('qwen/Qwen3.8-27B', capabilities)
+    ).resolves.toEqual(capabilities);
+    expect(invokeMock).toHaveBeenCalledWith('chat_set_local_model_capabilities', {
+      model: 'qwen/Qwen3.8-27B',
+      capabilities
+    });
+  });
+
+  it('checks account-visible OpenAI models without exposing the API key', async () => {
+    invokeMock.mockResolvedValue([{ id: 'gpt-5.6-terra', ownedBy: 'openai' }]);
+    const { TauriChatApi } = await import('./api');
+
+    await expect(new TauriChatApi().listOpenAiModels()).resolves.toEqual([
+      { id: 'gpt-5.6-terra', ownedBy: 'openai' }
+    ]);
+    expect(invokeMock).toHaveBeenCalledWith('chat_list_openai_models');
   });
 
   it('passes durable proposal resolution through typed commands', async () => {
@@ -456,7 +492,42 @@ describe('TauriChatApi', () => {
         content: 'Add this',
         attachments: [],
         forceWebSearch: undefined,
-        activeNote
+        activeNote,
+        selectedContext: []
+      }
+    });
+  });
+
+  it('requests local context suggestions and sends only explicit selections', async () => {
+    invokeMock
+      .mockResolvedValueOnce({ status: 'ready', reason: null, items: [] })
+      .mockResolvedValueOnce({
+        requestId: 'request-1', conversationId: 'chat-1',
+        userMessageId: 'user-1', assistantMessageId: 'assistant-1'
+      });
+    const { TauriChatApi } = await import('./api');
+    const api = new TauriChatApi();
+    await api.suggestContext({
+      conversationId: 'chat-1', vaultAccess: 'approved', query: 'compare plans'
+    });
+    const selectedContext = [{
+      noteId: 'note-2', sectionLabel: 'Decisions', startLine: 4, endLine: 9,
+      blockAnchor: 'decision-1', reason: 'related' as const
+    }];
+    await api.sendMessage({
+      conversationId: 'chat-1', content: 'Compare these', selectedContext
+    });
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'chat_suggest_context', {
+      request: {
+        conversationId: 'chat-1', vaultAccess: 'approved', query: 'compare plans',
+        excludeNoteId: null, limit: 4
+      }
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_send_message', {
+      request: {
+        conversationId: 'chat-1', content: 'Compare these', attachments: [],
+        forceWebSearch: undefined, activeNote: null, selectedContext
       }
     });
   });

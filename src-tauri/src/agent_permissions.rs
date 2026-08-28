@@ -1,4 +1,4 @@
-use crate::agent_runtime::AgentEvent;
+use crate::agent_runtime::{AgentEvent, AgentEventSink};
 use futures_util::future::Either;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -137,7 +137,7 @@ impl AgentPermissionBoundary {
         tool_call_id: &str,
         tool_name: &str,
         cancelled: CancellationToken,
-        event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+        event_sink: AgentEventSink,
     ) -> Result<Option<AgentPermissionResolution>, String> {
         let Some(requirement) = self.requirements.get(tool_name) else {
             return Ok(None);
@@ -197,7 +197,7 @@ impl From<&AgentPermissionRequest> for RunGrantKey {
 struct PendingPermission {
     request: AgentPermissionRequest,
     sender: oneshot::Sender<AgentPermissionResolution>,
-    event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+    event_sink: AgentEventSink,
 }
 
 #[derive(Default)]
@@ -216,7 +216,7 @@ impl AgentPermissionBroker {
         &self,
         request: AgentPermissionRequest,
         cancelled: CancellationToken,
-        event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync>,
+        event_sink: AgentEventSink,
     ) -> Result<AgentPermissionResolution, String> {
         if cancelled.is_cancelled() {
             return Ok(AgentPermissionResolution::Cancelled);
@@ -392,10 +392,7 @@ mod tests {
         }
     }
 
-    fn sink() -> (
-        Arc<Mutex<Vec<AgentEvent>>>,
-        Arc<dyn Fn(AgentEvent) + Send + Sync>,
-    ) {
+    fn sink() -> (Arc<Mutex<Vec<AgentEvent>>>, AgentEventSink) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&events);
         (

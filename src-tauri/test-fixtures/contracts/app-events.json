@@ -24,7 +24,6 @@
       "payload": {
         "settings": {
           "semanticSearchEnabled": true,
-          "localOnlyMode": true,
           "lexicalWeight": 0.5,
           "semanticWeight": 0.4000000059604645
         },
@@ -32,7 +31,6 @@
           "id": "jina-v5-nano",
           "label": "Jina embeddings v5 nano",
           "dimensions": 768,
-          "localOnly": true,
           "runtimeBinaryPath": "/app/llama-server",
           "modelPath": "/app/models/jina.gguf",
           "modelRepoId": "jinaai/jina-embeddings-v5-text-nano-retrieval",

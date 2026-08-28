@@ -15,6 +15,7 @@ const settings: ChatSettings = {
   openaiModel: 'test-model',
   localModel: '',
   localBaseUrl: 'http://localhost:1234/v1',
+  reasoningEffort: 'medium',
   serviceTier: 'standard',
   webAccess: 'auto',
   defaultVaultAccess: 'approved',
@@ -56,6 +57,7 @@ function conversation(overrides: Partial<ChatConversation> = {}): ChatConversati
     lastMessagePreview: null,
     provider: 'openai',
     model: 'test-model',
+    reasoningEffort: 'medium',
     messages: [],
     activeRequestId: null,
     projectionPath: null,
@@ -114,21 +116,22 @@ function fakeApi() {
         conversation({ vaultAccess });
       return summary;
     }),
-    setConversationProvider: vi.fn(async (_id, provider, model) => {
+    setConversationProvider: vi.fn(async (_id, provider, model, reasoningEffort) => {
       const { messages, activeRequestId, projectionPath, excerptMessageIds, ...summary } =
-        conversation({ provider, model });
+        conversation({ provider, model, reasoningEffort });
       return summary;
     }),
+    listOpenAiModels: vi.fn(async () => []),
     listLocalModels: vi.fn(async () => []),
     getModelCapabilities: vi.fn(async () => ({
       images: true,
+      audio: false,
+      video: false,
       files: true,
       acceptedMimeTypes: ['image/png', 'text/plain', 'application/pdf'],
       tools: true,
-      webSearch: true,
-      reasoningSummaries: false,
-      contextWindow: null
     })),
+    setLocalModelCapabilities: vi.fn(async (_model, capabilities) => capabilities),
     sendMessage: vi.fn(),
     cancelRequest: vi.fn(async () => undefined),
     decidePermission: vi.fn(async () => 'allowedOnce'),
@@ -439,10 +442,13 @@ describe('createChatController', () => {
       title: 'A local draft title',
       provider: 'openai',
       model: 'test-model',
+      reasoningEffort: 'medium',
       vaultAccess: 'approved'
     });
     expect(controller.getSnapshot().modelCapabilities).toEqual({
       images: true,
+      audio: false,
+      video: false,
       files: true,
       acceptedMimeTypes: [
         'image/png',
@@ -450,9 +456,6 @@ describe('createChatController', () => {
         'application/pdf'
       ],
       tools: true,
-      webSearch: true,
-      reasoningSummaries: false,
-      contextWindow: null
     });
   });
 
@@ -468,7 +471,8 @@ describe('createChatController', () => {
       title: 'Draft title',
       vaultAccess: 'approved',
       provider: 'openai',
-      model: 'test-model'
+      model: 'test-model',
+      reasoningEffort: 'medium'
     });
   });
 
@@ -494,7 +498,8 @@ describe('createChatController', () => {
       title: undefined,
       vaultAccess: 'full',
       provider: 'local',
-      model: 'local-model'
+      model: 'local-model',
+      reasoningEffort: 'medium'
     });
   });
 
@@ -589,7 +594,9 @@ describe('createChatController', () => {
       conversationId: 'conversation-1',
       content: 'Latest news',
       attachments: [],
-      forceWebSearch: true
+      forceWebSearch: true,
+      activeNote: undefined,
+      selectedContext: []
     });
   });
 
@@ -774,13 +781,110 @@ describe('createChatController', () => {
     expect(fake.api.setConversationProvider).toHaveBeenCalledWith(
       'conversation-1',
       'local',
-      'qwen3-8b'
+      'qwen3-8b',
+      'medium'
     );
     expect(controller.getSnapshot().conversation).toMatchObject({
       provider: 'local',
       model: 'qwen3-8b'
     });
     expect(controller.getSnapshot().conversation?.messages[0].content).toBe('Existing');
+  });
+
+  it('does not merge a delayed model update into a newly opened conversation', async () => {
+    const fake = fakeApi();
+    let resolveUpdate!: (value: ChatConversation) => void;
+    const delayedUpdate = new Promise<ChatConversation>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    vi.mocked(fake.api.setConversationProvider).mockImplementation(async () => {
+      const updated = await delayedUpdate;
+      const { messages, activeRequestId, projectionPath, excerptMessageIds, ...summary } = updated;
+      return summary;
+    });
+    vi.mocked(fake.api.getConversation).mockImplementation(async (id) =>
+      conversation({ id, title: id })
+    );
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    const update = controller.setProvider('openai', 'gpt-5.6-terra');
+    await controller.openConversation('conversation-2');
+    resolveUpdate(conversation({ provider: 'openai', model: 'gpt-5.6-terra' }));
+    await update;
+
+    expect(controller.getSnapshot().conversation).toMatchObject({
+      id: 'conversation-2',
+      model: 'test-model'
+    });
+  });
+
+  it('discovers local models through the controller-owned settings boundary', async () => {
+    const fake = fakeApi();
+    vi.mocked(fake.api.listLocalModels).mockResolvedValue([
+      { id: 'qwen3-8b', ownedBy: 'lmstudio' }
+    ]);
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await expect(controller.listLocalModels()).resolves.toEqual([
+      { id: 'qwen3-8b', ownedBy: 'lmstudio' }
+    ]);
+    expect(fake.api.listLocalModels).toHaveBeenCalledWith(
+      'http://localhost:1234/v1'
+    );
+  });
+
+  it('persists reasoning independently from the selected conversation model', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await controller.setReasoningEffort('high');
+
+    expect(fake.api.setConversationProvider).toHaveBeenCalledWith(
+      'conversation-1', 'openai', 'test-model', 'high'
+    );
+    expect(controller.getSnapshot().conversation?.reasoningEffort).toBe('high');
+  });
+
+  it('uses a local models saved reasoning effort when selecting it', async () => {
+    const fake = fakeApi();
+    vi.mocked(fake.api.getModelCapabilities).mockResolvedValue({
+      images: false,
+      audio: false,
+      video: false,
+      files: true,
+      acceptedMimeTypes: ['text/plain'],
+      tools: true,
+      defaultReasoningEffort: 'xhigh',
+    });
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await controller.setProvider('local', 'qwen/qwen3.8-27b');
+
+    expect(fake.api.setConversationProvider).toHaveBeenCalledWith(
+      'conversation-1',
+      'local',
+      'qwen/qwen3.8-27b',
+      'xhigh'
+    );
+    expect(controller.getSnapshot().conversation?.reasoningEffort).toBe('xhigh');
+  });
+
+  it('discovers account-visible OpenAI models through the backend boundary', async () => {
+    const fake = fakeApi();
+    vi.mocked(fake.api.listOpenAiModels).mockResolvedValue([
+      { id: 'gpt-5.6-terra', ownedBy: 'openai' }
+    ]);
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await expect(controller.listOpenAiModels()).resolves.toEqual([
+      { id: 'gpt-5.6-terra', ownedBy: 'openai' }
+    ]);
+    expect(fake.api.listOpenAiModels).toHaveBeenCalledOnce();
   });
 
   it('reloads unresolved proposals without opening their notes when a conversation opens', async () => {
@@ -945,7 +1049,8 @@ describe('createChatController', () => {
       content: 'Update this',
       attachments: [],
       forceWebSearch: false,
-      activeNote
+      activeNote,
+      selectedContext: []
     });
   });
 });

@@ -1,6 +1,5 @@
 export interface SemanticSettings {
   semanticSearchEnabled: boolean;
-  localOnlyMode: boolean;
   lexicalWeight: number;
   semanticWeight: number;
 }
@@ -9,7 +8,6 @@ export interface SemanticModelInfo {
   id: string;
   label: string;
   dimensions: number;
-  localOnly: boolean;
   runtimeBinaryPath: string | null;
   modelPath: string | null;
   modelRepoId: string;

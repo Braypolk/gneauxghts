@@ -16,13 +16,17 @@ import type {
   ChatAttachmentInput,
   ChatAgentProposal,
   ChatModelCapabilities,
+  ChatContextSelectionInput,
+  ChatContextSuggestionResponse,
   ChatProvider,
+  ChatReasoningEffort,
   ChatSettings,
   ChatAgentEventEnvelope,
   AgentPermissionDecision,
   AgentPermissionIdentity,
   AgentPermissionResolution,
   LocalModel,
+  LocalModelCapabilitySelection,
   ProjectionConflictResolution,
   VaultAccess
 } from './types';
@@ -45,11 +49,12 @@ interface RawChatSettings {
   serviceTier?: ChatSettings['serviceTier'];
   webAccess?: ChatSettings['webAccess'];
   atlasVisibility?: ChatSettings['atlasVisibility'];
+  reasoningEffort?: ChatReasoningEffort;
 }
 interface RawSummary {
   id: string; title: string; access: VaultAccess; status: string;
   createdAtMillis: number; updatedAtMillis: number; messageCount: number; detached: boolean;
-  provider?: ChatProvider | 'ollama'; model?: string;
+  provider?: ChatProvider | 'ollama'; model?: string; reasoningEffort?: ChatReasoningEffort;
 }
 interface RawSource {
   kind: string; noteId?: string | null; notePath?: string | null; title: string; excerpt: string;
@@ -90,6 +95,7 @@ function normalizeSettings(raw: RawChatSettings): ChatSettings {
       raw.openaiModel ?? (provider === 'openai' ? raw.model : ''),
     localModel: raw.localModel ?? (provider === 'local' ? raw.model : ''),
     localBaseUrl: raw.localBaseUrl ?? 'http://localhost:1234/v1',
+    reasoningEffort: raw.reasoningEffort ?? 'medium',
     serviceTier: raw.serviceTier ?? 'standard',
     webAccess: raw.webAccess ?? 'auto',
     defaultVaultAccess: raw.defaultAccess,
@@ -108,7 +114,8 @@ function normalizeSummary(raw: RawSummary): ChatConversationSummary {
     messageCount: raw.messageCount,
     lastMessagePreview: null,
     provider: raw.provider === 'ollama' ? 'local' : (raw.provider ?? 'openai'),
-    model: raw.model ?? ''
+    model: raw.model ?? '',
+    reasoningEffort: raw.reasoningEffort ?? 'medium'
   };
 }
 
@@ -200,6 +207,7 @@ export interface ChatApi {
     vaultAccess?: VaultAccess;
     provider?: ChatProvider;
     model?: string;
+    reasoningEffort?: ChatReasoningEffort;
   }): Promise<ChatConversation>;
   listConversations(includeArchived?: boolean): Promise<ChatConversationSummary[]>;
   getConversation(conversationId: string): Promise<ChatConversation>;
@@ -212,15 +220,33 @@ export interface ChatApi {
     retentionDays: ForgottenNoteRetentionPreference
   ): Promise<ForgottenNoteSummary | null>;
   setConversationVaultAccess(conversationId: string, vaultAccess: VaultAccess): Promise<ChatConversationSummary>;
-  setConversationProvider(conversationId: string, provider: ChatProvider, model: string): Promise<ChatConversationSummary>;
+  setConversationProvider(
+    conversationId: string,
+    provider: ChatProvider,
+    model: string,
+    reasoningEffort: ChatReasoningEffort
+  ): Promise<ChatConversationSummary>;
+  listOpenAiModels(): Promise<LocalModel[]>;
   listLocalModels(baseUrl: string): Promise<LocalModel[]>;
   getModelCapabilities(provider: ChatProvider, model: string): Promise<ChatModelCapabilities>;
+  setLocalModelCapabilities(
+    model: string,
+    capabilities: LocalModelCapabilitySelection
+  ): Promise<LocalModelCapabilitySelection>;
+  suggestContext(input: {
+    conversationId?: string | null;
+    vaultAccess: VaultAccess;
+    query: string;
+    excludeNoteId?: string | null;
+    limit?: number;
+  }): Promise<ChatContextSuggestionResponse>;
   sendMessage(input: {
     conversationId: string;
     content: string;
     attachments?: ChatAttachmentInput[];
     forceWebSearch?: boolean;
     activeNote?: ChatActiveNoteSnapshot | null;
+    selectedContext?: ChatContextSelectionInput[];
   }): Promise<ChatSendReceipt>;
   cancelRequest(requestId: string): Promise<void>;
   decidePermission(
@@ -264,7 +290,10 @@ export const CHAT_COMMANDS = {
   setConversationVaultAccess: 'chat_update_conversation_policy',
   setConversationProvider: 'chat_update_conversation_provider',
   listLocalModels: 'chat_list_local_models',
+  listOpenAiModels: 'chat_list_openai_models',
   getModelCapabilities: 'chat_get_model_capabilities',
+  setLocalModelCapabilities: 'chat_set_local_model_capabilities',
+  suggestContext: 'chat_suggest_context',
   sendMessage: 'chat_send_message',
   cancelRequest: 'chat_cancel_request',
   decidePermission: 'chat_decide_permission',
@@ -298,6 +327,7 @@ export class TauriChatApi implements ChatApi {
         openaiModel: settings.openaiModel,
         localModel: settings.localModel,
         localBaseUrl: settings.localBaseUrl,
+        reasoningEffort: settings.reasoningEffort,
         serviceTier: settings.serviceTier,
         webAccess: settings.webAccess,
         defaultAccess: settings.defaultVaultAccess,
@@ -325,13 +355,15 @@ export class TauriChatApi implements ChatApi {
     vaultAccess?: VaultAccess;
     provider?: ChatProvider;
     model?: string;
+    reasoningEffort?: ChatReasoningEffort;
   } = {}) {
     return invoke<RawConversation>(CHAT_COMMANDS.createConversation, {
       request: {
         title: input.title,
         access: input.vaultAccess,
         provider: input.provider,
-        model: input.model
+        model: input.model,
+        reasoningEffort: input.reasoningEffort
       }
     }).then((raw) => this.#normalizeConversation(raw));
   }
@@ -372,10 +404,18 @@ export class TauriChatApi implements ChatApi {
       conversationId, access: vaultAccess
     }));
   }
-  async setConversationProvider(conversationId: string, provider: ChatProvider, model: string) {
+  async setConversationProvider(
+    conversationId: string,
+    provider: ChatProvider,
+    model: string,
+    reasoningEffort: ChatReasoningEffort
+  ) {
     return normalizeSummary(await invoke<RawConversation>(CHAT_COMMANDS.setConversationProvider, {
-      conversationId, request: { provider, model }
+      conversationId, request: { provider, model, reasoningEffort }
     }));
+  }
+  listOpenAiModels() {
+    return invoke<LocalModel[]>(CHAT_COMMANDS.listOpenAiModels);
   }
   listLocalModels(baseUrl: string) {
     return invoke<LocalModel[]>(CHAT_COMMANDS.listLocalModels, { baseUrl });
@@ -383,12 +423,36 @@ export class TauriChatApi implements ChatApi {
   getModelCapabilities(provider: ChatProvider, model: string) {
     return invoke<ChatModelCapabilities>(CHAT_COMMANDS.getModelCapabilities, { provider, model });
   }
+  setLocalModelCapabilities(model: string, capabilities: LocalModelCapabilitySelection) {
+    return invoke<LocalModelCapabilitySelection>(CHAT_COMMANDS.setLocalModelCapabilities, {
+      model,
+      capabilities
+    });
+  }
+  suggestContext(input: {
+    conversationId?: string | null;
+    vaultAccess: VaultAccess;
+    query: string;
+    excludeNoteId?: string | null;
+    limit?: number;
+  }) {
+    return invoke<ChatContextSuggestionResponse>(CHAT_COMMANDS.suggestContext, {
+      request: {
+        conversationId: input.conversationId ?? null,
+        vaultAccess: input.vaultAccess,
+        query: input.query,
+        excludeNoteId: input.excludeNoteId ?? null,
+        limit: input.limit ?? 4
+      }
+    });
+  }
   async sendMessage(input: {
     conversationId: string;
     content: string;
     attachments?: ChatAttachmentInput[];
     forceWebSearch?: boolean;
     activeNote?: ChatActiveNoteSnapshot | null;
+    selectedContext?: ChatContextSelectionInput[];
   }) {
     const raw = await invoke<RawReceipt>(CHAT_COMMANDS.sendMessage, {
       request: {
@@ -396,7 +460,8 @@ export class TauriChatApi implements ChatApi {
         content: input.content,
         attachments: input.attachments ?? [],
         forceWebSearch: input.forceWebSearch,
-        activeNote: input.activeNote ?? null
+        activeNote: input.activeNote ?? null,
+        selectedContext: input.selectedContext ?? []
       }
     });
     this.#messageConversations.set(raw.userMessageId, raw.conversationId);

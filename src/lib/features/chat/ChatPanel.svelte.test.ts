@@ -28,6 +28,7 @@ describe('ChatPanel initial render', () => {
         title: '',
         provider: 'openai',
         model: 'configured-model',
+        reasoningEffort: 'medium',
         vaultAccess: 'full'
       },
       grants: [],
@@ -69,6 +70,7 @@ describe('ChatPanel initial render', () => {
         title: '',
         provider: 'openai',
         model: '',
+        reasoningEffort: 'medium',
         vaultAccess: 'approved'
       },
       grants: [],

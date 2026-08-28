@@ -494,6 +494,41 @@ pub(crate) fn timestamp_millis_to_rfc3339(timestamp_millis: u64) -> String {
     timestamp_seconds_to_rfc3339(timestamp_millis / 1_000)
 }
 
+pub(crate) fn parse_rfc3339_millis(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if value.len() < 20 {
+        return None;
+    }
+    let year = value.get(0..4)?.parse::<i64>().ok()?;
+    let month = value.get(5..7)?.parse::<i64>().ok()?;
+    let day = value.get(8..10)?.parse::<i64>().ok()?;
+    let hour = value.get(11..13)?.parse::<i64>().ok()?;
+    let minute = value.get(14..16)?.parse::<i64>().ok()?;
+    let second = value.get(17..19)?.parse::<i64>().ok()?;
+    if value.as_bytes().get(4) != Some(&b'-')
+        || value.as_bytes().get(7) != Some(&b'-')
+        || value.as_bytes().get(10) != Some(&b'T')
+        || value.as_bytes().get(13) != Some(&b':')
+        || value.as_bytes().get(16) != Some(&b':')
+        || value.as_bytes().get(19) != Some(&b'Z')
+        || value.len() != 20
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+    let days = days_from_civil(year, month, day);
+    let seconds = days
+        .checked_mul(86_400)?
+        .checked_add(hour.checked_mul(3_600)?)?
+        .checked_add(minute.checked_mul(60)?)?
+        .checked_add(second)?;
+    u64::try_from(seconds).ok()?.checked_mul(1_000)
+}
+
 fn timestamp_seconds_to_rfc3339(total_seconds: u64) -> String {
     let total_seconds = total_seconds as i64;
     let days = total_seconds.div_euclid(86_400);
@@ -520,12 +555,32 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (year, m, d)
 }
 
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * month + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         document_kind, extract_file_name_title_and_body, normalize_wikilink_markdown, parse_note,
-        prepare_note_markdown, reject_chat_projection_write, DocumentKind,
+        parse_rfc3339_millis, prepare_note_markdown, reject_chat_projection_write,
+        timestamp_millis_to_rfc3339, DocumentKind,
     };
+
+    #[test]
+    fn managed_timestamp_parser_round_trips_app_frontmatter_format() {
+        let timestamp = 1_767_268_923_000;
+        let encoded = timestamp_millis_to_rfc3339(timestamp);
+
+        assert_eq!(parse_rfc3339_millis(&encoded), Some(timestamp));
+        assert_eq!(parse_rfc3339_millis("not-a-timestamp"), None);
+    }
 
     #[test]
     fn parse_note_separates_frontmatter_and_body() {

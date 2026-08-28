@@ -168,7 +168,28 @@ Invariants:
 - Committed status is inferred only from verified target content or hash.
 - Repeated recovery is idempotent.
 
-## 12. Self-save suppression is operation-aware
+## 12. Related chat context is suggested, explicit, and retryable
+
+Related notes may be suggested while composing, but a suggestion does not enter
+the model context until the user selects it. The backend remains authoritative
+for identity, policy, and content at send time.
+
+Invariants:
+
+- Suggested notes are visually distinct from selected notes and default to
+  unselected.
+- Global note exclusion overrides full-vault access, conversation grants, and
+  run-scoped selections.
+- A selected note is resolved by stable note ID, reread from disk, stripped of
+  frontmatter, bounded, and persisted with its content hash for that exact run.
+- Retrying an interrupted or failed response reuses the original selected
+  context instead of silently retrieving a different set.
+- Context compaction and selected-note use are observable through durable,
+  provider-safe activity parts; raw model reasoning and tool arguments are not.
+- Suggestions do not force an active editor save or mutate the document while
+  the user is typing.
+
+## 13. Self-save suppression is operation-aware
 
 Self-save expectations describe the exact filesystem outcome of an app-owned
 operation. An external change is recognized immediately whenever the observed
@@ -182,7 +203,7 @@ Invariants:
 - A matching self-save may be deduplicated; a non-matching change is external
   even inside the deduplication window.
 
-## 13. Draft chats expose the complete chat configuration
+## 14. Draft chats expose the complete chat configuration
 
 A chat does not need to be persisted before its provider, vault access, web
 option, or attachment control is available. Draft choices become the initial
@@ -198,8 +219,23 @@ Invariants:
   atomically.
 - Attachment capability follows the selected draft model rather than the
   previously open conversation.
+- Settings defines defaults for new chats; choosing a model in the composer
+  changes only the current conversation or unsent draft.
+- Provider and model are separate composer controls. Changing provider selects
+  that provider's configured default model; the model menu only shows models
+  belonging to the active provider.
+- OpenAI model metadata is an app-owned curated catalog. Account model discovery
+  runs in the backend and only filters that catalog; credentials and unrelated
+  embedding, image, audio, or deprecated models never cross into the picker.
+- Reasoning effort is independent from provider and model, persists with the
+  conversation or unsent draft, and is constrained to the selected model's
+  supported product choices before it reaches the Responses API.
+- The model menu may reuse durable recent model IDs and discover IDs from the
+  configured local endpoint, but it does not invent provider model names.
+- A model cannot change during an active response. Both the controller and the
+  backend run boundary enforce this invariant.
 
-## 14. App-owned proposal commits advance the open document baseline
+## 15. App-owned proposal commits advance the open document baseline
 
 After a successful proposal commit, the open document acknowledges the exact
 markdown written by the app instead of routing that write through the generic
@@ -212,7 +248,7 @@ Invariants:
 - If disk no longer matches the markdown the app committed, normal external
   conflict protection still applies.
 
-## 15. Proposal arrival does not navigate
+## 16. Proposal arrival does not navigate
 
 Receiving a durable chat proposal adds it to the conversation's pending review
 queue. If its target is already open in an editor, the proposal is displayed

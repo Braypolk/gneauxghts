@@ -22,6 +22,7 @@ function conversation(): ChatConversation {
     lastMessagePreview: null,
     provider: 'openai',
     model: 'hosted-model',
+    reasoningEffort: 'medium',
     messages: [],
     activeRequestId: null,
     projectionPath: null,

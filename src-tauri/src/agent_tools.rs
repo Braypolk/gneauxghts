@@ -113,13 +113,14 @@ pub(crate) struct AgentToolContext {
     assistant_message_id: String,
     access: VaultAccess,
     active_note: Option<ActiveNoteSnapshot>,
+    run_grants: Arc<HashSet<String>>,
     surfaced: Arc<Mutex<HashSet<String>>>,
     read_coverage: Arc<Mutex<HashMap<String, ReadCoverage>>>,
     sources: Arc<Mutex<Vec<ChatSource>>>,
     proposal_lock: Arc<Mutex<()>>,
     local_model: bool,
     proposal_failures: Arc<AtomicUsize>,
-    event_sink: Arc<Mutex<Option<Arc<dyn Fn(AgentEvent) + Send + Sync>>>>,
+    event_sink: Arc<Mutex<Option<crate::agent_runtime::AgentEventSink>>>,
 }
 
 impl AgentToolContext {
@@ -133,6 +134,7 @@ impl AgentToolContext {
         assistant_message_id: String,
         access: VaultAccess,
         active_note: Option<ActiveNoteSnapshot>,
+        run_grants: HashSet<String>,
         local_model: bool,
     ) -> Self {
         Self {
@@ -144,6 +146,7 @@ impl AgentToolContext {
             assistant_message_id,
             access,
             active_note,
+            run_grants: Arc::new(run_grants),
             surfaced: Arc::new(Mutex::new(HashSet::new())),
             read_coverage: Arc::new(Mutex::new(HashMap::new())),
             sources: Arc::new(Mutex::new(Vec::new())),
@@ -169,7 +172,7 @@ impl AgentToolContext {
             .build()
     }
 
-    pub(crate) fn set_event_sink(&self, sink: Arc<dyn Fn(AgentEvent) + Send + Sync>) {
+    pub(crate) fn set_event_sink(&self, sink: crate::agent_runtime::AgentEventSink) {
         if let Ok(mut current) = self.event_sink.lock() {
             *current = Some(sink);
         }
@@ -188,6 +191,47 @@ impl AgentToolContext {
             .lock()
             .map(|items| items.clone())
             .unwrap_or_default()
+    }
+
+    /// Resolve opaque tool arguments into user-facing activity labels without
+    /// changing the ID-based authorization and execution boundary.
+    pub(crate) fn activity_note_title(&self, note_id: &str) -> Option<String> {
+        self.resolve_note(note_id).ok().map(|(_, title, _)| title)
+    }
+
+    pub(crate) fn active_note_title(&self) -> Option<&str> {
+        self.active_note
+            .as_ref()
+            .map(|note| note.title.trim())
+            .filter(|title| !title.is_empty())
+    }
+
+    pub(crate) fn selected_context_prompt(
+        &self,
+        items: &[crate::chat::ChatRunContextItem],
+    ) -> String {
+        let mut attached = Vec::new();
+        for item in items {
+            if !self.run_grants.contains(&item.note_id) {
+                continue;
+            }
+            self.surface(&item.note_id);
+            let path = self.service.notes_root().join(&item.note_path);
+            self.add_source(
+                &item.note_id,
+                &path,
+                &item.title,
+                &item.excerpt,
+                item.block_anchor
+                    .clone()
+                    .or_else(|| item.section_label.clone()),
+            );
+            attached.push(format!(
+                "[[{}]] (noteId: {}, contentHash: {}, reason: {})\n{}",
+                item.title, item.note_id, item.content_hash, item.reason, item.excerpt
+            ));
+        }
+        attached.join("\n\n")
     }
 
     pub(crate) fn explicit_wikilink_context(&self, message: &str) -> Result<String, String> {
@@ -281,7 +325,7 @@ impl AgentToolContext {
         let authoritative = ActiveNoteSnapshot {
             note_id: Some(note_id.to_string()),
             title,
-            path: Some(path.to_string_lossy().into_owned()),
+            path: Some(relative_path(self.service.notes_root(), &path)),
             body: working.body,
             body_hash: working.content_hash,
             selection: snapshot.selection.clone(),
@@ -326,6 +370,17 @@ impl AgentToolContext {
     }
 
     fn allowed(&self, note_id: &str) -> Result<bool, AgentToolError> {
+        if self
+            .service
+            .excluded_note_ids()
+            .map_err(AgentToolError)?
+            .contains(note_id)
+        {
+            return Ok(false);
+        }
+        if self.run_grants.contains(note_id) {
+            return Ok(true);
+        }
         self.service
             .note_is_allowed(&self.access, note_id)
             .map_err(AgentToolError)
@@ -474,6 +529,11 @@ impl AgentToolContext {
     }
 
     fn emit_proposal(&self, proposal: &ChatAgentProposal) {
+        self.emit_agent_event(AgentEvent::ProposalLinked {
+            proposal_id: proposal.id.clone(),
+            title: proposal.title.clone(),
+            kind: proposal.kind.clone(),
+        });
         let _ = self.app.emit("chat://proposal", proposal);
     }
 
@@ -559,10 +619,12 @@ struct SearchNotesTool(AgentToolContext);
 
 #[derive(Deserialize)]
 struct SearchArgs {
-    query: String,
+    query: Option<String>,
     limit: Option<usize>,
-    modified_after: Option<u64>,
-    modified_before: Option<u64>,
+    created_after: Option<u64>,
+    created_before: Option<u64>,
+    updated_after: Option<u64>,
+    updated_before: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -574,7 +636,8 @@ struct SearchItem {
     excerpt: String,
     score: f32,
     source: String,
-    modified_at_millis: u64,
+    created_at_millis: u64,
+    updated_at_millis: u64,
 }
 
 impl Tool for SearchNotesTool {
@@ -584,19 +647,20 @@ impl Tool for SearchNotesTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Search allowed ordinary notes across the vault using hybrid lexical and semantic retrieval. Use natural-language queries; results can then be paged with read_note.".to_string()
+        "Search allowed ordinary notes across the vault using hybrid lexical and semantic retrieval. Optionally filter by the note's managed frontmatter created_at and updated_at timestamps. A content query is optional when at least one date filter is supplied. Results can then be paged with read_note.".to_string()
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type":"object",
             "properties":{
-                "query":{"type":"string"},
+                "query":{"type":["string","null"],"description":"Optional natural-language content query; omit for a date-only search"},
                 "limit":{"type":["integer","null"],"minimum":1,"maximum":20},
-                "modified_after":{"type":["integer","null"],"description":"Unix milliseconds"},
-                "modified_before":{"type":["integer","null"],"description":"Unix milliseconds"}
+                "created_after":{"type":["integer","null"],"description":"Inclusive Unix-millisecond lower bound for gneauxghts.created_at in frontmatter"},
+                "created_before":{"type":["integer","null"],"description":"Inclusive Unix-millisecond upper bound for gneauxghts.created_at in frontmatter"},
+                "updated_after":{"type":["integer","null"],"description":"Inclusive Unix-millisecond lower bound for gneauxghts.updated_at in frontmatter"},
+                "updated_before":{"type":["integer","null"],"description":"Inclusive Unix-millisecond upper bound for gneauxghts.updated_at in frontmatter"}
             },
-            "required":["query"],
             "additionalProperties":false
         })
     }
@@ -610,9 +674,22 @@ impl Tool for SearchNotesTool {
         if self.0.access == VaultAccess::None {
             return Ok(json!({"status":"ready","items":[]}));
         }
-        let query = args.query.trim();
-        if query.is_empty() {
-            return Err(AgentToolError("Search query cannot be empty".to_string()));
+        let query = args.query.as_deref().unwrap_or("").trim();
+        let date_filters = crate::services::retrieval::VaultDateFilters {
+            created_after: args.created_after,
+            created_before: args.created_before,
+            updated_after: args.updated_after,
+            updated_before: args.updated_before,
+        };
+        if query.is_empty()
+            && date_filters.created_after.is_none()
+            && date_filters.created_before.is_none()
+            && date_filters.updated_after.is_none()
+            && date_filters.updated_before.is_none()
+        {
+            return Err(AgentToolError(
+                "Provide a content query or at least one date filter".to_string(),
+            ));
         }
         let limit = args.limit.unwrap_or(8).clamp(1, 20);
         let approved = if self.0.access == VaultAccess::Approved {
@@ -633,8 +710,7 @@ impl Tool for SearchNotesTool {
                 limit,
                 approved.as_ref(),
                 &excluded,
-                args.modified_after,
-                args.modified_before,
+                date_filters,
             )
         })
         .await?;
@@ -646,7 +722,9 @@ impl Tool for SearchNotesTool {
                 note_path: relative_path(self.0.service.notes_root(), &item.note_path),
                 excerpt: item.excerpt.clone(),
                 score: item.score,
-                source: if item.lexical_score.is_some() && item.semantic_score.is_some() {
+                source: if item.lexical_score.is_none() && item.semantic_score.is_none() {
+                    "date"
+                } else if item.lexical_score.is_some() && item.semantic_score.is_some() {
                     "hybrid"
                 } else if item.semantic_score.is_some() {
                     "semantic"
@@ -654,7 +732,8 @@ impl Tool for SearchNotesTool {
                     "lexical"
                 }
                 .to_string(),
-                modified_at_millis: item.modified_millis,
+                created_at_millis: item.created_at_millis,
+                updated_at_millis: item.updated_at_millis,
             })
             .collect::<Vec<_>>();
         for item in &items {

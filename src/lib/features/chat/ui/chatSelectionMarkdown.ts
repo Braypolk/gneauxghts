@@ -107,6 +107,7 @@ function serializeNode(node: Node): string {
   }
   if (!(node instanceof Element)) return serializeChildren(node);
   if (node.tagName === 'TABLE') return serializeTable(node);
+  if (node.classList.contains('gn-markdown-inline-citation')) return '';
   if (node.tagName === 'INPUT' && node.classList.contains('gn-markdown-task-checkbox')) {
     return '';
   }

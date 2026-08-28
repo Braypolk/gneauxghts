@@ -270,7 +270,7 @@ export class SettingsStore {
     return this.#semanticStatusRequest;
   }
 
-  async loadSemanticState() {
+  loadSemanticState = async () => {
     if (this.#semanticStateRequest) {
       return this.#semanticStateRequest;
     }
@@ -310,7 +310,7 @@ export class SettingsStore {
     })();
 
     return this.#semanticStateRequest;
-  }
+  };
 
   loadForgottenNotes = async () => {
     if (this.#forgottenNotesRequest) {
@@ -384,7 +384,10 @@ export class SettingsStore {
     }
   }
 
-  updateSetting<Key extends keyof SemanticSettings>(key: Key, value: SemanticSettings[Key]) {
+  updateSetting = <Key extends keyof SemanticSettings>(
+    key: Key,
+    value: SemanticSettings[Key]
+  ) => {
     if (!this.semanticSettings) {
       return;
     }
@@ -394,9 +397,9 @@ export class SettingsStore {
       [key]: value
     };
     void this.saveSettings();
-  }
+  };
 
-  async runAction(command: SemanticAction) {
+  runAction = async (command: SemanticAction) => {
     this.isRunningAction = true;
     this.semanticLayerError = null;
     this.semanticLayerMessage = null;
@@ -414,9 +417,9 @@ export class SettingsStore {
     } finally {
       this.isRunningAction = false;
     }
-  }
+  };
 
-  async downloadEmbeddingModel() {
+  downloadEmbeddingModel = async () => {
     this.isRunningAction = true;
     this.semanticLayerError = null;
     this.semanticLayerMessage = null;
@@ -436,18 +439,18 @@ export class SettingsStore {
     } finally {
       this.isRunningAction = false;
     }
-  }
+  };
 
-  async clearDebugMetrics() {
+  clearDebugMetrics = async () => {
     try {
       await invoke('clear_semantic_debug_metrics');
       await this.loadSemanticState();
     } catch (error) {
       console.error('Failed to clear semantic debug metrics:', error);
     }
-  }
+  };
 
-  async clearAtlasCache() {
+  clearAtlasCache = async () => {
     this.isRunningAction = true;
     this.semanticLayerError = null;
     this.semanticLayerMessage = null;
@@ -464,7 +467,7 @@ export class SettingsStore {
     } finally {
       this.isRunningAction = false;
     }
-  }
+  };
 
   async saveVaultDirectory() {
     this.isSavingVault = true;

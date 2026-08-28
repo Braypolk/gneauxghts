@@ -6,12 +6,10 @@
 
 	let {
 		class: className,
-		isStreaming: _isStreaming = false,
 		open = $bindable(false),
 		children,
 		...restProps
 	}: PlanProps = $props();
-	// indexing
 </script>
 
 <Collapsible data-slot="plan" bind:open {...restProps}>

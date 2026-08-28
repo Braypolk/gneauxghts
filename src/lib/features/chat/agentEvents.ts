@@ -2,7 +2,8 @@ import type {
   AgentEvent,
   ChatAgentEventEnvelope,
   ChatCitation,
-  ChatPart
+  ChatPart,
+  MessageStatus
 } from './types';
 
 export interface AgentEventState {
@@ -71,7 +72,13 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
         callId: event.callId,
         name: event.name,
         title: event.title,
-        status: event.status
+        status: event.status,
+        ...(event.stepIndex !== undefined ? { stepIndex: event.stepIndex } : {}),
+        ...(event.inputSummary ? { inputSummary: event.inputSummary } : {}),
+        ...(event.outputSummary ? { outputSummary: event.outputSummary } : {}),
+        ...(event.durationMillis !== undefined
+          ? { durationMillis: event.durationMillis }
+          : {})
       };
       const index = parts.findIndex((part) => part.id === tool.id);
       if (index < 0) return [...parts, tool];
@@ -79,6 +86,32 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
       next[index] = tool;
       return next;
     }
+    case 'stepUpdated':
+      // Model turns are durable runtime diagnostics, not user-facing parts.
+      return parts;
+    case 'runGuardTriggered':
+      return upsertPart(parts, {
+        id: 'run-guard',
+        type: 'status',
+        status: 'stopped',
+        reason: event.reason,
+        label: event.message
+      });
+    case 'proposalLinked':
+      return upsertPart(parts, {
+        id: `proposal:${event.proposalId}`,
+        type: 'proposalRef',
+        proposalId: event.proposalId,
+        title: event.title,
+        kind: event.kind
+      });
+    case 'contextUpdated':
+      return upsertPart(parts, {
+        id: 'context',
+        type: 'context',
+        compacted: event.compacted,
+        selectedNoteTitles: event.selectedNoteTitles
+      });
     case 'planUpdated': {
       const plan = { id: 'plan' as const, type: 'plan' as const, entries: event.entries };
       const index = parts.findIndex((part) => part.id === plan.id);
@@ -108,19 +141,6 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
         turn: event.turn,
         label: `Model turn ${event.turn} retried`
       });
-    case 'reasoningUpdated': {
-      const reasoning = {
-        id: 'reasoning' as const,
-        type: 'reasoning' as const,
-        status: event.status,
-        ...(event.summary ? { summary: event.summary } : {})
-      };
-      const index = parts.findIndex((part) => part.id === reasoning.id);
-      if (index < 0) return [...parts, reasoning];
-      const next = parts.slice();
-      next[index] = reasoning;
-      return next;
-    }
     case 'permissionRequested':
       return upsertPart(parts, {
         id: `permission:${event.request.permissionId}`,
@@ -149,6 +169,23 @@ export function settlePendingPermissions(parts: ChatPart[]): ChatPart[] {
   return parts.map((part) => part.type === 'permission' && part.status === 'pending'
     ? { ...part, status: 'resolved' as const, resolution: 'cancelled' as const }
     : part);
+}
+
+export function settleAgentActivity(
+  parts: ChatPart[],
+  messageStatus: MessageStatus
+): ChatPart[] {
+  if (messageStatus === 'pending' || messageStatus === 'streaming') return parts;
+  const terminalSuccess = messageStatus === 'completed';
+  return parts.map((part) => {
+    if (part.type === 'tool' && part.status === 'running') {
+      return {
+        ...part,
+        status: terminalSuccess ? ('success' as const) : ('error' as const)
+      };
+    }
+    return part;
+  });
 }
 
 function upsertPart(parts: ChatPart[], part: ChatPart): ChatPart[] {

@@ -77,4 +77,30 @@ describe('SettingsStore forgotten item actions', () => {
     expect(invokeMock).toHaveBeenCalledWith('retry_semantic_index');
     expect(store.isRunningAction).toBe(false);
   });
+
+  it('keeps component-passed semantic setting updates bound to the store', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    store.semanticSettings = {
+      semanticSearchEnabled: true,
+      lexicalWeight: 0.4,
+      semanticWeight: 0.6
+    };
+    invokeMock.mockImplementation(async (command, args) =>
+      command === 'set_semantic_settings' ? args.settings : undefined
+    );
+
+    const updateSetting = store.updateSetting;
+    updateSetting('semanticSearchEnabled', false);
+
+    await vi.waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('set_semantic_settings', {
+        settings: {
+          semanticSearchEnabled: false,
+          lexicalWeight: 0.4,
+          semanticWeight: 0.6
+        }
+      });
+    });
+  });
 });

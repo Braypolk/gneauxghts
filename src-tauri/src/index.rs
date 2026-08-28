@@ -653,6 +653,8 @@ pub(crate) struct IndexedNote {
     signature: FileSignature,
     pub(crate) note_id: String,
     pub(crate) modified_millis: u64,
+    pub(crate) created_at_millis: u64,
+    pub(crate) updated_at_millis: u64,
     pub(crate) document_kind: DocumentKind,
     pub(crate) title: String,
     pub(crate) title_lower: String,
@@ -1034,6 +1036,19 @@ fn build_indexed_note_with_signature(
     signature: FileSignature,
 ) -> IndexedNote {
     let modified_millis = signature.modified_millis;
+    let parsed = note::parse_note(markdown);
+    let created_at_millis = parsed
+        .frontmatter
+        .managed
+        .as_ref()
+        .and_then(|metadata| note::parse_rfc3339_millis(&metadata.created_at))
+        .unwrap_or(modified_millis);
+    let updated_at_millis = parsed
+        .frontmatter
+        .managed
+        .as_ref()
+        .and_then(|metadata| note::parse_rfc3339_millis(&metadata.updated_at))
+        .unwrap_or(modified_millis);
     let fallback_file_name = path
         .and_then(|path| path.file_stem())
         .and_then(|file_name| file_name.to_str())
@@ -1050,6 +1065,8 @@ fn build_indexed_note_with_signature(
         signature,
         note_id,
         modified_millis,
+        created_at_millis,
+        updated_at_millis,
         document_kind: note::document_kind(markdown),
         title: title.clone(),
         title_lower: title.to_lowercase(),
@@ -1071,6 +1088,19 @@ fn build_current_override_with_signature(
     signature: FileSignature,
 ) -> IndexedNote {
     let modified_millis = signature.modified_millis;
+    let parsed = note::parse_note(markdown);
+    let created_at_millis = parsed
+        .frontmatter
+        .managed
+        .as_ref()
+        .and_then(|metadata| note::parse_rfc3339_millis(&metadata.created_at))
+        .unwrap_or(modified_millis);
+    let updated_at_millis = parsed
+        .frontmatter
+        .managed
+        .as_ref()
+        .and_then(|metadata| note::parse_rfc3339_millis(&metadata.updated_at))
+        .unwrap_or(modified_millis);
     let searchable_body = note::strip_frontmatter(markdown);
     let file_name = if current_title.trim().is_empty() {
         path.and_then(|path| path.file_stem())
@@ -1095,6 +1125,8 @@ fn build_current_override_with_signature(
         signature,
         note_id,
         modified_millis,
+        created_at_millis,
+        updated_at_millis,
         document_kind: note::document_kind(markdown),
         title: effective_title.clone(),
         title_lower: effective_title.to_lowercase(),
@@ -1456,6 +1488,24 @@ mod tests {
 
         assert!(!searchable_text.contains("private-index-term"));
         assert!(searchable_text.contains("Body text"));
+    }
+
+    #[test]
+    fn indexed_note_uses_managed_frontmatter_timestamps_with_filesystem_fallback() {
+        let markdown = "---\ngneauxghts:\n  id: dated-note\n  created_at: 2026-01-01T00:00:00Z\n  updated_at: 2026-01-02T00:00:00Z\n---\n\nBody";
+        let dated = build_indexed_note(&fixture_path("dated.md"), markdown, 42);
+        let legacy = build_indexed_note(&fixture_path("legacy.md"), "Body", 42);
+
+        assert_eq!(
+            dated.created_at_millis,
+            crate::note::parse_rfc3339_millis("2026-01-01T00:00:00Z").unwrap()
+        );
+        assert_eq!(
+            dated.updated_at_millis,
+            crate::note::parse_rfc3339_millis("2026-01-02T00:00:00Z").unwrap()
+        );
+        assert_eq!(legacy.created_at_millis, 42);
+        assert_eq!(legacy.updated_at_millis, 42);
     }
 
     #[test]

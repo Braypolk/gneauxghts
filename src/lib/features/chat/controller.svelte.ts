@@ -11,17 +11,21 @@ import type {
   ChatAgentProposal,
   ChatActiveNoteSnapshot,
   ChatAttachmentInput,
+  ChatContextSelectionInput,
+  ChatContextSuggestionResponse,
   ChatModelCapabilities,
   ChatProvider,
+  ChatReasoningEffort,
   VaultAccess,
   ChatSettings,
   AgentPermissionDecision,
-  AgentPermissionIdentity
+  AgentPermissionIdentity,
+  LocalModel
 } from './types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
-import { configuredChatModel } from './chatConfiguration';
+import { configuredChatModel, normalizeChatReasoningEffort } from './chatConfiguration';
 import {
   materializeDurableChatParts,
   reduceAgentEvent,
@@ -45,6 +49,7 @@ export interface ChatControllerState {
     title: string;
     provider: ChatProvider;
     model: string;
+    reasoningEffort: ChatReasoningEffort;
     vaultAccess: VaultAccess;
   };
   grants: ChatNoteGrant[];
@@ -75,6 +80,7 @@ const initialState: Omit<
     title: '',
     provider: 'openai',
     model: '',
+    reasoningEffort: 'medium',
     vaultAccess: 'approved'
   },
   grants: [],
@@ -109,8 +115,15 @@ export interface ChatController extends Readable<ChatControllerState> {
     content: string,
     attachments?: ChatAttachmentInput[],
     forceWebSearch?: boolean,
-    activeNote?: ChatActiveNoteSnapshot | null
+    activeNote?: ChatActiveNoteSnapshot | null,
+    selectedContext?: ChatContextSelectionInput[]
   ): Promise<boolean>;
+  suggestContext(input: {
+    query: string;
+    vaultAccess: VaultAccess;
+    excludeNoteId?: string | null;
+    limit?: number;
+  }): Promise<ChatContextSuggestionResponse>;
   cancel(): Promise<void>;
   decidePermission(
     identity: AgentPermissionIdentity,
@@ -119,6 +132,9 @@ export interface ChatController extends Readable<ChatControllerState> {
   retry(messageId: string): Promise<void>;
   setVaultAccess(vaultAccess: VaultAccess): Promise<void>;
   setProvider(provider: ChatProvider, model: string): Promise<void>;
+  setReasoningEffort(reasoningEffort: ChatReasoningEffort): Promise<void>;
+  listOpenAiModels(): Promise<LocalModel[]>;
+  listLocalModels(): Promise<LocalModel[]>;
   keepProposal(
     proposalId: string,
     markdown?: string
@@ -192,7 +208,8 @@ function mergeSummary(list: ChatConversationSummary[], summary: ChatConversation
     messageCount: summary.messageCount,
     lastMessagePreview: summary.lastMessagePreview,
     provider: summary.provider,
-    model: summary.model
+    model: summary.model,
+    reasoningEffort: summary.reasoningEffort
   };
   return [compact, ...list.filter((item) => item.id !== compact.id)].sort(
     (a, b) => b.updatedAtMillis - a.updatedAtMillis
@@ -203,12 +220,13 @@ function draftConfiguration(
   settings: ChatSettings | null
 ): Pick<
   ChatControllerState['conversationDraft'],
-  'provider' | 'model' | 'vaultAccess'
+  'provider' | 'model' | 'reasoningEffort' | 'vaultAccess'
 > {
   const provider = settings?.provider ?? 'openai';
   return {
     provider,
     model: configuredChatModel(settings, provider),
+    reasoningEffort: settings?.reasoningEffort ?? 'medium',
     vaultAccess: settings?.defaultVaultAccess ?? 'approved'
   };
 }
@@ -254,6 +272,7 @@ export class ChatControllerStore implements ChatController {
   #initializeSequence = 0;
   #selectionOperationSequence = 0;
   #requestOperationSequence = 0;
+  #modelConfigurationSequence = 0;
   #listenersReady = false;
   #modelCapabilities = new Map<string, ChatModelCapabilities>();
 
@@ -376,11 +395,26 @@ export class ChatControllerStore implements ChatController {
   ) {
     const key = this.#modelKey(provider, model);
     const cached = this.#modelCapabilities.get(key);
-    if (cached) return cached;
+    // Local profiles are editable in Settings, so refresh them instead of
+    // allowing a controller-lived cache to hide a newly saved configuration.
+    if (cached && provider !== 'local') return cached;
     const capabilities =
       await this.#api.getModelCapabilities(provider, model);
     this.#modelCapabilities.set(key, capabilities);
     return capabilities;
+  }
+
+  #reasoningEffortForModel(
+    provider: ChatProvider,
+    model: string,
+    fallback: ChatReasoningEffort,
+    capabilities: ChatModelCapabilities | null
+  ) {
+    const configured =
+      provider === 'local'
+        ? capabilities?.defaultReasoningEffort ?? fallback
+        : fallback;
+    return normalizeChatReasoningEffort(provider, model, configured);
   }
 
   async #loadDraftModelCapabilities(
@@ -406,7 +440,19 @@ export class ChatControllerStore implements ChatController {
         this.conversationDraft.provider === provider &&
         this.conversationDraft.model === model
       ) {
-        this.#patch({ modelCapabilities });
+        const reasoningEffort = this.#reasoningEffortForModel(
+          provider,
+          model,
+          this.conversationDraft.reasoningEffort,
+          modelCapabilities
+        );
+        this.#patch({
+          modelCapabilities,
+          conversationDraft: {
+            ...this.conversationDraft,
+            reasoningEffort
+          }
+        });
       }
     } catch (error) {
       if (
@@ -787,7 +833,8 @@ export class ChatControllerStore implements ChatController {
         vaultAccess:
           input.vaultAccess ?? this.conversationDraft.vaultAccess,
         provider: this.conversationDraft.provider,
-        model: this.conversationDraft.model
+        model: this.conversationDraft.model,
+        reasoningEffort: this.conversationDraft.reasoningEffort
       });
       const modelCapabilities = await this.#getModelCapabilities(
         conversation.provider,
@@ -830,9 +877,11 @@ export class ChatControllerStore implements ChatController {
   startNewConversation(input: { title?: string } = {}) {
     const revision = this.conversationDraft.revision + 1;
     const configuration = draftConfiguration(this.settings);
-    const cachedCapabilities = this.#modelCapabilities.get(
-      this.#modelKey(configuration.provider, configuration.model)
-    ) ?? null;
+    const cachedCapabilities = configuration.provider === 'local'
+      ? null
+      : this.#modelCapabilities.get(
+          this.#modelKey(configuration.provider, configuration.model)
+        ) ?? null;
     this.#dispatch({ type: 'reset' });
     this.#patch({
       conversation: null,
@@ -1033,7 +1082,8 @@ export class ChatControllerStore implements ChatController {
     content: string,
     attachments: ChatAttachmentInput[] = [],
     forceWebSearch = false,
-    activeNote?: ChatActiveNoteSnapshot | null
+    activeNote?: ChatActiveNoteSnapshot | null,
+    selectedContext: ChatContextSelectionInput[] = []
   ) {
     const trimmed = content.trim();
     if ((!trimmed && attachments.length === 0) || this.isSending || !this.conversation) {
@@ -1054,7 +1104,8 @@ export class ChatControllerStore implements ChatController {
         content: trimmed,
         attachments,
         forceWebSearch,
-        activeNote
+        activeNote,
+        selectedContext
       });
       this.#dispatch({
         type: 'accepted',
@@ -1099,6 +1150,21 @@ export class ChatControllerStore implements ChatController {
       }
       return false;
     }
+  }
+
+  suggestContext(input: {
+    query: string;
+    vaultAccess: VaultAccess;
+    excludeNoteId?: string | null;
+    limit?: number;
+  }) {
+    if (this.#isDisposed()) {
+      return Promise.reject(new Error('Chat controller is disposed.'));
+    }
+    return this.#api.suggestContext({
+      ...input,
+      conversationId: this.conversation?.id ?? null
+    });
   }
 
   async cancel() {
@@ -1233,19 +1299,50 @@ export class ChatControllerStore implements ChatController {
     }
     try {
       const summary = await this.#api.setConversationVaultAccess(conversation.id, vaultAccess);
-      this.#updateConversation((current) => ({ ...current, ...summary }));
+      if (this.conversation?.id === conversation.id) {
+        this.#updateConversation((current) => ({ ...current, ...summary }));
+      }
     } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to change vault access.') });
+      if (this.conversation?.id === conversation.id) {
+        this.#patch({ error: errorText(error, 'Unable to change vault access.') });
+      }
     }
   }
 
   async setProvider(provider: ChatProvider, model: string) {
     if (this.#isDisposed()) return;
+    if (this.isSending) {
+      this.#patch({ error: 'Wait for the current response to finish before changing models.' });
+      return;
+    }
+    const operationId = ++this.#modelConfigurationSequence;
     const conversation = this.conversation;
+    const currentEffort = conversation?.reasoningEffort ?? this.conversationDraft.reasoningEffort;
+    let modelCapabilities = provider === 'local'
+      ? null
+      : this.#modelCapabilities.get(this.#modelKey(provider, model)) ?? null;
+    if (provider === 'local') {
+      try {
+        modelCapabilities = await this.#getModelCapabilities(provider, model);
+      } catch {
+        // Preserve model switching; capability loading below reports failures.
+      }
+    }
+    if (
+      operationId !== this.#modelConfigurationSequence ||
+      (conversation ? this.conversation?.id !== conversation.id : this.conversation !== null)
+    ) return;
+    const reasoningEffort = this.#reasoningEffortForModel(
+      provider,
+      model,
+      currentEffort,
+      modelCapabilities
+    );
     if (!conversation) {
       if (
         this.conversationDraft.provider === provider &&
-        this.conversationDraft.model === model
+        this.conversationDraft.model === model &&
+        this.conversationDraft.reasoningEffort === reasoningEffort
       ) {
         return;
       }
@@ -1253,33 +1350,128 @@ export class ChatControllerStore implements ChatController {
         conversationDraft: {
           ...this.conversationDraft,
           provider,
-          model
+          model,
+          reasoningEffort
         },
-        modelCapabilities:
-          this.#modelCapabilities.get(
-            this.#modelKey(provider, model)
-          ) ?? null
+        modelCapabilities
       });
-      await this.#loadDraftModelCapabilities(
-        this.conversationDraft.revision,
-        provider,
-        model
-      );
+      if (!modelCapabilities) {
+        await this.#loadDraftModelCapabilities(
+          this.conversationDraft.revision,
+          provider,
+          model
+        );
+      }
       return;
     }
     if (
       conversation.provider === provider &&
-      conversation.model === model
+      conversation.model === model &&
+      conversation.reasoningEffort === reasoningEffort
     ) return;
     try {
-      const summary = await this.#api.setConversationProvider(conversation.id, provider, model);
-      const modelCapabilities =
-        await this.#getModelCapabilities(provider, model);
+      const summary = await this.#api.setConversationProvider(
+        conversation.id,
+        provider,
+        model,
+        reasoningEffort
+      );
+      if (
+        operationId !== this.#modelConfigurationSequence ||
+        this.conversation?.id !== conversation.id
+      ) return;
       this.#updateConversation((current) => ({ ...current, ...summary }));
-      this.#patch({ modelCapabilities });
+      try {
+        modelCapabilities ??= await this.#getModelCapabilities(provider, model);
+        if (
+          operationId === this.#modelConfigurationSequence &&
+          this.conversation?.id === conversation.id &&
+          this.conversation.provider === provider &&
+          this.conversation.model === model
+        ) {
+          this.#patch({ modelCapabilities });
+        }
+      } catch (error) {
+        if (
+          operationId === this.#modelConfigurationSequence &&
+          this.conversation?.id === conversation.id
+        ) {
+          this.#patch({
+            modelCapabilities: null,
+            error: errorText(
+              error,
+              'The model changed, but its attachment capabilities could not be loaded.'
+            )
+          });
+        }
+      }
     } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to change the chat model.') });
+      if (
+        operationId === this.#modelConfigurationSequence &&
+        this.conversation?.id === conversation.id
+      ) {
+        this.#patch({ error: errorText(error, 'Unable to change the chat model.') });
+      }
     }
+  }
+
+  async setReasoningEffort(reasoningEffort: ChatReasoningEffort) {
+    if (this.#isDisposed()) return;
+    if (this.isSending) {
+      this.#patch({ error: 'Wait for the current response to finish before changing reasoning.' });
+      return;
+    }
+    const operationId = ++this.#modelConfigurationSequence;
+    const conversation = this.conversation;
+    const provider = conversation?.provider ?? this.conversationDraft.provider;
+    const model = conversation?.model ?? this.conversationDraft.model;
+    const normalized = normalizeChatReasoningEffort(provider, model, reasoningEffort);
+    if (!conversation) {
+      if (this.conversationDraft.reasoningEffort === normalized) return;
+      this.#patch({
+        conversationDraft: {
+          ...this.conversationDraft,
+          reasoningEffort: normalized
+        }
+      });
+      return;
+    }
+    if (conversation.reasoningEffort === normalized) return;
+    try {
+      const summary = await this.#api.setConversationProvider(
+        conversation.id,
+        provider,
+        model,
+        normalized
+      );
+      if (
+        operationId === this.#modelConfigurationSequence &&
+        this.conversation?.id === conversation.id
+      ) {
+        this.#updateConversation((current) => ({ ...current, ...summary }));
+      }
+    } catch (error) {
+      if (
+        operationId === this.#modelConfigurationSequence &&
+        this.conversation?.id === conversation.id
+      ) {
+        this.#patch({ error: errorText(error, 'Unable to change reasoning effort.') });
+      }
+    }
+  }
+
+  async listOpenAiModels(): Promise<LocalModel[]> {
+    if (this.#isDisposed()) return [];
+    return this.#api.listOpenAiModels();
+  }
+
+  async listLocalModels(): Promise<LocalModel[]> {
+    if (this.#isDisposed()) return [];
+    const baseUrl = this.settings?.localBaseUrl.trim();
+    if (!baseUrl) {
+      throw new Error('Configure a local model endpoint in Settings first.');
+    }
+    return this.#api.listLocalModels(baseUrl);
   }
 
   async keepProposal(proposalId: string, markdown?: string) {

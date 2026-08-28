@@ -2,25 +2,43 @@
   import { onMount } from 'svelte';
   import ChatCodeBlock from './ChatCodeBlock.svelte';
   import { parseChatMarkdownBlocks } from './chatMarkdown';
+  import type { ChatCitation } from '../types';
 
   interface Props {
     source: string;
+    citations?: ChatCitation[];
     streaming?: boolean;
+    onOpenCitation?: (
+      citation: Extract<ChatCitation, { kind: 'note' }>
+    ) => void | Promise<void>;
     onOpenWikilink?: (rawTarget: string) => void | Promise<void>;
   }
 
   let {
     source,
+    citations = [],
     streaming = false,
+    onOpenCitation,
     onOpenWikilink
   }: Props = $props();
 
-  const blocks = $derived(parseChatMarkdownBlocks(source));
+  const blocks = $derived(parseChatMarkdownBlocks(source, citations));
   let root = $state<HTMLDivElement | null>(null);
 
   function handleClick(event: MouseEvent) {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const citationElement = target.closest<HTMLElement>('[data-chat-note-citation-id]');
+    const citationId = citationElement?.dataset.chatNoteCitationId;
+    const citation = citations.find(
+      (candidate): candidate is Extract<ChatCitation, { kind: 'note' }> =>
+        candidate.kind === 'note' && candidate.id === citationId
+    );
+    if (citation) {
+      event.preventDefault();
+      void onOpenCitation?.(citation);
+      return;
+    }
     const link = target.closest<HTMLElement>('[data-wikilink-target]');
     const rawTarget = link?.dataset.wikilinkTarget;
     if (!rawTarget) return;

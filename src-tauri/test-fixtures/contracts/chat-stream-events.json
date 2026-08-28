@@ -17,6 +17,7 @@
           "messageCount": 2,
           "detached": false,
           "provider": "openai",
+          "reasoningEffort": "medium",
           "model": "gpt-5.6-terra"
         }
       }
@@ -63,6 +64,7 @@
           "messageCount": 2,
           "detached": false,
           "provider": "openai",
+          "reasoningEffort": "medium",
           "model": "gpt-5.6-terra"
         },
         "content": "Complete response"
@@ -84,6 +86,7 @@
           "messageCount": 2,
           "detached": false,
           "provider": "openai",
+          "reasoningEffort": "medium",
           "model": "gpt-5.6-terra"
         },
         "content": "Partial response",
@@ -106,6 +109,7 @@
           "messageCount": 2,
           "detached": false,
           "provider": "openai",
+          "reasoningEffort": "medium",
           "model": "gpt-5.6-terra"
         },
         "content": "Partial response"

@@ -86,7 +86,7 @@
         {semanticStatus.disabledReason ?? 'Semantic search is unavailable on this platform.'}
       </div>
     {:else}
-      <div class="mt-6 grid gap-4 md:grid-cols-2">
+      <div class="mt-6 grid gap-4">
         <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
           <div class="flex items-start justify-between gap-4">
             <div>
@@ -104,24 +104,6 @@
             />
           </div>
         </label>
-
-        <label class="rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <p class="text-sm font-medium">Local-only Mode</p>
-              <p class="mt-1 text-xs text-muted-foreground">
-                Stay offline for the semantic runtime. Turn off temporarily to download the embedding model from Hugging Face.
-              </p>
-            </div>
-            <input
-              type="checkbox"
-              checked={semanticSettings.localOnlyMode}
-              onchange={(event) =>
-                updateSetting('localOnlyMode', (event.currentTarget as HTMLInputElement).checked)}
-            />
-          </div>
-        </label>
-
       </div>
     {/if}
 

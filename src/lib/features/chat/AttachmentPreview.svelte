@@ -146,6 +146,14 @@
           src={attachmentDataUrl(attachment)}
           alt={attachment.name}
         />
+      {:else if kind === 'audio'}
+        <audio class="w-full" src={attachmentDataUrl(attachment)} controls>
+          <track kind="captions" />
+        </audio>
+      {:else if kind === 'video'}
+        <video class="max-h-full max-w-full" src={attachmentDataUrl(attachment)} controls>
+          <track kind="captions" />
+        </video>
       {:else if kind === 'pdf' && pdfUrl}
         <iframe
           class="attachment-preview-pdf"

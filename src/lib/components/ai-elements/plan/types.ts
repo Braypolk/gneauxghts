@@ -3,7 +3,6 @@ import type { Snippet } from "svelte";
 import type { Collapsible as CollapsiblePrimitive } from "bits-ui";
 
 export type PlanProps = CollapsiblePrimitive.RootProps & {
-	isStreaming?: boolean;
 	class?: string;
 	children?: Snippet;
 };
@@ -20,15 +19,7 @@ export type PlanDescriptionProps = Omit<HTMLAttributes<HTMLParagraphElement>, "c
 	children: Snippet;
 };
 
-export type PlanActionProps = HTMLAttributes<HTMLDivElement> & {
-	children?: Snippet;
-};
-
 export type PlanContentProps = HTMLAttributes<HTMLDivElement> & {
-	children?: Snippet;
-};
-
-export type PlanFooterProps = HTMLAttributes<HTMLDivElement> & {
 	children?: Snippet;
 };
 

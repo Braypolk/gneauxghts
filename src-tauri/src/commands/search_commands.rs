@@ -716,8 +716,7 @@ pub(crate) async fn retrieve_note_context(
                     effective_limit,
                     None,
                     &HashSet::new(),
-                    None,
-                    None,
+                    crate::services::retrieval::VaultDateFilters::default(),
                 )
             })
             .await

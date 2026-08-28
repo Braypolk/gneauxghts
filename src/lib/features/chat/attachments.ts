@@ -8,7 +8,13 @@ export const MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_CHAT_ATTACHMENT_TOTAL_BYTES = 25 * 1024 * 1024;
 export const MAX_CHAT_TEXT_PREVIEW_BYTES = 512 * 1024;
 
-export type ChatAttachmentPreviewKind = 'image' | 'pdf' | 'text' | 'unsupported';
+export type ChatAttachmentPreviewKind =
+  | 'image'
+  | 'audio'
+  | 'video'
+  | 'pdf'
+  | 'text'
+  | 'unsupported';
 
 export interface ChatAttachmentTextPreview {
   text: string;
@@ -16,6 +22,9 @@ export interface ChatAttachmentTextPreview {
 }
 
 const MIME_BY_EXTENSION: Record<string, string> = {
+  '.aac': 'audio/aac',
+  '.aiff': 'audio/aiff',
+  '.avi': 'video/avi',
   '.css': 'text/css',
   '.csv': 'text/csv',
   '.gif': 'image/gif',
@@ -25,13 +34,22 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.js': 'text/javascript',
   '.json': 'application/json',
+  '.m4a': 'audio/mp4',
   '.md': 'text/markdown',
+  '.mov': 'video/quicktime',
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.mpeg': 'video/mpeg',
+  '.mpg': 'video/mpeg',
+  '.ogg': 'audio/ogg',
   '.pdf': 'application/pdf',
   '.png': 'image/png',
   '.py': 'text/x-python',
   '.rtf': 'application/rtf',
   '.svg': 'image/svg+xml',
   '.txt': 'text/plain',
+  '.wav': 'audio/wav',
+  '.webm': 'video/webm',
   '.webp': 'image/webp',
   '.xml': 'application/xml'
 };
@@ -40,9 +58,12 @@ const MIME_ALIASES: Record<string, string> = {
   'application/javascript': 'text/javascript',
   'application/x-javascript': 'text/javascript',
   'application/x-python-code': 'text/x-python',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/x-wav': 'audio/wav',
   'image/jpg': 'image/jpeg',
   'text/rtf': 'application/rtf',
-  'text/xml': 'application/xml'
+  'text/xml': 'application/xml',
+  'video/x-msvideo': 'video/avi'
 };
 
 function inferredMimeType(file: File): string {
@@ -98,7 +119,15 @@ export function validateAttachmentBatch(
   for (const file of files) {
     const mimeType = inferredMimeType(file);
     const image = mimeType.startsWith('image/');
-    if ((image && !capabilities.images) || (!image && !capabilities.files)) {
+    const audio = mimeType.startsWith('audio/');
+    const video = mimeType.startsWith('video/');
+    const ordinaryFile = !image && !audio && !video;
+    if (
+      (image && !capabilities.images) ||
+      (audio && !capabilities.audio) ||
+      (video && !capabilities.video) ||
+      (ordinaryFile && !capabilities.files)
+    ) {
       return `The selected model cannot accept “${file.name}”.`;
     }
     if (!capabilities.acceptedMimeTypes.includes(mimeType)) {
@@ -133,6 +162,8 @@ export function attachmentPreviewKind(
   if (attachment.kind === 'image' || attachment.mimeType.startsWith('image/')) {
     return 'image';
   }
+  if (attachment.mimeType.startsWith('audio/')) return 'audio';
+  if (attachment.mimeType.startsWith('video/')) return 'video';
   if (attachment.mimeType === 'application/pdf') return 'pdf';
   if (
     attachment.mimeType.startsWith('text/') ||

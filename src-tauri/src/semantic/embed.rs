@@ -1,4 +1,4 @@
-use super::{debug::SemanticDebugState, SemanticSettings};
+use super::debug::SemanticDebugState;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -48,7 +48,6 @@ pub(crate) struct ModelInfo {
     pub(crate) id: String,
     pub(crate) label: String,
     pub(crate) dimensions: usize,
-    pub(crate) local_only: bool,
     pub(crate) runtime_binary_path: Option<String>,
     pub(crate) model_path: Option<String>,
     pub(crate) model_repo_id: String,
@@ -100,7 +99,6 @@ pub(crate) trait EmbeddingProvider {
 }
 
 pub(crate) struct JinaLlamaEmbeddingProvider {
-    settings: Arc<Mutex<SemanticSettings>>,
     // `reqwest::blocking::Client` owns an internal Tokio runtime. Its final
     // drop must not happen on a Tokio worker, so Drop moves it to a plain OS
     // thread. Keep this optional solely to permit that ownership transfer.
@@ -148,7 +146,6 @@ enum ModelSource {
 impl JinaLlamaEmbeddingProvider {
     pub(crate) fn new(
         app_data_dir: PathBuf,
-        settings: Arc<Mutex<SemanticSettings>>,
         bundled_runtime_path: Option<PathBuf>,
         debug: Arc<SemanticDebugState>,
     ) -> Result<Self, String> {
@@ -158,7 +155,6 @@ impl JinaLlamaEmbeddingProvider {
             .build()
             .map_err(|err| err.to_string())?;
         Ok(Self {
-            settings,
             client: Some(client),
             model_dir: app_data_dir.join("semantic").join("models"),
             bundled_runtime_path,
@@ -172,12 +168,7 @@ impl JinaLlamaEmbeddingProvider {
     }
 
     fn ensure_server_ready(&self) -> Result<u16, String> {
-        let settings = self
-            .settings
-            .lock()
-            .map_err(|_| "Semantic settings lock poisoned".to_string())?
-            .clone();
-        let model_source = self.resolve_model_source(&settings)?;
+        let model_source = self.resolve_model_source()?;
         let runtime_binary = self.resolve_runtime_binary().ok_or_else(|| {
             "Missing `llama-server`. Install llama.cpp or set GNEAUXGHTS_LLAMA_SERVER_BIN."
                 .to_string()
@@ -249,9 +240,6 @@ impl JinaLlamaEmbeddingProvider {
         command.env("LLAMA_CACHE", &self.model_dir);
         if let Some(backend_path) = bundled_backend_plugin_path(&runtime_binary) {
             command.env("GGML_BACKEND_PATH", backend_path);
-        }
-        if settings.local_only_mode {
-            command.env("LLAMA_OFFLINE", "1");
         }
         let ModelSource::LocalFile(model_path) = model_source;
         let thread_count = resolve_llama_thread_count();
@@ -423,24 +411,16 @@ impl JinaLlamaEmbeddingProvider {
         }
     }
 
-    fn resolve_model_source(&self, settings: &SemanticSettings) -> Result<ModelSource, String> {
+    fn resolve_model_source(&self) -> Result<ModelSource, String> {
         if let Some(model_path) = self.cached_model_path() {
             return Ok(ModelSource::LocalFile(model_path));
         }
 
-        let error = if settings.local_only_mode {
-            format!(
-                "Model file missing from {}. Local-only mode blocks network download. Turn off local-only mode and use Download embedding model in Settings, or place {} in this folder.",
-                self.model_dir.display(),
-                MODEL_FILENAME
-            )
-        } else {
-            format!(
-                "Model file missing from {}. Use Download embedding model in Settings (Search), or place {} in this folder.",
-                self.model_dir.display(),
-                MODEL_FILENAME
-            )
-        };
+        let error = format!(
+            "Model file missing from {}. Use Download embedding model in Settings (Search), or place {} in this folder.",
+            self.model_dir.display(),
+            MODEL_FILENAME
+        );
         self.update_runtime_error(error.clone());
         Err(error)
     }
@@ -783,11 +763,6 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
     }
 
     fn model_info(&self) -> ModelInfo {
-        let settings = self
-            .settings
-            .lock()
-            .map(|settings| settings.clone())
-            .unwrap_or_default();
         let runtime_binary_path = self.resolve_runtime_binary();
         let cached_model_path = self.cached_model_path();
         let (runtime_port, runtime_starting, runtime_error, runtime_status) =
@@ -804,12 +779,7 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
         } else if runtime_binary_path.is_none() {
             "llama-server runtime not installed".to_string()
         } else if cached_model_path.is_none() {
-            if settings.local_only_mode {
-                "model missing; turn off local-only mode to download, or add the GGUF file manually"
-                    .to_string()
-            } else {
-                "model missing; use Download embedding model in Settings".to_string()
-            }
+            "model missing; use Download embedding model in Settings".to_string()
         } else {
             "waiting for local runtime".to_string()
         };
@@ -818,7 +788,6 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             id: MODEL_REPO_ID.to_string(),
             label: "Jina Embeddings v5 Text Nano Retrieval".to_string(),
             dimensions: self.dimensions,
-            local_only: settings.local_only_mode,
             runtime_binary_path: runtime_binary_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
@@ -886,18 +855,6 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
                 already_present: true,
                 path: path.to_string_lossy().into_owned(),
             });
-        }
-
-        let settings = self
-            .settings
-            .lock()
-            .map_err(|_| "Semantic settings lock poisoned".to_string())?
-            .clone();
-        if settings.local_only_mode {
-            return Err(
-                "Local-only mode is on. Turn it off in Semantic Layer settings to download from Hugging Face, or add the GGUF file manually."
-                    .to_string(),
-            );
         }
 
         match self.download_gguf_from_huggingface() {
@@ -1281,7 +1238,6 @@ mod tests {
     fn blocking_http_client_can_be_released_from_async_context() {
         let provider = JinaLlamaEmbeddingProvider::new(
             std::env::temp_dir().join("gneauxghts-embedding-drop-test"),
-            Arc::new(Mutex::new(SemanticSettings::default())),
             None,
             Arc::new(SemanticDebugState::new()),
         )

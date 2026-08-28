@@ -47,7 +47,8 @@ function renderMessage(
       onCopyLink: noop,
       onInsertSelection: noop,
       onToggleRemember: noop,
-      onDecidePermission: noop
+      onDecidePermission: noop,
+      onReviewProposal: noop
     }
   }).body;
 }
@@ -77,10 +78,6 @@ describe('ChatMessage text rendering', () => {
           title: 'Read note', status: 'running'
         },
         {
-          id: 'reasoning', type: 'reasoning', status: 'completed',
-          summary: 'Compared the available note evidence.'
-        },
-        {
           id: 'plan', type: 'plan',
           entries: [{ id: 'step-1', text: 'Inspect notes', status: 'inProgress' }]
         },
@@ -91,16 +88,16 @@ describe('ChatMessage text rendering', () => {
       ]
     });
 
-    expect(body).toContain('aria-label="Activity, 0 of 1 steps complete. Toggle details"');
-    expect(body).toContain('aria-label="Reasoning completed. Toggle safe summary"');
-    expect(body).toContain('Compared the available note evidence.');
+    expect(body).toContain('aria-label="Activity, 0 of 1 actions complete. Toggle details"');
     expect(body).toContain('Model turn 2 retried');
     expect(body).toContain('Inspect notes');
+    expect(body).not.toContain('Step 1');
     expect(body).not.toContain('private reasoning payload');
   });
 
   it('derives durable sources and the branch checkpoint from message evidence and status', () => {
     const body = renderMessage('assistant', {
+      content: 'Supported by [Example](https://example.com).',
       citations: [{
         id: 'web:example', kind: 'web', label: 'Example',
         url: 'https://example.com', excerpt: 'Evidence'
@@ -109,6 +106,8 @@ describe('ChatMessage text rendering', () => {
 
     expect(body).toContain('1 source');
     expect(body).toContain('Example');
+    expect(body).toContain('data-chat-citation-id="web:example"');
+    expect(body).toContain('aria-label="Source 1: Example"');
     expect(body).toContain('aria-label="Branch from here"');
   });
 
@@ -132,5 +131,57 @@ describe('ChatMessage text rendering', () => {
     expect(body).toContain('Allow once');
     expect(body).toContain('Allow for this run');
     expect(body).not.toContain('disabled=""');
+  });
+
+  it('renders compacted context and a direct proposal review affordance', () => {
+    const body = renderMessage('assistant', {
+      parts: [
+        { id: 'text', type: 'text', text: 'Done' },
+        {
+          id: 'context', type: 'context', compacted: true,
+          selectedNoteTitles: ['Project plan']
+        },
+        {
+          id: 'proposal:proposal-1', type: 'proposalRef', proposalId: 'proposal-1',
+          title: 'Project plan', kind: 'update'
+        }
+      ]
+    });
+
+    expect(body).toContain('Earlier conversation context was compacted.');
+    expect(body).toContain('Project plan');
+    expect(body).toContain('Note changes prepared');
+    expect(body).toContain('Review');
+  });
+
+  it('shows concrete actions in runtime order without exposing model turns', () => {
+    const body = renderMessage('assistant', {
+      status: 'completed',
+      parts: [
+        { id: 'text', type: 'text', text: 'Done' },
+        {
+          id: 'tool:search', type: 'tool', callId: 'search', name: 'search_notes',
+          title: 'Search notes for “budget”', status: 'success', stepIndex: 1
+        },
+        {
+          id: 'tool:read', type: 'tool', callId: 'read', name: 'read_note',
+          title: 'Read “Budget”', status: 'success', stepIndex: 0
+        },
+        {
+          id: 'tool:edit', type: 'tool', callId: 'edit', name: 'propose_note_edits',
+          title: 'Prepare changes to “Budget”', status: 'running', stepIndex: 2
+        }
+      ]
+    });
+
+    expect(body).not.toContain('Running');
+    expect(body).not.toContain('Step 1');
+    expect(body.indexOf('Read “Budget”')).toBeLessThan(
+      body.indexOf('Search notes for “budget”')
+    );
+    expect(body.indexOf('Search notes for “budget”')).toBeLessThan(
+      body.indexOf('Prepare changes to “Budget”')
+    );
+    expect(body).toContain('Activity, 3 of 3 actions complete');
   });
 });

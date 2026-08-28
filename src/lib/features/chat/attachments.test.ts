@@ -13,12 +13,11 @@ import type { ChatModelCapabilities } from './types';
 
 const multimodal: ChatModelCapabilities = {
   images: true,
+  audio: false,
+  video: false,
   files: true,
   acceptedMimeTypes: ['image/png', 'text/plain', 'application/pdf'],
   tools: true,
-  webSearch: true,
-  reasoningSummaries: false,
-  contextWindow: null
 };
 
 describe('chat attachments', () => {
@@ -62,6 +61,22 @@ describe('chat attachments', () => {
     expect(validateAttachmentBatch([archive], [], multimodal)).toContain(
       'not a supported attachment type'
     );
+  });
+
+  it('accepts configured audio and video inputs and classifies their previews', async () => {
+    const mediaCapabilities: ChatModelCapabilities = {
+      ...multimodal,
+      audio: true,
+      video: true,
+      acceptedMimeTypes: ['audio/mpeg', 'video/mp4']
+    };
+    const audio = new File(['audio'], 'clip.mp3', { type: 'audio/mpeg' });
+    const video = new File(['video'], 'clip.mp4', { type: 'video/mp4' });
+
+    expect(validateAttachmentBatch([audio, video], [], mediaCapabilities)).toBeNull();
+    const [audioAttachment, videoAttachment] = await filesToAttachments([audio, video]);
+    expect(attachmentPreviewKind(audioAttachment)).toBe('audio');
+    expect(attachmentPreviewKind(videoAttachment)).toBe('video');
   });
 
   it('prepares safe local previews for text, images, and PDFs', () => {

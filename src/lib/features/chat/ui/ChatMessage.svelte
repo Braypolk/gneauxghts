@@ -3,6 +3,7 @@
     Brain,
     Copy,
     FileInput,
+    FilePenLine,
     Link,
     RotateCcw,
     ShieldAlert
@@ -23,7 +24,6 @@
   import PlanRoot from '$lib/components/ai-elements/plan/plan.svelte';
   import PlanTitle from '$lib/components/ai-elements/plan/plan-title.svelte';
   import PlanTrigger from '$lib/components/ai-elements/plan/plan-trigger.svelte';
-  import Reasoning from '$lib/components/ai-elements/reasoning/reasoning.svelte';
   import Sources from '$lib/components/ai-elements/sources/sources.svelte';
   import Task from '$lib/components/ai-elements/task/task.svelte';
   import ChatMarkdown from './ChatMarkdown.svelte';
@@ -41,7 +41,7 @@
   import {
     safeWebCitationHref
   } from './chatPanelHelpers';
-  import { materializeDurableChatParts } from '../agentEvents';
+  import { materializeDurableChatParts, settleAgentActivity } from '../agentEvents';
 
   interface Props {
     message: ChatMessageModel;
@@ -66,6 +66,7 @@
       request: AgentPermissionRequest,
       decision: AgentPermissionDecision
     ) => void | Promise<void>;
+    onReviewProposal?: (proposalId: string) => void | Promise<void>;
   }
 
   let {
@@ -85,28 +86,38 @@
     onCopyLink,
     onInsertSelection,
     onToggleRemember,
-    onDecidePermission
+    onDecidePermission,
+    onReviewProposal
   }: Props = $props();
 
   const visibleParts = $derived<ChatPart[]>(
-    materializeDurableChatParts(
-      message.parts.length > 0
-        ? message.parts
-        : [{ id: 'text', type: 'text', text: message.content }],
-      {
-        text: message.content,
-        citations: message.citations,
-        checkpoint: message.role === 'assistant' && message.status === 'completed'
-      }
+    settleAgentActivity(
+      materializeDurableChatParts(
+        message.parts.length > 0
+          ? message.parts
+          : [{ id: 'text', type: 'text', text: message.content }],
+        {
+          text: message.content,
+          citations: message.citations,
+          checkpoint: message.role === 'assistant' && message.status === 'completed'
+        }
+      ),
+      message.status
     )
   );
   const usagePart = $derived(
     visibleParts.find((part) => part.type === 'usage')
   );
-  const toolParts = $derived(
-    visibleParts.filter((part): part is Extract<ChatPart, { type: 'tool' }> => part.type === 'tool')
+  const toolParts = $derived.by(() =>
+    visibleParts
+      .filter((part): part is Extract<ChatPart, { type: 'tool' }> => part.type === 'tool')
+      .slice()
+      .sort(
+        (left, right) =>
+          (left.stepIndex ?? Number.MAX_SAFE_INTEGER) -
+          (right.stepIndex ?? Number.MAX_SAFE_INTEGER)
+      )
   );
-
   function planSummary(entries: Extract<ChatPart, { type: 'plan' }>['entries']) {
     const completed = entries.filter((entry) => entry.status === 'completed').length;
     return `${completed} of ${entries.length} steps complete`;
@@ -219,7 +230,10 @@
 
   <div class="flex w-full flex-col gap-2.5">
     {#if toolParts.length > 0}
-      <ChainOfThought steps={toolParts} open={message.status === 'streaming'} />
+      <ChainOfThought
+        steps={toolParts}
+        open={message.status === 'streaming'}
+      />
     {/if}
     {#each visibleParts as part (part.id)}
       {#if part.type === 'text' && part.text}
@@ -229,23 +243,18 @@
           {#if message.role === 'assistant'}
             <ChatMarkdown
               source={part.text}
+              citations={message.citations}
               streaming={message.status === 'streaming'}
+              {onOpenCitation}
               {onOpenWikilink}
             />
           {:else}
             <div class="chat-user-text">{part.text}</div>
           {/if}
         </MessageContent>
-      {:else if part.type === 'reasoning'}
-        <Reasoning
-          status={message.status === 'cancelled' && part.status === 'running' ? 'cancelled' : part.status}
-          summary={part.summary}
-          open={part.status === 'running'}
-        />
       {:else if part.type === 'plan'}
         <PlanRoot
           open={message.status === 'streaming'}
-          isStreaming={message.status === 'streaming'}
           class="border-border/70 bg-muted/15 shadow-none"
         >
           <PlanHeader class="grid-cols-[1fr_auto] px-3 py-2.5">
@@ -320,6 +329,40 @@
             </div>
           </div>
         </section>
+      {:else if part.type === 'proposalRef'}
+        <section class="rounded-lg border border-border/70 bg-muted/15 px-3 py-2.5 text-xs">
+          <div class="flex items-center gap-2">
+            <FilePenLine class="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div class="min-w-0 flex-1">
+              <div class="font-medium text-foreground">
+                {part.kind === 'create' ? 'New note prepared' : 'Note changes prepared'}
+              </div>
+              <div class="truncate text-muted-foreground">{part.title}</div>
+            </div>
+            {#if onReviewProposal}
+              <button
+                type="button"
+                class="rounded-md border border-border px-2 py-1 font-medium text-foreground hover:bg-muted"
+                onclick={() => void onReviewProposal?.(part.proposalId)}
+              >Review</button>
+            {/if}
+          </div>
+        </section>
+      {:else if part.type === 'context' && (part.compacted || part.selectedNoteTitles.length > 0)}
+        <details class="rounded-lg border border-border/70 bg-muted/15 px-3 py-2 text-xs">
+          <summary class="cursor-pointer font-medium text-foreground">
+            Context
+            {#if part.selectedNoteTitles.length > 0}
+              · {part.selectedNoteTitles.length} {part.selectedNoteTitles.length === 1 ? 'note' : 'notes'} included
+            {/if}
+          </summary>
+          <div class="mt-2 space-y-1 text-muted-foreground">
+            {#if part.compacted}<p>Earlier conversation context was compacted.</p>{/if}
+            {#if part.selectedNoteTitles.length > 0}
+              <p>{part.selectedNoteTitles.join(', ')}</p>
+            {/if}
+          </div>
+        </details>
       {:else if part.type === 'sources'}
         <Sources count={part.citations.length}>
           {#each part.citations as citation, index (citation.id)}

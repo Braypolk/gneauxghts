@@ -17,7 +17,40 @@ pub(crate) struct VaultRetrievalItem {
     pub(crate) start_line: Option<usize>,
     pub(crate) end_line: Option<usize>,
     pub(crate) block_anchor: Option<String>,
-    pub(crate) modified_millis: u64,
+    pub(crate) created_at_millis: u64,
+    pub(crate) updated_at_millis: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct VaultDateFilters {
+    pub(crate) created_after: Option<u64>,
+    pub(crate) created_before: Option<u64>,
+    pub(crate) updated_after: Option<u64>,
+    pub(crate) updated_before: Option<u64>,
+}
+
+impl VaultDateFilters {
+    fn is_active(self) -> bool {
+        self.created_after.is_some()
+            || self.created_before.is_some()
+            || self.updated_after.is_some()
+            || self.updated_before.is_some()
+    }
+}
+
+fn matches_date_filters(note: &crate::index::IndexedNote, filters: VaultDateFilters) -> bool {
+    !filters
+        .created_after
+        .is_some_and(|value| note.created_at_millis < value)
+        && !filters
+            .created_before
+            .is_some_and(|value| note.created_at_millis > value)
+        && !filters
+            .updated_after
+            .is_some_and(|value| note.updated_at_millis < value)
+        && !filters
+            .updated_before
+            .is_some_and(|value| note.updated_at_millis > value)
 }
 
 /// Shared policy-aware hybrid retrieval used by both interactive Tauri search
@@ -29,8 +62,7 @@ pub(crate) fn retrieve_vault_notes(
     limit: usize,
     allowed_note_ids: Option<&HashSet<String>>,
     excluded_note_ids: &HashSet<String>,
-    modified_after: Option<u64>,
-    modified_before: Option<u64>,
+    date_filters: VaultDateFilters,
 ) -> Result<Vec<VaultRetrievalItem>, String> {
     let limit = limit.clamp(1, 20);
     let terms = query
@@ -38,7 +70,8 @@ pub(crate) fn retrieve_vault_notes(
         .filter(|term| term.len() > 1)
         .map(str::to_lowercase)
         .collect::<Vec<_>>();
-    if terms.is_empty() {
+    let date_only = terms.is_empty();
+    if date_only && !date_filters.is_active() {
         return Ok(Vec::new());
     }
 
@@ -52,16 +85,18 @@ pub(crate) fn retrieve_vault_notes(
             if indexed.document_kind != DocumentKind::Note
                 || excluded_note_ids.contains(&indexed.note_id)
                 || allowed_note_ids.is_some_and(|ids| !ids.contains(&indexed.note_id))
-                || modified_after.is_some_and(|value| indexed.modified_millis < value)
-                || modified_before.is_some_and(|value| indexed.modified_millis > value)
+                || !matches_date_filters(indexed, date_filters)
             {
                 continue;
             }
-            let paragraph = indexed.paragraphs.iter().find(|paragraph| {
-                terms
-                    .iter()
-                    .any(|term| paragraph.text_lower.contains(term.as_str()))
+            let paragraph = (!date_only).then(|| {
+                indexed.paragraphs.iter().find(|paragraph| {
+                    terms
+                        .iter()
+                        .any(|term| paragraph.text_lower.contains(term.as_str()))
+                })
             });
+            let paragraph = paragraph.flatten();
             let matches = terms
                 .iter()
                 .filter(|term| {
@@ -73,10 +108,11 @@ pub(crate) fn retrieve_vault_notes(
                             .any(|paragraph| paragraph.text_lower.contains(term.as_str()))
                 })
                 .count();
-            if matches == 0 {
+            if !date_only && matches == 0 {
                 continue;
             }
-            let lexical_score = matches as f32 / terms.len() as f32;
+            let lexical_score = (!date_only).then(|| matches as f32 / terms.len() as f32);
+            let score = lexical_score.unwrap_or(1.0);
             candidates.insert(
                 indexed.note_id.clone(),
                 VaultRetrievalItem {
@@ -89,8 +125,8 @@ pub(crate) fn retrieve_vault_notes(
                     section_label: paragraph
                         .map(|value| value.section_label.clone())
                         .unwrap_or_default(),
-                    score: lexical_score,
-                    lexical_score: Some(lexical_score),
+                    score,
+                    lexical_score,
                     semantic_score: None,
                     start_line: paragraph
                         .and_then(|value| value.lines.first())
@@ -99,7 +135,8 @@ pub(crate) fn retrieve_vault_notes(
                         .and_then(|value| value.lines.last())
                         .map(|line| line.line_number),
                     block_anchor: None,
-                    modified_millis: indexed.modified_millis,
+                    created_at_millis: indexed.created_at_millis,
+                    updated_at_millis: indexed.updated_at_millis,
                 },
             );
         }
@@ -110,7 +147,7 @@ pub(crate) fn retrieve_vault_notes(
         .get_settings()
         .map(|settings| settings.semantic_search_enabled)
         .unwrap_or(false);
-    if semantic_enabled {
+    if semantic_enabled && !date_only {
         for item in state
             .semantic
             .semantic_matches_for_text(query, None, limit.saturating_mul(3))
@@ -130,8 +167,7 @@ pub(crate) fn retrieve_vault_notes(
             let Some(indexed) = indexed else { continue };
             if excluded_note_ids.contains(&indexed.note_id)
                 || allowed_note_ids.is_some_and(|ids| !ids.contains(&indexed.note_id))
-                || modified_after.is_some_and(|value| indexed.modified_millis < value)
-                || modified_before.is_some_and(|value| indexed.modified_millis > value)
+                || !matches_date_filters(&indexed, date_filters)
             {
                 continue;
             }
@@ -160,18 +196,66 @@ pub(crate) fn retrieve_vault_notes(
                     start_line: Some(item.start_line),
                     end_line: Some(item.end_line),
                     block_anchor: item.block_anchor,
-                    modified_millis: indexed.modified_millis,
+                    created_at_millis: indexed.created_at_millis,
+                    updated_at_millis: indexed.updated_at_millis,
                 });
         }
     }
 
     let mut results = candidates.into_values().collect::<Vec<_>>();
-    results.sort_by(|left, right| {
-        right
-            .score
-            .total_cmp(&left.score)
-            .then_with(|| left.title.cmp(&right.title))
-    });
+    if date_only {
+        let created_only = (date_filters.created_after.is_some()
+            || date_filters.created_before.is_some())
+            && date_filters.updated_after.is_none()
+            && date_filters.updated_before.is_none();
+        results.sort_by(|left, right| {
+            let (left_date, right_date) = if created_only {
+                (left.created_at_millis, right.created_at_millis)
+            } else {
+                (left.updated_at_millis, right.updated_at_millis)
+            };
+            right_date
+                .cmp(&left_date)
+                .then_with(|| left.title.cmp(&right.title))
+        });
+    } else {
+        results.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.title.cmp(&right.title))
+        });
+    }
     results.truncate(limit);
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{matches_date_filters, VaultDateFilters};
+    use crate::index::build_indexed_note;
+    use std::path::Path;
+
+    #[test]
+    fn date_filters_use_created_and_updated_frontmatter_independently() {
+        let markdown = "---\ngneauxghts:\n  id: dated-note\n  created_at: 2026-01-01T00:00:00Z\n  updated_at: 2026-02-01T00:00:00Z\n---\n\nBody";
+        let note = build_indexed_note(Path::new("dated.md"), markdown, 42);
+        let january_15 = crate::note::parse_rfc3339_millis("2026-01-15T00:00:00Z");
+
+        assert!(matches_date_filters(
+            &note,
+            VaultDateFilters {
+                created_before: january_15,
+                updated_after: january_15,
+                ..VaultDateFilters::default()
+            }
+        ));
+        assert!(!matches_date_filters(
+            &note,
+            VaultDateFilters {
+                created_after: january_15,
+                ..VaultDateFilters::default()
+            }
+        ));
+    }
 }

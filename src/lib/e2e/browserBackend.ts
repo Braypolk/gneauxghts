@@ -55,7 +55,6 @@ const notes = new Map<string, NoteFixture>([
 const semanticStatus = {
   settings: {
     semanticSearchEnabled: false,
-    localOnlyMode: true,
     lexicalWeight: 1,
     semanticWeight: 0
   },
@@ -63,7 +62,6 @@ const semanticStatus = {
     id: 'e2e-disabled',
     label: 'Disabled in E2E',
     dimensions: 0,
-    localOnly: true,
     runtimeBinaryPath: null,
     modelPath: null,
     modelRepoId: '',

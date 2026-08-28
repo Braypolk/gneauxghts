@@ -7,13 +7,14 @@ use crate::{
     agent_tools::ActiveNoteSnapshot,
     chat::{
         ChatAttachmentInput, ChatConversation, ChatConversationSummary, ChatExcerpt, ChatGrant,
-        ChatNotePolicy, ChatRequest, ChatRequestAccepted, ChatService, ChatSettings, VaultAccess,
+        ChatNotePolicy, ChatRequest, ChatRequestAccepted, ChatRunContextItem, ChatService,
+        ChatSettings, LocalModelCapabilitySelection, VaultAccess,
     },
     index::AppState,
     note::DocumentKind,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
 
@@ -32,6 +33,54 @@ pub(crate) struct ChatNoteCandidate {
     title: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChatContextSuggestion {
+    note_id: String,
+    title: String,
+    section_label: Option<String>,
+    excerpt: String,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    block_anchor: Option<String>,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChatContextSuggestionResponse {
+    status: String,
+    reason: Option<String>,
+    items: Vec<ChatContextSuggestion>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChatSuggestContextRequest {
+    conversation_id: Option<String>,
+    vault_access: VaultAccess,
+    query: String,
+    exclude_note_id: Option<String>,
+    #[serde(default = "default_context_suggestion_limit")]
+    limit: usize,
+}
+
+fn default_context_suggestion_limit() -> usize {
+    4
+}
+
+const CONTEXT_DRAFT_WEIGHT: f32 = 1.0;
+const CONTEXT_GENERATED_WEIGHT: f32 = 0.5;
+const CONTEXT_ACTIVE_NOTE_WEIGHT: f32 = 0.2;
+const MAX_CONTEXT_SIGNAL_CHARS: usize = 2_400;
+
+struct WeightedContextCandidate {
+    item: crate::services::retrieval::VaultRetrievalItem,
+    weighted_score: f32,
+    best_contribution: f32,
+    best_priority: u8,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CreateConversationRequest {
@@ -39,6 +88,7 @@ pub(crate) struct CreateConversationRequest {
     access: Option<VaultAccess>,
     provider: Option<String>,
     model: Option<String>,
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +101,19 @@ pub(crate) struct SendMessageRequest {
     #[serde(default)]
     force_web_search: bool,
     active_note: Option<ActiveNoteSnapshot>,
+    #[serde(default)]
+    selected_context: Vec<ChatContextSelectionInput>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChatContextSelectionInput {
+    note_id: String,
+    section_label: Option<String>,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    block_anchor: Option<String>,
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +121,7 @@ pub(crate) struct SendMessageRequest {
 pub(crate) struct UpdateConversationProviderRequest {
     provider: String,
     model: String,
+    reasoning_effort: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -79,19 +143,63 @@ struct OpenAiModel {
     owned_by: Option<String>,
 }
 
+const CURATED_OPENAI_CHAT_MODELS: &[&str] = &[
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+];
+
+fn curated_openai_models(models: Vec<OpenAiModel>) -> Vec<LocalModel> {
+    let by_id = models
+        .into_iter()
+        .map(|model| (model.id.clone(), model))
+        .collect::<std::collections::HashMap<_, _>>();
+    CURATED_OPENAI_CHAT_MODELS
+        .iter()
+        .filter_map(|id| by_id.get(*id))
+        .map(|model| LocalModel {
+            id: model.id.clone(),
+            owned_by: model.owned_by.clone(),
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatModelCapabilities {
     images: bool,
+    audio: bool,
+    video: bool,
     files: bool,
     accepted_mime_types: Vec<String>,
     tools: bool,
-    web_search: bool,
-    reasoning_summaries: bool,
-    context_window: Option<u64>,
+    default_reasoning_effort: Option<String>,
 }
 
 const IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
+const AUDIO_MIME_TYPES: &[&str] = &[
+    "audio/wav",
+    "audio/x-wav",
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/aiff",
+    "audio/aac",
+    "audio/ogg",
+    "audio/flac",
+    "audio/mp4",
+    "audio/x-m4a",
+];
+const VIDEO_MIME_TYPES: &[&str] = &[
+    "video/avi",
+    "video/x-msvideo",
+    "video/mp4",
+    "video/mpeg",
+    "video/quicktime",
+    "video/webm",
+];
 const TEXT_FILE_MIME_TYPES: &[&str] = &[
     "text/plain",
     "text/markdown",
@@ -112,19 +220,27 @@ fn openai_supports_attachments(model: &str) -> bool {
         .any(|prefix| model.starts_with(prefix))
 }
 
-fn accepted_mime_types(images: bool, files: bool, pdf: bool) -> Vec<String> {
+fn accepted_mime_types(
+    images: bool,
+    audio: bool,
+    video: bool,
+    files: bool,
+    pdf: bool,
+) -> Vec<String> {
     IMAGE_MIME_TYPES
         .iter()
         .copied()
         .filter(|_| images)
+        .chain(AUDIO_MIME_TYPES.iter().copied().filter(|_| audio))
+        .chain(VIDEO_MIME_TYPES.iter().copied().filter(|_| video))
         .chain(TEXT_FILE_MIME_TYPES.iter().copied().filter(|_| files))
         .chain(["application/pdf"].into_iter().filter(|_| pdf))
         .map(str::to_string)
         .collect()
 }
 
-async fn model_capabilities(
-    _service: &ChatService,
+fn model_capabilities(
+    service: &ChatService,
     provider: &str,
     model: &str,
 ) -> Result<ChatModelCapabilities, String> {
@@ -133,27 +249,33 @@ async fn model_capabilities(
             let multimodal = openai_supports_attachments(model);
             Ok(ChatModelCapabilities {
                 images: multimodal,
+                audio: false,
+                video: false,
                 files: multimodal,
-                accepted_mime_types: accepted_mime_types(multimodal, multimodal, multimodal),
+                accepted_mime_types: accepted_mime_types(
+                    multimodal, false, false, multimodal, multimodal,
+                ),
                 tools: true,
-                web_search: true,
-                reasoning_summaries: false,
-                context_window: None,
+                default_reasoning_effort: None,
             })
         }
         "local" => {
+            let selection = service.local_model_capabilities(model)?;
             Ok(ChatModelCapabilities {
-                // The OpenAI-compatible model-listing contract does not
-                // advertise vision support. Stay conservative until the app
-                // has an explicit per-model capability setting.
-                images: false,
+                images: selection.images,
+                audio: selection.audio,
+                video: selection.video,
                 // Text files are decoded locally and supplied as text content.
                 files: true,
-                accepted_mime_types: accepted_mime_types(false, true, false),
-                tools: true,
-                web_search: false,
-                reasoning_summaries: false,
-                context_window: None,
+                accepted_mime_types: accepted_mime_types(
+                    selection.images,
+                    selection.audio,
+                    selection.video,
+                    true,
+                    false,
+                ),
+                tools: selection.tools,
+                default_reasoning_effort: Some(selection.reasoning_effort),
             })
         }
         other => Err(format!("Unsupported chat provider '{other}'")),
@@ -170,6 +292,20 @@ fn validate_model_accepts_attachments(
         && !capabilities.images
     {
         return Err("The selected model does not accept image input".to_string());
+    }
+    if attachments
+        .iter()
+        .any(|attachment| attachment.mime_type.starts_with("audio/"))
+        && !capabilities.audio
+    {
+        return Err("The selected model does not accept audio input".to_string());
+    }
+    if attachments
+        .iter()
+        .any(|attachment| attachment.mime_type.starts_with("video/"))
+        && !capabilities.video
+    {
+        return Err("The selected model does not accept video input".to_string());
     }
     if attachments
         .iter()
@@ -246,6 +382,7 @@ pub(crate) fn chat_create_conversation(
         request.access,
         request.provider,
         request.model,
+        request.reasoning_effort,
     )
 }
 
@@ -353,7 +490,12 @@ pub(crate) fn chat_update_conversation_provider(
     conversation_id: String,
     request: UpdateConversationProviderRequest,
 ) -> Result<ChatConversation, String> {
-    service.update_conversation_provider(&conversation_id, &request.provider, &request.model)
+    service.update_conversation_provider(
+        &conversation_id,
+        &request.provider,
+        &request.model,
+        &request.reasoning_effort,
+    )
 }
 
 #[tauri::command]
@@ -395,12 +537,48 @@ pub(crate) async fn chat_list_local_models(
 }
 
 #[tauri::command]
-pub(crate) async fn chat_get_model_capabilities(
+pub(crate) async fn chat_list_openai_models(app: AppHandle) -> Result<Vec<LocalModel>, String> {
+    let api_key = crate::secrets::read_provider_api_key(&app, "openai")?
+        .ok_or_else(|| "Add an OpenAI API key in Settings".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|error| format!("Unable to configure OpenAI model client: {error}"))?;
+    let response = client
+        .get("https://api.openai.com/v1/models")
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(|error| format!("Unable to check available OpenAI models: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "OpenAI model availability returned {}",
+            response.status()
+        ));
+    }
+    let models = response
+        .json::<OpenAiModelsResponse>()
+        .await
+        .map_err(|error| format!("Unable to read available OpenAI models: {error}"))?;
+    Ok(curated_openai_models(models.data))
+}
+
+#[tauri::command]
+pub(crate) fn chat_get_model_capabilities(
     service: State<'_, ChatService>,
     provider: String,
     model: String,
 ) -> Result<ChatModelCapabilities, String> {
-    model_capabilities(&service, &provider, &model).await
+    model_capabilities(&service, &provider, &model)
+}
+
+#[tauri::command]
+pub(crate) fn chat_set_local_model_capabilities(
+    service: State<'_, ChatService>,
+    model: String,
+    capabilities: LocalModelCapabilitySelection,
+) -> Result<LocalModelCapabilitySelection, String> {
+    service.set_local_model_capabilities(&model, capabilities)
 }
 
 #[tauri::command]
@@ -476,8 +654,7 @@ pub(crate) fn chat_search_notes(
         limit.unwrap_or(12).clamp(1, 20),
         None,
         &HashSet::new(),
-        None,
-        None,
+        crate::services::retrieval::VaultDateFilters::default(),
     )
     .map(|items| {
         items
@@ -496,6 +673,225 @@ pub(crate) fn chat_search_notes(
     })
 }
 
+fn truncate_context_signal(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .take(MAX_CONTEXT_SIGNAL_CHARS)
+        .collect()
+}
+
+fn generated_context_query(conversation: Option<&ChatConversation>) -> Option<String> {
+    let mut remaining = MAX_CONTEXT_SIGNAL_CHARS;
+    let mut messages = Vec::new();
+    for message in conversation
+        .into_iter()
+        .flat_map(|conversation| conversation.messages.iter().rev())
+        .filter(|message| {
+            message.role == "assistant"
+                && message.status == "completed"
+                && !message.content.trim().is_empty()
+        })
+        .take(3)
+    {
+        if remaining == 0 {
+            break;
+        }
+        let content = message
+            .content
+            .trim()
+            .chars()
+            .take(remaining)
+            .collect::<String>();
+        remaining = remaining.saturating_sub(content.chars().count());
+        messages.push(content);
+    }
+    messages.reverse();
+    (!messages.is_empty()).then(|| messages.join("\n\n"))
+}
+
+fn active_note_context_query(
+    state: &AppState,
+    note_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(note_id) = note_id else {
+        return Ok(None);
+    };
+    let index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Notes index lock poisoned".to_string())?;
+    let Some((_, note)) = index.get_note_by_note_id(note_id) else {
+        return Ok(None);
+    };
+    let mut query = note.title.clone();
+    for paragraph in &note.paragraphs {
+        if query.chars().count() >= MAX_CONTEXT_SIGNAL_CHARS {
+            break;
+        }
+        if !query.is_empty() {
+            query.push('\n');
+        }
+        let remaining = MAX_CONTEXT_SIGNAL_CHARS.saturating_sub(query.chars().count());
+        query.extend(paragraph.text.chars().take(remaining));
+    }
+    let query = truncate_context_signal(&query);
+    Ok((!query.is_empty()).then_some(query))
+}
+
+fn merge_context_candidates(
+    candidates: &mut HashMap<String, WeightedContextCandidate>,
+    items: Vec<crate::services::retrieval::VaultRetrievalItem>,
+    weight: f32,
+    priority: u8,
+    excluded_note_id: Option<&str>,
+) {
+    for item in items {
+        if excluded_note_id == Some(item.note_id.as_str()) {
+            continue;
+        }
+        let contribution = item.score * weight;
+        match candidates.entry(item.note_id.clone()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(WeightedContextCandidate {
+                    item,
+                    weighted_score: contribution,
+                    best_contribution: contribution,
+                    best_priority: priority,
+                });
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let candidate = entry.get_mut();
+                candidate.weighted_score += contribution;
+                if contribution > candidate.best_contribution
+                    || (contribution == candidate.best_contribution
+                        && priority > candidate.best_priority)
+                {
+                    candidate.item = item;
+                    candidate.best_contribution = contribution;
+                    candidate.best_priority = priority;
+                }
+            }
+        }
+    }
+}
+
+fn finish_context_candidates(
+    candidates: HashMap<String, WeightedContextCandidate>,
+    limit: usize,
+) -> Vec<crate::services::retrieval::VaultRetrievalItem> {
+    let mut candidates = candidates.into_values().collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .weighted_score
+            .total_cmp(&left.weighted_score)
+            .then_with(|| right.best_priority.cmp(&left.best_priority))
+            .then_with(|| left.item.title.cmp(&right.item.title))
+    });
+    candidates
+        .into_iter()
+        .take(limit)
+        .map(|candidate| candidate.item)
+        .collect()
+}
+
+#[tauri::command]
+pub(crate) fn chat_suggest_context(
+    service: State<'_, ChatService>,
+    state: State<'_, AppState>,
+    request: ChatSuggestContextRequest,
+) -> Result<ChatContextSuggestionResponse, String> {
+    let conversation = request
+        .conversation_id
+        .as_deref()
+        .map(|id| service.get_conversation(id))
+        .transpose()?;
+    let access = conversation
+        .as_ref()
+        .map(|chat| chat.summary.access.clone())
+        .unwrap_or(request.vault_access);
+    if access == VaultAccess::None {
+        return Ok(ChatContextSuggestionResponse {
+            status: "unavailable".to_string(),
+            reason: Some("Vault access is off for this chat.".to_string()),
+            items: Vec::new(),
+        });
+    }
+    let query = request.query.trim().to_string();
+    if query.split_whitespace().count() < 2 {
+        return Ok(ChatContextSuggestionResponse {
+            status: "insufficientContent".to_string(),
+            reason: Some("Write a little more to find related notes.".to_string()),
+            items: Vec::new(),
+        });
+    }
+    let _foreground_guard = state.foreground_guard();
+    let notes_dir = prepare_notes_dir(false)?;
+    state.ensure_interactive_index(
+        &notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "chat_suggest_context",
+    )?;
+    let excluded = service.excluded_note_ids()?;
+    let excluded_note_id = request.exclude_note_id.as_deref();
+    let limit = request.limit.clamp(1, 8);
+    let candidate_limit = limit
+        .saturating_mul(3)
+        .saturating_add(usize::from(excluded_note_id.is_some()))
+        .clamp(1, 20);
+    let generated_query = generated_context_query(conversation.as_ref());
+    let active_note_query = if excluded_note_id.is_some_and(|note_id| excluded.contains(note_id)) {
+        None
+    } else {
+        active_note_context_query(&state, excluded_note_id)?
+    };
+    let mut candidates = HashMap::new();
+    for (signal, weight, priority) in [
+        (Some(query), CONTEXT_DRAFT_WEIGHT, 3),
+        (generated_query, CONTEXT_GENERATED_WEIGHT, 2),
+        (active_note_query, CONTEXT_ACTIVE_NOTE_WEIGHT, 1),
+    ] {
+        let Some(signal) = signal.filter(|value| !value.trim().is_empty()) else {
+            continue;
+        };
+        let retrieved = crate::services::retrieval::retrieve_vault_notes(
+            &state,
+            &truncate_context_signal(&signal),
+            candidate_limit,
+            None,
+            &excluded,
+            crate::services::retrieval::VaultDateFilters::default(),
+        )?;
+        merge_context_candidates(
+            &mut candidates,
+            retrieved,
+            weight,
+            priority,
+            excluded_note_id,
+        );
+    }
+    let items = finish_context_candidates(candidates, limit)
+        .into_iter()
+        .map(|item| ChatContextSuggestion {
+            note_id: item.note_id,
+            title: item.title,
+            section_label: (!item.section_label.trim().is_empty()).then_some(item.section_label),
+            excerpt: item.excerpt,
+            start_line: item.start_line,
+            end_line: item.end_line,
+            block_anchor: item.block_anchor,
+            reason: "related".to_string(),
+        })
+        .collect::<Vec<_>>();
+    Ok(ChatContextSuggestionResponse {
+        status: "ready".to_string(),
+        reason: items
+            .is_empty()
+            .then(|| "No related notes found.".to_string()),
+        items,
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn chat_send_message(
     app: AppHandle,
@@ -508,10 +904,15 @@ pub(crate) async fn chat_send_message(
         &service,
         &conversation.summary.provider,
         &conversation.summary.model,
-    )
-    .await?;
+    )?;
     validate_model_accepts_attachments(&request.attachments, &capabilities)?;
     let _foreground_guard = state.foreground_guard();
+    let selected_context = resolve_selected_context(
+        &service,
+        &state,
+        &conversation.summary.access,
+        &request.selected_context,
+    )?;
     service.begin_request(
         ChatRequest::New {
             conversation_id: request.conversation_id,
@@ -519,9 +920,110 @@ pub(crate) async fn chat_send_message(
             attachments: request.attachments,
             force_web_search: request.force_web_search,
             active_note: request.active_note,
+            selected_context,
         },
         app,
     )
+}
+
+fn resolve_selected_context(
+    service: &ChatService,
+    state: &AppState,
+    access: &VaultAccess,
+    selected: &[ChatContextSelectionInput],
+) -> Result<Vec<ChatRunContextItem>, String> {
+    const MAX_SELECTED_CONTEXT: usize = 8;
+    const MAX_CONTEXT_CHARS: usize = 12_000;
+    if selected.len() > MAX_SELECTED_CONTEXT {
+        return Err(format!(
+            "Include up to {MAX_SELECTED_CONTEXT} notes per message"
+        ));
+    }
+    if selected.is_empty() {
+        return Ok(Vec::new());
+    }
+    if access == &VaultAccess::None {
+        return Err("Enable vault access before including note context".to_string());
+    }
+    let notes_dir = prepare_notes_dir(false)?;
+    state.ensure_interactive_index(
+        &notes_dir,
+        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+        "chat_resolve_selected_context",
+    )?;
+    let excluded = service.excluded_note_ids()?;
+    let index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Notes index lock poisoned".to_string())?;
+    let mut resolved_notes = Vec::new();
+    let mut seen = HashSet::new();
+    for item in selected {
+        if !seen.insert(item.note_id.clone()) {
+            continue;
+        }
+        if excluded.contains(&item.note_id) {
+            return Err("An included note is excluded from AI".to_string());
+        }
+        let (path, indexed) = index
+            .get_note_by_note_id(&item.note_id)
+            .ok_or_else(|| "An included note is no longer available".to_string())?;
+        resolved_notes.push((item.clone(), path.clone(), indexed.title.clone()));
+    }
+    drop(index);
+
+    resolved_notes
+        .into_iter()
+        .map(|(item, path, title)| {
+            let raw = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            let body = crate::note::strip_frontmatter(&raw);
+            let lines = body.lines().collect::<Vec<_>>();
+            let start_line = item.start_line.unwrap_or(1).max(1);
+            let requested_end = item.end_line.unwrap_or(lines.len()).max(start_line);
+            let mut excerpt = String::new();
+            let mut actual_end = start_line.saturating_sub(1);
+            for (index, line) in lines
+                .iter()
+                .enumerate()
+                .skip(start_line.saturating_sub(1))
+                .take(requested_end.saturating_sub(start_line) + 1)
+            {
+                let separator = usize::from(!excerpt.is_empty());
+                if excerpt.chars().count() + separator + line.chars().count() > MAX_CONTEXT_CHARS {
+                    break;
+                }
+                if separator > 0 {
+                    excerpt.push('\n');
+                }
+                excerpt.push_str(line);
+                actual_end = index + 1;
+            }
+            if excerpt.trim().is_empty() || actual_end < start_line {
+                return Err(format!(
+                    "The selected section of ‘{title}’ is no longer available"
+                ));
+            }
+            Ok(ChatRunContextItem {
+                note_id: item.note_id,
+                note_path: path
+                    .strip_prefix(&notes_dir)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned(),
+                title,
+                section_label: item.section_label,
+                excerpt,
+                content_hash: crate::semantic::db::content_hash(&raw),
+                reason: item
+                    .reason
+                    .filter(|reason| matches!(reason.as_str(), "related" | "explicit"))
+                    .unwrap_or_else(|| "explicit".to_string()),
+                start_line: Some(start_line),
+                end_line: Some(actual_end),
+                block_anchor: item.block_anchor,
+            })
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -569,8 +1071,7 @@ pub(crate) async fn chat_retry_message(
         &service,
         &conversation.summary.provider,
         &conversation.summary.model,
-    )
-    .await?;
+    )?;
     let retry_attachments = user
         .attachments
         .iter()
@@ -740,6 +1241,63 @@ pub(crate) fn chat_resolve_projection_conflict(
 mod attachment_capability_tests {
     use super::*;
 
+    fn context_candidate(
+        note_id: &str,
+        title: &str,
+        score: f32,
+    ) -> crate::services::retrieval::VaultRetrievalItem {
+        crate::services::retrieval::VaultRetrievalItem {
+            note_id: note_id.to_string(),
+            note_path: PathBuf::from(format!("{title}.md")),
+            title: title.to_string(),
+            excerpt: title.to_string(),
+            section_label: String::new(),
+            score,
+            lexical_score: Some(score),
+            semantic_score: None,
+            start_line: Some(1),
+            end_line: Some(1),
+            block_anchor: None,
+            created_at_millis: 1,
+            updated_at_millis: 1,
+        }
+    }
+
+    #[test]
+    fn related_context_weights_draft_above_generated_content_above_active_note() {
+        let mut candidates = HashMap::new();
+        merge_context_candidates(
+            &mut candidates,
+            vec![context_candidate("draft", "Draft", 1.0)],
+            CONTEXT_DRAFT_WEIGHT,
+            3,
+            None,
+        );
+        merge_context_candidates(
+            &mut candidates,
+            vec![context_candidate("generated", "Generated", 1.0)],
+            CONTEXT_GENERATED_WEIGHT,
+            2,
+            None,
+        );
+        merge_context_candidates(
+            &mut candidates,
+            vec![context_candidate("active", "Active", 1.0)],
+            CONTEXT_ACTIVE_NOTE_WEIGHT,
+            1,
+            None,
+        );
+
+        let ranked = finish_context_candidates(candidates, 3);
+        assert_eq!(
+            ranked
+                .into_iter()
+                .map(|item| item.note_id)
+                .collect::<Vec<_>>(),
+            vec!["draft", "generated", "active"]
+        );
+    }
+
     #[test]
     fn openai_attachment_support_is_conservative_for_unknown_models() {
         assert!(openai_supports_attachments("gpt-5.6-terra"));
@@ -751,12 +1309,12 @@ mod attachment_capability_tests {
     fn capability_validation_rejects_images_for_text_only_models() {
         let capabilities = ChatModelCapabilities {
             images: false,
+            audio: false,
+            video: false,
             files: true,
-            accepted_mime_types: accepted_mime_types(false, true, false),
+            accepted_mime_types: accepted_mime_types(false, false, false, true, false),
             tools: true,
-            web_search: false,
-            reasoning_summaries: false,
-            context_window: None,
+            default_reasoning_effort: None,
         };
         let attachment = ChatAttachmentInput {
             kind: "image".to_string(),
@@ -766,5 +1324,28 @@ mod attachment_capability_tests {
             data_base64: "AA==".to_string(),
         };
         assert!(validate_model_accepts_attachments(&[attachment], &capabilities).is_err());
+    }
+
+    #[test]
+    fn openai_availability_keeps_only_curated_chat_models_in_product_order() {
+        let models = curated_openai_models(vec![
+            OpenAiModel {
+                id: "text-embedding-3-large".to_string(),
+                owned_by: Some("openai".to_string()),
+            },
+            OpenAiModel {
+                id: "gpt-5.6-terra".to_string(),
+                owned_by: Some("openai".to_string()),
+            },
+            OpenAiModel {
+                id: "gpt-5.6-sol".to_string(),
+                owned_by: Some("openai".to_string()),
+            },
+        ]);
+
+        assert_eq!(
+            models.into_iter().map(|model| model.id).collect::<Vec<_>>(),
+            vec!["gpt-5.6-sol", "gpt-5.6-terra"]
+        );
     }
 }
