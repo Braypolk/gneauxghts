@@ -249,6 +249,7 @@ fn note_timeline_expands_one_storage_neutral_role_limited_seam() {
             "pub(crate) struct CurrentContentAccess",
             "pub(crate) struct AgentRestoreAccess",
             "pub(crate) struct ExplicitRestoreGrant",
+            "pub(crate) struct HistoryModeGrant",
             "pub(crate) struct NoteMutationResult",
             "pub(crate) struct NoteMutationWarning",
             "pub(crate) enum MutationWarningStage",
@@ -266,6 +267,9 @@ fn note_timeline_expands_one_storage_neutral_role_limited_seam() {
             "row_id",
             "wal_checkpoint",
             "impl ExplicitRestoreGrant {\n    pub(crate) fn new",
+            "impl HistoryModeGrant {\n    pub(crate) fn authorized",
+            "impl RevisionIdentity {\n    pub(crate) fn",
+            "impl LifecycleEventIdentity {\n    pub(crate) fn",
         ],
     );
 }

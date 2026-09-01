@@ -19,12 +19,6 @@ macro_rules! identity_type {
     ($name:ident) => {
         #[derive(Clone, Debug, PartialEq, Eq, Hash)]
         pub(crate) struct $name(String);
-
-        impl $name {
-            pub(crate) fn new(value: impl Into<String>) -> Self {
-                Self(value.into())
-            }
-        }
     };
 }
 
@@ -32,6 +26,30 @@ identity_type!(NoteIdentity);
 identity_type!(RevisionIdentity);
 identity_type!(LifecycleEventIdentity);
 identity_type!(TurnIdentity);
+
+impl NoteIdentity {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
+impl TurnIdentity {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
+impl RevisionIdentity {
+    fn from_persisted(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
+impl LifecycleEventIdentity {
+    fn from_persisted(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PayloadVersion {
@@ -381,9 +399,17 @@ impl NoteMutation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VaultObservation {
     source: MutationSource,
+    kind: VaultObservationKind,
     path: PathBuf,
+    previous_path: Option<PathBuf>,
     observed_at_millis: u64,
     modified_at_millis: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VaultObservationKind {
+    CanonicalState,
+    Lifecycle(LifecycleEventKind),
 }
 
 impl VaultObservation {
@@ -394,14 +420,107 @@ impl VaultObservation {
     ) -> Self {
         Self {
             source: MutationSource::ExternalEdit,
+            kind: VaultObservationKind::CanonicalState,
             path,
+            previous_path: None,
             observed_at_millis,
             modified_at_millis,
         }
     }
 
+    pub(crate) fn renamed(
+        previous_path: impl Into<PathBuf>,
+        path: impl Into<PathBuf>,
+        observed_at_millis: u64,
+    ) -> Self {
+        Self::lifecycle(
+            LifecycleEventKind::Renamed,
+            path.into(),
+            Some(previous_path.into()),
+            observed_at_millis,
+        )
+    }
+
+    pub(crate) fn moved(
+        previous_path: impl Into<PathBuf>,
+        path: impl Into<PathBuf>,
+        observed_at_millis: u64,
+    ) -> Self {
+        Self::lifecycle(
+            LifecycleEventKind::Moved,
+            path.into(),
+            Some(previous_path.into()),
+            observed_at_millis,
+        )
+    }
+
+    pub(crate) fn forgotten(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
+        Self::lifecycle(
+            LifecycleEventKind::Forgotten,
+            path.into(),
+            None,
+            observed_at_millis,
+        )
+    }
+
+    pub(crate) fn recovered(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
+        Self::lifecycle(
+            LifecycleEventKind::Recovered,
+            path.into(),
+            None,
+            observed_at_millis,
+        )
+    }
+
+    pub(crate) fn missing(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
+        Self::lifecycle(
+            LifecycleEventKind::Missing,
+            path.into(),
+            None,
+            observed_at_millis,
+        )
+    }
+
+    pub(crate) fn reattached(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
+        Self::lifecycle(
+            LifecycleEventKind::Reattached,
+            path.into(),
+            None,
+            observed_at_millis,
+        )
+    }
+
+    pub(crate) fn purged(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
+        Self::lifecycle(
+            LifecycleEventKind::Purged,
+            path.into(),
+            None,
+            observed_at_millis,
+        )
+    }
+
+    fn lifecycle(
+        kind: LifecycleEventKind,
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        observed_at_millis: u64,
+    ) -> Self {
+        Self {
+            source: MutationSource::ExternalEdit,
+            kind: VaultObservationKind::Lifecycle(kind),
+            path,
+            previous_path,
+            observed_at_millis,
+            modified_at_millis: None,
+        }
+    }
+
     pub(crate) fn source(&self) -> MutationSource {
         self.source
+    }
+
+    pub(crate) fn kind(&self) -> VaultObservationKind {
+        self.kind
     }
 }
 
@@ -436,6 +555,17 @@ impl ExplicitRestoreGrant {
             note_id,
             revision_id,
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryModeGrant {
+    note_id: NoteIdentity,
+}
+
+impl HistoryModeGrant {
+    fn authorized(note_id: NoteIdentity) -> Self {
+        Self { note_id }
     }
 }
 
@@ -483,7 +613,9 @@ impl AgentRestoreAccess<'_> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ObservationReceipt {
     source: MutationSource,
+    kind: VaultObservationKind,
     path: PathBuf,
+    previous_path: Option<PathBuf>,
     observed_at_millis: u64,
     modified_at_millis: Option<u64>,
 }
@@ -493,8 +625,16 @@ impl ObservationReceipt {
         self.source
     }
 
+    pub(crate) fn kind(&self) -> VaultObservationKind {
+        self.kind
+    }
+
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(crate) fn previous_path(&self) -> Option<&Path> {
+        self.previous_path.as_deref()
     }
 
     pub(crate) fn observed_at_millis(&self) -> u64 {
@@ -534,22 +674,26 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn observe(&self, observation: VaultObservation) -> ObservationReceipt {
         let VaultObservation {
             source,
+            kind,
             path,
+            previous_path,
             observed_at_millis,
             modified_at_millis,
         } = observation;
         ObservationReceipt {
             source,
+            kind,
             path,
+            previous_path,
             observed_at_millis,
             modified_at_millis,
         }
     }
 
-    pub(crate) fn history_mode(&self, note_id: NoteIdentity) -> HistoryModeAccess<'a> {
+    pub(crate) fn history_mode(&self, grant: HistoryModeGrant) -> HistoryModeAccess<'a> {
         HistoryModeAccess {
             _state: self.state,
-            note_id,
+            note_id: grant.note_id,
         }
     }
 
@@ -612,6 +756,29 @@ mod tests {
         );
         let observation = VaultObservation::external_edit(path, 42, Some(41));
         assert_eq!(observation.source(), MutationSource::ExternalEdit);
+        assert_eq!(observation.kind(), VaultObservationKind::CanonicalState);
+
+        let lifecycle = [
+            VaultObservation::renamed("/vault/Old.md", "/vault/New.md", 43),
+            VaultObservation::moved("/vault/New.md", "/vault/Folder/New.md", 44),
+            VaultObservation::forgotten("/vault/Folder/New.md", 45),
+            VaultObservation::recovered("/vault/Folder/New.md", 46),
+            VaultObservation::missing("/vault/Folder/New.md", 47),
+            VaultObservation::reattached("/vault/Folder/New.md", 48),
+            VaultObservation::purged("/vault/Folder/New.md", 49),
+        ];
+        assert_eq!(
+            lifecycle.map(|observation| observation.kind()),
+            [
+                VaultObservationKind::Lifecycle(LifecycleEventKind::Renamed),
+                VaultObservationKind::Lifecycle(LifecycleEventKind::Moved),
+                VaultObservationKind::Lifecycle(LifecycleEventKind::Forgotten),
+                VaultObservationKind::Lifecycle(LifecycleEventKind::Recovered),
+                VaultObservationKind::Lifecycle(LifecycleEventKind::Missing),
+                VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached),
+                VaultObservationKind::Lifecycle(LifecycleEventKind::Purged),
+            ]
+        );
     }
 
     #[test]
@@ -655,9 +822,9 @@ mod tests {
         .expect("construct app state");
         let timeline = NoteTimeline::new(&state);
         let note_id = NoteIdentity::new("note-1");
-        let revision_id = RevisionIdentity::new("revision-1");
+        let revision_id = RevisionIdentity::from_persisted("revision-1");
 
-        let history = timeline.history_mode(note_id.clone());
+        let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
         let current = timeline.current_content(AllowedScope::only(note_id.clone()));
         let restore = timeline.agent_restore(ExplicitRestoreGrant::new(
             TurnIdentity::new("turn-1"),
@@ -692,14 +859,30 @@ mod tests {
 
         assert_eq!(receipt.path(), path);
         assert_eq!(receipt.source(), MutationSource::ExternalEdit);
+        assert_eq!(receipt.kind(), VaultObservationKind::CanonicalState);
         assert_eq!(receipt.observed_at_millis(), 42);
         assert_eq!(receipt.modified_at_millis(), Some(41));
+
+        let renamed = NoteTimeline::new(&state).observe(VaultObservation::renamed(
+            "/vault/Observed.md",
+            "/vault/Renamed.md",
+            43,
+        ));
+        assert_eq!(
+            renamed.kind(),
+            VaultObservationKind::Lifecycle(LifecycleEventKind::Renamed)
+        );
+        assert_eq!(
+            renamed.previous_path(),
+            Some(Path::new("/vault/Observed.md"))
+        );
+        assert_eq!(renamed.path(), Path::new("/vault/Renamed.md"));
     }
 
     #[test]
     fn domain_records_carry_versioned_payloads_and_explicit_predecessors() {
         let note_id = NoteIdentity::new("note-1");
-        let first_id = RevisionIdentity::new("revision-1");
+        let first_id = RevisionIdentity::from_persisted("revision-1");
         let first = NoteRevisionHeader::new(
             first_id.clone(),
             note_id.clone(),
@@ -707,7 +890,7 @@ mod tests {
             PayloadVersion::V1,
             MutationSource::Editor,
         );
-        let event_id = LifecycleEventIdentity::new("event-1");
+        let event_id = LifecycleEventIdentity::from_persisted("event-1");
         let renamed = LifecycleEventHeader::new(
             event_id.clone(),
             note_id.clone(),
@@ -716,7 +899,7 @@ mod tests {
             LifecycleEventKind::Renamed,
         );
         let second = NoteRevisionHeader::new(
-            RevisionIdentity::new("revision-2"),
+            RevisionIdentity::from_persisted("revision-2"),
             note_id,
             Some(TimelineRecordIdentity::LifecycleEvent(event_id)),
             PayloadVersion::V1,
@@ -729,7 +912,7 @@ mod tests {
         assert_eq!(
             second.predecessor(),
             Some(&TimelineRecordIdentity::LifecycleEvent(
-                LifecycleEventIdentity::new("event-1")
+                LifecycleEventIdentity::from_persisted("event-1")
             ))
         );
     }

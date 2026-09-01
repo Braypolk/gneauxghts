@@ -58,6 +58,12 @@ migration steps move them behind that seam. During this interval,
 the existing write and projection behavior without exposing SQL or storage
 policy.
 
+History Mode and agent restore capabilities require grants whose constructors
+remain private to the timeline module. Ordinary chat can receive only the
+current-content capability unless an app-owned current-turn restore path is
+implemented. Revision and Lifecycle Event identities likewise cannot be
+minted by callers; their durable issuer belongs inside `NoteTimeline`.
+
 A save currently crosses the `note_persistence` command seam and writes the
 vault before `PostCommitNoteMutationService` updates the required in-memory
 note catalog. Task, lexical, and semantic projections follow that shared

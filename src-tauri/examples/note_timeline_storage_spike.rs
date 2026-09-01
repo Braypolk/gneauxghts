@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
 use std::{
     collections::HashMap,
@@ -358,6 +358,9 @@ struct ScenarioMetrics {
     checkpoints: usize,
     zstd_checkpoint_bytes: u64,
     lz4_checkpoint_bytes: u64,
+    single_span_encode_nanos: u128,
+    selected_delta_encode_nanos: u128,
+    max_selected_delta_encode_nanos: u128,
     zstd_checkpoint_micros: u128,
     lz4_checkpoint_micros: u128,
     max_replay_micros: u128,
@@ -386,15 +389,23 @@ fn run_scenario(
     let mut lz4_checkpoint_bytes = 0_u64;
     let mut zstd_checkpoint_micros = 0_u128;
     let mut lz4_checkpoint_micros = 0_u128;
+    let mut single_span_encode_nanos = 0_u128;
+    let mut selected_delta_encode_nanos = 0_u128;
+    let mut max_selected_delta_encode_nanos = 0_u128;
     let mut max_replay = Duration::ZERO;
     let mut replay_bound_exceeded = false;
 
     for revision in 0..revisions {
         let base = current.clone();
         mutate(revision, &mut current);
+        let started = Instant::now();
         let single_span = Delta::between(&base, &current).encode();
-        let delta = LineDelta::between(&base, &current);
-        let encoded = delta.encode();
+        single_span_encode_nanos += started.elapsed().as_nanos();
+        let started = Instant::now();
+        let encoded = LineDelta::between(&base, &current).encode();
+        let selected_elapsed = started.elapsed().as_nanos();
+        selected_delta_encode_nanos += selected_elapsed;
+        max_selected_delta_encode_nanos = max_selected_delta_encode_nanos.max(selected_elapsed);
         let decoded = LineDelta::decode(&encoded)?;
         if decoded.apply(&base)? != current {
             return Err(format!("{name} revision {revision} did not round-trip"));
@@ -454,6 +465,9 @@ fn run_scenario(
             checkpoints: checkpoint_count,
             zstd_checkpoint_bytes,
             lz4_checkpoint_bytes,
+            single_span_encode_nanos,
+            selected_delta_encode_nanos,
+            max_selected_delta_encode_nanos,
             zstd_checkpoint_micros,
             lz4_checkpoint_micros,
             max_replay_micros: max_replay.as_micros(),
@@ -510,12 +524,17 @@ fn compress(program: &str, args: &[&str], bytes: &[u8]) -> Result<(Vec<u8>, Dura
 struct SqliteMetrics {
     synchronous: String,
     commits: usize,
+    payload_bytes: usize,
     elapsed_millis: u128,
     average_commit_micros: u128,
 }
 
-fn benchmark_sqlite(synchronous: &str, commits: usize) -> Result<SqliteMetrics, String> {
-    let database_path = temporary_database_path(synchronous);
+fn benchmark_sqlite(
+    synchronous: &str,
+    commits: usize,
+    payload_bytes: usize,
+) -> Result<SqliteMetrics, String> {
+    let database_path = temporary_database_path(&format!("{synchronous}-{payload_bytes}"));
     let connection = Connection::open(&database_path).map_err(|error| error.to_string())?;
     connection
         .execute_batch(&format!(
@@ -532,7 +551,7 @@ fn benchmark_sqlite(synchronous: &str, commits: usize) -> Result<SqliteMetrics, 
              );"
         ))
         .map_err(|error| error.to_string())?;
-    let payload = vec![b'x'; 1024];
+    let payload = vec![b'x'; payload_bytes];
     let started = Instant::now();
     for index in 0..commits {
         connection
@@ -557,6 +576,7 @@ fn benchmark_sqlite(synchronous: &str, commits: usize) -> Result<SqliteMetrics, 
     Ok(SqliteMetrics {
         synchronous: synchronous.to_string(),
         commits,
+        payload_bytes,
         elapsed_millis: elapsed.as_millis(),
         average_commit_micros: elapsed.as_micros() / commits as u128,
     })
@@ -580,7 +600,7 @@ fn remove_sqlite_files(database_path: &Path) {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ImmutableRecord {
     record_id: String,
@@ -599,6 +619,10 @@ struct ExportMetrics {
     fixture_bytes: usize,
     final_hash: String,
     reconstruction_ignores_row_order: bool,
+    fixture_round_trips: bool,
+    verified_parent_references: bool,
+    verified_content_hashes: usize,
+    verified_utf8: bool,
 }
 
 #[derive(Serialize)]
@@ -796,10 +820,33 @@ fn migration_shape_fixture() -> Result<ExportMetrics, String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
     let fixture = serde_json::to_vec_pretty(&exported).map_err(|error| error.to_string())?;
-    let by_id = exported
+    let fixture_records: Vec<ImmutableRecord> =
+        serde_json::from_slice(&fixture).map_err(|error| error.to_string())?;
+    let source_by_id = records
+        .iter()
+        .cloned()
+        .map(|record| (record.record_id.clone(), record))
+        .collect::<HashMap<_, _>>();
+    let by_id = fixture_records
         .into_iter()
         .map(|record| (record.record_id.clone(), record))
         .collect::<HashMap<_, _>>();
+    if source_by_id != by_id {
+        return Err("immutable fixture changed record meaning during export".to_string());
+    }
+    if by_id.values().any(|record| record.payload_version != 1) {
+        return Err("immutable fixture contains an unsupported payload version".to_string());
+    }
+    for record in by_id.values() {
+        if let Some(parent_id) = &record.parent_id {
+            if !by_id.contains_key(parent_id) {
+                return Err(format!(
+                    "{} references missing parent {parent_id}",
+                    record.record_id
+                ));
+            }
+        }
+    }
     let final_id = "revision-03";
     let mut chain = Vec::new();
     let mut cursor = Some(final_id.to_string());
@@ -811,19 +858,45 @@ fn migration_shape_fixture() -> Result<ExportMetrics, String> {
         cursor = record.parent_id.clone();
     }
     chain.reverse();
+    let mut verified_content_hashes = 0_usize;
     let reconstructed = chain.iter().try_fold(Vec::new(), |base, record| {
         let encoded = BASE64
             .decode(&record.payload_base64)
             .map_err(|error| error.to_string())?;
         let result = LineDelta::decode(&encoded)?.apply(&base)?;
+        String::from_utf8(result.clone()).map_err(|error| {
+            format!("{} reconstructed invalid UTF-8: {error}", record.record_id)
+        })?;
         let hash = blake3::hash(&result).to_hex().to_string();
         if record.result_hash.as_deref() != Some(hash.as_str()) {
             return Err(format!("hash mismatch for {}", record.record_id));
         }
+        verified_content_hashes += 1;
         Ok(result)
     })?;
-    let mut record_kinds = records
-        .iter()
+    for record in by_id
+        .values()
+        .filter(|record| record.result_hash.is_some() && record.record_kind != "revision")
+    {
+        if record.record_kind != "checkpoint" {
+            return Err(format!(
+                "cannot verify hashed record kind {}",
+                record.record_kind
+            ));
+        }
+        let content = BASE64
+            .decode(&record.payload_base64)
+            .map_err(|error| error.to_string())?;
+        String::from_utf8(content.clone())
+            .map_err(|error| format!("{} contains invalid UTF-8: {error}", record.record_id))?;
+        let hash = blake3::hash(&content).to_hex().to_string();
+        if record.result_hash.as_deref() != Some(hash.as_str()) {
+            return Err(format!("hash mismatch for {}", record.record_id));
+        }
+        verified_content_hashes += 1;
+    }
+    let mut record_kinds = by_id
+        .values()
         .map(|record| record.record_kind.clone())
         .collect::<Vec<_>>();
     record_kinds.sort();
@@ -834,6 +907,10 @@ fn migration_shape_fixture() -> Result<ExportMetrics, String> {
         fixture_bytes: fixture.len(),
         final_hash: blake3::hash(&reconstructed).to_hex().to_string(),
         reconstruction_ignores_row_order: reconstructed == states[2],
+        fixture_round_trips: source_by_id == by_id,
+        verified_parent_references: true,
+        verified_content_hashes,
+        verified_utf8: true,
     })
 }
 
@@ -961,8 +1038,10 @@ fn main() -> Result<(), String> {
         },
         scenarios,
         sqlite: vec![
-            benchmark_sqlite("FULL", 250)?,
-            benchmark_sqlite("NORMAL", 250)?,
+            benchmark_sqlite("FULL", 250, 1024)?,
+            benchmark_sqlite("NORMAL", 250, 1024)?,
+            benchmark_sqlite("FULL", 100, 64 * 1024)?,
+            benchmark_sqlite("FULL", 20, 1024 * 1024)?,
         ],
         paging: benchmark_timeline_paging()?,
         migration_shape: migration_shape_fixture()?,
@@ -987,6 +1066,22 @@ mod tests {
 
         assert_eq!(decoded.apply(base).expect("apply delta"), result);
         assert_eq!(&encoded[..4], b"NTL1");
+    }
+
+    #[test]
+    fn delta_round_trips_multibyte_utf8_without_splitting_code_points() {
+        let base = "# Café ☕️\n\n今日は世界\n";
+        let result = "# Café revisited ☕️\n\n今日は、世界 🌍\n";
+        let encoded = LineDelta::between(base.as_bytes(), result.as_bytes()).encode();
+        let reconstructed = LineDelta::decode(&encoded)
+            .expect("decode UTF-8 delta")
+            .apply(base.as_bytes())
+            .expect("apply UTF-8 delta");
+
+        assert_eq!(
+            String::from_utf8(reconstructed).expect("valid UTF-8"),
+            result
+        );
     }
 
     #[test]
@@ -1034,6 +1129,10 @@ mod tests {
             ]
         );
         assert!(fixture.reconstruction_ignores_row_order);
+        assert!(fixture.fixture_round_trips);
+        assert!(fixture.verified_parent_references);
+        assert_eq!(fixture.verified_content_hashes, 4);
+        assert!(fixture.verified_utf8);
         assert_eq!(fixture.final_hash.len(), 64);
     }
 }
