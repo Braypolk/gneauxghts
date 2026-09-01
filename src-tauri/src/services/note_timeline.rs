@@ -398,7 +398,7 @@ impl NoteMutation {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VaultObservation {
-    source: MutationSource,
+    source: VaultObservationSource,
     kind: VaultObservationKind,
     path: PathBuf,
     previous_path: Option<PathBuf>,
@@ -412,14 +412,47 @@ pub(crate) enum VaultObservationKind {
     Lifecycle(LifecycleEventKind),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VaultObservationSource {
+    Watcher,
+    Reconciliation,
+}
+
 impl VaultObservation {
     pub(crate) fn external_edit(
         path: PathBuf,
         observed_at_millis: u64,
         modified_at_millis: Option<u64>,
     ) -> Self {
+        Self::canonical_state(
+            VaultObservationSource::Watcher,
+            path,
+            observed_at_millis,
+            modified_at_millis,
+        )
+    }
+
+    pub(crate) fn reconciled_state(
+        path: PathBuf,
+        observed_at_millis: u64,
+        modified_at_millis: Option<u64>,
+    ) -> Self {
+        Self::canonical_state(
+            VaultObservationSource::Reconciliation,
+            path,
+            observed_at_millis,
+            modified_at_millis,
+        )
+    }
+
+    fn canonical_state(
+        source: VaultObservationSource,
+        path: PathBuf,
+        observed_at_millis: u64,
+        modified_at_millis: Option<u64>,
+    ) -> Self {
         Self {
-            source: MutationSource::ExternalEdit,
+            source,
             kind: VaultObservationKind::CanonicalState,
             path,
             previous_path: None,
@@ -454,24 +487,6 @@ impl VaultObservation {
         )
     }
 
-    pub(crate) fn forgotten(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
-        Self::lifecycle(
-            LifecycleEventKind::Forgotten,
-            path.into(),
-            None,
-            observed_at_millis,
-        )
-    }
-
-    pub(crate) fn recovered(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
-        Self::lifecycle(
-            LifecycleEventKind::Recovered,
-            path.into(),
-            None,
-            observed_at_millis,
-        )
-    }
-
     pub(crate) fn missing(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
         Self::lifecycle(
             LifecycleEventKind::Missing,
@@ -490,15 +505,6 @@ impl VaultObservation {
         )
     }
 
-    pub(crate) fn purged(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
-        Self::lifecycle(
-            LifecycleEventKind::Purged,
-            path.into(),
-            None,
-            observed_at_millis,
-        )
-    }
-
     fn lifecycle(
         kind: LifecycleEventKind,
         path: PathBuf,
@@ -506,7 +512,7 @@ impl VaultObservation {
         observed_at_millis: u64,
     ) -> Self {
         Self {
-            source: MutationSource::ExternalEdit,
+            source: VaultObservationSource::Watcher,
             kind: VaultObservationKind::Lifecycle(kind),
             path,
             previous_path,
@@ -515,7 +521,7 @@ impl VaultObservation {
         }
     }
 
-    pub(crate) fn source(&self) -> MutationSource {
+    pub(crate) fn source(&self) -> VaultObservationSource {
         self.source
     }
 
@@ -612,7 +618,7 @@ impl AgentRestoreAccess<'_> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ObservationReceipt {
-    source: MutationSource,
+    source: VaultObservationSource,
     kind: VaultObservationKind,
     path: PathBuf,
     previous_path: Option<PathBuf>,
@@ -621,7 +627,7 @@ pub(crate) struct ObservationReceipt {
 }
 
 impl ObservationReceipt {
-    pub(crate) fn source(&self) -> MutationSource {
+    pub(crate) fn source(&self) -> VaultObservationSource {
         self.source
     }
 
@@ -755,28 +761,25 @@ mod tests {
             ]
         );
         let observation = VaultObservation::external_edit(path, 42, Some(41));
-        assert_eq!(observation.source(), MutationSource::ExternalEdit);
+        assert_eq!(observation.source(), VaultObservationSource::Watcher);
         assert_eq!(observation.kind(), VaultObservationKind::CanonicalState);
+        let reconciled =
+            VaultObservation::reconciled_state(PathBuf::from("/vault/Reconciled.md"), 43, Some(40));
+        assert_eq!(reconciled.source(), VaultObservationSource::Reconciliation);
 
         let lifecycle = [
             VaultObservation::renamed("/vault/Old.md", "/vault/New.md", 43),
             VaultObservation::moved("/vault/New.md", "/vault/Folder/New.md", 44),
-            VaultObservation::forgotten("/vault/Folder/New.md", 45),
-            VaultObservation::recovered("/vault/Folder/New.md", 46),
-            VaultObservation::missing("/vault/Folder/New.md", 47),
-            VaultObservation::reattached("/vault/Folder/New.md", 48),
-            VaultObservation::purged("/vault/Folder/New.md", 49),
+            VaultObservation::missing("/vault/Folder/New.md", 45),
+            VaultObservation::reattached("/vault/Folder/New.md", 46),
         ];
         assert_eq!(
             lifecycle.map(|observation| observation.kind()),
             [
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Renamed),
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Moved),
-                VaultObservationKind::Lifecycle(LifecycleEventKind::Forgotten),
-                VaultObservationKind::Lifecycle(LifecycleEventKind::Recovered),
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Missing),
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached),
-                VaultObservationKind::Lifecycle(LifecycleEventKind::Purged),
             ]
         );
     }
@@ -858,7 +861,7 @@ mod tests {
         ));
 
         assert_eq!(receipt.path(), path);
-        assert_eq!(receipt.source(), MutationSource::ExternalEdit);
+        assert_eq!(receipt.source(), VaultObservationSource::Watcher);
         assert_eq!(receipt.kind(), VaultObservationKind::CanonicalState);
         assert_eq!(receipt.observed_at_millis(), 42);
         assert_eq!(receipt.modified_at_millis(), Some(41));
