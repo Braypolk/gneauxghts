@@ -61,6 +61,7 @@ tauri-plugin-window-state = "2"
 [dev-dependencies]
 rig-core = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
 rig-agent = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
+similar = { version = "3.2", default-features = false, features = ["bytes", "std"] }
 
 [patch.crates-io]
 corenn-kernels = { path = "vendor/corenn-kernels" }

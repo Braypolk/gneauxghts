@@ -1,0 +1,761 @@
+// This module is the expand side of an expand–migrate–contract change. Ticket
+// 03 moves production callers onto these entrypoints; keeping the complete
+// closed contract together here prevents temporary caller-specific seams.
+#![allow(dead_code)]
+
+use crate::{
+    index::AppState,
+    services::note_mutation::{
+        PostCommitIssue, PostCommitNoteMutationOutcome, PostCommitNoteMutationService,
+        PostCommitStage,
+    },
+};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
+
+macro_rules! identity_type {
+    ($name:ident) => {
+        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        pub(crate) struct $name(String);
+
+        impl $name {
+            pub(crate) fn new(value: impl Into<String>) -> Self {
+                Self(value.into())
+            }
+        }
+    };
+}
+
+identity_type!(NoteIdentity);
+identity_type!(RevisionIdentity);
+identity_type!(LifecycleEventIdentity);
+identity_type!(TurnIdentity);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PayloadVersion {
+    V1,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TimelineRecordIdentity {
+    Revision(RevisionIdentity),
+    LifecycleEvent(LifecycleEventIdentity),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LifecycleEventKind {
+    Created,
+    Renamed,
+    Moved,
+    Forgotten,
+    Recovered,
+    Missing,
+    Reattached,
+    Purged,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MutationSource {
+    Editor,
+    TaskAction,
+    AcceptedChatProposal,
+    ExternalEdit,
+    VersionRestore,
+    NoteCreation,
+    BaselineInitialization,
+    RecoveryReconciliation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MutationWarningStage {
+    CanonicalRead,
+    CatalogUpsert,
+    TaskProjectionUpsert,
+    CatalogRemove,
+    TaskProjectionRemove,
+    TaskViewRefresh,
+    SemanticUpdate,
+    SemanticMove,
+    DirtyRecovery,
+    Revision,
+}
+
+impl From<PostCommitStage> for MutationWarningStage {
+    fn from(stage: PostCommitStage) -> Self {
+        match stage {
+            PostCommitStage::CanonicalRead => Self::CanonicalRead,
+            PostCommitStage::CatalogUpsert => Self::CatalogUpsert,
+            PostCommitStage::TaskProjectionUpsert => Self::TaskProjectionUpsert,
+            PostCommitStage::CatalogRemove => Self::CatalogRemove,
+            PostCommitStage::TaskProjectionRemove => Self::TaskProjectionRemove,
+            PostCommitStage::TaskViewRefresh => Self::TaskViewRefresh,
+            PostCommitStage::SemanticUpdate => Self::SemanticUpdate,
+            PostCommitStage::SemanticMove => Self::SemanticMove,
+            PostCommitStage::DirtyRecovery => Self::DirtyRecovery,
+            PostCommitStage::Revision => Self::Revision,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NoteTimelineIssue {
+    stage: MutationWarningStage,
+    message: String,
+}
+
+impl From<PostCommitIssue> for NoteTimelineIssue {
+    fn from(issue: PostCommitIssue) -> Self {
+        Self {
+            stage: issue.stage.into(),
+            message: issue.message,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NoteMutationWarning {
+    payload_version: PayloadVersion,
+    message: String,
+    issues: Vec<NoteTimelineIssue>,
+}
+
+impl NoteMutationWarning {
+    pub(crate) fn payload_version(&self) -> PayloadVersion {
+        self.payload_version
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub(crate) fn issues(&self) -> &[NoteTimelineIssue] {
+        &self.issues
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NoteMutationResult {
+    payload_version: PayloadVersion,
+    note_id: NoteIdentity,
+    path: PathBuf,
+    canonical_markdown: String,
+    diagnostics: Vec<NoteTimelineIssue>,
+    warning: Option<NoteMutationWarning>,
+}
+
+impl NoteMutationResult {
+    fn from_post_commit(outcome: PostCommitNoteMutationOutcome) -> Self {
+        let warning = outcome
+            .required_consistency_warning()
+            .map(|warning| NoteMutationWarning {
+                payload_version: PayloadVersion::V1,
+                message: warning.message,
+                issues: warning.issues.into_iter().map(Into::into).collect(),
+            });
+        Self {
+            payload_version: PayloadVersion::V1,
+            note_id: NoteIdentity::new(outcome.note_id),
+            path: outcome.path,
+            canonical_markdown: outcome.canonical_markdown,
+            diagnostics: outcome.issues.into_iter().map(Into::into).collect(),
+            warning,
+        }
+    }
+
+    pub(crate) fn payload_version(&self) -> PayloadVersion {
+        self.payload_version
+    }
+
+    pub(crate) fn note_id(&self) -> &NoteIdentity {
+        &self.note_id
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn canonical_markdown(&self) -> &str {
+        &self.canonical_markdown
+    }
+
+    pub(crate) fn warning(&self) -> Option<&NoteMutationWarning> {
+        self.warning.as_ref()
+    }
+
+    pub(crate) fn diagnostics(&self) -> &[NoteTimelineIssue] {
+        &self.diagnostics
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NoteRevisionHeader {
+    identity: RevisionIdentity,
+    note_identity: NoteIdentity,
+    predecessor: Option<TimelineRecordIdentity>,
+    payload_version: PayloadVersion,
+    source: MutationSource,
+}
+
+impl NoteRevisionHeader {
+    pub(crate) fn new(
+        identity: RevisionIdentity,
+        note_identity: NoteIdentity,
+        predecessor: Option<TimelineRecordIdentity>,
+        payload_version: PayloadVersion,
+        source: MutationSource,
+    ) -> Self {
+        Self {
+            identity,
+            note_identity,
+            predecessor,
+            payload_version,
+            source,
+        }
+    }
+
+    pub(crate) fn predecessor(&self) -> Option<&TimelineRecordIdentity> {
+        self.predecessor.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LifecycleEventHeader {
+    identity: LifecycleEventIdentity,
+    note_identity: NoteIdentity,
+    predecessor: Option<TimelineRecordIdentity>,
+    payload_version: PayloadVersion,
+    kind: LifecycleEventKind,
+}
+
+impl LifecycleEventHeader {
+    pub(crate) fn new(
+        identity: LifecycleEventIdentity,
+        note_identity: NoteIdentity,
+        predecessor: Option<TimelineRecordIdentity>,
+        payload_version: PayloadVersion,
+        kind: LifecycleEventKind,
+    ) -> Self {
+        Self {
+            identity,
+            note_identity,
+            predecessor,
+            payload_version,
+            kind,
+        }
+    }
+
+    pub(crate) fn payload_version(&self) -> PayloadVersion {
+        self.payload_version
+    }
+
+    pub(crate) fn kind(&self) -> LifecycleEventKind {
+        self.kind
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NoteMutation {
+    source: MutationSource,
+    path: PathBuf,
+    previous_path: Option<PathBuf>,
+    fallback_markdown: String,
+}
+
+impl NoteMutation {
+    pub(crate) fn editor(
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> Self {
+        Self::with_source(
+            MutationSource::Editor,
+            path,
+            previous_path,
+            fallback_markdown,
+        )
+    }
+
+    pub(crate) fn task_action(
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> Self {
+        Self::with_source(
+            MutationSource::TaskAction,
+            path,
+            previous_path,
+            fallback_markdown,
+        )
+    }
+
+    pub(crate) fn accepted_chat_proposal(
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> Self {
+        Self::with_source(
+            MutationSource::AcceptedChatProposal,
+            path,
+            previous_path,
+            fallback_markdown,
+        )
+    }
+
+    pub(crate) fn version_restore(
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> Self {
+        Self::with_source(
+            MutationSource::VersionRestore,
+            path,
+            previous_path,
+            fallback_markdown,
+        )
+    }
+
+    pub(crate) fn note_creation(
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> Self {
+        Self::with_source(
+            MutationSource::NoteCreation,
+            path,
+            previous_path,
+            fallback_markdown,
+        )
+    }
+
+    pub(crate) fn baseline_initialization(
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> Self {
+        Self::with_source(
+            MutationSource::BaselineInitialization,
+            path,
+            previous_path,
+            fallback_markdown,
+        )
+    }
+
+    pub(crate) fn recovery_reconciliation(
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> Self {
+        Self::with_source(
+            MutationSource::RecoveryReconciliation,
+            path,
+            previous_path,
+            fallback_markdown,
+        )
+    }
+
+    fn with_source(
+        source: MutationSource,
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        fallback_markdown: String,
+    ) -> Self {
+        Self {
+            source,
+            path,
+            previous_path,
+            fallback_markdown,
+        }
+    }
+
+    pub(crate) fn source(&self) -> MutationSource {
+        self.source
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct VaultObservation {
+    source: MutationSource,
+    path: PathBuf,
+    observed_at_millis: u64,
+    modified_at_millis: Option<u64>,
+}
+
+impl VaultObservation {
+    pub(crate) fn external_edit(
+        path: PathBuf,
+        observed_at_millis: u64,
+        modified_at_millis: Option<u64>,
+    ) -> Self {
+        Self {
+            source: MutationSource::ExternalEdit,
+            path,
+            observed_at_millis,
+            modified_at_millis,
+        }
+    }
+
+    pub(crate) fn source(&self) -> MutationSource {
+        self.source
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AllowedScope {
+    note_ids: HashSet<NoteIdentity>,
+}
+
+impl AllowedScope {
+    pub(crate) fn only(note_id: NoteIdentity) -> Self {
+        Self {
+            note_ids: HashSet::from([note_id]),
+        }
+    }
+
+    fn allows(&self, note_id: &NoteIdentity) -> bool {
+        self.note_ids.contains(note_id)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExplicitRestoreGrant {
+    turn_id: TurnIdentity,
+    note_id: NoteIdentity,
+    revision_id: RevisionIdentity,
+}
+
+impl ExplicitRestoreGrant {
+    fn new(turn_id: TurnIdentity, note_id: NoteIdentity, revision_id: RevisionIdentity) -> Self {
+        Self {
+            turn_id,
+            note_id,
+            revision_id,
+        }
+    }
+}
+
+pub(crate) struct HistoryModeAccess<'a> {
+    _state: &'a AppState,
+    note_id: NoteIdentity,
+}
+
+impl HistoryModeAccess<'_> {
+    pub(crate) fn note_id(&self) -> &NoteIdentity {
+        &self.note_id
+    }
+}
+
+pub(crate) struct CurrentContentAccess<'a> {
+    _state: &'a AppState,
+    scope: AllowedScope,
+}
+
+impl CurrentContentAccess<'_> {
+    pub(crate) fn allows(&self, note_id: &NoteIdentity) -> bool {
+        self.scope.allows(note_id)
+    }
+}
+
+pub(crate) struct AgentRestoreAccess<'a> {
+    _state: &'a AppState,
+    grant: ExplicitRestoreGrant,
+}
+
+impl AgentRestoreAccess<'_> {
+    pub(crate) fn turn_id(&self) -> &TurnIdentity {
+        &self.grant.turn_id
+    }
+
+    pub(crate) fn note_id(&self) -> &NoteIdentity {
+        &self.grant.note_id
+    }
+
+    pub(crate) fn revision_id(&self) -> &RevisionIdentity {
+        &self.grant.revision_id
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ObservationReceipt {
+    source: MutationSource,
+    path: PathBuf,
+    observed_at_millis: u64,
+    modified_at_millis: Option<u64>,
+}
+
+impl ObservationReceipt {
+    pub(crate) fn source(&self) -> MutationSource {
+        self.source
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn observed_at_millis(&self) -> u64 {
+        self.observed_at_millis
+    }
+
+    pub(crate) fn modified_at_millis(&self) -> Option<u64> {
+        self.modified_at_millis
+    }
+}
+
+pub(crate) struct NoteTimeline<'a> {
+    state: &'a AppState,
+}
+
+impl<'a> NoteTimeline<'a> {
+    pub(crate) fn new(state: &'a AppState) -> Self {
+        Self { state }
+    }
+
+    pub(crate) fn mutate(&self, mutation: NoteMutation) -> NoteMutationResult {
+        let NoteMutation {
+            source: _,
+            path,
+            previous_path,
+            fallback_markdown,
+        } = mutation;
+        NoteMutationResult::from_post_commit(
+            PostCommitNoteMutationService::new(self.state).apply_canonical_file(
+                path,
+                previous_path,
+                fallback_markdown,
+            ),
+        )
+    }
+
+    pub(crate) fn observe(&self, observation: VaultObservation) -> ObservationReceipt {
+        let VaultObservation {
+            source,
+            path,
+            observed_at_millis,
+            modified_at_millis,
+        } = observation;
+        ObservationReceipt {
+            source,
+            path,
+            observed_at_millis,
+            modified_at_millis,
+        }
+    }
+
+    pub(crate) fn history_mode(&self, note_id: NoteIdentity) -> HistoryModeAccess<'a> {
+        HistoryModeAccess {
+            _state: self.state,
+            note_id,
+        }
+    }
+
+    pub(crate) fn current_content(&self, scope: AllowedScope) -> CurrentContentAccess<'a> {
+        CurrentContentAccess {
+            _state: self.state,
+            scope,
+        }
+    }
+
+    pub(crate) fn agent_restore(&self, grant: ExplicitRestoreGrant) -> AgentRestoreAccess<'a> {
+        AgentRestoreAccess {
+            _state: self.state,
+            grant,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{app::EventBus, index::AppState, semantic::SemanticState};
+    use std::{fs, path::PathBuf};
+
+    #[test]
+    fn editor_mutation_assigns_its_closed_source() {
+        let mutation = NoteMutation::editor(
+            PathBuf::from("/vault/Note.md"),
+            None,
+            "# Note\n\nBody".to_string(),
+        );
+
+        assert_eq!(mutation.source(), MutationSource::Editor);
+        assert_eq!(mutation.path(), PathBuf::from("/vault/Note.md"));
+    }
+
+    #[test]
+    fn typed_entrypoints_cover_the_closed_mutation_source_vocabulary() {
+        let path = PathBuf::from("/vault/Note.md");
+        let markdown = "# Note\n\nBody".to_string();
+        let mutations = [
+            NoteMutation::task_action(path.clone(), None, markdown.clone()),
+            NoteMutation::accepted_chat_proposal(path.clone(), None, markdown.clone()),
+            NoteMutation::version_restore(path.clone(), None, markdown.clone()),
+            NoteMutation::note_creation(path.clone(), None, markdown.clone()),
+            NoteMutation::baseline_initialization(path.clone(), None, markdown.clone()),
+            NoteMutation::recovery_reconciliation(path.clone(), None, markdown.clone()),
+        ];
+
+        assert_eq!(
+            mutations.map(|mutation| mutation.source()),
+            [
+                MutationSource::TaskAction,
+                MutationSource::AcceptedChatProposal,
+                MutationSource::VersionRestore,
+                MutationSource::NoteCreation,
+                MutationSource::BaselineInitialization,
+                MutationSource::RecoveryReconciliation,
+            ]
+        );
+        let observation = VaultObservation::external_edit(path, 42, Some(41));
+        assert_eq!(observation.source(), MutationSource::ExternalEdit);
+    }
+
+    #[test]
+    fn mutate_preserves_the_authoritative_post_commit_outcome() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-pass-through-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-pass-through-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let note_path = notes.path().join("Note.md");
+        let markdown = "---\ngneauxghts:\n  id: note-1\n  kind: note\n---\n\n# Note\n\nBody";
+        fs::write(&note_path, markdown).expect("write canonical note");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+
+        let outcome = NoteTimeline::new(&state).mutate(NoteMutation::editor(
+            note_path.clone(),
+            None,
+            markdown.to_string(),
+        ));
+
+        assert_eq!(outcome.payload_version(), PayloadVersion::V1);
+        assert_eq!(outcome.note_id(), &NoteIdentity::new("note-1"));
+        assert_eq!(outcome.path(), note_path);
+        assert_eq!(outcome.canonical_markdown(), markdown);
+        assert_eq!(outcome.warning(), None);
+    }
+
+    #[test]
+    fn history_roles_receive_distinct_scoped_capabilities() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-capabilities-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let timeline = NoteTimeline::new(&state);
+        let note_id = NoteIdentity::new("note-1");
+        let revision_id = RevisionIdentity::new("revision-1");
+
+        let history = timeline.history_mode(note_id.clone());
+        let current = timeline.current_content(AllowedScope::only(note_id.clone()));
+        let restore = timeline.agent_restore(ExplicitRestoreGrant::new(
+            TurnIdentity::new("turn-1"),
+            note_id.clone(),
+            revision_id.clone(),
+        ));
+
+        assert_eq!(history.note_id(), &note_id);
+        assert!(current.allows(&note_id));
+        assert_eq!(restore.note_id(), &note_id);
+        assert_eq!(restore.revision_id(), &revision_id);
+        assert_eq!(restore.turn_id(), &TurnIdentity::new("turn-1"));
+    }
+
+    #[test]
+    fn observe_returns_a_typed_receipt_without_claiming_unseen_history() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-observe-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let path = PathBuf::from("/vault/Observed.md");
+
+        let receipt = NoteTimeline::new(&state).observe(VaultObservation::external_edit(
+            path.clone(),
+            42,
+            Some(41),
+        ));
+
+        assert_eq!(receipt.path(), path);
+        assert_eq!(receipt.source(), MutationSource::ExternalEdit);
+        assert_eq!(receipt.observed_at_millis(), 42);
+        assert_eq!(receipt.modified_at_millis(), Some(41));
+    }
+
+    #[test]
+    fn domain_records_carry_versioned_payloads_and_explicit_predecessors() {
+        let note_id = NoteIdentity::new("note-1");
+        let first_id = RevisionIdentity::new("revision-1");
+        let first = NoteRevisionHeader::new(
+            first_id.clone(),
+            note_id.clone(),
+            None,
+            PayloadVersion::V1,
+            MutationSource::Editor,
+        );
+        let event_id = LifecycleEventIdentity::new("event-1");
+        let renamed = LifecycleEventHeader::new(
+            event_id.clone(),
+            note_id.clone(),
+            Some(TimelineRecordIdentity::Revision(first_id.clone())),
+            PayloadVersion::V1,
+            LifecycleEventKind::Renamed,
+        );
+        let second = NoteRevisionHeader::new(
+            RevisionIdentity::new("revision-2"),
+            note_id,
+            Some(TimelineRecordIdentity::LifecycleEvent(event_id)),
+            PayloadVersion::V1,
+            MutationSource::Editor,
+        );
+
+        assert_eq!(first.predecessor(), None);
+        assert_eq!(renamed.kind(), LifecycleEventKind::Renamed);
+        assert_eq!(renamed.payload_version(), PayloadVersion::V1);
+        assert_eq!(
+            second.predecessor(),
+            Some(&TimelineRecordIdentity::LifecycleEvent(
+                LifecycleEventIdentity::new("event-1")
+            ))
+        );
+    }
+
+    #[test]
+    fn mutation_result_preserves_required_warning_semantics_and_all_diagnostics() {
+        let result = NoteMutationResult::from_post_commit(PostCommitNoteMutationOutcome {
+            note_id: "note-1".to_string(),
+            path: PathBuf::from("/vault/Note.md"),
+            canonical_markdown: "# Note".to_string(),
+            issues: vec![
+                PostCommitIssue {
+                    stage: PostCommitStage::CanonicalRead,
+                    message: "read failed".to_string(),
+                },
+                PostCommitIssue {
+                    stage: PostCommitStage::SemanticUpdate,
+                    message: "semantic queue failed".to_string(),
+                },
+            ],
+        });
+
+        let warning = result.warning().expect("required warning");
+        assert_eq!(warning.payload_version(), PayloadVersion::V1);
+        assert_eq!(warning.issues().len(), 1);
+        assert!(warning.message().contains("Canonical note file was saved"));
+        assert_eq!(result.diagnostics().len(), 2);
+    }
+}

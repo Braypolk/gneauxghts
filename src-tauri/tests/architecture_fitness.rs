@@ -229,3 +229,43 @@ fn semantic_state_owns_one_work_queue_and_worker_context() {
     );
     assert_contains_none(&indexer, &["#[allow(clippy::too_many_arguments)]"]);
 }
+
+#[test]
+fn note_timeline_expands_one_storage_neutral_role_limited_seam() {
+    let services = repository_file("src-tauri/src/services/mod.rs");
+    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+
+    assert!(services.contains("pub(crate) mod note_timeline;"));
+    assert_contains_all(
+        &timeline,
+        &[
+            "pub(crate) struct NoteTimeline",
+            "pub(crate) fn mutate(",
+            "pub(crate) fn observe(",
+            "pub(crate) fn history_mode(",
+            "pub(crate) fn current_content(",
+            "pub(crate) fn agent_restore(",
+            "pub(crate) struct HistoryModeAccess",
+            "pub(crate) struct CurrentContentAccess",
+            "pub(crate) struct AgentRestoreAccess",
+            "pub(crate) struct ExplicitRestoreGrant",
+            "pub(crate) struct NoteMutationResult",
+            "pub(crate) struct NoteMutationWarning",
+            "pub(crate) enum MutationWarningStage",
+            "identity_type!(RevisionIdentity);",
+            "identity_type!(LifecycleEventIdentity);",
+        ],
+    );
+    assert_contains_none(
+        &timeline,
+        &[
+            "rusqlite",
+            "Connection",
+            "Transaction",
+            "history.sqlite3",
+            "row_id",
+            "wal_checkpoint",
+            "impl ExplicitRestoreGrant {\n    pub(crate) fn new",
+        ],
+    );
+}

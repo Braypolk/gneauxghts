@@ -1,0 +1,145 @@
+# Architecture
+
+Gneauxghts is a local-first desktop notes app. The Svelte frontend owns the
+interactive workspace and open-document experience; the Rust backend owns
+durable files, projections, search, and chat runs. Markdown files in the vault
+are the canonical note representation.
+
+Read [behavior invariants](docs/architecture/behavior-invariants.md) before
+changing user-visible coordination or recovery behavior. Hard-to-reverse
+choices live in [ADRs](docs/adr/).
+
+## System shape
+
+```text
+Svelte workspace and editors
+        | typed Tauri commands and events
+Rust persistence, chat, and retrieval modules
+        | canonical writes and derived projections
+Markdown vault + SQLite metadata/indexes
+```
+
+The Tauri command and event contracts are seams. Frontend modules should not
+reimplement backend persistence policy, and backend modules should not infer
+interactive workspace state that is owned by the frontend.
+
+## Canonical ownership
+
+| Concern | Canonical owner and seam |
+| --- | --- |
+| Pane membership, order, active pane, kind, and content references | `WorkspaceStore`; membership transitions use `paneLifecycleMachine.ts` |
+| Per-pane editor mount lifecycle | `PaneEditorSession` through `paneLifecycleMachine.ts` |
+| Open note content, identity, saved baseline, operation, and external conflict | `NoteDraftState` in `NotepadState.notesByKey`; transitions use the document machines |
+| Editor instances, save queues, timers, and resource bindings | `documentRegistry` and the document runtime |
+| Canonical note bytes | The Markdown file in the vault |
+| Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; during expand–migrate–contract it delegates post-write coordination to `PostCommitNoteMutationService` |
+| Canonical task toggle and delete behavior | `TaskMutationService` |
+| Pane navigation and document-departure ordering | `paneNavigationTransitionPipeline` |
+| Chat availability, selection, and request lifecycle | `ChatControllerStore.machine` |
+| Durable conversations, runs, events, context, and proposal status | `ChatService` |
+| One active proposal review | `ProposalReviewSession.workflow` through `proposalReviewMachine` |
+| Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
+| Semantic indexing work | The backend semantic work queue and worker context |
+
+`NotepadState` owns documents, while `WorkspaceStore` owns references from
+panes to those documents. `runtimeStore.svelte.ts` provides bootstrap and
+shared resource configuration; it must not mirror either owner's state.
+
+## Canonical write paths
+
+### Notes
+
+`NoteTimeline` is the future canonical owner for ordinary-note mutations,
+external observations, History Mode reads, current-content provenance, and
+explicitly granted agent restores. Its closed domain contract is expanded
+first; production callers continue using their existing routes until the
+migration steps move them behind that seam. During this interval,
+`NoteTimeline.mutate` delegates to `PostCommitNoteMutationService`, preserving
+the existing write and projection behavior without exposing SQL or storage
+policy.
+
+A save currently crosses the `note_persistence` command seam and writes the
+vault before `PostCommitNoteMutationService` updates the required in-memory
+note catalog. Task, lexical, and semantic projections follow that shared
+post-commit path. Lexical and semantic work may be queued after the canonical
+write.
+
+Once canonical bytes exist, the returned identity and path are authoritative.
+A later required-projection problem is returned as `commitWarning`; callers
+adopt the committed result and do not retry the write.
+
+### Tasks
+
+Closed or clean-note mutations go through `TaskMutationService.commit` and the
+ordinary post-commit path. A mutation targeting a dirty open note is prepared
+without writing, applied to `NoteDraftState.working`, and then persisted by the
+ordinary save path. Ambiguous duplicate task text is rejected instead of
+matching against stale positions.
+
+### Proposals
+
+Agent tools create durable proposals rather than writing notes. Keeping a
+proposal commits through the proposal domain and
+`PostCommitNoteMutationService`, then synchronizes durable proposal status.
+The open document adopts the verified committed Markdown as its new baseline
+without losing local edits made while the commit was running.
+
+### External changes
+
+Watcher events enter the document external-sync machine. Clean documents adopt
+disk content; dirty documents retain both versions in an explicit conflict.
+App-owned writes carry operation-specific expectations so only their exact
+filesystem outcomes are suppressed as self-saves.
+
+## Coordination rules
+
+The application uses small state machines rather than one application-wide
+machine. Note persistence, external synchronization, pane lifecycle,
+navigation, chat requests, proposal review, and transient UI can progress
+independently.
+
+- Reducers choose state; controllers execute effects.
+- Async results are serialized by an owner or correlated with an operation,
+  request, run, review, or conflict identity so stale results can be ignored.
+- Independent dimensions remain separate instead of forming a state
+  cross-product.
+- Recoverable errors stay on the state whose actions remain valid.
+- Durable terminal work is not reopened implicitly; retry starts a new
+  operation or uses an explicit recovery transition.
+- Navigation that leaves a document crosses the shared document-departure
+  phase before history or workspace state changes.
+
+## Agent runtime
+
+`agent_run_coordinator.rs` is the chat-to-runtime handoff.
+`agent_runtime.rs` adapts the selected provider to an app-owned request and
+event protocol. `ChatService` retains durable run lifecycle and context
+assembly. Provider and runtime-library types do not cross those seams.
+
+The protocol keeps run identity, structured activity, plans, usage,
+cancellation, bounded guardrails, and transient permission requests under
+product control. Reads obey vault access and exclusions. Note-changing tools
+produce proposals. New side-effecting tools must declare a permission at the
+app-owned pre-tool seam.
+
+See [ADR 0001](docs/adr/0001-keep-agent-runtime-app-owned.md) for the decision
+and replacement strategy.
+
+## Fitness checks
+
+Architecture fitness tests protect ownership and routing; behavior tests
+protect outcomes.
+
+- `src/lib/architectureFitness.test.ts` checks frontend state ownership and
+  reducer seams.
+- `src-tauri/tests/architecture_fitness.rs` checks backend write routing, the
+  storage-neutral role-limited `NoteTimeline` seam, chat run correlation,
+  permissions, and semantic-work ownership.
+- `src/lib/contracts/ipcFixtures.test.ts` checks representative command and
+  event shapes across the Tauri seam.
+
+When a change introduces a second owner, bypasses a canonical write path, or
+changes one of these seams, treat it as an architecture change. Update this
+map, the applicable behavior invariant, and an ADR only when the decision is
+hard to reverse, surprising without context, and the result of a real
+trade-off.

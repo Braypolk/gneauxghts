@@ -7,6 +7,7 @@ pub(crate) mod background_index_queue;
 pub(crate) mod current_document;
 pub(crate) mod note_catalog;
 pub(crate) mod note_mutation;
+pub(crate) mod note_timeline;
 pub(crate) mod retrieval;
 pub(crate) mod task_mutation;
 
