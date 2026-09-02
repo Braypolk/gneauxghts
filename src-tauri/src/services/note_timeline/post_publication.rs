@@ -19,6 +19,7 @@ use std::{
 #[serde(rename_all = "camelCase")]
 pub(super) enum PublicationStage {
     CanonicalRead,
+    IdentityRepair,
     CatalogUpsert,
     TaskProjectionUpsert,
     CatalogRemove,
@@ -90,6 +91,7 @@ impl PublicationStage {
         matches!(
             self,
             Self::CanonicalRead
+                | Self::IdentityRepair
                 | Self::CatalogUpsert
                 | Self::TaskProjectionUpsert
                 | Self::CatalogRemove
@@ -242,10 +244,43 @@ pub(super) fn synchronize_canonical_file(
     fallback_markdown: String,
 ) -> PublicationOutcome {
     let sink = AppStatePublicationSink { state };
-    let (markdown, read_error) = match fs::read_to_string(&path) {
+    let (mut markdown, read_error) = match fs::read_to_string(&path) {
         Ok(markdown) => (markdown, None),
         Err(error) => (fallback_markdown, Some(error.to_string())),
     };
+    let transferred_identity = previous_path.as_deref().and_then(|previous_path| {
+        state
+            .prepare_note_identity_transfer(previous_path, &path)
+            .ok()
+            .flatten()
+    });
+    let known_identity = state
+        .indexed_note_identity(&path)
+        .ok()
+        .flatten()
+        .or(transferred_identity);
+    let embedded_identity = crate::note::parse_note(&markdown)
+        .frontmatter
+        .managed
+        .map(|metadata| metadata.id)
+        .filter(|note_id| !note_id.trim().is_empty());
+    let identity_repair_error = known_identity
+        .filter(|note_id| embedded_identity.as_deref() != Some(note_id.as_str()))
+        .and_then(|note_id| {
+            let repaired = match crate::note::repair_managed_note_identity(&markdown, &note_id) {
+                Ok(repaired) => repaired,
+                Err(error) => return Some(error),
+            };
+            let expected_write = crate::vault_watcher::record_expected_write(&path, &repaired);
+            match crate::state::atomic_write_note(&path, repaired.as_bytes()) {
+                Ok(()) => {
+                    expected_write.commit();
+                    markdown = repaired;
+                    None
+                }
+                Err(error) => Some(error),
+            }
+        });
     let mutation = CommittedNoteMutation {
         path,
         previous_path,
@@ -258,6 +293,9 @@ pub(super) fn synchronize_canonical_file(
         if let Err(recovery_error) = sink.mark_dirty(&outcome.path, "timeline-canonical-read") {
             outcome.record_issue(PublicationStage::DirtyRecovery, recovery_error);
         }
+    }
+    if let Some(error) = identity_repair_error {
+        outcome.record_issue(PublicationStage::IdentityRepair, error);
     }
     outcome
 }

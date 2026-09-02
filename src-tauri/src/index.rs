@@ -526,7 +526,53 @@ impl AppState {
         Ok(index
             .entries
             .get(path)
-            .and_then(|note| note.managed_note_id.clone()))
+            .filter(|note| note.identity_is_stable)
+            .map(|note| note.note_id.clone()))
+    }
+
+    pub(crate) fn prepare_note_identity_transfer(
+        &self,
+        previous_path: &Path,
+        path: &Path,
+    ) -> Result<Option<String>, String> {
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        let Some(note_id) = index.stable_identity(previous_path) else {
+            return Ok(None);
+        };
+        index.reserve_identity_transfer(path, previous_path, note_id.clone());
+        Ok(Some(note_id))
+    }
+
+    pub(crate) fn prepare_known_note_identity_reattachment(
+        &self,
+        previous_path: &Path,
+        path: &Path,
+        note_id: String,
+    ) -> Result<(), String> {
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        index.reserve_identity_transfer(path, previous_path, note_id);
+        Ok(())
+    }
+
+    pub(crate) fn detach_indexed_note_identity(
+        &self,
+        path: &Path,
+    ) -> Result<Option<String>, String> {
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        let note_id = index.stable_identity(path);
+        if note_id.is_some() {
+            index.remove_entry(path);
+        }
+        Ok(note_id)
     }
 
     /// Lightweight cold-start prewarm. Populates the in-memory
@@ -624,8 +670,14 @@ impl AppState {
 pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
     by_id: HashMap<String, PathBuf>,
+    pending_identity_transfers: HashMap<PathBuf, PendingIdentityTransfer>,
     last_refresh_at: Option<Instant>,
     revision: u64,
+}
+
+struct PendingIdentityTransfer {
+    note_id: String,
+    previous_path: PathBuf,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -665,7 +717,7 @@ pub(crate) struct IndexedTask {
 pub(crate) struct IndexedNote {
     signature: FileSignature,
     pub(crate) note_id: String,
-    managed_note_id: Option<String>,
+    identity_is_stable: bool,
     pub(crate) modified_millis: u64,
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
@@ -717,7 +769,45 @@ impl NotesIndex {
             .and_then(|path| self.entries.get(path).map(|note| (path, note)))
     }
 
-    fn insert_entry(&mut self, path: PathBuf, note: IndexedNote) {
+    fn stable_identity(&self, path: &Path) -> Option<String> {
+        self.entries
+            .get(path)
+            .filter(|note| note.identity_is_stable)
+            .map(|note| note.note_id.clone())
+    }
+
+    fn reserve_identity_transfer(&mut self, path: &Path, previous_path: &Path, note_id: String) {
+        self.pending_identity_transfers.insert(
+            path.to_path_buf(),
+            PendingIdentityTransfer {
+                note_id,
+                previous_path: previous_path.to_path_buf(),
+            },
+        );
+    }
+
+    fn insert_entry(&mut self, path: PathBuf, mut note: IndexedNote) {
+        let identity_transfer = self.pending_identity_transfers.remove(&path);
+        if let Some(transfer) = &identity_transfer {
+            note.note_id.clone_from(&transfer.note_id);
+            note.identity_is_stable = true;
+        } else if let Some(existing) = self.entries.get(&path) {
+            if existing.identity_is_stable {
+                note.note_id.clone_from(&existing.note_id);
+                note.identity_is_stable = true;
+            }
+        }
+        let conflicting_owner = self
+            .by_id
+            .get(&note.note_id)
+            .filter(|owner| *owner != &path);
+        let owner_is_transfer_source = identity_transfer.as_ref().is_some_and(|transfer| {
+            conflicting_owner.map(PathBuf::as_path) == Some(transfer.previous_path.as_path())
+        });
+        if conflicting_owner.is_some() && !owner_is_transfer_source {
+            note.note_id = note::generate_note_id();
+            note.identity_is_stable = true;
+        }
         if let Some(previous) = self.entries.get(&path) {
             if previous.note_id != note.note_id {
                 let stale = self.by_id.get(&previous.note_id).cloned();
@@ -1080,11 +1170,12 @@ fn build_indexed_note_with_signature(
         .filter(|note_id| !note_id.is_empty())
         .map(str::to_string);
     let note_id = managed_note_id.clone().unwrap_or_else(|| file_name.clone());
+    let identity_is_stable = managed_note_id.is_some();
 
     IndexedNote {
         signature,
         note_id,
-        managed_note_id,
+        identity_is_stable,
         modified_millis,
         created_at_millis,
         updated_at_millis,
@@ -1147,11 +1238,12 @@ fn build_current_override_with_signature(
         .filter(|note_id| !note_id.is_empty())
         .map(str::to_string);
     let note_id = managed_note_id.clone().unwrap_or_else(|| file_name.clone());
+    let identity_is_stable = managed_note_id.is_some();
 
     IndexedNote {
         signature,
         note_id,
-        managed_note_id,
+        identity_is_stable,
         modified_millis,
         created_at_millis,
         updated_at_millis,

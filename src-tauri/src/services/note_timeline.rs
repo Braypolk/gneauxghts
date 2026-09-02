@@ -50,12 +50,20 @@ impl TurnIdentity {
 }
 
 impl RevisionIdentity {
+    fn issue() -> Self {
+        Self(crate::note::generate_note_id())
+    }
+
     fn from_persisted(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 }
 
 impl LifecycleEventIdentity {
+    fn issue() -> Self {
+        Self(crate::note::generate_note_id())
+    }
+
     fn from_persisted(value: impl Into<String>) -> Self {
         Self(value.into())
     }
@@ -100,6 +108,7 @@ pub(crate) enum MutationSource {
 #[serde(rename_all = "camelCase")]
 pub(crate) enum MutationWarningStage {
     CanonicalRead,
+    IdentityRepair,
     CatalogUpsert,
     TaskProjectionUpsert,
     CatalogRemove,
@@ -115,6 +124,7 @@ impl From<PublicationStage> for MutationWarningStage {
     fn from(stage: PublicationStage) -> Self {
         match stage {
             PublicationStage::CanonicalRead => Self::CanonicalRead,
+            PublicationStage::IdentityRepair => Self::IdentityRepair,
             PublicationStage::CatalogUpsert => Self::CatalogUpsert,
             PublicationStage::TaskProjectionUpsert => Self::TaskProjectionUpsert,
             PublicationStage::CatalogRemove => Self::CatalogRemove,
@@ -277,15 +287,14 @@ pub(crate) struct NoteRevisionHeader {
 }
 
 impl NoteRevisionHeader {
-    pub(crate) fn new(
-        identity: RevisionIdentity,
+    fn issue(
         note_identity: NoteIdentity,
         predecessor: Option<TimelineRecordIdentity>,
         payload_version: PayloadVersion,
         source: MutationSource,
     ) -> Self {
         Self {
-            identity,
+            identity: RevisionIdentity::issue(),
             note_identity,
             predecessor,
             payload_version,
@@ -308,15 +317,14 @@ pub(crate) struct LifecycleEventHeader {
 }
 
 impl LifecycleEventHeader {
-    pub(crate) fn new(
-        identity: LifecycleEventIdentity,
+    fn issue(
         note_identity: NoteIdentity,
         predecessor: Option<TimelineRecordIdentity>,
         payload_version: PayloadVersion,
         kind: LifecycleEventKind,
     ) -> Self {
         Self {
-            identity,
+            identity: LifecycleEventIdentity::issue(),
             note_identity,
             predecessor,
             payload_version,
@@ -865,7 +873,7 @@ impl<'a> NoteTimeline<'a> {
         } = observation;
         match kind {
             VaultObservationKind::Lifecycle(LifecycleEventKind::Missing) => {
-                if let Ok(Some(note_id)) = self.state.indexed_note_identity(&path) {
+                if let Ok(Some(note_id)) = self.state.detach_indexed_note_identity(&path) {
                     if let Ok(mut missing) = OBSERVED_MISSING_IDENTITIES.lock() {
                         missing
                             .get_or_insert_with(HashMap::new)
@@ -885,9 +893,23 @@ impl<'a> NoteTimeline<'a> {
                                     .and_then(|missing| missing.remove(&note_id))
                             });
                     if let Some(missing_path) = missing_path {
+                        let _ = self.state.prepare_known_note_identity_reattachment(
+                            &missing_path,
+                            &path,
+                            note_id.as_str().to_string(),
+                        );
                         kind = VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached);
                         previous_path = Some(missing_path);
                     }
+                }
+            }
+            VaultObservationKind::Lifecycle(
+                LifecycleEventKind::Renamed | LifecycleEventKind::Moved,
+            ) => {
+                if let Some(previous_path) = &previous_path {
+                    let _ = self
+                        .state
+                        .prepare_note_identity_transfer(previous_path, &path);
                 }
             }
             _ => {}
@@ -1046,6 +1068,361 @@ mod tests {
         assert_eq!(outcome.path(), note_path);
         assert_eq!(outcome.canonical_markdown(), markdown);
         assert_eq!(outcome.warning(), None);
+    }
+
+    #[test]
+    fn app_commit_preserves_identity_when_authored_content_becomes_empty() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-empty-identity-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-empty-identity-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let note_path = notes.path().join("Note.md");
+        let original = "---\ngneauxghts:\n  id: stable-note-1\n  kind: note\n---\n\nBody";
+        fs::write(&note_path, original).expect("write original note");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let timeline = NoteTimeline::new(&state);
+        timeline.mutate(NoteMutation::editor(
+            note_path.clone(),
+            None,
+            original.to_string(),
+        ));
+
+        fs::write(&note_path, "").expect("publish empty authored content");
+        let outcome = timeline.mutate(NoteMutation::editor(
+            note_path.clone(),
+            Some(note_path.clone()),
+            String::new(),
+        ));
+
+        assert_eq!(outcome.note_id(), &NoteIdentity::new("stable-note-1"));
+        let canonical = fs::read_to_string(&note_path).expect("read repaired canonical note");
+        assert_eq!(
+            crate::note::parse_note(&canonical)
+                .frontmatter
+                .managed
+                .expect("managed identity remains")
+                .id,
+            "stable-note-1"
+        );
+        assert_eq!(crate::note::strip_frontmatter(&canonical), "");
+    }
+
+    #[test]
+    fn external_metadata_damage_preserves_known_identity_without_rewriting_until_commit() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-damaged-identity-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-damaged-identity-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let note_path = notes.path().join("Damaged.md");
+        let original = "---\ngneauxghts:\n  id: stable-note-2\n  kind: note\n---\n\nOriginal";
+        fs::write(&note_path, original).expect("write original note");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let timeline = NoteTimeline::new(&state);
+        timeline.mutate(NoteMutation::editor(
+            note_path.clone(),
+            None,
+            original.to_string(),
+        ));
+
+        let damaged = "Externally changed without managed metadata";
+        fs::write(&note_path, damaged).expect("damage managed metadata externally");
+        timeline.observe(VaultObservation::external_edit(
+            note_path.clone(),
+            42,
+            Some(41),
+        ));
+        state
+            .upsert_note_indexes(
+                note_path.clone(),
+                crate::index::build_indexed_note(&note_path, damaged, 41),
+            )
+            .expect("apply observed catalog state");
+
+        assert_eq!(fs::read_to_string(&note_path).unwrap(), damaged);
+        assert_eq!(
+            state.indexed_note_identity(&note_path).unwrap().as_deref(),
+            Some("stable-note-2")
+        );
+
+        let outcome = timeline.mutate(NoteMutation::editor(
+            note_path.clone(),
+            Some(note_path.clone()),
+            damaged.to_string(),
+        ));
+        assert_eq!(outcome.note_id(), &NoteIdentity::new("stable-note-2"));
+        assert!(fs::read_to_string(&note_path)
+            .unwrap()
+            .contains("id: stable-note-2"));
+    }
+
+    #[test]
+    fn copied_identity_cannot_replace_the_original_and_is_repaired_on_commit() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-copy-identity-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-copy-identity-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let original_path = notes.path().join("Original.md");
+        let copy_path = notes.path().join("Copy.md");
+        let markdown =
+            "---\ngneauxghts:\n  id: stable-original-note\n  kind: note\n---\n\nCopied body";
+        fs::write(&original_path, markdown).expect("write original note");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let timeline = NoteTimeline::new(&state);
+        timeline.mutate(NoteMutation::editor(
+            original_path.clone(),
+            None,
+            markdown.to_string(),
+        ));
+
+        fs::write(&copy_path, markdown).expect("copy note byte for byte");
+        timeline.observe(VaultObservation::external_edit(
+            copy_path.clone(),
+            42,
+            Some(41),
+        ));
+        state
+            .upsert_note_indexes(
+                copy_path.clone(),
+                crate::index::build_indexed_note(&copy_path, markdown, 41),
+            )
+            .expect("ingest copied note");
+
+        let original_id = state
+            .indexed_note_identity(&original_path)
+            .unwrap()
+            .expect("original identity");
+        let copy_id = state
+            .indexed_note_identity(&copy_path)
+            .unwrap()
+            .expect("copy identity");
+        assert_eq!(original_id, "stable-original-note");
+        assert_ne!(copy_id, original_id);
+        assert_eq!(fs::read_to_string(&copy_path).unwrap(), markdown);
+
+        // Re-observing in either order cannot transfer either association.
+        state
+            .upsert_note_indexes(
+                original_path.clone(),
+                crate::index::build_indexed_note(&original_path, markdown, 43),
+            )
+            .unwrap();
+        state
+            .upsert_note_indexes(
+                copy_path.clone(),
+                crate::index::build_indexed_note(&copy_path, markdown, 44),
+            )
+            .unwrap();
+        assert_eq!(
+            state
+                .indexed_note_identity(&original_path)
+                .unwrap()
+                .as_deref(),
+            Some(original_id.as_str())
+        );
+        assert_eq!(
+            state.indexed_note_identity(&copy_path).unwrap().as_deref(),
+            Some(copy_id.as_str())
+        );
+
+        let outcome = timeline.mutate(NoteMutation::editor(
+            copy_path.clone(),
+            Some(copy_path.clone()),
+            markdown.to_string(),
+        ));
+        assert_eq!(outcome.note_id(), &NoteIdentity::new(copy_id.clone()));
+        assert_eq!(
+            crate::note::parse_note(&fs::read_to_string(&copy_path).unwrap())
+                .frontmatter
+                .managed
+                .expect("copy identity repaired")
+                .id,
+            copy_id
+        );
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("restart app state");
+        restarted
+            .prewarm_notes_index(notes.path())
+            .expect("rebuild index after restart");
+        assert_eq!(
+            restarted
+                .indexed_note_identity(&original_path)
+                .unwrap()
+                .as_deref(),
+            Some(original_id.as_str())
+        );
+        assert_eq!(
+            restarted
+                .indexed_note_identity(&copy_path)
+                .unwrap()
+                .as_deref(),
+            Some(copy_id.as_str())
+        );
+    }
+
+    #[test]
+    fn identity_follows_moves_disappearance_and_safe_reattachment_in_any_refresh_order() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-path-identity-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-path-identity-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let original_path = notes.path().join("Original.md");
+        let moved_path = notes.path().join("Folder").join("Moved.md");
+        let renamed_path = notes.path().join("Folder").join("Renamed.md");
+        let reattached_path = notes.path().join("Reattached.md");
+        let markdown = "---\ngneauxghts:\n  id: stable-path-note\n  kind: note\n---\n\nPath body";
+        fs::write(&original_path, markdown).expect("write original note");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let timeline = NoteTimeline::new(&state);
+        timeline.mutate(NoteMutation::editor(
+            original_path.clone(),
+            None,
+            markdown.to_string(),
+        ));
+
+        fs::create_dir_all(moved_path.parent().unwrap()).unwrap();
+        fs::rename(&original_path, &moved_path).expect("move note");
+        timeline.observe(VaultObservation::moved(
+            original_path.clone(),
+            moved_path.clone(),
+            42,
+        ));
+        // Removal-first refresh preserves the reservation for the new path.
+        state.remove_note_indexes(&original_path).unwrap();
+        state
+            .upsert_note_indexes(
+                moved_path.clone(),
+                crate::index::build_indexed_note(&moved_path, markdown, 42),
+            )
+            .unwrap();
+        assert_eq!(
+            state.indexed_note_identity(&moved_path).unwrap().as_deref(),
+            Some("stable-path-note")
+        );
+
+        fs::rename(&moved_path, &renamed_path).expect("rename note");
+        timeline.observe(VaultObservation::renamed(
+            moved_path.clone(),
+            renamed_path.clone(),
+            43,
+        ));
+        // Upsert-first refresh also transfers the association safely.
+        state
+            .upsert_note_indexes(
+                renamed_path.clone(),
+                crate::index::build_indexed_note(&renamed_path, markdown, 43),
+            )
+            .unwrap();
+        state.remove_note_indexes(&moved_path).unwrap();
+        assert_eq!(
+            state
+                .indexed_note_identity(&renamed_path)
+                .unwrap()
+                .as_deref(),
+            Some("stable-path-note")
+        );
+
+        fs::remove_file(&renamed_path).expect("temporarily remove note");
+        timeline.observe(VaultObservation::missing(renamed_path.clone(), 44));
+
+        let unrelated =
+            "---\ngneauxghts:\n  id: unrelated-note\n  kind: note\n---\n\nUnrelated body";
+        fs::write(&renamed_path, unrelated).expect("reuse disappeared path");
+        timeline.observe(VaultObservation::external_edit(
+            renamed_path.clone(),
+            45,
+            Some(45),
+        ));
+        state
+            .upsert_note_indexes(
+                renamed_path.clone(),
+                crate::index::build_indexed_note(&renamed_path, unrelated, 45),
+            )
+            .unwrap();
+        assert_eq!(
+            state
+                .indexed_note_identity(&renamed_path)
+                .unwrap()
+                .as_deref(),
+            Some("unrelated-note")
+        );
+
+        fs::write(&reattached_path, markdown).expect("reattach missing note elsewhere");
+        let receipt = timeline.observe(VaultObservation::external_edit(
+            reattached_path.clone(),
+            46,
+            Some(46),
+        ));
+        assert_eq!(
+            receipt.kind(),
+            VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached)
+        );
+        state
+            .upsert_note_indexes(
+                reattached_path.clone(),
+                crate::index::build_indexed_note(&reattached_path, markdown, 46),
+            )
+            .unwrap();
+        assert_eq!(
+            state
+                .indexed_note_identity(&reattached_path)
+                .unwrap()
+                .as_deref(),
+            Some("stable-path-note")
+        );
+        assert_eq!(
+            state
+                .indexed_note_identity(&renamed_path)
+                .unwrap()
+                .as_deref(),
+            Some("unrelated-note")
+        );
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("restart app state");
+        restarted
+            .prewarm_notes_index(notes.path())
+            .expect("rebuild index after restart");
+        assert_eq!(
+            restarted
+                .indexed_note_identity(&reattached_path)
+                .unwrap()
+                .as_deref(),
+            Some("stable-path-note")
+        );
+        assert_eq!(
+            restarted
+                .indexed_note_identity(&renamed_path)
+                .unwrap()
+                .as_deref(),
+            Some("unrelated-note")
+        );
     }
 
     #[test]
@@ -1221,37 +1598,39 @@ mod tests {
     #[test]
     fn domain_records_carry_versioned_payloads_and_explicit_predecessors() {
         let note_id = NoteIdentity::new("note-1");
-        let first_id = RevisionIdentity::from_persisted("revision-1");
-        let first = NoteRevisionHeader::new(
-            first_id.clone(),
+        let first = NoteRevisionHeader::issue(
             note_id.clone(),
             None,
             PayloadVersion::V1,
             MutationSource::Editor,
         );
-        let event_id = LifecycleEventIdentity::from_persisted("event-1");
-        let renamed = LifecycleEventHeader::new(
-            event_id.clone(),
+        let first_id = first.identity.clone();
+        let renamed = LifecycleEventHeader::issue(
             note_id.clone(),
             Some(TimelineRecordIdentity::Revision(first_id.clone())),
             PayloadVersion::V1,
             LifecycleEventKind::Renamed,
         );
-        let second = NoteRevisionHeader::new(
-            RevisionIdentity::from_persisted("revision-2"),
+        let event_id = renamed.identity.clone();
+        let second = NoteRevisionHeader::issue(
             note_id,
             Some(TimelineRecordIdentity::LifecycleEvent(event_id)),
             PayloadVersion::V1,
             MutationSource::Editor,
         );
 
+        assert_eq!(first.identity.0.len(), 26);
+        assert_eq!(renamed.identity.0.len(), 26);
+        assert_eq!(second.identity.0.len(), 26);
+        assert_ne!(first.identity.0, renamed.identity.0);
+        assert_ne!(renamed.identity.0, second.identity.0);
         assert_eq!(first.predecessor(), None);
         assert_eq!(renamed.kind(), LifecycleEventKind::Renamed);
         assert_eq!(renamed.payload_version(), PayloadVersion::V1);
         assert_eq!(
             second.predecessor(),
             Some(&TimelineRecordIdentity::LifecycleEvent(
-                LifecycleEventIdentity::from_persisted("event-1")
+                renamed.identity.clone()
             ))
         );
     }

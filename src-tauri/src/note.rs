@@ -301,6 +301,41 @@ pub(crate) fn prepare_note_markdown(
     Ok((enriched, metadata))
 }
 
+/// Restore the timeline-owned identity during an app-owned commit without
+/// changing authored content or unrelated managed metadata.
+pub(crate) fn repair_managed_note_identity(
+    markdown: &str,
+    note_id: &str,
+) -> Result<String, String> {
+    let parsed = parse_note(markdown);
+    let now = current_timestamp_rfc3339()?;
+    let mut metadata = parsed
+        .frontmatter
+        .managed
+        .unwrap_or_else(|| ManagedNoteMetadata {
+            id: String::new(),
+            created_at: now.clone(),
+            updated_at: now,
+            trashed_at: None,
+            kind: DocumentKind::Note,
+            chat_id: None,
+            part: None,
+            projection_hash: None,
+        });
+    metadata.id = note_id.to_string();
+    let frontmatter = compose_frontmatter(parsed.frontmatter.raw_other.as_deref(), &metadata);
+    if parsed.body.is_empty() {
+        Ok(format!(
+            "{FRONTMATTER_DELIMITER}\n{frontmatter}\n{FRONTMATTER_DELIMITER}\n"
+        ))
+    } else {
+        Ok(format!(
+            "{FRONTMATTER_DELIMITER}\n{frontmatter}\n{FRONTMATTER_DELIMITER}\n\n{}",
+            parsed.body
+        ))
+    }
+}
+
 pub(crate) fn note_id_from_path_or_markdown(
     note_path: Option<&Path>,
     markdown: &str,
@@ -458,7 +493,7 @@ fn normalize_yaml_scalar(value: &str) -> String {
         .to_string()
 }
 
-fn generate_note_id() -> String {
+pub(crate) fn generate_note_id() -> String {
     let timestamp_millis = current_time_millis().unwrap_or(0);
     let mut bytes = [0u8; 16];
     bytes[..6].copy_from_slice(&timestamp_millis.to_be_bytes()[2..]);

@@ -652,4 +652,29 @@ mod tests {
             Some(note_id)
         );
     }
+
+    #[test]
+    fn forget_and_recovery_preserve_the_same_managed_note_identity() {
+        let original =
+            "---\ngneauxghts:\n  id: lifecycle-note-1\n  kind: note\n---\n\nLifecycle body";
+        let (forgotten_markdown, forgotten_id) =
+            prepare_forgotten_note_markdown(original, "2026-09-01T12:00:00.000Z".to_string())
+                .expect("prepare forgotten note");
+        let restored_markdown =
+            note::prepare_note_markdown(&forgotten_markdown, Some(&forgotten_markdown), Some(None))
+                .expect("prepare recovered note")
+                .0;
+
+        assert_eq!(forgotten_id, "lifecycle-note-1");
+        assert_eq!(
+            note::note_id_from_path_or_markdown(None, &restored_markdown).as_deref(),
+            Some("lifecycle-note-1")
+        );
+        assert!(note::parse_note(&restored_markdown)
+            .frontmatter
+            .managed
+            .expect("managed metadata")
+            .trashed_at
+            .is_none());
+    }
 }

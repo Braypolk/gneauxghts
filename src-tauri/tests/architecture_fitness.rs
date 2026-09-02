@@ -471,3 +471,50 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
         ],
     );
 }
+
+#[test]
+fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
+    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let post_publication =
+        repository_file("src-tauri/src/services/note_timeline/post_publication.rs");
+    let index = repository_file("src-tauri/src/index.rs");
+    let architecture = repository_file("ARCHITECTURE.md");
+    let invariants = repository_file("docs/architecture/behavior-invariants.md");
+
+    assert_contains_all(
+        &timeline,
+        &[
+            "fn issue() -> Self",
+            "RevisionIdentity::issue()",
+            "LifecycleEventIdentity::issue()",
+            "prepare_note_identity_transfer(previous_path, &path)",
+            "prepare_known_note_identity_reattachment(",
+            "detach_indexed_note_identity(&path)",
+        ],
+    );
+    assert_contains_none(
+        &timeline,
+        &[
+            "impl RevisionIdentity {\n    pub(crate) fn issue",
+            "impl LifecycleEventIdentity {\n    pub(crate) fn issue",
+            "pub(crate) fn repair_managed_note_identity",
+        ],
+    );
+    assert_contains_all(
+        &post_publication,
+        &[
+            "prepare_note_identity_transfer(previous_path, &path)",
+            "repair_managed_note_identity(&markdown, &note_id)",
+        ],
+    );
+    assert_contains_all(
+        &index,
+        &[
+            "pending_identity_transfers",
+            "fn reserve_identity_transfer(",
+            "conflicting_owner.is_some() && !owner_is_transfer_source",
+        ],
+    );
+    assert!(architecture.contains("Note Identity follows the logical note"));
+    assert!(invariants.contains("Note Identity follows the note"));
+}

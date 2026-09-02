@@ -64,6 +64,16 @@ current-content capability unless an app-owned current-turn restore path is
 implemented. Revision and Lifecycle Event identities likewise cannot be
 minted by callers; their durable issuer belongs inside `NoteTimeline`.
 
+Note Identity follows the logical note rather than its current file path or
+authored-content length. The catalog preserves a known identity through empty
+content and damaged managed metadata, and reserves that association across
+rename, move, disappearance, and safe reattachment even when path refreshes
+arrive in either order. External observation never repairs Markdown. The next
+app-owned commit restores missing or damaged embedded identity metadata. If an
+observed copy repeats an identity already owned by another path, the original
+mapping wins and the copy receives a new globally unique identity before it
+can enter the catalog.
+
 A save crosses the `note_persistence` command seam, publishes the vault file,
 and immediately enters `NoteTimeline.mutate`, which updates the required
 in-memory note catalog through its private post-publication helper. Task,

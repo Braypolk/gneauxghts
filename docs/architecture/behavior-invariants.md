@@ -60,6 +60,21 @@ If bytes were committed but a required projection degraded, the result carries
 the authoritative identity and a warning; callers do not retry the mutation.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
 
+### Note Identity follows the note
+
+A managed ordinary note keeps its identity when its authored content becomes
+empty, its path changes, it is forgotten or recovered, or it temporarily
+disappears and safely reattaches. A known path whose embedded managed identity
+is missing or damaged retains its catalog identity without rewriting the file
+during observation; repair occurs only as part of the next app-owned commit.
+
+An observed file whose embedded identity is already owned by another path is
+a distinct copy. The existing owner keeps the identity and the copy receives a
+new globally unique identity, independent of catalog refresh order. Revision
+and Lifecycle Event identities are opaque, globally unique domain values with
+explicit predecessor relationships; database row IDs or insertion order never
+define timeline identity or lineage.
+
 ### Self-save suppression is operation-aware
 
 An app-owned write, move, or delete suppresses only the exact filesystem
