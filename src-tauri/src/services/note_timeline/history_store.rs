@@ -171,6 +171,19 @@ pub(super) fn history_store_exists() -> bool {
 }
 
 #[cfg(test)]
+pub(super) fn baseline_failure_note_ids() -> Vec<String> {
+    let connection = open_store().expect("open history store");
+    let mut statement = connection
+        .prepare("SELECT note_id FROM baseline_initialization_failures ORDER BY note_id")
+        .expect("prepare baseline failure query");
+    statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query baseline failures")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read baseline failures")
+}
+
+#[cfg(test)]
 pub(super) fn replace_lifecycle_payload_version(note_id: &NoteIdentity, version: i64) {
     open_store()
         .expect("open history store")

@@ -1250,6 +1250,7 @@ impl<'a> NoteTimeline<'a> {
             progress.discovered_notes += 1;
             let embedded_note_id =
                 (!metadata.id.trim().is_empty()).then(|| NoteIdentity::new(metadata.id.clone()));
+            let mut resolved_note_id = None;
             let initialized = (|| {
                 let persisted_path_identity = history_store::note_identity_for_current_path(&path)?;
                 let note_id = match persisted_path_identity {
@@ -1267,6 +1268,7 @@ impl<'a> NoteTimeline<'a> {
                         )?)
                     }
                 };
+                resolved_note_id = Some(note_id.clone());
                 let known_since_millis = crate::time::current_time_millis().map_err(|error| {
                     format!("Issue Baseline Revision known-since time: {error}")
                 })?;
@@ -1297,7 +1299,7 @@ impl<'a> NoteTimeline<'a> {
                         "Initialize existing note {}: {error}",
                         path.display()
                     ));
-                    if let Some(note_id) = embedded_note_id.as_ref() {
+                    if let Some(note_id) = resolved_note_id.as_ref().or(embedded_note_id.as_ref()) {
                         history_store::record_baseline_initialization_failure(
                             note_id,
                             &path,
@@ -2402,6 +2404,46 @@ mod tests {
             MutationSource::BaselineInitialization
         );
         assert_eq!(revisions[1].source(), MutationSource::Editor);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn initialization_failure_is_attributed_to_the_resolved_damaged_identity() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-damaged-failure-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-damaged-failure-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Damaged.md");
+        fs::write(
+            &path,
+            "---\ngneauxghts:\n  id: \n  kind: note\n---\n\nDamaged",
+        )
+        .unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        inject_history_baseline_failure_once();
+
+        let progress = NoteTimeline::new(&state)
+            .initialize_existing_notes(notes.path())
+            .unwrap();
+
+        assert_eq!(progress.phase(), BaselineInitializationPhase::Degraded);
+        let failed_note_ids = history_store::baseline_failure_note_ids();
+        assert_eq!(failed_note_ids.len(), 1);
+        let resolved_note_id = &failed_note_ids[0];
+        assert!(!resolved_note_id.trim().is_empty());
+        assert!(matches!(
+            NoteTimeline::new(&state)
+                .note_baseline_initialization_state(&NoteIdentity::new(resolved_note_id.clone()))
+                .unwrap(),
+            NoteBaselineInitializationState::Failed { error }
+                if error.contains("injected Baseline Revision failure")
+        ));
         crate::state::set_notes_root_override(None).unwrap();
     }
 
