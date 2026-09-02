@@ -148,6 +148,9 @@ Identity, so rolling back the manifest and store together is also rejected. A
 development reset advances the manifest generation first, records its operation
 and generation boundary outside the replacement timeline, removes the
 superseded store, and rebuilds current notes as truthful baselines.
+Detecting rollback to an older but internally valid store copy from the same
+generation requires the clean-close watermark and reconciliation work owned by
+Ticket 11; generation metadata alone does not claim to distinguish that case.
 See [ADR 0004](docs/adr/0004-treat-sqlite-as-the-first-note-timeline-store.md)
 for the initial store boundary and
 [ADR 0005](docs/adr/0005-remember-observed-history-generations-outside-the-vault.md)

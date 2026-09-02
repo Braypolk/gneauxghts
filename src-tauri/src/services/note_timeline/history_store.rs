@@ -1883,8 +1883,7 @@ fn open_store() -> Result<Connection, String> {
                result_hash TEXT,
                current_path TEXT NOT NULL
              );
-             DROP INDEX IF EXISTS timeline_heads_by_current_path;
-             CREATE INDEX timeline_heads_by_current_path
+             CREATE INDEX IF NOT EXISTS timeline_heads_by_current_path
                ON timeline_heads(current_path);",
         )
         .map_err(|error| format!("Initialize Note Timeline history store: {error}"))?;

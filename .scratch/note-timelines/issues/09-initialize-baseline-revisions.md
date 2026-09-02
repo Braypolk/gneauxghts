@@ -14,3 +14,8 @@
 - [x] Record vault identity, selected history format, and store generation in both manifest-level and store-level metadata and detect mismatches on reopen.
 - [x] Support resetting development metadata and rebuilding baselines without pretending that erased history survived.
 - [x] Add tests for new vaults containing existing notes, large scans, mutation races, restart, identity damage, and generation mismatch.
+
+Same-generation replacement by an older, internally valid store copy remains
+part of Ticket 11's clean-close portability and reconciliation work; this
+ticket detects missing stores, selector rollback, and manifest/store metadata
+mismatch without introducing that later watermark protocol.
