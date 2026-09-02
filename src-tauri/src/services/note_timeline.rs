@@ -7,7 +7,7 @@ mod history_store;
 mod post_publication;
 
 use self::post_publication::{PublicationIssue, PublicationOutcome, PublicationStage};
-use crate::index::AppState;
+use crate::{index::AppState, path_utils::collect_markdown_files_recursively};
 use serde::Serialize;
 use std::{
     collections::HashSet,
@@ -312,6 +312,9 @@ pub(crate) struct NoteRevisionHeader {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RevisionTimeEvidence {
+    Baseline {
+        known_since_millis: u64,
+    },
     Committed {
         committed_at_millis: u64,
     },
@@ -361,7 +364,7 @@ impl NoteRevisionHeader {
             RevisionTimeEvidence::Committed {
                 committed_at_millis,
             } => Some(committed_at_millis),
-            RevisionTimeEvidence::Observed { .. } => None,
+            RevisionTimeEvidence::Baseline { .. } | RevisionTimeEvidence::Observed { .. } => None,
         }
     }
 
@@ -370,7 +373,7 @@ impl NoteRevisionHeader {
             RevisionTimeEvidence::Observed {
                 observed_at_millis, ..
             } => Some(observed_at_millis),
-            RevisionTimeEvidence::Committed { .. } => None,
+            RevisionTimeEvidence::Baseline { .. } | RevisionTimeEvidence::Committed { .. } => None,
         }
     }
 
@@ -379,8 +382,86 @@ impl NoteRevisionHeader {
             RevisionTimeEvidence::Observed {
                 modified_at_millis, ..
             } => modified_at_millis,
-            RevisionTimeEvidence::Committed { .. } => None,
+            RevisionTimeEvidence::Baseline { .. } | RevisionTimeEvidence::Committed { .. } => None,
         }
+    }
+
+    pub(crate) fn known_since_millis(&self) -> Option<u64> {
+        match self.time_evidence {
+            RevisionTimeEvidence::Baseline { known_since_millis } => Some(known_since_millis),
+            RevisionTimeEvidence::Committed { .. } | RevisionTimeEvidence::Observed { .. } => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BaselineInitializationPhase {
+    NotStarted,
+    Initializing,
+    Complete,
+    Degraded,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BaselineInitializationProgress {
+    phase: BaselineInitializationPhase,
+    discovered_notes: u64,
+    baseline_revisions: u64,
+    ready_notes: u64,
+    failed_notes: u64,
+    last_error: Option<String>,
+}
+
+impl BaselineInitializationProgress {
+    pub(crate) fn phase(&self) -> BaselineInitializationPhase {
+        self.phase
+    }
+
+    pub(crate) fn discovered_notes(&self) -> u64 {
+        self.discovered_notes
+    }
+
+    pub(crate) fn baseline_revisions(&self) -> u64 {
+        self.baseline_revisions
+    }
+
+    pub(crate) fn ready_notes(&self) -> u64 {
+        self.ready_notes
+    }
+
+    pub(crate) fn failed_notes(&self) -> u64 {
+        self.failed_notes
+    }
+
+    pub(crate) fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NoteBaselineInitializationState {
+    Uninitialized,
+    Initialized { known_since_millis: Option<u64> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DevelopmentHistoryReset {
+    previous_generation: u64,
+    generation: u64,
+    initialization: BaselineInitializationProgress,
+}
+
+impl DevelopmentHistoryReset {
+    pub(crate) fn previous_generation(&self) -> u64 {
+        self.previous_generation
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn initialization(&self) -> &BaselineInitializationProgress {
+        &self.initialization
     }
 }
 
@@ -1094,6 +1175,111 @@ impl<'a> NoteTimeline<'a> {
         Self { state }
     }
 
+    pub(crate) fn initialize_existing_notes(
+        &self,
+        vault_root: &Path,
+    ) -> Result<BaselineInitializationProgress, String> {
+        self.recover_retained_observations()?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        let mut progress = BaselineInitializationProgress {
+            phase: BaselineInitializationPhase::Initializing,
+            discovered_notes: 0,
+            baseline_revisions: 0,
+            ready_notes: 0,
+            failed_notes: 0,
+            last_error: None,
+        };
+        history_store::store_baseline_initialization_progress(&progress)?;
+        for path in collect_markdown_files_recursively(vault_root)? {
+            let markdown = fs::read_to_string(&path).map_err(|error| {
+                format!(
+                    "Read existing note {} for baseline: {error}",
+                    path.display()
+                )
+            })?;
+            let parsed = crate::note::parse_note(&markdown);
+            let Some(metadata) = parsed.frontmatter.managed else {
+                continue;
+            };
+            if metadata.kind.is_chat_projection() {
+                continue;
+            }
+            progress.discovered_notes += 1;
+            let persisted_path_identity = history_store::note_identity_for_current_path(&path)?;
+            let note_id = match persisted_path_identity {
+                Some(note_id) => note_id,
+                None => {
+                    let historical_owner = (!metadata.id.trim().is_empty())
+                        .then(|| NoteIdentity::new(metadata.id.clone()))
+                        .map(|note_id| history_store::current_path(&note_id))
+                        .transpose()?
+                        .flatten();
+                    NoteIdentity::new(self.state.resolve_observed_note_identity(
+                        &path,
+                        &markdown,
+                        historical_owner.as_deref(),
+                    )?)
+                }
+            };
+            let known_since_millis = crate::time::current_time_millis()
+                .map_err(|error| format!("Issue Baseline Revision known-since time: {error}"))?;
+            history_store::record_baseline_revision_if_absent(
+                &note_id,
+                &path,
+                &markdown,
+                known_since_millis,
+            )?;
+            if matches!(
+                history_store::note_baseline_initialization_state(&note_id)?,
+                NoteBaselineInitializationState::Initialized {
+                    known_since_millis: Some(_)
+                }
+            ) {
+                progress.baseline_revisions += 1;
+            }
+            progress.ready_notes += 1;
+            history_store::store_baseline_initialization_progress(&progress)?;
+        }
+        progress.phase = if progress.failed_notes == 0 {
+            BaselineInitializationPhase::Complete
+        } else {
+            BaselineInitializationPhase::Degraded
+        };
+        history_store::store_baseline_initialization_progress(&progress)?;
+        Ok(progress)
+    }
+
+    pub(crate) fn baseline_initialization_progress(
+        &self,
+    ) -> Result<BaselineInitializationProgress, String> {
+        history_store::baseline_initialization_progress()
+    }
+
+    pub(crate) fn note_baseline_initialization_state(
+        &self,
+        note_id: &NoteIdentity,
+    ) -> Result<NoteBaselineInitializationState, String> {
+        history_store::note_baseline_initialization_state(note_id)
+    }
+
+    pub(crate) fn reset_development_history(
+        &self,
+        vault_root: &Path,
+    ) -> Result<DevelopmentHistoryReset, String> {
+        crate::state::with_note_file_mutation(|| {
+            let (previous_generation, generation) = {
+                let _timeline = self.state.lock_note_timeline_observation_replay()?;
+                history_store::reset_development_store(vault_root)?
+            };
+            let initialization = self.initialize_existing_notes(vault_root)?;
+            Ok(DevelopmentHistoryReset {
+                previous_generation,
+                generation,
+                initialization,
+            })
+        })
+    }
+
     /// Prepare user-authored Markdown for an app-owned publication while
     /// preserving the identity already owned by the logical note. Callers
     /// provide continuity evidence; the timeline keeps the repair policy
@@ -1118,7 +1304,18 @@ impl<'a> NoteTimeline<'a> {
                 ));
             }
         }
-        let authoritative_identity = catalog_identity.as_deref().or(retained_identity);
+        let historical_identity = if catalog_identity.is_none() && retained_identity.is_none() {
+            continuity_path
+                .map(history_store::note_identity_for_current_path)
+                .transpose()?
+                .flatten()
+        } else {
+            None
+        };
+        let authoritative_identity = catalog_identity
+            .as_deref()
+            .or(retained_identity)
+            .or_else(|| historical_identity.as_ref().map(NoteIdentity::as_str));
         let embedded_identity = crate::note::parse_note(markdown)
             .frontmatter
             .managed
@@ -1158,6 +1355,16 @@ impl<'a> NoteTimeline<'a> {
             Some(None),
         )?
         .0;
+        let baseline_markdown = continuity_path
+            .filter(|path| path.is_file())
+            .map(fs::read_to_string)
+            .transpose()
+            .map_err(|error| format!("Read canonical state before Baseline Revision: {error}"))?;
+        let baseline_known_since = baseline_markdown
+            .as_ref()
+            .map(|_| crate::time::current_time_millis())
+            .transpose()
+            .map_err(|error| format!("Issue Baseline Revision known-since time: {error}"))?;
         let history_intent = history_store::prepare_publication(
             source,
             target_path,
@@ -1167,6 +1374,14 @@ impl<'a> NoteTimeline<'a> {
             } else {
                 history_store::PublicationIntentKind::Update
             },
+            baseline_markdown
+                .as_deref()
+                .map(|canonical_markdown| history_store::BaselineSeed {
+                    path: continuity_path.expect("baseline requires continuity path"),
+                    canonical_markdown,
+                    known_since_millis: baseline_known_since
+                        .expect("baseline Markdown requires known-since time"),
+                }),
         )?;
         Ok(PreparedRevisionPublication {
             canonical_markdown: canonical,
@@ -1333,6 +1548,16 @@ impl<'a> NoteTimeline<'a> {
                         observed_at_millis,
                     )?;
                 }
+                if history_store::baseline_initialization_progress()?.phase()
+                    != BaselineInitializationPhase::Complete
+                {
+                    history_store::record_baseline_revision_if_absent(
+                        &NoteIdentity::new(note_id.clone()),
+                        &path,
+                        &markdown,
+                        observed_at_millis,
+                    )?;
+                }
                 history_store::record_external_revision(
                     &NoteIdentity::new(note_id.clone()),
                     &path,
@@ -1474,6 +1699,11 @@ pub(crate) fn inject_history_recovery_failure_once() {
 }
 
 #[cfg(test)]
+pub(crate) fn inject_history_baseline_failure_once() {
+    history_store::inject_fault_once(history_store::FaultPoint::Baseline);
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{app::EventBus, index::AppState, semantic::SemanticState};
@@ -1495,6 +1725,7 @@ mod tests {
             } else {
                 history_store::PublicationIntentKind::Update
             },
+            None,
         )
         .expect("prepare test history intent")
     }
@@ -1742,6 +1973,488 @@ mod tests {
             reconstructed_second.body(),
             "Replacement 🦀\nwith two lines"
         );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn existing_managed_note_gets_one_truthful_baseline_without_a_markdown_write() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-baseline-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-baseline-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Existing.md");
+        let markdown = "---\ngneauxghts:\n  id: existing-note\n  kind: note\n---\n\n# Existing\n\nKnown content";
+        fs::write(&path, markdown).unwrap();
+        let before_bytes = fs::read(&path).unwrap();
+        let before_known = crate::time::current_time_millis().unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+
+        let progress = NoteTimeline::new(&state)
+            .initialize_existing_notes(notes.path())
+            .unwrap();
+        let after_known = crate::time::current_time_millis().unwrap();
+
+        assert_eq!(progress.phase(), BaselineInitializationPhase::Complete);
+        assert_eq!(progress.discovered_notes(), 1);
+        assert_eq!(progress.baseline_revisions(), 1);
+        assert_eq!(fs::read(&path).unwrap(), before_bytes);
+        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(
+            NoteIdentity::new("existing-note"),
+        ));
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(
+            revisions[0].source(),
+            MutationSource::BaselineInitialization
+        );
+        assert_eq!(revisions[0].committed_at_millis(), None);
+        assert_eq!(revisions[0].observed_at_millis(), None);
+        assert!(revisions[0]
+            .known_since_millis()
+            .is_some_and(|known| (before_known..=after_known).contains(&known)));
+        assert_eq!(
+            history.reconstruct(revisions[0].identity()).unwrap().body(),
+            "# Existing\n\nKnown content"
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn first_mutation_synchronously_baselines_the_existing_canonical_state() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-baseline-race-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-baseline-race-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Existing.md");
+        let original =
+            "---\ngneauxghts:\n  id: raced-note\n  kind: note\n---\n\n# Existing\n\nBefore edit";
+        fs::write(&path, original).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Existing".to_string(),
+            "# Existing\n\nAfter edit".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+
+        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(
+            NoteIdentity::new("raced-note"),
+        ));
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(
+            revisions[0].source(),
+            MutationSource::BaselineInitialization
+        );
+        assert_eq!(revisions[1].source(), MutationSource::Editor);
+        assert_eq!(
+            history.reconstruct(revisions[0].identity()).unwrap().body(),
+            "# Existing\n\nBefore edit"
+        );
+        assert_eq!(
+            history.reconstruct(revisions[1].identity()).unwrap().body(),
+            "# Existing\n\nAfter edit"
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn first_watcher_observation_races_to_the_same_single_baseline() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-baseline-watcher-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-baseline-watcher-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Observed.md");
+        let markdown =
+            "---\ngneauxghts:\n  id: observed-before-scan\n  kind: note\n---\n\nObserved content";
+        fs::write(&path, markdown).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+
+        timeline
+            .observe(
+                VaultObservation::external_edit(path.clone(), 500, Some(450))
+                    .with_canonical_markdown(markdown.to_string()),
+            )
+            .unwrap();
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+
+        let history = timeline.history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+            "observed-before-scan",
+        )));
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(
+            revisions[0].source(),
+            MutationSource::BaselineInitialization
+        );
+        assert_eq!(revisions[0].known_since_millis(), Some(500));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn first_external_observation_after_initialization_is_an_external_edit() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-post-baseline-watcher-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-post-baseline-watcher-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+
+        let path = notes.path().join("Added later.md");
+        let markdown =
+            "---\ngneauxghts:\n  id: added-after-baseline\n  kind: note\n---\n\nAdded later";
+        fs::write(&path, markdown).unwrap();
+        timeline
+            .observe(
+                VaultObservation::external_edit(path, 600, Some(550))
+                    .with_canonical_markdown(markdown.to_string()),
+            )
+            .unwrap();
+
+        let history = timeline.history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+            "added-after-baseline",
+        )));
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(revisions[0].source(), MutationSource::ExternalEdit);
+        assert_eq!(
+            revisions[0].time_evidence(),
+            RevisionTimeEvidence::Observed {
+                observed_at_millis: 600,
+                modified_at_millis: Some(550),
+            }
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn initialization_diagnostics_and_note_state_survive_restart_and_repeat() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-baseline-status-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-baseline-status-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Existing.md");
+        let markdown = "---\ngneauxghts:\n  id: status-note\n  kind: note\n---\n\nStatus content";
+        fs::write(&path, markdown).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        let first_revision = timeline
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                "status-note",
+            )))
+            .revisions()
+            .unwrap()[0]
+            .identity()
+            .clone();
+        drop(timeline);
+        drop(state);
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&restarted);
+        let progress = timeline.baseline_initialization_progress().unwrap();
+        assert_eq!(progress.phase(), BaselineInitializationPhase::Complete);
+        assert_eq!(progress.discovered_notes(), 1);
+        assert_eq!(progress.baseline_revisions(), 1);
+        assert_eq!(progress.ready_notes(), 1);
+        assert_eq!(progress.failed_notes(), 0);
+        assert!(matches!(
+            timeline
+                .note_baseline_initialization_state(&NoteIdentity::new("status-note"))
+                .unwrap(),
+            NoteBaselineInitializationState::Initialized {
+                known_since_millis: Some(_)
+            }
+        ));
+
+        let repeated = timeline.initialize_existing_notes(notes.path()).unwrap();
+        assert_eq!(repeated.baseline_revisions(), 1);
+        let revisions = timeline
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                "status-note",
+            )))
+            .revisions()
+            .unwrap();
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(revisions[0].identity(), &first_revision);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn initialization_preserves_damaged_identity_continuity_without_rewriting_it() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-baseline-damaged-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-baseline-damaged-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let valid_path = notes.path().join("Valid.md");
+        let valid = "---\ngneauxghts:\n  id: valid-baseline\n  kind: note\n---\n\nValid";
+        fs::write(&valid_path, valid).unwrap();
+        let damaged_path = notes.path().join("Damaged.md");
+        let damaged = "---\ngneauxghts:\n  id: \n  kind: note\n---\n\nDamaged";
+        fs::write(&damaged_path, damaged).unwrap();
+        fs::write(
+            notes.path().join("Legacy.md"),
+            "Legacy without managed data",
+        )
+        .unwrap();
+        fs::write(
+            notes.path().join("Chat.md"),
+            "---\ngneauxghts:\n  id: chat-projection\n  kind: chatTranscript\n---\n\nChat",
+        )
+        .unwrap();
+        let damaged_before = fs::read(&damaged_path).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+
+        let progress = NoteTimeline::new(&state)
+            .initialize_existing_notes(notes.path())
+            .unwrap();
+
+        assert_eq!(progress.phase(), BaselineInitializationPhase::Complete);
+        assert_eq!(progress.discovered_notes(), 2);
+        assert_eq!(progress.baseline_revisions(), 2);
+        assert_eq!(progress.ready_notes(), 2);
+        assert_eq!(progress.failed_notes(), 0);
+        assert_eq!(progress.last_error(), None);
+        assert_eq!(fs::read(&damaged_path).unwrap(), damaged_before);
+
+        drop(state);
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &restarted,
+            "Damaged".to_string(),
+            "Edited after restart".to_string(),
+            Some(damaged_path.to_string_lossy().into_owned()),
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let repaired_note_id = saved.note_id.unwrap();
+        let revisions = NoteTimeline::new(&restarted)
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                repaired_note_id,
+            )))
+            .revisions()
+            .unwrap();
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(
+            revisions[0].source(),
+            MutationSource::BaselineInitialization
+        );
+        assert_eq!(revisions[1].source(), MutationSource::Editor);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn interrupted_large_initialization_resumes_idempotently_after_restart() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-baseline-resume-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-baseline-resume-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        for index in 0..64 {
+            fs::write(
+                notes.path().join(format!("Note {index:02}.md")),
+                format!(
+                    "---\ngneauxghts:\n  id: baseline-{index:02}\n  kind: note\n---\n\nContent {index}"
+                ),
+            )
+            .unwrap();
+        }
+        let first_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        inject_history_baseline_failure_once();
+        assert!(NoteTimeline::new(&first_state)
+            .initialize_existing_notes(notes.path())
+            .is_err());
+        assert_eq!(
+            NoteTimeline::new(&first_state)
+                .baseline_initialization_progress()
+                .unwrap()
+                .phase(),
+            BaselineInitializationPhase::Initializing
+        );
+        drop(first_state);
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let progress = NoteTimeline::new(&restarted)
+            .initialize_existing_notes(notes.path())
+            .unwrap();
+        assert_eq!(progress.phase(), BaselineInitializationPhase::Complete);
+        assert_eq!(progress.discovered_notes(), 64);
+        assert_eq!(progress.baseline_revisions(), 64);
+        assert_eq!(progress.ready_notes(), 64);
+        assert_eq!(progress.failed_notes(), 0);
+        for index in 0..64 {
+            let revisions = NoteTimeline::new(&restarted)
+                .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(format!(
+                    "baseline-{index:02}"
+                ))))
+                .revisions()
+                .unwrap();
+            assert_eq!(revisions.len(), 1);
+            assert_eq!(
+                revisions[0].source(),
+                MutationSource::BaselineInitialization
+            );
+        }
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn reopening_detects_manifest_and_history_store_generation_mismatch() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-generation-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-generation-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Existing.md");
+        fs::write(
+            &path,
+            "---\ngneauxghts:\n  id: generation-note\n  kind: note\n---\n\nContent",
+        )
+        .unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        NoteTimeline::new(&state)
+            .initialize_existing_notes(notes.path())
+            .unwrap();
+        drop(state);
+
+        let manifest_path = crate::state::vault_manifest_path_for(notes.path());
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        manifest["historyGeneration"] = serde_json::json!(2);
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let reopened = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+
+        let error = NoteTimeline::new(&reopened)
+            .baseline_initialization_progress()
+            .expect_err("mismatched selected generation must not open silently");
+        assert!(error.contains("generation mismatch"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn development_reset_advances_generation_and_rebuilds_truthful_baselines() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-reset-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-reset-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Existing.md");
+        let markdown =
+            "---\ngneauxghts:\n  id: reset-note\n  kind: note\n---\n\nRetained current content";
+        fs::write(&path, markdown).unwrap();
+        let original_bytes = fs::read(&path).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        let original_revision = timeline
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                "reset-note",
+            )))
+            .revisions()
+            .unwrap()[0]
+            .identity()
+            .clone();
+
+        let reset = timeline.reset_development_history(notes.path()).unwrap();
+
+        assert_eq!(reset.previous_generation(), 1);
+        assert_eq!(reset.generation(), 2);
+        assert_eq!(
+            reset.initialization().phase(),
+            BaselineInitializationPhase::Complete
+        );
+        assert_eq!(fs::read(&path).unwrap(), original_bytes);
+        let history = timeline.history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+            "reset-note",
+        )));
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 1);
+        assert_ne!(revisions[0].identity(), &original_revision);
+        assert_eq!(
+            revisions[0].source(),
+            MutationSource::BaselineInitialization
+        );
+        assert!(history.reconstruct(&original_revision).is_err());
+        let manifest = crate::state::read_vault_manifest_for(notes.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(manifest.history_generation, 2);
         crate::state::set_notes_root_override(None).unwrap();
     }
 

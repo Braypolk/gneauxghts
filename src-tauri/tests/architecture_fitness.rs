@@ -221,6 +221,7 @@ fn note_timeline_contracts_the_legacy_post_commit_boundary() {
 #[test]
 fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
     let watcher = repository_file("src-tauri/src/vault_watcher.rs");
+    let app = repository_file("src-tauri/src/lib.rs");
     let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
     let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
 
@@ -257,6 +258,13 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
         ],
     );
     assert_contains_none(&timeline, &["OBSERVED_MISSING_IDENTITIES"]);
+    assert_contains_all(
+        &app,
+        &[
+            "name(\"vault-watcher-startup\".to_string())",
+            "NoteTimeline::new(&state).initialize_existing_notes(&notes_dir)",
+        ],
+    );
     assert_contains_all(
         &forgotten,
         &[

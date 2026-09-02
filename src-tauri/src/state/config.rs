@@ -22,7 +22,9 @@ pub(crate) const VAULT_CACHE_DIR_NAME: &str = "cache";
 /// Portable vault manifest filename, inside the vault data dir.
 pub(crate) const VAULT_MANIFEST_FILE_NAME: &str = "vault.json";
 /// Current manifest schema version. Bump when the manifest shape changes.
-pub(crate) const VAULT_MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub(crate) const VAULT_MANIFEST_SCHEMA_VERSION: u32 = 2;
+pub(crate) const DEFAULT_HISTORY_FORMAT: &str = "sqlite-v1";
+pub(crate) const INITIAL_HISTORY_GENERATION: u64 = 1;
 
 static APP_DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 static DOCUMENTS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -411,6 +413,10 @@ pub(crate) struct VaultManifest {
     pub(crate) vault_id: String,
     /// Manifest schema version (see [`VAULT_MANIFEST_SCHEMA_VERSION`]).
     pub(crate) schema_version: u32,
+    /// Storage-neutral selector for the active Note Timeline store.
+    pub(crate) history_format: String,
+    /// Monotonic generation selected for the active history store.
+    pub(crate) history_generation: u64,
     /// App version that created the manifest, for diagnostics.
     pub(crate) app_version: String,
     /// Unix millis when the vault data dir was first scaffolded.
@@ -462,7 +468,28 @@ fn write_vault_manifest_for(vault_root: &Path, manifest: &VaultManifest) -> Resu
         fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
     let serialized = serde_json::to_string_pretty(manifest).map_err(|err| err.to_string())?;
-    fs::write(&path, serialized).map_err(|err| err.to_string())
+    let temporary =
+        path.with_file_name(format!(".vault-{}.tmp", crate::note::generate_unique_id()));
+    fs::write(&temporary, serialized).map_err(|err| err.to_string())?;
+    if let Err(error) = fs::rename(&temporary, &path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn advance_vault_history_generation(vault_root: &Path) -> Result<(u64, u64), String> {
+    let mut manifest = read_vault_manifest_for(vault_root)?
+        .map(Ok)
+        .unwrap_or_else(|| ensure_vault_scaffold(vault_root))?;
+    let previous_generation = manifest.history_generation;
+    manifest.history_generation = previous_generation
+        .checked_add(1)
+        .ok_or_else(|| "Note Timeline history generation is exhausted".to_string())?;
+    manifest.history_format = DEFAULT_HISTORY_FORMAT.to_string();
+    manifest.updated_at_millis = now_millis();
+    write_vault_manifest_for(vault_root, &manifest)?;
+    Ok((previous_generation, manifest.history_generation))
 }
 
 /// Ensure the `.gneauxghts` data + cache directories exist for a vault and
@@ -485,6 +512,8 @@ pub(crate) fn ensure_vault_scaffold(vault_root: &Path) -> Result<VaultManifest, 
         Some(existing) => VaultManifest {
             vault_id: existing.vault_id,
             schema_version: VAULT_MANIFEST_SCHEMA_VERSION,
+            history_format: existing.history_format,
+            history_generation: existing.history_generation,
             app_version,
             created_at_millis: existing.created_at_millis,
             updated_at_millis: now,
@@ -492,6 +521,8 @@ pub(crate) fn ensure_vault_scaffold(vault_root: &Path) -> Result<VaultManifest, 
         None => VaultManifest {
             vault_id: generate_vault_id(vault_root),
             schema_version: VAULT_MANIFEST_SCHEMA_VERSION,
+            history_format: DEFAULT_HISTORY_FORMAT.to_string(),
+            history_generation: INITIAL_HISTORY_GENERATION,
             app_version,
             created_at_millis: now,
             updated_at_millis: now,
@@ -581,6 +612,8 @@ mod tests {
         assert!(vault_manifest_path_for(root).is_file());
         assert!(manifest.vault_id.starts_with("vlt_"));
         assert_eq!(manifest.schema_version, VAULT_MANIFEST_SCHEMA_VERSION);
+        assert_eq!(manifest.history_format, "sqlite-v1");
+        assert_eq!(manifest.history_generation, 1);
         assert!(manifest.created_at_millis > 0);
         assert!(manifest.updated_at_millis >= manifest.created_at_millis);
     }

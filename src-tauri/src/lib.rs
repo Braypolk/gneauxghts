@@ -25,6 +25,7 @@ use app::EventBus;
 use chat::ChatService;
 use index::AppState;
 use semantic::SemanticState;
+use services::note_timeline::NoteTimeline;
 use state::{
     initialize_app_data_dir, initialize_documents_dir, notes_root, set_notes_root_override,
 };
@@ -199,6 +200,11 @@ pub fn run() {
                             if notes_dir.exists() {
                                 if let Err(error) = state.prewarm_notes_index(&notes_dir) {
                                     eprintln!("notes-index prewarm failed: {error}");
+                                }
+                                if let Err(error) =
+                                    NoteTimeline::new(&state).initialize_existing_notes(&notes_dir)
+                                {
+                                    eprintln!("Baseline Revision initialization failed: {error}");
                                 }
                             }
                         }

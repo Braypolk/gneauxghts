@@ -86,6 +86,13 @@ concurrent history reads or commits, which must never classify a live prepared
 intent as abandoned crash residue; a transient recovery failure remains
 retryable.
 Managed metadata changes alone do not create Note Revisions.
+A managed note that predates history receives one Baseline Revision without a
+Markdown write. Its `knownSince` time says only when Gneauxghts first retained
+the state; introduction and last-change time remain unknown. A mutation that
+beats background initialization establishes the current canonical state as its
+baseline in the same durable preparation transaction before the new revision.
+Repeated scans, watcher races, interruption, and restart never duplicate that
+baseline.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
 During synchronous reconciliation, a failed lexical projection retains the
 exact identity-resolved payload in retry state independent of catalog file

@@ -124,10 +124,23 @@ durable ledger before timeline application. `NoteTimeline` replays that ledger
 in order before later observations, authored publications, reconciliation, or
 history reads, so a transient failure or process restart cannot replace an
 already observed state with newer disk bytes.
+Existing managed notes receive one background `Baseline Revision` without a
+Markdown write. If an authored mutation or watcher observation reaches an
+uninitialized note first, the timeline establishes that baseline atomically
+before the newer revision. Baselines record only when their content became
+known; they do not infer creation or change time from filesystem metadata.
+Initialization progress and per-note readiness are durable diagnostics, so an
+interrupted scan resumes idempotently after restart.
 Each `AppState` completes that reconciliation successfully before its first
 history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live
 in-process publication intent; a transient recovery failure remains retryable.
+
+The vault manifest selects the active history format and monotonic store
+generation. The SQLite metadata repeats the vault identity, format, and
+generation; disagreement fails open explicitly instead of accepting replaced
+or copied history. A development reset advances the manifest generation first,
+removes the superseded store, and rebuilds current notes as truthful baselines.
 
 ### Tasks
 

@@ -4,12 +4,12 @@ pub(crate) mod task_projection;
 
 #[allow(unused_imports)]
 pub(crate) use config::{
-    app_data_dir, create_vault_folder, current_vault_info, default_notes_root,
-    ensure_vault_scaffold, forgotten_notes_root, initialize_app_data_dir, initialize_documents_dir,
-    list_vault_folders, notes_root, read_vault_config, read_vault_manifest_for, set_notes_root,
-    set_notes_root_override, vault_data_dir, vault_root, write_vault_config,
-    CreateVaultFolderResult, VaultConfig, VaultFolderInfo, VaultInfo, VaultManifest,
-    VAULT_CACHE_DIR_NAME,
+    advance_vault_history_generation, app_data_dir, create_vault_folder, current_vault_info,
+    default_notes_root, ensure_vault_scaffold, forgotten_notes_root, initialize_app_data_dir,
+    initialize_documents_dir, list_vault_folders, notes_root, read_vault_config,
+    read_vault_manifest_for, set_notes_root, set_notes_root_override, vault_data_dir,
+    vault_manifest_path_for, vault_root, write_vault_config, CreateVaultFolderResult, VaultConfig,
+    VaultFolderInfo, VaultInfo, VaultManifest, VAULT_CACHE_DIR_NAME,
 };
 #[allow(unused_imports)]
 pub(crate) use persistence::{

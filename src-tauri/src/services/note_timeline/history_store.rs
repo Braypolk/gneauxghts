@@ -4,10 +4,11 @@
 //! here. The parent module exposes only storage-neutral domain records.
 
 use super::{
-    HistoryIntentIdentity, LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind,
-    MutationSource, NoteIdentity, NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision,
-    RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity, VaultObservation,
-    VaultObservationKind, VaultObservationSource,
+    BaselineInitializationPhase, BaselineInitializationProgress, HistoryIntentIdentity,
+    LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind, MutationSource,
+    NoteBaselineInitializationState, NoteIdentity, NoteRevisionHeader, PayloadVersion,
+    ReconstructedNoteRevision, RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity,
+    VaultObservation, VaultObservationKind, VaultObservationSource,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
@@ -20,8 +21,7 @@ use std::{
 
 const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_FORMAT: &str = "sqlite-v1";
-const HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 4;
+const HISTORY_SCHEMA_VERSION: u64 = 5;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -42,12 +42,19 @@ pub(super) struct RetainedObservation {
     pub(super) observation: VaultObservation,
 }
 
+pub(super) struct BaselineSeed<'a> {
+    pub(super) path: &'a Path,
+    pub(super) canonical_markdown: &'a str,
+    pub(super) known_since_millis: u64,
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FaultPoint {
     Prepare,
     Finalize,
     Recover,
+    Baseline,
 }
 
 #[cfg(test)]
@@ -656,6 +663,7 @@ pub(super) fn prepare_publication(
     target_path: &Path,
     markdown: &str,
     kind: PublicationIntentKind,
+    baseline: Option<BaselineSeed<'_>>,
 ) -> Result<HistoryIntentIdentity, String> {
     if take_prepare_fault() {
         return Err("injected history preparation failure".to_string());
@@ -668,14 +676,26 @@ pub(super) fn prepare_publication(
         .ok_or_else(|| "History preparation requires a managed Note Identity".to_string())?;
     let authored_payload = AuthoredState::from_canonical(markdown).encode();
     let result_hash = hash(&authored_payload);
-    let connection = open_store()?;
+    let mut connection = open_store()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    if let Some(baseline) = baseline {
+        append_baseline_if_absent(
+            &transaction,
+            &NoteIdentity::new(note_id.clone()),
+            baseline.path,
+            baseline.canonical_markdown,
+            baseline.known_since_millis,
+        )?;
+    }
     let intent_id = crate::note::generate_unique_id();
     let revision_id = RevisionIdentity::issue().0;
     let prepared_at_millis = crate::time::current_time_millis()
         .map_err(|error| format!("Issue canonical publication time: {error}"))?;
     let lifecycle_event_id =
         (kind == PublicationIntentKind::Create).then(|| LifecycleEventIdentity::issue().0);
-    connection
+    transaction
         .execute(
             "INSERT INTO prepared_intents (
                intent_id, revision_id, lifecycle_event_id, note_id, target_path,
@@ -695,6 +715,7 @@ pub(super) fn prepare_publication(
             ],
         )
         .map_err(|error| format!("Prepare Note Revision: {error}"))?;
+    transaction.commit().map_err(|error| error.to_string())?;
     Ok(HistoryIntentIdentity::from_persisted(intent_id))
 }
 
@@ -782,6 +803,68 @@ pub(super) fn abandon_publication(history_intent: &HistoryIntentIdentity) -> Res
         )
         .map_err(|error| format!("Abandon prepared Note Revision: {error}"))?;
     Ok(())
+}
+
+pub(super) fn record_baseline_revision_if_absent(
+    note_id: &NoteIdentity,
+    path: &Path,
+    canonical_markdown: &str,
+    known_since_millis: u64,
+) -> Result<bool, String> {
+    #[cfg(test)]
+    if take_fault(FaultPoint::Baseline) {
+        return Err("injected Baseline Revision failure".to_string());
+    }
+    let mut connection = open_store()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let inserted = append_baseline_if_absent(
+        &transaction,
+        note_id,
+        path,
+        canonical_markdown,
+        known_since_millis,
+    )?;
+    transaction.commit().map_err(|error| error.to_string())?;
+    Ok(inserted)
+}
+
+fn append_baseline_if_absent(
+    transaction: &Transaction<'_>,
+    note_id: &NoteIdentity,
+    path: &Path,
+    canonical_markdown: &str,
+    known_since_millis: u64,
+) -> Result<bool, String> {
+    let head = load_head(&transaction, note_id.as_str())?;
+    if head
+        .as_ref()
+        .and_then(|head| head.revision_id.as_ref())
+        .is_some()
+    {
+        return Ok(false);
+    }
+    let authored_payload = AuthoredState::from_canonical(canonical_markdown).encode();
+    let result_hash = hash(&authored_payload);
+    append_revision(
+        &transaction,
+        RevisionAppend {
+            revision_id: &RevisionIdentity::issue().0,
+            note_id: note_id.as_str(),
+            predecessor: head
+                .as_ref()
+                .map(|head| (head.record_kind.as_str(), head.record_id.as_str())),
+            base_revision_id: None,
+            source: MutationSource::BaselineInitialization,
+            time_evidence: RevisionTimeEvidence::Baseline { known_since_millis },
+            authored_payload: &authored_payload,
+            result_hash: &result_hash,
+            intent_id: None,
+            path,
+        },
+    )?;
+    Ok(true)
 }
 
 pub(super) fn record_external_revision(
@@ -967,24 +1050,28 @@ fn append_revision(
                 DELTA_PAYLOAD_VERSION,
             )
         };
-    let (committed_at_millis, observed_at_millis, modified_at_millis) = match append.time_evidence {
-        RevisionTimeEvidence::Committed {
-            committed_at_millis,
-        } => (Some(committed_at_millis), None, None),
-        RevisionTimeEvidence::Observed {
-            observed_at_millis,
-            modified_at_millis,
-        } => (None, Some(observed_at_millis), modified_at_millis),
-    };
+    let (known_since_millis, committed_at_millis, observed_at_millis, modified_at_millis) =
+        match append.time_evidence {
+            RevisionTimeEvidence::Baseline { known_since_millis } => {
+                (Some(known_since_millis), None, None, None)
+            }
+            RevisionTimeEvidence::Committed {
+                committed_at_millis,
+            } => (None, Some(committed_at_millis), None, None),
+            RevisionTimeEvidence::Observed {
+                observed_at_millis,
+                modified_at_millis,
+            } => (None, None, Some(observed_at_millis), modified_at_millis),
+        };
     transaction
         .execute(
-            "INSERT INTO revisions (
+             "INSERT INTO revisions (
                revision_id, note_id, predecessor_kind, predecessor_id, base_revision_id,
-               source, committed_at_millis, observed_at_millis, modified_at_millis,
+               source, known_since_millis, committed_at_millis, observed_at_millis, modified_at_millis,
                payload_version, payload_kind, payload, base_hash, result_hash,
                replay_count, accumulated_delta_bytes, intent_id
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                       ?13, ?14, ?15, ?16, ?17)",
+                       ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 append.revision_id,
                 append.note_id,
@@ -992,6 +1079,7 @@ fn append_revision(
                 append.predecessor.map(|value| value.1),
                 append.base_revision_id,
                 append.source.as_storage_value(),
+                known_since_millis,
                 committed_at_millis,
                 observed_at_millis,
                 modified_at_millis,
@@ -1028,12 +1116,116 @@ fn append_revision(
     Ok(())
 }
 
+fn baseline_phase_value(phase: BaselineInitializationPhase) -> &'static str {
+    match phase {
+        BaselineInitializationPhase::NotStarted => "notStarted",
+        BaselineInitializationPhase::Initializing => "initializing",
+        BaselineInitializationPhase::Complete => "complete",
+        BaselineInitializationPhase::Degraded => "degraded",
+    }
+}
+
+fn baseline_phase_from_value(value: &str) -> Option<BaselineInitializationPhase> {
+    match value {
+        "notStarted" => Some(BaselineInitializationPhase::NotStarted),
+        "initializing" => Some(BaselineInitializationPhase::Initializing),
+        "complete" => Some(BaselineInitializationPhase::Complete),
+        "degraded" => Some(BaselineInitializationPhase::Degraded),
+        _ => None,
+    }
+}
+
+pub(super) fn store_baseline_initialization_progress(
+    progress: &BaselineInitializationProgress,
+) -> Result<(), String> {
+    open_store()?
+        .execute(
+            "UPDATE baseline_initialization SET
+               phase = ?1, discovered_notes = ?2, baseline_revisions = ?3,
+               ready_notes = ?4, failed_notes = ?5, last_error = ?6
+             WHERE singleton = 1",
+            params![
+                baseline_phase_value(progress.phase),
+                progress.discovered_notes,
+                progress.baseline_revisions,
+                progress.ready_notes,
+                progress.failed_notes,
+                progress.last_error.as_deref(),
+            ],
+        )
+        .map_err(|error| format!("Store Baseline Revision initialization progress: {error}"))?;
+    Ok(())
+}
+
+pub(super) fn baseline_initialization_progress() -> Result<BaselineInitializationProgress, String> {
+    let stored = open_store()?
+        .query_row(
+            "SELECT phase, discovered_notes, baseline_revisions,
+                    ready_notes, failed_notes, last_error
+             FROM baseline_initialization WHERE singleton = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u64>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, u64>(3)?,
+                    row.get::<_, u64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .map_err(|error| format!("Read Baseline Revision initialization progress: {error}"))?;
+    let phase = baseline_phase_from_value(&stored.0).ok_or_else(|| {
+        format!(
+            "Unknown Baseline Revision initialization phase `{}`",
+            stored.0
+        )
+    })?;
+    Ok(BaselineInitializationProgress {
+        phase,
+        discovered_notes: stored.1,
+        baseline_revisions: stored.2,
+        ready_notes: stored.3,
+        failed_notes: stored.4,
+        last_error: stored.5,
+    })
+}
+
+pub(super) fn note_baseline_initialization_state(
+    note_id: &NoteIdentity,
+) -> Result<NoteBaselineInitializationState, String> {
+    let root_revision = open_store()?
+        .query_row(
+            "SELECT source, known_since_millis
+             FROM revisions
+             WHERE note_id = ?1 AND base_revision_id IS NULL",
+            params![note_id.as_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<u64>>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("Read per-note Baseline Revision state: {error}"))?;
+    Ok(match root_revision {
+        Some((source, known_since_millis)) => {
+            let source = MutationSource::from_storage_value(&source)
+                .ok_or_else(|| format!("Unknown stored Mutation Source `{source}`"))?;
+            NoteBaselineInitializationState::Initialized {
+                known_since_millis: (source == MutationSource::BaselineInitialization)
+                    .then_some(known_since_millis)
+                    .flatten(),
+            }
+        }
+        None => NoteBaselineInitializationState::Uninitialized,
+    })
+}
+
 pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader>, String> {
     let connection = open_store()?;
     let mut statement = connection
         .prepare(
             "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id,
-                    committed_at_millis, observed_at_millis, modified_at_millis, payload_version
+                    known_since_millis, committed_at_millis, observed_at_millis,
+                    modified_at_millis, payload_version
              FROM revisions WHERE note_id = ?1",
         )
         .map_err(|error| error.to_string())?;
@@ -1050,7 +1242,8 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                 row.get::<_, Option<u64>>(5)?,
                 row.get::<_, Option<u64>>(6)?,
                 row.get::<_, Option<u64>>(7)?,
-                row.get::<_, i64>(8)?,
+                row.get::<_, Option<u64>>(8)?,
+                row.get::<_, i64>(9)?,
             ))
         })
         .map_err(|error| error.to_string())?
@@ -1064,6 +1257,7 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                 predecessor_kind,
                 predecessor_id,
                 source,
+                known_since_millis,
                 committed_at_millis,
                 observed_at_millis,
                 modified_at_millis,
@@ -1072,16 +1266,24 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                 let source = MutationSource::from_storage_value(&source)
                     .ok_or_else(|| format!("Unknown stored Mutation Source `{source}`"))?;
                 let payload_version = parse_payload_version(payload_version)?;
-                let time_evidence = match (committed_at_millis, observed_at_millis) {
-                    (Some(committed_at_millis), None) => RevisionTimeEvidence::Committed {
-                        committed_at_millis,
-                    },
-                    (None, Some(observed_at_millis)) => RevisionTimeEvidence::Observed {
-                        observed_at_millis,
-                        modified_at_millis,
-                    },
-                    _ => return Err("Stored Note Revision has invalid time evidence".to_string()),
-                };
+                let time_evidence =
+                    match (known_since_millis, committed_at_millis, observed_at_millis) {
+                        (Some(known_since_millis), None, None) => {
+                            RevisionTimeEvidence::Baseline { known_since_millis }
+                        }
+                        (None, Some(committed_at_millis), None) => {
+                            RevisionTimeEvidence::Committed {
+                                committed_at_millis,
+                            }
+                        }
+                        (None, None, Some(observed_at_millis)) => RevisionTimeEvidence::Observed {
+                            observed_at_millis,
+                            modified_at_millis,
+                        },
+                        _ => {
+                            return Err("Stored Note Revision has invalid time evidence".to_string())
+                        }
+                    };
                 Ok((
                     base,
                     NoteRevisionHeader {
@@ -1109,6 +1311,33 @@ pub(super) fn current_path(note_id: &NoteIdentity) -> Result<Option<PathBuf>, St
         )
         .optional()
         .map_err(|error| error.to_string())
+}
+
+pub(super) fn note_identity_for_current_path(path: &Path) -> Result<Option<NoteIdentity>, String> {
+    let connection = open_store()?;
+    let mut statement = connection
+        .prepare(
+            "SELECT note_id FROM timeline_heads
+             WHERE current_path = ?1
+             ORDER BY note_id
+             LIMIT 2",
+        )
+        .map_err(|error| error.to_string())?;
+    let identities = statement
+        .query_map(params![path.to_string_lossy().into_owned()], |row| {
+            row.get::<_, String>(0).map(NoteIdentity::new)
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    match identities.as_slice() {
+        [] => Ok(None),
+        [identity] => Ok(Some(identity.clone())),
+        _ => Err(format!(
+            "Multiple Note Timelines currently claim path {}",
+            path.display()
+        )),
+    }
 }
 
 fn order_revision_chain(
@@ -1218,11 +1447,40 @@ pub(super) fn reconstruct(
     })
 }
 
+pub(super) fn reset_development_store(vault_root: &Path) -> Result<(u64, u64), String> {
+    let generations = crate::state::advance_vault_history_generation(vault_root)?;
+    let data_dir = crate::state::vault_data_dir()?;
+    for path in [
+        data_dir.join(HISTORY_DATABASE_FILE_NAME),
+        data_dir.join(format!("{HISTORY_DATABASE_FILE_NAME}-wal")),
+        data_dir.join(format!("{HISTORY_DATABASE_FILE_NAME}-shm")),
+    ] {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Remove development Note Timeline store {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    drop(open_store()?);
+    Ok(generations)
+}
+
 fn open_store() -> Result<Connection, String> {
     let vault_root = crate::state::vault_root()?;
     let manifest = crate::state::read_vault_manifest_for(&vault_root)?
         .map(Ok)
         .unwrap_or_else(|| crate::state::ensure_vault_scaffold(&vault_root))?;
+    if manifest.history_format != HISTORY_FORMAT {
+        return Err(format!(
+            "Note Timeline history format mismatch: manifest selects `{}` but this build supports `{HISTORY_FORMAT}`",
+            manifest.history_format
+        ));
+    }
     let data_dir = crate::state::vault_data_dir()?;
     fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
     let path = data_dir.join(HISTORY_DATABASE_FILE_NAME);
@@ -1263,6 +1521,7 @@ fn open_store() -> Result<Connection, String> {
                predecessor_id TEXT,
                base_revision_id TEXT REFERENCES revisions(revision_id),
                source TEXT NOT NULL,
+               known_since_millis INTEGER,
                committed_at_millis INTEGER,
                observed_at_millis INTEGER,
                modified_at_millis INTEGER,
@@ -1274,11 +1533,15 @@ fn open_store() -> Result<Connection, String> {
                replay_count INTEGER NOT NULL,
                accumulated_delta_bytes INTEGER NOT NULL,
                intent_id TEXT UNIQUE REFERENCES prepared_intents(intent_id),
-               CHECK ((committed_at_millis IS NOT NULL AND observed_at_millis IS NULL)
-                   OR (committed_at_millis IS NULL AND observed_at_millis IS NOT NULL))
+               CHECK ((known_since_millis IS NOT NULL
+                       AND committed_at_millis IS NULL AND observed_at_millis IS NULL)
+                   OR (known_since_millis IS NULL
+                       AND committed_at_millis IS NOT NULL AND observed_at_millis IS NULL)
+                   OR (known_since_millis IS NULL
+                       AND committed_at_millis IS NULL AND observed_at_millis IS NOT NULL))
              );
              CREATE INDEX IF NOT EXISTS revisions_by_note_time
-               ON revisions(note_id, COALESCE(committed_at_millis, observed_at_millis), revision_id);
+               ON revisions(note_id, COALESCE(known_since_millis, committed_at_millis, observed_at_millis), revision_id);
              CREATE TABLE IF NOT EXISTS lifecycle_events (
                event_id TEXT PRIMARY KEY,
                note_id TEXT NOT NULL,
@@ -1303,6 +1566,19 @@ fn open_store() -> Result<Connection, String> {
                modified_at_millis INTEGER,
                canonical_markdown TEXT
              );
+             CREATE TABLE IF NOT EXISTS baseline_initialization (
+               singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+               phase TEXT NOT NULL CHECK (phase IN ('notStarted', 'initializing', 'complete', 'degraded')),
+               discovered_notes INTEGER NOT NULL,
+               baseline_revisions INTEGER NOT NULL,
+               ready_notes INTEGER NOT NULL,
+               failed_notes INTEGER NOT NULL,
+               last_error TEXT
+             );
+             INSERT OR IGNORE INTO baseline_initialization (
+               singleton, phase, discovered_notes, baseline_revisions,
+               ready_notes, failed_notes, last_error
+             ) VALUES (1, 'notStarted', 0, 0, 0, 0, NULL);
              CREATE TABLE IF NOT EXISTS timeline_heads (
                note_id TEXT PRIMARY KEY,
                record_kind TEXT NOT NULL,
@@ -1310,7 +1586,10 @@ fn open_store() -> Result<Connection, String> {
                revision_id TEXT,
                result_hash TEXT,
                current_path TEXT NOT NULL
-             );",
+             );
+             DROP INDEX IF EXISTS timeline_heads_by_current_path;
+             CREATE INDEX timeline_heads_by_current_path
+               ON timeline_heads(current_path);",
         )
         .map_err(|error| format!("Initialize Note Timeline history store: {error}"))?;
     let metadata = connection
@@ -1330,17 +1609,19 @@ fn open_store() -> Result<Connection, String> {
         .optional()
         .map_err(|error| error.to_string())?;
     match metadata {
-        Some((vault_id, format, generation, schema))
-            if vault_id == manifest.vault_id
-                && format == HISTORY_FORMAT
-                && generation == HISTORY_GENERATION
-                && schema == HISTORY_SCHEMA_VERSION => {}
-        Some(_) => {
-            return Err(
-                "Note Timeline history store identity or generation does not match the vault"
-                    .to_string(),
-            )
+        Some((vault_id, _, _, _)) if vault_id != manifest.vault_id => {
+            return Err("Note Timeline history store vault identity mismatch".to_string())
         }
+        Some((_, format, _, _)) if format != manifest.history_format => {
+            return Err("Note Timeline history store format mismatch".to_string())
+        }
+        Some((_, _, generation, _)) if generation != manifest.history_generation => {
+            return Err("Note Timeline history store generation mismatch".to_string())
+        }
+        Some((_, _, _, schema)) if schema != HISTORY_SCHEMA_VERSION => {
+            return Err("Note Timeline history store schema mismatch".to_string())
+        }
+        Some(_) => {}
         None => {
             connection
                 .execute(
@@ -1349,8 +1630,8 @@ fn open_store() -> Result<Connection, String> {
                      ) VALUES (1, ?1, ?2, ?3, ?4)",
                     params![
                         manifest.vault_id,
-                        HISTORY_FORMAT,
-                        HISTORY_GENERATION,
+                        manifest.history_format,
+                        manifest.history_generation,
                         HISTORY_SCHEMA_VERSION
                     ],
                 )
@@ -1819,6 +2100,7 @@ mod tests {
             &path,
             markdown,
             PublicationIntentKind::Create,
+            None,
         )
         .unwrap();
         fs::write(&path, markdown).unwrap();

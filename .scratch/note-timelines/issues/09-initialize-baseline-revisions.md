@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Scan existing managed ordinary notes in the background and create exactly one Baseline Revision for each uninitialized Note Identity without modifying its Markdown.
-- [ ] Record `knownSince` for baseline content while leaving earlier introduction and last-change provenance explicitly unknown.
-- [ ] If a mutation arrives before background initialization reaches the note, synchronously establish its baseline before preparing the new mutation.
-- [ ] Make repeated initialization, interruption, restart, and concurrent watcher observations idempotent.
-- [ ] Expose initialization progress and per-note initialization state through typed diagnostics.
-- [ ] Record vault identity, selected history format, and store generation in both manifest-level and store-level metadata and detect mismatches on reopen.
-- [ ] Support resetting development metadata and rebuilding baselines without pretending that erased history survived.
-- [ ] Add tests for new vaults containing existing notes, large scans, mutation races, restart, identity damage, and generation mismatch.
+- [x] Scan existing managed ordinary notes in the background and create exactly one Baseline Revision for each uninitialized Note Identity without modifying its Markdown.
+- [x] Record `knownSince` for baseline content while leaving earlier introduction and last-change provenance explicitly unknown.
+- [x] If a mutation arrives before background initialization reaches the note, synchronously establish its baseline before preparing the new mutation.
+- [x] Make repeated initialization, interruption, restart, and concurrent watcher observations idempotent.
+- [x] Expose initialization progress and per-note initialization state through typed diagnostics.
+- [x] Record vault identity, selected history format, and store generation in both manifest-level and store-level metadata and detect mismatches on reopen.
+- [x] Support resetting development metadata and rebuilding baselines without pretending that erased history survived.
+- [x] Add tests for new vaults containing existing notes, large scans, mutation races, restart, identity damage, and generation mismatch.
