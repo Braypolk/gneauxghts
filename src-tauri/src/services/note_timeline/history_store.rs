@@ -6,7 +6,7 @@
 use super::{
     HistoryIntentIdentity, LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind,
     MutationSource, NoteIdentity, NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision,
-    RevisionIdentity, TimelineRecordIdentity,
+    RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
@@ -20,7 +20,7 @@ use std::{
 const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_FORMAT: &str = "sqlite-v1";
 const HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 2;
+const HISTORY_SCHEMA_VERSION: u64 = 3;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -640,12 +640,200 @@ pub(super) fn abandon_publication(history_intent: &HistoryIntentIdentity) -> Res
     Ok(())
 }
 
+pub(super) fn record_external_revision(
+    note_id: &NoteIdentity,
+    canonical_markdown: &str,
+    observed_at_millis: u64,
+    modified_at_millis: Option<u64>,
+) -> Result<(), String> {
+    let mut connection = open_store()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let authored_payload = AuthoredState::from_canonical(canonical_markdown).encode();
+    let result_hash = hash(&authored_payload);
+    let head = load_head(&transaction, note_id.as_str())?;
+    if head.as_ref().and_then(|head| head.result_hash.as_deref()) == Some(result_hash.as_str()) {
+        transaction.commit().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+
+    let revision_id = RevisionIdentity::issue().0;
+    let predecessor = head
+        .as_ref()
+        .map(|head| (head.record_kind.clone(), head.record_id.clone()));
+    let base_revision_id = head.as_ref().and_then(|head| head.revision_id.clone());
+    let base = base_revision_id
+        .as_deref()
+        .map(|revision_id| reconstruct_revision(&transaction, revision_id))
+        .transpose()?
+        .unwrap_or_default();
+    let delta = LineDelta::between(&base, &authored_payload).encode();
+    let prior_policy = base_revision_id
+        .as_deref()
+        .map(|revision_id| load_revision_policy(&transaction, revision_id))
+        .transpose()?
+        .unwrap_or_default();
+    let replay_started = Instant::now();
+    let replay_result = LineDelta::decode(&delta)?.apply(&base)?;
+    let replay_elapsed = replay_started.elapsed();
+    if replay_result != authored_payload {
+        return Err(
+            "Encoded external Note Revision did not reconstruct its observed state".to_string(),
+        );
+    }
+    let next_replay = prior_policy.replay_count.saturating_add(1);
+    let next_accumulated = prior_policy
+        .accumulated_delta_bytes
+        .saturating_add(delta.len() as u64);
+    let ratio = delta.len() as f64 / authored_payload.len().max(1) as f64;
+    let checkpoint = base_revision_id.is_none()
+        || next_replay >= MAX_REPLAY_REVISIONS
+        || next_accumulated >= MAX_ACCUMULATED_DELTA_BYTES
+        || ratio >= MAX_DELTA_TO_FULL_RATIO
+        || replay_elapsed >= MAX_MEASURED_REPLAY;
+    let (payload_kind, payload, replay_count, accumulated_delta_bytes, payload_version) =
+        if checkpoint {
+            (
+                "checkpoint",
+                zstd::stream::encode_all(Cursor::new(&authored_payload), 3)
+                    .map_err(|error| format!("Compress external Note Revision: {error}"))?,
+                0,
+                0,
+                CHECKPOINT_PAYLOAD_VERSION,
+            )
+        } else {
+            (
+                "delta",
+                delta,
+                next_replay,
+                next_accumulated,
+                DELTA_PAYLOAD_VERSION,
+            )
+        };
+    transaction
+        .execute(
+            "INSERT INTO revisions (
+               revision_id, note_id, predecessor_kind, predecessor_id, base_revision_id,
+               source, committed_at_millis, observed_at_millis, modified_at_millis,
+               payload_version, payload_kind, payload, base_hash, result_hash,
+               replay_count, accumulated_delta_bytes, intent_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'externalEdit', NULL, ?6, ?7,
+                       ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL)",
+            params![
+                revision_id,
+                note_id.as_str(),
+                predecessor.as_ref().map(|value| value.0.as_str()),
+                predecessor.as_ref().map(|value| value.1.as_str()),
+                base_revision_id,
+                observed_at_millis,
+                modified_at_millis,
+                payload_version,
+                payload_kind,
+                payload,
+                (!base.is_empty()).then(|| hash(&base)),
+                result_hash,
+                replay_count,
+                accumulated_delta_bytes,
+            ],
+        )
+        .map_err(|error| format!("Record external Note Revision: {error}"))?;
+    transaction
+        .execute(
+            "INSERT INTO timeline_heads (note_id, record_kind, record_id, revision_id, result_hash)
+             VALUES (?1, 'revision', ?2, ?2, ?3)
+             ON CONFLICT(note_id) DO UPDATE SET
+               record_kind = excluded.record_kind,
+               record_id = excluded.record_id,
+               revision_id = excluded.revision_id,
+               result_hash = excluded.result_hash",
+            params![note_id.as_str(), revision_id, result_hash],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
+pub(super) fn record_observed_lifecycle_event(
+    note_id: &NoteIdentity,
+    kind: LifecycleEventKind,
+    previous_path: Option<&Path>,
+    path: &Path,
+    occurred_at_millis: u64,
+) -> Result<(), String> {
+    let mut connection = open_store()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let head = load_head(&transaction, note_id.as_str())?;
+    if let Some(head) = &head {
+        if head.record_kind == "lifecycleEvent" {
+            let duplicate = transaction
+                .query_row(
+                    "SELECT 1 FROM lifecycle_events
+                     WHERE event_id = ?1 AND kind = ?2
+                       AND previous_path IS ?3 AND path IS ?4",
+                    params![
+                        head.record_id,
+                        kind.as_storage_value(),
+                        previous_path.map(|value| value.to_string_lossy().into_owned()),
+                        path.to_string_lossy().into_owned(),
+                    ],
+                    |_| Ok(()),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?
+                .is_some();
+            if duplicate {
+                transaction.commit().map_err(|error| error.to_string())?;
+                return Ok(());
+            }
+        }
+    }
+    let event_id = LifecycleEventIdentity::issue().0;
+    transaction
+        .execute(
+            "INSERT INTO lifecycle_events (
+               event_id, note_id, predecessor_kind, predecessor_id, kind,
+               occurred_at_millis, previous_path, path, payload_version, intent_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, NULL)",
+            params![
+                event_id,
+                note_id.as_str(),
+                head.as_ref().map(|value| value.record_kind.as_str()),
+                head.as_ref().map(|value| value.record_id.as_str()),
+                kind.as_storage_value(),
+                occurred_at_millis,
+                previous_path.map(|value| value.to_string_lossy().into_owned()),
+                path.to_string_lossy().into_owned(),
+            ],
+        )
+        .map_err(|error| format!("Record observed Lifecycle Event: {error}"))?;
+    transaction
+        .execute(
+            "INSERT INTO timeline_heads (note_id, record_kind, record_id, revision_id, result_hash)
+             VALUES (?1, 'lifecycleEvent', ?2, ?3, ?4)
+             ON CONFLICT(note_id) DO UPDATE SET
+               record_kind = excluded.record_kind,
+               record_id = excluded.record_id,
+               revision_id = excluded.revision_id,
+               result_hash = excluded.result_hash",
+            params![
+                note_id.as_str(),
+                event_id,
+                head.as_ref().and_then(|value| value.revision_id.as_deref()),
+                head.as_ref().and_then(|value| value.result_hash.as_deref()),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction.commit().map_err(|error| error.to_string())
+}
+
 pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader>, String> {
     let connection = open_store()?;
     let mut statement = connection
         .prepare(
             "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id,
-                    committed_at_millis, payload_version
+                    committed_at_millis, observed_at_millis, modified_at_millis, payload_version
              FROM revisions WHERE note_id = ?1",
         )
         .map_err(|error| error.to_string())?;
@@ -659,8 +847,10 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                 predecessor_kind,
                 predecessor_id,
                 row.get::<_, String>(3)?,
-                row.get::<_, u64>(5)?,
-                row.get::<_, i64>(6)?,
+                row.get::<_, Option<u64>>(5)?,
+                row.get::<_, Option<u64>>(6)?,
+                row.get::<_, Option<u64>>(7)?,
+                row.get::<_, i64>(8)?,
             ))
         })
         .map_err(|error| error.to_string())?
@@ -675,11 +865,23 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                 predecessor_id,
                 source,
                 committed_at_millis,
+                observed_at_millis,
+                modified_at_millis,
                 payload_version,
             )| {
                 let source = MutationSource::from_storage_value(&source)
                     .ok_or_else(|| format!("Unknown stored Mutation Source `{source}`"))?;
                 let payload_version = parse_payload_version(payload_version)?;
+                let time_evidence = match (committed_at_millis, observed_at_millis) {
+                    (Some(committed_at_millis), None) => RevisionTimeEvidence::Committed {
+                        committed_at_millis,
+                    },
+                    (None, Some(observed_at_millis)) => RevisionTimeEvidence::Observed {
+                        observed_at_millis,
+                        modified_at_millis,
+                    },
+                    _ => return Err("Stored Note Revision has invalid time evidence".to_string()),
+                };
                 Ok((
                     base,
                     NoteRevisionHeader {
@@ -688,7 +890,7 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                         predecessor: parse_record_identity(predecessor_kind, predecessor_id)?,
                         payload_version,
                         source,
-                        committed_at_millis,
+                        time_evidence,
                     },
                 ))
             },
@@ -725,7 +927,8 @@ pub(super) fn lifecycle_events(
     let connection = open_store()?;
     let mut statement = connection
         .prepare(
-            "SELECT event_id, predecessor_kind, predecessor_id, kind, payload_version
+            "SELECT event_id, predecessor_kind, predecessor_id, kind, occurred_at_millis,
+                    previous_path, path, payload_version
              FROM lifecycle_events WHERE note_id = ?1
              ORDER BY occurred_at_millis ASC, event_id ASC",
         )
@@ -739,7 +942,10 @@ pub(super) fn lifecycle_events(
                 predecessor_kind,
                 predecessor_id,
                 row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, i64>(7)?,
             ))
         })
         .map_err(|error| error.to_string())?
@@ -747,7 +953,16 @@ pub(super) fn lifecycle_events(
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(
-            |(event_id, predecessor_kind, predecessor_id, kind, payload_version)| {
+            |(
+                event_id,
+                predecessor_kind,
+                predecessor_id,
+                kind,
+                occurred_at_millis,
+                previous_path,
+                path,
+                payload_version,
+            )| {
                 let kind = LifecycleEventKind::from_storage_value(&kind)
                     .ok_or_else(|| format!("Unknown stored Lifecycle Event Kind `{kind}`"))?;
                 Ok(LifecycleEventHeader {
@@ -756,6 +971,9 @@ pub(super) fn lifecycle_events(
                     predecessor: parse_record_identity(predecessor_kind, predecessor_id)?,
                     payload_version: parse_payload_version(payload_version)?,
                     kind,
+                    occurred_at_millis,
+                    previous_path: previous_path.map(PathBuf::from),
+                    path: path.map(PathBuf::from),
                 })
             },
         )
@@ -833,7 +1051,9 @@ fn open_store() -> Result<Connection, String> {
                predecessor_id TEXT,
                base_revision_id TEXT REFERENCES revisions(revision_id),
                source TEXT NOT NULL,
-               committed_at_millis INTEGER NOT NULL,
+               committed_at_millis INTEGER,
+               observed_at_millis INTEGER,
+               modified_at_millis INTEGER,
                payload_version INTEGER NOT NULL,
                payload_kind TEXT NOT NULL CHECK (payload_kind IN ('checkpoint', 'delta')),
                payload BLOB NOT NULL,
@@ -841,10 +1061,12 @@ fn open_store() -> Result<Connection, String> {
                result_hash TEXT NOT NULL,
                replay_count INTEGER NOT NULL,
                accumulated_delta_bytes INTEGER NOT NULL,
-               intent_id TEXT NOT NULL UNIQUE REFERENCES prepared_intents(intent_id)
+               intent_id TEXT UNIQUE REFERENCES prepared_intents(intent_id),
+               CHECK ((committed_at_millis IS NOT NULL AND observed_at_millis IS NULL)
+                   OR (committed_at_millis IS NULL AND observed_at_millis IS NOT NULL))
              );
              CREATE INDEX IF NOT EXISTS revisions_by_note_time
-               ON revisions(note_id, committed_at_millis, revision_id);
+               ON revisions(note_id, COALESCE(committed_at_millis, observed_at_millis), revision_id);
              CREATE TABLE IF NOT EXISTS lifecycle_events (
                event_id TEXT PRIMARY KEY,
                note_id TEXT NOT NULL,
@@ -852,6 +1074,8 @@ fn open_store() -> Result<Connection, String> {
                predecessor_id TEXT,
                kind TEXT NOT NULL,
                occurred_at_millis INTEGER NOT NULL,
+               previous_path TEXT,
+               path TEXT,
                payload_version INTEGER NOT NULL,
                intent_id TEXT UNIQUE REFERENCES prepared_intents(intent_id)
              );
