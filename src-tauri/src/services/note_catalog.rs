@@ -90,9 +90,9 @@ impl ProjectionPlan {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct PostCommitCatalogOutcome {
-    pub(crate) catalog_error: Option<String>,
-    pub(crate) task_projection_error: Option<String>,
+pub(super) struct PublicationCatalogOutcome {
+    pub(super) catalog_error: Option<String>,
+    pub(super) task_projection_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -221,11 +221,11 @@ impl<'a> NoteCatalog<'a> {
     /// Catalog/task errors are data, not command errors: by the time this is
     /// called the filesystem write has already committed. Lexical work remains
     /// deferred and is queued regardless of a synchronous projection failure.
-    pub(crate) fn upsert_post_commit(
+    pub(super) fn synchronize_published_upsert(
         &self,
         path: PathBuf,
         note: IndexedNote,
-    ) -> PostCommitCatalogOutcome {
+    ) -> PublicationCatalogOutcome {
         let plan = ProjectionPlan::for_upsert(CatalogWriteMode::Save, note.document_kind);
         let mutation = CatalogMutation::Upsert {
             path: path.clone(),
@@ -244,7 +244,7 @@ impl<'a> NoteCatalog<'a> {
             DeferredCatalogProjection::from_plan(mutation, plan)
                 .expect("save upsert always defers lexical projection"),
         );
-        PostCommitCatalogOutcome {
+        PublicationCatalogOutcome {
             catalog_error,
             task_projection_error,
         }
@@ -252,7 +252,7 @@ impl<'a> NoteCatalog<'a> {
 
     /// Remove a previous path after a committed move. The in-memory catalog and
     /// task projection are synchronous; lexical removal remains deferred.
-    pub(crate) fn remove_post_commit(&self, path: &Path) -> PostCommitCatalogOutcome {
+    pub(super) fn synchronize_published_remove(&self, path: &Path) -> PublicationCatalogOutcome {
         let mutation = CatalogMutation::Remove {
             path: path.to_path_buf(),
         };
@@ -272,7 +272,7 @@ impl<'a> NoteCatalog<'a> {
             )
             .expect("save remove always defers lexical projection"),
         );
-        PostCommitCatalogOutcome {
+        PublicationCatalogOutcome {
             catalog_error,
             task_projection_error,
         }
@@ -424,9 +424,9 @@ mod tests {
     }
 
     #[test]
-    fn post_commit_outcome_distinguishes_catalog_and_task_degradation() {
-        let healthy = PostCommitCatalogOutcome::default();
-        let degraded = PostCommitCatalogOutcome {
+    fn publication_outcome_distinguishes_catalog_and_task_degradation() {
+        let healthy = PublicationCatalogOutcome::default();
+        let degraded = PublicationCatalogOutcome {
             catalog_error: None,
             task_projection_error: Some("task projection unavailable".to_string()),
         };

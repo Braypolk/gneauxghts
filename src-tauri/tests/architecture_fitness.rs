@@ -32,6 +32,26 @@ fn assert_contains_none(source: &str, forbidden: &[&str]) {
     }
 }
 
+fn repository_rust_sources(relative_dir: &str) -> Vec<(PathBuf, String)> {
+    fn collect(directory: &std::path::Path, sources: &mut Vec<(PathBuf, String)>) {
+        for entry in fs::read_dir(directory).expect("read Rust source directory") {
+            let path = entry.expect("read Rust source entry").path();
+            if path.is_dir() {
+                collect(&path, sources);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                let source = fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+                sources.push((path, source));
+            }
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = Vec::new();
+    collect(&manifest_dir.join(relative_dir), &mut sources);
+    sources
+}
+
 #[test]
 fn clean_task_commands_delegate_canonical_mutation_to_the_task_service() {
     let commands = repository_file("src-tauri/src/commands/task_commands.rs");
@@ -109,6 +129,58 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
                 "reconcile_note_tasks",
             ],
         );
+    }
+}
+
+#[test]
+fn note_timeline_contracts_the_legacy_post_commit_boundary() {
+    let services = repository_file("src-tauri/src/services/mod.rs");
+    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let post_publication =
+        repository_file("src-tauri/src/services/note_timeline/post_publication.rs");
+    let architecture = repository_file("ARCHITECTURE.md");
+
+    assert_contains_all(
+        &timeline,
+        &[
+            "mod post_publication;",
+            "post_publication::synchronize_canonical_file(",
+        ],
+    );
+    assert_contains_none(
+        &services,
+        &["mod note_mutation;", "pub(crate) mod note_mutation;"],
+    );
+    assert_contains_all(
+        &post_publication,
+        &[
+            "pub(super) fn synchronize_canonical_file(",
+            "pub(super) struct PublicationOutcome",
+        ],
+    );
+    assert_contains_none(&post_publication, &["pub(crate)", "pub fn"]);
+    assert_contains_none(
+        &architecture,
+        &[
+            "PostCommitNoteMutationService",
+            "future canonical owner",
+            "future canonical owner for ordinary-note mutations",
+        ],
+    );
+
+    for (path, source) in repository_rust_sources("src") {
+        for legacy_entry in [
+            "PostCommitNoteMutationService",
+            "PostCommitNoteMutationOutcome",
+            "services::note_mutation",
+            ".apply_canonical_file(",
+        ] {
+            assert!(
+                !source.contains(legacy_entry),
+                "{} reintroduced legacy mutation entry `{legacy_entry}`",
+                path.display()
+            );
+        }
     }
 }
 
@@ -312,7 +384,7 @@ fn semantic_state_owns_one_work_queue_and_worker_context() {
 }
 
 #[test]
-fn note_timeline_expands_one_storage_neutral_role_limited_seam() {
+fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
     let services = repository_file("src-tauri/src/services/mod.rs");
     let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
 
@@ -342,10 +414,18 @@ fn note_timeline_expands_one_storage_neutral_role_limited_seam() {
         &timeline,
         &[
             "rusqlite",
+            "params!",
             "Connection",
             "Transaction",
+            "Row<'_>",
+            "PRAGMA",
+            "journal_mode",
+            "busy_timeout",
+            "synchronous =",
             "history.sqlite3",
             "row_id",
+            "rowid",
+            "WAL",
             "wal_checkpoint",
             "impl ExplicitRestoreGrant {\n    pub(crate) fn new",
             "impl HistoryModeGrant {\n    pub(crate) fn authorized",

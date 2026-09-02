@@ -32,7 +32,7 @@ interactive workspace state that is owned by the frontend.
 | Open note content, identity, saved baseline, operation, and external conflict | `NoteDraftState` in `NotepadState.notesByKey`; transitions use the document machines |
 | Editor instances, save queues, timers, and resource bindings | `documentRegistry` and the document runtime |
 | Canonical note bytes | The Markdown file in the vault |
-| Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; during expand–migrate–contract it delegates post-write coordination to `PostCommitNoteMutationService` |
+| Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
 | Canonical task toggle and delete behavior | `TaskMutationService` |
 | Pane navigation and document-departure ordering | `paneNavigationTransitionPipeline` |
 | Chat availability, selection, and request lifecycle | `ChatControllerStore.machine` |
@@ -49,14 +49,14 @@ shared resource configuration; it must not mirror either owner's state.
 
 ### Notes
 
-`NoteTimeline` is the future canonical owner for ordinary-note mutations,
+`NoteTimeline` is the canonical owner for ordinary-note mutation coordination,
 external observations, History Mode reads, current-content provenance, and
-explicitly granted agent restores. Its closed domain contract is expanded
-first; production callers continue using their existing routes until the
-migration steps move them behind that seam. During this interval,
-`NoteTimeline.mutate` delegates to `PostCommitNoteMutationService`, preserving
-the existing write and projection behavior without exposing SQL or storage
-policy.
+explicitly granted agent restores. Editor, task, proposal, lifecycle, watcher,
+and reconciliation callers enter its closed typed contract. Post-publication
+catalog, task, lexical, semantic, warning, and recovery coordination is a
+private timeline implementation detail; no parallel mutation service is
+available to callers. The same boundary can deepen durability ordering without
+changing those callers or exposing SQL and storage policy.
 
 History Mode and agent restore capabilities require grants whose constructors
 remain private to the timeline module. Ordinary chat can receive only the
@@ -64,11 +64,11 @@ current-content capability unless an app-owned current-turn restore path is
 implemented. Revision and Lifecycle Event identities likewise cannot be
 minted by callers; their durable issuer belongs inside `NoteTimeline`.
 
-A save currently crosses the `note_persistence` command seam and writes the
-vault before `PostCommitNoteMutationService` updates the required in-memory
-note catalog. Task, lexical, and semantic projections follow that shared
-post-commit path. Lexical and semantic work may be queued after the canonical
-write.
+A save crosses the `note_persistence` command seam, publishes the vault file,
+and immediately enters `NoteTimeline.mutate`, which updates the required
+in-memory note catalog through its private post-publication helper. Task,
+lexical, and semantic projections follow that same timeline-owned path.
+Lexical and semantic work may be queued after the canonical write.
 
 Once canonical bytes exist, the returned identity and path are authoritative.
 A later required-projection problem is returned as `commitWarning`; callers
@@ -77,16 +77,16 @@ adopt the committed result and do not retry the write.
 ### Tasks
 
 Closed or clean-note mutations go through `TaskMutationService.commit` and the
-ordinary post-commit path. A mutation targeting a dirty open note is prepared
-without writing, applied to `NoteDraftState.working`, and then persisted by the
-ordinary save path. Ambiguous duplicate task text is rejected instead of
-matching against stale positions.
+ordinary `NoteTimeline` mutation path. A mutation targeting a dirty open note
+is prepared without writing, applied to `NoteDraftState.working`, and then
+persisted by the ordinary save path. Ambiguous duplicate task text is rejected
+instead of matching against stale positions.
 
 ### Proposals
 
 Agent tools create durable proposals rather than writing notes. Keeping a
-proposal commits through the proposal domain and
-`PostCommitNoteMutationService`, then synchronizes durable proposal status.
+proposal commits through the proposal domain and `NoteTimeline`, then
+synchronizes durable proposal status.
 The open document adopts the verified committed Markdown as its new baseline
 without losing local edits made while the commit was running.
 

@@ -1,16 +1,12 @@
-// This module is the expand side of an expand–migrate–contract change. Tickets
-// 03 and 04 move production callers onto these entrypoints; keeping the
-// complete closed contract together here prevents temporary caller-specific
-// seams while later tickets deepen persistence and reads.
+// Canonical ordinary-note mutation, observation, lifecycle, and role-limited
+// history boundary. Storage and post-publication coordination remain private
+// implementation details so callers depend only on the closed domain contract.
 #![allow(dead_code)]
 
-use crate::{
-    index::AppState,
-    services::note_mutation::{
-        PostCommitIssue, PostCommitNoteMutationOutcome, PostCommitNoteMutationService,
-        PostCommitStage,
-    },
-};
+mod post_publication;
+
+use self::post_publication::{PublicationIssue, PublicationOutcome, PublicationStage};
+use crate::index::AppState;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -115,18 +111,18 @@ pub(crate) enum MutationWarningStage {
     Revision,
 }
 
-impl From<PostCommitStage> for MutationWarningStage {
-    fn from(stage: PostCommitStage) -> Self {
+impl From<PublicationStage> for MutationWarningStage {
+    fn from(stage: PublicationStage) -> Self {
         match stage {
-            PostCommitStage::CanonicalRead => Self::CanonicalRead,
-            PostCommitStage::CatalogUpsert => Self::CatalogUpsert,
-            PostCommitStage::TaskProjectionUpsert => Self::TaskProjectionUpsert,
-            PostCommitStage::CatalogRemove => Self::CatalogRemove,
-            PostCommitStage::TaskProjectionRemove => Self::TaskProjectionRemove,
-            PostCommitStage::SemanticUpdate => Self::SemanticUpdate,
-            PostCommitStage::SemanticMove => Self::SemanticMove,
-            PostCommitStage::DirtyRecovery => Self::DirtyRecovery,
-            PostCommitStage::Revision => Self::Revision,
+            PublicationStage::CanonicalRead => Self::CanonicalRead,
+            PublicationStage::CatalogUpsert => Self::CatalogUpsert,
+            PublicationStage::TaskProjectionUpsert => Self::TaskProjectionUpsert,
+            PublicationStage::CatalogRemove => Self::CatalogRemove,
+            PublicationStage::TaskProjectionRemove => Self::TaskProjectionRemove,
+            PublicationStage::SemanticUpdate => Self::SemanticUpdate,
+            PublicationStage::SemanticMove => Self::SemanticMove,
+            PublicationStage::DirtyRecovery => Self::DirtyRecovery,
+            PublicationStage::Revision => Self::Revision,
         }
     }
 }
@@ -148,8 +144,8 @@ impl NoteTimelineIssue {
     }
 }
 
-impl From<PostCommitIssue> for NoteTimelineIssue {
-    fn from(issue: PostCommitIssue) -> Self {
+impl From<PublicationIssue> for NoteTimelineIssue {
+    fn from(issue: PublicationIssue) -> Self {
         Self {
             stage: issue.stage.into(),
             message: issue.message,
@@ -212,7 +208,7 @@ pub(crate) struct NoteMutationResult {
 }
 
 impl NoteMutationResult {
-    fn from_post_commit(source: MutationSource, outcome: PostCommitNoteMutationOutcome) -> Self {
+    fn from_publication(source: MutationSource, outcome: PublicationOutcome) -> Self {
         let warning = outcome
             .required_consistency_warning()
             .map(|warning| NoteMutationWarning {
@@ -847,9 +843,10 @@ impl<'a> NoteTimeline<'a> {
             previous_path,
             fallback_markdown,
         } = mutation;
-        NoteMutationResult::from_post_commit(
+        NoteMutationResult::from_publication(
             source,
-            PostCommitNoteMutationService::new(self.state).apply_canonical_file(
+            post_publication::synchronize_canonical_file(
+                self.state,
                 path,
                 previous_path,
                 fallback_markdown,
@@ -1022,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn mutate_preserves_the_authoritative_post_commit_outcome() {
+    fn mutate_preserves_the_authoritative_publication_outcome() {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("timeline-pass-through-app-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
@@ -1261,19 +1258,19 @@ mod tests {
 
     #[test]
     fn mutation_result_preserves_required_warning_semantics_and_all_diagnostics() {
-        let result = NoteMutationResult::from_post_commit(
+        let result = NoteMutationResult::from_publication(
             MutationSource::Editor,
-            PostCommitNoteMutationOutcome {
+            PublicationOutcome {
                 note_id: "note-1".to_string(),
                 path: PathBuf::from("/vault/Note.md"),
                 canonical_markdown: "# Note".to_string(),
                 issues: vec![
-                    PostCommitIssue {
-                        stage: PostCommitStage::CanonicalRead,
+                    PublicationIssue {
+                        stage: PublicationStage::CanonicalRead,
                         message: "read failed".to_string(),
                     },
-                    PostCommitIssue {
-                        stage: PostCommitStage::SemanticUpdate,
+                    PublicationIssue {
+                        stage: PublicationStage::SemanticUpdate,
                         message: "semantic queue failed".to_string(),
                     },
                 ],
