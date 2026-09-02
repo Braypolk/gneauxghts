@@ -6,9 +6,7 @@
 //! required read-your-writes synchronization failure.
 
 use crate::index::{build_indexed_note, AppState, IndexedNote};
-use crate::services::note_catalog::{
-    apply_task_projection, CatalogMutation, DeferredCatalogProjection,
-};
+use crate::services::note_catalog::{CatalogMutation, DeferredCatalogProjection, ProjectionWork};
 use serde::Serialize;
 use std::{
     fs,
@@ -142,25 +140,40 @@ impl PublicationSink for AppStatePublicationSink<'_> {
     fn catalog_upsert(&self, path: PathBuf, note: IndexedNote) -> PublicationCatalogOutcome {
         let resolved = self.state.notes_index.lock().map(|mut index| {
             let note = index.upsert_note(path.clone(), note);
-            CatalogMutation::Upsert {
-                path: path.clone(),
-                note: Box::new(note),
-            }
+            let generation = index.revision();
+            (
+                generation,
+                CatalogMutation::Upsert {
+                    path: path.clone(),
+                    note: Box::new(note),
+                },
+            )
         });
         let catalog_error = resolved
             .as_ref()
             .err()
             .map(|_| "Search index lock poisoned".to_string());
-        let Some(mutation) = resolved.ok() else {
+        let Some((generation, mutation)) = resolved.ok() else {
             return PublicationCatalogOutcome {
                 catalog_error,
                 task_projection_error: None,
             };
         };
-        let task_projection_error = apply_task_projection(&mutation).err();
+        let task_projection_error = self
+            .state
+            .catalog_projection_retries
+            .apply(
+                &self.state.lexical,
+                generation,
+                &mutation,
+                ProjectionWork::timeline_tasks(),
+            )
+            .err();
         self.state
             .background_index_queue
-            .enqueue(DeferredCatalogProjection::lexical(mutation));
+            .enqueue(DeferredCatalogProjection::lexical(
+                generation, mutation, true,
+            ));
         PublicationCatalogOutcome {
             catalog_error,
             task_projection_error,
@@ -171,17 +184,35 @@ impl PublicationSink for AppStatePublicationSink<'_> {
         let mutation = CatalogMutation::Remove {
             path: path.to_path_buf(),
         };
-        let catalog_error = self
+        let resolved = self.state.notes_index.lock().map(|mut index| {
+            index.remove_note(path);
+            index.revision()
+        });
+        let catalog_error = resolved
+            .as_ref()
+            .err()
+            .map(|_| "Search index lock poisoned".to_string());
+        let Some(generation) = resolved.ok() else {
+            return PublicationCatalogOutcome {
+                catalog_error,
+                task_projection_error: None,
+            };
+        };
+        let task_projection_error = self
             .state
-            .notes_index
-            .lock()
-            .map(|mut index| index.remove_note(path))
-            .map_err(|_| "Search index lock poisoned".to_string())
+            .catalog_projection_retries
+            .apply(
+                &self.state.lexical,
+                generation,
+                &mutation,
+                ProjectionWork::timeline_tasks(),
+            )
             .err();
-        let task_projection_error = apply_task_projection(&mutation).err();
         self.state
             .background_index_queue
-            .enqueue(DeferredCatalogProjection::lexical(mutation));
+            .enqueue(DeferredCatalogProjection::lexical(
+                generation, mutation, true,
+            ));
         PublicationCatalogOutcome {
             catalog_error,
             task_projection_error,

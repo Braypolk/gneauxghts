@@ -9,9 +9,10 @@
 //! This queue moves whichever derived projections the catalog policy marks as
 //! deferred onto a single dedicated worker thread:
 //!
-//! * Lexical (`Arc<LexicalIndex>`) updates apply via `upsert_note` /
-//!   `remove_note`.
-//! * SQLite task projection updates apply via `task_projection::*`. Ordinary
+//! * Lexical and task updates enter the shared per-path, generation-ordered
+//!   catalog projection coordinator, so late background work cannot regress a
+//!   newer synchronous reconciliation.
+//! * SQLite task projection updates remain deferred for prewarm. Ordinary
 //!   saves currently reconcile tasks synchronously, so their queued job only
 //!   carries lexical work; startup prewarm defers both.
 //!
@@ -26,7 +27,7 @@
 //!   same note while still giving callers eventual consistency.
 
 use super::note_catalog::{
-    apply_lexical_projection, apply_task_projection, CatalogMutation, DeferredCatalogProjection,
+    CatalogMutation, CatalogProjectionRetries, DeferredCatalogProjection, ProjectionWork,
 };
 use crate::index::{ForegroundActivity, IndexedNote};
 use crate::lexical::LexicalIndex;
@@ -67,12 +68,20 @@ impl BackgroundIndexQueue {
     pub(crate) fn new(
         lexical: Arc<LexicalIndex>,
         foreground_activity: Arc<ForegroundActivity>,
+        projection_retries: Arc<CatalogProjectionRetries>,
     ) -> Self {
         let inner = Arc::new((Mutex::new(QueueInner::default()), Condvar::new()));
         let worker_inner = Arc::clone(&inner);
         let worker = thread::Builder::new()
             .name("notepad-bg-index".into())
-            .spawn(move || run_worker(worker_inner, lexical, foreground_activity))
+            .spawn(move || {
+                run_worker(
+                    worker_inner,
+                    lexical,
+                    foreground_activity,
+                    projection_retries,
+                )
+            })
             .ok();
 
         Self {
@@ -81,11 +90,14 @@ impl BackgroundIndexQueue {
         }
     }
 
-    pub(crate) fn enqueue_upsert(&self, path: PathBuf, note: IndexedNote) {
-        self.enqueue(DeferredCatalogProjection::all(CatalogMutation::Upsert {
-            path,
-            note: Box::new(note),
-        }));
+    pub(crate) fn enqueue_upsert(&self, path: PathBuf, note: IndexedNote, generation: u64) {
+        self.enqueue(DeferredCatalogProjection::all(
+            generation,
+            CatalogMutation::Upsert {
+                path,
+                note: Box::new(note),
+            },
+        ));
     }
 
     pub(crate) fn enqueue(&self, projection: DeferredCatalogProjection) {
@@ -104,6 +116,14 @@ impl BackgroundIndexQueue {
             // in place rather than queueing a duplicate.
             if let Some(&position) = state.pending_by_path.get(&path) {
                 if let Some(slot) = state.jobs.get_mut(position) {
+                    let is_older = matches!(
+                        (&*slot, &job),
+                        (BackgroundJob::Apply(existing), BackgroundJob::Apply(incoming))
+                            if incoming.generation < existing.generation
+                    );
+                    if is_older {
+                        return;
+                    }
                     *slot = job;
                     cvar.notify_one();
                     return;
@@ -123,6 +143,7 @@ fn run_worker(
     inner: Arc<(Mutex<QueueInner>, Condvar)>,
     lexical: Arc<LexicalIndex>,
     foreground_activity: Arc<ForegroundActivity>,
+    projection_retries: Arc<CatalogProjectionRetries>,
 ) {
     loop {
         // Cooperative back-off before each job: if a foreground IPC call
@@ -169,21 +190,20 @@ fn run_worker(
 
         match job {
             BackgroundJob::Apply(projection) => {
-                if projection.lexical {
-                    if let Err(error) = apply_lexical_projection(&lexical, &projection.mutation) {
-                        eprintln!(
-                            "background lexical projection failed for {:?}: {error}",
-                            projection.path()
-                        );
-                    }
-                }
-                if projection.tasks {
-                    if let Err(error) = apply_task_projection(&projection.mutation) {
-                        eprintln!(
-                            "background task projection failed for {:?}: {error}",
-                            projection.path()
-                        );
-                    }
+                if let Err(error) = projection_retries.apply(
+                    &lexical,
+                    projection.generation,
+                    &projection.mutation,
+                    ProjectionWork::background(
+                        projection.target_tasks,
+                        projection.lexical,
+                        projection.tasks,
+                    ),
+                ) {
+                    eprintln!(
+                        "background catalog projection failed for {:?}: {error}",
+                        projection.path()
+                    );
                 }
             }
             BackgroundJob::Shutdown => return,

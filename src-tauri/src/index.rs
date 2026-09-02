@@ -54,7 +54,8 @@ pub(crate) struct AppState {
     /// disk and the in-memory notes_index is updated; lexical/projection
     /// catch up shortly after.
     pub(crate) background_index_queue: crate::services::BackgroundIndexQueue,
-    catalog_projection_retries: crate::services::note_catalog::CatalogProjectionRetries,
+    pub(crate) catalog_projection_retries:
+        Arc<crate::services::note_catalog::CatalogProjectionRetries>,
     /// Counter of foreground IPC calls currently running on the hot path
     /// (note open / load session). The startup prewarm and the periodic
     /// background reconciler check it between per-note units of work and
@@ -155,9 +156,12 @@ impl AppState {
     ) -> Result<Self, String> {
         let lexical = Arc::new(LexicalIndex::new()?);
         let foreground_activity = Arc::new(ForegroundActivity::default());
+        let catalog_projection_retries =
+            Arc::new(crate::services::note_catalog::CatalogProjectionRetries::default());
         let background_index_queue = crate::services::BackgroundIndexQueue::new(
             Arc::clone(&lexical),
             Arc::clone(&foreground_activity),
+            Arc::clone(&catalog_projection_retries),
         );
         Ok(Self {
             notes_index: Mutex::new(NotesIndex::default()),
@@ -167,8 +171,7 @@ impl AppState {
             interactive_invalidation: Mutex::new(InteractiveInvalidationState::default()),
             draft_cache: Mutex::new(DraftCache::default()),
             background_index_queue,
-            catalog_projection_retries:
-                crate::services::note_catalog::CatalogProjectionRetries::default(),
+            catalog_projection_retries,
             foreground_activity,
         })
     }
@@ -339,7 +342,7 @@ impl AppState {
         source: &str,
     ) -> Result<(), String> {
         self.catalog_projection_retries
-            .retry_lexical(&self.lexical)?;
+            .retry_pending(&self.lexical)?;
         let dirty_paths = {
             let mut invalidation = self
                 .interactive_invalidation
@@ -418,7 +421,7 @@ impl AppState {
                 }
             })
             .collect();
-        let lexical_result = self.catalog_projection_retries.apply_lexical_batch(
+        let lexical_result = self.catalog_projection_retries.apply_batch(
             &self.lexical,
             generation,
             &projection_payloads,
@@ -443,7 +446,7 @@ impl AppState {
         F: FnOnce(&[PathBuf], &HashSet<PathBuf>) -> Result<(), String>,
     {
         self.catalog_projection_retries
-            .retry_lexical(&self.lexical)?;
+            .retry_pending(&self.lexical)?;
         let (existing_signatures, existing_paths, managed_chat_paths) = {
             let index = self
                 .notes_index
@@ -501,7 +504,7 @@ impl AppState {
                 crate::services::note_catalog::CatalogMutation::Remove { path: path.clone() }
             }))
             .collect();
-        let lexical_result = self.catalog_projection_retries.apply_lexical_batch(
+        let lexical_result = self.catalog_projection_retries.apply_batch(
             &self.lexical,
             generation,
             &projection_payloads,
@@ -629,16 +632,19 @@ impl AppState {
             seen_paths,
         } = collect_refresh_updates(notes_dir, &existing_signatures)?;
 
-        let (changed, queue_payloads) = {
+        let (changed, queue_payloads, generation) = {
             let mut index = self
                 .notes_index
                 .lock()
                 .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.apply_refresh_updates(updates, seen_paths)
+            let (changed, queue_payloads) = index.apply_refresh_updates(updates, seen_paths);
+            let generation = index.revision();
+            (changed, queue_payloads, generation)
         };
 
         for (path, note) in queue_payloads {
-            self.background_index_queue.enqueue_upsert(path, note);
+            self.background_index_queue
+                .enqueue_upsert(path, note, generation);
         }
 
         let mut invalidation = self

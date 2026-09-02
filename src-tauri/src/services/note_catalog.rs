@@ -107,76 +107,128 @@ struct PathProjectionState {
 
 #[derive(Default)]
 struct RegisteredProjection {
-    generation: u64,
-    pending: Option<CatalogMutation>,
-    project_tasks: bool,
+    generation: Option<u64>,
+    mutation: Option<CatalogMutation>,
+    lexical_pending: bool,
+    task_pending: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ProjectionWork {
+    target_tasks: bool,
+    lexical: bool,
+    tasks: bool,
+    surface_task_error: bool,
+}
+
+impl ProjectionWork {
+    pub(crate) fn synchronous(target_tasks: bool) -> Self {
+        Self {
+            target_tasks,
+            lexical: true,
+            tasks: target_tasks,
+            surface_task_error: true,
+        }
+    }
+
+    pub(crate) fn reconciliation(target_tasks: bool) -> Self {
+        Self {
+            surface_task_error: false,
+            ..Self::synchronous(target_tasks)
+        }
+    }
+
+    pub(crate) fn timeline_tasks() -> Self {
+        Self {
+            target_tasks: true,
+            lexical: false,
+            tasks: true,
+            surface_task_error: true,
+        }
+    }
+
+    pub(crate) fn background(target_tasks: bool, lexical: bool, tasks: bool) -> Self {
+        Self {
+            target_tasks,
+            lexical,
+            tasks,
+            surface_task_error: false,
+        }
+    }
 }
 
 impl CatalogProjectionRetries {
-    fn register_lexical(
-        &self,
-        generation: u64,
-        mutation: &CatalogMutation,
-        project_tasks: bool,
-    ) -> Result<Arc<PathProjectionState>, String> {
-        let state = self
+    fn path_state(&self, path: &Path) -> Result<Arc<PathProjectionState>, String> {
+        Ok(self
             .lexical
             .lock()
             .map_err(|_| "Catalog projection retry lock poisoned".to_string())?
-            .entry(mutation.path().to_path_buf())
+            .entry(path.to_path_buf())
             .or_insert_with(|| Arc::new(PathProjectionState::default()))
-            .clone();
-        let mut latest = state
-            .latest
-            .lock()
-            .map_err(|_| "Path projection coordination lock poisoned".to_string())?;
-        if generation >= latest.generation {
-            latest.generation = generation;
-            latest.pending = Some(mutation.clone());
-            latest.project_tasks = project_tasks;
-        }
-        drop(latest);
-        Ok(state)
+            .clone())
     }
 
-    fn apply_registered(lexical: &LexicalIndex, state: &PathProjectionState) -> Result<(), String> {
-        // This lock is per path, not the catalog or global retry registry.
-        // It orders lexical I/O for one note while unrelated paths continue.
+    fn apply_registered(
+        &self,
+        lexical: &LexicalIndex,
+        state: &PathProjectionState,
+        generation: u64,
+        mutation: &CatalogMutation,
+        work: ProjectionWork,
+    ) -> Result<(), String> {
+        // This lock is per path, not the catalog or global registry. It keeps
+        // every projection for one logical note in catalog-generation order.
         let mut latest = state
             .latest
             .lock()
             .map_err(|_| "Path projection coordination lock poisoned".to_string())?;
-        let Some(mutation) = latest.pending.as_ref() else {
+        if latest.generation.is_none_or(|current| generation > current) {
+            latest.generation = Some(generation);
+            latest.mutation = Some(mutation.clone());
+            latest.lexical_pending = true;
+            latest.task_pending = work.target_tasks;
+        }
+        let Some(latest_mutation) = latest.mutation.clone() else {
             return Ok(());
         };
-        let lexical_result = apply_lexical_projection(lexical, mutation);
-        if latest.project_tasks {
-            let _ = apply_task_projection(mutation);
-        }
-        match lexical_result {
-            Ok(()) => {
-                // Retain only the generation watermark after success. The
-                // potentially large indexed payload exists solely while it
-                // is pending, so this registry never mirrors the catalog.
-                latest.pending = None;
-                Ok(())
+        let mut first_error = None;
+        if work.lexical && latest.lexical_pending {
+            match apply_lexical_projection(lexical, &latest_mutation) {
+                Ok(()) => latest.lexical_pending = false,
+                Err(error) => {
+                    first_error = Some(error);
+                }
             }
-            Err(error) => Err(error),
         }
+        if work.tasks && latest.task_pending {
+            match apply_task_projection(&latest_mutation) {
+                Ok(()) => latest.task_pending = false,
+                Err(error) => {
+                    if work.surface_task_error {
+                        first_error.get_or_insert(error);
+                    }
+                }
+            }
+        }
+        if !latest.lexical_pending && !latest.task_pending {
+            // Keep only the generation watermark once both projections land.
+            latest.mutation = None;
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
-    pub(crate) fn apply_lexical(
+    pub(crate) fn apply(
         &self,
         lexical: &LexicalIndex,
         generation: u64,
         mutation: &CatalogMutation,
-        project_tasks: bool,
+        work: ProjectionWork,
     ) -> Result<(), String> {
-        let state = self.register_lexical(generation, mutation, project_tasks)?;
-        Self::apply_registered(lexical, &state)
+        let state = self.path_state(mutation.path())?;
+        self.apply_registered(lexical, &state, generation, mutation, work)
     }
 
-    pub(crate) fn retry_lexical(&self, lexical: &LexicalIndex) -> Result<(), String> {
+    pub(crate) fn retry_pending(&self, lexical: &LexicalIndex) -> Result<(), String> {
         let paths = self
             .lexical
             .lock()
@@ -186,23 +238,55 @@ impl CatalogProjectionRetries {
             .collect::<Vec<_>>();
         let mut first_error = None;
         for state in paths {
-            if let Err(error) = Self::apply_registered(lexical, &state) {
+            let pending = {
+                let latest = state
+                    .latest
+                    .lock()
+                    .map_err(|_| "Path projection coordination lock poisoned".to_string())?;
+                latest
+                    .generation
+                    .zip(latest.mutation.clone())
+                    .map(|(generation, mutation)| {
+                        (
+                            generation,
+                            mutation,
+                            latest.task_pending,
+                            latest.lexical_pending,
+                            latest.task_pending,
+                        )
+                    })
+            };
+            let Some((generation, mutation, target_tasks, lexical_pending, task_pending)) = pending
+            else {
+                continue;
+            };
+            if let Err(error) = self.apply(
+                lexical,
+                generation,
+                &mutation,
+                ProjectionWork::background(target_tasks, lexical_pending, task_pending),
+            ) {
                 first_error.get_or_insert(error);
             }
         }
         first_error.map_or(Ok(()), Err)
     }
 
-    pub(crate) fn apply_lexical_batch<'a>(
+    pub(crate) fn apply_batch<'a>(
         &self,
         lexical: &LexicalIndex,
         generation: u64,
         mutations: impl IntoIterator<Item = &'a CatalogMutation>,
-        project_tasks: bool,
+        target_tasks: bool,
     ) -> Result<(), String> {
         let mut first_error = None;
         for mutation in mutations {
-            if let Err(error) = self.apply_lexical(lexical, generation, mutation, project_tasks) {
+            if let Err(error) = self.apply(
+                lexical,
+                generation,
+                mutation,
+                ProjectionWork::reconciliation(target_tasks),
+            ) {
                 first_error.get_or_insert(error);
             }
         }
@@ -211,25 +295,31 @@ impl CatalogProjectionRetries {
 }
 
 pub(crate) struct DeferredCatalogProjection {
+    pub(crate) generation: u64,
     pub(crate) mutation: CatalogMutation,
     pub(crate) lexical: bool,
     pub(crate) tasks: bool,
+    pub(crate) target_tasks: bool,
 }
 
 impl DeferredCatalogProjection {
-    pub(crate) fn all(mutation: CatalogMutation) -> Self {
+    pub(crate) fn all(generation: u64, mutation: CatalogMutation) -> Self {
         Self {
+            generation,
             mutation,
             lexical: true,
             tasks: true,
+            target_tasks: true,
         }
     }
 
-    pub(crate) fn lexical(mutation: CatalogMutation) -> Self {
+    pub(crate) fn lexical(generation: u64, mutation: CatalogMutation, target_tasks: bool) -> Self {
         Self {
+            generation,
             mutation,
             lexical: true,
             tasks: false,
+            target_tasks,
         }
     }
 
@@ -278,11 +368,11 @@ impl<'a> NoteCatalog<'a> {
         };
 
         if plan.lexical == ProjectionTiming::Synchronous {
-            self.retries.apply_lexical(
+            self.retries.apply(
                 self.lexical,
                 generation,
                 &mutation,
-                plan.tasks == ProjectionTiming::Synchronous,
+                ProjectionWork::synchronous(plan.tasks == ProjectionTiming::Synchronous),
             )?;
         }
         Ok(())
@@ -303,11 +393,11 @@ impl<'a> NoteCatalog<'a> {
             path: path.to_path_buf(),
         };
         if plan.lexical == ProjectionTiming::Synchronous {
-            self.retries.apply_lexical(
+            self.retries.apply(
                 self.lexical,
                 generation,
                 &mutation,
-                plan.tasks == ProjectionTiming::Synchronous,
+                ProjectionWork::synchronous(plan.tasks == ProjectionTiming::Synchronous),
             )?;
         }
         Ok(())
@@ -508,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn newer_registered_projection_cannot_be_replaced_or_cleared_by_older_work() {
+    fn deferred_publication_cannot_overwrite_newer_reconciliation() {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("catalog-ordering-app-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
@@ -527,12 +617,32 @@ mod tests {
         };
         let lexical = LexicalIndex::new().unwrap();
         let retries = CatalogProjectionRetries::default();
-        retries.register_lexical(2, &newer_mutation, true).unwrap();
-        retries.register_lexical(1, &older_mutation, true).unwrap();
-
-        retries.retry_lexical(&lexical).unwrap();
+        // Ordinary publication applies tasks synchronously and defers lexical.
         retries
-            .apply_lexical(&lexical, 1, &older_mutation, true)
+            .apply(
+                &lexical,
+                1,
+                &older_mutation,
+                ProjectionWork::timeline_tasks(),
+            )
+            .unwrap();
+        // A newer reconciliation completes both projections first.
+        retries
+            .apply(
+                &lexical,
+                2,
+                &newer_mutation,
+                ProjectionWork::synchronous(true),
+            )
+            .unwrap();
+        // The older background lexical job arrives late and must be a no-op.
+        retries
+            .apply(
+                &lexical,
+                1,
+                &older_mutation,
+                ProjectionWork::background(true, true, false),
+            )
             .unwrap();
 
         let results = lexical
@@ -553,10 +663,26 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].text, "newest task");
 
-        let remove = CatalogMutation::Remove { path: path.clone() };
-        retries.apply_lexical(&lexical, 3, &remove, true).unwrap();
+        // Repeat the interleaving with a newer removal.
         retries
-            .apply_lexical(&lexical, 2, &newer_mutation, true)
+            .apply(
+                &lexical,
+                3,
+                &older_mutation,
+                ProjectionWork::timeline_tasks(),
+            )
+            .unwrap();
+        let remove = CatalogMutation::Remove { path: path.clone() };
+        retries
+            .apply(&lexical, 4, &remove, ProjectionWork::synchronous(true))
+            .unwrap();
+        retries
+            .apply(
+                &lexical,
+                3,
+                &older_mutation,
+                ProjectionWork::background(true, true, false),
+            )
             .unwrap();
         assert!(lexical
             .search(
@@ -574,7 +700,7 @@ mod tests {
                 .is_empty()
         );
         let state = retries.lexical.lock().unwrap().get(&path).unwrap().clone();
-        assert!(state.latest.lock().unwrap().pending.is_none());
+        assert!(state.latest.lock().unwrap().mutation.is_none());
         crate::state::set_notes_root_override(None).unwrap();
     }
 }

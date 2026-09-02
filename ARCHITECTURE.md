@@ -94,7 +94,9 @@ retained in a small path-keyed retry ledger independent of file signatures, so
 retry does not clone or hold the whole catalog during lexical I/O. Catalog
 generations and a per-path projection lock prevent late older work from
 clearing, replacing, or applying lexical or task state after a newer payload
-for that path.
+for that path. Ordinary timeline publication registers the generation before
+its synchronous task projection, and its deferred background lexical job
+carries the same generation through the shared coordinator.
 
 Once canonical bytes exist, the returned identity and path are authoritative.
 A later required-projection problem is returned as `commitWarning`; callers

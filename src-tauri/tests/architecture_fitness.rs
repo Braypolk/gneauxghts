@@ -192,10 +192,7 @@ fn note_timeline_contracts_the_legacy_post_commit_boundary() {
             "from_plan(",
         ],
     );
-    assert_contains_all(
-        &post_publication,
-        &["DeferredCatalogProjection::lexical(mutation)"],
-    );
+    assert_contains_all(&post_publication, &["DeferredCatalogProjection::lexical("]);
     assert_contains_none(
         &architecture,
         &[
@@ -480,6 +477,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         repository_file("src-tauri/src/services/note_timeline/post_publication.rs");
     let index = repository_file("src-tauri/src/index.rs");
     let catalog = repository_file("src-tauri/src/services/note_catalog.rs");
+    let background = repository_file("src-tauri/src/services/background_index_queue.rs");
     let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
     let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
     let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
@@ -530,10 +528,20 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
             "struct CatalogProjectionRetries",
             "struct PathProjectionState",
             "generation: u64",
-            "project_tasks: bool",
+            "struct ProjectionWork",
+            "target_tasks: bool",
         ],
     );
     assert_contains_none(&index, &["let mut candidate = index.clone()"]);
+    assert_contains_all(
+        &post_publication,
+        &["catalog_projection_retries\n            .apply("],
+    );
+    assert_contains_all(&background, &["projection_retries.apply("]);
+    assert_contains_none(
+        &background,
+        &["apply_lexical_projection(", "apply_task_projection("],
+    );
     assert_contains_all(&timeline, &["pub(crate) fn prepare_publication("]);
     assert_contains_all(
         &forgotten,
