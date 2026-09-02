@@ -565,20 +565,15 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &forgotten,
         &["NoteTimeline::new(&state).prepare_publication("],
     );
-    assert_contains_all(
-        &proposals,
-        &["NoteTimeline::new(&state).prepare_revision_publication("],
-    );
-    assert_contains_all(
-        &tasks,
-        &["NoteTimeline::new(self.state).prepare_revision_publication("],
-    );
+    assert_contains_all(&proposals, &["timeline.prepare_revision_publication("]);
+    assert_contains_all(&tasks, &["timeline.prepare_revision_publication("]);
     assert_contains_all(&note_persistence, &[".prepare_revision_publication("]);
     assert_contains_all(
         &state_persistence,
         &[
             "pub(crate) fn persist_note_with_preparation<P, T>(",
             "with_note_file_mutation(||",
+            "abandon(context)",
             "let outcome = finalize(",
         ],
     );
@@ -589,6 +584,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &[
             "pub(crate) struct HistoryIntentIdentity",
             "history_intent: HistoryIntentIdentity",
+            "pub(crate) fn abandon_revision_publication(",
             "history_store::finalize_publication(&history_intent, source, &path, canonical)",
         ],
     );

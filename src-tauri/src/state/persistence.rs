@@ -411,6 +411,7 @@ pub(crate) fn persist_note_with_preparation<P, T>(
     markdown: &str,
     current_path: Option<&Path>,
     prepare: impl FnOnce(&Path, &str) -> Result<(String, P), String>,
+    abandon: impl FnOnce(P) -> Result<(), String>,
     finalize: impl FnOnce(PathBuf, String, P) -> T,
 ) -> Result<Option<(String, String, T)>, String> {
     with_note_file_mutation(|| {
@@ -425,7 +426,20 @@ pub(crate) fn persist_note_with_preparation<P, T>(
                 prepared_context = Some(context);
                 Ok(markdown)
             },
-        )?;
+        );
+        let publication = match publication {
+            Ok(publication) => publication,
+            Err(publication_error) => {
+                if let Some(context) = prepared_context.take() {
+                    abandon(context).map_err(|abandon_error| {
+                        format!(
+                            "{publication_error}; additionally failed to abandon its prepared Note Revision: {abandon_error}"
+                        )
+                    })?;
+                }
+                return Err(publication_error);
+            }
+        };
         Ok(publication.map(|(path, markdown)| {
             let context = prepared_context
                 .take()

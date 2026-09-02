@@ -14,7 +14,7 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
@@ -49,6 +49,40 @@ static NEXT_FAULT: std::sync::Mutex<Option<FaultPoint>> = std::sync::Mutex::new(
 #[cfg(test)]
 pub(super) fn inject_fault_once(point: FaultPoint) {
     *NEXT_FAULT.lock().expect("history fault lock") = Some(point);
+}
+
+#[cfg(test)]
+pub(super) fn prepared_intent_count(status: &str) -> u64 {
+    open_store()
+        .expect("open history store")
+        .query_row(
+            "SELECT COUNT(*) FROM prepared_intents WHERE status = ?1",
+            params![status],
+            |row| row.get(0),
+        )
+        .expect("count prepared history intents")
+}
+
+#[cfg(test)]
+pub(super) fn replace_revision_source(note_id: &NoteIdentity, source: &str) {
+    open_store()
+        .expect("open history store")
+        .execute(
+            "UPDATE revisions SET source = ?1 WHERE note_id = ?2",
+            params![source, note_id.as_str()],
+        )
+        .expect("replace stored revision source");
+}
+
+#[cfg(test)]
+pub(super) fn replace_lifecycle_kind(note_id: &NoteIdentity, kind: &str) {
+    open_store()
+        .expect("open history store")
+        .execute(
+            "UPDATE lifecycle_events SET kind = ?1 WHERE note_id = ?2",
+            params![kind, note_id.as_str()],
+        )
+        .expect("replace stored lifecycle kind");
 }
 
 #[cfg(test)]
@@ -489,10 +523,13 @@ pub(super) fn finalize_publication(
     }
     let payload = AuthoredState::from_canonical(canonical_markdown).encode();
     let result_hash = hash(&payload);
+    let canonical_note_id = managed_note_identity(canonical_markdown)?;
+    let committed_at_millis = crate::time::current_time_millis()
+        .map_err(|error| format!("Record canonical publication time: {error}"))?;
     let mut connection = open_store()?;
     let intent = connection
         .query_row(
-            "SELECT target_path, source, result_hash, status
+            "SELECT target_path, source, result_hash, status, note_id
              FROM prepared_intents WHERE intent_id = ?1",
             params![history_intent.as_str()],
             |row| {
@@ -501,6 +538,7 @@ pub(super) fn finalize_publication(
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             },
         )
@@ -516,17 +554,45 @@ pub(super) fn finalize_publication(
         || intent.1 != source.as_storage_value()
         || intent.2 != result_hash
         || intent.3 != "prepared"
+        || intent.4 != canonical_note_id
     {
+        if intent.3 == "prepared" {
+            connection
+                .execute(
+                    "UPDATE prepared_intents SET status = 'abandoned'
+                     WHERE intent_id = ?1 AND status = 'prepared'",
+                    params![history_intent.as_str()],
+                )
+                .map_err(|error| format!("Abandon mismatched Note Revision: {error}"))?;
+        }
         return Err("Committed note does not match its exact durable history intent".to_string());
     }
-    finalize_intent(&mut connection, history_intent.as_str(), &payload)
+    finalize_intent(
+        &mut connection,
+        history_intent.as_str(),
+        &payload,
+        committed_at_millis,
+    )
+}
+
+pub(super) fn abandon_publication(history_intent: &HistoryIntentIdentity) -> Result<(), String> {
+    let connection = open_store()?;
+    connection
+        .execute(
+            "UPDATE prepared_intents SET status = 'abandoned'
+             WHERE intent_id = ?1 AND status = 'prepared'",
+            params![history_intent.as_str()],
+        )
+        .map_err(|error| format!("Abandon prepared Note Revision: {error}"))?;
+    Ok(())
 }
 
 pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader>, String> {
     let connection = open_store()?;
     let mut statement = connection
         .prepare(
-            "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id
+            "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id,
+                    committed_at_millis
              FROM revisions WHERE note_id = ?1",
         )
         .map_err(|error| error.to_string())?;
@@ -536,19 +602,35 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
             let predecessor_id = row.get::<_, Option<String>>(2)?;
             Ok((
                 row.get::<_, Option<String>>(4)?,
-                NoteRevisionHeader {
-                    identity: RevisionIdentity::from_persisted(row.get::<_, String>(0)?),
-                    note_identity: note_id.clone(),
-                    predecessor: parse_record_identity(predecessor_kind, predecessor_id),
-                    payload_version: PayloadVersion::V1,
-                    source: MutationSource::from_storage_value(&row.get::<_, String>(3)?)
-                        .unwrap_or(MutationSource::RecoveryReconciliation),
-                },
+                row.get::<_, String>(0)?,
+                predecessor_kind,
+                predecessor_id,
+                row.get::<_, String>(3)?,
+                row.get::<_, u64>(5)?,
             ))
         })
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(
+            |(base, revision_id, predecessor_kind, predecessor_id, source, committed_at_millis)| {
+                let source = MutationSource::from_storage_value(&source)
+                    .ok_or_else(|| format!("Unknown stored Mutation Source `{source}`"))?;
+                Ok((
+                    base,
+                    NoteRevisionHeader {
+                        identity: RevisionIdentity::from_persisted(revision_id),
+                        note_identity: note_id.clone(),
+                        predecessor: parse_record_identity(predecessor_kind, predecessor_id),
+                        payload_version: PayloadVersion::V1,
+                        source,
+                        committed_at_millis,
+                    },
+                ))
+            },
+        )
+        .collect::<Result<Vec<_>, String>>()?;
     order_revision_chain(revisions)
 }
 
@@ -589,18 +671,29 @@ pub(super) fn lifecycle_events(
         .query_map(params![note_id.as_str()], |row| {
             let predecessor_kind = row.get::<_, Option<String>>(1)?;
             let predecessor_id = row.get::<_, Option<String>>(2)?;
-            Ok(LifecycleEventHeader {
-                identity: LifecycleEventIdentity::from_persisted(row.get::<_, String>(0)?),
-                note_identity: note_id.clone(),
-                predecessor: parse_record_identity(predecessor_kind, predecessor_id),
-                payload_version: PayloadVersion::V1,
-                kind: LifecycleEventKind::from_storage_value(&row.get::<_, String>(3)?)
-                    .unwrap_or(LifecycleEventKind::Created),
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                predecessor_kind,
+                predecessor_id,
+                row.get::<_, String>(3)?,
+            ))
         })
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|(event_id, predecessor_kind, predecessor_id, kind)| {
+            let kind = LifecycleEventKind::from_storage_value(&kind)
+                .ok_or_else(|| format!("Unknown stored Lifecycle Event Kind `{kind}`"))?;
+            Ok(LifecycleEventHeader {
+                identity: LifecycleEventIdentity::from_persisted(event_id),
+                note_identity: note_id.clone(),
+                predecessor: parse_record_identity(predecessor_kind, predecessor_id),
+                payload_version: PayloadVersion::V1,
+                kind,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(events)
 }
 
@@ -761,7 +854,7 @@ fn recover_pending_with_connection(connection: &Connection) -> Result<(), String
     let pending = {
         let mut statement = connection
             .prepare(
-                "SELECT intent_id, target_path, authored_payload, result_hash
+                "SELECT intent_id, target_path, authored_payload, result_hash, note_id
                  FROM prepared_intents WHERE status = 'prepared'
                  ORDER BY prepared_at_millis, intent_id",
             )
@@ -773,6 +866,7 @@ fn recover_pending_with_connection(connection: &Connection) -> Result<(), String
                     PathBuf::from(row.get::<_, String>(1)?),
                     row.get::<_, Vec<u8>>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             })
             .map_err(|error| error.to_string())?
@@ -780,15 +874,22 @@ fn recover_pending_with_connection(connection: &Connection) -> Result<(), String
             .map_err(|error| error.to_string())?;
         pending
     };
-    for (intent_id, path, intended_payload, intended_hash) in pending {
+    for (intent_id, path, intended_payload, intended_hash, intended_note_id) in pending {
         match fs::read_to_string(&path) {
             Ok(markdown) => {
                 let canonical_payload = AuthoredState::from_canonical(&markdown).encode();
                 if hash(&canonical_payload) == intended_hash
                     && canonical_payload == intended_payload
+                    && managed_note_identity(&markdown).as_deref() == Ok(intended_note_id.as_str())
                 {
+                    let committed_at_millis = file_modified_at_millis(&path)?;
                     let mut recovered = open_existing_connection(connection)?;
-                    finalize_intent(&mut recovered, &intent_id, &canonical_payload)?;
+                    finalize_intent(
+                        &mut recovered,
+                        &intent_id,
+                        &canonical_payload,
+                        committed_at_millis,
+                    )?;
                 } else {
                     connection
                         .execute(
@@ -833,6 +934,7 @@ fn finalize_intent(
     connection: &mut Connection,
     intent_id: &str,
     authored_payload: &[u8],
+    committed_at_millis: u64,
 ) -> Result<(), String> {
     let transaction = connection
         .transaction()
@@ -864,7 +966,7 @@ fn finalize_intent(
         return Ok(());
     }
 
-    let occurred_at = now_millis();
+    let occurred_at = committed_at_millis;
     let mut predecessor = head
         .as_ref()
         .map(|head| (head.record_kind.clone(), head.record_id.clone()));
@@ -1136,6 +1238,32 @@ fn read_u64(encoded: &[u8], offset: usize) -> Result<u64, String> {
 
 fn now_millis() -> u64 {
     crate::time::current_time_millis().unwrap_or(0)
+}
+
+fn managed_note_identity(markdown: &str) -> Result<String, String> {
+    crate::note::parse_note(markdown)
+        .frontmatter
+        .managed
+        .map(|metadata| metadata.id)
+        .filter(|identity| !identity.trim().is_empty())
+        .ok_or_else(|| "Canonical history publication has no managed Note Identity".to_string())
+}
+
+fn file_modified_at_millis(path: &Path) -> Result<u64, String> {
+    let modified = fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| {
+            format!(
+                "Read canonical publication time for {}: {error}",
+                path.display()
+            )
+        })?;
+    let millis = modified
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("Canonical publication time precedes the Unix epoch: {error}"))?
+        .as_millis();
+    u64::try_from(millis)
+        .map_err(|_| "Canonical publication time exceeds supported range".to_string())
 }
 
 #[cfg(test)]

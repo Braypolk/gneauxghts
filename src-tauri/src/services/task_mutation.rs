@@ -5,7 +5,7 @@
 //! prepare the same transform without writing any canonical or derived state.
 
 use super::note_timeline::{
-    HistoryIntentIdentity, MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline,
+    MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline, PreparedRevisionPublication,
 };
 use crate::{
     index::{
@@ -93,17 +93,12 @@ trait TaskMutationSink {
         &self,
         path: &Path,
         markdown: &str,
-    ) -> Result<PreparedTaskPublication, String>;
+    ) -> Result<PreparedRevisionPublication, String>;
     fn synchronize(
         &self,
         path: PathBuf,
-        publication: PreparedTaskPublication,
+        publication: PreparedRevisionPublication,
     ) -> TaskSynchronization;
-}
-
-struct PreparedTaskPublication {
-    markdown: String,
-    history_intent: HistoryIntentIdentity,
 }
 
 struct TaskSynchronization {
@@ -124,32 +119,42 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
         &self,
         path: &Path,
         markdown: &str,
-    ) -> Result<PreparedTaskPublication, String> {
-        let prepared = NoteTimeline::new(self.state).prepare_revision_publication(
+    ) -> Result<PreparedRevisionPublication, String> {
+        let timeline = NoteTimeline::new(self.state);
+        let prepared = timeline.prepare_revision_publication(
             MutationSource::TaskAction,
             path,
             Some(path),
             None,
             markdown,
         )?;
-        write_task_document_atomically(path, prepared.canonical_markdown())?;
-        let (markdown, history_intent) = prepared.into_parts();
-        Ok(PreparedTaskPublication {
-            markdown,
-            history_intent,
-        })
+        if let Err(publication_error) =
+            write_task_document_atomically(path, prepared.canonical_markdown())
+        {
+            let (_, history_intent) = prepared.into_parts();
+            timeline
+                .abandon_revision_publication(history_intent)
+                .map_err(|abandon_error| {
+                    format!(
+                        "{publication_error}; additionally failed to abandon its prepared Note Revision: {abandon_error}"
+                    )
+                })?;
+            return Err(publication_error);
+        }
+        Ok(prepared)
     }
 
     fn synchronize(
         &self,
         path: PathBuf,
-        publication: PreparedTaskPublication,
+        publication: PreparedRevisionPublication,
     ) -> TaskSynchronization {
+        let (markdown, history_intent) = publication.into_parts();
         let outcome = NoteTimeline::new(self.state).mutate(NoteMutation::task_action(
-            publication.history_intent,
+            history_intent,
             path.clone(),
             Some(path),
-            publication.markdown,
+            markdown,
         ));
         outcome.report_degraded("task mutation");
         TaskSynchronization {
@@ -298,19 +303,19 @@ mod tests {
             &self,
             _path: &Path,
             markdown: &str,
-        ) -> Result<PreparedTaskPublication, String> {
+        ) -> Result<PreparedRevisionPublication, String> {
             self.writes.set(self.writes.get() + 1);
             *self.canonical.borrow_mut() = markdown.to_string();
-            Ok(PreparedTaskPublication {
-                markdown: markdown.to_string(),
-                history_intent: HistoryIntentIdentity::for_test("task-test-intent"),
-            })
+            Ok(PreparedRevisionPublication::for_test(
+                markdown,
+                "task-test-intent",
+            ))
         }
 
         fn synchronize(
             &self,
             _path: PathBuf,
-            _publication: PreparedTaskPublication,
+            _publication: PreparedRevisionPublication,
         ) -> TaskSynchronization {
             TaskSynchronization {
                 note_id: "note-1".to_string(),
@@ -466,6 +471,39 @@ mod tests {
         write_task_document_atomically(&path, "- [x] Ship it").unwrap();
 
         assert_eq!(fs::read_to_string(path).unwrap(), "- [x] Ship it");
+    }
+
+    #[test]
+    fn failed_task_publication_abandons_its_history_intent_immediately() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("task-publication-fault-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("task-publication-fault-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let path = notes.path().join("Tasks.md");
+        let canonical = crate::note::prepare_note_markdown("- [ ] Ship it", None, Some(None))
+            .unwrap()
+            .0;
+        fs::write(&path, canonical).unwrap();
+        crate::state::inject_note_publication_failure_once();
+        let sink = AppStateTaskMutationSink { state: &state };
+
+        let error = sink
+            .write_canonical(&path, "- [x] Ship it")
+            .expect_err("task publication must fail");
+
+        assert!(error.contains("injected note publication failure"));
+        assert_eq!(
+            crate::services::note_timeline::prepared_history_intent_count_for_test("prepared"),
+            0
+        );
+        crate::state::set_notes_root_override(None).unwrap();
     }
 
     #[test]

@@ -70,7 +70,10 @@ finalization never rediscovers an intent from path, source, or content. Editor,
 task, and proposal flows remain under the shared note-file mutation owner from
 preparation through publication and history finalization. Identical authored
 content finalizes without another Note Revision; distinct content finalizes a
-versioned, hash-verified delta or compressed checkpoint.
+versioned, hash-verified delta or compressed checkpoint. Exact finalization
+also verifies the managed Note Identity in the published file, and records the
+app-owned publication time rather than the later reconciliation time. Crash
+recovery uses the canonical file's modification time as publication evidence.
 
 History Mode and agent restore capabilities require grants whose constructors
 remain private to the timeline module. Ordinary chat can receive only the
@@ -113,6 +116,9 @@ Prepared intents are reconciled idempotently against authoritative Markdown
 after restart, so recovery completes history without replaying the file write.
 History finalization likewise reads authoritative Markdown from disk and never
 substitutes caller fallback bytes when that read fails.
+Known publication failures and proposal conflicts explicitly abandon their
+prepared intent; only an indeterminate post-publication finalization failure
+remains pending for restart recovery.
 Each `AppState` completes that reconciliation successfully before its first
 history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live

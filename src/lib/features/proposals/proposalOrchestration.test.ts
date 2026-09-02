@@ -177,6 +177,7 @@ function setup(options: { opened?: boolean } = {}) {
         path,
         previousPath: path
       },
+      noteId: 'note-1',
       message: null
     })
   );
@@ -454,6 +455,7 @@ describe('durable proposal editor review', () => {
     test.commit.mockResolvedValueOnce({
       status: 'conflict',
       applied: null,
+      noteId: null,
       message: 'Changed on disk.'
     });
     await test.orchestration.loadDurableProposal(test.request);

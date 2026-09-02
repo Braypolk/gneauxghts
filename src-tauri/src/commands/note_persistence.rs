@@ -109,6 +109,7 @@ fn persist_note_session_with_source(
                 )
                 .map(|prepared| prepared.into_parts())
         },
+        |history_intent| NoteTimeline::new(state).abandon_revision_publication(history_intent),
         |path, persisted_markdown, history_intent| {
             let mutation = if is_note_creation {
                 NoteMutation::note_creation(history_intent, path, None, persisted_markdown)

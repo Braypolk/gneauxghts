@@ -27,6 +27,7 @@ export interface ProposalPreview {
 export interface CommitNoteReviewResult {
   status: 'committed' | 'conflict';
   applied: AppliedNoteChange | null;
+  noteId: string | null;
   message: string | null;
   commitWarning?: CommittedMutationWarning | null;
 }

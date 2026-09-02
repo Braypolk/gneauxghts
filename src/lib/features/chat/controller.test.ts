@@ -148,6 +148,7 @@ function fakeApi() {
     commitAgentProposal: vi.fn(async () => ({
       status: 'committed' as const,
       applied: { kind: 'updateNote', path: '/vault/Plan.md', previousPath: '/vault/Plan.md' },
+      noteId: 'note-1',
       message: null
     })),
     dismissAgentProposal: vi.fn(),
@@ -989,6 +990,7 @@ describe('createChatController', () => {
         path: '/vault/Project plan.md',
         previousPath: '/vault/Project plan.md'
       },
+      noteId: 'note-1',
       message: null,
       commitWarning: {
         message: 'History finalization is pending.',
@@ -1036,6 +1038,7 @@ describe('createChatController', () => {
     vi.mocked(fake.api.commitAgentProposal).mockResolvedValue({
       status: 'conflict',
       applied: null,
+      noteId: null,
       message: 'Note changed on disk.'
     });
     const controller = createChatController(fake.api);

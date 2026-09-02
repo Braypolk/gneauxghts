@@ -87,6 +87,7 @@ pub(crate) struct CreationProposalPreview {
 pub(crate) struct CommitNoteReviewResult {
     pub(crate) status: String,
     pub(crate) applied: Option<AppliedNoteChange>,
+    pub(crate) note_id: Option<String>,
     pub(crate) message: Option<String>,
     pub(crate) commit_warning: Option<NoteMutationWarning>,
 }
@@ -394,6 +395,7 @@ pub(crate) fn commit_note_review(
         return Ok(CommitNoteReviewResult {
             status: "conflict".to_string(),
             applied: None,
+            note_id: None,
             message: Some("Note changed on disk.".to_string()),
             commit_warning: None,
         });
@@ -414,6 +416,7 @@ pub(crate) fn commit_note_review(
             path: Some(note_path.to_string_lossy().into_owned()),
             previous_path: Some(note_path.to_string_lossy().into_owned()),
         }),
+        note_id: None,
         message: None,
         commit_warning: None,
     })
@@ -500,6 +503,7 @@ pub(crate) fn commit_note_creation(
             path: Some(path.to_string_lossy().into_owned()),
             previous_path: None,
         }),
+        note_id: None,
         message: None,
         commit_warning: None,
     })
@@ -529,6 +533,7 @@ pub(crate) fn commit_note_creation_at_path(
                     path: Some(target_path.to_string_lossy().into_owned()),
                     previous_path: None,
                 }),
+                note_id: None,
                 message: None,
                 commit_warning: None,
             })
@@ -537,6 +542,7 @@ pub(crate) fn commit_note_creation_at_path(
             Ok(CommitNoteReviewResult {
                 status: "conflict".to_string(),
                 applied: None,
+                note_id: None,
                 message: Some(
                     "The proposed creation path is now occupied; review the proposal again."
                         .to_string(),

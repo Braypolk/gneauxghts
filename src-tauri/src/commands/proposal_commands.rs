@@ -82,7 +82,8 @@ pub(crate) fn commit_agent_proposal(
         .then(|| proposal.note_id.as_deref().map(NoteIdentity::new))
         .flatten();
     let commit_result = with_note_file_mutation(|| {
-        let prepared = NoteTimeline::new(&state).prepare_revision_publication(
+        let timeline = NoteTimeline::new(&state);
+        let prepared = timeline.prepare_revision_publication(
             MutationSource::AcceptedChatProposal,
             &intent.target_path,
             (proposal.kind == "update").then_some(intent.target_path.as_path()),
@@ -90,7 +91,7 @@ pub(crate) fn commit_agent_proposal(
             &committed_markdown,
         )?;
         let (committed_markdown, history_intent) = prepared.into_parts();
-        let mut result = if proposal.kind == "update" {
+        let publication_result = if proposal.kind == "update" {
             commit_review(
                 &notes_dir,
                 intent.target_path.to_string_lossy().into_owned(),
@@ -98,7 +99,7 @@ pub(crate) fn commit_agent_proposal(
                     .clone()
                     .expect("update proposal base hash was parsed"),
                 committed_markdown.clone(),
-            )?
+            )
         } else {
             commit_note_creation_at_path(
                 &notes_dir,
@@ -107,10 +108,29 @@ pub(crate) fn commit_agent_proposal(
                     .clone()
                     .expect("creation proposal title was parsed"),
                 committed_markdown.clone(),
-            )?
+            )
         };
-        result.commit_warning =
+        let mut result = match publication_result {
+            Ok(result) => result,
+            Err(publication_error) => {
+                timeline
+                    .abandon_revision_publication(history_intent)
+                    .map_err(|abandon_error| {
+                        format!(
+                            "{publication_error}; additionally failed to abandon its prepared Note Revision: {abandon_error}"
+                        )
+                    })?;
+                return Err(publication_error);
+            }
+        };
+        if result.applied.is_none() {
+            timeline.abandon_revision_publication(history_intent)?;
+            return Ok(result);
+        }
+        let synchronization =
             synchronize_applied_change(&state, &result, history_intent, committed_markdown);
+        result.note_id = Some(synchronization.note_id);
+        result.commit_warning = synchronization.commit_warning;
         Ok(result)
     });
     let result = match commit_result {
@@ -137,14 +157,25 @@ pub(crate) fn dismiss_agent_proposal(
     service.resolve_agent_proposal(&proposal_id, "dismissed")
 }
 
+struct ProposalSynchronization {
+    note_id: String,
+    commit_warning: Option<crate::services::note_timeline::NoteMutationWarning>,
+}
+
 fn synchronize_applied_change(
     state: &AppState,
     result: &CommitNoteReviewResult,
     history_intent: HistoryIntentIdentity,
     fallback_markdown: String,
-) -> Option<crate::services::note_timeline::NoteMutationWarning> {
-    let applied = result.applied.as_ref()?;
-    let path = applied.path.as_deref()?;
+) -> ProposalSynchronization {
+    let applied = result
+        .applied
+        .as_ref()
+        .expect("proposal synchronization requires a committed change");
+    let path = applied
+        .path
+        .as_deref()
+        .expect("committed proposal change requires a canonical path");
     let outcome = NoteTimeline::new(state).mutate(NoteMutation::accepted_chat_proposal(
         history_intent,
         PathBuf::from(path),
@@ -152,7 +183,10 @@ fn synchronize_applied_change(
         fallback_markdown,
     ));
     outcome.report_degraded("proposal commit");
-    outcome.warning().cloned()
+    ProposalSynchronization {
+        note_id: outcome.note_id().as_str().to_string(),
+        commit_warning: outcome.warning().cloned(),
+    }
 }
 
 fn converge_agent_proposal_status(
@@ -236,15 +270,19 @@ mod tests {
                 path: Some(path.to_string_lossy().into_owned()),
                 previous_path: None,
             }),
+            note_id: None,
             message: None,
             commit_warning: None,
         };
         inject_history_finalization_failure_once();
 
-        let warning =
-            synchronize_applied_change(&state, &result, history_intent, canonical).unwrap();
+        let synchronization =
+            synchronize_applied_change(&state, &result, history_intent, canonical);
 
-        assert!(warning
+        assert!(!synchronization.note_id.is_empty());
+        assert!(synchronization
+            .commit_warning
+            .unwrap()
             .issues()
             .iter()
             .any(|issue| issue.stage() == MutationWarningStage::HistoryFinalization));

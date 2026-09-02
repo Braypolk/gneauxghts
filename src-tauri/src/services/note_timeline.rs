@@ -307,6 +307,7 @@ pub(crate) struct NoteRevisionHeader {
     predecessor: Option<TimelineRecordIdentity>,
     payload_version: PayloadVersion,
     source: MutationSource,
+    committed_at_millis: u64,
 }
 
 impl NoteRevisionHeader {
@@ -322,6 +323,7 @@ impl NoteRevisionHeader {
             predecessor,
             payload_version,
             source,
+            committed_at_millis: 0,
         }
     }
 
@@ -335,6 +337,10 @@ impl NoteRevisionHeader {
 
     pub(crate) fn source(&self) -> MutationSource {
         self.source
+    }
+
+    pub(crate) fn committed_at_millis(&self) -> u64 {
+        self.committed_at_millis
     }
 }
 
@@ -429,6 +435,14 @@ impl PreparedRevisionPublication {
 
     pub(crate) fn into_parts(self) -> (String, HistoryIntentIdentity) {
         (self.canonical_markdown, self.history_intent)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(markdown: &str, history_intent: &str) -> Self {
+        Self {
+            canonical_markdown: markdown.to_string(),
+            history_intent: HistoryIntentIdentity::for_test(history_intent),
+        }
     }
 }
 
@@ -1088,6 +1102,13 @@ impl<'a> NoteTimeline<'a> {
         NoteMutationResult::from_publication(source, outcome)
     }
 
+    pub(crate) fn abandon_revision_publication(
+        &self,
+        history_intent: HistoryIntentIdentity,
+    ) -> Result<(), String> {
+        history_store::abandon_publication(&history_intent)
+    }
+
     pub(crate) fn observe(&self, observation: VaultObservation) -> ObservationReceipt {
         let VaultObservation {
             source,
@@ -1191,6 +1212,11 @@ pub(crate) fn recover_pending_history() -> Result<(), String> {
 #[cfg(test)]
 pub(crate) fn inject_history_finalization_failure_once() {
     history_store::inject_fault_once(history_store::FaultPoint::Finalize);
+}
+
+#[cfg(test)]
+pub(crate) fn prepared_history_intent_count_for_test(status: &str) -> u64 {
+    history_store::prepared_intent_count(status)
 }
 
 #[cfg(test)]
@@ -1392,6 +1418,7 @@ mod tests {
         .unwrap();
 
         let first = "---\r\nproject: atlas\r\n---\r\n\r\nHello, 🌍\r\n";
+        let before_publication = crate::time::current_time_millis().unwrap();
         let created = crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
             "Timeline".to_string(),
@@ -1421,6 +1448,7 @@ mod tests {
             Some(path),
         )
         .unwrap();
+        let after_publication = crate::time::current_time_millis().unwrap();
 
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
@@ -1433,6 +1461,9 @@ mod tests {
         assert_eq!(revisions.len(), 2);
         assert_eq!(revisions[0].source(), MutationSource::NoteCreation);
         assert_eq!(revisions[1].source(), MutationSource::Editor);
+        assert!(revisions.iter().all(|revision| {
+            (before_publication..=after_publication).contains(&revision.committed_at_millis())
+        }));
         let creation = history.lifecycle_events().unwrap();
         assert_eq!(creation.len(), 1);
         assert_eq!(creation[0].kind(), LifecycleEventKind::Created);
@@ -1623,6 +1654,56 @@ mod tests {
     }
 
     #[test]
+    fn finalization_rejects_matching_authored_content_under_another_note_identity() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-intent-note-id-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-intent-note-id-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        let path = notes.path().join("Identity Mismatch.md");
+        let prepared = timeline
+            .prepare_revision_publication(
+                MutationSource::NoteCreation,
+                &path,
+                None,
+                None,
+                "same authored content",
+            )
+            .unwrap();
+        let intended_note_id = NoteIdentity::new(
+            crate::note::parse_note(prepared.canonical_markdown())
+                .frontmatter
+                .managed
+                .unwrap()
+                .id,
+        );
+        let (canonical, history_intent) = prepared.into_parts();
+        let wrong_identity =
+            crate::note::repair_managed_note_identity(&canonical, "wrong-note-id").unwrap();
+        fs::write(&path, &wrong_identity).unwrap();
+
+        let result = timeline.mutate(NoteMutation::note_creation(
+            history_intent,
+            path,
+            None,
+            wrong_identity,
+        ));
+
+        assert!(result.warning().is_some());
+        let history = timeline.history_mode(HistoryModeGrant::authorized(intended_note_id));
+        assert!(history.revisions().unwrap().is_empty());
+        assert_eq!(history_store::prepared_intent_count("abandoned"), 1);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
     fn unreadable_authoritative_markdown_never_finalizes_from_fallback_memory() {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("timeline-read-fault-app-data");
@@ -1770,6 +1851,14 @@ mod tests {
             .iter()
             .any(|issue| issue.stage() == MutationWarningStage::HistoryFinalization));
 
+        let published_at_millis = fs::metadata(session.path.as_deref().unwrap())
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
         let note_id = NoteIdentity::new(session.note_id.unwrap());
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
@@ -1778,8 +1867,9 @@ mod tests {
         .unwrap();
         let history =
             NoteTimeline::new(&restarted).history_mode(HistoryModeGrant::authorized(note_id));
-        assert_eq!(history.revisions().unwrap().len(), 1);
-        assert_eq!(history.revisions().unwrap().len(), 1);
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(revisions[0].committed_at_millis(), published_at_millis);
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -1839,6 +1929,46 @@ mod tests {
                 .collect::<Vec<_>>(),
             sources
         );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn unknown_persisted_history_vocabulary_fails_closed() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-vocabulary-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-vocabulary-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Vocabulary".to_string(),
+            "body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        history_store::replace_revision_source(&note_id, "futureSource");
+        let history =
+            NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        assert!(history
+            .revisions()
+            .unwrap_err()
+            .contains("Unknown stored Mutation Source `futureSource`"));
+
+        history_store::replace_revision_source(&note_id, "noteCreation");
+        history_store::replace_lifecycle_kind(&note_id, "futureEvent");
+        assert!(history
+            .lifecycle_events()
+            .unwrap_err()
+            .contains("Unknown stored Lifecycle Event Kind `futureEvent`"));
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -1911,6 +2041,7 @@ mod tests {
         assert!(error.contains("injected note publication failure"));
         let path = notes.path().join("Unpublished.md");
         assert!(!path.exists());
+        assert_eq!(history_store::prepared_intent_count("prepared"), 0);
 
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
