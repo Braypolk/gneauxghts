@@ -1,7 +1,7 @@
 use crate::{
     note,
     semantic::db::content_hash,
-    services::note_timeline::NoteMutationWarning,
+    services::note_timeline::{NoteMutationWarning, PreparedRevisionPublication},
     state::{atomic_write_note, is_forgotten_note_path, is_valid_note_path},
     vault_watcher,
 };
@@ -406,14 +406,28 @@ pub(crate) fn commit_note_review(
     let normalized = note::normalize_wikilink_markdown(&markdown);
     note::reject_chat_projection_write(&normalized)?;
     let prepared = note::prepare_note_markdown(&normalized, Some(&raw), Some(None))?.0;
-    commit_prepared_note_review(notes_dir, path, expected_base_hash, prepared)
+    commit_canonical_note_review(notes_dir, path, expected_base_hash, &prepared)
 }
 
 pub(crate) fn commit_prepared_note_review(
     notes_dir: &Path,
     path: String,
     expected_base_hash: String,
-    canonical_markdown: String,
+    publication: &PreparedRevisionPublication,
+) -> Result<CommitNoteReviewResult, String> {
+    commit_canonical_note_review(
+        notes_dir,
+        path,
+        expected_base_hash,
+        publication.canonical_markdown(),
+    )
+}
+
+fn commit_canonical_note_review(
+    notes_dir: &Path,
+    path: String,
+    expected_base_hash: String,
+    canonical_markdown: &str,
 ) -> Result<CommitNoteReviewResult, String> {
     let note_path = validate_existing_note_path(notes_dir, &path)?;
     let raw = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
@@ -426,8 +440,8 @@ pub(crate) fn commit_prepared_note_review(
             commit_warning: None,
         });
     }
-    note::reject_chat_projection_write(&canonical_markdown)?;
-    let expected_write = vault_watcher::record_expected_write(&note_path, &canonical_markdown);
+    note::reject_chat_projection_write(canonical_markdown)?;
+    let expected_write = vault_watcher::record_expected_write(&note_path, canonical_markdown);
     atomic_write_note(&note_path, canonical_markdown.as_bytes())?;
     expected_write.commit();
     Ok(CommitNoteReviewResult {
@@ -544,21 +558,35 @@ pub(crate) fn commit_note_creation_at_path(
     let normalized = note::normalize_wikilink_markdown(&markdown);
     note::reject_chat_projection_write(&normalized)?;
     let prepared = note::prepare_note_markdown(&normalized, None, Some(None))?.0;
-    commit_prepared_note_creation_at_path(notes_dir, &target_path, title, prepared)
+    commit_canonical_note_creation_at_path(notes_dir, &target_path, title, &prepared)
 }
 
 pub(crate) fn commit_prepared_note_creation_at_path(
     notes_dir: &Path,
     target_path: &Path,
     title: String,
-    canonical_markdown: String,
+    publication: &PreparedRevisionPublication,
+) -> Result<CommitNoteReviewResult, String> {
+    commit_canonical_note_creation_at_path(
+        notes_dir,
+        target_path,
+        title,
+        publication.canonical_markdown(),
+    )
+}
+
+fn commit_canonical_note_creation_at_path(
+    notes_dir: &Path,
+    target_path: &Path,
+    title: String,
+    canonical_markdown: &str,
 ) -> Result<CommitNoteReviewResult, String> {
     if title.trim().is_empty() {
         return Err("A title is required for a new note.".to_string());
     }
     let target_path = canonical_agent_commit_target(notes_dir, target_path)?;
-    note::reject_chat_projection_write(&canonical_markdown)?;
-    let expected_write = vault_watcher::record_expected_write(&target_path, &canonical_markdown);
+    note::reject_chat_projection_write(canonical_markdown)?;
+    let expected_write = vault_watcher::record_expected_write(&target_path, canonical_markdown);
     match create_note_without_overwrite(&target_path, canonical_markdown.as_bytes()) {
         Ok(()) => {
             expected_write.commit();
@@ -848,6 +876,7 @@ mod tests {
     };
     use crate::{
         semantic::db::content_hash,
+        services::note_timeline::PreparedRevisionPublication,
         state::initialize_app_data_dir,
         test_support::{lock_test_env, TestDir},
     };
@@ -1174,10 +1203,10 @@ mod tests {
         let dir = setup("proposal-exact-review");
         let (path, hash) = write_note(&dir, "Exact.md", "old");
         let canonical = "---\ngneauxghts:\n  id: fixed-id\n  kind: note\n  updated_at: fixed-time\n---\n\nExact body\n";
+        let publication = PreparedRevisionPublication::for_test(canonical, "test-intent");
 
-        let result =
-            commit_prepared_note_review(dir.path(), path.clone(), hash, canonical.to_string())
-                .expect("commit exact prepared bytes");
+        let result = commit_prepared_note_review(dir.path(), path.clone(), hash, &publication)
+            .expect("commit exact prepared bytes");
 
         assert_eq!(result.status, "committed");
         assert_eq!(fs::read_to_string(path).unwrap(), canonical);

@@ -97,7 +97,7 @@ pub(crate) fn commit_agent_proposal(
                 expected_base_hash
                     .clone()
                     .expect("update proposal base hash was parsed"),
-                prepared.canonical_markdown().to_string(),
+                &prepared,
             )
         } else {
             commit_prepared_note_creation_at_path(
@@ -106,7 +106,7 @@ pub(crate) fn commit_agent_proposal(
                 create_title
                     .clone()
                     .expect("creation proposal title was parsed"),
-                prepared.canonical_markdown().to_string(),
+                &prepared,
             )
         };
         let mut result = match publication_result {

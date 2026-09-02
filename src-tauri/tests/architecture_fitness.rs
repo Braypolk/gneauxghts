@@ -499,6 +499,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     let state_persistence = repository_file("src-tauri/src/state/persistence.rs");
     let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
     let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
+    let proposal_writers = repository_file("src-tauri/src/proposals.rs");
     let tasks = repository_file("src-tauri/src/services/task_mutation.rs");
     let architecture = repository_file("ARCHITECTURE.md");
     let invariants = repository_file("docs/architecture/behavior-invariants.md");
@@ -589,13 +590,14 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         ],
     );
     assert_contains_all(
-        &proposals,
+        &proposal_writers,
         &[
             "commit_prepared_note_review(",
             "commit_prepared_note_creation_at_path(",
-            "prepared.canonical_markdown().to_string()",
+            "publication: &PreparedRevisionPublication",
         ],
     );
+    assert_contains_all(&proposals, &["&prepared"]);
     assert_contains_none(
         &format!("{note_persistence}\n{forgotten}\n{proposals}\n{tasks}"),
         &["repair_managed_note_identity"],

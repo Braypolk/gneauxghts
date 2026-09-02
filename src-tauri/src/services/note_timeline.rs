@@ -45,7 +45,7 @@ impl TurnIdentity {
 
 impl RevisionIdentity {
     fn issue() -> Self {
-        Self(crate::note::generate_note_id())
+        Self(crate::note::generate_unique_id())
     }
 
     fn from_persisted(value: impl Into<String>) -> Self {
@@ -55,7 +55,7 @@ impl RevisionIdentity {
 
 impl LifecycleEventIdentity {
     fn issue() -> Self {
-        Self(crate::note::generate_note_id())
+        Self(crate::note::generate_unique_id())
     }
 
     fn from_persisted(value: impl Into<String>) -> Self {

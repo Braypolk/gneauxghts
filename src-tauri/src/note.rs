@@ -490,10 +490,15 @@ fn normalize_yaml_scalar(value: &str) -> String {
 }
 
 pub(crate) fn generate_note_id() -> String {
+    generate_unique_id()
+}
+
+pub(crate) fn generate_unique_id() -> String {
     let timestamp_millis = current_time_millis().unwrap_or(0);
     let mut bytes = [0u8; 16];
     bytes[..6].copy_from_slice(&timestamp_millis.to_be_bytes()[2..]);
-    getrandom::fill(&mut bytes[6..]).expect("operating-system randomness is required for note IDs");
+    getrandom::fill(&mut bytes[6..])
+        .expect("operating-system randomness is required for unique identities");
     encode_base32(bytes)
 }
 

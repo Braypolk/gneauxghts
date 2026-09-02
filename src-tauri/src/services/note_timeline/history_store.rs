@@ -525,7 +525,7 @@ pub(super) fn prepare_publication(
     let authored_payload = AuthoredState::from_canonical(markdown).encode();
     let result_hash = hash(&authored_payload);
     let connection = open_store()?;
-    let intent_id = crate::note::generate_note_id();
+    let intent_id = crate::note::generate_unique_id();
     let revision_id = RevisionIdentity::issue().0;
     let prepared_at_millis = crate::time::current_time_millis()
         .map_err(|error| format!("Issue canonical publication time: {error}"))?;
