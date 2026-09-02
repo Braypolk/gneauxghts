@@ -42,6 +42,7 @@ function setup(overrides: Partial<ConstructorParameters<typeof HistoryModeSessio
     captureWorkspace: vi.fn(() => workspace),
     readTarget: vi.fn(() => target),
     restoreWorkspace: vi.fn(),
+    restoreFocus: vi.fn(),
     loadPage: vi.fn().mockResolvedValue(firstPage),
     loadRevision: vi.fn().mockResolvedValue(revision),
     ...overrides
@@ -92,14 +93,66 @@ describe('HistoryModeSession', () => {
   });
 
   it('restores the captured workspace and focus on exit', async () => {
-    const restoreWorkspace = vi.fn();
-    const { session } = setup({ restoreWorkspace });
+    const phases: string[] = [];
+    let session!: HistoryModeSession;
+    const restoreWorkspace = vi.fn(() => {
+      phases.push(session.state.phase);
+    });
+    const restoreFocus = vi.fn(() => {
+      phases.push(session.state.phase);
+    });
+    ({ session } = setup({ restoreWorkspace, restoreFocus }));
     await session.enter('notepad-pane-1');
 
     await session.exit();
 
     expect(restoreWorkspace).toHaveBeenCalledWith(workspace);
+    expect(restoreFocus).toHaveBeenCalledWith(workspace);
+    expect(phases).toEqual(['exiting', 'restoring']);
     expect(session.state).toEqual({ phase: 'inactive', entryError: null });
+  });
+
+  it('retries unavailable history without recapturing or replacing the original focus', async () => {
+    const captureWorkspace = vi.fn(() => workspace);
+    const flushWorkspace = vi.fn().mockResolvedValue(undefined);
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce(firstPage)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(firstPage);
+    const { session } = setup({ captureWorkspace, flushWorkspace, loadPage });
+    await session.enter('notepad-pane-1');
+    await session.refresh();
+    expect(session.state.phase).toBe('historyUnavailable');
+    await session.retry();
+
+    expect(captureWorkspace).toHaveBeenCalledTimes(1);
+    expect(flushWorkspace).toHaveBeenCalledTimes(1);
+    expect(session.state).toMatchObject({ phase: 'open', workspace });
+  });
+
+  it('transitions the target explicitly after normal external synchronization', async () => {
+    const renamedTarget = {
+      ...target,
+      noteTitle: 'Renamed note',
+      notePath: '/vault/Renamed note.md'
+    };
+    const readTarget = vi
+      .fn()
+      .mockReturnValueOnce(target)
+      .mockReturnValueOnce(target)
+      .mockReturnValueOnce(renamedTarget);
+    const loadPage = vi.fn().mockResolvedValue(firstPage);
+    const { session } = setup({ readTarget, loadPage });
+    await session.enter('notepad-pane-1');
+
+    await session.synchronizeAfterLifecycleChange();
+
+    expect(session.state).toMatchObject({
+      phase: 'open',
+      target: renamedTarget
+    });
+    expect(loadPage).toHaveBeenCalledTimes(2);
   });
 
   it('refreshes record headers while keeping the selected revision body pinned', async () => {

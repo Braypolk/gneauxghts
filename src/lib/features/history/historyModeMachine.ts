@@ -68,6 +68,7 @@ export type HistoryModeState =
   | {
       phase: 'entering';
       requestId: number;
+      origin: 'entry' | 'retry';
       target: HistoryModeTarget;
       workspace: HistoryWorkspaceSnapshot;
     }
@@ -94,7 +95,8 @@ export type HistoryModeState =
       workspace: HistoryWorkspaceSnapshot;
       error: string;
     }
-  | { phase: 'exiting'; workspace: HistoryWorkspaceSnapshot };
+  | { phase: 'exiting'; workspace: HistoryWorkspaceSnapshot }
+  | { phase: 'restoring'; workspace: HistoryWorkspaceSnapshot };
 
 export type HistoryModeEvent =
   | {
@@ -103,7 +105,10 @@ export type HistoryModeEvent =
       target: HistoryModeTarget;
       workspace: HistoryWorkspaceSnapshot;
     }
+  | { type: 'entryRejected'; error: string }
+  | { type: 'retryStarted'; requestId: number; target: HistoryModeTarget }
   | { type: 'entryFailed'; requestId: number; error: string }
+  | { type: 'retryFailed'; requestId: number; error: string }
   | {
       type: 'entryLoaded';
       requestId: number;
@@ -125,9 +130,12 @@ export type HistoryModeEvent =
   | { type: 'selectionFailed'; requestId: number; error: string }
   | { type: 'historyUnavailable'; error: string }
   | { type: 'noteUnavailable'; error: string }
+  | { type: 'lifecycleChanged'; target: HistoryModeTarget }
   | { type: 'dismissEntryError' }
   | { type: 'exitStarted' }
-  | { type: 'exitCompleted' };
+  | { type: 'workspaceRestored' }
+  | { type: 'exitRestoreFailed'; error: string }
+  | { type: 'exitCompleted'; error?: string };
 
 export function createInactiveHistoryModeState(): HistoryModeState {
   return { phase: 'inactive', entryError: null };
@@ -172,14 +180,47 @@ export function transitionHistoryMode(
       return {
         phase: 'entering',
         requestId: event.requestId,
+        origin: 'entry',
         target: event.target,
         workspace: event.workspace
+      };
+    case 'entryRejected':
+      return state.phase === 'inactive'
+        ? { phase: 'inactive', entryError: event.error }
+        : state;
+    case 'retryStarted':
+      if (
+        state.phase !== 'historyUnavailable' &&
+        state.phase !== 'noteUnavailable'
+      ) {
+        return state;
+      }
+      return {
+        phase: 'entering',
+        requestId: event.requestId,
+        origin: 'retry',
+        target: event.target,
+        workspace: state.workspace
       };
     case 'entryFailed':
       if (state.phase !== 'entering' || state.requestId !== event.requestId) {
         return state;
       }
       return { phase: 'inactive', entryError: event.error };
+    case 'retryFailed':
+      if (
+        state.phase !== 'entering' ||
+        state.origin !== 'retry' ||
+        state.requestId !== event.requestId
+      ) {
+        return state;
+      }
+      return {
+        phase: 'historyUnavailable',
+        target: state.target,
+        workspace: state.workspace,
+        error: event.error
+      };
     case 'entryLoaded': {
       if (state.phase !== 'entering' || state.requestId !== event.requestId) {
         return state;
@@ -266,16 +307,39 @@ export function transitionHistoryMode(
       return unavailableState(state, 'historyUnavailable', event.error);
     case 'noteUnavailable':
       return unavailableState(state, 'noteUnavailable', event.error);
+    case 'lifecycleChanged':
+      if (
+        state.phase !== 'open' &&
+        state.phase !== 'historyUnavailable' &&
+        state.phase !== 'noteUnavailable'
+      ) {
+        return state;
+      }
+      return { ...state, target: event.target };
     case 'dismissEntryError':
       return state.phase === 'inactive'
         ? createInactiveHistoryModeState()
         : state;
     case 'exitStarted':
-      if (state.phase === 'inactive' || state.phase === 'exiting') return state;
+      if (
+        state.phase === 'inactive' ||
+        state.phase === 'exiting' ||
+        state.phase === 'restoring'
+      ) {
+        return state;
+      }
       return { phase: 'exiting', workspace: state.workspace };
-    case 'exitCompleted':
+    case 'workspaceRestored':
       return state.phase === 'exiting'
-        ? createInactiveHistoryModeState()
+        ? { phase: 'restoring', workspace: state.workspace }
+        : state;
+    case 'exitRestoreFailed':
+      return state.phase === 'exiting'
+        ? { phase: 'inactive', entryError: event.error }
+        : state;
+    case 'exitCompleted':
+      return state.phase === 'restoring'
+        ? { phase: 'inactive', entryError: event.error ?? null }
         : state;
   }
 }

@@ -8,7 +8,7 @@
   } from './historyModeMachine';
 
   interface Props {
-    state: Exclude<HistoryModeState, { phase: 'inactive' }>;
+    state: Exclude<HistoryModeState, { phase: 'inactive' | 'restoring' }>;
     onExit: () => void | Promise<void>;
     onSelectRevision: (revisionId: string) => void | Promise<void>;
     onLoadMore: () => void | Promise<void>;
@@ -18,7 +18,7 @@
   let { state, onExit, onSelectRevision, onLoadMore, onRetry }: Props = $props();
 
   const sourceLabels: Record<HistoryMutationSource, string> = {
-    editor: 'Editor save',
+    editor: 'Editor revision',
     taskAction: 'Task action',
     acceptedChatProposal: 'Accepted chat proposal',
     externalEdit: 'External edit',

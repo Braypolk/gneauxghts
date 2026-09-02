@@ -179,8 +179,33 @@ describe('historyModeMachine', () => {
 
     const exiting = transitionHistoryMode(entering, { type: 'exitStarted' });
     expect(exiting).toEqual({ phase: 'exiting', workspace });
+    const restoring = transitionHistoryMode(exiting, { type: 'workspaceRestored' });
+    expect(restoring).toEqual({ phase: 'restoring', workspace });
     expect(
-      transitionHistoryMode(exiting, { type: 'exitCompleted' })
+      transitionHistoryMode(restoring, { type: 'exitCompleted' })
     ).toEqual(createInactiveHistoryModeState());
+  });
+
+  it('retries unavailable history without replacing the captured workspace', () => {
+    const unavailable = {
+      phase: 'historyUnavailable' as const,
+      target,
+      workspace,
+      error: 'temporarily unavailable'
+    };
+
+    expect(
+      transitionHistoryMode(unavailable, {
+        type: 'retryStarted',
+        requestId: 9,
+        target: { ...target, noteTitle: 'Renamed note' }
+      })
+    ).toEqual({
+      phase: 'entering',
+      requestId: 9,
+      origin: 'retry',
+      target: { ...target, noteTitle: 'Renamed note' },
+      workspace
+    });
   });
 });

@@ -13,6 +13,7 @@ export interface HistoryModeSessionDeps {
   captureWorkspace: (paneId: string) => HistoryWorkspaceSnapshot;
   readTarget: (paneId: string) => HistoryModeTarget | null;
   restoreWorkspace: (snapshot: HistoryWorkspaceSnapshot) => void | Promise<void>;
+  restoreFocus: (snapshot: HistoryWorkspaceSnapshot) => void | Promise<void>;
   loadPage: (
     noteId: string,
     cursor: string | null
@@ -38,7 +39,7 @@ export class HistoryModeSession {
   }
 
   get isActive(): boolean {
-    return this.state.phase !== 'inactive';
+    return this.state.phase !== 'inactive' && this.state.phase !== 'restoring';
   }
 
   #dispatch(event: Parameters<typeof transitionHistoryMode>[1]) {
@@ -50,10 +51,10 @@ export class HistoryModeSession {
     const workspace = this.#deps.captureWorkspace(paneId);
     const initialTarget = this.#deps.readTarget(paneId);
     if (!initialTarget) {
-      this.state = {
-        phase: 'inactive',
-        entryError: 'History Mode is available after this note has been saved.'
-      };
+      this.#dispatch({
+        type: 'entryRejected',
+        error: 'History Mode is available after this note has been saved.'
+      });
       return;
     }
     const requestId = this.#nextRequestId++;
@@ -73,6 +74,7 @@ export class HistoryModeSession {
         error: `History Mode could not open because the latest changes were not saved: ${errorMessage(error)}`
       });
       await this.#deps.restoreWorkspace(workspace);
+      await this.#deps.restoreFocus(workspace);
       return;
     }
 
@@ -84,9 +86,19 @@ export class HistoryModeSession {
         error: 'History Mode could not identify the saved note.'
       });
       await this.#deps.restoreWorkspace(workspace);
+      await this.#deps.restoreFocus(workspace);
       return;
     }
 
+    await this.#loadEntry(requestId, target, 'entry', workspace);
+  };
+
+  #loadEntry = async (
+    requestId: number,
+    target: HistoryModeTarget,
+    origin: 'entry' | 'retry',
+    workspace: HistoryWorkspaceSnapshot
+  ): Promise<void> => {
     try {
       const page = await this.#deps.loadPage(target.noteId, null);
       const newestRevision = page.records.find(
@@ -104,11 +116,14 @@ export class HistoryModeSession {
       }
     } catch (error) {
       this.#dispatch({
-        type: 'entryFailed',
+        type: origin === 'entry' ? 'entryFailed' : 'retryFailed',
         requestId,
         error: `History Mode is unavailable: ${errorMessage(error)}`
       });
-      await this.#deps.restoreWorkspace(workspace);
+      if (origin === 'entry' && workspace) {
+        await this.#deps.restoreWorkspace(workspace);
+        await this.#deps.restoreFocus(workspace);
+      }
     }
   };
 
@@ -200,21 +215,73 @@ export class HistoryModeSession {
       this.state.phase === 'historyUnavailable' ||
       this.state.phase === 'noteUnavailable'
     ) {
-      const paneId = this.state.workspace.activePaneId;
-      this.state = createInactiveHistoryModeState();
-      await this.enter(paneId);
+      const target = this.#deps.readTarget(this.state.workspace.activePaneId);
+      if (!target || target.noteId !== this.state.target.noteId) {
+        this.#dispatch({
+          type: 'noteUnavailable',
+          error: 'This note is no longer available in the workspace.'
+        });
+        return;
+      }
+      const requestId = this.#nextRequestId++;
+      const workspace = this.state.workspace;
+      this.#dispatch({ type: 'retryStarted', requestId, target });
+      await this.#loadEntry(requestId, target, 'retry', workspace);
       return;
     }
     await this.refresh();
   };
 
+  synchronizeAfterLifecycleChange = async (): Promise<void> => {
+    if (
+      this.state.phase !== 'open' &&
+      this.state.phase !== 'historyUnavailable' &&
+      this.state.phase !== 'noteUnavailable'
+    ) {
+      return;
+    }
+    const target = this.#deps.readTarget(this.state.workspace.activePaneId);
+    if (!target || target.noteId !== this.state.target.noteId) {
+      this.#dispatch({
+        type: 'noteUnavailable',
+        error: 'This note changed lifecycle state while History Mode was open.'
+      });
+      return;
+    }
+    this.#dispatch({ type: 'lifecycleChanged', target });
+    if (this.state.phase === 'open') await this.refresh();
+  };
+
   exit = async (): Promise<void> => {
-    if (this.state.phase === 'inactive' || this.state.phase === 'exiting') return;
+    if (
+      this.state.phase === 'inactive' ||
+      this.state.phase === 'exiting' ||
+      this.state.phase === 'restoring'
+    ) {
+      return;
+    }
     const workspace = this.state.workspace;
     this.#refreshPending = false;
     this.#dispatch({ type: 'exitStarted' });
-    this.#dispatch({ type: 'exitCompleted' });
-    await this.#deps.restoreWorkspace(workspace);
+    try {
+      await this.#deps.restoreWorkspace(workspace);
+    } catch (error) {
+      this.#dispatch({
+        type: 'exitRestoreFailed',
+        error: `History Mode closed, but the workspace could not be restored: ${errorMessage(error)}`
+      });
+      return;
+    }
+    this.#dispatch({ type: 'workspaceRestored' });
+    try {
+      await this.#deps.restoreFocus(workspace);
+      this.#dispatch({ type: 'exitCompleted' });
+    } catch (error) {
+      this.#dispatch({
+        type: 'exitCompleted',
+        error: `The workspace was restored, but focus could not be restored: ${errorMessage(error)}`
+      });
+    }
   };
 
   dismissEntryError = () => {

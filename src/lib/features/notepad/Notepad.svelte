@@ -709,6 +709,10 @@
       const paneId = snapshot.activePaneId as PaneId;
       workspaceStore.setActivePaneId(paneId);
       await tick();
+    },
+    restoreFocus: async (snapshot) => {
+      const paneId = snapshot.activePaneId as PaneId;
+      await tick();
       if (snapshot.focusElement?.isConnected) {
         snapshot.focusElement.focus();
         return;
@@ -1204,21 +1208,19 @@
   }
 
   function handleHistoryAwareWindowFocus() {
+    handleWindowFocus();
     if (historyMode.isActive) {
       void historyMode.refresh();
-      return;
     }
-    handleWindowFocus();
   }
 
   function handleHistoryAwareVisibilityChange() {
+    handleVisibilityChange();
     if (historyMode.isActive) {
       if (document.visibilityState === "visible") {
         void historyMode.refresh();
       }
-      return;
     }
-    handleVisibilityChange();
   }
 
   // ---------------------------------------------------------------------------
@@ -1334,11 +1336,12 @@
     focusNavigationPane: () =>
       commands.focusPaneAfterShortcut(getNavigationPaneId()),
     onVaultNoteChanged: (payload) => {
-      if (historyMode.isActive) {
-        void historyMode.refresh();
-        return;
-      }
-      void handleVaultNoteChanged(payload);
+      void (async () => {
+        await handleVaultNoteChanged(payload);
+        if (historyMode.isActive) {
+          await historyMode.synchronizeAfterLifecycleChange();
+        }
+      })();
     },
     dispose: () => {
       documents.saveCursorPositionForDocument();
@@ -1592,7 +1595,7 @@
   {/if}
   </div>
 
-  {#if historyMode.state.phase !== "inactive"}
+  {#if historyMode.state.phase !== "inactive" && historyMode.state.phase !== "restoring"}
     <HistoryMode
       state={historyMode.state}
       onExit={historyMode.exit}
@@ -1600,7 +1603,7 @@
       onLoadMore={historyMode.loadMore}
       onRetry={historyMode.retry}
     />
-  {:else if historyMode.state.entryError}
+  {:else if historyMode.state.phase === "inactive" && historyMode.state.entryError}
     <div
       class="absolute inset-x-4 top-4 z-50 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-destructive/30 bg-card px-4 py-3 text-sm shadow-lg"
       role="alert"
