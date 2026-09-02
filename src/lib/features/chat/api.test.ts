@@ -24,25 +24,6 @@ describe('TauriChatApi', () => {
     expect(settings.reasoningEffort).toBe('medium');
   });
 
-  it('normalizes legacy Ollama settings to the local provider', async () => {
-    invokeMock.mockResolvedValue({
-      provider: 'ollama',
-      model: 'qwen3:8b',
-      openaiModel: 'gpt-5.6-terra',
-      defaultAccess: 'approved',
-      atlasVisibility: 'hidden'
-    });
-    const { TauriChatApi } = await import('./api');
-
-    const settings = await new TauriChatApi().getSettings();
-
-    expect(settings).toMatchObject({
-      provider: 'local',
-      localModel: 'qwen3:8b',
-      localBaseUrl: 'http://localhost:1234/v1'
-    });
-  });
-
   it('persists web access without a legacy mode setting', async () => {
     const settings = {
       provider: 'openai' as const,

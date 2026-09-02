@@ -1,12 +1,17 @@
-<!-- OPENWIKI:START -->
+## Agent skills
 
-## OpenWiki
+### Issue tracker
 
-This repository has a generated `openwiki/` evidence index. It is optional just-in-time context, not required startup reading.
+Issues are tracked as local Markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
 
-- Treat source code and tests as authoritative. A brief's unknowns and review items are verification gaps, not automatic requirements.
-- Prefer the narrowest quiet validation that proves the changed behavior. Preserve complete failure output.
+### Triage labels
 
-The scheduled OpenWiki GitHub Actions workflow refreshes the repository wiki. Do not hand-edit generated OpenWiki pages unless explicitly asked; prefer updating source code/docs and letting OpenWiki regenerate.
+Use the five default canonical triage labels. See `docs/agents/triage-labels.md`.
 
-<!-- OPENWIKI:END -->
+### Domain docs
+
+This repository uses a single-context domain-doc layout. See `docs/agents/domain.md`.
+
+### Architecture docs
+
+Before changing state ownership, cross-module write paths, persistence consistency, state-machine coordination, or the agent runtime seam, read `ARCHITECTURE.md` and follow its links to the applicable behavior invariants and ADRs.

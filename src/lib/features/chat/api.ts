@@ -40,7 +40,7 @@ import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 
 interface RawChatSettings {
-  provider: ChatProvider | 'ollama';
+  provider: ChatProvider;
   model: string;
   defaultAccess: VaultAccess;
   openaiModel?: string;
@@ -54,7 +54,7 @@ interface RawChatSettings {
 interface RawSummary {
   id: string; title: string; access: VaultAccess; status: string;
   createdAtMillis: number; updatedAtMillis: number; messageCount: number; detached: boolean;
-  provider?: ChatProvider | 'ollama'; model?: string; reasoningEffort?: ChatReasoningEffort;
+  provider?: ChatProvider; model?: string; reasoningEffort?: ChatReasoningEffort;
 }
 interface RawSource {
   kind: string; noteId?: string | null; notePath?: string | null; title: string; excerpt: string;
@@ -87,13 +87,12 @@ interface RawProjectionConflictEvent {
 }
 
 function normalizeSettings(raw: RawChatSettings): ChatSettings {
-  const provider = raw.provider === 'ollama' ? 'local' : raw.provider;
   return {
-    provider,
+    provider: raw.provider,
     model: raw.model,
     openaiModel:
-      raw.openaiModel ?? (provider === 'openai' ? raw.model : ''),
-    localModel: raw.localModel ?? (provider === 'local' ? raw.model : ''),
+      raw.openaiModel ?? (raw.provider === 'openai' ? raw.model : ''),
+    localModel: raw.localModel ?? (raw.provider === 'local' ? raw.model : ''),
     localBaseUrl: raw.localBaseUrl ?? 'http://localhost:1234/v1',
     reasoningEffort: raw.reasoningEffort ?? 'medium',
     serviceTier: raw.serviceTier ?? 'standard',
@@ -113,7 +112,7 @@ function normalizeSummary(raw: RawSummary): ChatConversationSummary {
     updatedAtMillis: raw.updatedAtMillis,
     messageCount: raw.messageCount,
     lastMessagePreview: null,
-    provider: raw.provider === 'ollama' ? 'local' : (raw.provider ?? 'openai'),
+    provider: raw.provider ?? 'openai',
     model: raw.model ?? '',
     reasoningEffort: raw.reasoningEffort ?? 'medium'
   };

@@ -107,8 +107,10 @@ a conversation.
 
 ## Development
 
-The chat runtime boundary, event protocol, provider strategy, and ACP decision
-are documented in [docs/architecture/chat-agent-runtime.md](docs/architecture/chat-agent-runtime.md).
+The ownership map, canonical write paths, and runtime seams are documented in
+[ARCHITECTURE.md](ARCHITECTURE.md). The app-owned agent runtime decision is
+recorded in
+[ADR 0001](docs/adr/0001-keep-agent-runtime-app-owned.md).
 
 ### Prerequisites
 

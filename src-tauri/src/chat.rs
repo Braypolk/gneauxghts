@@ -818,19 +818,9 @@ impl ChatService {
             [],
         ).is_ok();
         let _ = connection.execute(
-            "ALTER TABLE chat_settings ADD COLUMN ollama_model TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE chat_settings ADD COLUMN local_model TEXT NOT NULL DEFAULT ''",
             [],
         );
-        let _ = connection.execute(
-            "ALTER TABLE chat_settings ADD COLUMN ollama_base_url TEXT NOT NULL DEFAULT 'http://localhost:11434'",
-            [],
-        );
-        let local_model_added = connection
-            .execute(
-                "ALTER TABLE chat_settings ADD COLUMN local_model TEXT NOT NULL DEFAULT ''",
-                [],
-            )
-            .is_ok();
         let _ = connection.execute(
             "ALTER TABLE chat_settings ADD COLUMN local_base_url TEXT NOT NULL DEFAULT 'http://localhost:1234/v1'",
             [],
@@ -907,14 +897,6 @@ impl ChatService {
                 )
                 .map_err(|error| error.to_string())?;
         }
-        if local_model_added {
-            connection
-                .execute(
-                    "UPDATE chat_settings SET local_model = ollama_model WHERE id = 1",
-                    [],
-                )
-                .map_err(|error| error.to_string())?;
-        }
         if conversation_provider_added {
             connection
                 .execute(
@@ -937,9 +919,6 @@ impl ChatService {
             .execute_batch(
                 "UPDATE chat_settings SET default_access = 'approved' WHERE default_access = 'limited';
                  UPDATE chat_conversations SET access = 'approved' WHERE access = 'limited';
-                 UPDATE chat_settings SET provider = 'local' WHERE provider = 'ollama';
-                 UPDATE chat_conversations SET provider = 'local' WHERE provider = 'ollama';
-                 UPDATE chat_messages SET provider = 'local' WHERE provider = 'ollama';
                  INSERT OR IGNORE INTO chat_note_policies
                    (note_id, disposition, title, updated_at_millis)
                  SELECT note_id, 'approved', title, granted_at_millis FROM chat_limited_grants;",
@@ -5741,7 +5720,6 @@ mod tests {
     fn model_title_refinement_is_hosted_only() {
         assert!(supports_background_title_refinement("openai"));
         assert!(!supports_background_title_refinement("local"));
-        assert!(!supports_background_title_refinement("ollama"));
     }
 
     #[test]

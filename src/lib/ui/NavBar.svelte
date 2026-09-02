@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { page } from '$app/state';
-  import { House, ListTodo, Network, Settings } from '@lucide/svelte';
+  import { Gauge, House, LayoutPanelTop, ListTodo, Network, PanelsTopLeft, Settings } from '@lucide/svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
   import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts.svelte';
@@ -14,6 +14,9 @@
     { href: '/map', label: 'Map', icon: Network },
     { href: '/', label: 'Gneauxght', icon: House },
     { href: '/list', label: 'List', icon: ListTodo },
+    { href: '/work-1', label: 'Work 1', icon: LayoutPanelTop },
+    { href: '/work-2', label: 'Work 2', icon: PanelsTopLeft },
+    { href: '/work-3', label: 'Work 3', icon: Gauge },
   ] as const;
   const settingsHref = '/settings';
 
@@ -74,7 +77,7 @@
     getCurrentPathname: () => currentPathname,
     normalizePathname,
     flushPendingWork: awaitPendingNoteSave,
-    navigate: (href) => goto(resolve(href as '/' | '/map' | '/list' | '/settings' | '/atlas')),
+    navigate: (href) => goto(resolve(href as '/' | '/map' | '/list' | '/work-1' | '/work-2' | '/work-3' | '/settings' | '/atlas')),
     onForceRemount: bumpAppShellViewGeneration,
     onFlushError: (error) => {
       console.error('Failed to flush pending note save before navigation:', error);
