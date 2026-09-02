@@ -18,10 +18,11 @@ pub(crate) use persistence::{
     db_set_note_pinned, db_touch_note_activity, derive_file_stem,
     derive_file_stem_from_title_and_markdown, effective_open_count, is_forgotten_note_path,
     is_valid_note_path, persist_note, prune_recent_note_ids, prune_recent_note_ids_with_lookup,
-    read_state, read_state_with_lookup, resolve_note_id_from_path, resolve_note_path_by_id,
-    touch_recent_note_id, validate_current_path, write_last_opened_and_recents, write_state,
-    write_state_with_lookup, ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver,
-    PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
+    read_state, read_state_with_lookup, read_unpruned_state, resolve_note_id_from_path,
+    resolve_note_path_by_id, touch_recent_note_id, validate_current_path,
+    write_last_opened_and_recents, write_state, write_state_with_lookup, write_unpruned_state,
+    ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver, PersistedForgottenNote,
+    PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 
 #[cfg(test)]
@@ -233,6 +234,7 @@ mod tests {
                 ],
                 forgotten_notes: vec![
                     PersistedForgottenNote {
+                        note_id: None,
                         forgotten_path: stale_forgotten_note.to_string_lossy().into_owned(),
                         original_path: live_note.to_string_lossy().into_owned(),
                         title: "Missing forgotten".to_string(),
@@ -243,6 +245,7 @@ mod tests {
                         conversation_id: None,
                     },
                     PersistedForgottenNote {
+                        note_id: None,
                         forgotten_path: live_forgotten_note.to_string_lossy().into_owned(),
                         original_path: live_note.to_string_lossy().into_owned(),
                         title: "Live forgotten".to_string(),
@@ -253,6 +256,7 @@ mod tests {
                         conversation_id: None,
                     },
                     PersistedForgottenNote {
+                        note_id: None,
                         forgotten_path: live_forgotten_note.to_string_lossy().into_owned(),
                         original_path: live_note.to_string_lossy().into_owned(),
                         title: "Duplicate forgotten".to_string(),

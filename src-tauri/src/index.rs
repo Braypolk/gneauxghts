@@ -323,7 +323,7 @@ impl AppState {
     ///    performs a synchronous full refresh so the caller has data to
     ///    work with.
     /// 3. Otherwise leaves the index alone. A separate background
-    ///    reconciliation pass (see [`AppState::reconcile_full_vault_scan`])
+    ///    reconciliation pass (see [`AppState::reconcile_full_vault_scan_observing`])
     ///    catches any events the watcher missed without ever blocking a
     ///    keystroke or focus.
     ///
@@ -436,6 +436,13 @@ impl AppState {
     }
 
     fn run_full_refresh(&self, notes_dir: &Path) -> Result<bool, String> {
+        self.run_full_refresh_observing(notes_dir, |_, _| Ok(()))
+    }
+
+    fn run_full_refresh_observing<F>(&self, notes_dir: &Path, observer: F) -> Result<bool, String>
+    where
+        F: FnOnce(&[PathBuf], &HashSet<PathBuf>) -> Result<(), String>,
+    {
         let (existing_signatures, existing_paths, managed_chat_paths) = {
             let index = self
                 .notes_index
@@ -460,6 +467,9 @@ impl AppState {
             mut updates,
             seen_paths,
         } = collect_refresh_updates(notes_dir, &existing_signatures)?;
+        // The reconciliation owner may emit typed per-note observations from
+        // this exact scan before any index/projection decisions are applied.
+        observer(&existing_paths, &seen_paths)?;
         // Managed chat writes update the catalog directly. If the bytes on
         // disk later diverge, the chat conflict pipeline owns that state; a
         // generic reconciliation pass must not index the external edit.
@@ -512,16 +522,26 @@ impl AppState {
     /// any updates the watcher may have missed. Designed to be invoked
     /// from a long-running background thread; the foreground hot path
     /// never calls this directly.
-    pub(crate) fn reconcile_full_vault_scan(&self, notes_dir: &Path) -> Result<bool, String> {
-        self.run_full_refresh(notes_dir)
+    pub(crate) fn reconcile_full_vault_scan_observing<F>(
+        &self,
+        notes_dir: &Path,
+        observer: F,
+    ) -> Result<bool, String>
+    where
+        F: FnOnce(&[PathBuf], &HashSet<PathBuf>) -> Result<(), String>,
+    {
+        self.run_full_refresh_observing(notes_dir, observer)
     }
 
-    pub(crate) fn indexed_note_paths(&self) -> Result<Vec<PathBuf>, String> {
+    pub(crate) fn indexed_note_identity(&self, path: &Path) -> Result<Option<String>, String> {
         let index = self
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        Ok(index.entries.keys().cloned().collect())
+        Ok(index
+            .entries
+            .get(path)
+            .and_then(|note| note.managed_note_id.clone()))
     }
 
     /// Lightweight cold-start prewarm. Populates the in-memory
@@ -552,7 +572,7 @@ impl AppState {
     ///    behind hundreds of projection transactions.
     ///
     /// The 60-second background reconciler still calls the heavier
-    /// [`AppState::reconcile_full_vault_scan`], which catches genuine
+    /// [`AppState::reconcile_full_vault_scan_observing`], which catches genuine
     /// drift after the foreground has settled.
     pub(crate) fn prewarm_notes_index(&self, notes_dir: &Path) -> Result<bool, String> {
         let existing_signatures = {
@@ -660,6 +680,7 @@ pub(crate) struct IndexedTask {
 pub(crate) struct IndexedNote {
     signature: FileSignature,
     pub(crate) note_id: String,
+    managed_note_id: Option<String>,
     pub(crate) modified_millis: u64,
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
@@ -1066,12 +1087,19 @@ fn build_indexed_note_with_signature(
 
     let (title, body) = note::extract_file_name_title_and_body(markdown, &fallback_file_name);
     let file_name = fallback_file_name;
-    let note_id =
-        note::note_id_from_path_or_markdown(path, markdown).unwrap_or_else(|| file_name.clone());
+    let managed_note_id = parsed
+        .frontmatter
+        .managed
+        .as_ref()
+        .map(|metadata| metadata.id.trim())
+        .filter(|note_id| !note_id.is_empty())
+        .map(str::to_string);
+    let note_id = managed_note_id.clone().unwrap_or_else(|| file_name.clone());
 
     IndexedNote {
         signature,
         note_id,
+        managed_note_id,
         modified_millis,
         created_at_millis,
         updated_at_millis,
@@ -1126,12 +1154,19 @@ fn build_current_override_with_signature(
     } else {
         title
     };
-    let note_id =
-        note::note_id_from_path_or_markdown(path, markdown).unwrap_or_else(|| file_name.clone());
+    let managed_note_id = parsed
+        .frontmatter
+        .managed
+        .as_ref()
+        .map(|metadata| metadata.id.trim())
+        .filter(|note_id| !note_id.is_empty())
+        .map(str::to_string);
+    let note_id = managed_note_id.clone().unwrap_or_else(|| file_name.clone());
 
     IndexedNote {
         signature,
         note_id,
+        managed_note_id,
         modified_millis,
         created_at_millis,
         updated_at_millis,
@@ -1758,7 +1793,7 @@ gneauxghts:
         // Background reconciliation, on the other hand, *does* discover
         // the new file.
         state
-            .reconcile_full_vault_scan(temp.path())
+            .reconcile_full_vault_scan_observing(temp.path(), |_, _| Ok(()))
             .expect("reconcile");
         assert_eq!(state.notes_index.lock().unwrap().entries.len(), 2);
     }

@@ -118,6 +118,8 @@ impl ForgottenItemKind {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedForgottenNote {
+    #[serde(default)]
+    pub(crate) note_id: Option<String>,
     pub(crate) forgotten_path: String,
     pub(crate) original_path: String,
     pub(crate) title: String,
@@ -170,6 +172,10 @@ pub(crate) fn read_state_with_lookup(
 
 pub(crate) fn write_state(notes_dir: &Path, state: &PersistedState) -> Result<(), String> {
     write_state_with_lookup(notes_dir, state, &NoteIdLookup::Disk)
+}
+
+pub(crate) fn write_unpruned_state(state: &PersistedState) -> Result<(), String> {
+    write_state_to_database(state)
 }
 
 pub(crate) fn write_state_with_lookup(
@@ -715,6 +721,7 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
             );
             CREATE TABLE IF NOT EXISTS app_state_forgotten_notes (
                 forgotten_path TEXT PRIMARY KEY,
+                note_id TEXT,
                 original_path TEXT NOT NULL,
                 title TEXT NOT NULL,
                 forgotten_at_millis INTEGER NOT NULL,
@@ -738,6 +745,14 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
 }
 
 fn migrate_forgotten_item_columns(connection: &Connection) -> Result<(), String> {
+    if !has_column(connection, "app_state_forgotten_notes", "note_id")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state_forgotten_notes ADD COLUMN note_id TEXT",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
     if !has_column(connection, "app_state_forgotten_notes", "kind")? {
         connection
             .execute(
@@ -831,7 +846,7 @@ fn has_column(
     Ok(false)
 }
 
-fn read_unpruned_state(_notes_dir: &Path) -> Result<PersistedState, String> {
+pub(crate) fn read_unpruned_state(_notes_dir: &Path) -> Result<PersistedState, String> {
     if let Some(state) = read_unpruned_state_from_database()? {
         return Ok(state);
     }
@@ -935,7 +950,7 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
     let mut forgotten_notes = Vec::new();
     let mut statement = connection
         .prepare(
-            "SELECT forgotten_path, original_path, title, forgotten_at_millis,
+            "SELECT forgotten_path, note_id, original_path, title, forgotten_at_millis,
                     purge_after_days, purge_at_millis, kind, conversation_id
              FROM app_state_forgotten_notes",
         )
@@ -944,13 +959,14 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
         .query_map([], |row| {
             Ok(PersistedForgottenNote {
                 forgotten_path: row.get(0)?,
-                original_path: row.get(1)?,
-                title: row.get(2)?,
-                forgotten_at_millis: read_u64_column(row, 3)?,
-                purge_after_days: read_u32_column(row, 4)?,
-                purge_at_millis: read_u64_column(row, 5)?,
-                kind: ForgottenItemKind::parse(&row.get::<_, String>(6)?),
-                conversation_id: row.get(7)?,
+                note_id: row.get(1)?,
+                original_path: row.get(2)?,
+                title: row.get(3)?,
+                forgotten_at_millis: read_u64_column(row, 4)?,
+                purge_after_days: read_u32_column(row, 5)?,
+                purge_at_millis: read_u64_column(row, 6)?,
+                kind: ForgottenItemKind::parse(&row.get::<_, String>(7)?),
+                conversation_id: row.get(8)?,
             })
         })
         .map_err(|err| err.to_string())?;
@@ -1088,6 +1104,7 @@ fn write_state_to_connection(
             .execute(
                 "INSERT INTO app_state_forgotten_notes (
                     forgotten_path,
+                    note_id,
                     original_path,
                     title,
                     forgotten_at_millis,
@@ -1095,9 +1112,10 @@ fn write_state_to_connection(
                     purge_at_millis,
                     kind,
                     conversation_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     forgotten_note.forgotten_path.as_str(),
+                    forgotten_note.note_id.as_deref(),
                     forgotten_note.original_path.as_str(),
                     forgotten_note.title.as_str(),
                     to_i64(forgotten_note.forgotten_at_millis)?,

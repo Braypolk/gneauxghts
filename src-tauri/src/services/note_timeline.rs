@@ -13,9 +13,17 @@ use crate::{
 };
 use serde::Serialize;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
+    fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
+
+// Temporary in-process recovery memory for the expand–migrate phase. It lives
+// behind NoteTimeline, is keyed by stable Note Identity, and can therefore be
+// replaced by the durable timeline store without changing watcher callers.
+static OBSERVED_MISSING_IDENTITIES: Mutex<Option<HashMap<NoteIdentity, PathBuf>>> =
+    Mutex::new(None);
 
 macro_rules! identity_type {
     ($name:ident) => {
@@ -567,30 +575,10 @@ impl VaultObservation {
         )
     }
 
-    pub(crate) fn reattached(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
-        Self::lifecycle(
-            VaultObservationSource::Watcher,
-            LifecycleEventKind::Reattached,
-            path.into(),
-            None,
-            observed_at_millis,
-        )
-    }
-
     pub(crate) fn reconciled_missing(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
         Self::lifecycle(
             VaultObservationSource::Reconciliation,
             LifecycleEventKind::Missing,
-            path.into(),
-            None,
-            observed_at_millis,
-        )
-    }
-
-    pub(crate) fn reconciled_reattached(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
-        Self::lifecycle(
-            VaultObservationSource::Reconciliation,
-            LifecycleEventKind::Reattached,
             path.into(),
             None,
             observed_at_millis,
@@ -872,12 +860,41 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn observe(&self, observation: VaultObservation) -> ObservationReceipt {
         let VaultObservation {
             source,
-            kind,
+            mut kind,
             path,
-            previous_path,
+            mut previous_path,
             observed_at_millis,
             modified_at_millis,
         } = observation;
+        match kind {
+            VaultObservationKind::Lifecycle(LifecycleEventKind::Missing) => {
+                if let Ok(Some(note_id)) = self.state.indexed_note_identity(&path) {
+                    if let Ok(mut missing) = OBSERVED_MISSING_IDENTITIES.lock() {
+                        missing
+                            .get_or_insert_with(HashMap::new)
+                            .insert(NoteIdentity::new(note_id), path.clone());
+                    }
+                }
+            }
+            VaultObservationKind::CanonicalState => {
+                if let Some(note_id) = identity_from_canonical_path(&path) {
+                    let missing_path =
+                        OBSERVED_MISSING_IDENTITIES
+                            .lock()
+                            .ok()
+                            .and_then(|mut missing| {
+                                missing
+                                    .as_mut()
+                                    .and_then(|missing| missing.remove(&note_id))
+                            });
+                    if let Some(missing_path) = missing_path {
+                        kind = VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached);
+                        previous_path = Some(missing_path);
+                    }
+                }
+            }
+            _ => {}
+        }
         ObservationReceipt {
             source,
             kind,
@@ -925,6 +942,16 @@ impl<'a> NoteTimeline<'a> {
             grant,
         }
     }
+}
+
+fn identity_from_canonical_path(path: &Path) -> Option<NoteIdentity> {
+    let markdown = fs::read_to_string(path).ok()?;
+    crate::note::parse_note(&markdown)
+        .frontmatter
+        .managed
+        .map(|metadata| metadata.id)
+        .filter(|note_id| !note_id.trim().is_empty())
+        .map(NoteIdentity::new)
 }
 
 #[cfg(test)]
@@ -983,7 +1010,6 @@ mod tests {
             VaultObservation::renamed("/vault/Old.md", "/vault/New.md", 43),
             VaultObservation::moved("/vault/New.md", "/vault/Folder/New.md", 44),
             VaultObservation::missing("/vault/Folder/New.md", 45),
-            VaultObservation::reattached("/vault/Folder/New.md", 46),
         ];
         assert_eq!(
             lifecycle.map(|observation| observation.kind()),
@@ -991,7 +1017,6 @@ mod tests {
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Renamed),
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Moved),
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Missing),
-                VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached),
             ]
         );
     }
@@ -1093,6 +1118,61 @@ mod tests {
             Some(Path::new("/vault/Observed.md"))
         );
         assert_eq!(renamed.path(), Path::new("/vault/Renamed.md"));
+    }
+
+    #[test]
+    fn reattachment_requires_note_identity_and_can_follow_a_new_path() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-reattach-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-reattach-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let original_path = notes.path().join("Original.md");
+        let reattached_path = notes.path().join("Reattached.md");
+        let original_markdown =
+            "---\ngneauxghts:\n  id: timeline-reattach-note-1\n  kind: note\n---\n\n# Original";
+        fs::write(&original_path, original_markdown).expect("write original note");
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let timeline = NoteTimeline::new(&state);
+        timeline.mutate(NoteMutation::editor(
+            original_path.clone(),
+            None,
+            original_markdown.to_string(),
+        ));
+
+        fs::remove_file(&original_path).expect("remove original note");
+        let missing = timeline.observe(VaultObservation::missing(original_path.clone(), 40));
+        assert_eq!(
+            missing.kind(),
+            VaultObservationKind::Lifecycle(LifecycleEventKind::Missing)
+        );
+
+        let unrelated_markdown =
+            "---\ngneauxghts:\n  id: timeline-reattach-note-2\n  kind: note\n---\n\n# Unrelated";
+        fs::write(&original_path, unrelated_markdown).expect("reuse original path");
+        let unrelated = timeline.observe(VaultObservation::external_edit(
+            original_path.clone(),
+            41,
+            Some(40),
+        ));
+        assert_eq!(unrelated.kind(), VaultObservationKind::CanonicalState);
+
+        fs::write(&reattached_path, original_markdown).expect("reattach original identity");
+        let reattached = timeline.observe(VaultObservation::external_edit(
+            reattached_path.clone(),
+            42,
+            Some(41),
+        ));
+        assert_eq!(
+            reattached.kind(),
+            VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached)
+        );
+        assert_eq!(reattached.previous_path(), Some(original_path.as_path()));
+        assert_eq!(reattached.path(), reattached_path);
     }
 
     #[test]

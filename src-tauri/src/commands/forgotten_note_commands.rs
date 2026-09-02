@@ -9,8 +9,8 @@ use crate::{
     path_utils::unique_path_in_dir,
     services::note_timeline::{NoteIdentity, NoteLifecycleOperation, NoteTimeline},
     state::{
-        forgotten_notes_root, read_state, validate_current_path, write_state, ForgottenItemKind,
-        PersistedForgottenNote,
+        forgotten_notes_root, read_state, read_unpruned_state, validate_current_path, write_state,
+        write_unpruned_state, ForgottenItemKind, PersistedForgottenNote,
     },
 };
 use std::{
@@ -45,12 +45,8 @@ pub(crate) fn forget_note(
         let purge_at_millis = forgotten_at_millis
             .saturating_add(u64::from(retention_days).saturating_mul(FORGOTTEN_DAY_MILLIS));
         let note_markdown = fs::read_to_string(note_path).map_err(|err| err.to_string())?;
-        let forgotten_markdown = note::prepare_note_markdown(
-            &note_markdown,
-            Some(&note_markdown),
-            Some(Some(forgotten_at_rfc3339)),
-        )?
-        .0;
+        let (forgotten_markdown, note_id) =
+            prepare_forgotten_note_markdown(&note_markdown, forgotten_at_rfc3339)?;
 
         if note_path.exists() {
             let expected_move = crate::vault_watcher::record_expected_move(
@@ -64,19 +60,12 @@ pub(crate) fn forget_note(
         }
 
         let raw_path = note_path.to_string_lossy().into_owned();
-        let note_id = previous_note
-            .as_ref()
-            .map(|note| note.note_id.clone())
-            .or_else(|| note::note_id_from_path_or_markdown(Some(note_path), &note_markdown))
-            .unwrap_or_default();
-        if !note_id.is_empty() {
-            NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(
-                NoteIdentity::new(note_id.clone()),
-                note_path.clone(),
-                forgotten_path.clone(),
-                forgotten_at_millis,
-            ));
-        }
+        NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(
+            NoteIdentity::new(note_id.clone()),
+            note_path.clone(),
+            forgotten_path.clone(),
+            forgotten_at_millis,
+        ));
         if persisted_state.last_opened_note_id.as_deref() == Some(note_id.as_str()) {
             persisted_state.last_opened_note_id = None;
         }
@@ -86,6 +75,7 @@ pub(crate) fn forget_note(
         persisted_state
             .forgotten_notes
             .push(PersistedForgottenNote {
+                note_id: Some(note_id.clone()),
                 forgotten_path: forgotten_path.to_string_lossy().into_owned(),
                 original_path: raw_path.clone(),
                 title: previous_note
@@ -153,6 +143,7 @@ pub(super) fn register_forgotten_chat_folder(
     persisted_state
         .forgotten_notes
         .push(PersistedForgottenNote {
+            note_id: None,
             forgotten_path: forgotten_path.to_string_lossy().into_owned(),
             original_path: original_path.to_string_lossy().into_owned(),
             title: title.to_string(),
@@ -327,7 +318,7 @@ pub(crate) fn delete_forgotten_notes(
         return Ok(());
     }
 
-    let mut persisted_state = read_state(&notes_dir)?;
+    let mut persisted_state = read_unpruned_state(&notes_dir)?;
     let mut index = 0usize;
 
     while index < persisted_state.forgotten_notes.len() {
@@ -352,7 +343,7 @@ pub(crate) fn delete_forgotten_notes(
                 current_time_millis()?,
             ));
         }
-        write_state(&notes_dir, &persisted_state)?;
+        write_unpruned_state(&persisted_state)?;
     }
 
     Ok(())
@@ -363,6 +354,18 @@ fn validate_retention_days(retention_days: u32) -> Result<(), String> {
         1 | 7 | 30 => Ok(()),
         _ => Err("Unsupported forgotten note retention window".to_string()),
     }
+}
+
+fn prepare_forgotten_note_markdown(
+    note_markdown: &str,
+    forgotten_at_rfc3339: String,
+) -> Result<(String, String), String> {
+    let (forgotten_markdown, metadata) = note::prepare_note_markdown(
+        note_markdown,
+        Some(note_markdown),
+        Some(Some(forgotten_at_rfc3339)),
+    )?;
+    Ok((forgotten_markdown, metadata.id))
 }
 
 pub(super) fn build_forgotten_note_summary(
@@ -435,7 +438,7 @@ pub(super) fn cleanup_expired_forgotten_notes(
     state: &AppState,
 ) -> Result<(), String> {
     let now = current_time_millis()?;
-    let mut persisted_state = read_state(notes_dir)?;
+    let mut persisted_state = read_unpruned_state(notes_dir)?;
     let original_len = persisted_state.forgotten_notes.len();
     let mut kept_notes = Vec::with_capacity(original_len);
 
@@ -466,7 +469,7 @@ pub(super) fn cleanup_expired_forgotten_notes(
 
     if kept_notes.len() != original_len {
         persisted_state.forgotten_notes = kept_notes;
-        write_state(notes_dir, &persisted_state)?;
+        write_unpruned_state(&persisted_state)?;
     }
 
     Ok(())
@@ -478,6 +481,13 @@ fn forgotten_note_identity(
 ) -> Option<NoteIdentity> {
     if forgotten_note.kind != ForgottenItemKind::Note {
         return None;
+    }
+    if let Some(note_id) = forgotten_note
+        .note_id
+        .as_deref()
+        .filter(|note_id| !note_id.trim().is_empty())
+    {
+        return Some(NoteIdentity::new(note_id));
     }
     let markdown = fs::read_to_string(forgotten_path).ok()?;
     note::note_id_from_path_or_markdown(Some(forgotten_path), &markdown).map(NoteIdentity::new)
@@ -603,5 +613,43 @@ mod tests {
             .is_empty());
 
         set_notes_root_override(None).expect("clear notes root override");
+    }
+
+    #[test]
+    fn persisted_identity_survives_an_unreadable_forgotten_note() {
+        let forgotten_note = PersistedForgottenNote {
+            forgotten_path: "/vault/.forgotten/Missing.md".to_string(),
+            original_path: "/vault/Missing.md".to_string(),
+            title: "Missing".to_string(),
+            forgotten_at_millis: 10,
+            purge_after_days: 7,
+            purge_at_millis: 20,
+            kind: ForgottenItemKind::Note,
+            conversation_id: None,
+            note_id: Some("forgotten-note-1".to_string()),
+        };
+
+        assert_eq!(
+            forgotten_note_identity(&forgotten_note, Path::new(&forgotten_note.forgotten_path)),
+            Some(NoteIdentity::new("forgotten-note-1"))
+        );
+    }
+
+    #[test]
+    fn forgetting_an_unmanaged_note_uses_the_generated_managed_identity() {
+        let (forgotten_markdown, note_id) = prepare_forgotten_note_markdown(
+            "# Existing note\n\nBody",
+            "2026-09-01T12:00:00.000Z".to_string(),
+        )
+        .expect("prepare forgotten note");
+
+        assert!(!note_id.is_empty());
+        assert_eq!(
+            note::parse_note(&forgotten_markdown)
+                .frontmatter
+                .managed
+                .map(|metadata| metadata.id),
+            Some(note_id)
+        );
     }
 }

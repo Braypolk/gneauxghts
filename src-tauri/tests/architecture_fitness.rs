@@ -116,6 +116,7 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
 fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
     let watcher = repository_file("src-tauri/src/vault_watcher.rs");
     let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
+    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
 
     assert_contains_all(
         &watcher,
@@ -124,11 +125,27 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
             "NoteTimeline::new(&state).observe(VaultObservation::moved(",
             "VaultObservation::external_edit(",
             "NoteTimeline::new(&state).observe(VaultObservation::missing(",
-            "classify_present_observation(",
-            "VaultObservation::reattached(",
             "fn observe_reconciliation_state(",
             "VaultObservation::reconciled_state(",
             "reconciliation_observations(",
+            "reconcile_full_vault_scan_observing(",
+        ],
+    );
+    assert_contains_none(
+        &watcher,
+        &[
+            "OBSERVED_MISSING_NOTES",
+            "classify_present_observation(",
+            "VaultObservation::reattached(",
+            "collect_markdown_files_recursively(",
+        ],
+    );
+    assert_contains_all(
+        &timeline,
+        &[
+            "OBSERVED_MISSING_IDENTITIES",
+            "indexed_note_identity(&path)",
+            "LifecycleEventKind::Reattached",
         ],
     );
     assert_contains_all(
@@ -137,6 +154,9 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(",
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::recovered(",
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::purged(",
+            "prepare_forgotten_note_markdown(&note_markdown, forgotten_at_rfc3339)",
+            "note_id: Some(note_id.clone())",
+            "forgotten_note\n        .note_id",
         ],
     );
     assert_contains_none(&forgotten, &["prepare_notes_dir(true)"]);
