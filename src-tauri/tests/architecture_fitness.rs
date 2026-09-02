@@ -107,6 +107,7 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
         &[
             "projection_conflict_conversion(",
             "persist_note_session_with_outcome(",
+            "settle_committed_projection_conversion(",
             "restore_projection_after_conflict(",
         ],
     );
@@ -187,7 +188,13 @@ fn note_timeline_contracts_the_legacy_post_commit_boundary() {
             "synchronize_published_upsert",
             "synchronize_published_remove",
             "CatalogWriteMode::Save",
+            "ProjectionTiming::Deferred",
+            "from_plan(",
         ],
+    );
+    assert_contains_all(
+        &post_publication,
+        &["DeferredCatalogProjection::lexical(mutation)"],
     );
     assert_contains_none(
         &architecture,

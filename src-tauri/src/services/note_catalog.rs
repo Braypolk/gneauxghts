@@ -4,7 +4,6 @@
 //! in-memory catalog plus the lexical and task projections after callers have
 //! already decided that a document should be reflected in the catalog.
 
-use super::BackgroundIndexQueue;
 use crate::{
     index::{IndexedNote, NotesIndex},
     lexical::LexicalIndex,
@@ -27,7 +26,6 @@ pub(crate) enum CatalogWriteMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProjectionTiming {
     Synchronous,
-    Deferred,
     Excluded,
 }
 
@@ -106,14 +104,12 @@ impl DeferredCatalogProjection {
         }
     }
 
-    fn from_plan(mutation: CatalogMutation, plan: ProjectionPlan) -> Option<Self> {
-        let lexical = plan.lexical == ProjectionTiming::Deferred;
-        let tasks = plan.tasks == ProjectionTiming::Deferred;
-        (lexical || tasks).then_some(Self {
+    pub(crate) fn lexical(mutation: CatalogMutation) -> Self {
+        Self {
             mutation,
-            lexical,
-            tasks,
-        })
+            lexical: true,
+            tasks: false,
+        }
     }
 
     pub(crate) fn path(&self) -> &Path {
@@ -124,19 +120,13 @@ impl DeferredCatalogProjection {
 pub(crate) struct NoteCatalog<'a> {
     notes_index: &'a Mutex<NotesIndex>,
     lexical: &'a Arc<LexicalIndex>,
-    background_queue: &'a BackgroundIndexQueue,
 }
 
 impl<'a> NoteCatalog<'a> {
-    pub(crate) fn new(
-        notes_index: &'a Mutex<NotesIndex>,
-        lexical: &'a Arc<LexicalIndex>,
-        background_queue: &'a BackgroundIndexQueue,
-    ) -> Self {
+    pub(crate) fn new(notes_index: &'a Mutex<NotesIndex>, lexical: &'a Arc<LexicalIndex>) -> Self {
         Self {
             notes_index,
             lexical,
-            background_queue,
         }
     }
 
@@ -152,14 +142,6 @@ impl<'a> NoteCatalog<'a> {
             self.lexical.upsert_note(&path, &note)?;
         }
 
-        let deferred = DeferredCatalogProjection::from_plan(
-            CatalogMutation::Upsert {
-                path: path.clone(),
-                note: note.clone(),
-            },
-            plan,
-        );
-
         self.notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?
@@ -167,9 +149,6 @@ impl<'a> NoteCatalog<'a> {
 
         if plan.tasks == ProjectionTiming::Synchronous {
             let _ = apply_task_projection(&CatalogMutation::Upsert { path, note });
-        }
-        if let Some(deferred) = deferred {
-            self.background_queue.enqueue(deferred);
         }
         Ok(())
     }
@@ -191,9 +170,6 @@ impl<'a> NoteCatalog<'a> {
         };
         if plan.tasks == ProjectionTiming::Synchronous {
             let _ = apply_task_projection(&mutation);
-        }
-        if let Some(deferred) = DeferredCatalogProjection::from_plan(mutation, plan) {
-            self.background_queue.enqueue(deferred);
         }
         Ok(())
     }

@@ -249,12 +249,7 @@ impl AppState {
         path: PathBuf,
         note: IndexedNote,
     ) -> Result<(), String> {
-        crate::services::NoteCatalog::new(
-            &self.notes_index,
-            &self.lexical,
-            &self.background_index_queue,
-        )
-        .upsert(
+        crate::services::NoteCatalog::new(&self.notes_index, &self.lexical).upsert(
             path.clone(),
             note,
             crate::services::note_catalog::CatalogWriteMode::Synchronous,
@@ -271,12 +266,7 @@ impl AppState {
         path: PathBuf,
         note: IndexedNote,
     ) -> Result<(), String> {
-        crate::services::NoteCatalog::new(
-            &self.notes_index,
-            &self.lexical,
-            &self.background_index_queue,
-        )
-        .upsert(
+        crate::services::NoteCatalog::new(&self.notes_index, &self.lexical).upsert(
             path.clone(),
             note,
             crate::services::note_catalog::CatalogWriteMode::ManagedProjection,
@@ -285,12 +275,7 @@ impl AppState {
     }
 
     pub(crate) fn remove_note_indexes(&self, path: &Path) -> Result<(), String> {
-        crate::services::NoteCatalog::new(
-            &self.notes_index,
-            &self.lexical,
-            &self.background_index_queue,
-        )
-        .remove(
+        crate::services::NoteCatalog::new(&self.notes_index, &self.lexical).remove(
             path,
             crate::services::note_catalog::CatalogWriteMode::Synchronous,
         )?;

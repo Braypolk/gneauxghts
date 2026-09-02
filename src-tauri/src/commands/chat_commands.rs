@@ -1219,6 +1219,21 @@ pub(crate) fn chat_find_conversation_by_projection_path(
     service.projection_owner_for_path(&absolute_path)
 }
 
+fn settle_committed_projection_conversion(
+    converted_path: String,
+    follow_up: Result<PathBuf, String>,
+) -> (String, Option<PathBuf>) {
+    match follow_up {
+        Ok(projection) => (converted_path, Some(projection)),
+        Err(error) => {
+            eprintln!(
+                "converted note committed at {converted_path}, but chat projection recovery is incomplete: {error}"
+            );
+            (converted_path, None)
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) fn chat_resolve_projection_conflict(
     service: State<'_, ChatService>,
@@ -1226,7 +1241,7 @@ pub(crate) fn chat_resolve_projection_conflict(
     conversation_id: String,
     action: String,
 ) -> Result<Option<String>, String> {
-    let converted = match action.as_str() {
+    let (converted, projection) = match action.as_str() {
         "convert" => {
             let conversion = service.projection_conflict_conversion(&conversation_id)?;
             let outcome = persist_note_session_with_outcome(
@@ -1239,29 +1254,48 @@ pub(crate) fn chat_resolve_projection_conflict(
                 .session
                 .and_then(|session| session.path)
                 .ok_or_else(|| "Converted note was not published".to_string())?;
-            service.restore_projection_after_conflict(&conversation_id)?;
-            Some(path)
+            let follow_up = service
+                .restore_projection_after_conflict(&conversation_id)
+                .and_then(|()| {
+                    service
+                        .recall_document(&conversation_id)
+                        .map(|document| document.path)
+                });
+            let (path, projection) = settle_committed_projection_conversion(path, follow_up);
+            (Some(path), projection)
         }
         "restore" => {
             service.restore_projection_after_conflict(&conversation_id)?;
-            None
+            (None, Some(service.recall_document(&conversation_id)?.path))
         }
         _ => return Err("Projection conflict action must be convert or restore".to_string()),
     };
-    let projection = service.recall_document(&conversation_id)?.path;
-    state.events.vault_document_changed(
-        &projection,
-        false,
-        DocumentKind::ChatIndex,
-        "chatProjectionConflictResolved",
-        Some(conversation_id),
-    );
+    if let Some(projection) = projection {
+        state.events.vault_document_changed(
+            &projection,
+            false,
+            DocumentKind::ChatIndex,
+            "chatProjectionConflictResolved",
+            Some(conversation_id),
+        );
+    }
     Ok(converted)
 }
 
 #[cfg(test)]
 mod attachment_capability_tests {
     use super::*;
+
+    #[test]
+    fn committed_conversion_survives_projection_follow_up_failure() {
+        let (path, projection) = settle_committed_projection_conversion(
+            "/vault/Converted.md".to_string(),
+            Err::<PathBuf, _>("projection unavailable".to_string()),
+        );
+
+        assert_eq!(path, "/vault/Converted.md");
+        assert!(projection.is_none());
+    }
 
     fn context_candidate(
         note_id: &str,

@@ -154,11 +154,7 @@ impl PublicationSink for AppStatePublicationSink<'_> {
         let task_projection_error = apply_task_projection(&mutation).err();
         self.state
             .background_index_queue
-            .enqueue(DeferredCatalogProjection {
-                mutation,
-                lexical: true,
-                tasks: false,
-            });
+            .enqueue(DeferredCatalogProjection::lexical(mutation));
         PublicationCatalogOutcome {
             catalog_error,
             task_projection_error,
@@ -179,11 +175,7 @@ impl PublicationSink for AppStatePublicationSink<'_> {
         let task_projection_error = apply_task_projection(&mutation).err();
         self.state
             .background_index_queue
-            .enqueue(DeferredCatalogProjection {
-                mutation,
-                lexical: true,
-                tasks: false,
-            });
+            .enqueue(DeferredCatalogProjection::lexical(mutation));
         PublicationCatalogOutcome {
             catalog_error,
             task_projection_error,
