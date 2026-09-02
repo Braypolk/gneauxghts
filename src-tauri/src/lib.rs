@@ -225,6 +225,7 @@ pub fn run() {
             commands::wikilink_commands::resolve_note_link,
             commands::wikilink_commands::autocomplete_note_links,
             commands::save_note,
+            commands::save_task_note,
             commands::mark_note_opened,
             commands::clear_last_opened_note,
             commands::forgotten_note_commands::forget_note,

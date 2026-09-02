@@ -7,9 +7,9 @@ use crate::{
 };
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum NoteSaveSource {
+#[derive(Clone, Copy, Debug)]
+enum NoteSaveSource {
+    Editor,
     TaskAction,
 }
 
@@ -49,22 +49,36 @@ fn build_saved_note_session(
     }
 }
 
-#[cfg(test)]
 pub(crate) fn persist_note_session_with_outcome(
     state: &AppState,
     title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<PersistNoteOutcome, String> {
-    persist_note_session_with_source(state, title, markdown, current_path, None)
+    persist_note_session_with_source(state, title, markdown, current_path, NoteSaveSource::Editor)
 }
 
-pub(crate) fn persist_note_session_with_source(
+pub(crate) fn persist_task_note_session_with_outcome(
     state: &AppState,
     title: String,
     markdown: String,
     current_path: Option<String>,
-    save_source: Option<NoteSaveSource>,
+) -> Result<PersistNoteOutcome, String> {
+    persist_note_session_with_source(
+        state,
+        title,
+        markdown,
+        current_path,
+        NoteSaveSource::TaskAction,
+    )
+}
+
+fn persist_note_session_with_source(
+    state: &AppState,
+    title: String,
+    markdown: String,
+    current_path: Option<String>,
+    save_source: NoteSaveSource,
 ) -> Result<PersistNoteOutcome, String> {
     // Save is a hot path; the throttled forgotten-note cleanup runs from
     // explicit forgotten-note commands and at startup instead.
@@ -78,10 +92,12 @@ pub(crate) fn persist_note_session_with_source(
             NoteMutation::note_creation(path, None, markdown.clone())
         } else {
             match save_source {
-                Some(NoteSaveSource::TaskAction) => {
+                NoteSaveSource::TaskAction => {
                     NoteMutation::task_action(path, current_path.clone(), markdown.clone())
                 }
-                None => NoteMutation::editor(path, current_path.clone(), markdown.clone()),
+                NoteSaveSource::Editor => {
+                    NoteMutation::editor(path, current_path.clone(), markdown.clone())
+                }
             }
         };
         NoteTimeline::new(state).mutate(mutation)

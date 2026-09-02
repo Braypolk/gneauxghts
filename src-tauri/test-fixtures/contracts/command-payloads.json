@@ -14,6 +14,19 @@
         "path": "/vault/Title.md"
       }
     },
+    "save_task_note": {
+      "args": {
+        "title": "Title",
+        "markdown": "Body",
+        "currentPath": "/vault/Title.md"
+      },
+      "result": {
+        "noteId": "note-1",
+        "title": "Title",
+        "markdown": "Body",
+        "path": "/vault/Title.md"
+      }
+    },
     "clear_last_opened_note": {
       "args": null,
       "result": null

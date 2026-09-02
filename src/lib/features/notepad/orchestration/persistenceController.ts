@@ -1,7 +1,6 @@
 import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
 import {
   type SessionSnapshot,
-  type NoteSaveSource,
 } from "$lib/features/notepad/session/session";
 import {
   dispatchDocumentOperation,
@@ -22,7 +21,11 @@ export interface PersistenceControllerParams {
     title: string,
     markdown: string,
     currentPath: string | null,
-    saveSource?: NoteSaveSource,
+  ) => Promise<SessionSnapshot>;
+  saveTaskNoteSession?: (
+    title: string,
+    markdown: string,
+    currentPath: string | null,
   ) => Promise<SessionSnapshot>;
   markNoteOpened?: (noteId: string) => Promise<void>;
   isActiveNote?: (note: NoteDraftState) => boolean;
@@ -43,6 +46,11 @@ export interface PersistenceControllerParams {
 export function createNotepadPersistenceController(
   params: PersistenceControllerParams,
 ) {
+  const taskActionAttributions = new WeakMap<
+    NoteDraftState,
+    { revision: number; markdown: string }
+  >();
+
   function hasCleanBuffer(note: NoteDraftState = params.getDocumentSession()) {
     return documentHasCleanBuffer(note);
   }
@@ -79,10 +87,7 @@ export function createNotepadPersistenceController(
     });
   }
 
-  async function persistNote(
-    note: NoteDraftState,
-    saveSource?: NoteSaveSource,
-  ) {
+  async function persistNote(note: NoteDraftState) {
     if (
       documentHasUnresolvedConflict(note) ||
       params.shouldSuppressPersistence?.(note)
@@ -93,6 +98,19 @@ export function createNotepadPersistenceController(
     const markdown = getDocumentMarkdown(note);
     const currentNoteId = getDocumentNoteId(note);
     const currentNotePath = getDocumentPath(note);
+    const taskAttribution = taskActionAttributions.get(note);
+    const isAttributedTaskAction = Boolean(
+      taskAttribution &&
+        taskAttribution.revision === note.operation.revision &&
+        taskAttribution.markdown === markdown,
+    );
+    if (
+      taskAttribution &&
+      note.operation.revision >= taskAttribution.revision &&
+      !isAttributedTaskAction
+    ) {
+      taskActionAttributions.delete(note);
+    }
 
     if (documentHasCleanBuffer(note)) {
       return;
@@ -104,14 +122,19 @@ export function createNotepadPersistenceController(
     });
     const operationToken = note.operation.token;
     const operationRevision = note.operation.revision;
-    const savedSession = saveSource
-      ? await params.saveNoteSession(
-          title,
-          markdown,
-          currentNotePath,
-          saveSource,
-        )
-      : await params.saveNoteSession(title, markdown, currentNotePath);
+    const save = isAttributedTaskAction
+      ? params.saveTaskNoteSession
+      : params.saveNoteSession;
+    if (!save) {
+      throw new Error("Task note persistence is not configured");
+    }
+    const savedSession = await save(title, markdown, currentNotePath);
+    if (
+      isAttributedTaskAction &&
+      taskActionAttributions.get(note) === taskAttribution
+    ) {
+      taskActionAttributions.delete(note);
+    }
     if (!isDocumentOperationCurrent(note, operationToken)) {
       return;
     }
@@ -182,9 +205,8 @@ export function createNotepadPersistenceController(
 
   async function enqueueSave(
     note: NoteDraftState = params.getDocumentSession(),
-    saveSource?: NoteSaveSource,
   ) {
-    return queueNoteOperation(note, () => persistNote(note, saveSource));
+    return queueNoteOperation(note, () => persistNote(note));
   }
 
   function flushPendingAutosave(
@@ -208,7 +230,24 @@ export function createNotepadPersistenceController(
     await Promise.all(queues);
   }
 
+  function attributeTaskActionSave(
+    note: NoteDraftState,
+    expectedMarkdown: string,
+  ) {
+    const attribution = {
+      revision: note.operation.revision + 1,
+      markdown: expectedMarkdown,
+    };
+    taskActionAttributions.set(note, attribution);
+    return () => {
+      if (taskActionAttributions.get(note) === attribution) {
+        taskActionAttributions.delete(note);
+      }
+    };
+  }
+
   return {
+    attributeTaskActionSave,
     cancelPendingAutosave,
     enqueueSave,
     flushPendingAutosave,

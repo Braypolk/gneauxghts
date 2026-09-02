@@ -75,6 +75,8 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
             "NoteTimeline::new(state).mutate(",
             "NoteMutation::editor(",
             "NoteMutation::note_creation(",
+            "pub(crate) fn persist_task_note_session_with_outcome(",
+            "NoteMutation::task_action(",
             "commit_warning",
         ],
     );
@@ -120,9 +122,13 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
         &[
             "NoteTimeline::new(&state).observe(VaultObservation::renamed(",
             "NoteTimeline::new(&state).observe(VaultObservation::moved(",
-            "NoteTimeline::new(&state).observe(VaultObservation::external_edit(",
+            "VaultObservation::external_edit(",
             "NoteTimeline::new(&state).observe(VaultObservation::missing(",
-            "NoteTimeline::new(&state).observe(VaultObservation::reconciliation_scan(",
+            "classify_present_observation(",
+            "VaultObservation::reattached(",
+            "fn observe_reconciliation_state(",
+            "VaultObservation::reconciled_state(",
+            "reconciliation_observations(",
         ],
     );
     assert_contains_all(
@@ -133,6 +139,7 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::purged(",
         ],
     );
+    assert_contains_none(&forgotten, &["prepare_notes_dir(true)"]);
 }
 
 #[test]
@@ -166,8 +173,24 @@ fn dirty_document_task_prepare_contract_is_registered_and_fixture_backed() {
 
     let registration = repository_file("src-tauri/src/lib.rs");
     let frontend = repository_file("src/lib/features/tasks/openDocumentTaskMutation.ts");
+    let sessions = repository_file("src/lib/features/notepad/session/session.ts");
+    let persistence =
+        repository_file("src/lib/features/notepad/orchestration/persistenceController.ts");
     assert!(registration.contains("commands::task_commands::prepare_task_document_mutation"));
+    assert!(registration.contains("commands::save_task_note"));
     assert!(frontend.contains("'prepare_task_document_mutation'"));
+    assert!(frontend.contains("attributeTaskActionSave"));
+    assert!(sessions.contains("invoke<NoteSession>(\"save_task_note\""));
+    assert_contains_all(
+        &persistence,
+        &[
+            "taskActionAttributions",
+            "taskAttribution.revision === note.operation.revision",
+            "taskAttribution.markdown === markdown",
+            "params.saveTaskNoteSession",
+        ],
+    );
+    assert_contains_none(&sessions, &["saveSource"]);
 }
 
 #[test]

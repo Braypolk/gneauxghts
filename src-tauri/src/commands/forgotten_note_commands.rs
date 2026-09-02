@@ -29,7 +29,7 @@ pub(crate) fn forget_note(
     current_path: Option<String>,
     retention_days: u32,
 ) -> Result<Option<ForgottenNoteSummary>, String> {
-    let notes_dir = super::prepare_notes_dir(true)?;
+    let notes_dir = super::prepare_notes_dir_with_state(true, Some(&state))?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let mut persisted_state = read_state(&notes_dir)?;
@@ -198,7 +198,7 @@ pub(crate) fn restore_forgotten_notes(
     chat_service: State<'_, ChatService>,
     forgotten_paths: Vec<String>,
 ) -> Result<Vec<RestoredForgottenNote>, String> {
-    let notes_dir = super::prepare_notes_dir(true)?;
+    let notes_dir = super::prepare_notes_dir_with_state(true, Some(&state))?;
 
     let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)?;
     if selected_paths.is_empty() {
@@ -320,7 +320,7 @@ pub(crate) fn delete_forgotten_notes(
     chat_service: State<'_, ChatService>,
     forgotten_paths: Vec<String>,
 ) -> Result<(), String> {
-    let notes_dir = super::prepare_notes_dir(true)?;
+    let notes_dir = super::prepare_notes_dir_with_state(true, Some(&state))?;
 
     let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)?;
     if selected_paths.is_empty() {
@@ -432,7 +432,7 @@ fn resolve_restore_target_path(notes_dir: &Path, original_path: &Path) -> PathBu
 
 pub(super) fn cleanup_expired_forgotten_notes(
     notes_dir: &Path,
-    state: Option<&AppState>,
+    state: &AppState,
 ) -> Result<(), String> {
     let now = current_time_millis()?;
     let mut persisted_state = read_state(notes_dir)?;
@@ -452,7 +452,7 @@ pub(super) fn cleanup_expired_forgotten_notes(
             if forgotten_path.exists() {
                 remove_forgotten_item_path(&forgotten_path, &forgotten_note.kind)?;
             }
-            if let (Some(state), Some(note_id)) = (state, forgotten_note_id) {
+            if let Some(note_id) = forgotten_note_id {
                 NoteTimeline::new(state).lifecycle(NoteLifecycleOperation::purged(
                     note_id,
                     forgotten_path,
@@ -585,7 +585,15 @@ mod tests {
         persisted_state.forgotten_notes[0].purge_at_millis = 0;
         write_state(root.path(), &persisted_state).expect("expire forgotten chat");
 
-        cleanup_expired_forgotten_notes(root.path(), None).expect("clean up expired chat");
+        let app_data = TestDir::new("expired-forgotten-chat-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf())
+            .expect("initialize app data");
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
+        cleanup_expired_forgotten_notes(root.path(), &state).expect("clean up expired chat");
 
         assert!(!forgotten_path.exists());
         assert!(service.get_conversation(&conversation.summary.id).is_err());

@@ -1,6 +1,7 @@
 use crate::{
     chat::ChatService,
     index::AppState,
+    path_utils::collect_markdown_files_recursively,
     semantic::db::content_hash,
     services::note_timeline::{NoteTimeline, VaultObservation},
     state::{is_forgotten_note_path, notes_root},
@@ -19,7 +20,7 @@ use std::{
         Condvar, Mutex,
     },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
 
@@ -66,6 +67,7 @@ enum ExpectedFilesystemOutcome {
 }
 
 static RECENT_SELF_SAVES: Mutex<Option<HashMap<PathBuf, ExpectedSelfSave>>> = Mutex::new(None);
+static OBSERVED_MISSING_NOTES: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
 static NEXT_EXPECTED_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A pending app-owned filesystem mutation.
@@ -497,6 +499,7 @@ fn flush_dirty_batch(
         };
 
         let (new_path, markdown, modified_millis) = &resolved.present[present_index];
+        let _ = take_observed_missing(new_path);
         let observed_at_millis = current_time_millis()?;
         if removed_path.parent() == new_path.parent() {
             NoteTimeline::new(&state).observe(VaultObservation::renamed(
@@ -533,7 +536,7 @@ fn flush_dirty_batch(
         if present_consumed[index] {
             continue;
         }
-        NoteTimeline::new(&state).observe(VaultObservation::external_edit(
+        NoteTimeline::new(&state).observe(classify_present_observation(
             path.clone(),
             current_time_millis()?,
             Some(*modified_millis),
@@ -554,6 +557,7 @@ fn flush_dirty_batch(
         if removed_consumed[index] {
             continue;
         }
+        record_observed_missing(path);
         NoteTimeline::new(&state).observe(VaultObservation::missing(
             path.clone(),
             current_time_millis()?,
@@ -593,6 +597,108 @@ fn stored_content_hash(state: &AppState, path: &Path) -> Option<String> {
     state.semantic.stored_content_hash(path)
 }
 
+fn record_observed_missing(path: &Path) {
+    if let Ok(mut paths) = OBSERVED_MISSING_NOTES.lock() {
+        paths
+            .get_or_insert_with(HashSet::new)
+            .insert(path.to_path_buf());
+    }
+}
+
+fn take_observed_missing(path: &Path) -> bool {
+    OBSERVED_MISSING_NOTES
+        .lock()
+        .ok()
+        .and_then(|mut paths| paths.as_mut().map(|paths| paths.remove(path)))
+        .unwrap_or(false)
+}
+
+fn classify_present_observation(
+    path: PathBuf,
+    observed_at_millis: u64,
+    modified_at_millis: Option<u64>,
+) -> VaultObservation {
+    if take_observed_missing(&path) {
+        VaultObservation::reattached(path, observed_at_millis)
+    } else {
+        VaultObservation::external_edit(path, observed_at_millis, modified_at_millis)
+    }
+}
+
+fn reconciliation_observations(
+    known_paths: Vec<PathBuf>,
+    present_paths: Vec<(PathBuf, Option<u64>)>,
+    observed_at_millis: u64,
+) -> Vec<VaultObservation> {
+    let present_set = present_paths
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<HashSet<_>>();
+    let mut observations = present_paths
+        .into_iter()
+        .map(|(path, modified_at_millis)| {
+            if take_observed_missing(&path) {
+                VaultObservation::reconciled_reattached(path, observed_at_millis)
+            } else {
+                VaultObservation::reconciled_state(path, observed_at_millis, modified_at_millis)
+            }
+        })
+        .collect::<Vec<_>>();
+    for path in known_paths {
+        if present_set.contains(&path) {
+            continue;
+        }
+        record_observed_missing(&path);
+        observations.push(VaultObservation::reconciled_missing(
+            path,
+            observed_at_millis,
+        ));
+    }
+    observations
+}
+
+fn is_managed_chat_projection(app_handle: &AppHandle, path: &Path) -> bool {
+    app_handle
+        .try_state::<ChatService>()
+        .and_then(|chat| chat.projection_owner_for_path(path).ok().flatten())
+        .is_some()
+}
+
+fn observe_reconciliation_state(
+    app_handle: &AppHandle,
+    state: &tauri::State<'_, AppState>,
+    notes_dir: &Path,
+) -> Result<(), String> {
+    let observed_at_millis = current_time_millis()?;
+    let timeline = NoteTimeline::new(state);
+    timeline.observe(VaultObservation::reconciliation_scan(
+        notes_dir.to_path_buf(),
+        observed_at_millis,
+    ));
+
+    let known_paths = state
+        .indexed_note_paths()?
+        .into_iter()
+        .filter(|path| !is_managed_chat_projection(app_handle, path))
+        .collect::<Vec<_>>();
+    let present_paths = collect_markdown_files_recursively(notes_dir)?
+        .into_iter()
+        .filter(|path| !is_managed_chat_projection(app_handle, path))
+        .map(|path| {
+            let modified_at_millis = fs::metadata(&path)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .and_then(|duration| u64::try_from(duration.as_millis()).ok());
+            (path, modified_at_millis)
+        })
+        .collect::<Vec<_>>();
+    for observation in reconciliation_observations(known_paths, present_paths, observed_at_millis) {
+        timeline.observe(observation);
+    }
+    Ok(())
+}
+
 /// Periodic full-vault rescan that runs entirely off the request path.
 /// Catches up on file-system events the OS watcher dropped (e.g. on
 /// network shares, large bursts) without ever blocking a search or focus
@@ -612,11 +718,8 @@ fn spawn_background_reconcile_loop(app_handle: AppHandle, queue: std::sync::Arc<
         if !notes_dir.exists() {
             continue;
         }
-        if let Ok(observed_at_millis) = current_time_millis() {
-            NoteTimeline::new(&state).observe(VaultObservation::reconciliation_scan(
-                notes_dir.clone(),
-                observed_at_millis,
-            ));
+        if let Err(error) = observe_reconciliation_state(&app_handle, &state, &notes_dir) {
+            eprintln!("vault timeline reconciliation observation error: {error}");
         }
         if let Err(error) = state.reconcile_full_vault_scan(&notes_dir) {
             eprintln!("vault reconcile error: {error}");
@@ -668,16 +771,20 @@ fn is_watchable_markdown_path(path: &Path, notes_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        consume_self_save, is_watchable_markdown_path, next_reconcile_interval,
-        record_expected_move, record_expected_removal, record_expected_write,
+        classify_present_observation, consume_self_save, is_watchable_markdown_path,
+        next_reconcile_interval, reconciliation_observations, record_expected_move,
+        record_expected_removal, record_expected_write, record_observed_missing,
         should_process_watch_event, RECONCILE_INTERVAL_MAX, RECONCILE_INTERVAL_MIN,
+    };
+    use crate::services::note_timeline::{
+        LifecycleEventKind, VaultObservationKind, VaultObservationSource,
     };
     use notify::{
         event::{CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode},
         EventKind,
     };
     use std::{
-        path::Path,
+        path::{Path, PathBuf},
         time::{Duration, Instant},
     };
 
@@ -738,6 +845,58 @@ mod tests {
     #[test]
     fn reconcile_interval_relaxed_without_activity() {
         assert_eq!(next_reconcile_interval(None), RECONCILE_INTERVAL_MAX);
+    }
+
+    #[test]
+    fn a_present_path_after_an_observed_disappearance_is_reattached_once() {
+        let path = std::env::temp_dir().join(format!(
+            "gneauxghts-observed-reappearance-{}.md",
+            std::process::id()
+        ));
+        record_observed_missing(&path);
+
+        let reattached = classify_present_observation(path.clone(), 42, Some(41));
+        let subsequent = classify_present_observation(path, 43, Some(42));
+
+        assert_eq!(
+            reattached.kind(),
+            VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached)
+        );
+        assert_eq!(subsequent.kind(), VaultObservationKind::CanonicalState);
+    }
+
+    #[test]
+    fn reconciliation_enters_per_note_present_missing_and_reattached_states() {
+        let present = PathBuf::from(format!(
+            "/vault/reconcile-present-{}.md",
+            std::process::id()
+        ));
+        let missing = PathBuf::from(format!(
+            "/vault/reconcile-missing-{}.md",
+            std::process::id()
+        ));
+        let first = reconciliation_observations(
+            vec![present.clone(), missing.clone()],
+            vec![(present, Some(40))],
+            42,
+        );
+
+        assert!(first
+            .iter()
+            .all(|entry| { entry.source() == VaultObservationSource::Reconciliation }));
+        assert!(first
+            .iter()
+            .any(|entry| entry.kind() == VaultObservationKind::CanonicalState));
+        assert!(first.iter().any(|entry| {
+            entry.kind() == VaultObservationKind::Lifecycle(LifecycleEventKind::Missing)
+        }));
+
+        let second =
+            reconciliation_observations(vec![missing.clone()], vec![(missing, Some(43))], 44);
+        assert_eq!(
+            second[0].kind(),
+            VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached)
+        );
     }
 
     #[test]

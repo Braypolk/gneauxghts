@@ -29,6 +29,10 @@ export interface OpenDocumentTaskMutationDeps {
     document: NoteDraftState,
     markdown: string
   ) => Promise<void>;
+  attributeTaskActionSave?: (
+    document: NoteDraftState,
+    expectedMarkdown: string
+  ) => (() => void) | void;
   saveDocument: (document: NoteDraftState) => Promise<void>;
   prepare?: (request: {
     taskId: string;
@@ -139,10 +143,19 @@ export function createOpenDocumentTaskMutationHandler(
         );
       }
 
-      await deps.replaceMarkdown(
+      const cancelTaskAttribution = deps.attributeTaskActionSave?.(
         document,
         prepared.updatedEditorMarkdown
       );
+      try {
+        await deps.replaceMarkdown(
+          document,
+          prepared.updatedEditorMarkdown
+        );
+      } catch (error) {
+        cancelTaskAttribution?.();
+        throw error;
+      }
       await deps.saveDocument(document);
       return { status: 'applied-to-open-document' };
     }

@@ -516,6 +516,14 @@ impl AppState {
         self.run_full_refresh(notes_dir)
     }
 
+    pub(crate) fn indexed_note_paths(&self) -> Result<Vec<PathBuf>, String> {
+        let index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        Ok(index.entries.keys().cloned().collect())
+    }
+
     /// Lightweight cold-start prewarm. Populates the in-memory
     /// `notes_index` (so `prune_state_in_place` resolves note ids via
     /// O(1) hashmap lookups and so the first search/recents/wikilinks

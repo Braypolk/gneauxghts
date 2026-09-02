@@ -79,6 +79,7 @@ mod tests {
 
         for command in [
             "save_note",
+            "save_task_note",
             "clear_last_opened_note",
             "chat_send_message",
             "commit_agent_proposal",

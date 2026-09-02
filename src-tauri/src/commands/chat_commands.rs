@@ -1,7 +1,7 @@
 use super::{
     forgotten_note_commands::{register_forgotten_chat_folder, resolve_forgotten_target_path},
     index_bridge::remove_notes_index_entry,
-    prepare_notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+    prepare_notes_dir, prepare_notes_dir_with_state, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
 use crate::{
     agent_tools::ActiveNoteSnapshot,
@@ -431,7 +431,7 @@ pub(crate) fn chat_archive_conversation(
         return Err("Restore forgotten chats from Settings → Forgotten Items".to_string());
     }
 
-    let notes_dir = prepare_notes_dir(true)?;
+    let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
     let snapshot = service.forgotten_folder_snapshot(&conversation_id)?;
     if snapshot.archived {
         return Ok(None);

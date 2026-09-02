@@ -89,6 +89,50 @@ describe("persistenceController", () => {
     expect(controller.hasCleanBuffer(note)).toBe(true);
   });
 
+  it("keeps task attribution on the exact revision when an editor save is already queued", async () => {
+    const note = dirtyNote();
+    const saveNoteSession = vi.fn();
+    const saveTaskNoteSession = vi.fn().mockResolvedValue(
+      snapshot({
+        title: "Draft",
+        bodyMarkdown: "task body",
+        lastSavedTitle: "Draft",
+        lastSavedMarkdown: "task body",
+      }),
+    );
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note,
+      saveNoteSession,
+      saveTaskNoteSession,
+      rekeyNoteWithRuntime: (currentNote) => currentNote,
+      applySavedSnapshot,
+    });
+    let releaseBarrier!: () => void;
+    const barrier = controller.queueNoteOperation(
+      note,
+      () =>
+        new Promise<void>((resolve) => {
+          releaseBarrier = resolve;
+        }),
+    );
+    const queuedEditorSave = controller.enqueueSave(note);
+
+    controller.attributeTaskActionSave(note, "task body");
+    updateDocumentMarkdown(note, "task body");
+    const queuedTaskSave = controller.enqueueSave(note);
+    releaseBarrier();
+    await Promise.all([barrier, queuedEditorSave, queuedTaskSave]);
+
+    expect(saveNoteSession).not.toHaveBeenCalled();
+    expect(saveTaskNoteSession).toHaveBeenCalledWith(
+      "Draft",
+      "task body",
+      "/vault/Saved.md",
+    );
+    expect(saveTaskNoteSession).toHaveBeenCalledTimes(1);
+    expect(controller.hasCleanBuffer(note)).toBe(true);
+  });
+
   it("does not apply save results after a deliberate invalidation", async () => {
     const note = dirtyNote();
     let resolveSave!: (snapshot: SessionSnapshot) => void;

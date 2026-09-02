@@ -99,12 +99,14 @@ describe('notepad task mutation adapter', () => {
       }
     );
     const enqueueSave = vi.fn(async () => undefined);
+    const attributeTaskActionSave = vi.fn();
     const handler = createNotepadTaskMutationHandler({
       listReferencedNoteKeys: () => [note.key],
       getNoteByKey: () => note,
       replaceMarkdown,
       replaceDocumentContentInPlace,
       enqueueSave,
+      attributeTaskActionSave,
       hashMarkdown: async () => 'body-hash',
       prepare: async () => ({
         taskId: 'task-1',
@@ -138,7 +140,11 @@ describe('notepad task mutation adapter', () => {
       note,
       '- [x] Task\n\nLocal edit'
     );
-    expect(enqueueSave).toHaveBeenCalledWith(note, 'taskAction');
+    expect(attributeTaskActionSave).toHaveBeenCalledWith(
+      note,
+      '- [x] Task\n\nLocal edit'
+    );
+    expect(enqueueSave).toHaveBeenCalledWith(note);
   });
 
   it('traces a dirty task mutation through editing and the real document save boundary', async () => {
@@ -186,6 +192,7 @@ describe('notepad task mutation adapter', () => {
       createNotepadPersistenceController({
         getDocumentSession: () => note,
         saveNoteSession,
+        saveTaskNoteSession: saveNoteSession,
         rekeyNoteWithRuntime: (current) => current,
         applySavedSnapshot: (
           current,
@@ -219,6 +226,8 @@ describe('notepad task mutation adapter', () => {
         trace.push(`runtime:${markdown}`);
       },
       enqueueSave: persistence.enqueueSave,
+      attributeTaskActionSave:
+        persistence.attributeTaskActionSave,
       hashMarkdown: async () => 'trace-hash',
       prepare: async ({ workingMarkdown }) => {
         trace.push(`prepare:${workingMarkdown}`);
@@ -253,8 +262,7 @@ describe('notepad task mutation adapter', () => {
       expect(saveNoteSession).toHaveBeenCalledWith(
         'Tasks',
         '- [x] Trace me\n\nUnsaved local context',
-        path,
-        'taskAction'
+        path
       );
       expect(documentHasCleanBuffer(note)).toBe(true);
       expect(note.savedBaseline?.content.markdown).toBe(

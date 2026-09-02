@@ -43,10 +43,11 @@ describe('Rust-owned IPC contract fixtures', () => {
   });
 
   it('pins note save and session-clear argument names', async () => {
-    const { clearLastOpenedNote, saveNoteSession } = await import(
+    const { clearLastOpenedNote, saveNoteSession, saveTaskNoteSession } = await import(
       '$lib/features/notepad/session/session'
     );
     const save = commandFixture.commands.save_note;
+    const taskSave = commandFixture.commands.save_task_note;
 
     invokeMock.mockResolvedValueOnce(save.result);
     await saveNoteSession(
@@ -57,16 +58,15 @@ describe('Rust-owned IPC contract fixtures', () => {
     expect(invokeMock).toHaveBeenLastCalledWith('save_note', save.args);
 
     invokeMock.mockResolvedValueOnce(save.result);
-    await saveNoteSession(
-      save.args!.title as string,
-      save.args!.markdown as string,
-      save.args!.currentPath as string,
-      'taskAction'
+    await saveTaskNoteSession(
+      taskSave.args!.title as string,
+      taskSave.args!.markdown as string,
+      taskSave.args!.currentPath as string
     );
-    expect(invokeMock).toHaveBeenLastCalledWith('save_note', {
-      ...save.args,
-      saveSource: 'taskAction'
-    });
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'save_task_note',
+      taskSave.args
+    );
 
     invokeMock.mockResolvedValueOnce(null);
     await clearLastOpenedNote();

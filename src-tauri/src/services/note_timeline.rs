@@ -535,6 +535,7 @@ impl VaultObservation {
         observed_at_millis: u64,
     ) -> Self {
         Self::lifecycle(
+            VaultObservationSource::Watcher,
             LifecycleEventKind::Renamed,
             path.into(),
             Some(previous_path.into()),
@@ -548,6 +549,7 @@ impl VaultObservation {
         observed_at_millis: u64,
     ) -> Self {
         Self::lifecycle(
+            VaultObservationSource::Watcher,
             LifecycleEventKind::Moved,
             path.into(),
             Some(previous_path.into()),
@@ -557,6 +559,7 @@ impl VaultObservation {
 
     pub(crate) fn missing(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
         Self::lifecycle(
+            VaultObservationSource::Watcher,
             LifecycleEventKind::Missing,
             path.into(),
             None,
@@ -566,6 +569,27 @@ impl VaultObservation {
 
     pub(crate) fn reattached(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
         Self::lifecycle(
+            VaultObservationSource::Watcher,
+            LifecycleEventKind::Reattached,
+            path.into(),
+            None,
+            observed_at_millis,
+        )
+    }
+
+    pub(crate) fn reconciled_missing(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
+        Self::lifecycle(
+            VaultObservationSource::Reconciliation,
+            LifecycleEventKind::Missing,
+            path.into(),
+            None,
+            observed_at_millis,
+        )
+    }
+
+    pub(crate) fn reconciled_reattached(path: impl Into<PathBuf>, observed_at_millis: u64) -> Self {
+        Self::lifecycle(
+            VaultObservationSource::Reconciliation,
             LifecycleEventKind::Reattached,
             path.into(),
             None,
@@ -574,13 +598,14 @@ impl VaultObservation {
     }
 
     fn lifecycle(
+        source: VaultObservationSource,
         kind: LifecycleEventKind,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         observed_at_millis: u64,
     ) -> Self {
         Self {
-            source: VaultObservationSource::Watcher,
+            source,
             kind: VaultObservationKind::Lifecycle(kind),
             path,
             previous_path,

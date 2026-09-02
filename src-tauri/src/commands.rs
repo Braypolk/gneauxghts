@@ -32,7 +32,7 @@ use crate::{
     },
     time::current_time_millis,
 };
-use note_persistence::{persist_note_session_with_source, NoteSaveSource};
+use note_persistence::{persist_note_session_with_outcome, persist_task_note_session_with_outcome};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -204,10 +204,7 @@ const FORGOTTEN_NOTE_CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 5);
 static LAST_FORGOTTEN_NOTE_CLEANUP_AT: std::sync::Mutex<Option<std::time::Instant>> =
     std::sync::Mutex::new(None);
 
-fn maybe_run_forgotten_note_cleanup(
-    notes_dir: &Path,
-    state: Option<&AppState>,
-) -> Result<(), String> {
+fn maybe_run_forgotten_note_cleanup(notes_dir: &Path, state: &AppState) -> Result<(), String> {
     let mut last = LAST_FORGOTTEN_NOTE_CLEANUP_AT
         .lock()
         .map_err(|_| "Forgotten note cleanup lock poisoned".to_string())?;
@@ -230,7 +227,7 @@ pub(crate) fn startup_cleanup_expired_forgotten_notes(state: &AppState) -> Resul
         .map_err(|_| "Forgotten note cleanup lock poisoned".to_string())?;
     *last = Some(std::time::Instant::now());
     drop(last);
-    forgotten_note_commands::cleanup_expired_forgotten_notes(&notes_dir, Some(state))
+    forgotten_note_commands::cleanup_expired_forgotten_notes(&notes_dir, state)
 }
 
 fn prepare_notes_dir(cleanup_forgotten_notes: bool) -> Result<PathBuf, String> {
@@ -247,7 +244,10 @@ fn prepare_notes_dir_with_state(
         // The previous behaviour ran the full forgotten-note cleanup on every
         // save/open/list invocation. We now throttle to a background cadence
         // so common interactive commands no longer pay for it.
-        maybe_run_forgotten_note_cleanup(&notes_dir, state.map(|state| state.inner()))?;
+        let state = state
+            .map(|state| state.inner())
+            .ok_or_else(|| "Forgotten-note cleanup requires application state".to_string())?;
+        maybe_run_forgotten_note_cleanup(&notes_dir, state)?;
     }
     Ok(notes_dir)
 }
@@ -339,15 +339,24 @@ pub(crate) fn save_note(
     title: String,
     markdown: String,
     current_path: Option<String>,
-    save_source: Option<NoteSaveSource>,
 ) -> Result<NoteSession, String> {
-    let outcome = persist_note_session_with_source(
-        &state,
-        title.clone(),
-        markdown,
-        current_path,
-        save_source,
-    )?;
+    let outcome = persist_note_session_with_outcome(&state, title.clone(), markdown, current_path)?;
+    let session = outcome
+        .session
+        .clone()
+        .ok_or_else(|| "Saved note session is missing".to_string())?;
+    Ok(session)
+}
+
+#[tauri::command]
+pub(crate) fn save_task_note(
+    state: State<'_, AppState>,
+    title: String,
+    markdown: String,
+    current_path: Option<String>,
+) -> Result<NoteSession, String> {
+    let outcome =
+        persist_task_note_session_with_outcome(&state, title.clone(), markdown, current_path)?;
     let session = outcome
         .session
         .clone()

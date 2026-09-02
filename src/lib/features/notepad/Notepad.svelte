@@ -21,6 +21,7 @@
   import {
     markNoteOpened,
     saveNoteSession,
+    saveTaskNoteSession,
     type ForgottenNote,
     type SessionSnapshot,
   } from "$lib/features/notepad/session/session";
@@ -533,6 +534,7 @@
   const persistence = createNotepadPersistenceController({
     getDocumentSession,
     saveNoteSession,
+    saveTaskNoteSession,
     markNoteOpened,
     rekeyNoteWithRuntime,
     applySavedSnapshot: async (
@@ -562,6 +564,7 @@
 
   const {
     cancelPendingAutosave,
+    attributeTaskActionSave,
     enqueueSave,
     flushPendingAutosave,
     getNoteSaveQueue,
@@ -659,6 +662,7 @@
       replaceDocumentContentInPlace:
         documents.replaceDocumentContentInPlace,
       enqueueSave,
+      attributeTaskActionSave,
     });
 
   const workspacePersistence = createWorkspacePersistenceService({
