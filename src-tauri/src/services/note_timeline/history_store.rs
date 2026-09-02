@@ -49,6 +49,8 @@ struct HistoryObservations {
 struct ObservedHistorySelection {
     history_format: String,
     generation: u64,
+    #[serde(default)]
+    allow_missing_store: bool,
     last_reset: Option<PersistedHistoryReset>,
 }
 
@@ -142,6 +144,30 @@ pub(super) fn replace_history_generation(generation: u64) {
         params![generation],
     )
     .expect("replace history generation");
+}
+
+#[cfg(test)]
+pub(super) fn remove_history_store() {
+    let data_dir = crate::state::vault_data_dir().expect("vault data directory");
+    for path in [
+        data_dir.join(HISTORY_DATABASE_FILE_NAME),
+        data_dir.join(format!("{HISTORY_DATABASE_FILE_NAME}-wal")),
+        data_dir.join(format!("{HISTORY_DATABASE_FILE_NAME}-shm")),
+    ] {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("remove history store fixture: {error}"),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn history_store_exists() -> bool {
+    crate::state::vault_data_dir()
+        .expect("vault data directory")
+        .join(HISTORY_DATABASE_FILE_NAME)
+        .is_file()
 }
 
 #[cfg(test)]
@@ -1630,6 +1656,7 @@ fn validate_and_remember_history_selection(
         }
         if manifest.history_generation == observed.generation
             && manifest.history_format == observed.history_format
+            && !observed.allow_missing_store
         {
             return Ok(());
         }
@@ -1643,6 +1670,7 @@ fn validate_and_remember_history_selection(
         ObservedHistorySelection {
             history_format: manifest.history_format.clone(),
             generation: manifest.history_generation,
+            allow_missing_store: false,
             last_reset,
         },
     );
@@ -1666,6 +1694,7 @@ fn record_history_reset(
         ObservedHistorySelection {
             history_format: manifest.history_format.clone(),
             generation,
+            allow_missing_store: true,
             last_reset: Some(PersistedHistoryReset {
                 operation_id: operation_id.to_string(),
                 previous_generation,
@@ -1675,6 +1704,36 @@ fn record_history_reset(
         },
     );
     write_history_observations(&path, &observations)
+}
+
+fn ensure_store_creation_is_authorized(
+    manifest: &crate::state::VaultManifest,
+) -> Result<(), String> {
+    let _guard = HISTORY_OBSERVATIONS_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
+    let observations = read_history_observations(&history_observations_path()?)?;
+    let Some(observed) = observations.vaults.get(&manifest.vault_id) else {
+        return Ok(());
+    };
+    if manifest.history_generation < observed.generation {
+        return Err(format!(
+            "Note Timeline history generation rollback: vault selected generation {} after this app observed generation {}",
+            manifest.history_generation, observed.generation
+        ));
+    }
+    if manifest.history_generation == observed.generation
+        && manifest.history_format != observed.history_format
+    {
+        return Err("Note Timeline history format changed without a generation change".to_string());
+    }
+    if manifest.history_generation == observed.generation && observed.allow_missing_store {
+        return Ok(());
+    }
+    Err(format!(
+        "Note Timeline history store is missing or uninitialized for previously observed generation {}",
+        manifest.history_generation
+    ))
 }
 
 pub(super) fn latest_development_history_reset() -> Result<Option<(String, u64, u64, u64)>, String>
@@ -1713,6 +1772,9 @@ fn open_store() -> Result<Connection, String> {
     let data_dir = crate::state::vault_data_dir()?;
     fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
     let path = data_dir.join(HISTORY_DATABASE_FILE_NAME);
+    if !path.is_file() {
+        ensure_store_creation_is_authorized(&manifest)?;
+    }
     let connection = Connection::open(&path).map_err(|error| error.to_string())?;
     connection
         .execute_batch(
@@ -1857,6 +1919,7 @@ fn open_store() -> Result<Connection, String> {
         }
         Some(_) => {}
         None => {
+            ensure_store_creation_is_authorized(&manifest)?;
             connection
                 .execute(
                     "INSERT INTO history_metadata (

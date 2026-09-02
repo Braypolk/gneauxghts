@@ -148,6 +148,10 @@ Identity, so rolling back the manifest and store together is also rejected. A
 development reset advances the manifest generation first, records its operation
 and generation boundary outside the replacement timeline, removes the
 superseded store, and rebuilds current notes as truthful baselines.
+See [ADR 0004](docs/adr/0004-treat-sqlite-as-the-first-note-timeline-store.md)
+for the initial store boundary and
+[ADR 0005](docs/adr/0005-remember-observed-history-generations-outside-the-vault.md)
+for the app-local rollback authority and portability trade-off.
 
 ### Tasks
 

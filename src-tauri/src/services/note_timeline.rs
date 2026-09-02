@@ -1191,6 +1191,21 @@ pub(crate) struct NoteTimeline<'a> {
     state: &'a AppState,
 }
 
+fn require_active_vault_root(requested_root: &Path) -> Result<PathBuf, String> {
+    let active_root = crate::state::vault_root()?;
+    let active_identity = fs::canonicalize(&active_root).unwrap_or_else(|_| active_root.clone());
+    let requested_identity =
+        fs::canonicalize(requested_root).unwrap_or_else(|_| requested_root.to_path_buf());
+    if requested_identity != active_identity {
+        return Err(format!(
+            "Note Timeline vault root mismatch: requested {} but active vault is {}",
+            requested_root.display(),
+            active_root.display()
+        ));
+    }
+    Ok(active_root)
+}
+
 impl<'a> NoteTimeline<'a> {
     pub(crate) fn new(state: &'a AppState) -> Self {
         Self { state }
@@ -1200,6 +1215,7 @@ impl<'a> NoteTimeline<'a> {
         &self,
         vault_root: &Path,
     ) -> Result<BaselineInitializationProgress, String> {
+        let vault_root = require_active_vault_root(vault_root)?;
         self.recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         let mut progress = BaselineInitializationProgress {
@@ -1211,7 +1227,7 @@ impl<'a> NoteTimeline<'a> {
             last_error: None,
         };
         history_store::store_baseline_initialization_progress(&progress)?;
-        for path in collect_markdown_files_recursively(vault_root)? {
+        for path in collect_markdown_files_recursively(&vault_root)? {
             let markdown = match fs::read_to_string(&path) {
                 Ok(markdown) => markdown,
                 Err(error) => {
@@ -1318,12 +1334,13 @@ impl<'a> NoteTimeline<'a> {
         &self,
         vault_root: &Path,
     ) -> Result<DevelopmentHistoryReset, String> {
+        let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
             let (previous_generation, generation, operation_id, reset_at_millis) = {
                 let _timeline = self.state.lock_note_timeline_observation_replay()?;
-                history_store::reset_development_store(vault_root)?
+                history_store::reset_development_store(&vault_root)?
             };
-            let initialization = self.initialize_existing_notes(vault_root)?;
+            let initialization = self.initialize_existing_notes(&vault_root)?;
             Ok(DevelopmentHistoryReset {
                 operation_id,
                 previous_generation,
@@ -2507,6 +2524,85 @@ mod tests {
             .baseline_initialization_progress()
             .expect_err("mismatched selected generation must not open silently");
         assert!(error.contains("generation mismatch"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn reopening_rejects_a_missing_store_for_an_observed_generation() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-missing-store-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-missing-store-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        fs::write(
+            notes.path().join("Existing.md"),
+            "---\ngneauxghts:\n  id: missing-store-note\n  kind: note\n---\n\nContent",
+        )
+        .unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        history_store::remove_history_store();
+
+        let error = timeline
+            .baseline_initialization_progress()
+            .expect_err("missing selected history must require explicit recovery");
+        assert!(error.contains("missing or uninitialized"));
+        assert!(!history_store::history_store_exists());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn initialization_and_reset_reject_a_non_active_vault_root() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-root-mismatch-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let active = crate::test_support::TestDir::new("timeline-root-mismatch-active");
+        let other = crate::test_support::TestDir::new("timeline-root-mismatch-other");
+        crate::state::set_notes_root_override(Some(active.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(active.path()).unwrap();
+        ensure_vault_scaffold(other.path()).unwrap();
+        fs::write(
+            active.path().join("Active.md"),
+            "---\ngneauxghts:\n  id: active-root-note\n  kind: note\n---\n\nActive",
+        )
+        .unwrap();
+        fs::write(
+            other.path().join("Other.md"),
+            "---\ngneauxghts:\n  id: other-root-note\n  kind: note\n---\n\nOther",
+        )
+        .unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(active.path()).unwrap();
+
+        assert!(timeline
+            .initialize_existing_notes(other.path())
+            .expect_err("initialization must use the active vault")
+            .contains("vault root mismatch"));
+        assert!(timeline
+            .reset_development_history(other.path())
+            .expect_err("reset must use the active vault")
+            .contains("vault root mismatch"));
+        assert_eq!(
+            timeline
+                .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                    "active-root-note",
+                )))
+                .revisions()
+                .unwrap()
+                .len(),
+            1
+        );
         crate::state::set_notes_root_override(None).unwrap();
     }
 
