@@ -2,7 +2,10 @@ use crate::{
     chat::ChatService,
     index::AppState,
     semantic::db::content_hash,
-    services::note_timeline::{NoteTimeline, VaultObservation, VaultObservationKind},
+    services::note_timeline::{
+        NoteTimeline, VaultObservation, VaultObservationKind,
+        BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
+    },
     state::{is_forgotten_note_path, notes_root},
     time::current_time_millis,
 };
@@ -745,18 +748,23 @@ fn spawn_background_reconcile_loop(app_handle: AppHandle, queue: std::sync::Arc<
         if !notes_dir.exists() {
             continue;
         }
-        if let Err(error) =
-            state.reconcile_full_vault_scan_observing(&notes_dir, |known_paths, present_paths| {
-                observe_reconciliation_state(
-                    &app_handle,
-                    &state,
-                    &notes_dir,
-                    known_paths,
-                    present_paths,
-                )
-            })
-        {
-            eprintln!("vault reconcile error: {error}");
+        match state.reconcile_full_vault_scan_observing(&notes_dir, |known_paths, present_paths| {
+            observe_reconciliation_state(
+                &app_handle,
+                &state,
+                &notes_dir,
+                known_paths,
+                present_paths,
+            )
+        }) {
+            Err(error) => eprintln!("vault reconcile error: {error}"),
+            Ok(_) => {
+                if let Err(error) = NoteTimeline::new(&state)
+                    .compact_history_storage(BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES)
+                {
+                    eprintln!("Note Timeline background compaction error: {error}");
+                }
+            }
         }
     });
 }

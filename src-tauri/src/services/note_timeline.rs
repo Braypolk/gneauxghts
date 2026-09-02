@@ -13,7 +13,24 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
+
+pub(crate) const BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES: u64 = 256 * 1024;
+static CURRENT_CONTENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Snapshot token for a current-content read. A purge advances the shared
+/// generation before removing rebuildable projections, so callers can avoid
+/// publishing prose assembled concurrently with that removal.
+pub(crate) struct CurrentContentRead {
+    generation: u64,
+}
+
+impl CurrentContentRead {
+    pub(crate) fn is_current(&self) -> bool {
+        CURRENT_CONTENT_GENERATION.load(Ordering::Acquire) == self.generation
+    }
+}
 
 pub(crate) fn ensure_vault_scaffold(
     vault_root: &Path,
@@ -36,6 +53,7 @@ identity_type!(NoteIdentity);
 identity_type!(RevisionIdentity);
 identity_type!(LifecycleEventIdentity);
 identity_type!(TurnIdentity);
+identity_type!(DeletionOperationIdentity);
 
 impl NoteIdentity {
     pub(crate) fn new(value: impl Into<String>) -> Self {
@@ -70,6 +88,20 @@ impl LifecycleEventIdentity {
 
     fn from_persisted(value: impl Into<String>) -> Self {
         Self(value.into())
+    }
+}
+
+impl DeletionOperationIdentity {
+    fn issue() -> Self {
+        Self(crate::note::generate_unique_id())
+    }
+
+    fn from_persisted(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -462,6 +494,176 @@ pub(crate) struct DevelopmentHistoryReset {
     generation: u64,
     reset_at_millis: u64,
     initialization: BaselineInitializationProgress,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HistoryDeletionKind {
+    // Individual revisions are deliberately absent: only whole-scope
+    // boundaries can delete retained authored states. Named Revision labels
+    // remain independent records and can be removed without this vocabulary.
+    Clear,
+    Purge,
+}
+
+impl HistoryDeletionKind {
+    fn as_storage_value(self) -> &'static str {
+        match self {
+            Self::Clear => "clear",
+            Self::Purge => "purge",
+        }
+    }
+
+    fn from_storage_value(value: &str) -> Option<Self> {
+        match value {
+            "clear" => Some(Self::Clear),
+            "purge" => Some(Self::Purge),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DeletionScope {
+    Note(NoteIdentity),
+    Vault(String),
+}
+
+impl DeletionScope {
+    fn storage_parts(&self) -> (&'static str, &str) {
+        match self {
+            Self::Note(note_id) => ("note", note_id.as_str()),
+            Self::Vault(vault_id) => ("vault", vault_id),
+        }
+    }
+
+    fn from_storage_parts(kind: &str, identity: String) -> Result<Self, String> {
+        match kind {
+            "note" => Ok(Self::Note(NoteIdentity::new(identity))),
+            "vault" => Ok(Self::Vault(identity)),
+            _ => Err(format!("Unknown deletion marker scope `{kind}`")),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeletionMarker {
+    payload_version: PayloadVersion,
+    operation_id: DeletionOperationIdentity,
+    scope: DeletionScope,
+    kind: HistoryDeletionKind,
+    occurred_at_millis: u64,
+    history_generation: u64,
+}
+
+impl DeletionMarker {
+    fn issue(
+        scope: DeletionScope,
+        kind: HistoryDeletionKind,
+        occurred_at_millis: u64,
+        history_generation: u64,
+    ) -> Self {
+        Self {
+            payload_version: PayloadVersion::V1,
+            operation_id: DeletionOperationIdentity::issue(),
+            scope,
+            kind,
+            occurred_at_millis,
+            history_generation,
+        }
+    }
+
+    pub(crate) fn payload_version(&self) -> PayloadVersion {
+        self.payload_version
+    }
+
+    pub(crate) fn operation_id(&self) -> &DeletionOperationIdentity {
+        &self.operation_id
+    }
+
+    pub(crate) fn scope(&self) -> &DeletionScope {
+        &self.scope
+    }
+
+    pub(crate) fn kind(&self) -> HistoryDeletionKind {
+        self.kind
+    }
+
+    pub(crate) fn occurred_at_millis(&self) -> u64 {
+        self.occurred_at_millis
+    }
+
+    pub(crate) fn history_generation(&self) -> u64 {
+        self.history_generation
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryDeletionReceipt {
+    marker: DeletionMarker,
+    baseline_note_ids: Vec<NoteIdentity>,
+}
+
+#[derive(Clone, Debug)]
+struct HistoryClearBaseline {
+    note_id: NoteIdentity,
+    path: PathBuf,
+    canonical_markdown: String,
+}
+
+impl HistoryDeletionReceipt {
+    pub(crate) fn scope(&self) -> &DeletionScope {
+        self.marker.scope()
+    }
+
+    pub(crate) fn kind(&self) -> HistoryDeletionKind {
+        self.marker.kind()
+    }
+
+    pub(crate) fn marker(&self) -> &DeletionMarker {
+        &self.marker
+    }
+
+    pub(crate) fn baseline_note_ids(&self) -> &[NoteIdentity] {
+        &self.baseline_note_ids
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryStorageUsage {
+    allocated_bytes: u64,
+    reclaimable_bytes: u64,
+}
+
+impl HistoryStorageUsage {
+    pub(crate) fn allocated_bytes(&self) -> u64 {
+        self.allocated_bytes
+    }
+
+    pub(crate) fn reclaimable_bytes(&self) -> u64 {
+        self.reclaimable_bytes
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryCompactionReceipt {
+    before: HistoryStorageUsage,
+    after: HistoryStorageUsage,
+}
+
+impl HistoryCompactionReceipt {
+    pub(crate) fn before(&self) -> &HistoryStorageUsage {
+        &self.before
+    }
+
+    pub(crate) fn after(&self) -> &HistoryStorageUsage {
+        &self.after
+    }
+
+    pub(crate) fn reclaimed_bytes(&self) -> u64 {
+        self.before
+            .allocated_bytes
+            .saturating_sub(self.after.allocated_bytes)
+    }
 }
 
 impl DevelopmentHistoryReset {
@@ -1206,9 +1408,121 @@ fn require_active_vault_root(requested_root: &Path) -> Result<PathBuf, String> {
     Ok(active_root)
 }
 
+#[cfg(test)]
+static FAIL_NEXT_PURGE_STAGE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static FAIL_NEXT_PURGE_PROJECTION_CLEANUP: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn stage_note_for_purge(path: &Path, staged_path: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if FAIL_NEXT_PURGE_STAGE.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return Err(std::io::Error::other("injected purge staging failure"));
+    }
+    fs::rename(path, staged_path)
+}
+
 impl<'a> NoteTimeline<'a> {
     pub(crate) fn new(state: &'a AppState) -> Self {
         Self { state }
+    }
+
+    fn with_settled_history_mutation<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let _replay = self.state.lock_note_timeline_observation_replay()?;
+        self.recover_pending_deletions()?;
+        self.replay_retained_observations(None)?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        operation()
+    }
+
+    /// Settle durable purge work created after startup, then capture the
+    /// generation that current-content query results must still match.
+    pub(crate) fn begin_current_content_read(&self) -> Result<CurrentContentRead, String> {
+        let _replay = self.state.lock_note_timeline_observation_replay()?;
+        self.recover_pending_deletions()?;
+        Ok(CurrentContentRead {
+            generation: CURRENT_CONTENT_GENERATION.load(Ordering::Acquire),
+        })
+    }
+
+    fn recover_pending_deletions(&self) -> Result<(), String> {
+        for pending in history_store::pending_deletions_for_recovery()? {
+            if !pending.finalized && !pending.staged_path.exists() && pending.path.exists() {
+                history_store::abandon_note_purge(&pending.operation_id)?;
+                continue;
+            }
+            self.remove_purged_note_projections(&pending.note_id, &pending.path)?;
+            if !pending.finalized {
+                history_store::finalize_note_purge(&pending.operation_id)?;
+            }
+            history_store::complete_note_purge(&pending.operation_id)?;
+        }
+        Ok(())
+    }
+
+    fn purge_note_under_mutation_boundary(
+        &self,
+        note_id: &NoteIdentity,
+        path: &Path,
+        occurred_at_millis: u64,
+    ) -> Result<(), String> {
+        let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
+            .ok_or_else(|| "History purge requires a vault manifest".to_string())?;
+        let marker = DeletionMarker::issue(
+            DeletionScope::Note(note_id.clone()),
+            HistoryDeletionKind::Purge,
+            occurred_at_millis,
+            manifest.history_generation,
+        );
+        let staged_path = history_store::prepare_note_purge(note_id, path, &marker)?;
+        let expected_removal = crate::vault_watcher::record_expected_removal(path);
+        match stage_note_for_purge(path, &staged_path) {
+            Ok(()) => expected_removal.commit(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !path.exists() => {}
+            Err(error) => {
+                return match history_store::abandon_note_purge(marker.operation_id()) {
+                    Ok(()) => Err(format!(
+                        "Stage canonical note before purging its timeline {}: {error}",
+                        path.display()
+                    )),
+                    Err(abandon_error) => Err(format!(
+                        "Stage canonical note before purging its timeline {}: {error}; abandon prepared purge: {abandon_error}",
+                        path.display()
+                    )),
+                };
+            }
+        }
+        self.remove_purged_note_projections(note_id, path)?;
+        history_store::finalize_note_purge(marker.operation_id())?;
+        history_store::complete_note_purge(marker.operation_id())
+    }
+
+    fn remove_purged_note_projections(
+        &self,
+        note_id: &NoteIdentity,
+        path: &Path,
+    ) -> Result<(), String> {
+        CURRENT_CONTENT_GENERATION.fetch_add(1, Ordering::AcqRel);
+        crate::commands::search_commands::invalidate_result_caches()?;
+        #[cfg(test)]
+        if FAIL_NEXT_PURGE_PROJECTION_CLEANUP.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Err("injected purge projection cleanup interruption".to_string());
+        }
+        let indexed_identity = self.state.indexed_note_identity(path)?;
+        if indexed_identity
+            .as_deref()
+            .is_none_or(|indexed_note_id| indexed_note_id == note_id.as_str())
+        {
+            self.state.remove_note_indexes(path)?;
+        }
+        self.state
+            .semantic
+            .purge_note_projection(path, note_id.as_str())?;
+        Ok(())
     }
 
     pub(crate) fn initialize_existing_notes(
@@ -1370,6 +1684,136 @@ impl<'a> NoteTimeline<'a> {
         }))
     }
 
+    pub(crate) fn clear_note_history(
+        &self,
+        note_id: &NoteIdentity,
+    ) -> Result<HistoryDeletionReceipt, String> {
+        crate::state::with_note_file_mutation(|| {
+            self.with_settled_history_mutation(|| {
+                let path = history_store::current_path(note_id)?
+                    .ok_or_else(|| "Cannot clear an unknown Note Timeline".to_string())?;
+                let canonical_markdown = fs::read_to_string(&path).map_err(|error| {
+                    format!(
+                        "Read current canonical note before clearing history {}: {error}",
+                        path.display()
+                    )
+                })?;
+                let occurred_at_millis = crate::time::current_time_millis()
+                    .map_err(|error| format!("Issue history clear time: {error}"))?;
+                let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
+                    .ok_or_else(|| "History clear requires a vault manifest".to_string())?;
+                let marker = DeletionMarker::issue(
+                    DeletionScope::Note(note_id.clone()),
+                    HistoryDeletionKind::Clear,
+                    occurred_at_millis,
+                    manifest.history_generation,
+                );
+                history_store::clear_note_history(note_id, &path, &canonical_markdown, &marker)?;
+                Ok(HistoryDeletionReceipt {
+                    marker,
+                    baseline_note_ids: vec![note_id.clone()],
+                })
+            })
+        })
+    }
+
+    pub(crate) fn clear_vault_history(
+        &self,
+        vault_root: &Path,
+    ) -> Result<HistoryDeletionReceipt, String> {
+        let vault_root = require_active_vault_root(vault_root)?;
+        crate::state::with_note_file_mutation(|| {
+            self.with_settled_history_mutation(|| {
+                let mut seeds = Vec::new();
+                let mut seen_note_ids = HashSet::new();
+                for path in collect_markdown_files_recursively(&vault_root)? {
+                    let canonical_markdown = fs::read_to_string(&path).map_err(|error| {
+                        format!(
+                            "Read active canonical note before clearing vault history {}: {error}",
+                            path.display()
+                        )
+                    })?;
+                    let parsed = crate::note::parse_note(&canonical_markdown);
+                    let managed_metadata = parsed.frontmatter.managed;
+                    if managed_metadata
+                        .as_ref()
+                        .is_some_and(|metadata| metadata.kind.is_chat_projection())
+                    {
+                        continue;
+                    }
+                    let historical_note_id = history_store::note_identity_for_current_path(&path)?;
+                    let embedded_note_id = managed_metadata
+                        .as_ref()
+                        .map(|metadata| metadata.id.as_str())
+                        .filter(|note_id| !note_id.trim().is_empty())
+                        .map(NoteIdentity::new);
+                    let note_id = match historical_note_id.or(embedded_note_id) {
+                        Some(note_id) => note_id,
+                        None if managed_metadata.is_none() => continue,
+                        None => {
+                            return Err(format!(
+                            "Active note {} has no stable Note Identity for vault history clear",
+                            path.display()
+                        ));
+                        }
+                    };
+                    if !seen_note_ids.insert(note_id.clone()) {
+                        return Err(format!(
+                        "Multiple active notes claim Note Identity {} during vault history clear",
+                        note_id.as_str()
+                    ));
+                    }
+                    seeds.push(HistoryClearBaseline {
+                        note_id,
+                        path,
+                        canonical_markdown,
+                    });
+                }
+                let occurred_at_millis = crate::time::current_time_millis()
+                    .map_err(|error| format!("Issue vault history clear time: {error}"))?;
+                let manifest = crate::state::read_vault_manifest_for(&vault_root)?
+                    .ok_or_else(|| "Vault history clear requires a vault manifest".to_string())?;
+                let marker = DeletionMarker::issue(
+                    DeletionScope::Vault(manifest.vault_id),
+                    HistoryDeletionKind::Clear,
+                    occurred_at_millis,
+                    manifest.history_generation,
+                );
+                history_store::clear_vault_history(&seeds, &marker)?;
+                Ok(HistoryDeletionReceipt {
+                    marker,
+                    baseline_note_ids: seeds.into_iter().map(|seed| seed.note_id).collect(),
+                })
+            })
+        })
+    }
+
+    pub(crate) fn deletion_markers(&self) -> Result<Vec<DeletionMarker>, String> {
+        self.recover_retained_observations()?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        history_store::deletion_markers()
+    }
+
+    pub(crate) fn history_storage_usage(&self) -> Result<HistoryStorageUsage, String> {
+        self.recover_retained_observations()?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        history_store::storage_usage()
+    }
+
+    pub(crate) fn compact_history_storage(
+        &self,
+        maximum_reclaim_bytes: u64,
+    ) -> Result<HistoryCompactionReceipt, String> {
+        crate::state::with_note_file_mutation(|| {
+            self.with_settled_history_mutation(|| {
+                let before = history_store::storage_usage()?;
+                history_store::compact(maximum_reclaim_bytes)?;
+                let after = history_store::storage_usage()?;
+                Ok(HistoryCompactionReceipt { before, after })
+            })
+        })
+    }
+
     /// Prepare user-authored Markdown for an app-owned publication while
     /// preserving the identity already owned by the logical note. Callers
     /// provide continuity evidence; the timeline keeps the repair policy
@@ -1513,6 +1957,7 @@ impl<'a> NoteTimeline<'a> {
         observation: VaultObservation,
     ) -> Result<ObservationReceipt, String> {
         let _replay = self.state.lock_note_timeline_observation_replay()?;
+        self.recover_pending_deletions()?;
         let observation = Self::capture_observed_markdown(observation)?;
         if observation.kind == VaultObservationKind::ReconciliationScan {
             self.replay_retained_observations(None)?;
@@ -1528,6 +1973,7 @@ impl<'a> NoteTimeline<'a> {
 
     fn recover_retained_observations(&self) -> Result<(), String> {
         let _replay = self.state.lock_note_timeline_observation_replay()?;
+        self.recover_pending_deletions()?;
         self.replay_retained_observations(None).map(|_| ())
     }
 
@@ -1707,7 +2153,10 @@ impl<'a> NoteTimeline<'a> {
         })
     }
 
-    pub(crate) fn lifecycle(&self, operation: NoteLifecycleOperation) -> LifecycleReceipt {
+    pub(crate) fn lifecycle(
+        &self,
+        operation: NoteLifecycleOperation,
+    ) -> Result<LifecycleReceipt, String> {
         let NoteLifecycleOperation {
             kind,
             note_id,
@@ -1715,13 +2164,20 @@ impl<'a> NoteTimeline<'a> {
             previous_path,
             occurred_at_millis,
         } = operation;
-        LifecycleReceipt {
+        if kind == LifecycleEventKind::Purged {
+            crate::state::with_note_file_mutation(|| {
+                self.with_settled_history_mutation(|| {
+                    self.purge_note_under_mutation_boundary(&note_id, &path, occurred_at_millis)
+                })
+            })?;
+        }
+        Ok(LifecycleReceipt {
             kind,
             note_id,
             path,
             previous_path,
             occurred_at_millis,
-        }
+        })
     }
 
     pub(crate) fn history_mode(&self, grant: HistoryModeGrant) -> HistoryModeAccess<'a> {
@@ -1746,8 +2202,9 @@ impl<'a> NoteTimeline<'a> {
     }
 }
 
-pub(crate) fn recover_pending_history() -> Result<(), String> {
-    history_store::recover_pending()
+pub(crate) fn recover_pending_history(state: &AppState) -> Result<(), String> {
+    history_store::recover_pending()?;
+    NoteTimeline::new(state).recover_pending_deletions()
 }
 
 #[cfg(test)]
@@ -1791,6 +2248,21 @@ pub(crate) fn inject_history_recovery_failure_once() {
 #[cfg(test)]
 pub(crate) fn inject_history_baseline_failure_once() {
     history_store::inject_fault_once(history_store::FaultPoint::Baseline);
+}
+
+#[cfg(test)]
+pub(crate) fn inject_history_deletion_failure_once() {
+    history_store::inject_fault_once(history_store::FaultPoint::Deletion);
+}
+
+#[cfg(test)]
+fn inject_purge_staging_failure_once() {
+    FAIL_NEXT_PURGE_STAGE.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn inject_purge_projection_cleanup_failure_once() {
+    FAIL_NEXT_PURGE_PROJECTION_CLEANUP.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 #[cfg(test)]
@@ -2068,6 +2540,587 @@ mod tests {
             reconstructed_second.body(),
             "Replacement 🦀\nwith two lines"
         );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn clearing_one_note_atomically_replaces_readable_history_with_a_truthful_baseline() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-clear-note-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-clear-note-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Clear me".to_string(),
+            "First retained state".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Clear me".to_string(),
+            "Current canonical state".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        fs::write(
+            &path,
+            "Current canonical state without managed identity metadata",
+        )
+        .unwrap();
+        let before_bytes = fs::read(&path).unwrap();
+        let history =
+            NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        let removed_revision = history.revisions().unwrap()[0].identity().clone();
+        let before_clear = crate::time::current_time_millis().unwrap();
+
+        let receipt = NoteTimeline::new(&state)
+            .clear_note_history(&note_id)
+            .unwrap();
+        let after_clear = crate::time::current_time_millis().unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), before_bytes);
+        assert_eq!(receipt.scope(), &DeletionScope::Note(note_id.clone()));
+        assert_eq!(receipt.kind(), HistoryDeletionKind::Clear);
+        assert_eq!(receipt.baseline_note_ids(), &[note_id.clone()]);
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&restarted);
+        let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(
+            revisions[0].source(),
+            MutationSource::BaselineInitialization
+        );
+        assert_eq!(revisions[0].predecessor(), None);
+        assert_eq!(revisions[0].committed_at_millis(), None);
+        assert_eq!(revisions[0].observed_at_millis(), None);
+        assert!(revisions[0]
+            .known_since_millis()
+            .is_some_and(|known| (before_clear..=after_clear).contains(&known)));
+        assert_eq!(
+            history.reconstruct(revisions[0].identity()).unwrap().body(),
+            "Current canonical state without managed identity metadata"
+        );
+        assert_eq!(
+            history.reconstruct(&removed_revision).unwrap_err(),
+            "Unknown Note Revision"
+        );
+        let markers = timeline.deletion_markers().unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].scope(), &DeletionScope::Note(note_id));
+        assert_eq!(markers[0].kind(), HistoryDeletionKind::Clear);
+        assert_eq!(markers[0].payload_version(), PayloadVersion::V1);
+        assert_eq!(markers[0].operation_id().as_str().len(), 26);
+        assert!((before_clear..=after_clear).contains(&markers[0].occurred_at_millis()));
+        assert_eq!(markers[0].history_generation(), 1);
+        assert!(!format!("{markers:?}").contains("First retained state"));
+        assert!(!format!("{markers:?}").contains("Current canonical state without"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn clearing_vault_history_rebaselines_each_active_note_but_retains_missing_timelines() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-clear-vault-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-clear-vault-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let mut created = Vec::new();
+        for title in ["Alpha", "Beta", "Missing"] {
+            let session = crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                title.to_string(),
+                format!("{title} original"),
+                None,
+            )
+            .unwrap()
+            .session
+            .unwrap();
+            created.push((
+                NoteIdentity::new(session.note_id.unwrap()),
+                PathBuf::from(session.path.unwrap()),
+            ));
+        }
+        for (note_id, path) in &created[..2] {
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                path.file_stem().unwrap().to_string_lossy().into_owned(),
+                format!("{} current", note_id.as_str()),
+                Some(path.to_string_lossy().into_owned()),
+            )
+            .unwrap();
+        }
+        fs::write(&created[1].1, "Beta current without managed metadata").unwrap();
+        let active_bytes = created[..2]
+            .iter()
+            .map(|(_, path)| fs::read(path).unwrap())
+            .collect::<Vec<_>>();
+        fs::remove_file(&created[2].1).unwrap();
+
+        let receipt = NoteTimeline::new(&state)
+            .clear_vault_history(notes.path())
+            .unwrap();
+
+        assert_eq!(
+            receipt.scope(),
+            &DeletionScope::Vault(
+                crate::state::read_vault_manifest_for(notes.path())
+                    .unwrap()
+                    .unwrap()
+                    .vault_id
+            )
+        );
+        assert_eq!(receipt.kind(), HistoryDeletionKind::Clear);
+        assert_eq!(receipt.baseline_note_ids().len(), 2);
+        for (index, (note_id, path)) in created[..2].iter().enumerate() {
+            assert_eq!(fs::read(path).unwrap(), active_bytes[index]);
+            let revisions = NoteTimeline::new(&state)
+                .history_mode(HistoryModeGrant::authorized(note_id.clone()))
+                .revisions()
+                .unwrap();
+            assert_eq!(revisions.len(), 1);
+            assert_eq!(
+                revisions[0].source(),
+                MutationSource::BaselineInitialization
+            );
+            if index == 1 {
+                assert_eq!(
+                    NoteTimeline::new(&state)
+                        .history_mode(HistoryModeGrant::authorized(note_id.clone()))
+                        .reconstruct(revisions[0].identity())
+                        .unwrap()
+                        .body(),
+                    "Beta current without managed metadata"
+                );
+            }
+        }
+        let missing_revisions = NoteTimeline::new(&state)
+            .history_mode(HistoryModeGrant::authorized(created[2].0.clone()))
+            .revisions()
+            .unwrap();
+        assert_eq!(missing_revisions.len(), 1);
+        assert_eq!(missing_revisions[0].source(), MutationSource::NoteCreation);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn purging_a_note_removes_its_complete_timeline_and_all_revision_dependents() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-purge-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-purge-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Purge me".to_string(),
+            "Secret first state".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Purge me".to_string(),
+            "Secret current state".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        let history =
+            NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        let removed_revision = history.revisions().unwrap()[0].identity().clone();
+        history_store::seed_revision_dependents_for_test(&removed_revision);
+        assert_eq!(
+            history_store::revision_dependent_count_for_test(&note_id),
+            2
+        );
+        let removed_canonical = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            state.indexed_note_identity(&path).unwrap().as_deref(),
+            Some(note_id.as_str())
+        );
+
+        NoteTimeline::new(&state)
+            .lifecycle(NoteLifecycleOperation::purged(
+                note_id.clone(),
+                path.clone(),
+                700,
+            ))
+            .unwrap();
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&restarted);
+        let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        assert!(history.revisions().unwrap().is_empty());
+        assert!(history.lifecycle_events().unwrap().is_empty());
+        assert_eq!(
+            history.reconstruct(&removed_revision).unwrap_err(),
+            "Unknown Note Revision"
+        );
+        assert_eq!(
+            history_store::revision_dependent_count_for_test(&note_id),
+            0
+        );
+        assert_eq!(history_store::current_path(&note_id).unwrap(), None);
+        assert_eq!(state.indexed_note_identity(&path).unwrap(), None);
+        let markers = timeline.deletion_markers().unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].scope(), &DeletionScope::Note(note_id.clone()));
+        assert_eq!(markers[0].kind(), HistoryDeletionKind::Purge);
+        assert_eq!(markers[0].occurred_at_millis(), 700);
+        assert!(history_store::record_baseline_revision_if_absent(
+            &note_id,
+            &path,
+            &removed_canonical,
+            701,
+        )
+        .unwrap_err()
+        .contains("Purged Note Identity"));
+        assert!(history.revisions().unwrap().is_empty());
+
+        NoteTimeline::new(&restarted)
+            .lifecycle(NoteLifecycleOperation::purged(note_id, path, 702))
+            .unwrap();
+        assert_eq!(timeline.deletion_markers().unwrap().len(), 2);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn purge_staging_failure_keeps_canonical_history_and_projections_intact() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-purge-stage-failure-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-purge-stage-failure-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Keep me".to_string(),
+            "Still readable".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        inject_purge_staging_failure_once();
+
+        let error = NoteTimeline::new(&state)
+            .lifecycle(NoteLifecycleOperation::purged(
+                note_id.clone(),
+                path.clone(),
+                700,
+            ))
+            .unwrap_err();
+
+        assert!(error.contains("injected purge staging failure"));
+        assert!(path.is_file());
+        assert_eq!(
+            state.indexed_note_identity(&path).unwrap().as_deref(),
+            Some(note_id.as_str())
+        );
+        let timeline = NoteTimeline::new(&state);
+        assert!(!timeline
+            .history_mode(HistoryModeGrant::authorized(note_id))
+            .revisions()
+            .unwrap()
+            .is_empty());
+        assert!(timeline.deletion_markers().unwrap().is_empty());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn interrupted_projection_cleanup_remains_pending_and_retries_before_finalization() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-purge-projection-retry-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-purge-projection-retry-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Retry purge".to_string(),
+            "Private body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        let in_flight_read = NoteTimeline::new(&state)
+            .begin_current_content_read()
+            .unwrap();
+        inject_purge_projection_cleanup_failure_once();
+
+        let error = NoteTimeline::new(&state)
+            .lifecycle(NoteLifecycleOperation::purged(
+                note_id.clone(),
+                path.clone(),
+                700,
+            ))
+            .unwrap_err();
+
+        assert!(error.contains("injected purge projection cleanup interruption"));
+        assert!(!in_flight_read.is_current());
+        assert!(!path.exists());
+        assert_eq!(
+            state.indexed_note_identity(&path).unwrap().as_deref(),
+            Some(note_id.as_str())
+        );
+        let retrieved = crate::services::retrieval::retrieve_vault_notes(
+            &state,
+            "Private body",
+            8,
+            None,
+            &HashSet::new(),
+            crate::services::retrieval::VaultDateFilters::default(),
+        )
+        .unwrap();
+        assert!(retrieved.is_empty());
+        let timeline = NoteTimeline::new(&state);
+        let markers = timeline.deletion_markers().unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].scope(), &DeletionScope::Note(note_id.clone()));
+        assert_eq!(state.indexed_note_identity(&path).unwrap(), None);
+        assert!(timeline
+            .history_mode(HistoryModeGrant::authorized(note_id))
+            .revisions()
+            .unwrap()
+            .is_empty());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn interrupted_purge_recovers_before_history_can_be_read_again() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-purge-interrupt-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-purge-interrupt-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Interrupted purge".to_string(),
+            "Private history".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        inject_history_deletion_failure_once();
+
+        let error = NoteTimeline::new(&state)
+            .lifecycle(NoteLifecycleOperation::purged(
+                note_id.clone(),
+                path.clone(),
+                701,
+            ))
+            .unwrap_err();
+
+        assert!(error.contains("injected history deletion interruption"));
+        assert!(!path.exists());
+        let replacement =
+            "---\ngneauxghts:\n  id: replacement-note\n  kind: note\n---\n\nReplacement";
+        fs::write(&path, replacement).unwrap();
+        drop(state);
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&restarted);
+        assert_eq!(fs::read_to_string(&path).unwrap(), replacement);
+        let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        assert!(history.revisions().unwrap().is_empty());
+        assert!(history.lifecycle_events().unwrap().is_empty());
+        let markers = timeline.deletion_markers().unwrap();
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].scope(), &DeletionScope::Note(note_id));
+        assert_eq!(markers[0].kind(), HistoryDeletionKind::Purge);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn interrupted_clear_rolls_back_completely_and_retry_after_restart_succeeds() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-clear-interrupt-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-clear-interrupt-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Interrupted".to_string(),
+            "Before".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = created.path.unwrap();
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Interrupted".to_string(),
+            "After".to_string(),
+            Some(path),
+        )
+        .unwrap();
+        inject_history_deletion_failure_once();
+
+        let error = NoteTimeline::new(&state)
+            .clear_note_history(&note_id)
+            .unwrap_err();
+
+        assert!(error.contains("injected history deletion interruption"));
+        let history =
+            NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        assert_eq!(history.revisions().unwrap().len(), 2);
+        assert!(NoteTimeline::new(&state)
+            .deletion_markers()
+            .unwrap()
+            .is_empty());
+        drop(state);
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        NoteTimeline::new(&restarted)
+            .clear_note_history(&note_id)
+            .unwrap();
+        let history =
+            NoteTimeline::new(&restarted).history_mode(HistoryModeGrant::authorized(note_id));
+        assert_eq!(history.revisions().unwrap().len(), 1);
+        assert_eq!(
+            history.revisions().unwrap()[0].source(),
+            MutationSource::BaselineInitialization
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn storage_usage_distinguishes_immediate_logical_deletion_from_bounded_reclamation() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-storage-usage-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-storage-usage-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Storage".to_string(),
+            "Initial".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = created.path.unwrap();
+        for revision in 0..24 {
+            let body = (0..512)
+                .map(|line| format!("revision-{revision:02}-line-{line:04}-{}", "x".repeat(48)))
+                .collect::<Vec<_>>()
+                .join("\n");
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                "Storage".to_string(),
+                body,
+                Some(path.clone()),
+            )
+            .unwrap();
+        }
+        let timeline = NoteTimeline::new(&state);
+        assert_eq!(history_store::auto_vacuum_mode_for_test(), 2);
+        let retained = timeline.history_storage_usage().unwrap();
+
+        timeline.clear_note_history(&note_id).unwrap();
+        let logically_deleted = timeline.history_storage_usage().unwrap();
+
+        assert!(logically_deleted.allocated_bytes() >= retained.allocated_bytes());
+        assert!(logically_deleted.reclaimable_bytes() > retained.reclaimable_bytes());
+        let first_compaction = timeline.compact_history_storage(32 * 1024).unwrap();
+        assert_eq!(first_compaction.before(), &logically_deleted);
+        assert!(first_compaction.reclaimed_bytes() <= 32 * 1024);
+        assert!(first_compaction.after().allocated_bytes() <= logically_deleted.allocated_bytes());
+        let mut usage = first_compaction.after().clone();
+        for _ in 0..128 {
+            if usage.reclaimable_bytes() == 0 {
+                break;
+            }
+            let compaction = timeline.compact_history_storage(32 * 1024).unwrap();
+            assert!(compaction.reclaimed_bytes() <= 32 * 1024);
+            usage = compaction.after().clone();
+        }
+        assert_eq!(usage.reclaimable_bytes(), 0);
+        assert!(usage.allocated_bytes() < logically_deleted.allocated_bytes());
+        let history = timeline.history_mode(HistoryModeGrant::authorized(note_id));
+        assert_eq!(history.revisions().unwrap().len(), 1);
+        assert_eq!(timeline.deletion_markers().unwrap().len(), 1);
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -3307,6 +4360,9 @@ mod tests {
 
     #[test]
     fn unknown_persisted_history_vocabulary_fails_closed() {
+        assert_eq!(HistoryDeletionKind::from_storage_value("revision"), None);
+        assert!(DeletionScope::from_storage_parts("revision", "id".to_string()).is_err());
+
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("timeline-vocabulary-app-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
@@ -4478,12 +5534,14 @@ mod tests {
         .expect("construct app state");
         let note_id = NoteIdentity::new("note-1");
 
-        let receipt = NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(
-            note_id.clone(),
-            PathBuf::from("/vault/Note.md"),
-            PathBuf::from("/vault/.forgotten/Note.md"),
-            42,
-        ));
+        let receipt = NoteTimeline::new(&state)
+            .lifecycle(NoteLifecycleOperation::forgotten(
+                note_id.clone(),
+                PathBuf::from("/vault/Note.md"),
+                PathBuf::from("/vault/.forgotten/Note.md"),
+                42,
+            ))
+            .unwrap();
 
         assert_eq!(receipt.kind(), LifecycleEventKind::Forgotten);
         assert_eq!(receipt.note_id(), &note_id);

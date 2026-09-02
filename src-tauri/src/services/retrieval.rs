@@ -1,4 +1,4 @@
-use crate::{index::AppState, note::DocumentKind};
+use crate::{index::AppState, note::DocumentKind, services::note_timeline::NoteTimeline};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -64,6 +64,7 @@ pub(crate) fn retrieve_vault_notes(
     excluded_note_ids: &HashSet<String>,
     date_filters: VaultDateFilters,
 ) -> Result<Vec<VaultRetrievalItem>, String> {
+    let content_read = NoteTimeline::new(state).begin_current_content_read()?;
     let limit = limit.clamp(1, 20);
     let terms = query
         .split(|ch: char| !ch.is_alphanumeric())
@@ -227,6 +228,9 @@ pub(crate) fn retrieve_vault_notes(
         });
     }
     results.truncate(limit);
+    if !content_read.is_current() {
+        results.clear();
+    }
     Ok(results)
 }
 

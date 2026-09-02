@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     index::AppState,
-    services::note_timeline::{MutationWarningStage, NoteMutationWarning},
+    services::note_timeline::{MutationWarningStage, NoteMutationWarning, NoteTimeline},
     services::task_mutation::{
         PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
     },
@@ -24,6 +24,7 @@ pub(super) fn list_recent_tasks(
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<Vec<RecentTaskItem>, String> {
+    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
 
     let persisted_state = read_state(&notes_dir)?;
@@ -37,7 +38,7 @@ pub(super) fn list_recent_tasks(
         persisted_state.hidden_note_ids.iter().cloned().collect();
 
     let records = list_recent_open_tasks(limit, &hidden_note_ids)?;
-    Ok(records
+    let items = records
         .into_iter()
         .map(|record| RecentTaskItem {
             note_id: record.note_id,
@@ -48,7 +49,12 @@ pub(super) fn list_recent_tasks(
             line_number: record.line_number,
             updated_at_millis: record.updated_at_millis,
         })
-        .collect())
+        .collect();
+    Ok(if content_read.is_current() {
+        items
+    } else {
+        Vec::new()
+    })
 }
 
 pub(super) fn list_tasks(
@@ -56,6 +62,7 @@ pub(super) fn list_tasks(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<Vec<TaskListGroup>, String> {
+    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
     let persisted_state = read_state(&notes_dir)?;
 
@@ -75,12 +82,12 @@ pub(super) fn list_tasks(
         &collapsed_note_ids,
     )?;
 
-    Ok(group_task_records(
-        records,
-        show_hidden,
-        &hidden_note_ids,
-        &collapsed_note_ids,
-    ))
+    let groups = group_task_records(records, show_hidden, &hidden_note_ids, &collapsed_note_ids);
+    Ok(if content_read.is_current() {
+        groups
+    } else {
+        Vec::new()
+    })
 }
 
 pub(super) fn get_task_group(
@@ -89,13 +96,19 @@ pub(super) fn get_task_group(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
+    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
     state.ensure_interactive_index(
         &notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,
         "get_task_group",
     )?;
-    build_task_group_patch(&note_id, filter, show_hidden)
+    let mut patch = build_task_group_patch(&note_id, filter, show_hidden)?;
+    if !content_read.is_current() {
+        patch.note_path = None;
+        patch.group = None;
+    }
+    Ok(patch)
 }
 
 fn projection_filter_from_task_filter(filter: &TaskFilter) -> ProjectionFilter {

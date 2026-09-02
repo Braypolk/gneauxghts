@@ -17,11 +17,11 @@ use self::{
     ann::AnnIndexState,
     atlas::{AtlasChatVisibilityKey, AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse},
     db::{
-        clear_atlas_cache, content_hash, count_indexed_items, edges_are_stale_for_generation,
-        edges_are_stale_for_model, ensure_schema, load_chunks_by_ann_labels, load_latest_job,
-        load_note_record, load_related_note_previews, load_related_note_previews_for_paths,
-        load_semantic_settings, mark_running_jobs_interrupted, open_database,
-        save_semantic_settings,
+        clear_atlas_cache, content_hash, count_indexed_items, delete_note,
+        edges_are_stale_for_generation, edges_are_stale_for_model, ensure_schema,
+        load_chunks_by_ann_labels, load_latest_job, load_note_chunk_labels, load_note_record,
+        load_related_note_previews, load_related_note_previews_for_paths, load_semantic_settings,
+        mark_running_jobs_interrupted, open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
@@ -582,6 +582,45 @@ impl SemanticState {
 
     pub(crate) fn queue_delete_note(&self, note_path: &Path) -> Result<(), String> {
         self.queue_delete_note_inner(note_path, true)
+    }
+
+    /// Remove queryable semantic rows and ANN labels before a permanent purge
+    /// returns. Stable identity prevents recovery from deleting a replacement
+    /// note that reused the same canonical path.
+    pub(crate) fn purge_note_projection(
+        &self,
+        note_path: &Path,
+        purged_note_id: &str,
+    ) -> Result<(), String> {
+        let SemanticStateInner::Active(state) = &self.inner else {
+            return Ok(());
+        };
+        state
+            .related_query_cache
+            .lock()
+            .map_err(|_| "Related query cache lock poisoned".to_string())?
+            .clear();
+        let mut connection = open_database(&state.db_path)?;
+        ensure_schema(&connection)?;
+        let path = note_path.to_string_lossy();
+        let previous_note = load_note_record(&connection, &path)?;
+        let belongs_to_purged_note = previous_note
+            .as_ref()
+            .is_some_and(|note| note.note_id.is_empty() || note.note_id == purged_note_id);
+        if belongs_to_purged_note {
+            let previous_labels = load_note_chunk_labels(&connection, &path)?;
+            state.ann.apply_note_delete(&previous_labels)?;
+            state.note_ann.apply_note_delete(
+                previous_note
+                    .as_ref()
+                    .map(|note| note.stable_ann_label)
+                    .unwrap_or(0),
+            )?;
+            delete_note(&mut connection, &path)?;
+            state.index_revision.fetch_add(1, Ordering::AcqRel);
+        }
+        drop(connection);
+        self.clear_atlas_cache()
     }
 
     fn queue_delete_note_inner(&self, note_path: &Path, wake: bool) -> Result<(), String> {
@@ -1183,6 +1222,7 @@ impl ActiveSemanticState {
         let reranked_count = candidate_labels.len();
         let mut matches = load_chunks_by_ann_labels(&connection, &candidate_labels)?
             .into_iter()
+            .filter(|chunk| Path::new(&chunk.note_path).is_file())
             .filter(|chunk| exclude_note_path != Some(chunk.note_path.as_str()))
             .filter_map(|chunk| {
                 let score = cosine_similarity(&query_embedding, &chunk.embedding);

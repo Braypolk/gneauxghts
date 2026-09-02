@@ -100,6 +100,27 @@ Identity, storage format, and generation. The app also remembers the greatest
 generation it has opened outside the vault, so a synchronized rollback of both
 vault-local records is not silently accepted. Development resets retain an
 operation and generation diagnostic outside the replacement timelines.
+Clearing one Note Timeline atomically removes every previously readable record
+and establishes the current canonical authored state as a fresh Baseline
+Revision. A vault clear applies the same boundary independently to every active
+ordinary note without rewriting Markdown; missing and forgotten timelines stay
+retained. Permanent purge removes the complete timeline and all
+revision-dependent labels, citations, and rebuildable projections. Clear and
+purge leave only a versioned, prose-free deletion marker with stable scope,
+operation identity, time, and history generation. They become unreadable when
+their transaction commits, regardless of whether SQLite still has allocated
+pages. A whole-note purge durably prepares its deletion before atomically staging
+the canonical file under hidden vault data; pending deletion recovery uses that
+filesystem evidence before history reads and observation replay, and the purged
+Note Identity cannot acquire new records even when the original path is reused.
+Allocated and reclaimable byte totals remain distinct, and physical compaction
+is separately budgeted across WAL checkpoint and incremental-vacuum work and
+never chooses what history to retain. Allocated totals include the live SQLite
+main file, WAL, and SHM sidecar; reclaimable totals include database freelist
+pages and checkpoint net reduction that the store can prove are reclaimable.
+The WAL autocheckpoint and retained-size limits keep normal persistent WAL
+allocation within the background pass budget; larger live WALs remain reported
+and are never truncated by a smaller pass.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
 During synchronous reconciliation, a failed lexical projection retains the
 exact identity-resolved payload in retry state independent of catalog file

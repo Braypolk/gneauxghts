@@ -148,6 +148,24 @@ Identity, so rolling back the manifest and store together is also rejected. A
 development reset advances the manifest generation first, records its operation
 and generation boundary outside the replacement timeline, removes the
 superseded store, and rebuilds current notes as truthful baselines.
+Note and vault history clears, plus whole-note lifecycle purge, cross the same
+timeline-owned mutation barrier. Their SQLite transaction removes readable
+records before exposing a fresh baseline where applicable and retains only a
+storage-neutral deletion marker without authored prose. SQLite page reclamation
+is a later bounded maintenance operation scheduled after background vault
+reconciliation; storage diagnostics report allocated and reclaimable bytes
+separately so physical compaction cannot be confused with logical deletion. A
+whole-note purge first records a prose-free durable deletion intent, atomically
+stages the canonical file under hidden vault data, commits the timeline deletion,
+and removes the staging file. Recovery uses that staging evidence before
+observation replay or history access, so interruption or reuse of the original
+path cannot make the purged identity readable or appendable again.
+Allocated-byte reporting covers the live SQLite main file, WAL, and ephemeral
+SHM sidecar. A compaction pass only checkpoints a WAL that fits wholly inside
+its remaining byte budget, then bounds incremental vacuum work with that
+remainder.
+Schema-five stores migrate once behind the storage-opening barrier to enable
+incremental auto-vacuum before schema six is admitted.
 Detecting rollback to an older but internally valid store copy from the same
 generation requires the clean-close watermark and reconciliation work owned by
 Ticket 11; generation metadata alone does not claim to distinguish that case.

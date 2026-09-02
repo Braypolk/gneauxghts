@@ -168,6 +168,7 @@ pub(crate) struct StoredNoteRecord {
     pub(crate) presentation_hash: String,
     pub(crate) stable_ann_label: u64,
     pub(crate) document_kind: DocumentKind,
+    pub(crate) note_id: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -432,7 +433,7 @@ pub(crate) fn load_stored_note_records(
     let mut statement = connection
         .prepare(
             "SELECT path, modified_millis, content_hash, semantic_input_hash,
-                    structure_hash, presentation_hash, stable_ann_label, document_kind
+                    structure_hash, presentation_hash, stable_ann_label, document_kind, note_id
              FROM notes",
         )
         .map_err(|err| err.to_string())?;
@@ -452,6 +453,7 @@ pub(crate) fn load_stored_note_records(
                 document_kind: DocumentKind::from_frontmatter_value(
                     &row.get::<_, String>(7).map_err(|err| err.to_string())?,
                 ),
+                note_id: row.get::<_, String>(8).map_err(|err| err.to_string())?,
             },
         );
     }
@@ -467,7 +469,7 @@ pub(crate) fn load_note_record(
         .query_row(
             "
             SELECT modified_millis, content_hash, semantic_input_hash,
-                   structure_hash, presentation_hash, stable_ann_label, document_kind
+                   structure_hash, presentation_hash, stable_ann_label, document_kind, note_id
             FROM notes
             WHERE path = ?1
             ",
@@ -481,6 +483,7 @@ pub(crate) fn load_note_record(
                     presentation_hash: row.get(4)?,
                     stable_ann_label: row.get(5)?,
                     document_kind: DocumentKind::from_frontmatter_value(&row.get::<_, String>(6)?),
+                    note_id: row.get(7)?,
                 })
             },
         )

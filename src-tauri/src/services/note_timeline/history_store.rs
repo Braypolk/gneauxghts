@@ -4,11 +4,13 @@
 //! here. The parent module exposes only storage-neutral domain records.
 
 use super::{
-    BaselineInitializationPhase, BaselineInitializationProgress, HistoryIntentIdentity,
-    LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind, MutationSource,
-    NoteBaselineInitializationState, NoteIdentity, NoteRevisionHeader, PayloadVersion,
-    ReconstructedNoteRevision, RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity,
-    VaultObservation, VaultObservationKind, VaultObservationSource,
+    BaselineInitializationPhase, BaselineInitializationProgress, DeletionMarker,
+    DeletionOperationIdentity, DeletionScope, HistoryClearBaseline, HistoryDeletionKind,
+    HistoryIntentIdentity, HistoryStorageUsage, LifecycleEventHeader, LifecycleEventIdentity,
+    LifecycleEventKind, MutationSource, NoteBaselineInitializationState, NoteIdentity,
+    NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision, RevisionIdentity,
+    RevisionTimeEvidence, TimelineRecordIdentity, VaultObservation, VaultObservationKind,
+    VaultObservationSource, BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
@@ -25,7 +27,7 @@ const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_OBSERVATIONS_FILE_NAME: &str = "note-timeline-history-observations.json";
 pub(super) const HISTORY_FORMAT: &str = "sqlite-v1";
 pub(super) const INITIAL_HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 5;
+const HISTORY_SCHEMA_VERSION: u64 = 6;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -34,8 +36,10 @@ const MAX_REPLAY_REVISIONS: u64 = 128;
 const MAX_ACCUMULATED_DELTA_BYTES: u64 = 256 * 1024;
 const MAX_DELTA_TO_FULL_RATIO: f64 = 0.65;
 const MAX_MEASURED_REPLAY: Duration = Duration::from_millis(50);
+const MAX_COMPACTION_PAGES_PER_PASS: u64 = 256;
 
 static HISTORY_OBSERVATIONS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static HISTORY_STORE_OPEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +91,8 @@ pub(super) enum FaultPoint {
     Finalize,
     Recover,
     Baseline,
+    Deletion,
+    Migration,
 }
 
 #[cfg(test)]
@@ -171,6 +177,14 @@ pub(super) fn history_store_exists() -> bool {
 }
 
 #[cfg(test)]
+pub(super) fn auto_vacuum_mode_for_test() -> u64 {
+    open_store()
+        .expect("open history store")
+        .query_row("PRAGMA auto_vacuum", [], |row| row.get(0))
+        .expect("read history auto-vacuum mode")
+}
+
+#[cfg(test)]
 pub(super) fn baseline_failure_note_ids() -> Vec<String> {
     let connection = open_store().expect("open history store");
     let mut statement = connection
@@ -181,6 +195,43 @@ pub(super) fn baseline_failure_note_ids() -> Vec<String> {
         .expect("query baseline failures")
         .collect::<Result<Vec<_>, _>>()
         .expect("read baseline failures")
+}
+
+#[cfg(test)]
+pub(super) fn seed_revision_dependents_for_test(revision_id: &RevisionIdentity) {
+    let connection = open_store().expect("open history store");
+    connection
+        .execute(
+            "INSERT INTO named_revision_labels (label_id, revision_id, label)
+             VALUES ('test-label', ?1, 'Milestone')",
+            params![revision_id.0],
+        )
+        .expect("seed Named Revision label");
+    connection
+        .execute(
+            "INSERT INTO revision_citations (citation_id, revision_id, current_excerpt)
+             VALUES ('test-citation', ?1, 'Deleted prose projection')",
+            params![revision_id.0],
+        )
+        .expect("seed Revision Citation projection");
+}
+
+#[cfg(test)]
+pub(super) fn revision_dependent_count_for_test(note_id: &NoteIdentity) -> u64 {
+    open_store()
+        .expect("open history store")
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM named_revision_labels labels
+                JOIN revisions revisions ON revisions.revision_id = labels.revision_id
+                WHERE revisions.note_id = ?1)
+             + (SELECT COUNT(*) FROM revision_citations citations
+                JOIN revisions revisions ON revisions.revision_id = citations.revision_id
+                WHERE revisions.note_id = ?1)",
+            params![note_id.as_str()],
+            |row| row.get(0),
+        )
+        .expect("count revision dependents")
 }
 
 #[cfg(test)]
@@ -1004,6 +1055,7 @@ pub(super) fn record_observed_lifecycle_event(
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
+    reject_purged_note_identity(&transaction, note_id.as_str())?;
     let head = load_head(&transaction, note_id.as_str())?;
     if let Some(head) = &head {
         if head.record_kind == "lifecycleEvent" {
@@ -1088,6 +1140,7 @@ fn append_revision(
     transaction: &Transaction<'_>,
     append: RevisionAppend<'_>,
 ) -> Result<(), String> {
+    reject_purged_note_identity(transaction, append.note_id)?;
     let base = append
         .base_revision_id
         .map(|revision_id| reconstruct_revision(transaction, revision_id))
@@ -1197,6 +1250,28 @@ fn append_revision(
             ],
         )
         .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn reject_purged_note_identity(connection: &Connection, note_id: &str) -> Result<(), String> {
+    let purged = connection
+        .query_row(
+            "SELECT 1 FROM (
+               SELECT scope_id FROM deletion_markers
+               WHERE scope_kind = 'note' AND deletion_kind = 'purge'
+               UNION ALL
+               SELECT scope_id FROM pending_deletions
+             ) WHERE scope_id = ?1
+             LIMIT 1",
+            params![note_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|error| format!("Read Note Timeline purge boundary: {error}"))?
+        .is_some();
+    if purged {
+        return Err("Purged Note Identity cannot acquire new timeline records".to_string());
+    }
     Ok(())
 }
 
@@ -1569,6 +1644,488 @@ pub(super) fn reconstruct(
     })
 }
 
+fn insert_deletion_marker(
+    transaction: &Transaction<'_>,
+    marker: &DeletionMarker,
+) -> Result<(), String> {
+    let (scope_kind, scope_id) = marker.scope.storage_parts();
+    transaction
+        .execute(
+            "INSERT INTO deletion_markers (
+               operation_id, scope_kind, scope_id, deletion_kind,
+               occurred_at_millis, history_generation, payload_version
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
+            params![
+                marker.operation_id.as_str(),
+                scope_kind,
+                scope_id,
+                marker.kind.as_storage_value(),
+                marker.occurred_at_millis,
+                marker.history_generation,
+            ],
+        )
+        .map_err(|error| format!("Record Note Timeline deletion marker: {error}"))?;
+    Ok(())
+}
+
+fn delete_note_timeline_records(
+    transaction: &Transaction<'_>,
+    note_id: &NoteIdentity,
+) -> Result<(), String> {
+    transaction
+        .execute(
+            "DELETE FROM timeline_heads WHERE note_id = ?1",
+            params![note_id.as_str()],
+        )
+        .map_err(|error| format!("Delete Note Timeline head: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM baseline_initialization_failures WHERE note_id = ?1",
+            params![note_id.as_str()],
+        )
+        .map_err(|error| format!("Delete Note Timeline initialization failure: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM lifecycle_events WHERE note_id = ?1",
+            params![note_id.as_str()],
+        )
+        .map_err(|error| format!("Delete Note Timeline Lifecycle Events: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM revisions WHERE note_id = ?1",
+            params![note_id.as_str()],
+        )
+        .map_err(|error| format!("Delete Note Timeline revisions: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM prepared_intents WHERE note_id = ?1",
+            params![note_id.as_str()],
+        )
+        .map_err(|error| format!("Delete Note Timeline publication intents: {error}"))?;
+    Ok(())
+}
+
+pub(super) fn clear_note_history(
+    note_id: &NoteIdentity,
+    path: &Path,
+    canonical_markdown: &str,
+    marker: &DeletionMarker,
+) -> Result<(), String> {
+    let mut connection = open_store()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    transaction
+        .execute_batch("PRAGMA defer_foreign_keys=ON;")
+        .map_err(|error| format!("Defer Note Timeline clear constraints: {error}"))?;
+    delete_note_timeline_records(&transaction, note_id)?;
+    insert_deletion_marker(&transaction, marker)?;
+    append_baseline_if_absent(
+        &transaction,
+        note_id,
+        path,
+        canonical_markdown,
+        marker.occurred_at_millis,
+    )?;
+    #[cfg(test)]
+    if take_fault(FaultPoint::Deletion) {
+        return Err("injected history deletion interruption".to_string());
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Commit Note Timeline clear: {error}"))
+}
+
+pub(super) fn clear_vault_history(
+    seeds: &[HistoryClearBaseline],
+    marker: &DeletionMarker,
+) -> Result<(), String> {
+    let mut connection = open_store()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    transaction
+        .execute_batch("PRAGMA defer_foreign_keys=ON;")
+        .map_err(|error| format!("Defer vault Note Timeline clear constraints: {error}"))?;
+    for seed in seeds {
+        delete_note_timeline_records(&transaction, &seed.note_id)?;
+    }
+    insert_deletion_marker(&transaction, marker)?;
+    for seed in seeds {
+        append_baseline_if_absent(
+            &transaction,
+            &seed.note_id,
+            &seed.path,
+            &seed.canonical_markdown,
+            marker.occurred_at_millis,
+        )?;
+    }
+    #[cfg(test)]
+    if take_fault(FaultPoint::Deletion) {
+        return Err("injected history deletion interruption".to_string());
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Commit vault Note Timeline clear: {error}"))
+}
+
+pub(super) fn prepare_note_purge(
+    note_id: &NoteIdentity,
+    path: &Path,
+    marker: &DeletionMarker,
+) -> Result<PathBuf, String> {
+    let connection = open_store()?;
+    let (scope_kind, scope_id) = marker.scope.storage_parts();
+    if scope_kind != "note" || scope_id != note_id.as_str() {
+        return Err("Note purge marker scope does not match its Note Identity".to_string());
+    }
+    let staged_path = purge_staging_path(marker.operation_id())?;
+    connection
+        .execute(
+            "INSERT INTO pending_deletions (
+               operation_id, note_id, path, staged_path, scope_kind, scope_id,
+               deletion_kind, occurred_at_millis, history_generation, payload_version
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1)",
+            params![
+                marker.operation_id.as_str(),
+                note_id.as_str(),
+                path.to_string_lossy().into_owned(),
+                staged_path.to_string_lossy().into_owned(),
+                scope_kind,
+                scope_id,
+                marker.kind.as_storage_value(),
+                marker.occurred_at_millis,
+                marker.history_generation,
+            ],
+        )
+        .map_err(|error| format!("Prepare Note Timeline purge: {error}"))?;
+    Ok(staged_path)
+}
+
+pub(super) fn abandon_note_purge(operation_id: &DeletionOperationIdentity) -> Result<(), String> {
+    open_store()?
+        .execute(
+            "DELETE FROM pending_deletions WHERE operation_id = ?1",
+            params![operation_id.as_str()],
+        )
+        .map_err(|error| format!("Abandon prepared Note Timeline purge: {error}"))?;
+    Ok(())
+}
+
+pub(super) fn finalize_note_purge(operation_id: &DeletionOperationIdentity) -> Result<(), String> {
+    let mut connection = open_store()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    let pending = transaction
+        .query_row(
+            "SELECT note_id, path, scope_kind, scope_id, deletion_kind,
+                    occurred_at_millis, history_generation, payload_version
+             FROM pending_deletions WHERE operation_id = ?1",
+            params![operation_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    PathBuf::from(row.get::<_, String>(1)?),
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, u64>(5)?,
+                    row.get::<_, u64>(6)?,
+                    row.get::<_, i64>(7)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Read prepared Note Timeline purge: {error}"))?
+        .ok_or_else(|| "Unknown prepared Note Timeline purge".to_string())?;
+    let marker = DeletionMarker {
+        payload_version: parse_payload_version(pending.7)?,
+        operation_id: operation_id.clone(),
+        scope: DeletionScope::from_storage_parts(&pending.2, pending.3)?,
+        kind: HistoryDeletionKind::from_storage_value(&pending.4)
+            .ok_or_else(|| format!("Unknown prepared deletion kind `{}`", pending.4))?,
+        occurred_at_millis: pending.5,
+        history_generation: pending.6,
+    };
+    if marker.kind != HistoryDeletionKind::Purge
+        || marker.scope != DeletionScope::Note(NoteIdentity::new(pending.0.clone()))
+    {
+        return Err("Prepared Note Timeline purge has an invalid scope or kind".to_string());
+    }
+    transaction
+        .execute_batch("PRAGMA defer_foreign_keys=ON;")
+        .map_err(|error| format!("Defer Note Timeline purge constraints: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM pending_observations WHERE path = ?1 OR previous_path = ?1",
+            params![pending.1.to_string_lossy().into_owned()],
+        )
+        .map_err(|error| format!("Delete pending observations for purged note: {error}"))?;
+    delete_note_timeline_records(&transaction, &NoteIdentity::new(pending.0))?;
+    insert_deletion_marker(&transaction, &marker)?;
+    #[cfg(test)]
+    if take_fault(FaultPoint::Deletion) {
+        return Err("injected history deletion interruption".to_string());
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Commit Note Timeline purge: {error}"))
+}
+
+pub(super) fn complete_note_purge(operation_id: &DeletionOperationIdentity) -> Result<(), String> {
+    let connection = open_store()?;
+    let staged_path = connection
+        .query_row(
+            "SELECT staged_path FROM pending_deletions WHERE operation_id = ?1",
+            params![operation_id.as_str()],
+            |row| row.get::<_, String>(0).map(PathBuf::from),
+        )
+        .optional()
+        .map_err(|error| format!("Read staged Note Timeline purge cleanup: {error}"))?;
+    let Some(staged_path) = staged_path else {
+        return Ok(());
+    };
+    match fs::remove_file(&staged_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Remove staged canonical note after timeline purge {}: {error}",
+                staged_path.display()
+            ));
+        }
+    }
+    connection
+        .execute(
+            "DELETE FROM pending_deletions WHERE operation_id = ?1",
+            params![operation_id.as_str()],
+        )
+        .map_err(|error| format!("Complete prepared Note Timeline purge: {error}"))?;
+    Ok(())
+}
+
+pub(super) struct PendingDeletionRecovery {
+    pub(super) operation_id: DeletionOperationIdentity,
+    pub(super) note_id: NoteIdentity,
+    pub(super) path: PathBuf,
+    pub(super) staged_path: PathBuf,
+    pub(super) finalized: bool,
+}
+
+pub(super) fn pending_deletions_for_recovery() -> Result<Vec<PendingDeletionRecovery>, String> {
+    let connection = open_store()?;
+    let pending = {
+        let mut statement = connection
+            .prepare(
+                "SELECT operation_id, note_id, path, staged_path
+                 FROM pending_deletions ORDER BY operation_id",
+            )
+            .map_err(|error| format!("Prepare pending deletion recovery: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    DeletionOperationIdentity::from_persisted(row.get::<_, String>(0)?),
+                    NoteIdentity::new(row.get::<_, String>(1)?),
+                    PathBuf::from(row.get::<_, String>(2)?),
+                    PathBuf::from(row.get::<_, String>(3)?),
+                ))
+            })
+            .map_err(|error| format!("Read pending deletion recovery: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Decode pending deletion recovery: {error}"))?;
+        rows
+    };
+    drop(connection);
+    pending
+        .into_iter()
+        .map(|(operation_id, note_id, path, staged_path)| {
+            let finalized = deletion_marker_exists(&operation_id)?;
+            Ok(PendingDeletionRecovery {
+                operation_id,
+                note_id,
+                path,
+                staged_path,
+                finalized,
+            })
+        })
+        .collect()
+}
+
+fn deletion_marker_exists(operation_id: &DeletionOperationIdentity) -> Result<bool, String> {
+    Ok(open_store()?
+        .query_row(
+            "SELECT 1 FROM deletion_markers WHERE operation_id = ?1",
+            params![operation_id.as_str()],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|error| format!("Read Note Timeline purge completion marker: {error}"))?
+        .is_some())
+}
+
+fn purge_staging_path(operation_id: &DeletionOperationIdentity) -> Result<PathBuf, String> {
+    let directory = crate::state::vault_data_dir()?.join("pending-note-purges");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Create Note Timeline purge staging directory: {error}"))?;
+    Ok(directory.join(format!("{}.md", operation_id.as_str())))
+}
+
+pub(super) fn deletion_markers() -> Result<Vec<DeletionMarker>, String> {
+    let connection = open_store()?;
+    let mut statement = connection
+        .prepare(
+            "SELECT operation_id, scope_kind, scope_id, deletion_kind,
+                    occurred_at_millis, history_generation, payload_version
+             FROM deletion_markers
+             ORDER BY occurred_at_millis, operation_id",
+        )
+        .map_err(|error| format!("Prepare deletion marker export: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, u64>(4)?,
+                row.get::<_, u64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })
+        .map_err(|error| format!("Read deletion marker export: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Decode deletion marker export: {error}"))?;
+    rows.into_iter()
+        .map(
+            |(
+                operation_id,
+                scope_kind,
+                scope_id,
+                deletion_kind,
+                occurred_at_millis,
+                history_generation,
+                payload_version,
+            )| {
+                Ok(DeletionMarker {
+                    payload_version: parse_payload_version(payload_version)?,
+                    operation_id: DeletionOperationIdentity::from_persisted(operation_id),
+                    scope: DeletionScope::from_storage_parts(&scope_kind, scope_id)?,
+                    kind: HistoryDeletionKind::from_storage_value(&deletion_kind)
+                        .ok_or_else(|| format!("Unknown deletion marker kind `{deletion_kind}`"))?,
+                    occurred_at_millis,
+                    history_generation,
+                })
+            },
+        )
+        .collect()
+}
+
+fn storage_usage_with_connection(connection: &Connection) -> Result<HistoryStorageUsage, String> {
+    let page_size = connection
+        .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("Read Note Timeline storage page size: {error}"))?;
+    let reclaimable_pages = connection
+        .query_row("PRAGMA freelist_count", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("Read reclaimable Note Timeline storage: {error}"))?;
+    let logical_pages = connection
+        .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("Read logical Note Timeline storage pages: {error}"))?;
+    let database_path = history_database_path()?;
+    let allocated_bytes = sqlite_store_paths(&database_path)
+        .into_iter()
+        .try_fold(0_u64, |total, path| {
+            storage_file_bytes(&path).map(|bytes| total.saturating_add(bytes))
+        })?;
+    let main_bytes = storage_file_bytes(&database_path)?;
+    let wal_bytes = storage_file_bytes(&sqlite_sidecar_path(&database_path, "-wal"))?;
+    let checkpoint_growth = logical_pages
+        .saturating_mul(page_size)
+        .saturating_sub(main_bytes);
+    let checkpoint_reclaimable_bytes = wal_bytes.saturating_sub(checkpoint_growth);
+    Ok(HistoryStorageUsage {
+        allocated_bytes,
+        reclaimable_bytes: reclaimable_pages
+            .saturating_mul(page_size)
+            .saturating_add(checkpoint_reclaimable_bytes),
+    })
+}
+
+pub(super) fn storage_usage() -> Result<HistoryStorageUsage, String> {
+    storage_usage_with_connection(&open_store()?)
+}
+
+pub(super) fn compact(maximum_reclaim_bytes: u64) -> Result<(), String> {
+    let connection = open_store()?;
+    connection
+        .execute_batch("PRAGMA wal_autocheckpoint=0;")
+        .map_err(|error| format!("Bound Note Timeline compaction checkpointing: {error}"))?;
+    if maximum_reclaim_bytes == 0 {
+        return Ok(());
+    }
+    let database_path = history_database_path()?;
+    let wal_path = sqlite_sidecar_path(&database_path, "-wal");
+    let wal_bytes = storage_file_bytes(&wal_path)?;
+    let mut remaining_budget = maximum_reclaim_bytes;
+    if wal_bytes > 0 && wal_bytes <= remaining_budget {
+        connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(|error| format!("Compact Note Timeline WAL storage: {error}"))?;
+        remaining_budget = remaining_budget.saturating_sub(wal_bytes);
+    }
+    if remaining_budget == 0 {
+        return Ok(());
+    }
+    let usage = storage_usage_with_connection(&connection)?;
+    if usage.reclaimable_bytes == 0 {
+        return Ok(());
+    }
+    let page_size = connection
+        .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("Read Note Timeline compaction page size: {error}"))?;
+    let maximum_pages = (remaining_budget / page_size).min(MAX_COMPACTION_PAGES_PER_PASS);
+    if maximum_pages == 0 {
+        return Ok(());
+    }
+    let reclaimable_pages = usage.reclaimable_bytes / page_size;
+    let pages = maximum_pages.min(reclaimable_pages);
+    for _ in 0..pages {
+        connection
+            .execute_batch("PRAGMA incremental_vacuum(1);")
+            .map_err(|error| format!("Compact Note Timeline storage: {error}"))?;
+    }
+    Ok(())
+}
+
+fn history_database_path() -> Result<PathBuf, String> {
+    Ok(crate::state::vault_data_dir()?.join(HISTORY_DATABASE_FILE_NAME))
+}
+
+fn sqlite_sidecar_path(database_path: &Path, suffix: &str) -> PathBuf {
+    let mut sidecar = database_path.as_os_str().to_os_string();
+    sidecar.push(suffix);
+    PathBuf::from(sidecar)
+}
+
+fn sqlite_store_paths(database_path: &Path) -> [PathBuf; 3] {
+    [
+        database_path.to_path_buf(),
+        sqlite_sidecar_path(database_path, "-wal"),
+        sqlite_sidecar_path(database_path, "-shm"),
+    ]
+}
+
+fn storage_file_bytes(path: &Path) -> Result<u64, String> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(format!(
+            "Read Note Timeline storage allocation {}: {error}",
+            path.display()
+        )),
+    }
+}
+
 pub(super) fn reset_development_store(
     vault_root: &Path,
 ) -> Result<(u64, u64, String, u64), String> {
@@ -1772,6 +2329,9 @@ pub(super) fn latest_development_history_reset() -> Result<Option<(String, u64, 
 }
 
 fn open_store() -> Result<Connection, String> {
+    let _open_guard = HISTORY_STORE_OPEN_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history store open lock poisoned".to_string())?;
     let vault_root = crate::state::vault_root()?;
     let manifest = crate::state::read_vault_manifest_for(&vault_root)?
         .map(Ok)
@@ -1784,18 +2344,69 @@ fn open_store() -> Result<Connection, String> {
     }
     let data_dir = crate::state::vault_data_dir()?;
     fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
-    let path = data_dir.join(HISTORY_DATABASE_FILE_NAME);
-    if !path.is_file() {
+    let path = history_database_path()?;
+    let creating_store = !path.is_file();
+    if creating_store {
         ensure_store_creation_is_authorized(&manifest)?;
     }
     let connection = Connection::open(&path).map_err(|error| error.to_string())?;
+    if !creating_store {
+        let has_metadata_table = connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master
+                 WHERE type = 'table' AND name = 'history_metadata'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .is_some();
+        if has_metadata_table {
+            let metadata = connection
+                .query_row(
+                    "SELECT vault_id, history_format, history_generation, schema_version
+                     FROM history_metadata WHERE singleton = 1",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, u64>(2)?,
+                            row.get::<_, u64>(3)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|error| error.to_string())?;
+            if let Some((vault_id, format, generation, schema)) = metadata {
+                if vault_id != manifest.vault_id {
+                    return Err("Note Timeline history store vault identity mismatch".to_string());
+                }
+                if format != manifest.history_format {
+                    return Err("Note Timeline history store format mismatch".to_string());
+                }
+                if generation != manifest.history_generation {
+                    return Err("Note Timeline history store generation mismatch".to_string());
+                }
+                match schema {
+                    5 => migrate_schema_five_storage(&connection)?,
+                    HISTORY_SCHEMA_VERSION => {}
+                    _ => return Err("Note Timeline history store schema mismatch".to_string()),
+                }
+            }
+        }
+    }
+    if creating_store {
+        connection
+            .execute_batch("PRAGMA auto_vacuum=INCREMENTAL; VACUUM;")
+            .map_err(|error| format!("Initialize reclaimable Note Timeline storage: {error}"))?;
+    }
     connection
         .execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA foreign_keys=ON;
              PRAGMA synchronous=FULL;
              PRAGMA busy_timeout=5000;
-             PRAGMA wal_autocheckpoint=1000;
              CREATE TABLE IF NOT EXISTS history_metadata (
                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                vault_id TEXT NOT NULL,
@@ -1846,6 +2457,20 @@ fn open_store() -> Result<Connection, String> {
              );
              CREATE INDEX IF NOT EXISTS revisions_by_note_time
                ON revisions(note_id, COALESCE(known_since_millis, committed_at_millis, observed_at_millis), revision_id);
+             CREATE TABLE IF NOT EXISTS named_revision_labels (
+               label_id TEXT PRIMARY KEY,
+               revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE CASCADE,
+               label TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS named_revision_labels_by_revision
+               ON named_revision_labels(revision_id, label_id);
+             CREATE TABLE IF NOT EXISTS revision_citations (
+               citation_id TEXT PRIMARY KEY,
+               revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE CASCADE,
+               current_excerpt TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS revision_citations_by_revision
+               ON revision_citations(revision_id, citation_id);
              CREATE TABLE IF NOT EXISTS lifecycle_events (
                event_id TEXT PRIMARY KEY,
                note_id TEXT NOT NULL,
@@ -1897,9 +2522,33 @@ fn open_store() -> Result<Connection, String> {
                current_path TEXT NOT NULL
              );
              CREATE INDEX IF NOT EXISTS timeline_heads_by_current_path
-               ON timeline_heads(current_path);",
+               ON timeline_heads(current_path);
+             CREATE TABLE IF NOT EXISTS deletion_markers (
+               operation_id TEXT PRIMARY KEY,
+               scope_kind TEXT NOT NULL CHECK (scope_kind IN ('note', 'vault')),
+               scope_id TEXT NOT NULL,
+               deletion_kind TEXT NOT NULL CHECK (deletion_kind IN ('clear', 'purge')),
+               occurred_at_millis INTEGER NOT NULL,
+               history_generation INTEGER NOT NULL,
+               payload_version INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS deletion_markers_by_scope
+               ON deletion_markers(scope_kind, scope_id, occurred_at_millis, operation_id);
+             CREATE TABLE IF NOT EXISTS pending_deletions (
+               operation_id TEXT PRIMARY KEY,
+               note_id TEXT NOT NULL,
+               path TEXT NOT NULL,
+               staged_path TEXT NOT NULL,
+               scope_kind TEXT NOT NULL CHECK (scope_kind = 'note'),
+               scope_id TEXT NOT NULL,
+               deletion_kind TEXT NOT NULL CHECK (deletion_kind = 'purge'),
+               occurred_at_millis INTEGER NOT NULL,
+               history_generation INTEGER NOT NULL,
+               payload_version INTEGER NOT NULL
+             );",
         )
         .map_err(|error| format!("Initialize Note Timeline history store: {error}"))?;
+    configure_wal_bounds(&connection)?;
     let metadata = connection
         .query_row(
             "SELECT vault_id, history_format, history_generation, schema_version
@@ -1926,6 +2575,9 @@ fn open_store() -> Result<Connection, String> {
         Some((_, _, generation, _)) if generation != manifest.history_generation => {
             return Err("Note Timeline history store generation mismatch".to_string())
         }
+        Some((_, _, _, 5)) => {
+            record_schema_six_migration(&connection)?;
+        }
         Some((_, _, _, schema)) if schema != HISTORY_SCHEMA_VERSION => {
             return Err("Note Timeline history store schema mismatch".to_string())
         }
@@ -1949,6 +2601,57 @@ fn open_store() -> Result<Connection, String> {
     }
     validate_and_remember_history_selection(&manifest)?;
     Ok(connection)
+}
+
+fn migrate_schema_five_storage(connection: &Connection) -> Result<(), String> {
+    #[cfg(test)]
+    if take_fault(FaultPoint::Migration) {
+        return Err("injected schema migration interruption".to_string());
+    }
+    let auto_vacuum = connection
+        .query_row("PRAGMA auto_vacuum", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("Read legacy Note Timeline auto-vacuum mode: {error}"))?;
+    if auto_vacuum != 2 {
+        connection
+            .execute_batch("PRAGMA auto_vacuum=INCREMENTAL; VACUUM;")
+            .map_err(|error| format!("Migrate Note Timeline to bounded reclamation: {error}"))?;
+    }
+    Ok(())
+}
+
+fn record_schema_six_migration(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE history_metadata SET schema_version = ?1
+             WHERE singleton = 1 AND schema_version = 5",
+            params![HISTORY_SCHEMA_VERSION],
+        )
+        .map_err(|error| format!("Record Note Timeline schema migration: {error}"))?;
+    Ok(())
+}
+
+fn configure_wal_bounds(connection: &Connection) -> Result<(), String> {
+    let page_size = connection
+        .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
+        .map_err(|error| format!("Read Note Timeline WAL page size: {error}"))?;
+    let wal_header_bytes = 32_u64;
+    let wal_frame_header_bytes = 24_u64;
+    let autocheckpoint_pages = BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES
+        .saturating_sub(wal_header_bytes)
+        .checked_div(page_size.saturating_add(wal_frame_header_bytes))
+        .unwrap_or(0)
+        .max(1);
+    connection
+        .pragma_update(None, "wal_autocheckpoint", autocheckpoint_pages)
+        .map_err(|error| format!("Configure Note Timeline WAL autocheckpoint: {error}"))?;
+    connection
+        .pragma_update(
+            None,
+            "journal_size_limit",
+            BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
+        )
+        .map_err(|error| format!("Configure Note Timeline WAL size limit: {error}"))?;
+    Ok(())
 }
 
 pub(super) fn recover_pending() -> Result<(), String> {
@@ -2424,6 +3127,22 @@ mod tests {
         let note_id = NoteIdentity::new("corrupt-note");
         let revision = revisions(&note_id).unwrap().remove(0);
         let connection = open_store().unwrap();
+        let page_size = connection
+            .query_row("PRAGMA page_size", [], |row| row.get::<_, u64>(0))
+            .unwrap();
+        let autocheckpoint_pages = connection
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, u64>(0))
+            .unwrap();
+        assert!(
+            32_u64.saturating_add(autocheckpoint_pages.saturating_mul(page_size + 24))
+                <= BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES
+        );
+        assert_eq!(
+            connection
+                .query_row("PRAGMA journal_size_limit", [], |row| row.get::<_, u64>(0))
+                .unwrap(),
+            BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES
+        );
         connection
             .execute(
                 "UPDATE revisions SET payload = ?1 WHERE revision_id = ?2",
@@ -2433,6 +3152,148 @@ mod tests {
 
         let error = reconstruct(&note_id, revision.identity()).unwrap_err();
         assert!(error.contains("checkpoint") || error.contains("hash"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn storage_usage_counts_live_sidecars_and_tiny_compaction_skips_a_larger_wal() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-storage-sidecars-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-storage-sidecars-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let connection = open_store().unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA wal_checkpoint(TRUNCATE);
+                 CREATE TABLE IF NOT EXISTS storage_usage_probe (payload BLOB NOT NULL);",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO storage_usage_probe (payload) VALUES (?1)",
+                params![vec![7_u8; 128 * 1024]],
+            )
+            .unwrap();
+        let database_path = history_database_path().unwrap();
+        let wal_path = sqlite_sidecar_path(&database_path, "-wal");
+        let wal_before = storage_file_bytes(&wal_path).unwrap();
+        assert!(wal_before > 1);
+        let physical_bytes = sqlite_store_paths(&database_path)
+            .into_iter()
+            .map(|path| storage_file_bytes(&path).unwrap())
+            .sum::<u64>();
+
+        assert_eq!(
+            storage_usage_with_connection(&connection)
+                .unwrap()
+                .allocated_bytes,
+            physical_bytes
+        );
+        compact(1).unwrap();
+        assert!(storage_file_bytes(&wal_path).unwrap() >= wal_before);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn opening_schema_five_store_migrates_it_to_incremental_vacuum_without_data_loss() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-schema-five-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-schema-five-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let manifest = crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let database_path = history_database_path().unwrap();
+        fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        let legacy = Connection::open(&database_path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE history_metadata (
+                   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                   vault_id TEXT NOT NULL,
+                   history_format TEXT NOT NULL,
+                   history_generation INTEGER NOT NULL,
+                   schema_version INTEGER NOT NULL
+                 );
+                 CREATE TABLE migration_probe (value TEXT NOT NULL);
+                 INSERT INTO migration_probe (value) VALUES ('retained');",
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "INSERT INTO history_metadata (
+                   singleton, vault_id, history_format, history_generation, schema_version
+                 ) VALUES (1, ?1, ?2, ?3, 5)",
+                params![
+                    manifest.vault_id,
+                    HISTORY_FORMAT,
+                    manifest.history_generation
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            legacy
+                .query_row("PRAGMA auto_vacuum", [], |row| row.get::<_, u64>(0))
+                .unwrap(),
+            0
+        );
+        drop(legacy);
+
+        inject_fault_once(FaultPoint::Migration);
+        assert!(open_store()
+            .unwrap_err()
+            .contains("injected schema migration interruption"));
+        let interrupted = Connection::open(&database_path).unwrap();
+        assert_eq!(
+            interrupted
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = 'deletion_markers'",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            interrupted
+                .query_row(
+                    "SELECT schema_version FROM history_metadata WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap(),
+            5
+        );
+        drop(interrupted);
+
+        let migrated = open_store().unwrap();
+
+        assert_eq!(
+            migrated
+                .query_row("PRAGMA auto_vacuum", [], |row| row.get::<_, u64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            migrated
+                .query_row(
+                    "SELECT schema_version FROM history_metadata WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap(),
+            HISTORY_SCHEMA_VERSION
+        );
+        assert_eq!(
+            migrated
+                .query_row("SELECT value FROM migration_probe", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap(),
+            "retained"
+        );
         crate::state::set_notes_root_override(None).unwrap();
     }
 }

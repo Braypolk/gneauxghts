@@ -282,6 +282,52 @@ fn default_pending_label_source() -> String {
     "pending".to_string()
 }
 
+fn suppress_missing_atlas_nodes(response: &mut VaultAtlasResponse) {
+    let retained_node_ids = response
+        .nodes
+        .iter()
+        .filter(|node| Path::new(&node.note_path).is_file())
+        .map(|node| node.id.clone())
+        .collect::<HashSet<_>>();
+    if retained_node_ids.len() == response.nodes.len() {
+        return;
+    }
+    response
+        .nodes
+        .retain(|node| retained_node_ids.contains(&node.id));
+    response.links.retain(|link| {
+        retained_node_ids.contains(&link.source_id) && retained_node_ids.contains(&link.target_id)
+    });
+    for cloud in &mut response.clouds {
+        cloud
+            .member_node_ids
+            .retain(|node_id| retained_node_ids.contains(node_id));
+        cloud
+            .core_node_ids
+            .retain(|node_id| retained_node_ids.contains(node_id));
+        cloud
+            .outlier_node_ids
+            .retain(|node_id| retained_node_ids.contains(node_id));
+        cloud
+            .representative_node_ids
+            .retain(|node_id| retained_node_ids.contains(node_id));
+        cloud.note_count = cloud.member_node_ids.len();
+        cloud.label = None;
+        cloud.label_source = default_pending_label_source();
+    }
+    response.clouds.retain(|cloud| cloud.note_count > 0);
+    let retained_cloud_ids = response
+        .clouds
+        .iter()
+        .map(|cloud| cloud.id.clone())
+        .collect::<HashSet<_>>();
+    for cloud in &mut response.clouds {
+        cloud
+            .child_cloud_ids
+            .retain(|cloud_id| retained_cloud_ids.contains(cloud_id));
+    }
+}
+
 #[derive(Clone)]
 struct WorkingNode {
     id: String,
@@ -824,7 +870,10 @@ impl AtlasWorkerContext {
             load_atlas_note_embeddings(&connection)?,
             &metadata,
             self.dimensions,
-        );
+        )
+        .into_iter()
+        .filter(|note| Path::new(&note.note_path).is_file())
+        .collect::<Vec<_>>();
         if indexed_notes.is_empty() {
             record_atlas_phase(&self.debug, "load", load_started);
             let response = empty_atlas("empty", "No indexed notes are available yet.", revision)?;
@@ -1264,6 +1313,7 @@ impl ActiveSemanticState {
         let mut label_request = None;
         let expected_label_model = self.provider.model_info().fingerprint();
         if let Some(response) = &mut published {
+            suppress_missing_atlas_nodes(response);
             let membership =
                 cloud_membership_fingerprint(&response.structural_generation, &response.clouds);
             label_request = Some(AtlasLabelRequest {
@@ -1382,7 +1432,10 @@ impl ActiveSemanticState {
             load_atlas_note_embeddings(&connection)?,
             &metadata,
             self.provider.model_info().dimensions,
-        );
+        )
+        .into_iter()
+        .filter(|note| Path::new(&note.note_path).is_file())
+        .collect::<Vec<_>>();
         if indexed_notes.is_empty() {
             return Ok(AtlasSearchResponse {
                 status: "empty".to_string(),

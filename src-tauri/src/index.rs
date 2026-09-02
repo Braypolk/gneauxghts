@@ -204,7 +204,7 @@ impl AppState {
         if *recovered {
             return Ok(());
         }
-        crate::services::note_timeline::recover_pending_history()?;
+        crate::services::note_timeline::recover_pending_history(self)?;
         *recovered = true;
         Ok(())
     }

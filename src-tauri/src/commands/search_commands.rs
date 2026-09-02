@@ -10,7 +10,7 @@ use crate::{
         atlas::{frequency_score, recency_score},
         RelatedNotesResponse, SemanticChunkMatch,
     },
-    services::{resolve_current_document, CurrentDocumentRequest},
+    services::{note_timeline::NoteTimeline, resolve_current_document, CurrentDocumentRequest},
     state::{
         db_load_note_activity, db_set_last_chat_location, db_set_note_pinned, effective_open_count,
         prune_recent_note_ids, read_state, resolve_note_id_from_path, validate_current_path,
@@ -23,7 +23,10 @@ use std::collections::HashSet;
 use std::{
     collections::HashMap,
     path::Path,
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    },
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager, State};
@@ -40,26 +43,42 @@ const SEARCH_ACCESS_WEIGHT: f32 = 0.08;
 #[derive(Clone)]
 struct CachedSearchResults {
     fingerprint: String,
+    generation: u64,
     inserted_at: Instant,
     results: Vec<NoteSearchResult>,
 }
 
 static SEARCH_RESULT_CACHE: Mutex<Vec<CachedSearchResults>> = Mutex::new(Vec::new());
+static RESULT_CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-fn search_cache_get(fingerprint: &str) -> Option<Vec<NoteSearchResult>> {
+fn result_cache_generation() -> u64 {
+    RESULT_CACHE_GENERATION.load(Ordering::Acquire)
+}
+
+fn result_cache_generation_is_current(generation: u64) -> bool {
+    result_cache_generation() == generation
+}
+
+fn search_cache_get(fingerprint: &str, generation: u64) -> Option<Vec<NoteSearchResult>> {
     let mut cache = SEARCH_RESULT_CACHE.lock().ok()?;
+    if result_cache_generation() != generation {
+        return None;
+    }
     let now = Instant::now();
     cache.retain(|entry| now.duration_since(entry.inserted_at) <= SEARCH_RESULT_CACHE_TTL);
     cache
         .iter()
-        .find(|entry| entry.fingerprint == fingerprint)
+        .find(|entry| entry.fingerprint == fingerprint && entry.generation == generation)
         .map(|entry| entry.results.clone())
 }
 
-fn search_cache_put(fingerprint: String, results: Vec<NoteSearchResult>) {
+fn search_cache_put(fingerprint: String, generation: u64, results: Vec<NoteSearchResult>) {
     let Ok(mut cache) = SEARCH_RESULT_CACHE.lock() else {
         return;
     };
+    if result_cache_generation() != generation {
+        return;
+    }
     let now = Instant::now();
     cache.retain(|entry| {
         entry.fingerprint != fingerprint
@@ -67,6 +86,7 @@ fn search_cache_put(fingerprint: String, results: Vec<NoteSearchResult>) {
     });
     cache.push(CachedSearchResults {
         fingerprint,
+        generation,
         inserted_at: now,
         results,
     });
@@ -78,26 +98,50 @@ fn search_cache_put(fingerprint: String, results: Vec<NoteSearchResult>) {
 #[derive(Clone)]
 struct CachedRelatedResponse {
     fingerprint: String,
+    generation: u64,
     inserted_at: Instant,
     response: RelatedNotesResponse,
 }
 
 static RELATED_RESULT_CACHE: Mutex<Vec<CachedRelatedResponse>> = Mutex::new(Vec::new());
 
-fn related_cache_get(fingerprint: &str) -> Option<RelatedNotesResponse> {
+pub(crate) fn invalidate_result_caches() -> Result<(), String> {
+    RESULT_CACHE_GENERATION.fetch_add(1, Ordering::AcqRel);
+    SEARCH_RESULT_CACHE
+        .lock()
+        .map_err(|_| "Search result cache lock poisoned".to_string())?
+        .clear();
+    RELATED_RESULT_CACHE
+        .lock()
+        .map_err(|_| "Related result cache lock poisoned".to_string())?
+        .clear();
+    CURRENT_OVERRIDE_CACHE
+        .lock()
+        .map_err(|_| "Current note override cache lock poisoned".to_string())?
+        .clear();
+    Ok(())
+}
+
+fn related_cache_get(fingerprint: &str, generation: u64) -> Option<RelatedNotesResponse> {
     let mut cache = RELATED_RESULT_CACHE.lock().ok()?;
+    if result_cache_generation() != generation {
+        return None;
+    }
     let now = Instant::now();
     cache.retain(|entry| now.duration_since(entry.inserted_at) <= SEARCH_RESULT_CACHE_TTL);
     cache
         .iter()
-        .find(|entry| entry.fingerprint == fingerprint)
+        .find(|entry| entry.fingerprint == fingerprint && entry.generation == generation)
         .map(|entry| entry.response.clone())
 }
 
-fn related_cache_put(fingerprint: String, response: RelatedNotesResponse) {
+fn related_cache_put(fingerprint: String, generation: u64, response: RelatedNotesResponse) {
     let Ok(mut cache) = RELATED_RESULT_CACHE.lock() else {
         return;
     };
+    if result_cache_generation() != generation {
+        return;
+    }
     let now = Instant::now();
     cache.retain(|entry| {
         entry.fingerprint != fingerprint
@@ -105,6 +149,7 @@ fn related_cache_put(fingerprint: String, response: RelatedNotesResponse) {
     });
     cache.push(CachedRelatedResponse {
         fingerprint,
+        generation,
         inserted_at: now,
         response,
     });
@@ -217,6 +262,7 @@ pub(crate) fn list_recent_notes(
     limit: usize,
     current_path: Option<String>,
 ) -> Result<Vec<NoteSearchResult>, String> {
+    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
@@ -235,7 +281,7 @@ pub(crate) fn list_recent_notes(
         .lock()
         .map_err(|_| "Search index lock poisoned".to_string())?;
 
-    Ok(collect_recent_note_results(
+    let results = collect_recent_note_results(
         &persisted_state.recent_note_ids,
         current_path
             .as_deref()
@@ -244,7 +290,12 @@ pub(crate) fn list_recent_notes(
             .as_deref(),
         &index,
         limit,
-    ))
+    );
+    Ok(if content_read.is_current() {
+        results
+    } else {
+        Vec::new()
+    })
 }
 
 #[derive(Clone, Serialize)]
@@ -310,6 +361,7 @@ pub(crate) fn list_recent_focus(
     limit: usize,
     current_path: Option<String>,
 ) -> Result<RecentFocusBundle, String> {
+    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
@@ -353,11 +405,16 @@ pub(crate) fn list_recent_focus(
             context_note_path: persisted_state.last_chat_context_note_path.clone(),
         });
 
-    Ok(RecentFocusBundle {
+    let mut bundle = RecentFocusBundle {
         pinned_notes,
         recent_notes,
         last_chat,
-    })
+    };
+    if !content_read.is_current() {
+        bundle.pinned_notes.clear();
+        bundle.recent_notes.clear();
+    }
+    Ok(bundle)
 }
 
 #[tauri::command]
@@ -436,6 +493,8 @@ pub(crate) async fn search_notes_hybrid(
     lexical_weight: Option<f32>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let _foreground_guard = state.foreground_guard();
+    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let cache_generation = result_cache_generation();
     let started_at = Instant::now();
     let notes_dir = prepare_notes_dir(false)?;
 
@@ -472,8 +531,14 @@ pub(crate) async fn search_notes_hybrid(
         lexical_weight,
         semantic_weight,
     );
-    if let Some(cached) = search_cache_get(&cache_fingerprint) {
-        return Ok(cached);
+    if let Some(cached) = search_cache_get(&cache_fingerprint, cache_generation) {
+        return Ok(
+            if content_read.is_current() && result_cache_generation_is_current(cache_generation) {
+                cached
+            } else {
+                Vec::new()
+            },
+        );
     }
     let resolved_body = resolved_current.body.unwrap_or_default();
     let lexical_candidates = collect_lexical_candidates(
@@ -530,8 +595,14 @@ pub(crate) async fn search_notes_hybrid(
             ),
             effective_limit,
         );
-        search_cache_put(cache_fingerprint, results.clone());
-        return Ok(results);
+        search_cache_put(cache_fingerprint, cache_generation, results.clone());
+        return Ok(
+            if content_read.is_current() && result_cache_generation_is_current(cache_generation) {
+                results
+            } else {
+                Vec::new()
+            },
+        );
     }
 
     let semantic = state.semantic.clone();
@@ -597,8 +668,14 @@ pub(crate) async fn search_notes_hybrid(
             metrics.search_duration_max_millis = metrics.search_duration_max_millis.max(elapsed);
         },
     );
-    search_cache_put(cache_fingerprint, ranked.clone());
-    Ok(ranked)
+    search_cache_put(cache_fingerprint, cache_generation, ranked.clone());
+    Ok(
+        if content_read.is_current() && result_cache_generation_is_current(cache_generation) {
+            ranked
+        } else {
+            Vec::new()
+        },
+    )
 }
 
 fn semantic_query_or_empty(
@@ -622,6 +699,8 @@ pub(crate) async fn get_related_notes(
     limit: usize,
 ) -> Result<RelatedNotesResponse, String> {
     let _foreground_guard = state.foreground_guard();
+    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let cache_generation = result_cache_generation();
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
@@ -640,8 +719,19 @@ pub(crate) async fn get_related_notes(
         selected_text.as_deref(),
         limit,
     );
-    if let Some(cached) = related_cache_get(&fingerprint) {
-        return Ok(cached);
+    if let Some(cached) = related_cache_get(&fingerprint, cache_generation) {
+        return Ok(
+            if content_read.is_current() && result_cache_generation_is_current(cache_generation) {
+                cached
+            } else {
+                RelatedNotesResponse {
+                    status: cached.status,
+                    scope: cached.scope,
+                    reason: cached.reason,
+                    items: Vec::new(),
+                }
+            },
+        );
     }
     let resolved_body = resolved_current.body.unwrap_or_default();
     let current_path_raw = current_path
@@ -649,7 +739,7 @@ pub(crate) async fn get_related_notes(
         .map(|path| path.to_string_lossy().into_owned());
     let semantic = state.semantic.clone();
 
-    let response = tauri::async_runtime::spawn_blocking(move || {
+    let mut response = tauri::async_runtime::spawn_blocking(move || {
         semantic.related_notes(
             current_path_raw.as_deref(),
             &current_title,
@@ -660,7 +750,10 @@ pub(crate) async fn get_related_notes(
     })
     .await
     .map_err(|err| err.to_string())??;
-    related_cache_put(fingerprint, response.clone());
+    related_cache_put(fingerprint, cache_generation, response.clone());
+    if !content_read.is_current() || !result_cache_generation_is_current(cache_generation) {
+        response.items.clear();
+    }
     Ok(response)
 }
 
@@ -679,6 +772,8 @@ pub(crate) async fn retrieve_note_context(
     limit: usize,
 ) -> Result<RetrievalContextResponse, String> {
     let _foreground_guard = state.foreground_guard();
+    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let cache_generation = result_cache_generation();
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
@@ -696,7 +791,7 @@ pub(crate) async fn retrieve_note_context(
         .map(|path| path.to_string_lossy().into_owned());
     let effective_limit = limit.max(1);
 
-    match scope {
+    let mut response = match scope {
         RetrievalContextScope::Query => {
             let Some(query) = query.filter(|value| !value.trim().is_empty()) else {
                 return Ok(RetrievalContextResponse {
@@ -721,7 +816,7 @@ pub(crate) async fn retrieve_note_context(
             })
             .await
             .map_err(|err| err.to_string())??;
-            Ok(RetrievalContextResponse {
+            Ok::<_, String>(RetrievalContextResponse {
                 status: "ready".to_string(),
                 scope: "query".to_string(),
                 reason: None,
@@ -770,7 +865,7 @@ pub(crate) async fn retrieve_note_context(
             })
             .await
             .map_err(|err| err.to_string())??;
-            Ok(RetrievalContextResponse {
+            Ok::<_, String>(RetrievalContextResponse {
                 status: response.status,
                 scope: response.scope,
                 reason: response.reason,
@@ -797,7 +892,11 @@ pub(crate) async fn retrieve_note_context(
                     .collect(),
             })
         }
+    }?;
+    if !content_read.is_current() || !result_cache_generation_is_current(cache_generation) {
+        response.items.clear();
     }
+    Ok(response)
 }
 
 pub(super) fn build_draft_ref(
@@ -1232,6 +1331,34 @@ fn structural_boost_from_semantic(
         boost -= 0.2;
     }
     boost
+}
+
+#[cfg(test)]
+mod result_cache_generation_tests {
+    use super::*;
+
+    #[test]
+    fn invalidation_rejects_late_search_and_related_cache_writes() {
+        let old_generation = result_cache_generation();
+        invalidate_result_caches().unwrap();
+        let current_generation = result_cache_generation();
+        assert_ne!(old_generation, current_generation);
+
+        search_cache_put("late-search".to_string(), old_generation, Vec::new());
+        related_cache_put(
+            "late-related".to_string(),
+            old_generation,
+            RelatedNotesResponse {
+                status: "ready".to_string(),
+                scope: "note".to_string(),
+                reason: None,
+                items: Vec::new(),
+            },
+        );
+
+        assert!(search_cache_get("late-search", current_generation).is_none());
+        assert!(related_cache_get("late-related", current_generation).is_none());
+    }
 }
 
 #[cfg(test)]

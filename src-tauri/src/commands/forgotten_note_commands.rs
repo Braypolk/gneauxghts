@@ -67,7 +67,7 @@ pub(crate) fn forget_note(
             note_path.clone(),
             forgotten_path.clone(),
             forgotten_at_millis,
-        ));
+        ))?;
         if persisted_state.last_opened_note_id.as_deref() == Some(note_id.as_str()) {
             persisted_state.last_opened_note_id = None;
         }
@@ -254,7 +254,7 @@ pub(crate) fn restore_forgotten_notes(
                         forgotten_path.clone(),
                         restored_path.clone(),
                         timestamp_millis,
-                    ));
+                    ))?;
                 }
 
                 let note = build_indexed_note(&restored_path, &restored_markdown, timestamp_millis);
@@ -336,21 +336,12 @@ pub(crate) fn delete_forgotten_notes(
         }
 
         let forgotten_note = persisted_state.forgotten_notes.remove(index);
-        let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
-        let forgotten_note_id = forgotten_note_identity(&forgotten_note, &forgotten_path);
-        if let Some(conversation_id) = forgotten_note.conversation_id.as_deref() {
-            chat_service.delete_archived_conversation(conversation_id)?;
-        }
-        if forgotten_path.exists() {
-            remove_forgotten_item_path(&forgotten_path, &forgotten_note.kind)?;
-        }
-        if let Some(note_id) = forgotten_note_id {
-            NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::purged(
-                note_id,
-                forgotten_path,
-                current_time_millis()?,
-            ));
-        }
+        purge_forgotten_item(
+            &state,
+            &forgotten_note,
+            current_time_millis()?,
+            |conversation_id| chat_service.delete_archived_conversation(conversation_id),
+        )?;
         write_unpruned_state(&persisted_state)?;
     }
 
@@ -451,25 +442,13 @@ pub(super) fn cleanup_expired_forgotten_notes(
     let mut kept_notes = Vec::with_capacity(original_len);
 
     for forgotten_note in persisted_state.forgotten_notes.drain(..) {
-        let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
         if forgotten_note.purge_at_millis <= now {
-            let forgotten_note_id = forgotten_note_identity(&forgotten_note, &forgotten_path);
-            if let Some(conversation_id) = forgotten_note.conversation_id.as_deref() {
+            purge_forgotten_item(state, &forgotten_note, now, |conversation_id| {
                 ChatService::delete_persisted_conversation(
                     &crate::state::vault_data_dir()?,
                     conversation_id,
-                )?;
-            }
-            if forgotten_path.exists() {
-                remove_forgotten_item_path(&forgotten_path, &forgotten_note.kind)?;
-            }
-            if let Some(note_id) = forgotten_note_id {
-                NoteTimeline::new(state).lifecycle(NoteLifecycleOperation::purged(
-                    note_id,
-                    forgotten_path,
-                    now,
-                ));
-            }
+                )
+            })?;
             continue;
         }
         kept_notes.push(forgotten_note);
@@ -481,6 +460,31 @@ pub(super) fn cleanup_expired_forgotten_notes(
     }
 
     Ok(())
+}
+
+fn purge_forgotten_item(
+    state: &AppState,
+    forgotten_note: &PersistedForgottenNote,
+    occurred_at_millis: u64,
+    delete_conversation: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
+    let forgotten_note_id = forgotten_note_identity(forgotten_note, &forgotten_path);
+    if let Some(conversation_id) = forgotten_note.conversation_id.as_deref() {
+        delete_conversation(conversation_id)?;
+    }
+    if let Some(note_id) = forgotten_note_id {
+        NoteTimeline::new(state).lifecycle(NoteLifecycleOperation::purged(
+            note_id,
+            forgotten_path,
+            occurred_at_millis,
+        ))?;
+        Ok(())
+    } else if forgotten_path.exists() {
+        remove_forgotten_item_path(&forgotten_path, &forgotten_note.kind)
+    } else {
+        Ok(())
+    }
 }
 
 fn forgotten_note_identity(
