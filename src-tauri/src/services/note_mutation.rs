@@ -21,7 +21,6 @@ pub(crate) enum PostCommitStage {
     TaskProjectionUpsert,
     CatalogRemove,
     TaskProjectionRemove,
-    TaskViewRefresh,
     SemanticUpdate,
     SemanticMove,
     DirtyRecovery,
@@ -81,20 +80,6 @@ impl PostCommitNoteMutationOutcome {
             ),
             issues: required_issues,
         })
-    }
-
-    pub(crate) fn report_degraded(&self, source: &str) {
-        if self.issues.is_empty() {
-            return;
-        }
-        for issue in &self.issues {
-            eprintln!(
-                "{source} committed {} but post-commit {:?} degraded: {}",
-                self.path.display(),
-                issue.stage,
-                issue.message
-            );
-        }
     }
 }
 

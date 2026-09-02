@@ -2,6 +2,7 @@ use crate::{
     chat::ChatService,
     index::AppState,
     semantic::db::content_hash,
+    services::note_timeline::{NoteTimeline, VaultObservation},
     state::{is_forgotten_note_path, notes_root},
     time::current_time_millis,
 };
@@ -496,6 +497,20 @@ fn flush_dirty_batch(
         };
 
         let (new_path, markdown, modified_millis) = &resolved.present[present_index];
+        let observed_at_millis = current_time_millis()?;
+        if removed_path.parent() == new_path.parent() {
+            NoteTimeline::new(&state).observe(VaultObservation::renamed(
+                removed_path,
+                new_path,
+                observed_at_millis,
+            ));
+        } else {
+            NoteTimeline::new(&state).observe(VaultObservation::moved(
+                removed_path,
+                new_path,
+                observed_at_millis,
+            ));
+        }
         state.semantic.queue_note_move(
             removed_path,
             new_path,
@@ -518,6 +533,11 @@ fn flush_dirty_batch(
         if present_consumed[index] {
             continue;
         }
+        NoteTimeline::new(&state).observe(VaultObservation::external_edit(
+            path.clone(),
+            current_time_millis()?,
+            Some(*modified_millis),
+        ));
         if !crate::note::semantic_recall_eligible(markdown) {
             state.semantic.queue_delete_note(path)?;
         } else {
@@ -534,6 +554,10 @@ fn flush_dirty_batch(
         if removed_consumed[index] {
             continue;
         }
+        NoteTimeline::new(&state).observe(VaultObservation::missing(
+            path.clone(),
+            current_time_millis()?,
+        ));
         state.semantic.queue_delete_note(path)?;
         state.mark_notes_index_dirty(path, "watcher")?;
         state.events.vault_note_changed(path, true);
@@ -587,6 +611,12 @@ fn spawn_background_reconcile_loop(app_handle: AppHandle, queue: std::sync::Arc<
         };
         if !notes_dir.exists() {
             continue;
+        }
+        if let Ok(observed_at_millis) = current_time_millis() {
+            NoteTimeline::new(&state).observe(VaultObservation::reconciliation_scan(
+                notes_dir.clone(),
+                observed_at_millis,
+            ));
         }
         if let Err(error) = state.reconcile_full_vault_scan(&notes_dir) {
             eprintln!("vault reconcile error: {error}");

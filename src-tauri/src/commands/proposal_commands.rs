@@ -6,7 +6,7 @@ use crate::{
         plan_agent_creation_commit, plan_agent_update_commit, CommitNoteReviewResult,
         ProposalPreview,
     },
-    services::PostCommitNoteMutationService,
+    services::note_timeline::{NoteMutation, NoteTimeline},
     state::notes_root,
 };
 use std::path::PathBuf;
@@ -127,11 +127,11 @@ fn synchronize_applied_change(
     let Some(path) = applied.path.as_deref() else {
         return;
     };
-    let outcome = PostCommitNoteMutationService::new(state).apply_canonical_file(
+    let outcome = NoteTimeline::new(state).mutate(NoteMutation::accepted_chat_proposal(
         PathBuf::from(path),
         applied.previous_path.as_deref().map(PathBuf::from),
         fallback_markdown,
-    );
+    ));
     outcome.report_degraded("proposal commit");
 }
 

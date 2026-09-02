@@ -60,16 +60,21 @@ fn clean_task_commands_delegate_canonical_mutation_to_the_task_service() {
 }
 
 #[test]
-fn note_save_and_proposal_commit_use_the_shared_post_commit_boundary() {
+fn ordinary_note_writers_use_typed_note_timeline_mutations() {
     let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
     let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
+    let tasks = repository_file("src-tauri/src/services/task_mutation.rs");
+    let task_production = tasks
+        .split("#[cfg(test)]")
+        .next()
+        .expect("task mutation production source");
 
     assert_contains_all(
         &note_persistence,
         &[
-            "PostCommitNoteMutationService::new(state)",
-            ".apply_canonical_file(",
-            "required_consistency_warning()",
+            "NoteTimeline::new(state).mutate(",
+            "NoteMutation::editor(",
+            "NoteMutation::note_creation(",
             "commit_warning",
         ],
     );
@@ -77,16 +82,24 @@ fn note_save_and_proposal_commit_use_the_shared_post_commit_boundary() {
         &proposals,
         &[
             "fn synchronize_applied_change(",
-            "PostCommitNoteMutationService::new(state)",
-            ".apply_canonical_file(",
+            "NoteTimeline::new(state).mutate(NoteMutation::accepted_chat_proposal(",
             "synchronize_applied_change(&state, &result",
         ],
     );
+    assert_contains_all(
+        &tasks,
+        &[
+            "NoteTimeline::new(self.state).mutate(NoteMutation::task_action(",
+            "outcome.report_degraded(\"task mutation\")",
+        ],
+    );
 
-    for source in [&note_persistence, &proposals] {
+    for source in [&note_persistence, &proposals, task_production] {
         assert_contains_none(
             source,
             &[
+                "PostCommitNoteMutationService",
+                ".apply_canonical_file(",
                 "refresh_saved_note_best_effort",
                 "build_indexed_note",
                 "queue_note_update",
@@ -95,6 +108,31 @@ fn note_save_and_proposal_commit_use_the_shared_post_commit_boundary() {
             ],
         );
     }
+}
+
+#[test]
+fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
+    let watcher = repository_file("src-tauri/src/vault_watcher.rs");
+    let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
+
+    assert_contains_all(
+        &watcher,
+        &[
+            "NoteTimeline::new(&state).observe(VaultObservation::renamed(",
+            "NoteTimeline::new(&state).observe(VaultObservation::moved(",
+            "NoteTimeline::new(&state).observe(VaultObservation::external_edit(",
+            "NoteTimeline::new(&state).observe(VaultObservation::missing(",
+            "NoteTimeline::new(&state).observe(VaultObservation::reconciliation_scan(",
+        ],
+    );
+    assert_contains_all(
+        &forgotten,
+        &[
+            "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(",
+            "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::recovered(",
+            "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::purged(",
+        ],
+    );
 }
 
 #[test]

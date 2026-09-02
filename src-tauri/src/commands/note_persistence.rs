@@ -2,10 +2,16 @@ use super::{prepare_notes_dir, NoteSession};
 use crate::{
     index::AppState,
     note,
-    services::PostCommitNoteMutationService,
+    services::note_timeline::{NoteMutation, NoteMutationWarning, NoteTimeline},
     state::{persist_note, validate_current_path},
 };
 use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum NoteSaveSource {
+    TaskAction,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct PersistNoteOutcome {
@@ -23,7 +29,7 @@ fn build_saved_note_session(
     markdown: &str,
     persisted_path: Option<String>,
     persisted_markdown: &str,
-    commit_warning: Option<crate::services::note_mutation::CommittedMutationWarning>,
+    commit_warning: Option<NoteMutationWarning>,
 ) -> NoteSession {
     let fallback_title = file_stem_title(persisted_path.as_deref()).unwrap_or_default();
     NoteSession {
@@ -43,31 +49,50 @@ fn build_saved_note_session(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn persist_note_session_with_outcome(
     state: &AppState,
     title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<PersistNoteOutcome, String> {
+    persist_note_session_with_source(state, title, markdown, current_path, None)
+}
+
+pub(crate) fn persist_note_session_with_source(
+    state: &AppState,
+    title: String,
+    markdown: String,
+    current_path: Option<String>,
+    save_source: Option<NoteSaveSource>,
+) -> Result<PersistNoteOutcome, String> {
     // Save is a hot path; the throttled forgotten-note cleanup runs from
     // explicit forgotten-note commands and at startup instead.
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
+    let is_note_creation = current_path.is_none();
     let persisted_path = persist_note(&notes_dir, &title, &markdown, current_path.as_deref())?;
     let mutation_outcome = persisted_path.as_ref().map(|path| {
-        PostCommitNoteMutationService::new(state).apply_canonical_file(
-            PathBuf::from(path),
-            current_path.clone(),
-            markdown.clone(),
-        )
+        let path = PathBuf::from(path);
+        let mutation = if is_note_creation {
+            NoteMutation::note_creation(path, None, markdown.clone())
+        } else {
+            match save_source {
+                Some(NoteSaveSource::TaskAction) => {
+                    NoteMutation::task_action(path, current_path.clone(), markdown.clone())
+                }
+                None => NoteMutation::editor(path, current_path.clone(), markdown.clone()),
+            }
+        };
+        NoteTimeline::new(state).mutate(mutation)
     });
 
     let saved_note_id = mutation_outcome
         .as_ref()
-        .map(|outcome| outcome.note_id.clone());
+        .map(|outcome| outcome.note_id().as_str().to_string());
     let commit_warning = mutation_outcome
         .as_ref()
-        .and_then(|outcome| outcome.required_consistency_warning());
+        .and_then(|outcome| outcome.warning().cloned());
 
     let session = persisted_path.as_ref().map(|_| {
         build_saved_note_session(
@@ -77,7 +102,7 @@ pub(crate) fn persist_note_session_with_outcome(
             persisted_path.clone(),
             mutation_outcome
                 .as_ref()
-                .map(|outcome| outcome.canonical_markdown.as_str())
+                .map(|outcome| outcome.canonical_markdown())
                 .unwrap_or(""),
             commit_warning.clone(),
         )
@@ -93,7 +118,9 @@ pub(crate) fn persist_note_session_with_outcome(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{app::EventBus, semantic::SemanticState, services::note_mutation::PostCommitStage};
+    use crate::{
+        app::EventBus, semantic::SemanticState, services::note_timeline::MutationWarningStage,
+    };
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     #[test]
@@ -130,8 +157,8 @@ mod tests {
         assert!(Path::new(session.path.as_deref().unwrap()).exists());
         let warning = session.commit_warning.expect("committed warning");
         assert!(warning
-            .issues
+            .issues()
             .iter()
-            .any(|issue| issue.stage == PostCommitStage::CatalogUpsert));
+            .any(|issue| issue.stage() == MutationWarningStage::CatalogUpsert));
     }
 }

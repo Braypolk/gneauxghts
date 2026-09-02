@@ -4,10 +4,7 @@
 //! through the filesystem and post-commit note boundary; dirty documents can
 //! prepare the same transform without writing any canonical or derived state.
 
-use super::{
-    note_mutation::{CommittedMutationWarning, PostCommitNoteMutationOutcome},
-    PostCommitNoteMutationService,
-};
+use super::note_timeline::{NoteMutation, NoteMutationWarning, NoteTimeline};
 use crate::{
     index::{
         delete_task_in_markdown, find_unambiguous_task_line, toggle_task_in_markdown, AppState,
@@ -46,7 +43,7 @@ pub(crate) struct PreparedTaskDocumentMutation {
 pub(crate) struct CommittedTaskMutation {
     pub(crate) note_id: String,
     pub(crate) note_path: PathBuf,
-    pub(crate) commit_warning: Option<CommittedMutationWarning>,
+    pub(crate) commit_warning: Option<NoteMutationWarning>,
 }
 
 #[derive(Clone, Debug)]
@@ -91,7 +88,12 @@ pub(crate) fn task_document_hash(markdown: &str) -> String {
 trait TaskMutationSink {
     fn read_canonical(&self, path: &Path) -> Result<String, String>;
     fn write_canonical(&self, path: &Path, markdown: &str) -> Result<(), String>;
-    fn synchronize(&self, path: PathBuf, markdown: String) -> PostCommitNoteMutationOutcome;
+    fn synchronize(&self, path: PathBuf, markdown: String) -> TaskSynchronization;
+}
+
+struct TaskSynchronization {
+    note_id: String,
+    commit_warning: Option<NoteMutationWarning>,
 }
 
 struct AppStateTaskMutationSink<'a> {
@@ -107,12 +109,17 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
         write_task_document_atomically(path, markdown)
     }
 
-    fn synchronize(&self, path: PathBuf, markdown: String) -> PostCommitNoteMutationOutcome {
-        PostCommitNoteMutationService::new(self.state).apply_canonical_file(
+    fn synchronize(&self, path: PathBuf, markdown: String) -> TaskSynchronization {
+        let outcome = NoteTimeline::new(self.state).mutate(NoteMutation::task_action(
             path.clone(),
             Some(path),
             markdown,
-        )
+        ));
+        outcome.report_degraded("task mutation");
+        TaskSynchronization {
+            note_id: outcome.note_id().as_str().to_string(),
+            commit_warning: outcome.warning().cloned(),
+        }
     }
 }
 
@@ -215,33 +222,31 @@ fn commit_loaded_task(
     sink.write_canonical(&target.note_path, &updated_markdown)?;
 
     let outcome = sink.synchronize(target.note_path.clone(), updated_markdown);
-    outcome.report_degraded("task mutation");
-    let commit_warning = outcome.required_consistency_warning();
     Ok(CommittedTaskMutation {
         note_id: outcome.note_id,
         note_path: target.note_path,
-        commit_warning,
+        commit_warning: outcome.commit_warning,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::note_mutation::{PostCommitIssue, PostCommitStage};
+    use crate::services::note_timeline::MutationWarningStage;
     use std::cell::{Cell, RefCell};
 
     struct FakeSink {
         canonical: RefCell<String>,
         writes: Cell<usize>,
-        outcome_issues: Vec<PostCommitIssue>,
+        commit_warning: Option<NoteMutationWarning>,
     }
 
     impl FakeSink {
-        fn new(markdown: &str, outcome_issues: Vec<PostCommitIssue>) -> Self {
+        fn new(markdown: &str, commit_warning: Option<NoteMutationWarning>) -> Self {
             Self {
                 canonical: RefCell::new(markdown.to_string()),
                 writes: Cell::new(0),
-                outcome_issues,
+                commit_warning,
             }
         }
     }
@@ -257,12 +262,10 @@ mod tests {
             Ok(())
         }
 
-        fn synchronize(&self, path: PathBuf, markdown: String) -> PostCommitNoteMutationOutcome {
-            PostCommitNoteMutationOutcome {
+        fn synchronize(&self, _path: PathBuf, _markdown: String) -> TaskSynchronization {
+            TaskSynchronization {
                 note_id: "note-1".to_string(),
-                path: path.clone(),
-                canonical_markdown: markdown,
-                issues: self.outcome_issues.clone(),
+                commit_warning: self.commit_warning.clone(),
             }
         }
     }
@@ -396,7 +399,7 @@ mod tests {
 
     #[test]
     fn clean_commit_writes_once_and_returns_authoritative_identity() {
-        let sink = FakeSink::new("# Tasks\n\n- [ ] Ship it", Vec::new());
+        let sink = FakeSink::new("# Tasks\n\n- [ ] Ship it", None);
         let outcome = commit_loaded_task(&sink, target(), TaskMutationKind::Toggle).unwrap();
 
         assert_eq!(sink.writes.get(), 1);
@@ -420,32 +423,28 @@ mod tests {
     fn required_failure_returns_committed_warning_after_one_write() {
         let sink = FakeSink::new(
             "# Tasks\n\n- [ ] Ship it",
-            vec![PostCommitIssue {
-                stage: PostCommitStage::TaskProjectionUpsert,
-                message: "task database unavailable".to_string(),
-            }],
+            Some(NoteMutationWarning::single(
+                MutationWarningStage::TaskProjectionUpsert,
+                "Canonical note file was saved, but task synchronization was incomplete."
+                    .to_string(),
+                "task database unavailable".to_string(),
+            )),
         );
         let outcome = commit_loaded_task(&sink, target(), TaskMutationKind::Delete).unwrap();
 
         assert_eq!(sink.writes.get(), 1);
         assert!(!sink.canonical.borrow().contains("Ship it"));
         let warning = outcome.commit_warning.expect("committed warning");
-        assert!(warning.message.contains("Canonical note file was saved"));
+        assert!(warning.message().contains("Canonical note file was saved"));
         assert_eq!(
-            warning.issues[0].stage,
-            PostCommitStage::TaskProjectionUpsert
+            warning.issues()[0].stage(),
+            MutationWarningStage::TaskProjectionUpsert
         );
     }
 
     #[test]
     fn derived_failure_does_not_turn_a_committed_write_into_an_error() {
-        let sink = FakeSink::new(
-            "# Tasks\n\n- [ ] Ship it",
-            vec![PostCommitIssue {
-                stage: PostCommitStage::SemanticUpdate,
-                message: "semantic queue unavailable".to_string(),
-            }],
-        );
+        let sink = FakeSink::new("# Tasks\n\n- [ ] Ship it", None);
         let outcome = commit_loaded_task(&sink, target(), TaskMutationKind::Toggle).unwrap();
 
         assert_eq!(sink.writes.get(), 1);

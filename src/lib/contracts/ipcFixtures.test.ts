@@ -56,6 +56,18 @@ describe('Rust-owned IPC contract fixtures', () => {
     );
     expect(invokeMock).toHaveBeenLastCalledWith('save_note', save.args);
 
+    invokeMock.mockResolvedValueOnce(save.result);
+    await saveNoteSession(
+      save.args!.title as string,
+      save.args!.markdown as string,
+      save.args!.currentPath as string,
+      'taskAction'
+    );
+    expect(invokeMock).toHaveBeenLastCalledWith('save_note', {
+      ...save.args,
+      saveSource: 'taskAction'
+    });
+
     invokeMock.mockResolvedValueOnce(null);
     await clearLastOpenedNote();
     expect(invokeMock).toHaveBeenLastCalledWith(

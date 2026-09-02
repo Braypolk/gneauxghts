@@ -138,7 +138,7 @@ describe('notepad task mutation adapter', () => {
       note,
       '- [x] Task\n\nLocal edit'
     );
-    expect(enqueueSave).toHaveBeenCalledWith(note);
+    expect(enqueueSave).toHaveBeenCalledWith(note, 'taskAction');
   });
 
   it('traces a dirty task mutation through editing and the real document save boundary', async () => {
@@ -253,7 +253,8 @@ describe('notepad task mutation adapter', () => {
       expect(saveNoteSession).toHaveBeenCalledWith(
         'Tasks',
         '- [x] Trace me\n\nUnsaved local context',
-        path
+        path,
+        'taskAction'
       );
       expect(documentHasCleanBuffer(note)).toBe(true);
       expect(note.savedBaseline?.content.markdown).toBe(

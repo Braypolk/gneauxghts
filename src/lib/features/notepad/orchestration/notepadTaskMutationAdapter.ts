@@ -8,6 +8,7 @@ import {
   type NoteDraftState,
   type NoteKey
 } from '$lib/features/notepad/document/documentState';
+import type { NoteSaveSource } from '$lib/features/notepad/session/session';
 
 export interface NotepadTaskMutationAdapterDeps {
   listReferencedNoteKeys: () => NoteKey[];
@@ -22,7 +23,10 @@ export interface NotepadTaskMutationAdapterDeps {
     document: NoteDraftState,
     markdown: string
   ) => Promise<unknown>;
-  enqueueSave: (document: NoteDraftState) => Promise<void>;
+  enqueueSave: (
+    document: NoteDraftState,
+    saveSource?: NoteSaveSource
+  ) => Promise<void>;
   prepare?: OpenDocumentTaskMutationDeps['prepare'];
   hashMarkdown?: OpenDocumentTaskMutationDeps['hashMarkdown'];
 }
@@ -80,7 +84,8 @@ export function createNotepadTaskMutationHandler(
         },
         { autosave: false }
       ).then(() => undefined),
-    saveDocument: deps.enqueueSave,
+    saveDocument: (document) =>
+      deps.enqueueSave(document, 'taskAction'),
     prepare: deps.prepare,
     hashMarkdown: deps.hashMarkdown
   });

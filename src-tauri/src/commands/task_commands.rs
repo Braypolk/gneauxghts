@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     index::AppState,
-    services::note_mutation::{CommittedMutationWarning, PostCommitIssue, PostCommitStage},
+    services::note_timeline::{MutationWarningStage, NoteMutationWarning},
     services::task_mutation::{
         PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
     },
@@ -346,23 +346,20 @@ fn mutate_task_with_view(
             note_id: committed.note_id.clone(),
             note_path: None,
             group: None,
-            commit_warning: Some(CommittedMutationWarning {
-                message: format!(
+            commit_warning: Some(NoteMutationWarning::single(
+                MutationWarningStage::TaskViewRefresh,
+                format!(
                     "Canonical task mutation was saved at {}, but the task view could not refresh: {error}",
                     committed.note_path.display()
                 ),
-                issues: vec![PostCommitIssue {
-                    stage: PostCommitStage::TaskViewRefresh,
-                    message: error,
-                }],
-            }),
+                error,
+            )),
         },
     };
     patch.note_path = Some(committed.note_path.to_string_lossy().into_owned());
     if let Some(mut warning) = committed.commit_warning {
         if let Some(view_warning) = patch.commit_warning.take() {
-            warning.message = format!("{}; {}", warning.message, view_warning.message);
-            warning.issues.extend(view_warning.issues);
+            warning.merge(view_warning);
         }
         patch.commit_warning = Some(warning);
     }

@@ -140,16 +140,28 @@ export async function readNoteSession(
   return createSessionSnapshot(session);
 }
 
+export type NoteSaveSource = "taskAction";
+
 export async function saveNoteSession(
   title: string,
   markdown: string,
   currentPath: string | null,
+  saveSource?: NoteSaveSource,
 ) {
-  const saved = await invoke<NoteSession>("save_note", {
+  const args: {
+    title: string;
+    markdown: string;
+    currentPath: string | null;
+    saveSource?: NoteSaveSource;
+  } = {
     title,
     markdown,
     currentPath,
-  });
+  };
+  if (saveSource) {
+    args.saveSource = saveSource;
+  }
+  const saved = await invoke<NoteSession>("save_note", args);
   return createSessionSnapshot(saved);
 }
 

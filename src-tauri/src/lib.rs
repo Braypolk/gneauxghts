@@ -171,8 +171,12 @@ pub fn run() {
                             eprintln!("vault watcher startup failed: {error}");
                         }
                     }
-                    if let Err(error) = commands::startup_cleanup_expired_forgotten_notes() {
-                        eprintln!("forgotten-note startup cleanup failed: {error}");
+                    if let Some(state) = watcher_handle.try_state::<AppState>() {
+                        if let Err(error) =
+                            commands::startup_cleanup_expired_forgotten_notes(&state)
+                        {
+                            eprintln!("forgotten-note startup cleanup failed: {error}");
+                        }
                     }
                     // Prewarm the in-memory `notes_index` so the first
                     // user-driven `open_note` (and the autosave it triggers

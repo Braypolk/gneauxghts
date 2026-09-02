@@ -7,6 +7,7 @@ use crate::{
     index::{build_indexed_note, AppState},
     note,
     path_utils::unique_path_in_dir,
+    services::note_timeline::{NoteIdentity, NoteLifecycleOperation, NoteTimeline},
     state::{
         forgotten_notes_root, read_state, validate_current_path, write_state, ForgottenItemKind,
         PersistedForgottenNote,
@@ -68,6 +69,14 @@ pub(crate) fn forget_note(
             .map(|note| note.note_id.clone())
             .or_else(|| note::note_id_from_path_or_markdown(Some(note_path), &note_markdown))
             .unwrap_or_default();
+        if !note_id.is_empty() {
+            NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(
+                NoteIdentity::new(note_id.clone()),
+                note_path.clone(),
+                forgotten_path.clone(),
+                forgotten_at_millis,
+            ));
+        }
         if persisted_state.last_opened_note_id.as_deref() == Some(note_id.as_str()) {
             persisted_state.last_opened_note_id = None;
         }
@@ -164,8 +173,10 @@ pub(super) fn register_forgotten_chat_folder(
 }
 
 #[tauri::command]
-pub(crate) fn list_forgotten_notes() -> Result<Vec<ForgottenNoteSummary>, String> {
-    let notes_dir = super::prepare_notes_dir(true)?;
+pub(crate) fn list_forgotten_notes(
+    state: State<'_, AppState>,
+) -> Result<Vec<ForgottenNoteSummary>, String> {
+    let notes_dir = super::prepare_notes_dir_with_state(true, Some(&state))?;
 
     let mut forgotten_notes = read_state(&notes_dir)?.forgotten_notes;
     forgotten_notes.sort_by(|left, right| {
@@ -236,6 +247,17 @@ pub(crate) fn restore_forgotten_notes(
                 fs::write(&restored_path, &restored_markdown).map_err(|err| err.to_string())?;
                 expected_move.commit();
 
+                if let Some(note_id) =
+                    note::note_id_from_path_or_markdown(Some(&restored_path), &restored_markdown)
+                {
+                    NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::recovered(
+                        NoteIdentity::new(note_id),
+                        forgotten_path.clone(),
+                        restored_path.clone(),
+                        timestamp_millis,
+                    ));
+                }
+
                 let note = build_indexed_note(&restored_path, &restored_markdown, timestamp_millis);
                 upsert_notes_index_entry(&state, restored_path.clone(), note)?;
                 state.semantic.queue_note_update(
@@ -294,6 +316,7 @@ pub(crate) fn restore_forgotten_notes(
 
 #[tauri::command]
 pub(crate) fn delete_forgotten_notes(
+    state: State<'_, AppState>,
     chat_service: State<'_, ChatService>,
     forgotten_paths: Vec<String>,
 ) -> Result<(), String> {
@@ -315,11 +338,19 @@ pub(crate) fn delete_forgotten_notes(
 
         let forgotten_note = persisted_state.forgotten_notes.remove(index);
         let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
+        let forgotten_note_id = forgotten_note_identity(&forgotten_note, &forgotten_path);
         if let Some(conversation_id) = forgotten_note.conversation_id.as_deref() {
             chat_service.delete_archived_conversation(conversation_id)?;
         }
         if forgotten_path.exists() {
             remove_forgotten_item_path(&forgotten_path, &forgotten_note.kind)?;
+        }
+        if let Some(note_id) = forgotten_note_id {
+            NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::purged(
+                note_id,
+                forgotten_path,
+                current_time_millis()?,
+            ));
         }
         write_state(&notes_dir, &persisted_state)?;
     }
@@ -399,7 +430,10 @@ fn resolve_restore_target_path(notes_dir: &Path, original_path: &Path) -> PathBu
     )
 }
 
-pub(super) fn cleanup_expired_forgotten_notes(notes_dir: &Path) -> Result<(), String> {
+pub(super) fn cleanup_expired_forgotten_notes(
+    notes_dir: &Path,
+    state: Option<&AppState>,
+) -> Result<(), String> {
     let now = current_time_millis()?;
     let mut persisted_state = read_state(notes_dir)?;
     let original_len = persisted_state.forgotten_notes.len();
@@ -408,6 +442,7 @@ pub(super) fn cleanup_expired_forgotten_notes(notes_dir: &Path) -> Result<(), St
     for forgotten_note in persisted_state.forgotten_notes.drain(..) {
         let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
         if forgotten_note.purge_at_millis <= now {
+            let forgotten_note_id = forgotten_note_identity(&forgotten_note, &forgotten_path);
             if let Some(conversation_id) = forgotten_note.conversation_id.as_deref() {
                 ChatService::delete_persisted_conversation(
                     &crate::state::vault_data_dir()?,
@@ -416,6 +451,13 @@ pub(super) fn cleanup_expired_forgotten_notes(notes_dir: &Path) -> Result<(), St
             }
             if forgotten_path.exists() {
                 remove_forgotten_item_path(&forgotten_path, &forgotten_note.kind)?;
+            }
+            if let (Some(state), Some(note_id)) = (state, forgotten_note_id) {
+                NoteTimeline::new(state).lifecycle(NoteLifecycleOperation::purged(
+                    note_id,
+                    forgotten_path,
+                    now,
+                ));
             }
             continue;
         }
@@ -428,6 +470,17 @@ pub(super) fn cleanup_expired_forgotten_notes(notes_dir: &Path) -> Result<(), St
     }
 
     Ok(())
+}
+
+fn forgotten_note_identity(
+    forgotten_note: &PersistedForgottenNote,
+    forgotten_path: &Path,
+) -> Option<NoteIdentity> {
+    if forgotten_note.kind != ForgottenItemKind::Note {
+        return None;
+    }
+    let markdown = fs::read_to_string(forgotten_path).ok()?;
+    note::note_id_from_path_or_markdown(Some(forgotten_path), &markdown).map(NoteIdentity::new)
 }
 
 fn forgotten_item_kind_name(kind: &ForgottenItemKind) -> &'static str {
@@ -532,7 +585,7 @@ mod tests {
         persisted_state.forgotten_notes[0].purge_at_millis = 0;
         write_state(root.path(), &persisted_state).expect("expire forgotten chat");
 
-        cleanup_expired_forgotten_notes(root.path()).expect("clean up expired chat");
+        cleanup_expired_forgotten_notes(root.path(), None).expect("clean up expired chat");
 
         assert!(!forgotten_path.exists());
         assert!(service.get_conversation(&conversation.summary.id).is_err());

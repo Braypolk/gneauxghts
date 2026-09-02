@@ -1,6 +1,7 @@
-// This module is the expand side of an expand–migrate–contract change. Ticket
-// 03 moves production callers onto these entrypoints; keeping the complete
-// closed contract together here prevents temporary caller-specific seams.
+// This module is the expand side of an expand–migrate–contract change. Tickets
+// 03 and 04 move production callers onto these entrypoints; keeping the
+// complete closed contract together here prevents temporary caller-specific
+// seams while later tickets deepen persistence and reads.
 #![allow(dead_code)]
 
 use crate::{
@@ -10,6 +11,7 @@ use crate::{
         PostCommitStage,
     },
 };
+use serde::Serialize;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -30,6 +32,10 @@ identity_type!(TurnIdentity);
 impl NoteIdentity {
     pub(crate) fn new(value: impl Into<String>) -> Self {
         Self(value.into())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -86,7 +92,8 @@ pub(crate) enum MutationSource {
     RecoveryReconciliation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) enum MutationWarningStage {
     CanonicalRead,
     CatalogUpsert,
@@ -108,7 +115,6 @@ impl From<PostCommitStage> for MutationWarningStage {
             PostCommitStage::TaskProjectionUpsert => Self::TaskProjectionUpsert,
             PostCommitStage::CatalogRemove => Self::CatalogRemove,
             PostCommitStage::TaskProjectionRemove => Self::TaskProjectionRemove,
-            PostCommitStage::TaskViewRefresh => Self::TaskViewRefresh,
             PostCommitStage::SemanticUpdate => Self::SemanticUpdate,
             PostCommitStage::SemanticMove => Self::SemanticMove,
             PostCommitStage::DirtyRecovery => Self::DirtyRecovery,
@@ -117,10 +123,21 @@ impl From<PostCommitStage> for MutationWarningStage {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct NoteTimelineIssue {
     stage: MutationWarningStage,
     message: String,
+}
+
+impl NoteTimelineIssue {
+    pub(crate) fn stage(&self) -> MutationWarningStage {
+        self.stage
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl From<PostCommitIssue> for NoteTimelineIssue {
@@ -132,8 +149,10 @@ impl From<PostCommitIssue> for NoteTimelineIssue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct NoteMutationWarning {
+    #[serde(skip)]
     payload_version: PayloadVersion,
     message: String,
     issues: Vec<NoteTimelineIssue>,
@@ -151,11 +170,32 @@ impl NoteMutationWarning {
     pub(crate) fn issues(&self) -> &[NoteTimelineIssue] {
         &self.issues
     }
+
+    pub(crate) fn single(
+        stage: MutationWarningStage,
+        message: String,
+        issue_message: String,
+    ) -> Self {
+        Self {
+            payload_version: PayloadVersion::V1,
+            message,
+            issues: vec![NoteTimelineIssue {
+                stage,
+                message: issue_message,
+            }],
+        }
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.message = format!("{}; {}", self.message, other.message);
+        self.issues.extend(other.issues);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NoteMutationResult {
     payload_version: PayloadVersion,
+    source: MutationSource,
     note_id: NoteIdentity,
     path: PathBuf,
     canonical_markdown: String,
@@ -164,7 +204,7 @@ pub(crate) struct NoteMutationResult {
 }
 
 impl NoteMutationResult {
-    fn from_post_commit(outcome: PostCommitNoteMutationOutcome) -> Self {
+    fn from_post_commit(source: MutationSource, outcome: PostCommitNoteMutationOutcome) -> Self {
         let warning = outcome
             .required_consistency_warning()
             .map(|warning| NoteMutationWarning {
@@ -174,6 +214,7 @@ impl NoteMutationResult {
             });
         Self {
             payload_version: PayloadVersion::V1,
+            source,
             note_id: NoteIdentity::new(outcome.note_id),
             path: outcome.path,
             canonical_markdown: outcome.canonical_markdown,
@@ -184,6 +225,10 @@ impl NoteMutationResult {
 
     pub(crate) fn payload_version(&self) -> PayloadVersion {
         self.payload_version
+    }
+
+    pub(crate) fn source(&self) -> MutationSource {
+        self.source
     }
 
     pub(crate) fn note_id(&self) -> &NoteIdentity {
@@ -204,6 +249,17 @@ impl NoteMutationResult {
 
     pub(crate) fn diagnostics(&self) -> &[NoteTimelineIssue] {
         &self.diagnostics
+    }
+
+    pub(crate) fn report_degraded(&self, source: &str) {
+        for issue in &self.diagnostics {
+            eprintln!(
+                "{source} committed {} but post-commit {:?} degraded: {}",
+                self.path.display(),
+                issue.stage,
+                issue.message
+            );
+        }
     }
 }
 
@@ -409,6 +465,7 @@ pub(crate) struct VaultObservation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum VaultObservationKind {
     CanonicalState,
+    ReconciliationScan,
     Lifecycle(LifecycleEventKind),
 }
 
@@ -443,6 +500,17 @@ impl VaultObservation {
             observed_at_millis,
             modified_at_millis,
         )
+    }
+
+    pub(crate) fn reconciliation_scan(vault_root: PathBuf, observed_at_millis: u64) -> Self {
+        Self {
+            source: VaultObservationSource::Reconciliation,
+            kind: VaultObservationKind::ReconciliationScan,
+            path: vault_root,
+            previous_path: None,
+            observed_at_millis,
+            modified_at_millis: None,
+        }
     }
 
     fn canonical_state(
@@ -527,6 +595,104 @@ impl VaultObservation {
 
     pub(crate) fn kind(&self) -> VaultObservationKind {
         self.kind
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NoteLifecycleOperation {
+    kind: LifecycleEventKind,
+    note_id: NoteIdentity,
+    path: PathBuf,
+    previous_path: Option<PathBuf>,
+    occurred_at_millis: u64,
+}
+
+impl NoteLifecycleOperation {
+    pub(crate) fn forgotten(
+        note_id: NoteIdentity,
+        previous_path: PathBuf,
+        path: PathBuf,
+        occurred_at_millis: u64,
+    ) -> Self {
+        Self::new(
+            LifecycleEventKind::Forgotten,
+            note_id,
+            path,
+            Some(previous_path),
+            occurred_at_millis,
+        )
+    }
+
+    pub(crate) fn recovered(
+        note_id: NoteIdentity,
+        previous_path: PathBuf,
+        path: PathBuf,
+        occurred_at_millis: u64,
+    ) -> Self {
+        Self::new(
+            LifecycleEventKind::Recovered,
+            note_id,
+            path,
+            Some(previous_path),
+            occurred_at_millis,
+        )
+    }
+
+    pub(crate) fn purged(note_id: NoteIdentity, path: PathBuf, occurred_at_millis: u64) -> Self {
+        Self::new(
+            LifecycleEventKind::Purged,
+            note_id,
+            path,
+            None,
+            occurred_at_millis,
+        )
+    }
+
+    fn new(
+        kind: LifecycleEventKind,
+        note_id: NoteIdentity,
+        path: PathBuf,
+        previous_path: Option<PathBuf>,
+        occurred_at_millis: u64,
+    ) -> Self {
+        Self {
+            kind,
+            note_id,
+            path,
+            previous_path,
+            occurred_at_millis,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LifecycleReceipt {
+    kind: LifecycleEventKind,
+    note_id: NoteIdentity,
+    path: PathBuf,
+    previous_path: Option<PathBuf>,
+    occurred_at_millis: u64,
+}
+
+impl LifecycleReceipt {
+    pub(crate) fn kind(&self) -> LifecycleEventKind {
+        self.kind
+    }
+
+    pub(crate) fn note_id(&self) -> &NoteIdentity {
+        &self.note_id
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn previous_path(&self) -> Option<&Path> {
+        self.previous_path.as_deref()
+    }
+
+    pub(crate) fn occurred_at_millis(&self) -> u64 {
+        self.occurred_at_millis
     }
 }
 
@@ -663,12 +829,13 @@ impl<'a> NoteTimeline<'a> {
 
     pub(crate) fn mutate(&self, mutation: NoteMutation) -> NoteMutationResult {
         let NoteMutation {
-            source: _,
+            source,
             path,
             previous_path,
             fallback_markdown,
         } = mutation;
         NoteMutationResult::from_post_commit(
+            source,
             PostCommitNoteMutationService::new(self.state).apply_canonical_file(
                 path,
                 previous_path,
@@ -693,6 +860,23 @@ impl<'a> NoteTimeline<'a> {
             previous_path,
             observed_at_millis,
             modified_at_millis,
+        }
+    }
+
+    pub(crate) fn lifecycle(&self, operation: NoteLifecycleOperation) -> LifecycleReceipt {
+        let NoteLifecycleOperation {
+            kind,
+            note_id,
+            path,
+            previous_path,
+            occurred_at_millis,
+        } = operation;
+        LifecycleReceipt {
+            kind,
+            note_id,
+            path,
+            previous_path,
+            occurred_at_millis,
         }
     }
 
@@ -766,6 +950,9 @@ mod tests {
         let reconciled =
             VaultObservation::reconciled_state(PathBuf::from("/vault/Reconciled.md"), 43, Some(40));
         assert_eq!(reconciled.source(), VaultObservationSource::Reconciliation);
+        let scan = VaultObservation::reconciliation_scan(PathBuf::from("/vault"), 44);
+        assert_eq!(scan.source(), VaultObservationSource::Reconciliation);
+        assert_eq!(scan.kind(), VaultObservationKind::ReconciliationScan);
 
         let lifecycle = [
             VaultObservation::renamed("/vault/Old.md", "/vault/New.md", 43),
@@ -807,6 +994,7 @@ mod tests {
         ));
 
         assert_eq!(outcome.payload_version(), PayloadVersion::V1);
+        assert_eq!(outcome.source(), MutationSource::Editor);
         assert_eq!(outcome.note_id(), &NoteIdentity::new("note-1"));
         assert_eq!(outcome.path(), note_path);
         assert_eq!(outcome.canonical_markdown(), markdown);
@@ -883,6 +1071,52 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_returns_the_typed_identity_and_paths() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-lifecycle-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let note_id = NoteIdentity::new("note-1");
+
+        let receipt = NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(
+            note_id.clone(),
+            PathBuf::from("/vault/Note.md"),
+            PathBuf::from("/vault/.forgotten/Note.md"),
+            42,
+        ));
+
+        assert_eq!(receipt.kind(), LifecycleEventKind::Forgotten);
+        assert_eq!(receipt.note_id(), &note_id);
+        assert_eq!(receipt.path(), Path::new("/vault/.forgotten/Note.md"));
+        assert_eq!(receipt.previous_path(), Some(Path::new("/vault/Note.md")));
+        assert_eq!(receipt.occurred_at_millis(), 42);
+    }
+
+    #[test]
+    fn warning_serialization_retains_the_existing_ipc_shape() {
+        let warning = NoteMutationWarning::single(
+            MutationWarningStage::CatalogUpsert,
+            "Saved with degraded synchronization".to_string(),
+            "catalog unavailable".to_string(),
+        );
+
+        assert_eq!(
+            serde_json::to_value(warning).unwrap(),
+            serde_json::json!({
+                "message": "Saved with degraded synchronization",
+                "issues": [{
+                    "stage": "catalogUpsert",
+                    "message": "catalog unavailable"
+                }]
+            })
+        );
+    }
+
+    #[test]
     fn domain_records_carry_versioned_payloads_and_explicit_predecessors() {
         let note_id = NoteIdentity::new("note-1");
         let first_id = RevisionIdentity::from_persisted("revision-1");
@@ -922,21 +1156,24 @@ mod tests {
 
     #[test]
     fn mutation_result_preserves_required_warning_semantics_and_all_diagnostics() {
-        let result = NoteMutationResult::from_post_commit(PostCommitNoteMutationOutcome {
-            note_id: "note-1".to_string(),
-            path: PathBuf::from("/vault/Note.md"),
-            canonical_markdown: "# Note".to_string(),
-            issues: vec![
-                PostCommitIssue {
-                    stage: PostCommitStage::CanonicalRead,
-                    message: "read failed".to_string(),
-                },
-                PostCommitIssue {
-                    stage: PostCommitStage::SemanticUpdate,
-                    message: "semantic queue failed".to_string(),
-                },
-            ],
-        });
+        let result = NoteMutationResult::from_post_commit(
+            MutationSource::Editor,
+            PostCommitNoteMutationOutcome {
+                note_id: "note-1".to_string(),
+                path: PathBuf::from("/vault/Note.md"),
+                canonical_markdown: "# Note".to_string(),
+                issues: vec![
+                    PostCommitIssue {
+                        stage: PostCommitStage::CanonicalRead,
+                        message: "read failed".to_string(),
+                    },
+                    PostCommitIssue {
+                        stage: PostCommitStage::SemanticUpdate,
+                        message: "semantic queue failed".to_string(),
+                    },
+                ],
+            },
+        );
 
         let warning = result.warning().expect("required warning");
         assert_eq!(warning.payload_version(), PayloadVersion::V1);

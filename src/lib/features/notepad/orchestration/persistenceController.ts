@@ -1,6 +1,7 @@
 import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
 import {
   type SessionSnapshot,
+  type NoteSaveSource,
 } from "$lib/features/notepad/session/session";
 import {
   dispatchDocumentOperation,
@@ -21,6 +22,7 @@ export interface PersistenceControllerParams {
     title: string,
     markdown: string,
     currentPath: string | null,
+    saveSource?: NoteSaveSource,
   ) => Promise<SessionSnapshot>;
   markNoteOpened?: (noteId: string) => Promise<void>;
   isActiveNote?: (note: NoteDraftState) => boolean;
@@ -77,7 +79,10 @@ export function createNotepadPersistenceController(
     });
   }
 
-  async function persistNote(note: NoteDraftState) {
+  async function persistNote(
+    note: NoteDraftState,
+    saveSource?: NoteSaveSource,
+  ) {
     if (
       documentHasUnresolvedConflict(note) ||
       params.shouldSuppressPersistence?.(note)
@@ -99,11 +104,14 @@ export function createNotepadPersistenceController(
     });
     const operationToken = note.operation.token;
     const operationRevision = note.operation.revision;
-    const savedSession = await params.saveNoteSession(
-      title,
-      markdown,
-      currentNotePath,
-    );
+    const savedSession = saveSource
+      ? await params.saveNoteSession(
+          title,
+          markdown,
+          currentNotePath,
+          saveSource,
+        )
+      : await params.saveNoteSession(title, markdown, currentNotePath);
     if (!isDocumentOperationCurrent(note, operationToken)) {
       return;
     }
@@ -174,8 +182,9 @@ export function createNotepadPersistenceController(
 
   async function enqueueSave(
     note: NoteDraftState = params.getDocumentSession(),
+    saveSource?: NoteSaveSource,
   ) {
-    return queueNoteOperation(note, () => persistNote(note));
+    return queueNoteOperation(note, () => persistNote(note, saveSource));
   }
 
   function flushPendingAutosave(
