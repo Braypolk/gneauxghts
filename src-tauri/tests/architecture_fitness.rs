@@ -422,6 +422,7 @@ fn semantic_state_owns_one_work_queue_and_worker_context() {
 fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
     let services = repository_file("src-tauri/src/services/mod.rs");
     let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let history_store = repository_file("src-tauri/src/services/note_timeline/history_store.rs");
 
     assert!(services.contains("pub(crate) mod note_timeline;"));
     assert_contains_all(
@@ -443,6 +444,8 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
             "pub(crate) enum MutationWarningStage",
             "identity_type!(RevisionIdentity);",
             "identity_type!(LifecycleEventIdentity);",
+            "mod history_store;",
+            "pub(crate) fn prepare_revision_publication(",
         ],
     );
     assert_contains_none(
@@ -466,6 +469,20 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
             "impl HistoryModeGrant {\n    pub(crate) fn authorized",
             "impl RevisionIdentity {\n    pub(crate) fn",
             "impl LifecycleEventIdentity {\n    pub(crate) fn",
+            "trait HistoryStore",
+        ],
+    );
+    assert_contains_all(
+        &history_store,
+        &[
+            "use rusqlite::{params, Connection, OptionalExtension, Transaction};",
+            "PRAGMA journal_mode=WAL;",
+            "PRAGMA foreign_keys=ON;",
+            "PRAGMA synchronous=FULL;",
+            "PRAGMA busy_timeout=5000;",
+            "PRAGMA wal_autocheckpoint=1000;",
+            "history.sqlite3",
+            "const LINE_DELTA_MAGIC: &[u8; 4] = b\"NTL1\";",
         ],
     );
 }
@@ -549,15 +566,15 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     );
     assert_contains_all(
         &proposals,
-        &["NoteTimeline::new(&state).prepare_publication("],
+        &["NoteTimeline::new(&state).prepare_revision_publication("],
     );
     assert_contains_all(
         &tasks,
-        &[".prepare_publication(Some(path), None, markdown)"],
+        &["NoteTimeline::new(self.state).prepare_revision_publication("],
     );
     assert_contains_all(
         &note_persistence,
-        &["NoteTimeline::new(state).prepare_publication("],
+        &["NoteTimeline::new(state).prepare_revision_publication("],
     );
     assert_contains_none(
         &format!("{note_persistence}\n{forgotten}\n{proposals}\n{tasks}"),

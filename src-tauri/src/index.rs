@@ -1973,13 +1973,17 @@ gneauxghts:
         let temp = TestDir::new("index-refresh-nested");
         let nested_dir = temp.path().join("Projects");
         let hidden_dir = temp.path().join(".obsidian");
+        let history_dir = temp.path().join(".gneauxghts");
         fs::create_dir_all(&nested_dir).expect("create nested dir");
         fs::create_dir_all(&hidden_dir).expect("create hidden dir");
+        fs::create_dir_all(&history_dir).expect("create history dir");
 
         let nested_note = nested_dir.join("Roadmap.md");
         let hidden_note = hidden_dir.join("Hidden.md");
+        let history_note = history_dir.join("History Sidecar.md");
         fs::write(&nested_note, "# Roadmap\n\nBody").expect("write nested note");
         fs::write(&hidden_note, "# Hidden\n\nBody").expect("write hidden note");
+        fs::write(&history_note, "# History\n\nNot a note").expect("write history sidecar");
 
         let mut index = NotesIndex::default();
         let RefreshScan {
@@ -1991,5 +1995,6 @@ gneauxghts:
         assert_eq!(index.entries.len(), 1);
         assert!(index.entries.contains_key(&nested_note));
         assert!(!index.entries.contains_key(&hidden_note));
+        assert!(!index.entries.contains_key(&history_note));
     }
 }

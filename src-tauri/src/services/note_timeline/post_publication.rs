@@ -24,6 +24,7 @@ pub(super) enum PublicationStage {
     SemanticUpdate,
     SemanticMove,
     DirtyRecovery,
+    HistoryFinalization,
     Revision,
 }
 
@@ -74,7 +75,7 @@ impl PublicationOutcome {
             .join("; ");
         Some(CommittedMutationWarning {
             message: format!(
-                "Canonical note file was saved at {}, but required catalog/task synchronization is incomplete: {}",
+                "Canonical note file was saved at {}, but required history or catalog/task synchronization is incomplete: {}",
                 self.path.display(),
                 details
             ),
@@ -92,6 +93,7 @@ impl PublicationStage {
                 | Self::TaskProjectionUpsert
                 | Self::CatalogRemove
                 | Self::TaskProjectionRemove
+                | Self::HistoryFinalization
         )
     }
 }
@@ -604,7 +606,7 @@ mod tests {
             .required_consistency_warning()
             .expect("task projection failure is required");
         assert!(warning.message.starts_with(
-            "Canonical note file was saved at /vault/Note.md, but required catalog/task synchronization is incomplete"
+            "Canonical note file was saved at /vault/Note.md, but required history or catalog/task synchronization is incomplete"
         ));
         assert!(warning
             .message

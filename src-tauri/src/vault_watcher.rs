@@ -739,6 +739,18 @@ fn is_watchable_markdown_path(path: &Path, notes_dir: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
         && !is_forgotten_note_path(path, notes_dir)
+        && !is_hidden_vault_path(path, notes_dir)
+}
+
+fn is_hidden_vault_path(path: &Path, notes_dir: &Path) -> bool {
+    path.strip_prefix(notes_dir).is_ok_and(|relative| {
+        relative.components().any(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .is_some_and(|name| name.starts_with('.'))
+        })
+    })
 }
 
 #[cfg(test)]
@@ -795,6 +807,18 @@ mod tests {
 
         assert!(!is_watchable_markdown_path(forgotten_note, notes_dir));
         assert!(is_watchable_markdown_path(active_note, notes_dir));
+    }
+
+    #[test]
+    fn ignores_hidden_history_store_paths_and_sidecars() {
+        let notes_dir = Path::new("/tmp/Gneauxghts");
+        let hidden_markdown = Path::new("/tmp/Gneauxghts/.gneauxghts/Injected.md");
+        let history = Path::new("/tmp/Gneauxghts/.gneauxghts/history.sqlite3");
+        let wal = Path::new("/tmp/Gneauxghts/.gneauxghts/history.sqlite3-wal");
+
+        assert!(!is_watchable_markdown_path(hidden_markdown, notes_dir));
+        assert!(!is_watchable_markdown_path(history, notes_dir));
+        assert!(!is_watchable_markdown_path(wal, notes_dir));
     }
 
     #[test]

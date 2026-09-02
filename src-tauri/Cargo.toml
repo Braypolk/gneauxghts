@@ -46,6 +46,8 @@ futures-util = "0.3"
 tokio = { version = "1", features = ["sync", "time", "macros"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+similar = { version = "3.2", default-features = false, features = ["bytes", "std"] }
+zstd = "0.13"
 notify = "6.1"
 rig-core = { version = "=0.41.0", default-features = false, features = ["derive", "reqwest", "rustls"] }
 rig-agent = { version = "=0.41.0", default-features = false }
@@ -62,7 +64,6 @@ tauri-plugin-window-state = "2"
 [dev-dependencies]
 rig-core = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
 rig-agent = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
-similar = { version = "3.2", default-features = false, features = ["bytes", "std"] }
 
 [patch.crates-io]
 corenn-kernels = { path = "vendor/corenn-kernels" }

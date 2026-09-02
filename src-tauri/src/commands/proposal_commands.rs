@@ -6,7 +6,7 @@ use crate::{
         plan_agent_creation_commit, plan_agent_update_commit, CommitNoteReviewResult,
         ProposalPreview,
     },
-    services::note_timeline::{NoteIdentity, NoteMutation, NoteTimeline},
+    services::note_timeline::{MutationSource, NoteIdentity, NoteMutation, NoteTimeline},
     state::notes_root,
 };
 use std::path::PathBuf;
@@ -76,18 +76,22 @@ pub(crate) fn commit_agent_proposal(
         &plan.target_path,
         &plan.intended_editor_content_hash,
     )?;
+    let retained_identity = (proposal.kind == "update")
+        .then(|| proposal.note_id.as_deref().map(NoteIdentity::new))
+        .flatten();
+    let committed_markdown = NoteTimeline::new(&state).prepare_revision_publication(
+        MutationSource::AcceptedChatProposal,
+        &intent.target_path,
+        (proposal.kind == "update").then_some(intent.target_path.as_path()),
+        retained_identity.as_ref(),
+        &committed_markdown,
+    )?;
     let commit_result = if proposal.kind == "update" {
-        let retained_identity = proposal.note_id.as_deref().map(NoteIdentity::new);
-        let committed_markdown = NoteTimeline::new(&state).prepare_publication(
-            Some(&intent.target_path),
-            retained_identity.as_ref(),
-            &committed_markdown,
-        )?;
         commit_review(
             &notes_dir,
             intent.target_path.to_string_lossy().into_owned(),
             expected_base_hash.expect("update proposal base hash was parsed"),
-            committed_markdown,
+            committed_markdown.clone(),
         )
     } else {
         commit_note_creation_at_path(

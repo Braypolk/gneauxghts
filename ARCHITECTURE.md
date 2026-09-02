@@ -62,7 +62,11 @@ Before an app-owned writer publishes canonical bytes, it asks `NoteTimeline`
 to prepare the publication from path or lifecycle continuity evidence. Identity
 repair policy and managed-metadata representation remain hidden inside that
 operation; editor, task, proposal, and lifecycle writers never resolve or
-rewrite Note Identity themselves.
+rewrite Note Identity themselves. For authored-state mutations, preparation
+also commits a durable intent to the private vault-owned SQLite history store
+before the Markdown write is admitted. Identical authored content finalizes
+without another Note Revision; distinct content finalizes a versioned,
+hash-verified delta or compressed checkpoint.
 
 History Mode and agent restore capabilities require grants whose constructors
 remain private to the timeline module. Ordinary chat can receive only the
@@ -99,8 +103,10 @@ its synchronous task projection, and its deferred background lexical job
 carries the same generation through the shared coordinator.
 
 Once canonical bytes exist, the returned identity and path are authoritative.
-A later required-projection problem is returned as `commitWarning`; callers
-adopt the committed result and do not retry the write.
+A later history-finalization or required-projection problem is returned as
+`commitWarning`; callers adopt the committed result and do not retry the write.
+Prepared intents are reconciled idempotently against authoritative Markdown
+after restart, so recovery completes history without replaying the file write.
 
 ### Tasks
 

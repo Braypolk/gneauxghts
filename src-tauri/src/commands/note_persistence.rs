@@ -2,8 +2,8 @@ use super::{prepare_notes_dir, NoteSession};
 use crate::{
     index::AppState,
     note,
-    services::note_timeline::{NoteMutation, NoteMutationWarning, NoteTimeline},
-    state::{persist_note, validate_current_path},
+    services::note_timeline::{MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline},
+    state::{persist_note_with_preparation, validate_current_path},
 };
 use std::path::{Path, PathBuf};
 
@@ -85,20 +85,45 @@ fn persist_note_session_with_source(
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let is_note_creation = current_path.is_none();
-    let markdown =
-        NoteTimeline::new(state).prepare_publication(current_path.as_deref(), None, &markdown)?;
-    let persisted_path = persist_note(&notes_dir, &title, &markdown, current_path.as_deref())?;
+    let source = if is_note_creation {
+        MutationSource::NoteCreation
+    } else {
+        match save_source {
+            NoteSaveSource::TaskAction => MutationSource::TaskAction,
+            NoteSaveSource::Editor => MutationSource::Editor,
+        }
+    };
+    let publication = persist_note_with_preparation(
+        &notes_dir,
+        &title,
+        &markdown,
+        current_path.as_deref(),
+        |target_path, canonical| {
+            NoteTimeline::new(state).prepare_revision_publication(
+                source,
+                target_path,
+                current_path.as_deref(),
+                None,
+                canonical,
+            )
+        },
+    )?;
+    let (persisted_path, persisted_markdown) = publication
+        .map(|(path, markdown)| (Some(path), markdown))
+        .unwrap_or((None, markdown.clone()));
     let mutation_outcome = persisted_path.as_ref().map(|path| {
         let path = PathBuf::from(path);
         let mutation = if is_note_creation {
-            NoteMutation::note_creation(path, None, markdown.clone())
+            NoteMutation::note_creation(path, None, persisted_markdown.clone())
         } else {
             match save_source {
-                NoteSaveSource::TaskAction => {
-                    NoteMutation::task_action(path, current_path.clone(), markdown.clone())
-                }
+                NoteSaveSource::TaskAction => NoteMutation::task_action(
+                    path,
+                    current_path.clone(),
+                    persisted_markdown.clone(),
+                ),
                 NoteSaveSource::Editor => {
-                    NoteMutation::editor(path, current_path.clone(), markdown.clone())
+                    NoteMutation::editor(path, current_path.clone(), persisted_markdown.clone())
                 }
             }
         };
@@ -116,7 +141,7 @@ fn persist_note_session_with_source(
         build_saved_note_session(
             saved_note_id,
             &title,
-            &markdown,
+            &persisted_markdown,
             persisted_path.clone(),
             mutation_outcome
                 .as_ref()

@@ -4,7 +4,7 @@
 //! through the filesystem and post-commit note boundary; dirty documents can
 //! prepare the same transform without writing any canonical or derived state.
 
-use super::note_timeline::{NoteMutation, NoteMutationWarning, NoteTimeline};
+use super::note_timeline::{MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline};
 use crate::{
     index::{
         delete_task_in_markdown, find_unambiguous_task_line, toggle_task_in_markdown, AppState,
@@ -106,8 +106,13 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
     }
 
     fn write_canonical(&self, path: &Path, markdown: &str) -> Result<(), String> {
-        let prepared =
-            NoteTimeline::new(self.state).prepare_publication(Some(path), None, markdown)?;
+        let prepared = NoteTimeline::new(self.state).prepare_revision_publication(
+            MutationSource::TaskAction,
+            path,
+            Some(path),
+            None,
+            markdown,
+        )?;
         write_task_document_atomically(path, &prepared)
     }
 

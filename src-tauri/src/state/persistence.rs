@@ -363,17 +363,34 @@ pub(crate) fn is_forgotten_note_path(path: &Path, notes_dir: &Path) -> bool {
     path.starts_with(forgotten_notes_root(notes_dir))
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn persist_note(
     notes_dir: &Path,
     title: &str,
     markdown: &str,
     current_path: Option<&Path>,
 ) -> Result<Option<String>, String> {
+    persist_note_with_preparation(
+        notes_dir,
+        title,
+        markdown,
+        current_path,
+        |_path, markdown| Ok(markdown.to_string()),
+    )
+    .map(|published| published.map(|(path, _)| path))
+}
+
+pub(crate) fn persist_note_with_preparation(
+    notes_dir: &Path,
+    title: &str,
+    markdown: &str,
+    current_path: Option<&Path>,
+    prepare: impl FnOnce(&Path, &str) -> Result<String, String>,
+) -> Result<Option<(String, String)>, String> {
     let _file_mutation_guard = NOTE_FILE_MUTATION
         .lock()
         .map_err(|_| "Note file mutation lock poisoned".to_string())?;
-    persist_note_locked(notes_dir, title, markdown, current_path)
+    persist_note_locked(notes_dir, title, markdown, current_path, prepare)
 }
 
 fn persist_note_locked(
@@ -381,7 +398,8 @@ fn persist_note_locked(
     title: &str,
     markdown: &str,
     current_path: Option<&Path>,
-) -> Result<Option<String>, String> {
+    prepare: impl FnOnce(&Path, &str) -> Result<String, String>,
+) -> Result<Option<(String, String)>, String> {
     let normalized_markdown = note::normalize_wikilink_markdown(markdown);
     note::reject_chat_projection_write(&normalized_markdown)?;
     let existing_markdown = current_path
@@ -411,7 +429,10 @@ fn persist_note_locked(
         let expected_write = crate::vault_watcher::record_expected_write(&target_path, "");
         fs::write(&target_path, "").map_err(|err| err.to_string())?;
         expected_write.commit();
-        return Ok(Some(target_path.to_string_lossy().into_owned()));
+        return Ok(Some((
+            target_path.to_string_lossy().into_owned(),
+            String::new(),
+        )));
     }
 
     let prepared_markdown = note::prepare_note_markdown(
@@ -424,6 +445,7 @@ fn persist_note_locked(
     let Some(target_path) = target_path else {
         return Ok(None);
     };
+    let prepared_markdown = prepare(&target_path, &prepared_markdown)?;
 
     if let Some(existing_path) = current_path {
         if existing_path != target_path && existing_path.exists() {
@@ -437,7 +459,10 @@ fn persist_note_locked(
         crate::vault_watcher::record_expected_write(&target_path, &prepared_markdown);
     atomic_write_note(&target_path, prepared_markdown.as_bytes())?;
     expected_write.commit();
-    Ok(Some(target_path.to_string_lossy().into_owned()))
+    Ok(Some((
+        target_path.to_string_lossy().into_owned(),
+        prepared_markdown,
+    )))
 }
 
 /// Publish a fully-written note in one rename. Keeping the temporary file next

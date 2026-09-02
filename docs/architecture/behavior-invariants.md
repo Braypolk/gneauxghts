@@ -52,12 +52,17 @@ guessing from stale positions.
 ### Save completion has a consistency boundary
 
 A successful save means canonical bytes and the required in-memory note
-catalog are committed. Task reads provide read-your-write consistency. Lexical
-and semantic indexing may finish later and cannot turn a completed canonical
-save into failure.
+catalog are committed, and its distinct user-authored state has one durable
+Note Revision. History intent is durably prepared before Markdown publication;
+a preparation failure publishes nothing. Task reads provide read-your-write
+consistency. Lexical and semantic indexing may finish later and cannot turn a
+completed canonical save into failure.
 
 If bytes were committed but a required projection degraded, the result carries
 the authoritative identity and a warning; callers do not retry the mutation.
+A history-finalization failure follows the same committed-warning rule and is
+completed idempotently from its prepared intent and authoritative Markdown.
+Managed metadata changes alone do not create Note Revisions.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
 During synchronous reconciliation, a failed lexical projection retains the
 exact identity-resolved payload in retry state independent of catalog file
