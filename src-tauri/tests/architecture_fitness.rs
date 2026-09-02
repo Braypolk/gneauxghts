@@ -264,7 +264,7 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(",
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::recovered(",
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::purged(",
-            "authoritative_note_id.as_deref()",
+            "retained_identity.as_ref()",
             "note_id: Some(note_id.clone())",
             "forgotten_note\n        .note_id",
         ],
@@ -502,9 +502,9 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &[
             "impl RevisionIdentity {\n    pub(crate) fn issue",
             "impl LifecycleEventIdentity {\n    pub(crate) fn issue",
-            "pub(crate) fn repair_managed_note_identity",
         ],
     );
+    assert_contains_all(&timeline, &["crate::note::repair_managed_note_identity("]);
     assert_contains_all(
         &post_publication,
         &["prepare_note_identity_transfer(previous_path, &path)"],
@@ -522,27 +522,26 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
             "expected_canonical_hash",
         ],
     );
-    assert_contains_all(
-        &note_persistence,
-        &[
-            "persist_note_with_identity(",
-            "authoritative_note_id.as_deref()",
-        ],
-    );
+    assert_contains_all(&timeline, &["pub(crate) fn prepare_publication("]);
     assert_contains_all(
         &forgotten,
-        &[
-            "prepare_note_markdown_with_identity(",
-            "forgotten_note.note_id.as_deref()",
-        ],
+        &["NoteTimeline::new(&state).prepare_publication("],
     );
     assert_contains_all(
         &proposals,
-        &["commit_note_review_with_identity as commit_review"],
+        &["NoteTimeline::new(&state).prepare_publication("],
     );
     assert_contains_all(
         &tasks,
-        &["repair_managed_note_identity(markdown, &note_id)"],
+        &[".prepare_publication(Some(path), None, markdown)"],
+    );
+    assert_contains_all(
+        &note_persistence,
+        &["NoteTimeline::new(state).prepare_publication("],
+    );
+    assert_contains_none(
+        &format!("{note_persistence}\n{forgotten}\n{proposals}\n{tasks}"),
+        &["repair_managed_note_identity"],
     );
     assert!(architecture.contains("Note Identity follows the logical note"));
     assert!(invariants.contains("Note Identity follows the note"));

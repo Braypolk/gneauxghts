@@ -59,6 +59,9 @@ save into failure.
 If bytes were committed but a required projection degraded, the result carries
 the authoritative identity and a warning; callers do not retry the mutation.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
+During synchronous reconciliation, an identity-resolved catalog candidate does
+not advance its committed file signature until lexical projection succeeds;
+failure keeps or restores the dirty path so the projection remains retryable.
 
 ### Note Identity follows the note
 
@@ -67,7 +70,9 @@ empty, its path changes, it is forgotten or recovered, or it temporarily
 disappears and safely reattaches. A known path whose embedded managed identity
 is missing or damaged retains its catalog identity without rewriting the file
 during observation; repair is included in the original atomic publication of
-the next app-owned commit. Identity at an unrelated path is insufficient to
+the next app-owned commit. Every canonical writer obtains those prepared bytes
+through `NoteTimeline`; identity repair is not duplicated in writer-specific
+code. Identity at an unrelated path is insufficient to
 reattach a Missing Note unless the watcher correlated that path change as a
 move or rename.
 

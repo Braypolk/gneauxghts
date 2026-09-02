@@ -297,26 +297,6 @@ pub(crate) fn prepare_note_markdown(
     Ok((enriched, metadata))
 }
 
-/// Prepare canonical Markdown while honoring identity already resolved by the
-/// catalog. This runs before an app-owned publication so repair is part of the
-/// original atomic write rather than a racy follow-up replacement.
-pub(crate) fn prepare_note_markdown_with_identity(
-    markdown: &str,
-    existing_markdown: Option<&str>,
-    trashed_at: Option<Option<String>>,
-    authoritative_note_id: Option<&str>,
-) -> Result<(String, ManagedNoteMetadata), String> {
-    let (mut prepared, mut metadata) =
-        prepare_note_markdown(markdown, existing_markdown, trashed_at)?;
-    if let Some(note_id) = authoritative_note_id.filter(|note_id| !note_id.trim().is_empty()) {
-        if metadata.id != note_id {
-            prepared = repair_managed_note_identity(&prepared, note_id)?;
-            metadata.id = note_id.to_string();
-        }
-    }
-    Ok((prepared, metadata))
-}
-
 /// Restore the timeline-owned identity during an app-owned commit without
 /// changing authored content or unrelated managed metadata.
 pub(crate) fn repair_managed_note_identity(

@@ -45,12 +45,10 @@ pub(crate) fn forget_note(
         let purge_at_millis = forgotten_at_millis
             .saturating_add(u64::from(retention_days).saturating_mul(FORGOTTEN_DAY_MILLIS));
         let note_markdown = fs::read_to_string(note_path).map_err(|err| err.to_string())?;
-        let authoritative_note_id = state.indexed_note_identity(note_path)?;
-        let (forgotten_markdown, note_id) = prepare_forgotten_note_markdown(
-            &note_markdown,
-            forgotten_at_rfc3339,
-            authoritative_note_id.as_deref(),
-        )?;
+        let note_markdown =
+            NoteTimeline::new(&state).prepare_publication(Some(note_path), None, &note_markdown)?;
+        let (forgotten_markdown, note_id) =
+            prepare_forgotten_note_markdown(&note_markdown, forgotten_at_rfc3339)?;
 
         if note_path.exists() {
             let expected_move = crate::vault_watcher::record_expected_move(
@@ -230,13 +228,14 @@ pub(crate) fn restore_forgotten_notes(
                 );
                 let markdown =
                     fs::read_to_string(&forgotten_path).map_err(|err| err.to_string())?;
-                let restored_markdown = note::prepare_note_markdown_with_identity(
+                let retained_identity = forgotten_note.note_id.as_deref().map(NoteIdentity::new);
+                let markdown = NoteTimeline::new(&state).prepare_publication(
+                    None,
+                    retained_identity.as_ref(),
                     &markdown,
-                    Some(&markdown),
-                    Some(None),
-                    forgotten_note.note_id.as_deref(),
-                )?
-                .0;
+                )?;
+                let restored_markdown =
+                    note::prepare_note_markdown(&markdown, Some(&markdown), Some(None))?.0;
                 let timestamp_millis = current_time_millis()?;
                 let expected_move = crate::vault_watcher::record_expected_move(
                     &forgotten_path,
@@ -368,13 +367,11 @@ fn validate_retention_days(retention_days: u32) -> Result<(), String> {
 fn prepare_forgotten_note_markdown(
     note_markdown: &str,
     forgotten_at_rfc3339: String,
-    authoritative_note_id: Option<&str>,
 ) -> Result<(String, String), String> {
-    let (forgotten_markdown, metadata) = note::prepare_note_markdown_with_identity(
+    let (forgotten_markdown, metadata) = note::prepare_note_markdown(
         note_markdown,
         Some(note_markdown),
         Some(Some(forgotten_at_rfc3339)),
-        authoritative_note_id,
     )?;
     Ok((forgotten_markdown, metadata.id))
 }
@@ -651,7 +648,6 @@ mod tests {
         let (forgotten_markdown, note_id) = prepare_forgotten_note_markdown(
             "# Existing note\n\nBody",
             "2026-09-01T12:00:00.000Z".to_string(),
-            None,
         )
         .expect("prepare forgotten note");
 
@@ -669,12 +665,9 @@ mod tests {
     fn forget_and_recovery_preserve_the_same_managed_note_identity() {
         let original =
             "---\ngneauxghts:\n  id: lifecycle-note-1\n  kind: note\n---\n\nLifecycle body";
-        let (forgotten_markdown, forgotten_id) = prepare_forgotten_note_markdown(
-            original,
-            "2026-09-01T12:00:00.000Z".to_string(),
-            Some("lifecycle-note-1"),
-        )
-        .expect("prepare forgotten note");
+        let (forgotten_markdown, forgotten_id) =
+            prepare_forgotten_note_markdown(original, "2026-09-01T12:00:00.000Z".to_string())
+                .expect("prepare forgotten note");
         let restored_markdown =
             note::prepare_note_markdown(&forgotten_markdown, Some(&forgotten_markdown), Some(None))
                 .expect("prepare recovered note")
@@ -695,23 +688,18 @@ mod tests {
 
     #[test]
     fn damaged_metadata_uses_catalog_identity_through_forget_and_recovery() {
-        let damaged = "Authored content without managed metadata";
-        let (forgotten_markdown, forgotten_id) = prepare_forgotten_note_markdown(
-            damaged,
-            "2026-09-01T12:00:00.000Z".to_string(),
-            Some("known-before-damage"),
-        )
-        .expect("prepare damaged forgotten note");
+        // The timeline prepares this canonical input before lifecycle
+        // metadata transformation and the original atomic publication.
+        let repaired = "---\ngneauxghts:\n  id: known-before-damage\n  kind: note\n---\n\nAuthored content without managed metadata";
+        let (forgotten_markdown, forgotten_id) =
+            prepare_forgotten_note_markdown(repaired, "2026-09-01T12:00:00.000Z".to_string())
+                .expect("prepare damaged forgotten note");
         assert_eq!(forgotten_id, "known-before-damage");
 
-        let recovered = note::prepare_note_markdown_with_identity(
-            damaged,
-            Some(&forgotten_markdown),
-            Some(None),
-            Some(&forgotten_id),
-        )
-        .expect("recover damaged forgotten note")
-        .0;
+        let recovered =
+            note::prepare_note_markdown(&forgotten_markdown, Some(&forgotten_markdown), Some(None))
+                .expect("recover damaged forgotten note")
+                .0;
         assert_eq!(
             note::parse_note(&recovered)
                 .frontmatter

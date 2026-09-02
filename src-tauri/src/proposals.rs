@@ -386,16 +386,6 @@ pub(crate) fn commit_note_review(
     expected_base_hash: String,
     markdown: String,
 ) -> Result<CommitNoteReviewResult, String> {
-    commit_note_review_with_identity(notes_dir, path, expected_base_hash, markdown, None)
-}
-
-pub(crate) fn commit_note_review_with_identity(
-    notes_dir: &Path,
-    path: String,
-    expected_base_hash: String,
-    markdown: String,
-    authoritative_note_id: Option<&str>,
-) -> Result<CommitNoteReviewResult, String> {
     let note_path = validate_existing_note_path(notes_dir, &path)?;
     let raw = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
     if content_hash(&raw) != expected_base_hash {
@@ -410,13 +400,7 @@ pub(crate) fn commit_note_review_with_identity(
     // is correct for ordinary saves but violates the review contract.
     let normalized = note::normalize_wikilink_markdown(&markdown);
     note::reject_chat_projection_write(&normalized)?;
-    let prepared = note::prepare_note_markdown_with_identity(
-        &normalized,
-        Some(&raw),
-        Some(None),
-        authoritative_note_id,
-    )?
-    .0;
+    let prepared = note::prepare_note_markdown(&normalized, Some(&raw), Some(None))?.0;
     let expected_write = vault_watcher::record_expected_write(&note_path, &prepared);
     atomic_write_note(&note_path, prepared.as_bytes())?;
     expected_write.commit();

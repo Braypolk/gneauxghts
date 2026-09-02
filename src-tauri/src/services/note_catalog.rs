@@ -141,11 +141,12 @@ impl<'a> NoteCatalog<'a> {
         note: IndexedNote,
         mode: CatalogWriteMode,
     ) -> Result<(), String> {
-        let note = self
+        let mut index = self
             .notes_index
             .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?
-            .upsert_note(path.clone(), note);
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        let mut candidate = index.clone();
+        let note = candidate.upsert_note(path.clone(), note);
         let plan = ProjectionPlan::for_upsert(mode, note.document_kind);
 
         if plan.lexical == ProjectionTiming::Synchronous {
@@ -154,24 +155,27 @@ impl<'a> NoteCatalog<'a> {
 
         if plan.tasks == ProjectionTiming::Synchronous {
             let _ = apply_task_projection(&CatalogMutation::Upsert {
-                path,
-                note: Box::new(note),
+                path: path.clone(),
+                note: Box::new(note.clone()),
             });
         }
+        *index = candidate;
         Ok(())
     }
 
     pub(crate) fn remove(&self, path: &Path, mode: CatalogWriteMode) -> Result<(), String> {
         let plan = ProjectionPlan::for_remove(mode);
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        let mut candidate = index.clone();
 
         if plan.lexical == ProjectionTiming::Synchronous {
             self.lexical.remove_note(path)?;
         }
 
-        self.notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?
-            .remove_note(path);
+        candidate.remove_note(path);
 
         let mutation = CatalogMutation::Remove {
             path: path.to_path_buf(),
@@ -179,6 +183,7 @@ impl<'a> NoteCatalog<'a> {
         if plan.tasks == ProjectionTiming::Synchronous {
             let _ = apply_task_projection(&mutation);
         }
+        *index = candidate;
         Ok(())
     }
 }

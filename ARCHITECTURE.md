@@ -58,6 +58,12 @@ private timeline implementation detail; no parallel mutation service is
 available to callers. The same boundary can deepen durability ordering without
 changing those callers or exposing SQL and storage policy.
 
+Before an app-owned writer publishes canonical bytes, it asks `NoteTimeline`
+to prepare the publication from path or lifecycle continuity evidence. Identity
+repair policy and managed-metadata representation remain hidden inside that
+operation; editor, task, proposal, and lifecycle writers never resolve or
+rewrite Note Identity themselves.
+
 History Mode and agent restore capabilities require grants whose constructors
 remain private to the timeline module. Ordinary chat can receive only the
 current-content capability unless an app-owned current-turn restore path is
@@ -82,6 +88,9 @@ and immediately enters `NoteTimeline.mutate`, which updates the required
 in-memory note catalog through its private post-publication helper. Task,
 lexical, and semantic projections follow that same timeline-owned path.
 Lexical and semantic work may be queued after the canonical write.
+Synchronous reconciliation stages identity resolution in a candidate catalog
+and advances its file signature only after required lexical projection accepts
+the same payload, preserving a retry path on projection failure.
 
 Once canonical bytes exist, the returned identity and path are authoritative.
 A later required-projection problem is returned as `commitWarning`; callers

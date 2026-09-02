@@ -835,6 +835,37 @@ impl<'a> NoteTimeline<'a> {
         Self { state }
     }
 
+    /// Prepare user-authored Markdown for an app-owned publication while
+    /// preserving the identity already owned by the logical note. Callers
+    /// provide continuity evidence; the timeline keeps the repair policy
+    /// and metadata representation private.
+    pub(crate) fn prepare_publication(
+        &self,
+        continuity_path: Option<&Path>,
+        retained_identity: Option<&NoteIdentity>,
+        markdown: &str,
+    ) -> Result<String, String> {
+        let catalog_identity = continuity_path
+            .map(|path| self.state.indexed_note_identity(path))
+            .transpose()?
+            .flatten();
+        let authoritative_identity = retained_identity
+            .map(NoteIdentity::as_str)
+            .filter(|note_id| !note_id.trim().is_empty())
+            .or(catalog_identity.as_deref());
+        let embedded_identity = crate::note::parse_note(markdown)
+            .frontmatter
+            .managed
+            .map(|metadata| metadata.id);
+
+        match authoritative_identity {
+            Some(note_id) if embedded_identity.as_deref() != Some(note_id) => {
+                crate::note::repair_managed_note_identity(markdown, note_id)
+            }
+            _ => Ok(markdown.to_string()),
+        }
+    }
+
     pub(crate) fn mutate(&self, mutation: NoteMutation) -> NoteMutationResult {
         let NoteMutation {
             source,

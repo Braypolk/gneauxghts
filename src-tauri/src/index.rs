@@ -356,6 +356,7 @@ impl AppState {
     }
 
     fn apply_dirty_paths(&self, dirty_paths: Vec<PathBuf>) -> Result<bool, String> {
+        let retry_paths = dirty_paths.clone();
         let existing_signatures = {
             let index = self
                 .notes_index
@@ -374,25 +375,37 @@ impl AppState {
         let updates = collect_dirty_updates(dirty_paths, &existing_signatures)?;
         // Resolve stable identity once in the authoritative catalog before
         // any derived projection observes the update.
-        let (changed, updates) = {
+        let staged = {
             let mut index = self
                 .notes_index
                 .lock()
                 .map_err(|_| "Search index lock poisoned".to_string())?;
-            let (changed, updates) = index.apply_pending_updates(updates);
-            index.mark_refreshed(changed);
-            (changed, updates)
-        };
-        for update in &updates {
-            match update {
-                PendingIndexUpdate::Upsert(path, note) => {
-                    self.lexical.upsert_note(path, note)?;
+            let mut candidate = index.clone();
+            let (changed, updates) = candidate.apply_pending_updates(updates);
+            let projection = updates.iter().try_for_each(|update| match update {
+                PendingIndexUpdate::Upsert(path, note) => self.lexical.upsert_note(path, note),
+                PendingIndexUpdate::Remove(path) => self.lexical.remove_note(path),
+            });
+            match projection {
+                Ok(()) => {
+                    candidate.mark_refreshed(changed);
+                    *index = candidate;
+                    Ok((changed, updates))
                 }
-                PendingIndexUpdate::Remove(path) => {
-                    self.lexical.remove_note(path)?;
-                }
+                Err(error) => Err(error),
             }
-        }
+        };
+        let (changed, updates) = match staged {
+            Ok(staged) => staged,
+            Err(error) => {
+                let mut invalidation = self
+                    .interactive_invalidation
+                    .lock()
+                    .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
+                invalidation.dirty_paths.extend(retry_paths);
+                return Err(error);
+            }
+        };
         let projection_payloads: Vec<crate::services::note_catalog::CatalogMutation> = updates
             .iter()
             .map(|update| match update {
@@ -468,15 +481,19 @@ impl AppState {
                 .notes_index
                 .lock()
                 .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.apply_refresh_updates(updates, seen_paths)
+            let mut candidate = index.clone();
+            let (changed, updates) = candidate.apply_refresh_updates(updates, seen_paths);
+            // Commit the catalog signature only after required synchronous
+            // projections accept the same identity-resolved payload.
+            for (path, note) in &updates {
+                self.lexical.upsert_note(path, note)?;
+            }
+            for path in &stale_lexical_paths {
+                self.lexical.remove_note(path)?;
+            }
+            *index = candidate;
+            (changed, updates)
         };
-        // Project only the identity-resolved catalog payloads.
-        for (path, note) in &updates {
-            self.lexical.upsert_note(path, note)?;
-        }
-        for path in &stale_lexical_paths {
-            self.lexical.remove_note(path)?;
-        }
         let projection_payloads: Vec<crate::services::note_catalog::CatalogMutation> = updates
             .iter()
             .map(
@@ -647,7 +664,7 @@ impl AppState {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
     by_id: HashMap<String, PathBuf>,
@@ -657,12 +674,14 @@ pub(crate) struct NotesIndex {
     revision: u64,
 }
 
+#[derive(Clone)]
 struct PendingIdentityTransfer {
     note_id: String,
     previous_path: PathBuf,
     expected_canonical_hash: String,
 }
 
+#[derive(Clone)]
 struct DetachedIdentityOwner {
     path: PathBuf,
     canonical_hash: String,

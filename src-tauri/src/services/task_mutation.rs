@@ -106,18 +106,9 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
     }
 
     fn write_canonical(&self, path: &Path, markdown: &str) -> Result<(), String> {
-        let authoritative_note_id = self.state.indexed_note_identity(path)?;
-        let embedded_note_id = crate::note::parse_note(markdown)
-            .frontmatter
-            .managed
-            .map(|metadata| metadata.id);
-        let repaired = match authoritative_note_id {
-            Some(note_id) if embedded_note_id.as_deref() != Some(note_id.as_str()) => {
-                crate::note::repair_managed_note_identity(markdown, &note_id)?
-            }
-            _ => markdown.to_string(),
-        };
-        write_task_document_atomically(path, &repaired)
+        let prepared =
+            NoteTimeline::new(self.state).prepare_publication(Some(path), None, markdown)?;
+        write_task_document_atomically(path, &prepared)
     }
 
     fn synchronize(&self, path: PathBuf, markdown: String) -> TaskSynchronization {
