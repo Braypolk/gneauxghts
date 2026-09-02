@@ -394,14 +394,15 @@ impl AppState {
         let updates = collect_dirty_updates(dirty_paths, &existing_signatures)?;
         // Resolve stable identity once in the authoritative catalog before
         // any derived projection observes the update.
-        let (changed, updates) = {
+        let (changed, updates, generation) = {
             let mut index = self
                 .notes_index
                 .lock()
                 .map_err(|_| "Search index lock poisoned".to_string())?;
             let (changed, updates) = index.apply_pending_updates(updates);
             index.mark_refreshed(changed);
-            (changed, updates)
+            let generation = index.revision();
+            (changed, updates, generation)
         };
         let projection_payloads: Vec<crate::services::note_catalog::CatalogMutation> = updates
             .iter()
@@ -417,9 +418,11 @@ impl AppState {
                 }
             })
             .collect();
-        let lexical_result = self
-            .catalog_projection_retries
-            .apply_lexical_batch(&self.lexical, &projection_payloads);
+        let lexical_result = self.catalog_projection_retries.apply_lexical_batch(
+            &self.lexical,
+            generation,
+            &projection_payloads,
+        );
         for payload in projection_payloads {
             let _ = crate::services::note_catalog::apply_task_projection(&payload);
         }
@@ -479,12 +482,14 @@ impl AppState {
             .filter(|path| !seen_paths.contains(*path))
             .cloned()
             .collect();
-        let (changed, updates) = {
+        let (changed, updates, generation) = {
             let mut index = self
                 .notes_index
                 .lock()
                 .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.apply_refresh_updates(updates, seen_paths)
+            let (changed, updates) = index.apply_refresh_updates(updates, seen_paths);
+            let generation = index.revision();
+            (changed, updates, generation)
         };
         let projection_payloads: Vec<crate::services::note_catalog::CatalogMutation> = updates
             .iter()
@@ -498,9 +503,11 @@ impl AppState {
                 crate::services::note_catalog::CatalogMutation::Remove { path: path.clone() }
             }))
             .collect();
-        let lexical_result = self
-            .catalog_projection_retries
-            .apply_lexical_batch(&self.lexical, &projection_payloads);
+        let lexical_result = self.catalog_projection_retries.apply_lexical_batch(
+            &self.lexical,
+            generation,
+            &projection_payloads,
+        );
         for payload in projection_payloads {
             let _ = crate::services::note_catalog::apply_task_projection(&payload);
         }

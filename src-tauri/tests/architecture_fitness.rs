@@ -524,7 +524,14 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
             "catalog_projection_retries",
         ],
     );
-    assert_contains_all(&catalog, &["struct CatalogProjectionRetries"]);
+    assert_contains_all(
+        &catalog,
+        &[
+            "struct CatalogProjectionRetries",
+            "struct PathProjectionState",
+            "generation: u64",
+        ],
+    );
     assert_contains_none(&index, &["let mut candidate = index.clone()"]);
     assert_contains_all(&timeline, &["pub(crate) fn prepare_publication("]);
     assert_contains_all(

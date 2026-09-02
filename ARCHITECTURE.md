@@ -91,7 +91,9 @@ Lexical and semantic work may be queued after the canonical write.
 Synchronous reconciliation resolves identity once, commits the catalog, and
 hands the exact resolved payload to lexical projection. A failed projection is
 retained in a small path-keyed retry ledger independent of file signatures, so
-retry does not clone or hold the whole catalog during lexical I/O.
+retry does not clone or hold the whole catalog during lexical I/O. Catalog
+generations and a per-path projection lock prevent late older work from
+clearing, replacing, or applying after a newer payload for that path.
 
 Once canonical bytes exist, the returned identity and path are authoritative.
 A later required-projection problem is returned as `commitWarning`; callers
