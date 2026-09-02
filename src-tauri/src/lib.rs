@@ -229,6 +229,8 @@ pub fn run() {
             commands::trust_and_migrate_legacy_note_timeline_history,
             commands::get_history_health,
             commands::get_note_history_health,
+            commands::history_commands::get_note_history_page,
+            commands::history_commands::get_note_history_revision,
             commands::retry_history_recovery,
             commands::reset_corrupt_history,
             commands::asset_commands::read_image_asset_data_url,

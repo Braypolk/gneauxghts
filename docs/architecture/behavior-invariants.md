@@ -33,6 +33,17 @@ while another remains, including in a chat-only workspace.
 After the active pane closes, the pane immediately to its right becomes active
 when present; otherwise the pane immediately to its left becomes active.
 
+### History browsing leaves the workspace untouched
+
+Entering global History Mode first flushes pending canonical note saves. A
+failed save leaves the user in the editor with a clear error. While history is
+open, the normal workspace remains mounted but inert: history is not a pane,
+does not create an editor runtime, and cannot change pane membership or Note
+Draft State. Exiting restores the captured active pane and focus while the
+mounted editors retain their selection and scroll. The selected historical
+revision remains pinned when newer timeline records arrive, and History Mode
+never survives an application restart.
+
 ## Documents, tasks, and persistence
 
 ### External changes never overwrite dirty local work

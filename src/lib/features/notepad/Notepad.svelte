@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import type { createProposalOrchestration } from "$lib/features/proposals/proposalOrchestration";
   import { appSettings } from "$lib/appSettings.svelte";
   import { createEditorCapabilityAdapter } from "$lib/features/notepad/editor/editorCapabilities";
@@ -103,6 +103,10 @@
   import { workspaceStore } from "$lib/features/notepad/workspace/workspaceStore.svelte";
   import { paneHasCapability } from "$lib/features/notepad/workspace/paneCapabilities";
   import { createWorkspacePersistenceService } from "$lib/features/notepad/workspace/workspacePersistenceService";
+  import HistoryMode from "$lib/features/history/HistoryMode.svelte";
+  import { getHistoryModePage, getHistoryModeRevision } from "$lib/features/history/historyApi";
+  import { HistoryModeSession } from "$lib/features/history/historyModeSession.svelte";
+  import type { HistoryWorkspaceSnapshot } from "$lib/features/history/historyModeMachine";
   import {
     createWorkspaceShortcutHandler,
     registerWorkspaceWindowCloseHandler,
@@ -672,6 +676,55 @@
     enqueueSave,
   });
 
+  const historyMode = new HistoryModeSession({
+    flushWorkspace: workspacePersistence.flushAllForNavigation,
+    captureWorkspace: (paneId) => {
+      const resolvedPaneId = paneId as PaneId;
+      const focusTarget: HistoryWorkspaceSnapshot["focusTarget"] =
+        document.activeElement === getPaneTitleInput(resolvedPaneId)
+          ? "title"
+          : getPaneKind(resolvedPaneId) === "chat"
+            ? "chat"
+            : "editor";
+      return {
+        activePaneId: resolvedPaneId,
+        focusTarget,
+        focusElement:
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null,
+      };
+    },
+    readTarget: (paneId) => {
+      const document = getPaneDocumentSession(paneId as PaneId);
+      const noteId = getDocumentNoteId(document);
+      if (!noteId) return null;
+      return {
+        noteId,
+        noteTitle: getDocumentTitle(document) || "Untitled note",
+        notePath: getDocumentPath(document),
+      };
+    },
+    restoreWorkspace: async (snapshot) => {
+      const paneId = snapshot.activePaneId as PaneId;
+      workspaceStore.setActivePaneId(paneId);
+      await tick();
+      if (snapshot.focusElement?.isConnected) {
+        snapshot.focusElement.focus();
+        return;
+      }
+      if (snapshot.focusTarget === "title") {
+        focusTitleAtEnd(paneId);
+      } else if (snapshot.focusTarget === "chat") {
+        focusPaneChat(paneId);
+      } else {
+        focusPaneEditor(paneId);
+      }
+    },
+    loadPage: getHistoryModePage,
+    loadRevision: getHistoryModeRevision,
+  });
+
   // ---------------------------------------------------------------------------
   // Search / related store accessors.
   // ---------------------------------------------------------------------------
@@ -1138,6 +1191,36 @@
     handleWikilinkKeydown,
   });
 
+  function handleHistoryAwareGlobalKeydown(event: KeyboardEvent) {
+    if (!historyMode.isActive) {
+      handleGlobalKeydown(event);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void historyMode.exit();
+    }
+  }
+
+  function handleHistoryAwareWindowFocus() {
+    if (historyMode.isActive) {
+      void historyMode.refresh();
+      return;
+    }
+    handleWindowFocus();
+  }
+
+  function handleHistoryAwareVisibilityChange() {
+    if (historyMode.isActive) {
+      if (document.visibilityState === "visible") {
+        void historyMode.refresh();
+      }
+      return;
+    }
+    handleVisibilityChange();
+  }
+
   // ---------------------------------------------------------------------------
   // Pane view-model + actions wired into NotepadPane.svelte.
   // ---------------------------------------------------------------------------
@@ -1180,6 +1263,7 @@
       const isPinned = searchState.pinnedNotes.some((item) => item.noteId === noteId);
       await searchState.setPinned(noteId, !isPinned);
     },
+    onOpenHistory: (paneId) => historyMode.enter(paneId),
     onKeepMyEdits: async (paneId) => {
       await documentConflicts.keepMyEdits(
         getPaneDocumentSession(paneId),
@@ -1250,6 +1334,10 @@
     focusNavigationPane: () =>
       commands.focusPaneAfterShortcut(getNavigationPaneId()),
     onVaultNoteChanged: (payload) => {
+      if (historyMode.isActive) {
+        void historyMode.refresh();
+        return;
+      }
       void handleVaultNoteChanged(payload);
     },
     dispose: () => {
@@ -1304,16 +1392,21 @@
 </script>
 
 <svelte:window
-  onkeydowncapture={handleGlobalKeydown}
-  onfocus={handleWindowFocus}
+  onkeydowncapture={handleHistoryAwareGlobalKeydown}
+  onfocus={handleHistoryAwareWindowFocus}
   onresize={handleWindowResize}
 />
-<svelte:document onvisibilitychange={handleVisibilityChange} />
+<svelte:document onvisibilitychange={handleHistoryAwareVisibilityChange} />
 
 <div
   bind:this={workspaceShell}
   class="notepad-shell relative h-full w-full min-h-0 overflow-visible"
 >
+  <div
+    class="contents"
+    inert={historyMode.isActive}
+    aria-hidden={historyMode.isActive}
+  >
   <div
     class="relative h-full min-h-0 w-full [--related-reserved-width:0px] [--related-balance-width:0px]"
     style={getRelatedGroupStyle(
@@ -1496,6 +1589,30 @@
       onSelect={(suggestion) =>
         handleWikilinkSuggestionSelect(wikilinkPaneId, suggestion.value)}
     />
+  {/if}
+  </div>
+
+  {#if historyMode.state.phase !== "inactive"}
+    <HistoryMode
+      state={historyMode.state}
+      onExit={historyMode.exit}
+      onSelectRevision={historyMode.selectRevision}
+      onLoadMore={historyMode.loadMore}
+      onRetry={historyMode.retry}
+    />
+  {:else if historyMode.state.entryError}
+    <div
+      class="absolute inset-x-4 top-4 z-50 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-destructive/30 bg-card px-4 py-3 text-sm shadow-lg"
+      role="alert"
+      data-testid="history-entry-error"
+    >
+      <p class="min-w-0 flex-1">{historyMode.state.entryError}</p>
+      <button
+        type="button"
+        class="shrink-0 font-semibold"
+        onclick={historyMode.dismissEntryError}
+      >Dismiss</button>
+    </div>
   {/if}
 </div>
 

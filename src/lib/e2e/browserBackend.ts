@@ -141,6 +141,46 @@ function findNote(args: Record<string, unknown>) {
   );
 }
 
+function historyRecords(note: NoteFixture) {
+  const now = 1_800_000_000_000;
+  const revisions = Array.from({ length: 35 }, (_, index) => {
+    const ordinal = 35 - index;
+    return {
+      kind: 'revision',
+      recordId: `${note.noteId}-revision-${ordinal}`,
+      revisionId: `${note.noteId}-revision-${ordinal}`,
+      source: ordinal === 35 ? 'editor' : ordinal % 6 === 0 ? 'externalEdit' : 'editor',
+      occurredAtMillis: now - index * 60_000,
+      timeKind: ordinal % 6 === 0 ? 'observed' : 'committed',
+      modifiedAtMillis: ordinal % 6 === 0 ? now - index * 60_000 - 5_000 : null
+    };
+  });
+  return [
+    ...revisions,
+    {
+      kind: 'lifecycleEvent',
+      recordId: `${note.noteId}-created`,
+      eventId: `${note.noteId}-created`,
+      eventKind: 'created',
+      occurredAtMillis: now - 36 * 60_000,
+      previousPath: null,
+      path: note.path
+    }
+  ];
+}
+
+function historicalRevision(note: NoteFixture, revisionId: string) {
+  const ordinal = Number(revisionId.split('-').at(-1));
+  return {
+    revisionId,
+    unmanagedFrontmatter: ordinal % 5 === 0 ? 'fixture: browser-e2e\n' : null,
+    body:
+      ordinal === 35
+        ? note.markdown
+        : `Historical revision ${ordinal} of ${note.title}\n\nThis content is read only.`
+  };
+}
+
 export function installBrowserE2eBackend() {
   if (!import.meta.env.DEV || import.meta.env.VITE_E2E_BROWSER !== 'true') return;
   if (window.__GNEAUXGHTS_E2E__) return;
@@ -188,6 +228,29 @@ export function installBrowserE2eBackend() {
       notes.set(saved.noteId, saved);
       activeNote = saved;
       return session(saved);
+    }
+    if (command === 'get_note_history_page') {
+      const note = notes.get(String(args.noteId ?? ''));
+      if (!note) throw new Error('Unknown Note Identity');
+      const records = historyRecords(note);
+      const cursor = typeof args.cursor === 'string' ? args.cursor : null;
+      const start = cursor
+        ? Math.max(0, records.findIndex((record) => record.recordId === cursor) + 1)
+        : 0;
+      const limit = Number(args.limit ?? 30);
+      const pageRecords = records.slice(start, start + limit);
+      return {
+        records: pageRecords,
+        nextCursor:
+          start + pageRecords.length < records.length
+            ? pageRecords.at(-1)?.recordId ?? null
+            : null
+      };
+    }
+    if (command === 'get_note_history_revision') {
+      const note = notes.get(String(args.noteId ?? ''));
+      if (!note) throw new Error('Unknown Note Identity');
+      return historicalRevision(note, String(args.revisionId ?? ''));
     }
     if (command === 'search_notes_hybrid') {
       const query = String(args.query ?? '').toLowerCase();

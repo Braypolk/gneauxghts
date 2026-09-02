@@ -35,6 +35,7 @@ interactive workspace state that is owned by the frontend.
 | Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
 | Canonical task toggle and delete behavior | `TaskMutationService` |
 | Pane navigation and document-departure ordering | `paneNavigationTransitionPipeline` |
+| Global read-only history browsing, entry/exit, paging, and workspace return | `HistoryModeSession` through `historyModeMachine.ts`; it overlays rather than joins pane or document ownership |
 | Chat availability, selection, and request lifecycle | `ChatControllerStore.machine` |
 | Durable conversations, runs, events, context, and proposal status | `ChatService` |
 | One active proposal review | `ProposalReviewSession.workflow` through `proposalReviewMachine` |
@@ -221,6 +222,14 @@ The application uses small state machines rather than one application-wide
 machine. Note persistence, external synchronization, pane lifecycle,
 navigation, chat requests, proposal review, and transient UI can progress
 independently.
+
+History Mode is a global read-only session alongside those owners. Entry first
+crosses the workspace persistence barrier, then obtains role-limited timeline
+pages. The normal workspace stays mounted behind an inert overlay, so pane
+membership, note context, editor resources, selection, and scroll are neither
+recreated nor transferred to a history pane. Exit restores the captured active
+pane and focus. The session itself is intentionally not persisted; restart
+returns to the normal persisted workspace.
 
 - Reducers choose state; controllers execute effects.
 - Async results are serialized by an owner or correlated with an operation,

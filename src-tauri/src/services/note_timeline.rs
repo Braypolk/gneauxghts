@@ -145,7 +145,8 @@ pub(crate) enum TimelineRecordIdentity {
     LifecycleEvent(LifecycleEventIdentity),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) enum LifecycleEventKind {
     Created,
     Renamed,
@@ -157,7 +158,8 @@ pub(crate) enum LifecycleEventKind {
     Purged,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) enum MutationSource {
     Editor,
     TaskAction,
@@ -1437,6 +1439,96 @@ pub(crate) struct HistoryModeAccess<'a> {
     note_id: NoteIdentity,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum HistoryModeRevisionTimeKind {
+    KnownSince,
+    Committed,
+    Observed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum HistoryModeRecord {
+    Revision {
+        record_id: String,
+        revision_id: String,
+        source: MutationSource,
+        occurred_at_millis: u64,
+        time_kind: HistoryModeRevisionTimeKind,
+        modified_at_millis: Option<u64>,
+    },
+    LifecycleEvent {
+        record_id: String,
+        event_id: String,
+        event_kind: LifecycleEventKind,
+        occurred_at_millis: u64,
+        previous_path: Option<String>,
+        path: Option<String>,
+    },
+}
+
+impl HistoryModeRecord {
+    pub(crate) fn record_id(&self) -> &str {
+        match self {
+            Self::Revision { record_id, .. } | Self::LifecycleEvent { record_id, .. } => record_id,
+        }
+    }
+
+    pub(crate) fn revision_id(&self) -> Option<&str> {
+        match self {
+            Self::Revision { revision_id, .. } => Some(revision_id),
+            Self::LifecycleEvent { .. } => None,
+        }
+    }
+
+    fn occurred_at_millis(&self) -> u64 {
+        match self {
+            Self::Revision {
+                occurred_at_millis, ..
+            }
+            | Self::LifecycleEvent {
+                occurred_at_millis, ..
+            } => *occurred_at_millis,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryModePage {
+    records: Vec<HistoryModeRecord>,
+    next_cursor: Option<String>,
+}
+
+impl HistoryModePage {
+    pub(crate) fn records(&self) -> &[HistoryModeRecord] {
+        &self.records
+    }
+
+    pub(crate) fn next_cursor(&self) -> Option<&str> {
+        self.next_cursor.as_deref()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryModeRevision {
+    revision_id: String,
+    unmanaged_frontmatter: Option<String>,
+    body: String,
+}
+
+impl HistoryModeRevision {
+    pub(crate) fn body(&self) -> &str {
+        &self.body
+    }
+}
+
 impl HistoryModeAccess<'_> {
     pub(crate) fn note_id(&self) -> &NoteIdentity {
         &self.note_id
@@ -1464,6 +1556,97 @@ impl HistoryModeAccess<'_> {
         NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::reconstruct(&self.note_id, revision_id)
+    }
+
+    pub(crate) fn page(
+        &self,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<HistoryModePage, String> {
+        let revisions = self.revisions()?;
+        let lifecycle_events = self.lifecycle_events()?;
+        let mut records = Vec::with_capacity(revisions.len() + lifecycle_events.len());
+        for revision in revisions {
+            let (occurred_at_millis, time_kind, modified_at_millis) = match revision.time_evidence {
+                RevisionTimeEvidence::Baseline { known_since_millis } => (
+                    known_since_millis,
+                    HistoryModeRevisionTimeKind::KnownSince,
+                    None,
+                ),
+                RevisionTimeEvidence::Committed {
+                    committed_at_millis,
+                } => (
+                    committed_at_millis,
+                    HistoryModeRevisionTimeKind::Committed,
+                    None,
+                ),
+                RevisionTimeEvidence::Observed {
+                    observed_at_millis,
+                    modified_at_millis,
+                } => (
+                    observed_at_millis,
+                    HistoryModeRevisionTimeKind::Observed,
+                    modified_at_millis,
+                ),
+            };
+            records.push(HistoryModeRecord::Revision {
+                record_id: revision.identity.0.clone(),
+                revision_id: revision.identity.0,
+                source: revision.source,
+                occurred_at_millis,
+                time_kind,
+                modified_at_millis,
+            });
+        }
+        records.extend(lifecycle_events.into_iter().map(|event| {
+            HistoryModeRecord::LifecycleEvent {
+                record_id: event.identity.0.clone(),
+                event_id: event.identity.0,
+                event_kind: event.kind,
+                occurred_at_millis: event.occurred_at_millis,
+                previous_path: event
+                    .previous_path
+                    .map(|path| path.to_string_lossy().into_owned()),
+                path: event.path.map(|path| path.to_string_lossy().into_owned()),
+            }
+        }));
+        records.sort_by(|left, right| {
+            right
+                .occurred_at_millis()
+                .cmp(&left.occurred_at_millis())
+                .then_with(|| right.record_id().cmp(left.record_id()))
+        });
+
+        let start = match cursor {
+            Some(cursor) => records
+                .iter()
+                .position(|record| record.record_id() == cursor)
+                .map(|index| index + 1)
+                .ok_or_else(|| "History page cursor is no longer available".to_string())?,
+            None => 0,
+        };
+        let end = start.saturating_add(limit.clamp(1, 100)).min(records.len());
+        let page_records = records[start..end].to_vec();
+        let next_cursor = (end < records.len())
+            .then(|| {
+                page_records
+                    .last()
+                    .map(|record| record.record_id().to_string())
+            })
+            .flatten();
+        Ok(HistoryModePage {
+            records: page_records,
+            next_cursor,
+        })
+    }
+
+    pub(crate) fn revision(&self, revision_id: &str) -> Result<HistoryModeRevision, String> {
+        let reconstructed = self.reconstruct(&RevisionIdentity::from_persisted(revision_id))?;
+        Ok(HistoryModeRevision {
+            revision_id: revision_id.to_string(),
+            unmanaged_frontmatter: reconstructed.unmanaged_frontmatter,
+            body: reconstructed.body,
+        })
     }
 }
 
@@ -2563,6 +2746,10 @@ impl<'a> NoteTimeline<'a> {
             state: self.state,
             note_id: grant.note_id,
         }
+    }
+
+    pub(crate) fn open_history_mode(&self, note_id: NoteIdentity) -> HistoryModeAccess<'a> {
+        self.history_mode(HistoryModeGrant::authorized(note_id))
     }
 
     pub(crate) fn current_content(&self, scope: AllowedScope) -> CurrentContentAccess<'a> {
@@ -6689,5 +6876,82 @@ mod tests {
         assert_eq!(warning.issues().len(), 1);
         assert!(warning.message().contains("Canonical note file was saved"));
         assert_eq!(result.diagnostics().len(), 2);
+    }
+
+    #[test]
+    fn history_mode_pages_records_with_a_stable_cursor_and_reconstructs_the_selected_revision() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-history-mode-page-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-history-mode-page-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Paged".to_string(),
+            "first".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = created.path.unwrap();
+        for body in ["second", "third"] {
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                "Paged".to_string(),
+                body.to_string(),
+                Some(path.clone()),
+            )
+            .unwrap();
+        }
+
+        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let first_page = access.page(None, 2).unwrap();
+        assert_eq!(first_page.records().len(), 2);
+        let serialized = serde_json::to_value(&first_page).unwrap();
+        assert_eq!(serialized["records"][0]["kind"], "revision");
+        assert!(serialized["records"][0]["recordId"].is_string());
+        assert!(serialized["records"][0]["revisionId"].is_string());
+        assert_eq!(serialized["records"][0]["timeKind"], "committed");
+        assert!(serialized.get("nextCursor").is_some());
+        let cursor = first_page
+            .next_cursor()
+            .expect("older page cursor")
+            .to_string();
+        let selected_id = first_page.records()[0]
+            .revision_id()
+            .expect("newest record is a revision")
+            .to_string();
+        assert_eq!(access.revision(&selected_id).unwrap().body(), "third");
+
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Paged".to_string(),
+            "fourth".to_string(),
+            Some(path),
+        )
+        .unwrap();
+        let second_page = access.page(Some(&cursor), 2).unwrap();
+        let first_ids = first_page
+            .records()
+            .iter()
+            .map(HistoryModeRecord::record_id)
+            .collect::<HashSet<_>>();
+        assert!(second_page
+            .records()
+            .iter()
+            .all(|record| !first_ids.contains(record.record_id())));
+        assert!(second_page
+            .records()
+            .iter()
+            .all(|record| record.revision_id() != Some(selected_id.as_str())));
+        crate::state::set_notes_root_override(None).unwrap();
     }
 }

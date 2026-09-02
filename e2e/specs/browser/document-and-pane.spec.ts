@@ -2,7 +2,14 @@ import { browser, expect, $ } from '@wdio/globals';
 
 async function waitForNote(title: string) {
   const input = await $('[data-testid="note-title"]');
-  await input.waitForDisplayed();
+  try {
+    await input.waitForDisplayed();
+  } catch (error) {
+    const pageText = await browser.execute(() => document.body.innerText);
+    throw new Error(`Note editor did not render. Page text: ${pageText}`, {
+      cause: error
+    });
+  }
   await browser.waitUntil(async () => (await input.getValue()) === title, {
     timeoutMsg: `Expected active note title to become ${title}`
   });
@@ -89,6 +96,58 @@ describe('document and pane state-machine boundaries', () => {
       },
       { timeoutMsg: 'Expected the editor scroll position to be restored' }
     );
+  });
+
+  it('opens paged read-only history and returns to the exact editor state without surviving restart', async () => {
+    const panesBefore = await $$('[data-testid="workspace-pane"]');
+    const scroller = await $('[data-testid="note-editor"] .cm-scroller');
+    const content = await $('[data-testid="note-editor"] .cm-content');
+    await browser.execute((element: HTMLElement) => {
+      element.scrollTop = Math.max(300, element.scrollHeight * 0.55);
+      element.dispatchEvent(new Event('scroll'));
+    }, scroller);
+    await content.click();
+    await browser.keys(['Meta', 'a']);
+    const scrollBefore = await browser.execute(
+      (element: HTMLElement) => element.scrollTop,
+      scroller
+    );
+
+    const openHistory = await $('button[aria-label="Open note history"]');
+    await browser.execute((element: HTMLElement) => element.click(), openHistory);
+    const history = await $('[data-testid="history-mode"]');
+    await history.waitForExist();
+    expect((await history.getText()).toUpperCase()).toContain('READ ONLY');
+    expect(await history.getText()).toContain('Alpha line 1');
+    expect(await $$('[data-testid="workspace-pane"]')).toHaveLength(panesBefore.length);
+    expect(await $('[data-testid="note-editor"] .cm-content').getAttribute('contenteditable')).toBe(
+      'true'
+    );
+
+    const loadOlder = await $('button=Load older history');
+    await loadOlder.waitForClickable();
+    await loadOlder.click();
+    await browser.waitUntil(async () => !(await $('button=Load older history').isExisting()));
+    expect(await history.getText()).toContain('Created');
+
+    const back = await $('button[aria-label="Back to workspace"]');
+    await back.click();
+    await history.waitForExist({ reverse: true });
+    const restoredScroller = await $('[data-testid="note-editor"] .cm-scroller');
+    const restoredScroll = await browser.execute(
+      (element: HTMLElement) => element.scrollTop,
+      restoredScroller
+    );
+    expect(Math.abs(restoredScroll - scrollBefore)).toBeLessThanOrEqual(2);
+    expect(
+      await browser.execute(() =>
+        document.activeElement?.classList.contains('cm-content') ?? false
+      )
+    ).toBe(true);
+
+    await browser.refresh();
+    await waitForNote('Alpha note');
+    expect(await $('[data-testid="history-mode"]').isExisting()).toBe(false);
   });
 
   it('pins notes above recents and reveals search shortcuts on modifier hold', async () => {

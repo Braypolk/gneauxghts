@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CornerUpLeft, MessagesSquare, Pin, X } from '@lucide/svelte';
+  import { CornerUpLeft, History, MessagesSquare, Pin, X } from '@lucide/svelte';
   import {
     formatShortcutBinding,
     getEffectiveKeyboardShortcutBinding
@@ -107,7 +107,17 @@
       <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20">
         <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
         <div class="notepad-editor-top-row relative z-10 flex items-center justify-between gap-2 px-3 pt-3 pb-2 sm:gap-3 sm:px-4 sm:pt-4 sm:pb-3">
-          <div class="h-10 w-10 shrink-0 sm:h-9 sm:w-9" aria-hidden="true"></div>
+          <button
+            type="button"
+            disabled={!viewModel.canPin}
+            class="mobile-touch-target inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-muted/72 disabled:hover:text-muted-foreground sm:h-9 sm:w-9"
+            aria-label="Open note history"
+            title="Open note history"
+            onmousedown={(event) => event.preventDefault()}
+            onclick={() => void actions.onOpenHistory(viewModel.paneId)}
+          >
+            <History class="h-4 w-4" />
+          </button>
           <div class="notepad-editor-title-wrap pointer-events-none absolute inset-x-14 top-3 flex justify-center sm:inset-x-16 sm:top-4">
             <div
               bind:this={pane.refs.titleShell}

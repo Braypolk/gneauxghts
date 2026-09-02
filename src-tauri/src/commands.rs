@@ -2,6 +2,7 @@ pub(crate) mod asset_commands;
 pub(crate) mod atlas_commands;
 pub(crate) mod chat_commands;
 pub(crate) mod forgotten_note_commands;
+pub(crate) mod history_commands;
 mod index_bridge;
 pub(crate) mod note_persistence;
 mod note_session;

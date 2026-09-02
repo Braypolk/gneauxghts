@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Add a dedicated global `HistoryModeSession` state machine alongside the normal workspace rather than a pane kind, pane transient, or editable document runtime.
-- [ ] Flush pending autosave before entry and refuse to enter with a clear error if that save cannot complete.
-- [ ] Display paged Note Revisions and Lifecycle Events for the selected Note Identity using role-limited History Mode access.
-- [ ] Preserve and restore active panes, note context, editor selection, scroll, focus, and other owned workspace state on exit.
-- [ ] Keep the selected historical revision pinned if new revisions arrive while History Mode is open.
-- [ ] Prevent History Mode from modifying canonical content, Note Draft State, editor resources, pane membership, or workspace ownership.
-- [ ] Handle note lifecycle changes or unavailable history while open through explicit state-machine transitions.
-- [ ] Add state-machine, component, architecture-fitness, and end-to-end tests for successful entry, failed autosave, paging, pinning, exit, and restart-safe workspace behavior.
+- [x] Add a dedicated global `HistoryModeSession` state machine alongside the normal workspace rather than a pane kind, pane transient, or editable document runtime.
+- [x] Flush pending autosave before entry and refuse to enter with a clear error if that save cannot complete.
+- [x] Display paged Note Revisions and Lifecycle Events for the selected Note Identity using role-limited History Mode access.
+- [x] Preserve and restore active panes, note context, editor selection, scroll, focus, and other owned workspace state on exit.
+- [x] Keep the selected historical revision pinned if new revisions arrive while History Mode is open.
+- [x] Prevent History Mode from modifying canonical content, Note Draft State, editor resources, pane membership, or workspace ownership.
+- [x] Handle note lifecycle changes or unavailable history while open through explicit state-machine transitions.
+- [x] Add state-machine, component, architecture-fitness, and end-to-end tests for successful entry, failed autosave, paging, pinning, exit, and restart-safe workspace behavior.

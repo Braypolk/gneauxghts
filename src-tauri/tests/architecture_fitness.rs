@@ -512,6 +512,40 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
 }
 
 #[test]
+fn history_mode_commands_use_only_the_role_limited_note_timeline_access() {
+    let commands = repository_file("src-tauri/src/commands/history_commands.rs");
+    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let lib = repository_file("src-tauri/src/lib.rs");
+
+    assert_contains_all(
+        &commands,
+        &[
+            "open_history_mode(NoteIdentity::new(note_id))",
+            ".page(cursor.as_deref(), limit)",
+            ".revision(revision_id)",
+        ],
+    );
+    assert_contains_none(
+        &commands,
+        &["history_store", "rusqlite", "reconstruct_revision"],
+    );
+    assert_contains_all(
+        &timeline,
+        &[
+            "pub(crate) struct HistoryModeAccess",
+            "self.history_mode(HistoryModeGrant::authorized(note_id))",
+        ],
+    );
+    assert_contains_all(
+        &lib,
+        &[
+            "commands::history_commands::get_note_history_page",
+            "commands::history_commands::get_note_history_revision",
+        ],
+    );
+}
+
+#[test]
 fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
     let post_publication =

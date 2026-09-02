@@ -166,6 +166,31 @@ describe('architecture fitness: notepad state ownership', () => {
       'publication'
     ]);
   });
+
+  it('keeps global History Mode outside pane, draft, and editor-runtime ownership', () => {
+    const workspace = sourceText(
+      'src/lib/features/notepad/workspace/workspaceStore.svelte.ts'
+    );
+    const paneTypes = sourceText(
+      'src/lib/features/notepad/workspace/paneTypes.ts'
+    );
+    const noteStore = sourceText(
+      'src/lib/features/notepad/state/noteStore.ts'
+    );
+    const runtime = sourceText(
+      'src/lib/features/notepad/document/documentRuntime.ts'
+    );
+    const notepad = sourceText(
+      'src/lib/features/notepad/Notepad.svelte'
+    );
+
+    expect(notepad).toContain('new HistoryModeSession({');
+    expect(notepad).toContain('inert={historyMode.isActive}');
+    for (const owner of [workspace, paneTypes, noteStore, runtime]) {
+      expect(owner).not.toContain('HistoryModeSession');
+      expect(owner).not.toMatch(/kind:\s*["']history["']/);
+    }
+  });
 });
 
 describe('architecture fitness: content operation machines', () => {
