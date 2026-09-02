@@ -422,10 +422,8 @@ impl AppState {
             &self.lexical,
             generation,
             &projection_payloads,
+            true,
         );
-        for payload in projection_payloads {
-            let _ = crate::services::note_catalog::apply_task_projection(&payload);
-        }
         lexical_result?;
         let mut invalidation = self
             .interactive_invalidation
@@ -507,10 +505,8 @@ impl AppState {
             &self.lexical,
             generation,
             &projection_payloads,
+            true,
         );
-        for payload in projection_payloads {
-            let _ = crate::services::note_catalog::apply_task_projection(&payload);
-        }
         lexical_result?;
         let mut invalidation = self
             .interactive_invalidation

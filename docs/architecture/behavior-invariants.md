@@ -63,7 +63,8 @@ During synchronous reconciliation, a failed lexical projection retains the
 exact identity-resolved payload in retry state independent of catalog file
 signatures. Retry neither depends on another filesystem change nor repeats
 identity resolution. Per-path projection ordering and catalog generations make
-newest catalog state win even when older projection work finishes later.
+newest catalog state win in both lexical and task projections even when older
+projection work finishes later.
 
 ### Note Identity follows the note
 

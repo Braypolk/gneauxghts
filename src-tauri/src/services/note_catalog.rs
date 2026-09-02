@@ -109,6 +109,7 @@ struct PathProjectionState {
 struct RegisteredProjection {
     generation: u64,
     pending: Option<CatalogMutation>,
+    project_tasks: bool,
 }
 
 impl CatalogProjectionRetries {
@@ -116,6 +117,7 @@ impl CatalogProjectionRetries {
         &self,
         generation: u64,
         mutation: &CatalogMutation,
+        project_tasks: bool,
     ) -> Result<Arc<PathProjectionState>, String> {
         let state = self
             .lexical
@@ -131,6 +133,7 @@ impl CatalogProjectionRetries {
         if generation >= latest.generation {
             latest.generation = generation;
             latest.pending = Some(mutation.clone());
+            latest.project_tasks = project_tasks;
         }
         drop(latest);
         Ok(state)
@@ -146,7 +149,11 @@ impl CatalogProjectionRetries {
         let Some(mutation) = latest.pending.as_ref() else {
             return Ok(());
         };
-        match apply_lexical_projection(lexical, mutation) {
+        let lexical_result = apply_lexical_projection(lexical, mutation);
+        if latest.project_tasks {
+            let _ = apply_task_projection(mutation);
+        }
+        match lexical_result {
             Ok(()) => {
                 // Retain only the generation watermark after success. The
                 // potentially large indexed payload exists solely while it
@@ -163,8 +170,9 @@ impl CatalogProjectionRetries {
         lexical: &LexicalIndex,
         generation: u64,
         mutation: &CatalogMutation,
+        project_tasks: bool,
     ) -> Result<(), String> {
-        let state = self.register_lexical(generation, mutation)?;
+        let state = self.register_lexical(generation, mutation, project_tasks)?;
         Self::apply_registered(lexical, &state)
     }
 
@@ -190,10 +198,11 @@ impl CatalogProjectionRetries {
         lexical: &LexicalIndex,
         generation: u64,
         mutations: impl IntoIterator<Item = &'a CatalogMutation>,
+        project_tasks: bool,
     ) -> Result<(), String> {
         let mut first_error = None;
         for mutation in mutations {
-            if let Err(error) = self.apply_lexical(lexical, generation, mutation) {
+            if let Err(error) = self.apply_lexical(lexical, generation, mutation, project_tasks) {
                 first_error.get_or_insert(error);
             }
         }
@@ -269,12 +278,12 @@ impl<'a> NoteCatalog<'a> {
         };
 
         if plan.lexical == ProjectionTiming::Synchronous {
-            self.retries
-                .apply_lexical(self.lexical, generation, &mutation)?;
-        }
-
-        if plan.tasks == ProjectionTiming::Synchronous {
-            let _ = apply_task_projection(&mutation);
+            self.retries.apply_lexical(
+                self.lexical,
+                generation,
+                &mutation,
+                plan.tasks == ProjectionTiming::Synchronous,
+            )?;
         }
         Ok(())
     }
@@ -294,11 +303,12 @@ impl<'a> NoteCatalog<'a> {
             path: path.to_path_buf(),
         };
         if plan.lexical == ProjectionTiming::Synchronous {
-            self.retries
-                .apply_lexical(self.lexical, generation, &mutation)?;
-        }
-        if plan.tasks == ProjectionTiming::Synchronous {
-            let _ = apply_task_projection(&mutation);
+            self.retries.apply_lexical(
+                self.lexical,
+                generation,
+                &mutation,
+                plan.tasks == ProjectionTiming::Synchronous,
+            )?;
         }
         Ok(())
     }
@@ -499,10 +509,14 @@ mod tests {
 
     #[test]
     fn newer_registered_projection_cannot_be_replaced_or_cleared_by_older_work() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("catalog-ordering-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
         let notes = crate::test_support::TestDir::new("catalog-lexical-retry");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
         let path = notes.path().join("Retry.md");
-        let older = "---\ngneauxghts:\n  id: retry-note-id\n  kind: note\n---\n\nObsolete payload";
-        let newer = "---\ngneauxghts:\n  id: retry-note-id\n  kind: note\n---\n\nNewest coordinated payload";
+        let older = "---\ngneauxghts:\n  id: retry-note-id\n  kind: note\n---\n\nObsolete payload\n\n- [ ] obsolete task";
+        let newer = "---\ngneauxghts:\n  id: retry-note-id\n  kind: note\n---\n\nNewest coordinated payload\n\n- [ ] newest task";
         let older_mutation = CatalogMutation::Upsert {
             path: path.clone(),
             note: Box::new(build_indexed_note(&path, older, 91)),
@@ -513,11 +527,13 @@ mod tests {
         };
         let lexical = LexicalIndex::new().unwrap();
         let retries = CatalogProjectionRetries::default();
-        retries.register_lexical(2, &newer_mutation).unwrap();
-        retries.register_lexical(1, &older_mutation).unwrap();
+        retries.register_lexical(2, &newer_mutation, true).unwrap();
+        retries.register_lexical(1, &older_mutation, true).unwrap();
 
         retries.retry_lexical(&lexical).unwrap();
-        retries.apply_lexical(&lexical, 1, &older_mutation).unwrap();
+        retries
+            .apply_lexical(&lexical, 1, &older_mutation, true)
+            .unwrap();
 
         let results = lexical
             .search(
@@ -533,7 +549,32 @@ mod tests {
             .search("obsolete", "obsolete", &["obsolete"], 10, None)
             .unwrap()
             .is_empty());
+        let tasks = crate::state::task_projection::load_tasks_for_note_id("retry-note-id").unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].text, "newest task");
+
+        let remove = CatalogMutation::Remove { path: path.clone() };
+        retries.apply_lexical(&lexical, 3, &remove, true).unwrap();
+        retries
+            .apply_lexical(&lexical, 2, &newer_mutation, true)
+            .unwrap();
+        assert!(lexical
+            .search(
+                "newest coordinated",
+                "newest coordinated",
+                &["newest", "coordinated"],
+                10,
+                None,
+            )
+            .unwrap()
+            .is_empty());
+        assert!(
+            crate::state::task_projection::load_tasks_for_note_id("retry-note-id")
+                .unwrap()
+                .is_empty()
+        );
         let state = retries.lexical.lock().unwrap().get(&path).unwrap().clone();
         assert!(state.latest.lock().unwrap().pending.is_none());
+        crate::state::set_notes_root_override(None).unwrap();
     }
 }

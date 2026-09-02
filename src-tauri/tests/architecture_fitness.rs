@@ -530,6 +530,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
             "struct CatalogProjectionRetries",
             "struct PathProjectionState",
             "generation: u64",
+            "project_tasks: bool",
         ],
     );
     assert_contains_none(&index, &["let mut candidate = index.clone()"]);
