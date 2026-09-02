@@ -384,27 +384,56 @@ pub(crate) fn persist_note(
     markdown: &str,
     current_path: Option<&Path>,
 ) -> Result<Option<String>, String> {
-    persist_note_with_preparation(
-        notes_dir,
-        title,
-        markdown,
-        current_path,
-        |_path, markdown| Ok(markdown.to_string()),
-    )
-    .map(|published| published.map(|(path, _)| path))
+    with_note_file_mutation(|| {
+        persist_note_locked(
+            notes_dir,
+            title,
+            markdown,
+            current_path,
+            |_path, markdown| Ok(markdown.to_string()),
+        )
+        .map(|published| published.map(|(path, _)| path))
+    })
 }
 
-pub(crate) fn persist_note_with_preparation(
+pub(crate) fn with_note_file_mutation<T>(
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _file_mutation_guard = NOTE_FILE_MUTATION
+        .lock()
+        .map_err(|_| "Note file mutation lock poisoned".to_string())?;
+    operation()
+}
+
+pub(crate) fn persist_note_with_preparation<P, T>(
     notes_dir: &Path,
     title: &str,
     markdown: &str,
     current_path: Option<&Path>,
-    prepare: impl FnOnce(&Path, &str) -> Result<String, String>,
-) -> Result<Option<(String, String)>, String> {
-    let _file_mutation_guard = NOTE_FILE_MUTATION
-        .lock()
-        .map_err(|_| "Note file mutation lock poisoned".to_string())?;
-    persist_note_locked(notes_dir, title, markdown, current_path, prepare)
+    prepare: impl FnOnce(&Path, &str) -> Result<(String, P), String>,
+    finalize: impl FnOnce(PathBuf, String, P) -> T,
+) -> Result<Option<(String, String, T)>, String> {
+    with_note_file_mutation(|| {
+        let mut prepared_context = None;
+        let publication = persist_note_locked(
+            notes_dir,
+            title,
+            markdown,
+            current_path,
+            |path, markdown| {
+                let (markdown, context) = prepare(path, markdown)?;
+                prepared_context = Some(context);
+                Ok(markdown)
+            },
+        )?;
+        Ok(publication.map(|(path, markdown)| {
+            let context = prepared_context
+                .take()
+                .expect("published note has prepared timeline context");
+            let outcome = finalize(PathBuf::from(&path), markdown.clone(), context);
+            (path, markdown, outcome)
+        }))
+    })
 }
 
 fn persist_note_locked(

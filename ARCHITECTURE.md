@@ -64,9 +64,13 @@ repair policy and managed-metadata representation remain hidden inside that
 operation; editor, task, proposal, and lifecycle writers never resolve or
 rewrite Note Identity themselves. For authored-state mutations, preparation
 also commits a durable intent to the private vault-owned SQLite history store
-before the Markdown write is admitted. Identical authored content finalizes
-without another Note Revision; distinct content finalizes a versioned,
-hash-verified delta or compressed checkpoint.
+before the Markdown write is admitted. Preparation returns an opaque intent
+identity that the writer carries through publication to exact finalization;
+finalization never rediscovers an intent from path, source, or content. Editor,
+task, and proposal flows remain under the shared note-file mutation owner from
+preparation through publication and history finalization. Identical authored
+content finalizes without another Note Revision; distinct content finalizes a
+versioned, hash-verified delta or compressed checkpoint.
 
 History Mode and agent restore capabilities require grants whose constructors
 remain private to the timeline module. Ordinary chat can receive only the
@@ -107,9 +111,12 @@ A later history-finalization or required-projection problem is returned as
 `commitWarning`; callers adopt the committed result and do not retry the write.
 Prepared intents are reconciled idempotently against authoritative Markdown
 after restart, so recovery completes history without replaying the file write.
-Each `AppState` performs that reconciliation once before its first timeline
-operation. Ordinary reads and later preparations do not rerun startup recovery,
-so they cannot abandon another live in-process publication intent.
+History finalization likewise reads authoritative Markdown from disk and never
+substitutes caller fallback bytes when that read fails.
+Each `AppState` completes that reconciliation successfully before its first
+history read or prepared write. Ordinary reads and later preparations do not
+rerun successful startup recovery, so they cannot abandon another live
+in-process publication intent; a transient recovery failure remains retryable.
 
 ### Tasks
 

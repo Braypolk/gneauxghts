@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex, OnceLock,
+        Arc, Mutex,
     },
     time::UNIX_EPOCH,
     time::{Duration, Instant},
@@ -66,7 +66,7 @@ pub(crate) struct AppState {
     /// effect of every history read or preparation. Running it once prevents
     /// another in-process mutation from mistaking a live prepared intent for
     /// crash residue.
-    note_timeline_history_recovery: OnceLock<Result<(), String>>,
+    note_timeline_history_recovered: Mutex<bool>,
 }
 
 /// Atomic counter of foreground IPC calls currently in flight on the hot
@@ -178,14 +178,21 @@ impl AppState {
             background_index_queue,
             catalog_projection_retries,
             foreground_activity,
-            note_timeline_history_recovery: OnceLock::new(),
+            note_timeline_history_recovered: Mutex::new(false),
         })
     }
 
     pub(crate) fn ensure_note_timeline_history_recovered(&self) -> Result<(), String> {
-        self.note_timeline_history_recovery
-            .get_or_init(crate::services::note_timeline::recover_pending_history)
-            .clone()
+        let mut recovered = self
+            .note_timeline_history_recovered
+            .lock()
+            .map_err(|_| "Note Timeline recovery lock poisoned".to_string())?;
+        if *recovered {
+            return Ok(());
+        }
+        crate::services::note_timeline::recover_pending_history()?;
+        *recovered = true;
+        Ok(())
     }
 
     /// Acquire a guard that marks a foreground IPC call as in-flight.

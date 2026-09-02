@@ -54,17 +54,24 @@ guessing from stale positions.
 A successful save means canonical bytes and the required in-memory note
 catalog are committed, and its distinct user-authored state has one durable
 Note Revision. History intent is durably prepared before Markdown publication;
-a preparation failure publishes nothing. Task reads provide read-your-write
-consistency. Lexical and semantic indexing may finish later and cannot turn a
-completed canonical save into failure.
+a preparation failure publishes nothing. An opaque intent identity correlates
+that preparation with exact finalization, and the shared note-file mutation
+owner serializes preparation, publication, and finalization end to end. Task
+reads provide read-your-write consistency. Lexical and semantic indexing may
+finish later and cannot turn a completed canonical save into failure.
 
 If bytes were committed but a required projection degraded, the result carries
 the authoritative identity and a warning; callers do not retry the mutation.
 A history-finalization failure follows the same committed-warning rule and is
 completed idempotently from its prepared intent and authoritative Markdown.
-Pending-intent recovery runs once per application state before its first
-timeline operation; it is not rerun by concurrent history reads or commits,
-which must never classify a live prepared intent as abandoned crash residue.
+If authoritative Markdown cannot be read after publication, history remains
+pending and the committed result carries a warning; caller fallback bytes are
+never finalized as history truth.
+Pending-intent recovery must succeed once per application state before its
+first history read or prepared write. It is not rerun after success by
+concurrent history reads or commits, which must never classify a live prepared
+intent as abandoned crash residue; a transient recovery failure remains
+retryable.
 Managed metadata changes alone do not create Note Revisions.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
 During synchronous reconciliation, a failed lexical projection retains the

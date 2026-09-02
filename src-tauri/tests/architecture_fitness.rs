@@ -496,6 +496,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     let catalog = repository_file("src-tauri/src/services/note_catalog.rs");
     let background = repository_file("src-tauri/src/services/background_index_queue.rs");
     let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
+    let state_persistence = repository_file("src-tauri/src/state/persistence.rs");
     let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
     let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
     let tasks = repository_file("src-tauri/src/services/task_mutation.rs");
@@ -572,9 +573,24 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &tasks,
         &["NoteTimeline::new(self.state).prepare_revision_publication("],
     );
+    assert_contains_all(&note_persistence, &[".prepare_revision_publication("]);
     assert_contains_all(
-        &note_persistence,
-        &["NoteTimeline::new(state).prepare_revision_publication("],
+        &state_persistence,
+        &[
+            "pub(crate) fn persist_note_with_preparation<P, T>(",
+            "with_note_file_mutation(||",
+            "let outcome = finalize(",
+        ],
+    );
+    assert_contains_all(&proposals, &["with_note_file_mutation(||"]);
+    assert_contains_all(&tasks, &["crate::state::with_note_file_mutation(||"]);
+    assert_contains_all(
+        &timeline,
+        &[
+            "pub(crate) struct HistoryIntentIdentity",
+            "history_intent: HistoryIntentIdentity",
+            "history_store::finalize_publication(&history_intent, source, &path, canonical)",
+        ],
     );
     assert_contains_none(
         &format!("{note_persistence}\n{forgotten}\n{proposals}\n{tasks}"),

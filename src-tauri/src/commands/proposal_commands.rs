@@ -6,8 +6,10 @@ use crate::{
         plan_agent_creation_commit, plan_agent_update_commit, CommitNoteReviewResult,
         ProposalPreview,
     },
-    services::note_timeline::{MutationSource, NoteIdentity, NoteMutation, NoteTimeline},
-    state::notes_root,
+    services::note_timeline::{
+        HistoryIntentIdentity, MutationSource, NoteIdentity, NoteMutation, NoteTimeline,
+    },
+    state::{notes_root, with_note_file_mutation},
 };
 use std::path::PathBuf;
 use tauri::State;
@@ -79,29 +81,39 @@ pub(crate) fn commit_agent_proposal(
     let retained_identity = (proposal.kind == "update")
         .then(|| proposal.note_id.as_deref().map(NoteIdentity::new))
         .flatten();
-    let committed_markdown = NoteTimeline::new(&state).prepare_revision_publication(
-        MutationSource::AcceptedChatProposal,
-        &intent.target_path,
-        (proposal.kind == "update").then_some(intent.target_path.as_path()),
-        retained_identity.as_ref(),
-        &committed_markdown,
-    )?;
-    let commit_result = if proposal.kind == "update" {
-        commit_review(
-            &notes_dir,
-            intent.target_path.to_string_lossy().into_owned(),
-            expected_base_hash.expect("update proposal base hash was parsed"),
-            committed_markdown.clone(),
-        )
-    } else {
-        commit_note_creation_at_path(
-            &notes_dir,
+    let commit_result = with_note_file_mutation(|| {
+        let prepared = NoteTimeline::new(&state).prepare_revision_publication(
+            MutationSource::AcceptedChatProposal,
             &intent.target_path,
-            create_title.expect("creation proposal title was parsed"),
-            committed_markdown.clone(),
-        )
-    };
-    let mut result = match commit_result {
+            (proposal.kind == "update").then_some(intent.target_path.as_path()),
+            retained_identity.as_ref(),
+            &committed_markdown,
+        )?;
+        let (committed_markdown, history_intent) = prepared.into_parts();
+        let mut result = if proposal.kind == "update" {
+            commit_review(
+                &notes_dir,
+                intent.target_path.to_string_lossy().into_owned(),
+                expected_base_hash
+                    .clone()
+                    .expect("update proposal base hash was parsed"),
+                committed_markdown.clone(),
+            )?
+        } else {
+            commit_note_creation_at_path(
+                &notes_dir,
+                &intent.target_path,
+                create_title
+                    .clone()
+                    .expect("creation proposal title was parsed"),
+                committed_markdown.clone(),
+            )?
+        };
+        result.commit_warning =
+            synchronize_applied_change(&state, &result, history_intent, committed_markdown);
+        Ok(result)
+    });
+    let result = match commit_result {
         Ok(result) => result,
         Err(error) => {
             converge_agent_proposal_status(&service, &proposal_id, "conflict", false)?;
@@ -114,7 +126,6 @@ pub(crate) fn commit_agent_proposal(
         "conflict"
     };
     converge_agent_proposal_status(&service, &proposal_id, resolution, result.applied.is_some())?;
-    result.commit_warning = synchronize_applied_change(&state, &result, committed_markdown);
     Ok(result)
 }
 
@@ -129,11 +140,13 @@ pub(crate) fn dismiss_agent_proposal(
 fn synchronize_applied_change(
     state: &AppState,
     result: &CommitNoteReviewResult,
+    history_intent: HistoryIntentIdentity,
     fallback_markdown: String,
 ) -> Option<crate::services::note_timeline::NoteMutationWarning> {
     let applied = result.applied.as_ref()?;
     let path = applied.path.as_deref()?;
     let outcome = NoteTimeline::new(state).mutate(NoteMutation::accepted_chat_proposal(
+        history_intent,
         PathBuf::from(path),
         applied.previous_path.as_deref().map(PathBuf::from),
         fallback_markdown,
@@ -205,7 +218,7 @@ mod tests {
         )
         .unwrap();
         let path = notes.path().join("Proposal.md");
-        let canonical = NoteTimeline::new(&state)
+        let prepared = NoteTimeline::new(&state)
             .prepare_revision_publication(
                 MutationSource::AcceptedChatProposal,
                 &path,
@@ -214,6 +227,7 @@ mod tests {
                 "proposal content",
             )
             .unwrap();
+        let (canonical, history_intent) = prepared.into_parts();
         fs::write(&path, &canonical).unwrap();
         let result = CommitNoteReviewResult {
             status: "committed".to_string(),
@@ -227,7 +241,8 @@ mod tests {
         };
         inject_history_finalization_failure_once();
 
-        let warning = synchronize_applied_change(&state, &result, canonical).unwrap();
+        let warning =
+            synchronize_applied_change(&state, &result, history_intent, canonical).unwrap();
 
         assert!(warning
             .issues()

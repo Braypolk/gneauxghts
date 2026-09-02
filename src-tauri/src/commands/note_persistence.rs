@@ -5,7 +5,7 @@ use crate::{
     services::note_timeline::{MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline},
     state::{persist_note_with_preparation, validate_current_path},
 };
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Clone, Copy, Debug)]
 enum NoteSaveSource {
@@ -99,36 +99,41 @@ fn persist_note_session_with_source(
         &markdown,
         current_path.as_deref(),
         |target_path, canonical| {
-            NoteTimeline::new(state).prepare_revision_publication(
-                source,
-                target_path,
-                current_path.as_deref(),
-                None,
-                canonical,
-            )
+            NoteTimeline::new(state)
+                .prepare_revision_publication(
+                    source,
+                    target_path,
+                    current_path.as_deref(),
+                    None,
+                    canonical,
+                )
+                .map(|prepared| prepared.into_parts())
+        },
+        |path, persisted_markdown, history_intent| {
+            let mutation = if is_note_creation {
+                NoteMutation::note_creation(history_intent, path, None, persisted_markdown)
+            } else {
+                match save_source {
+                    NoteSaveSource::TaskAction => NoteMutation::task_action(
+                        history_intent,
+                        path,
+                        current_path.clone(),
+                        persisted_markdown,
+                    ),
+                    NoteSaveSource::Editor => NoteMutation::editor(
+                        history_intent,
+                        path,
+                        current_path.clone(),
+                        persisted_markdown,
+                    ),
+                }
+            };
+            NoteTimeline::new(state).mutate(mutation)
         },
     )?;
-    let (persisted_path, persisted_markdown) = publication
-        .map(|(path, markdown)| (Some(path), markdown))
-        .unwrap_or((None, markdown.clone()));
-    let mutation_outcome = persisted_path.as_ref().map(|path| {
-        let path = PathBuf::from(path);
-        let mutation = if is_note_creation {
-            NoteMutation::note_creation(path, None, persisted_markdown.clone())
-        } else {
-            match save_source {
-                NoteSaveSource::TaskAction => NoteMutation::task_action(
-                    path,
-                    current_path.clone(),
-                    persisted_markdown.clone(),
-                ),
-                NoteSaveSource::Editor => {
-                    NoteMutation::editor(path, current_path.clone(), persisted_markdown.clone())
-                }
-            }
-        };
-        NoteTimeline::new(state).mutate(mutation)
-    });
+    let (persisted_path, persisted_markdown, mutation_outcome) = publication
+        .map(|(path, markdown, outcome)| (Some(path), markdown, Some(outcome)))
+        .unwrap_or((None, markdown.clone(), None));
 
     let saved_note_id = mutation_outcome
         .as_ref()

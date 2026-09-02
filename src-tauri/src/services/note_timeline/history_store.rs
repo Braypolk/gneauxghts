@@ -4,9 +4,9 @@
 //! here. The parent module exposes only storage-neutral domain records.
 
 use super::{
-    LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind, MutationSource, NoteIdentity,
-    NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision, RevisionIdentity,
-    TimelineRecordIdentity,
+    HistoryIntentIdentity, LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind,
+    MutationSource, NoteIdentity, NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision,
+    RevisionIdentity, TimelineRecordIdentity,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
@@ -29,11 +29,18 @@ const MAX_ACCUMULATED_DELTA_BYTES: u64 = 256 * 1024;
 const MAX_DELTA_TO_FULL_RATIO: f64 = 0.65;
 const MAX_MEASURED_REPLAY: Duration = Duration::from_millis(50);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PublicationIntentKind {
+    Create,
+    Update,
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FaultPoint {
     Prepare,
     Finalize,
+    Recover,
 }
 
 #[cfg(test)]
@@ -431,8 +438,8 @@ pub(super) fn prepare_publication(
     source: MutationSource,
     target_path: &Path,
     markdown: &str,
-    creates_note: bool,
-) -> Result<(), String> {
+    kind: PublicationIntentKind,
+) -> Result<HistoryIntentIdentity, String> {
     if take_prepare_fault() {
         return Err("injected history preparation failure".to_string());
     }
@@ -447,7 +454,8 @@ pub(super) fn prepare_publication(
     let connection = open_store()?;
     let intent_id = crate::note::generate_note_id();
     let revision_id = RevisionIdentity::issue().0;
-    let lifecycle_event_id = creates_note.then(|| LifecycleEventIdentity::issue().0);
+    let lifecycle_event_id =
+        (kind == PublicationIntentKind::Create).then(|| LifecycleEventIdentity::issue().0);
     connection
         .execute(
             "INSERT INTO prepared_intents (
@@ -467,10 +475,11 @@ pub(super) fn prepare_publication(
             ],
         )
         .map_err(|error| format!("Prepare Note Revision: {error}"))?;
-    Ok(())
+    Ok(HistoryIntentIdentity::from_persisted(intent_id))
 }
 
 pub(super) fn finalize_publication(
+    history_intent: &HistoryIntentIdentity,
     source: MutationSource,
     target_path: &Path,
     canonical_markdown: &str,
@@ -481,17 +490,19 @@ pub(super) fn finalize_publication(
     let payload = AuthoredState::from_canonical(canonical_markdown).encode();
     let result_hash = hash(&payload);
     let mut connection = open_store()?;
-    let intent_id = connection
+    let intent = connection
         .query_row(
-            "SELECT intent_id FROM prepared_intents
-             WHERE target_path = ?1 AND source = ?2 AND result_hash = ?3 AND status = 'prepared'
-             ORDER BY prepared_at_millis DESC, intent_id DESC LIMIT 1",
-            params![
-                target_path.to_string_lossy().into_owned(),
-                source.as_storage_value(),
-                result_hash,
-            ],
-            |row| row.get::<_, String>(0),
+            "SELECT target_path, source, result_hash, status
+             FROM prepared_intents WHERE intent_id = ?1",
+            params![history_intent.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
         )
         .optional()
         .map_err(|error| format!("Find prepared Note Revision: {error}"))?
@@ -501,7 +512,14 @@ pub(super) fn finalize_publication(
                 target_path.display()
             )
         })?;
-    finalize_intent(&mut connection, &intent_id, &payload)
+    if intent.0 != target_path.to_string_lossy()
+        || intent.1 != source.as_storage_value()
+        || intent.2 != result_hash
+        || intent.3 != "prepared"
+    {
+        return Err("Committed note does not match its exact durable history intent".to_string());
+    }
+    finalize_intent(&mut connection, history_intent.as_str(), &payload)
 }
 
 pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader>, String> {
@@ -731,6 +749,10 @@ fn open_store() -> Result<Connection, String> {
 }
 
 pub(super) fn recover_pending() -> Result<(), String> {
+    #[cfg(test)]
+    if take_fault(FaultPoint::Recover) {
+        return Err("injected history recovery failure".to_string());
+    }
     let connection = open_store()?;
     recover_pending_with_connection(&connection)
 }
@@ -1169,9 +1191,21 @@ mod tests {
         let path = notes.path().join("Corrupt.md");
         let markdown = "---\ngneauxghts:\n  id: corrupt-note\n  kind: note\n---\n\nOriginal";
 
-        prepare_publication(MutationSource::NoteCreation, &path, markdown, true).unwrap();
+        let history_intent = prepare_publication(
+            MutationSource::NoteCreation,
+            &path,
+            markdown,
+            PublicationIntentKind::Create,
+        )
+        .unwrap();
         fs::write(&path, markdown).unwrap();
-        finalize_publication(MutationSource::NoteCreation, &path, markdown).unwrap();
+        finalize_publication(
+            &history_intent,
+            MutationSource::NoteCreation,
+            &path,
+            markdown,
+        )
+        .unwrap();
         let note_id = NoteIdentity::new("corrupt-note");
         let revision = revisions(&note_id).unwrap().remove(0);
         let connection = open_store().unwrap();

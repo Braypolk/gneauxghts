@@ -398,6 +398,40 @@ pub(crate) struct ReconstructedNoteRevision {
     body: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryIntentIdentity(String);
+
+impl HistoryIntentIdentity {
+    fn from_persisted(value: String) -> Self {
+        Self(value)
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PreparedRevisionPublication {
+    canonical_markdown: String,
+    history_intent: HistoryIntentIdentity,
+}
+
+impl PreparedRevisionPublication {
+    pub(crate) fn canonical_markdown(&self) -> &str {
+        &self.canonical_markdown
+    }
+
+    pub(crate) fn into_parts(self) -> (String, HistoryIntentIdentity) {
+        (self.canonical_markdown, self.history_intent)
+    }
+}
+
 impl ReconstructedNoteRevision {
     pub(crate) fn unmanaged_frontmatter(&self) -> Option<&str> {
         self.unmanaged_frontmatter.as_deref()
@@ -411,6 +445,7 @@ impl ReconstructedNoteRevision {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NoteMutation {
     source: MutationSource,
+    history_intent: HistoryIntentIdentity,
     path: PathBuf,
     previous_path: Option<PathBuf>,
     fallback_markdown: String,
@@ -418,12 +453,14 @@ pub(crate) struct NoteMutation {
 
 impl NoteMutation {
     pub(crate) fn editor(
+        history_intent: HistoryIntentIdentity,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self::with_source(
             MutationSource::Editor,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
@@ -431,12 +468,14 @@ impl NoteMutation {
     }
 
     pub(crate) fn task_action(
+        history_intent: HistoryIntentIdentity,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self::with_source(
             MutationSource::TaskAction,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
@@ -444,12 +483,14 @@ impl NoteMutation {
     }
 
     pub(crate) fn accepted_chat_proposal(
+        history_intent: HistoryIntentIdentity,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self::with_source(
             MutationSource::AcceptedChatProposal,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
@@ -457,12 +498,14 @@ impl NoteMutation {
     }
 
     pub(crate) fn version_restore(
+        history_intent: HistoryIntentIdentity,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self::with_source(
             MutationSource::VersionRestore,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
@@ -470,12 +513,14 @@ impl NoteMutation {
     }
 
     pub(crate) fn note_creation(
+        history_intent: HistoryIntentIdentity,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self::with_source(
             MutationSource::NoteCreation,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
@@ -483,12 +528,14 @@ impl NoteMutation {
     }
 
     pub(crate) fn baseline_initialization(
+        history_intent: HistoryIntentIdentity,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self::with_source(
             MutationSource::BaselineInitialization,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
@@ -496,12 +543,14 @@ impl NoteMutation {
     }
 
     pub(crate) fn recovery_reconciliation(
+        history_intent: HistoryIntentIdentity,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self::with_source(
             MutationSource::RecoveryReconciliation,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
@@ -510,12 +559,14 @@ impl NoteMutation {
 
     fn with_source(
         source: MutationSource,
+        history_intent: HistoryIntentIdentity,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self {
             source,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
@@ -977,7 +1028,7 @@ impl<'a> NoteTimeline<'a> {
         continuity_path: Option<&Path>,
         retained_identity: Option<&NoteIdentity>,
         markdown: &str,
-    ) -> Result<String, String> {
+    ) -> Result<PreparedRevisionPublication, String> {
         self.state.ensure_note_timeline_history_recovered()?;
         let identity_prepared =
             self.prepare_publication(continuity_path, retained_identity, markdown)?;
@@ -992,24 +1043,39 @@ impl<'a> NoteTimeline<'a> {
             Some(None),
         )?
         .0;
-        history_store::prepare_publication(
+        let history_intent = history_store::prepare_publication(
             source,
             target_path,
             &canonical,
-            continuity_path.is_none(),
+            if continuity_path.is_none() {
+                history_store::PublicationIntentKind::Create
+            } else {
+                history_store::PublicationIntentKind::Update
+            },
         )?;
-        Ok(canonical)
+        Ok(PreparedRevisionPublication {
+            canonical_markdown: canonical,
+            history_intent,
+        })
     }
 
     pub(crate) fn mutate(&self, mutation: NoteMutation) -> NoteMutationResult {
         let NoteMutation {
             source,
+            history_intent,
             path,
             previous_path,
             fallback_markdown,
         } = mutation;
-        let canonical = fs::read_to_string(&path).unwrap_or_else(|_| fallback_markdown.clone());
-        let history_error = history_store::finalize_publication(source, &path, &canonical).err();
+        let canonical_read = fs::read_to_string(&path);
+        let history_error = match canonical_read.as_deref() {
+            Ok(canonical) => {
+                history_store::finalize_publication(&history_intent, source, &path, canonical).err()
+            }
+            Err(error) => Some(format!(
+                "Read authoritative Markdown before history finalization: {error}"
+            )),
+        };
         let mut outcome = post_publication::synchronize_canonical_file(
             self.state,
             path,
@@ -1128,26 +1194,40 @@ pub(crate) fn inject_history_finalization_failure_once() {
 }
 
 #[cfg(test)]
+fn inject_history_recovery_failure_once() {
+    history_store::inject_fault_once(history_store::FaultPoint::Recover);
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{app::EventBus, index::AppState, semantic::SemanticState};
     use std::{fs, path::PathBuf};
 
-    fn prepare_test_history(source: MutationSource, path: &Path, markdown: &str) {
+    fn prepare_test_history(
+        source: MutationSource,
+        path: &Path,
+        markdown: &str,
+    ) -> HistoryIntentIdentity {
         crate::state::ensure_vault_scaffold(&crate::state::vault_root().expect("test vault root"))
             .expect("test vault scaffold");
         history_store::prepare_publication(
             source,
             path,
             markdown,
-            source == MutationSource::NoteCreation,
+            if source == MutationSource::NoteCreation {
+                history_store::PublicationIntentKind::Create
+            } else {
+                history_store::PublicationIntentKind::Update
+            },
         )
-        .expect("prepare test history intent");
+        .expect("prepare test history intent")
     }
 
     #[test]
     fn editor_mutation_assigns_its_closed_source() {
         let mutation = NoteMutation::editor(
+            HistoryIntentIdentity::for_test("editor-intent"),
             PathBuf::from("/vault/Note.md"),
             None,
             "# Note\n\nBody".to_string(),
@@ -1162,12 +1242,42 @@ mod tests {
         let path = PathBuf::from("/vault/Note.md");
         let markdown = "# Note\n\nBody".to_string();
         let mutations = [
-            NoteMutation::task_action(path.clone(), None, markdown.clone()),
-            NoteMutation::accepted_chat_proposal(path.clone(), None, markdown.clone()),
-            NoteMutation::version_restore(path.clone(), None, markdown.clone()),
-            NoteMutation::note_creation(path.clone(), None, markdown.clone()),
-            NoteMutation::baseline_initialization(path.clone(), None, markdown.clone()),
-            NoteMutation::recovery_reconciliation(path.clone(), None, markdown.clone()),
+            NoteMutation::task_action(
+                HistoryIntentIdentity::for_test("task-intent"),
+                path.clone(),
+                None,
+                markdown.clone(),
+            ),
+            NoteMutation::accepted_chat_proposal(
+                HistoryIntentIdentity::for_test("proposal-intent"),
+                path.clone(),
+                None,
+                markdown.clone(),
+            ),
+            NoteMutation::version_restore(
+                HistoryIntentIdentity::for_test("restore-intent"),
+                path.clone(),
+                None,
+                markdown.clone(),
+            ),
+            NoteMutation::note_creation(
+                HistoryIntentIdentity::for_test("creation-intent"),
+                path.clone(),
+                None,
+                markdown.clone(),
+            ),
+            NoteMutation::baseline_initialization(
+                HistoryIntentIdentity::for_test("baseline-intent"),
+                path.clone(),
+                None,
+                markdown.clone(),
+            ),
+            NoteMutation::recovery_reconciliation(
+                HistoryIntentIdentity::for_test("recovery-intent"),
+                path.clone(),
+                None,
+                markdown.clone(),
+            ),
         ];
 
         assert_eq!(
@@ -1250,9 +1360,10 @@ mod tests {
             EventBus::disabled(),
         )
         .expect("construct app state");
-        prepare_test_history(MutationSource::Editor, &note_path, markdown);
+        let history_intent = prepare_test_history(MutationSource::Editor, &note_path, markdown);
 
         let outcome = NoteTimeline::new(&state).mutate(NoteMutation::editor(
+            history_intent,
             note_path.clone(),
             None,
             markdown.to_string(),
@@ -1413,13 +1524,20 @@ mod tests {
                 "second",
             )
             .unwrap();
+        let (first, first_intent) = first.into_parts();
+        let (second, second_intent) = second.into_parts();
         fs::write(&first_path, &first).unwrap();
-        let first_result =
-            timeline.mutate(NoteMutation::note_creation(first_path.clone(), None, first));
+        let first_result = timeline.mutate(NoteMutation::note_creation(
+            first_intent,
+            first_path.clone(),
+            None,
+            first,
+        ));
         assert_eq!(first_result.warning(), None);
 
         fs::write(&second_path, &second).unwrap();
         let second_result = timeline.mutate(NoteMutation::note_creation(
+            second_intent,
             second_path.clone(),
             None,
             second,
@@ -1433,6 +1551,151 @@ mod tests {
                 .len(),
             1
         );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn finalization_uses_the_exact_prepared_intent_identity() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-intent-id-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-intent-id-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Intent".to_string(),
+            "initial".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let path = PathBuf::from(created.path.unwrap());
+        let timeline = NoteTimeline::new(&state);
+        let first = timeline
+            .prepare_revision_publication(
+                MutationSource::Editor,
+                &path,
+                Some(&path),
+                None,
+                "first update",
+            )
+            .unwrap();
+        let second = timeline
+            .prepare_revision_publication(
+                MutationSource::Editor,
+                &path,
+                Some(&path),
+                None,
+                "second update",
+            )
+            .unwrap();
+        let (first_markdown, first_intent) = first.into_parts();
+        let (second_markdown, second_intent) = second.into_parts();
+        fs::write(&path, &second_markdown).unwrap();
+
+        let stale = timeline.mutate(NoteMutation::editor(
+            first_intent,
+            path.clone(),
+            Some(path.clone()),
+            first_markdown,
+        ));
+        assert!(stale.warning().is_some());
+        let committed = timeline.mutate(NoteMutation::editor(
+            second_intent,
+            path.clone(),
+            Some(path),
+            second_markdown,
+        ));
+        assert_eq!(committed.warning(), None);
+
+        let history = timeline.history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+            created.note_id.unwrap(),
+        )));
+        assert_eq!(history.revisions().unwrap().len(), 2);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn unreadable_authoritative_markdown_never_finalizes_from_fallback_memory() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-read-fault-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-read-fault-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        let path = notes.path().join("Vanished.md");
+        let prepared = timeline
+            .prepare_revision_publication(
+                MutationSource::NoteCreation,
+                &path,
+                None,
+                None,
+                "published then removed",
+            )
+            .unwrap();
+        let note_id = NoteIdentity::new(
+            crate::note::parse_note(prepared.canonical_markdown())
+                .frontmatter
+                .managed
+                .unwrap()
+                .id,
+        );
+        let (canonical, history_intent) = prepared.into_parts();
+        fs::write(&path, &canonical).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        let result = timeline.mutate(NoteMutation::note_creation(
+            history_intent,
+            path,
+            None,
+            canonical,
+        ));
+
+        assert!(result.warning().is_some());
+        assert!(timeline
+            .history_mode(HistoryModeGrant::authorized(note_id))
+            .revisions()
+            .unwrap()
+            .is_empty());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn transient_startup_recovery_failure_can_be_retried() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-recovery-retry-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-recovery-retry-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(
+            NoteIdentity::new("missing-note"),
+        ));
+        inject_history_recovery_failure_once();
+
+        assert!(history
+            .revisions()
+            .unwrap_err()
+            .contains("injected history recovery failure"));
+        assert!(history.revisions().unwrap().is_empty());
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -1545,7 +1808,7 @@ mod tests {
         ];
         let mut note_id = None;
         for (index, source) in sources.into_iter().enumerate() {
-            let canonical = timeline
+            let prepared = timeline
                 .prepare_revision_publication(
                     source,
                     &path,
@@ -1554,9 +1817,11 @@ mod tests {
                     &format!("authored state {index}"),
                 )
                 .unwrap();
+            let (canonical, history_intent) = prepared.into_parts();
             fs::write(&path, &canonical).unwrap();
             let result = timeline.mutate(NoteMutation::with_source(
                 source,
+                history_intent,
                 path.clone(),
                 (index > 0).then(|| path.clone()),
                 canonical,
@@ -1591,7 +1856,7 @@ mod tests {
         )
         .unwrap();
         let path = notes.path().join("Never Published.md");
-        let canonical = NoteTimeline::new(&state)
+        let prepared = NoteTimeline::new(&state)
             .prepare_revision_publication(
                 MutationSource::NoteCreation,
                 &path,
@@ -1601,7 +1866,7 @@ mod tests {
             )
             .unwrap();
         let note_id = NoteIdentity::new(
-            crate::note::parse_note(&canonical)
+            crate::note::parse_note(prepared.canonical_markdown())
                 .frontmatter
                 .managed
                 .unwrap()
@@ -1652,11 +1917,11 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let canonical = NoteTimeline::new(&restarted)
+        let prepared = NoteTimeline::new(&restarted)
             .prepare_revision_publication(MutationSource::NoteCreation, &path, None, None, "retry")
             .unwrap();
         let note_id = NoteIdentity::new(
-            crate::note::parse_note(&canonical)
+            crate::note::parse_note(prepared.canonical_markdown())
                 .frontmatter
                 .managed
                 .unwrap()
@@ -1695,7 +1960,7 @@ mod tests {
                 "# Long chain\n\nrevision {revision}: {}",
                 "x".repeat(revision)
             );
-            let canonical = timeline
+            let prepared = timeline
                 .prepare_revision_publication(
                     source,
                     &path,
@@ -1704,9 +1969,11 @@ mod tests {
                     &body,
                 )
                 .unwrap();
+            let (canonical, history_intent) = prepared.into_parts();
             fs::write(&path, &canonical).unwrap();
             let result = timeline.mutate(NoteMutation::with_source(
                 source,
+                history_intent,
                 path.clone(),
                 (revision > 0).then(|| path.clone()),
                 canonical,
@@ -1751,8 +2018,9 @@ mod tests {
         )
         .expect("construct app state");
         let timeline = NoteTimeline::new(&state);
-        prepare_test_history(MutationSource::Editor, &note_path, original);
+        let history_intent = prepare_test_history(MutationSource::Editor, &note_path, original);
         timeline.mutate(NoteMutation::editor(
+            history_intent,
             note_path.clone(),
             None,
             original.to_string(),
@@ -1797,8 +2065,9 @@ mod tests {
         )
         .expect("construct app state");
         let timeline = NoteTimeline::new(&state);
-        prepare_test_history(MutationSource::Editor, &note_path, original);
+        let history_intent = prepare_test_history(MutationSource::Editor, &note_path, original);
         timeline.mutate(NoteMutation::editor(
+            history_intent,
             note_path.clone(),
             None,
             original.to_string(),
@@ -1857,8 +2126,9 @@ mod tests {
         )
         .expect("construct app state");
         let timeline = NoteTimeline::new(&state);
-        prepare_test_history(MutationSource::Editor, &original_path, markdown);
+        let history_intent = prepare_test_history(MutationSource::Editor, &original_path, markdown);
         timeline.mutate(NoteMutation::editor(
+            history_intent,
             original_path.clone(),
             None,
             markdown.to_string(),
@@ -1976,8 +2246,9 @@ mod tests {
         )
         .expect("construct app state");
         let timeline = NoteTimeline::new(&state);
-        prepare_test_history(MutationSource::Editor, &original_path, markdown);
+        let history_intent = prepare_test_history(MutationSource::Editor, &original_path, markdown);
         timeline.mutate(NoteMutation::editor(
+            history_intent,
             original_path.clone(),
             None,
             markdown.to_string(),
@@ -2270,8 +2541,10 @@ mod tests {
         )
         .expect("construct app state");
         let timeline = NoteTimeline::new(&state);
-        prepare_test_history(MutationSource::Editor, &original_path, original_markdown);
+        let history_intent =
+            prepare_test_history(MutationSource::Editor, &original_path, original_markdown);
         timeline.mutate(NoteMutation::editor(
+            history_intent,
             original_path.clone(),
             None,
             original_markdown.to_string(),

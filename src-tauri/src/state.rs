@@ -20,9 +20,10 @@ pub(crate) use persistence::{
     is_valid_note_path, persist_note_with_preparation, prune_recent_note_ids,
     prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup, read_unpruned_state,
     resolve_note_id_from_path, resolve_note_path_by_id, touch_recent_note_id,
-    validate_current_path, write_last_opened_and_recents, write_state, write_state_with_lookup,
-    write_unpruned_state, ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver,
-    PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
+    validate_current_path, with_note_file_mutation, write_last_opened_and_recents, write_state,
+    write_state_with_lookup, write_unpruned_state, ForgottenItemKind, NoteActivity, NoteIdLookup,
+    NoteIdPathResolver, PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS,
+    OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 #[cfg(test)]
 pub(crate) use persistence::{inject_note_publication_failure_once, persist_note};

@@ -4,7 +4,9 @@
 //! through the filesystem and post-commit note boundary; dirty documents can
 //! prepare the same transform without writing any canonical or derived state.
 
-use super::note_timeline::{MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline};
+use super::note_timeline::{
+    HistoryIntentIdentity, MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline,
+};
 use crate::{
     index::{
         delete_task_in_markdown, find_unambiguous_task_line, toggle_task_in_markdown, AppState,
@@ -87,8 +89,21 @@ pub(crate) fn task_document_hash(markdown: &str) -> String {
 
 trait TaskMutationSink {
     fn read_canonical(&self, path: &Path) -> Result<String, String>;
-    fn write_canonical(&self, path: &Path, markdown: &str) -> Result<(), String>;
-    fn synchronize(&self, path: PathBuf, markdown: String) -> TaskSynchronization;
+    fn write_canonical(
+        &self,
+        path: &Path,
+        markdown: &str,
+    ) -> Result<PreparedTaskPublication, String>;
+    fn synchronize(
+        &self,
+        path: PathBuf,
+        publication: PreparedTaskPublication,
+    ) -> TaskSynchronization;
+}
+
+struct PreparedTaskPublication {
+    markdown: String,
+    history_intent: HistoryIntentIdentity,
 }
 
 struct TaskSynchronization {
@@ -105,7 +120,11 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
         fs::read_to_string(path).map_err(|error| error.to_string())
     }
 
-    fn write_canonical(&self, path: &Path, markdown: &str) -> Result<(), String> {
+    fn write_canonical(
+        &self,
+        path: &Path,
+        markdown: &str,
+    ) -> Result<PreparedTaskPublication, String> {
         let prepared = NoteTimeline::new(self.state).prepare_revision_publication(
             MutationSource::TaskAction,
             path,
@@ -113,14 +132,24 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
             None,
             markdown,
         )?;
-        write_task_document_atomically(path, &prepared)
+        write_task_document_atomically(path, prepared.canonical_markdown())?;
+        let (markdown, history_intent) = prepared.into_parts();
+        Ok(PreparedTaskPublication {
+            markdown,
+            history_intent,
+        })
     }
 
-    fn synchronize(&self, path: PathBuf, markdown: String) -> TaskSynchronization {
+    fn synchronize(
+        &self,
+        path: PathBuf,
+        publication: PreparedTaskPublication,
+    ) -> TaskSynchronization {
         let outcome = NoteTimeline::new(self.state).mutate(NoteMutation::task_action(
+            publication.history_intent,
             path.clone(),
             Some(path),
-            markdown,
+            publication.markdown,
         ));
         outcome.report_degraded("task mutation");
         TaskSynchronization {
@@ -162,11 +191,13 @@ impl<'a> TaskMutationService<'a> {
             note_path,
             ..target
         };
-        commit_loaded_task(
-            &AppStateTaskMutationSink { state: self.state },
-            target,
-            mutation_kind,
-        )
+        crate::state::with_note_file_mutation(|| {
+            commit_loaded_task(
+                &AppStateTaskMutationSink { state: self.state },
+                target,
+                mutation_kind,
+            )
+        })
     }
 
     pub(crate) fn prepare(
@@ -226,9 +257,9 @@ fn commit_loaded_task(
     let markdown = sink.read_canonical(&target.note_path)?;
     let updated_markdown =
         transform_task_document(mutation_kind, &markdown, target.line_number, &target.text)?;
-    sink.write_canonical(&target.note_path, &updated_markdown)?;
+    let publication = sink.write_canonical(&target.note_path, &updated_markdown)?;
 
-    let outcome = sink.synchronize(target.note_path.clone(), updated_markdown);
+    let outcome = sink.synchronize(target.note_path.clone(), publication);
     Ok(CommittedTaskMutation {
         note_id: outcome.note_id,
         note_path: target.note_path,
@@ -263,13 +294,24 @@ mod tests {
             Ok(self.canonical.borrow().clone())
         }
 
-        fn write_canonical(&self, _path: &Path, markdown: &str) -> Result<(), String> {
+        fn write_canonical(
+            &self,
+            _path: &Path,
+            markdown: &str,
+        ) -> Result<PreparedTaskPublication, String> {
             self.writes.set(self.writes.get() + 1);
             *self.canonical.borrow_mut() = markdown.to_string();
-            Ok(())
+            Ok(PreparedTaskPublication {
+                markdown: markdown.to_string(),
+                history_intent: HistoryIntentIdentity::for_test("task-test-intent"),
+            })
         }
 
-        fn synchronize(&self, _path: PathBuf, _markdown: String) -> TaskSynchronization {
+        fn synchronize(
+            &self,
+            _path: PathBuf,
+            _publication: PreparedTaskPublication,
+        ) -> TaskSynchronization {
             TaskSynchronization {
                 note_id: "note-1".to_string(),
                 commit_warning: self.commit_warning.clone(),
