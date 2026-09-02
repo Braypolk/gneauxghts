@@ -101,7 +101,7 @@ pub(crate) fn commit_agent_proposal(
             committed_markdown.clone(),
         )
     };
-    let result = match commit_result {
+    let mut result = match commit_result {
         Ok(result) => result,
         Err(error) => {
             converge_agent_proposal_status(&service, &proposal_id, "conflict", false)?;
@@ -114,7 +114,7 @@ pub(crate) fn commit_agent_proposal(
         "conflict"
     };
     converge_agent_proposal_status(&service, &proposal_id, resolution, result.applied.is_some())?;
-    synchronize_applied_change(&state, &result, committed_markdown);
+    result.commit_warning = synchronize_applied_change(&state, &result, committed_markdown);
     Ok(result)
 }
 
@@ -127,22 +127,19 @@ pub(crate) fn dismiss_agent_proposal(
 }
 
 fn synchronize_applied_change(
-    state: &State<'_, AppState>,
+    state: &AppState,
     result: &CommitNoteReviewResult,
     fallback_markdown: String,
-) {
-    let Some(applied) = result.applied.as_ref() else {
-        return;
-    };
-    let Some(path) = applied.path.as_deref() else {
-        return;
-    };
+) -> Option<crate::services::note_timeline::NoteMutationWarning> {
+    let applied = result.applied.as_ref()?;
+    let path = applied.path.as_deref()?;
     let outcome = NoteTimeline::new(state).mutate(NoteMutation::accepted_chat_proposal(
         PathBuf::from(path),
         applied.previous_path.as_deref().map(PathBuf::from),
         fallback_markdown,
     ));
     outcome.report_degraded("proposal commit");
+    outcome.warning().cloned()
 }
 
 fn converge_agent_proposal_status(
@@ -181,5 +178,61 @@ fn converge_agent_proposal_status(
         Err(format!(
             "Proposal filesystem commit did not complete, and status synchronization failed: {detail}"
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::EventBus,
+        semantic::SemanticState,
+        services::note_timeline::{inject_history_finalization_failure_once, MutationWarningStage},
+    };
+    use std::fs;
+
+    #[test]
+    fn proposal_synchronization_returns_history_finalization_warning() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("proposal-warning-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("proposal-warning-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let path = notes.path().join("Proposal.md");
+        let canonical = NoteTimeline::new(&state)
+            .prepare_revision_publication(
+                MutationSource::AcceptedChatProposal,
+                &path,
+                None,
+                None,
+                "proposal content",
+            )
+            .unwrap();
+        fs::write(&path, &canonical).unwrap();
+        let result = CommitNoteReviewResult {
+            status: "committed".to_string(),
+            applied: Some(crate::proposals::AppliedNoteChange {
+                kind: "createNote".to_string(),
+                path: Some(path.to_string_lossy().into_owned()),
+                previous_path: None,
+            }),
+            message: None,
+            commit_warning: None,
+        };
+        inject_history_finalization_failure_once();
+
+        let warning = synchronize_applied_change(&state, &result, canonical).unwrap();
+
+        assert!(warning
+            .issues()
+            .iter()
+            .any(|issue| issue.stage() == MutationWarningStage::HistoryFinalization));
+        crate::state::set_notes_root_override(None).unwrap();
     }
 }

@@ -28,4 +28,6 @@ export interface CommitNoteReviewResult {
   status: 'committed' | 'conflict';
   applied: AppliedNoteChange | null;
   message: string | null;
+  commitWarning?: CommittedMutationWarning | null;
 }
+import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';

@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::UNIX_EPOCH,
     time::{Duration, Instant},
@@ -62,6 +62,11 @@ pub(crate) struct AppState {
     /// yield while the foreground is active, so the SQLite state mutex
     /// and the lexical writer do not stall a user-driven note switch.
     foreground_activity: Arc<ForegroundActivity>,
+    /// Recovery is a startup concern for each application state, not a side
+    /// effect of every history read or preparation. Running it once prevents
+    /// another in-process mutation from mistaking a live prepared intent for
+    /// crash residue.
+    note_timeline_history_recovery: OnceLock<Result<(), String>>,
 }
 
 /// Atomic counter of foreground IPC calls currently in flight on the hot
@@ -173,7 +178,14 @@ impl AppState {
             background_index_queue,
             catalog_projection_retries,
             foreground_activity,
+            note_timeline_history_recovery: OnceLock::new(),
         })
+    }
+
+    pub(crate) fn ensure_note_timeline_history_recovered(&self) -> Result<(), String> {
+        self.note_timeline_history_recovery
+            .get_or_init(crate::services::note_timeline::recover_pending_history)
+            .clone()
     }
 
     /// Acquire a guard that marks a foreground IPC call as in-flight.

@@ -11,8 +11,6 @@ pub(crate) use config::{
     CreateVaultFolderResult, VaultConfig, VaultFolderInfo, VaultInfo, VaultManifest,
     VAULT_CACHE_DIR_NAME,
 };
-#[cfg(test)]
-pub(crate) use persistence::persist_note;
 #[allow(unused_imports)]
 pub(crate) use persistence::{
     atomic_write_note, db_clear_last_opened_note, db_load_note_activity, db_mark_note_opened,
@@ -26,6 +24,8 @@ pub(crate) use persistence::{
     write_unpruned_state, ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver,
     PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
+#[cfg(test)]
+pub(crate) use persistence::{inject_note_publication_failure_once, persist_note};
 
 #[cfg(test)]
 mod tests {

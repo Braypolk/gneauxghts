@@ -431,6 +431,7 @@ pub(super) fn prepare_publication(
     source: MutationSource,
     target_path: &Path,
     markdown: &str,
+    creates_note: bool,
 ) -> Result<(), String> {
     if take_prepare_fault() {
         return Err("injected history preparation failure".to_string());
@@ -444,10 +445,9 @@ pub(super) fn prepare_publication(
     let authored_payload = AuthoredState::from_canonical(markdown).encode();
     let result_hash = hash(&authored_payload);
     let connection = open_store()?;
-    recover_pending_with_connection(&connection)?;
     let intent_id = crate::note::generate_note_id();
     let revision_id = RevisionIdentity::issue().0;
-    let lifecycle_event_id = (!target_path.exists()).then(|| LifecycleEventIdentity::issue().0);
+    let lifecycle_event_id = creates_note.then(|| LifecycleEventIdentity::issue().0);
     connection
         .execute(
             "INSERT INTO prepared_intents (
@@ -506,7 +506,6 @@ pub(super) fn finalize_publication(
 
 pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader>, String> {
     let connection = open_store()?;
-    recover_pending_with_connection(&connection)?;
     let mut statement = connection
         .prepare(
             "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id
@@ -561,7 +560,6 @@ pub(super) fn lifecycle_events(
     note_id: &NoteIdentity,
 ) -> Result<Vec<LifecycleEventHeader>, String> {
     let connection = open_store()?;
-    recover_pending_with_connection(&connection)?;
     let mut statement = connection
         .prepare(
             "SELECT event_id, predecessor_kind, predecessor_id, kind
@@ -593,7 +591,6 @@ pub(super) fn reconstruct(
     revision_id: &RevisionIdentity,
 ) -> Result<ReconstructedNoteRevision, String> {
     let connection = open_store()?;
-    recover_pending_with_connection(&connection)?;
     let stored_note_id = connection
         .query_row(
             "SELECT note_id FROM revisions WHERE revision_id = ?1",
@@ -731,6 +728,11 @@ fn open_store() -> Result<Connection, String> {
         }
     }
     Ok(connection)
+}
+
+pub(super) fn recover_pending() -> Result<(), String> {
+    let connection = open_store()?;
+    recover_pending_with_connection(&connection)
 }
 
 fn recover_pending_with_connection(connection: &Connection) -> Result<(), String> {
@@ -1167,7 +1169,7 @@ mod tests {
         let path = notes.path().join("Corrupt.md");
         let markdown = "---\ngneauxghts:\n  id: corrupt-note\n  kind: note\n---\n\nOriginal";
 
-        prepare_publication(MutationSource::NoteCreation, &path, markdown).unwrap();
+        prepare_publication(MutationSource::NoteCreation, &path, markdown, true).unwrap();
         fs::write(&path, markdown).unwrap();
         finalize_publication(MutationSource::NoteCreation, &path, markdown).unwrap();
         let note_id = NoteIdentity::new("corrupt-note");

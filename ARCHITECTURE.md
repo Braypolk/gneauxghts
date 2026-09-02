@@ -107,6 +107,9 @@ A later history-finalization or required-projection problem is returned as
 `commitWarning`; callers adopt the committed result and do not retry the write.
 Prepared intents are reconciled idempotently against authoritative Markdown
 after restart, so recovery completes history without replaying the file write.
+Each `AppState` performs that reconciliation once before its first timeline
+operation. Ordinary reads and later preparations do not rerun startup recovery,
+so they cannot abandon another live in-process publication intent.
 
 ### Tasks
 

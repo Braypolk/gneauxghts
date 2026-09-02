@@ -826,7 +826,7 @@ impl HistoryModeGrant {
 }
 
 pub(crate) struct HistoryModeAccess<'a> {
-    _state: &'a AppState,
+    state: &'a AppState,
     note_id: NoteIdentity,
 }
 
@@ -836,10 +836,12 @@ impl HistoryModeAccess<'_> {
     }
 
     pub(crate) fn revisions(&self) -> Result<Vec<NoteRevisionHeader>, String> {
+        self.state.ensure_note_timeline_history_recovered()?;
         history_store::revisions(&self.note_id)
     }
 
     pub(crate) fn lifecycle_events(&self) -> Result<Vec<LifecycleEventHeader>, String> {
+        self.state.ensure_note_timeline_history_recovered()?;
         history_store::lifecycle_events(&self.note_id)
     }
 
@@ -847,6 +849,7 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &RevisionIdentity,
     ) -> Result<ReconstructedNoteRevision, String> {
+        self.state.ensure_note_timeline_history_recovered()?;
         history_store::reconstruct(&self.note_id, revision_id)
     }
 }
@@ -975,6 +978,7 @@ impl<'a> NoteTimeline<'a> {
         retained_identity: Option<&NoteIdentity>,
         markdown: &str,
     ) -> Result<String, String> {
+        self.state.ensure_note_timeline_history_recovered()?;
         let identity_prepared =
             self.prepare_publication(continuity_path, retained_identity, markdown)?;
         let existing_markdown = target_path
@@ -988,7 +992,12 @@ impl<'a> NoteTimeline<'a> {
             Some(None),
         )?
         .0;
-        history_store::prepare_publication(source, target_path, &canonical)?;
+        history_store::prepare_publication(
+            source,
+            target_path,
+            &canonical,
+            continuity_path.is_none(),
+        )?;
         Ok(canonical)
     }
 
@@ -1079,7 +1088,7 @@ impl<'a> NoteTimeline<'a> {
 
     pub(crate) fn history_mode(&self, grant: HistoryModeGrant) -> HistoryModeAccess<'a> {
         HistoryModeAccess {
-            _state: self.state,
+            state: self.state,
             note_id: grant.note_id,
         }
     }
@@ -1109,6 +1118,15 @@ fn identity_from_canonical_path(path: &Path) -> Option<NoteIdentity> {
         .map(NoteIdentity::new)
 }
 
+pub(crate) fn recover_pending_history() -> Result<(), String> {
+    history_store::recover_pending()
+}
+
+#[cfg(test)]
+pub(crate) fn inject_history_finalization_failure_once() {
+    history_store::inject_fault_once(history_store::FaultPoint::Finalize);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1118,8 +1136,13 @@ mod tests {
     fn prepare_test_history(source: MutationSource, path: &Path, markdown: &str) {
         crate::state::ensure_vault_scaffold(&crate::state::vault_root().expect("test vault root"))
             .expect("test vault scaffold");
-        history_store::prepare_publication(source, path, markdown)
-            .expect("prepare test history intent");
+        history_store::prepare_publication(
+            source,
+            path,
+            markdown,
+            source == MutationSource::NoteCreation,
+        )
+        .expect("prepare test history intent");
     }
 
     #[test]
@@ -1356,6 +1379,102 @@ mod tests {
     }
 
     #[test]
+    fn a_second_preparation_cannot_abandon_an_in_flight_intent() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-live-intent-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-live-intent-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        let first_path = notes.path().join("First.md");
+        let second_path = notes.path().join("Second.md");
+        let first = timeline
+            .prepare_revision_publication(
+                MutationSource::NoteCreation,
+                &first_path,
+                None,
+                None,
+                "first",
+            )
+            .unwrap();
+
+        let second = timeline
+            .prepare_revision_publication(
+                MutationSource::NoteCreation,
+                &second_path,
+                None,
+                None,
+                "second",
+            )
+            .unwrap();
+        fs::write(&first_path, &first).unwrap();
+        let first_result =
+            timeline.mutate(NoteMutation::note_creation(first_path.clone(), None, first));
+        assert_eq!(first_result.warning(), None);
+
+        fs::write(&second_path, &second).unwrap();
+        let second_result = timeline.mutate(NoteMutation::note_creation(
+            second_path.clone(),
+            None,
+            second,
+        ));
+        assert_eq!(second_result.warning(), None);
+        assert_eq!(
+            timeline
+                .history_mode(HistoryModeGrant::authorized(first_result.note_id().clone()))
+                .revisions()
+                .unwrap()
+                .len(),
+            1
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn rename_with_authored_change_does_not_emit_a_second_created_event() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-rename-event-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-rename-event-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Before".to_string(),
+            "first body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "After".to_string(),
+            "changed body".to_string(),
+            created.path,
+        )
+        .unwrap();
+
+        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id));
+        assert_eq!(history.revisions().unwrap().len(), 2);
+        assert_eq!(history.lifecycle_events().unwrap().len(), 1);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
     fn committed_markdown_survives_finalization_failure_and_recovers_once() {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("timeline-finalize-fault-app-data");
@@ -1499,6 +1618,54 @@ mod tests {
         assert!(history.revisions().unwrap().is_empty());
         assert!(history.lifecycle_events().unwrap().is_empty());
         assert!(!path.exists());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn publication_failure_creates_no_revision_and_restart_abandons_the_intent() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-publish-fault-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-publish-fault-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        crate::state::inject_note_publication_failure_once();
+
+        let error = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Unpublished".to_string(),
+            "dirty draft".to_string(),
+            None,
+        )
+        .expect_err("publication must fail after durable preparation");
+        assert!(error.contains("injected note publication failure"));
+        let path = notes.path().join("Unpublished.md");
+        assert!(!path.exists());
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let canonical = NoteTimeline::new(&restarted)
+            .prepare_revision_publication(MutationSource::NoteCreation, &path, None, None, "retry")
+            .unwrap();
+        let note_id = NoteIdentity::new(
+            crate::note::parse_note(&canonical)
+                .frontmatter
+                .managed
+                .unwrap()
+                .id,
+        );
+        let history =
+            NoteTimeline::new(&restarted).history_mode(HistoryModeGrant::authorized(note_id));
+        assert!(history.revisions().unwrap().is_empty());
+        assert!(history.lifecycle_events().unwrap().is_empty());
         crate::state::set_notes_root_override(None).unwrap();
     }
 

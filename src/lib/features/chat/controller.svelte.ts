@@ -1491,8 +1491,11 @@ export class ChatControllerStore implements ChatController {
       }
       this.#patch({
         proposals: this.proposals.filter((item) => item.id !== proposalId),
-        error: null
+        error: result.commitWarning?.message ?? null
       });
+      if (result.commitWarning) {
+        console.warn('Proposal was committed with incomplete projections:', result.commitWarning);
+      }
       this.#options.onProposalResolved?.(proposalId);
       return result;
     } catch (error) {

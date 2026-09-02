@@ -1,6 +1,7 @@
 use crate::{
     note,
     semantic::db::content_hash,
+    services::note_timeline::NoteMutationWarning,
     state::{atomic_write_note, is_forgotten_note_path, is_valid_note_path},
     vault_watcher,
 };
@@ -87,6 +88,7 @@ pub(crate) struct CommitNoteReviewResult {
     pub(crate) status: String,
     pub(crate) applied: Option<AppliedNoteChange>,
     pub(crate) message: Option<String>,
+    pub(crate) commit_warning: Option<NoteMutationWarning>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -393,6 +395,7 @@ pub(crate) fn commit_note_review(
             status: "conflict".to_string(),
             applied: None,
             message: Some("Note changed on disk.".to_string()),
+            commit_warning: None,
         });
     }
     // A reviewed body is deliberately written back to the existing file. The
@@ -412,6 +415,7 @@ pub(crate) fn commit_note_review(
             previous_path: Some(note_path.to_string_lossy().into_owned()),
         }),
         message: None,
+        commit_warning: None,
     })
 }
 
@@ -497,6 +501,7 @@ pub(crate) fn commit_note_creation(
             previous_path: None,
         }),
         message: None,
+        commit_warning: None,
     })
 }
 
@@ -525,6 +530,7 @@ pub(crate) fn commit_note_creation_at_path(
                     previous_path: None,
                 }),
                 message: None,
+                commit_warning: None,
             })
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -535,6 +541,7 @@ pub(crate) fn commit_note_creation_at_path(
                     "The proposed creation path is now occupied; review the proposal again."
                         .to_string(),
                 ),
+                commit_warning: None,
             })
         }
         Err(error) => Err(error.to_string()),

@@ -7,8 +7,10 @@ import {
 import type { SessionSnapshot } from "$lib/features/notepad/session/session";
 import {
   applySessionSnapshotToDocument,
+  getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
+  getDocumentTitle,
   updateDocumentMarkdown,
 } from "$lib/features/notepad/document/documentState";
 import { captureExternalSnapshotForTest } from "$lib/features/notepad/document/documentExternalSyncTestSupport";
@@ -333,25 +335,27 @@ describe("persistenceController", () => {
     expect(note.externalSync.kind).toBe("conflict");
   });
 
-  it("rejects an explicit save barrier while retaining a retryable failed document", async () => {
+  it("preserves dirty editor content when durable history preparation fails", async () => {
     const note = dirtyNote();
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
       saveNoteSession: vi
         .fn()
-        .mockRejectedValue(new Error("disk unavailable")),
+        .mockRejectedValue(new Error("history preparation unavailable")),
       rekeyNoteWithRuntime: (currentNote) => currentNote,
       applySavedSnapshot,
     });
 
     await expect(controller.enqueueSave(note)).rejects.toThrow(
-      "disk unavailable",
+      "history preparation unavailable",
     );
     expect(note.operation).toMatchObject({
       kind: "failed",
       failedOperation: "saving",
-      message: "disk unavailable",
+      message: "history preparation unavailable",
     });
+    expect(getDocumentTitle(note)).toBe("Draft");
+    expect(getDocumentMarkdown(note)).toBe("draft body");
     expect(controller.hasCleanBuffer(note)).toBe(false);
   });
 });

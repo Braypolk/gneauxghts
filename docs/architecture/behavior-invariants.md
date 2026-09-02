@@ -62,6 +62,9 @@ If bytes were committed but a required projection degraded, the result carries
 the authoritative identity and a warning; callers do not retry the mutation.
 A history-finalization failure follows the same committed-warning rule and is
 completed idempotently from its prepared intent and authoritative Markdown.
+Pending-intent recovery runs once per application state before its first
+timeline operation; it is not rerun by concurrent history reads or commits,
+which must never classify a live prepared intent as abandoned crash residue.
 Managed metadata changes alone do not create Note Revisions.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
 During synchronous reconciliation, a failed lexical projection retains the

@@ -979,6 +979,32 @@ describe('createChatController', () => {
     expect(onProposalResolved).toHaveBeenCalledWith('proposal-1');
   });
 
+  it('surfaces a committed proposal history warning without replaying the write', async () => {
+    const fake = fakeApi();
+    vi.mocked(fake.api.listPendingProposals).mockResolvedValue([proposal()]);
+    vi.mocked(fake.api.commitAgentProposal).mockResolvedValue({
+      status: 'committed',
+      applied: {
+        kind: 'updateNote',
+        path: '/vault/Project plan.md',
+        previousPath: '/vault/Project plan.md'
+      },
+      message: null,
+      commitWarning: {
+        message: 'History finalization is pending.',
+        issues: [{ stage: 'historyFinalization', message: 'store unavailable' }]
+      }
+    });
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+
+    await controller.keepProposal('proposal-1');
+
+    expect(fake.api.commitAgentProposal).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot().proposals).toEqual([]);
+    expect(controller.getSnapshot().error).toBe('History finalization is pending.');
+  });
+
   it('removes a resolved proposal mirrored from another chat pane', async () => {
     const fake = fakeApi();
     vi.mocked(fake.api.listPendingProposals).mockResolvedValue([proposal()]);

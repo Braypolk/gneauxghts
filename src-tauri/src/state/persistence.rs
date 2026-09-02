@@ -91,6 +91,20 @@ pub(super) const APP_STATE_SINGLETON_ID: i64 = 1;
 const APP_STATE_DB_FILE_NAME: &str = "app-state.sqlite3";
 static NOTE_FILE_MUTATION: Mutex<()> = Mutex::new(());
 
+#[cfg(test)]
+static FAIL_NEXT_NOTE_PUBLICATION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+pub(crate) fn inject_note_publication_failure_once() {
+    FAIL_NEXT_NOTE_PUBLICATION.store(true, std::sync::atomic::Ordering::Release);
+}
+
+#[cfg(test)]
+fn take_note_publication_failure() -> bool {
+    FAIL_NEXT_NOTE_PUBLICATION.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum ForgottenItemKind {
@@ -468,6 +482,10 @@ fn persist_note_locked(
 /// Publish a fully-written note in one rename. Keeping the temporary file next
 /// to its destination makes the rename atomic on the vault filesystem.
 pub(crate) fn atomic_write_note(path: &Path, contents: &[u8]) -> Result<(), String> {
+    #[cfg(test)]
+    if take_note_publication_failure() {
+        return Err("injected note publication failure".to_string());
+    }
     let parent = path
         .parent()
         .ok_or_else(|| "Note path has no parent directory.".to_string())?;
