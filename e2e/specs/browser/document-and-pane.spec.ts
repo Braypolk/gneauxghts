@@ -118,6 +118,7 @@ describe('document and pane state-machine boundaries', () => {
     const history = await $('[data-testid="history-mode"]');
     await history.waitForExist();
     expect((await history.getText()).toUpperCase()).toContain('READ ONLY');
+    await $('[data-testid="historical-revision-diff"]').waitForExist({ timeout: 20_000 });
     expect(await history.getText()).toContain('Alpha line 1');
     expect(await $$('[data-testid="workspace-pane"]')).toHaveLength(panesBefore.length);
     expect(await $('[data-testid="note-editor"] .cm-content').getAttribute('contenteditable')).toBe(
@@ -130,12 +131,59 @@ describe('document and pane state-machine boundaries', () => {
     await expandSession.click();
     await editingSession.$('button[aria-label="Collapse Editing Session"]').waitForExist();
     expect(await editingSession.$$('[data-revision-id]')).toHaveLength(5);
+    const changedRevision = await editingSession.$('[data-revision-id="note-alpha-revision-33"]');
+    await changedRevision.click();
+    const revisionDiff = await $('[data-testid="historical-revision-diff"]');
+    await browser.waitUntil(async () => (await revisionDiff.getText()).includes('Inserted'));
+    expect(await revisionDiff.getText()).toContain('Removed');
+    expect(await revisionDiff.getText()).toContain('*old formatting*');
+    expect(await revisionDiff.getText()).toContain('**new formatting**');
+    const properties = await revisionDiff.$('details');
+    expect(await properties.getAttribute('open')).toBeNull();
+    await properties.$('summary').click();
+    expect(await properties.getText()).toContain('project: atlas');
+    expect(await properties.getText()).toContain('project: zeus');
+
+    expect(await history.getText()).toContain('Renamed Alpha old.md to alpha.md');
+    expect(await $$('[data-revision-id="note-alpha-title-only-rename"]')).toHaveLength(0);
+
+    const emptySession = await $('[data-testid="editing-session-note-alpha-revision-30"]');
+    await emptySession.$('button[aria-label="Expand Editing Session"]').click();
+    const emptyRevision = await emptySession.$('[data-revision-id="note-alpha-revision-30"]');
+    await emptyRevision.click();
+    await browser.waitUntil(async () =>
+      (await revisionDiff.getText()).includes('Deleted to create an empty note.')
+    );
+    const authoredBody = await revisionDiff.$('[aria-label="Authored body changes"]');
+    expect(await authoredBody.$$('[data-diff-kind="removed"]')).toHaveLength(1);
+    expect(await authoredBody.$$('[data-diff-kind="added"]')).toHaveLength(0);
+
     const olderRevision = await editingSession.$('[data-revision-id="note-alpha-revision-34"]');
     await olderRevision.click();
     await browser.waitUntil(async () =>
-      (await $('[data-testid="historical-revision-content"]').getText()).includes(
+      (await $('[data-testid="historical-revision-diff"]').getText()).includes(
         'Historical revision 34'
       )
+    );
+    expect(await history.getText()).toContain('missing-diagram.png');
+    const currentComparison = await $(
+      'button[aria-label="Compare selected revision with current note"]'
+    );
+    await currentComparison.waitForClickable();
+    await currentComparison.click();
+    await browser.waitUntil(async () =>
+      (await currentComparison.getAttribute('aria-pressed')) === 'true' &&
+      (await currentComparison.isEnabled())
+    );
+    expect(await history.getText()).toContain('Alpha line 1');
+    const parentComparison = await $(
+      'button[aria-label="Compare selected revision with previous revision"]'
+    );
+    await parentComparison.waitForClickable();
+    await parentComparison.click();
+    await browser.waitUntil(async () =>
+      (await parentComparison.getAttribute('aria-pressed')) === 'true' &&
+      (await parentComparison.isEnabled())
     );
 
     const loadOlder = await $('button=Load older history');

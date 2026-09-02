@@ -104,7 +104,7 @@
   import { paneHasCapability } from "$lib/features/notepad/workspace/paneCapabilities";
   import { createWorkspacePersistenceService } from "$lib/features/notepad/workspace/workspacePersistenceService";
   import HistoryMode from "$lib/features/history/HistoryMode.svelte";
-  import { getHistoryModePage, getHistoryModeRevision } from "$lib/features/history/historyApi";
+  import { getHistoryModeDiff, getHistoryModePage } from "$lib/features/history/historyApi";
   import { HistoryModeSession } from "$lib/features/history/historyModeSession.svelte";
   import type { HistoryWorkspaceSnapshot } from "$lib/features/history/historyModeMachine";
   import {
@@ -726,7 +726,7 @@
       }
     },
     loadPage: getHistoryModePage,
-    loadRevision: getHistoryModeRevision,
+    loadDiff: getHistoryModeDiff,
   });
 
   // ---------------------------------------------------------------------------
@@ -1600,6 +1600,7 @@
       state={historyMode.state}
       onExit={historyMode.exit}
       onSelectRevision={historyMode.selectRevision}
+      onSetComparison={historyMode.setComparison}
       onLoadMore={historyMode.loadMore}
       onRetry={historyMode.retry}
     />

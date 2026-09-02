@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getHistoryModePage, getHistoryModeRevision } from './historyApi';
+import {
+  getHistoryModeDiff,
+  getHistoryModePage,
+  getHistoryModeRevision
+} from './historyApi';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 
@@ -32,6 +36,26 @@ describe('historyApi', () => {
     expect(invoke).toHaveBeenCalledWith('get_note_history_revision', {
       noteId: 'note-1',
       revisionId: 'revision-1'
+    });
+  });
+
+  it('requests a deterministic comparison for the selected revision', async () => {
+    invoke.mockResolvedValue({
+      revisionId: 'revision-1',
+      comparison: 'current',
+      fromRevisionId: 'revision-1',
+      toRevisionId: 'revision-2',
+      bodyLines: [],
+      propertiesLines: [],
+      missingAssets: []
+    });
+
+    await getHistoryModeDiff('note-1', 'revision-1', 'current');
+
+    expect(invoke).toHaveBeenCalledWith('get_note_history_diff', {
+      noteId: 'note-1',
+      revisionId: 'revision-1',
+      comparison: 'current'
     });
   });
 });

@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Default to comparing the selected Note Revision with its parent and allow switching to selected-versus-current comparison.
-- [ ] Reconstruct and diff the complete authored body deterministically without offering arbitrary two-revision comparison.
-- [ ] Render unmanaged frontmatter changes in a collapsible properties section.
-- [ ] Hide managed Gneauxghts metadata from historical diffs.
-- [ ] Keep title and path changes in Lifecycle Events and prove that a title-only or path-only operation creates no revision diff.
-- [ ] Preserve historical Markdown asset references and visibly report referenced binary assets that are no longer present without attempting to version them.
-- [ ] Keep diff selection pinned as new history arrives and show integrity failures instead of substituting a nearby revision.
-- [ ] Add reconstruction, component, and end-to-end tests for insertions, deletions, formatting, frontmatter, empty content, lifecycle-only changes, current comparison, and missing assets.
+- [x] Default to comparing the selected Note Revision with its parent and allow switching to selected-versus-current comparison.
+- [x] Reconstruct and diff the complete authored body deterministically without offering arbitrary two-revision comparison.
+- [x] Render unmanaged frontmatter changes in a collapsible properties section.
+- [x] Hide managed Gneauxghts metadata from historical diffs.
+- [x] Keep title and path changes in Lifecycle Events and prove that a title-only or path-only operation creates no revision diff.
+- [x] Preserve historical Markdown asset references and visibly report referenced binary assets that are no longer present without attempting to version them.
+- [x] Keep diff selection pinned as new history arrives and show integrity failures instead of substituting a nearby revision.
+- [x] Add reconstruction, component, and end-to-end tests for insertions, deletions, formatting, frontmatter, empty content, lifecycle-only changes, current comparison, and missing assets.

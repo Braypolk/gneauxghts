@@ -51,10 +51,29 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
   ],
   nextCursor: 'event-1',
   selectedRevisionId: 'revision-2',
-  selectedRevision: {
+  selectedComparison: 'parent',
+  selectedDiff: {
     revisionId: 'revision-2',
-    unmanagedFrontmatter: 'project: atlas\n',
-    body: '# Historical body'
+    comparison: 'parent',
+    fromRevisionId: 'revision-1',
+    toRevisionId: 'revision-2',
+    bodyLines: [
+      {
+        kind: 'added',
+        text: '# Historical body',
+        oldLineNumber: null,
+        newLineNumber: 1
+      }
+    ],
+    propertiesLines: [
+      {
+        kind: 'added',
+        text: 'project: atlas',
+        oldLineNumber: null,
+        newLineNumber: 1
+      }
+    ],
+    missingAssets: []
   },
   request: null,
   error: null
@@ -67,6 +86,7 @@ describe('HistoryMode', () => {
         state: openState,
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
+        onSetComparison: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }
@@ -82,6 +102,8 @@ describe('HistoryMode', () => {
     expect(body).toContain('Renamed Old.md to Timeline note.md');
     expect(body).toContain('# Historical body');
     expect(body).toContain('project: atlas');
+    expect(body).toContain('Previous revision');
+    expect(body).toContain('Current note');
     expect(body).toContain('Load older history');
     expect(body).not.toContain('contenteditable');
     expect(body).not.toContain('<textarea');
@@ -93,6 +115,7 @@ describe('HistoryMode', () => {
         state: openState,
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
+        onSetComparison: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }
@@ -114,6 +137,7 @@ describe('HistoryMode', () => {
         state,
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
+        onSetComparison: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }

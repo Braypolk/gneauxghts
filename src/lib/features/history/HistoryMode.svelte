@@ -1,9 +1,11 @@
 <script lang="ts">
   import { ArrowLeft, Clock3, LoaderCircle, RotateCcw } from '@lucide/svelte';
   import type {
+    HistoryDiffComparison,
     HistoryLifecycleRecord,
     HistoryModeState
   } from './historyModeMachine';
+  import HistoryDiff from './HistoryDiff.svelte';
   import HistoryEditingSession from './HistoryEditingSession.svelte';
   import HistoryRevisionSummary from './HistoryRevisionSummary.svelte';
   import { buildHistoryTimelineItems, formatHistoryTime } from './historyTimeline';
@@ -12,6 +14,7 @@
     state: Exclude<HistoryModeState, { phase: 'inactive' | 'restoring' }>;
     onExit: () => void | Promise<void>;
     onSelectRevision: (revisionId: string) => void | Promise<void>;
+    onSetComparison: (comparison: HistoryDiffComparison) => void | Promise<void>;
     onLoadMore: () => void | Promise<void>;
     onRetry: () => void | Promise<void>;
   }
@@ -20,6 +23,7 @@
     state: historyState,
     onExit,
     onSelectRevision,
+    onSetComparison,
     onLoadMore,
     onRetry
   }: Props = $props();
@@ -185,20 +189,42 @@
         {#if historyState.error}
           <p class="mb-4 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{historyState.error}</p>
         {/if}
-        {#if historyState.request?.kind === 'selection'}
-          <div class="flex items-center gap-2 text-sm text-muted-foreground">
-            <LoaderCircle class="h-4 w-4 animate-spin" /> Loading revision…
+        {#if historyState.selectedRevisionId}
+          <div class="mb-5 inline-flex rounded-full border border-border bg-muted/50 p-1" aria-label="Diff comparison">
+            <button
+              type="button"
+              class={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${historyState.selectedComparison === 'parent' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              aria-label="Compare selected revision with previous revision"
+              aria-pressed={historyState.selectedComparison === 'parent'}
+              disabled={historyState.request !== null}
+              onclick={() => void onSetComparison('parent')}
+            >
+              Previous revision
+            </button>
+            <button
+              type="button"
+              class={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${historyState.selectedComparison === 'current' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              aria-label="Compare selected revision with current note"
+              aria-pressed={historyState.selectedComparison === 'current'}
+              disabled={historyState.request !== null}
+              onclick={() => void onSetComparison('current')}
+            >
+              Current note
+            </button>
           </div>
-        {:else if historyState.selectedRevision}
-          {#if historyState.selectedRevision.unmanagedFrontmatter}
-            <details class="mb-5 rounded-2xl border border-border bg-muted/30 px-4 py-3">
-              <summary class="cursor-pointer text-sm font-medium">Properties</summary>
-              <pre class="mt-3 overflow-x-auto whitespace-pre-wrap text-xs text-muted-foreground">{historyState.selectedRevision.unmanagedFrontmatter}</pre>
-            </details>
-          {/if}
-          <pre class="whitespace-pre-wrap break-words font-sans text-[0.98rem] leading-7" data-testid="historical-revision-content">{historyState.selectedRevision.body}</pre>
+        {/if}
+        {#if historyState.request?.kind === 'diff'}
+          <div class="flex items-center gap-2 text-sm text-muted-foreground">
+            <LoaderCircle class="h-4 w-4 animate-spin" /> Loading revision diff…
+          </div>
+        {:else if historyState.selectedDiff}
+          <HistoryDiff diff={historyState.selectedDiff} />
         {:else}
-          <p class="text-sm text-muted-foreground">This page contains lifecycle events but no selectable revision.</p>
+          <p class="text-sm text-muted-foreground">
+            {historyState.selectedRevisionId
+              ? 'The selected revision diff is unavailable.'
+              : 'This page contains lifecycle events but no selectable revision.'}
+          </p>
         {/if}
       </main>
     </div>

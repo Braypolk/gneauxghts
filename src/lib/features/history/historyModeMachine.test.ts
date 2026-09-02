@@ -41,6 +41,25 @@ function page(
   return { records, nextCursor };
 }
 
+function diff(revisionId: string, text: string) {
+  return {
+    revisionId,
+    comparison: 'parent' as const,
+    fromRevisionId: null,
+    toRevisionId: revisionId,
+    bodyLines: [
+      {
+        kind: 'added' as const,
+        text,
+        oldLineNumber: null,
+        newLineNumber: 1
+      }
+    ],
+    propertiesLines: [],
+    missingAssets: []
+  };
+}
+
 describe('historyModeMachine', () => {
   it('refuses entry when the autosave barrier fails', () => {
     const entering = transitionHistoryMode(
@@ -70,11 +89,7 @@ describe('historyModeMachine', () => {
       requestId: 4,
       target,
       page: page([revision('revision-2', 20), revision('revision-1', 10)]),
-      selectedRevision: {
-        revisionId: 'revision-2',
-        body: 'second',
-        unmanagedFrontmatter: null
-      }
+      selectedDiff: diff('revision-2', 'second')
     });
 
     const refreshing = transitionHistoryMode(open, {
@@ -94,7 +109,7 @@ describe('historyModeMachine', () => {
     expect(refreshed).toMatchObject({
       phase: 'open',
       selectedRevisionId: 'revision-2',
-      selectedRevision: { body: 'second' }
+      selectedDiff: { bodyLines: [{ text: 'second' }] }
     });
   });
 
@@ -108,11 +123,7 @@ describe('historyModeMachine', () => {
       requestId: 1,
       target,
       page: page([revision('revision-3', 30), revision('revision-2', 20)], 'revision-2'),
-      selectedRevision: {
-        revisionId: 'revision-3',
-        body: 'third',
-        unmanagedFrontmatter: null
-      }
+      selectedDiff: diff('revision-3', 'third')
     });
     const loading = transitionHistoryMode(open, {
       type: 'pageStarted',
@@ -143,11 +154,7 @@ describe('historyModeMachine', () => {
       requestId: 1,
       target,
       page: page([revision('revision-1', 10)]),
-      selectedRevision: {
-        revisionId: 'revision-1',
-        body: 'first',
-        unmanagedFrontmatter: null
-      }
+      selectedDiff: diff('revision-1', 'first')
     });
 
     const unavailable = transitionHistoryMode(open, {

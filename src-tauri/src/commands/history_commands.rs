@@ -1,6 +1,9 @@
 use crate::{
     index::AppState,
-    services::note_timeline::{HistoryModePage, HistoryModeRevision, NoteIdentity, NoteTimeline},
+    services::note_timeline::{
+        HistoryDiffComparison, HistoryModeDiff, HistoryModePage, HistoryModeRevision, NoteIdentity,
+        NoteTimeline,
+    },
 };
 use tauri::State;
 
@@ -36,4 +39,18 @@ pub(crate) fn get_note_history_revision(
         return Err("History Mode requires a Revision Identity".to_string());
     }
     history_access(&state, note_id)?.revision(revision_id)
+}
+
+#[tauri::command]
+pub(crate) fn get_note_history_diff(
+    state: State<'_, AppState>,
+    note_id: String,
+    revision_id: String,
+    comparison: HistoryDiffComparison,
+) -> Result<HistoryModeDiff, String> {
+    let revision_id = revision_id.trim();
+    if revision_id.is_empty() {
+        return Err("History Mode requires a Revision Identity".to_string());
+    }
+    history_access(&state, note_id)?.diff(revision_id, comparison)
 }

@@ -163,7 +163,18 @@ function historyRecords(note: NoteFixture) {
     };
   });
   return [
-    ...revisions,
+    ...revisions.slice(0, 5),
+    {
+      kind: 'lifecycleEvent',
+      recordId: `${note.noteId}-title-only-rename`,
+      eventId: `${note.noteId}-title-only-rename`,
+      eventKind: 'renamed',
+      occurredAtMillis: now - 5.5 * 60_000,
+      timelineOrdinal: 30,
+      previousPath: '/e2e/Alpha old.md',
+      path: note.path
+    },
+    ...revisions.slice(5),
     {
       kind: 'lifecycleEvent',
       recordId: `${note.noteId}-created`,
@@ -179,13 +190,108 @@ function historyRecords(note: NoteFixture) {
 
 function historicalRevision(note: NoteFixture, revisionId: string) {
   const ordinal = Number(revisionId.split('-').at(-1));
+  const fixture = {
+    29: { unmanagedFrontmatter: null, body: 'Deleted to create an empty note.\n' },
+    30: { unmanagedFrontmatter: 'project: empty\n', body: '' },
+    32: {
+      unmanagedFrontmatter: 'project: atlas\n',
+      body: 'Kept\nRemoved\n*old formatting*\n'
+    },
+    33: {
+      unmanagedFrontmatter: 'project: zeus\n',
+      body: 'Kept\nInserted\n**new formatting**\n'
+    }
+  }[ordinal];
   return {
     revisionId,
-    unmanagedFrontmatter: ordinal % 5 === 0 ? 'fixture: browser-e2e\n' : null,
-    body:
-      ordinal === 35
+    unmanagedFrontmatter:
+      fixture?.unmanagedFrontmatter ?? (ordinal % 5 === 0 ? 'fixture: browser-e2e\n' : null),
+    body: fixture
+      ? fixture.body
+      : ordinal === 35
         ? note.markdown
-        : `Historical revision ${ordinal} of ${note.title}\n\nThis content is read only.`
+        : `Historical revision ${ordinal} of ${note.title}\n\nThis content is read only.${ordinal === 34 ? '\n\n![[missing-diagram.png]]' : ''}`
+  };
+}
+
+function historicalDiff(
+  note: NoteFixture,
+  revisionId: string,
+  comparison: 'parent' | 'current'
+) {
+  const ordinal = Number(revisionId.split('-').at(-1));
+  const selected = historicalRevision(note, revisionId);
+  const compared =
+    comparison === 'parent'
+      ? ordinal > 1
+        ? historicalRevision(note, `${note.noteId}-revision-${ordinal - 1}`)
+        : { revisionId: null, unmanagedFrontmatter: null, body: '' }
+      : historicalRevision(note, `${note.noteId}-revision-35`);
+  const sameBody = compared.body === selected.body;
+  const sameProperties = compared.unmanagedFrontmatter === selected.unmanagedFrontmatter;
+  const bodyFrom = comparison === 'parent' ? compared.body : selected.body;
+  const bodyTo = comparison === 'parent' ? selected.body : compared.body;
+  const propertiesFrom =
+    comparison === 'parent'
+      ? compared.unmanagedFrontmatter ?? ''
+      : selected.unmanagedFrontmatter ?? '';
+  const propertiesTo =
+    comparison === 'parent'
+      ? selected.unmanagedFrontmatter ?? ''
+      : compared.unmanagedFrontmatter ?? '';
+  return {
+    revisionId,
+    comparison,
+    fromRevisionId: comparison === 'parent' ? compared.revisionId : revisionId,
+    toRevisionId: comparison === 'parent' ? revisionId : compared.revisionId,
+    bodyLines: sameBody && selected.body
+      ? [
+          {
+            kind: 'context',
+            text: selected.body,
+            oldLineNumber: 1,
+            newLineNumber: 1
+          }
+        ]
+      : [
+          ...(bodyFrom
+            ? [{
+            kind: 'removed',
+            text: bodyFrom,
+            oldLineNumber: 1,
+            newLineNumber: null
+          }]
+            : []),
+          ...(bodyTo
+            ? [{
+            kind: 'added',
+            text: bodyTo,
+            oldLineNumber: null,
+            newLineNumber: 1
+          }]
+            : [])
+        ],
+    propertiesLines: sameProperties
+      ? []
+      : [
+          ...(propertiesFrom
+            ? [{
+            kind: 'removed',
+            text: propertiesFrom,
+            oldLineNumber: 1,
+            newLineNumber: null
+          }]
+            : []),
+          ...(propertiesTo
+            ? [{
+            kind: 'added',
+            text: propertiesTo,
+            oldLineNumber: null,
+            newLineNumber: 1
+          }]
+            : [])
+        ],
+    missingAssets: ordinal === 34 ? ['missing-diagram.png'] : []
   };
 }
 
@@ -259,6 +365,15 @@ export function installBrowserE2eBackend() {
       const note = notes.get(String(args.noteId ?? ''));
       if (!note) throw new Error('Unknown Note Identity');
       return historicalRevision(note, String(args.revisionId ?? ''));
+    }
+    if (command === 'get_note_history_diff') {
+      const note = notes.get(String(args.noteId ?? ''));
+      if (!note) throw new Error('Unknown Note Identity');
+      return historicalDiff(
+        note,
+        String(args.revisionId ?? ''),
+        args.comparison === 'current' ? 'current' : 'parent'
+      );
     }
     if (command === 'search_notes_hybrid') {
       const query = String(args.query ?? '').toLowerCase();

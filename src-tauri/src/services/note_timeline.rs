@@ -11,7 +11,8 @@ use crate::{
     index::{AppState, NoteTimelineIntegrityAttestation},
     path_utils::collect_markdown_files_recursively,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use similar::{capture_diff_slices, Algorithm, DiffOp};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -1623,6 +1624,281 @@ pub(crate) struct HistoryModeRevision {
     body: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum HistoryDiffComparison {
+    Parent,
+    Current,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum HistoryDiffLineKind {
+    Context,
+    Added,
+    Removed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryDiffLine {
+    kind: HistoryDiffLineKind,
+    text: String,
+    old_line_number: Option<usize>,
+    new_line_number: Option<usize>,
+}
+
+impl HistoryDiffLine {
+    fn kind(&self) -> HistoryDiffLineKind {
+        self.kind
+    }
+
+    fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryModeDiff {
+    revision_id: String,
+    comparison: HistoryDiffComparison,
+    from_revision_id: Option<String>,
+    to_revision_id: String,
+    body_lines: Vec<HistoryDiffLine>,
+    properties_lines: Vec<HistoryDiffLine>,
+    missing_assets: Vec<String>,
+}
+
+impl HistoryModeDiff {
+    fn comparison(&self) -> HistoryDiffComparison {
+        self.comparison
+    }
+
+    fn from_revision_id(&self) -> Option<&str> {
+        self.from_revision_id.as_deref()
+    }
+
+    fn to_revision_id(&self) -> &str {
+        &self.to_revision_id
+    }
+
+    fn body_lines(&self) -> &[HistoryDiffLine] {
+        &self.body_lines
+    }
+
+    fn properties_lines(&self) -> &[HistoryDiffLine] {
+        &self.properties_lines
+    }
+
+    fn missing_assets(&self) -> &[String] {
+        &self.missing_assets
+    }
+}
+
+fn diff_lines(old: &str, new: &str) -> Vec<HistoryDiffLine> {
+    let old_lines = old.split_inclusive('\n').collect::<Vec<_>>();
+    let new_lines = new.split_inclusive('\n').collect::<Vec<_>>();
+    let mut lines = Vec::new();
+    for operation in capture_diff_slices(Algorithm::Myers, &old_lines, &new_lines) {
+        match operation {
+            DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } => {
+                for offset in 0..len {
+                    lines.push(HistoryDiffLine {
+                        kind: HistoryDiffLineKind::Context,
+                        text: old_lines[old_index + offset].to_string(),
+                        old_line_number: Some(old_index + offset + 1),
+                        new_line_number: Some(new_index + offset + 1),
+                    });
+                }
+            }
+            DiffOp::Delete {
+                old_index, old_len, ..
+            } => append_removed_lines(&mut lines, &old_lines, old_index, old_len),
+            DiffOp::Insert {
+                new_index, new_len, ..
+            } => append_added_lines(&mut lines, &new_lines, new_index, new_len),
+            DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } => {
+                append_removed_lines(&mut lines, &old_lines, old_index, old_len);
+                append_added_lines(&mut lines, &new_lines, new_index, new_len);
+            }
+        }
+    }
+    lines
+}
+
+fn append_removed_lines(
+    lines: &mut Vec<HistoryDiffLine>,
+    source: &[&str],
+    start: usize,
+    len: usize,
+) {
+    lines.extend((0..len).map(|offset| HistoryDiffLine {
+        kind: HistoryDiffLineKind::Removed,
+        text: source[start + offset].to_string(),
+        old_line_number: Some(start + offset + 1),
+        new_line_number: None,
+    }));
+}
+
+fn append_added_lines(lines: &mut Vec<HistoryDiffLine>, source: &[&str], start: usize, len: usize) {
+    lines.extend((0..len).map(|offset| HistoryDiffLine {
+        kind: HistoryDiffLineKind::Added,
+        text: source[start + offset].to_string(),
+        old_line_number: None,
+        new_line_number: Some(start + offset + 1),
+    }));
+}
+
+fn strip_inline_code(line: &str) -> String {
+    let mut visible = String::with_capacity(line.len());
+    let mut delimiter_width = 0;
+    let mut chars = line.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '`' {
+            let mut width = 1;
+            while chars.peek() == Some(&'`') {
+                chars.next();
+                width += 1;
+            }
+            if delimiter_width == 0 {
+                delimiter_width = width;
+            } else if delimiter_width == width {
+                delimiter_width = 0;
+            }
+        } else if delimiter_width == 0 {
+            visible.push(character);
+        }
+    }
+    visible
+}
+
+fn binary_asset_name(target: &str) -> Option<String> {
+    let target = target
+        .trim()
+        .trim_matches(['<', '>'])
+        .split(['|', '#', '?'])
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .replace("\\(", "(")
+        .replace("\\)", ")");
+    if target.is_empty() || target.contains(':') {
+        return None;
+    }
+    let mut components = Path::new(&target)
+        .components()
+        .map(|component| match component {
+            std::path::Component::Normal(component) => component.to_str(),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if components.first() == Some(&"assets") {
+        components.remove(0);
+    }
+    if components.is_empty() {
+        return None;
+    }
+    let extension = Path::new(components.last()?)
+        .extension()
+        .and_then(|extension| extension.to_str())?
+        .to_ascii_lowercase();
+    if matches!(extension.as_str(), "md" | "markdown") {
+        return None;
+    }
+    Some(components.join("/"))
+}
+
+fn balanced_markdown_destination(target: &str) -> Option<(&str, usize)> {
+    let mut depth = 1;
+    let mut escaped = false;
+    for (index, character) in target.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' => escaped = true,
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((&target[..index], index + character.len_utf8()));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn referenced_binary_assets(markdown: &str) -> Vec<String> {
+    let mut assets = HashSet::new();
+    let mut in_fence = false;
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let visible = strip_inline_code(line);
+        let mut remainder = visible.as_str();
+        while let Some(start) = remainder.find("[[") {
+            let target = &remainder[start + 2..];
+            let Some(end) = target.find("]]") else {
+                break;
+            };
+            if let Some(file_name) = binary_asset_name(&target[..end]) {
+                assets.insert(file_name);
+            }
+            remainder = &target[end + 2..];
+        }
+        let mut remainder = visible.as_str();
+        while let Some(start) = remainder.find("](") {
+            let target = &remainder[start + 2..];
+            let Some((destination, consumed)) = balanced_markdown_destination(target) else {
+                break;
+            };
+            let destination = destination.trim();
+            let destination = if let Some(stripped) = destination.strip_prefix('<') {
+                stripped.split('>').next().unwrap_or_default()
+            } else {
+                destination
+                    .split_ascii_whitespace()
+                    .next()
+                    .unwrap_or_default()
+            };
+            if let Some(file_name) = binary_asset_name(destination) {
+                assets.insert(file_name);
+            }
+            remainder = &target[consumed..];
+        }
+    }
+    let mut assets = assets.into_iter().collect::<Vec<_>>();
+    assets.sort();
+    assets
+}
+
+fn missing_binary_assets(markdown: &str) -> Result<Vec<String>, String> {
+    let assets_dir = crate::state::notes_root()?.join("assets");
+    Ok(referenced_binary_assets(markdown)
+        .into_iter()
+        .filter(|file_name| !assets_dir.join(file_name).is_file())
+        .collect())
+}
+
 impl HistoryModeRevision {
     pub(crate) fn body(&self) -> &str {
         &self.body
@@ -1772,6 +2048,72 @@ impl HistoryModeAccess<'_> {
             revision_id: revision_id.to_string(),
             unmanaged_frontmatter: reconstructed.unmanaged_frontmatter,
             body: reconstructed.body,
+        })
+    }
+
+    pub(crate) fn diff(
+        &self,
+        revision_id: &str,
+        comparison: HistoryDiffComparison,
+    ) -> Result<HistoryModeDiff, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
+        NoteTimeline::new(self.state).recover_retained_observations()?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        let revision_id = RevisionIdentity::from_persisted(revision_id);
+        let revisions = history_store::revisions(&self.note_id)?;
+        let selected_index = revisions
+            .iter()
+            .position(|revision| revision.identity() == &revision_id)
+            .ok_or_else(|| "Selected Note Revision is no longer available".to_string())?;
+        let selected = history_store::reconstruct(&self.note_id, &revision_id)?;
+        let (from_revision_id, to_revision_id, from, to) = match comparison {
+            HistoryDiffComparison::Parent => {
+                let parent = selected_index
+                    .checked_sub(1)
+                    .map(|index| {
+                        let identity = revisions[index].identity();
+                        history_store::reconstruct(&self.note_id, identity)
+                            .map(|revision| (Some(identity.0.clone()), revision))
+                    })
+                    .transpose()?;
+                let (from_revision_id, from) = parent.unwrap_or((
+                    None,
+                    ReconstructedNoteRevision {
+                        unmanaged_frontmatter: None,
+                        body: String::new(),
+                    },
+                ));
+                (
+                    from_revision_id,
+                    revision_id.0.clone(),
+                    from,
+                    selected.clone(),
+                )
+            }
+            HistoryDiffComparison::Current => {
+                let current_id = revisions
+                    .last()
+                    .map(NoteRevisionHeader::identity)
+                    .ok_or_else(|| "No current Note Revision is available".to_string())?;
+                let current = history_store::reconstruct(&self.note_id, current_id)?;
+                (
+                    Some(revision_id.0.clone()),
+                    current_id.0.clone(),
+                    selected.clone(),
+                    current,
+                )
+            }
+        };
+        let old_properties = from.unmanaged_frontmatter.as_deref().unwrap_or_default();
+        let new_properties = to.unmanaged_frontmatter.as_deref().unwrap_or_default();
+        Ok(HistoryModeDiff {
+            revision_id: revision_id.0,
+            comparison,
+            from_revision_id,
+            to_revision_id,
+            body_lines: diff_lines(&from.body, &to.body),
+            properties_lines: diff_lines(old_properties, new_properties),
+            missing_assets: missing_binary_assets(&selected.body)?,
         })
     }
 }
@@ -3104,6 +3446,151 @@ mod tests {
                 body: String::new(),
             }),
             (0, 0)
+        );
+    }
+
+    #[test]
+    fn historical_diffs_compare_parent_and_current_authored_state_and_report_missing_assets() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-diff-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-diff-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        fs::create_dir_all(notes.path().join("assets")).unwrap();
+        fs::write(notes.path().join("assets/present.png"), b"image").unwrap();
+        fs::write(notes.path().join("assets/present.pdf"), b"pdf").unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+
+        let first = "---\nproject: atlas\n---\n\nKept\nRemoved\n*old*\n";
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Diff note".to_string(),
+            first.to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let path = created.path.clone().unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let second = "---\nproject: zeus\n---\n\nKept\nInserted\n**new**\n![[present.png]]\n![[present.pdf]]\n![[missing.png|320]]\n![[missing.pdf]]\n[recording](assets/missing.mp3)\n[workbook](assets/report(2026).xlsx)\n`![[inline-code.zip]]`\n```md\n![[fenced-code.wav]]\n```\n";
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Diff note".to_string(),
+            second.to_string(),
+            Some(path.clone()),
+        )
+        .unwrap();
+        let current = "---\nproject: zeus\nstatus: current\n---\n\nKept\nCurrent ending\n";
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Diff note".to_string(),
+            current.to_string(),
+            Some(path),
+        )
+        .unwrap();
+
+        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id));
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 3);
+        let selected_id = revisions[1].identity();
+
+        let parent = history
+            .diff(&selected_id.0, HistoryDiffComparison::Parent)
+            .unwrap();
+        assert_eq!(parent.comparison(), HistoryDiffComparison::Parent);
+        assert_eq!(
+            parent.from_revision_id(),
+            Some(revisions[0].identity().0.as_str())
+        );
+        assert_eq!(parent.to_revision_id(), revisions[1].identity().0.as_str());
+        assert!(parent.body_lines().iter().any(|line| {
+            line.kind() == HistoryDiffLineKind::Removed && line.text() == "Removed\n"
+        }));
+        assert!(parent.body_lines().iter().any(|line| {
+            line.kind() == HistoryDiffLineKind::Added && line.text() == "Inserted\n"
+        }));
+        assert!(parent.properties_lines().iter().any(|line| {
+            line.kind() == HistoryDiffLineKind::Removed && line.text() == "project: atlas\n"
+        }));
+        assert!(parent.properties_lines().iter().any(|line| {
+            line.kind() == HistoryDiffLineKind::Added && line.text() == "project: zeus\n"
+        }));
+        assert_eq!(
+            parent.missing_assets(),
+            &[
+                "missing.mp3".to_string(),
+                "missing.pdf".to_string(),
+                "missing.png".to_string(),
+                "report(2026).xlsx".to_string()
+            ]
+        );
+        assert!(parent
+            .body_lines()
+            .iter()
+            .all(|line| !line.text().contains("gneauxghts")));
+        assert!(parent
+            .properties_lines()
+            .iter()
+            .all(|line| !line.text().contains("gneauxghts")
+                && !line.text().contains("created_at")
+                && !line.text().contains("updated_at")));
+
+        let current_diff = history
+            .diff(&selected_id.0, HistoryDiffComparison::Current)
+            .unwrap();
+        assert_eq!(
+            current_diff.from_revision_id(),
+            Some(revisions[1].identity().0.as_str())
+        );
+        assert_eq!(
+            current_diff.to_revision_id(),
+            revisions[2].identity().0.as_str()
+        );
+        assert!(current_diff.body_lines().iter().any(|line| {
+            line.kind() == HistoryDiffLineKind::Added && line.text() == "Current ending\n"
+        }));
+        assert!(current_diff.properties_lines().iter().any(|line| {
+            line.kind() == HistoryDiffLineKind::Added && line.text() == "status: current\n"
+        }));
+        assert_eq!(
+            current_diff.missing_assets(),
+            &[
+                "missing.mp3".to_string(),
+                "missing.pdf".to_string(),
+                "missing.png".to_string(),
+                "report(2026).xlsx".to_string()
+            ]
+        );
+
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn historical_line_diffs_cover_empty_content_without_inventing_lines() {
+        assert!(diff_lines("", "").is_empty());
+        assert_eq!(
+            diff_lines("", "First line without a newline"),
+            vec![HistoryDiffLine {
+                kind: HistoryDiffLineKind::Added,
+                text: "First line without a newline".to_string(),
+                old_line_number: None,
+                new_line_number: Some(1),
+            }]
+        );
+        assert_eq!(
+            diff_lines("Last content\n", ""),
+            vec![HistoryDiffLine {
+                kind: HistoryDiffLineKind::Removed,
+                text: "Last content\n".to_string(),
+                old_line_number: Some(1),
+                new_line_number: None,
+            }]
         );
     }
 
@@ -6699,7 +7186,23 @@ mod tests {
             .unwrap();
 
         let history = timeline.history_mode(HistoryModeGrant::authorized(note_id));
-        assert_eq!(history.revisions().unwrap().len(), 1);
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 1);
+        let lifecycle_only_diff = history
+            .diff(&revisions[0].identity().0, HistoryDiffComparison::Current)
+            .unwrap();
+        assert!(lifecycle_only_diff
+            .body_lines()
+            .iter()
+            .all(|line| line.kind() == HistoryDiffLineKind::Context));
+        assert!(lifecycle_only_diff
+            .properties_lines()
+            .iter()
+            .all(|line| line.kind() == HistoryDiffLineKind::Context));
+        assert!(lifecycle_only_diff
+            .body_lines()
+            .iter()
+            .all(|line| { !line.text().contains("Before") && !line.text().contains("After.md") }));
         let events = history.lifecycle_events().unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[1].kind(), LifecycleEventKind::Renamed);
@@ -6745,7 +7248,19 @@ mod tests {
 
         let timeline = NoteTimeline::new(&state);
         let history = timeline.history_mode(HistoryModeGrant::authorized(note_id));
-        assert_eq!(history.revisions().unwrap().len(), 1);
+        let revisions = history.revisions().unwrap();
+        assert_eq!(revisions.len(), 1);
+        let lifecycle_only_diff = history
+            .diff(&revisions[0].identity().0, HistoryDiffComparison::Current)
+            .unwrap();
+        assert!(lifecycle_only_diff
+            .body_lines()
+            .iter()
+            .all(|line| line.kind() == HistoryDiffLineKind::Context));
+        assert!(lifecycle_only_diff
+            .body_lines()
+            .iter()
+            .all(|line| { !line.text().contains("Before") && !line.text().contains("After") }));
         let events = history.lifecycle_events().unwrap();
         assert_eq!(events.len(), 2);
         let rename = events

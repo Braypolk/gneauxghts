@@ -56,6 +56,25 @@ export interface HistoricalRevision {
   body: string;
 }
 
+export type HistoryDiffComparison = 'parent' | 'current';
+
+export interface HistoryDiffLine {
+  kind: 'context' | 'added' | 'removed';
+  text: string;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+}
+
+export interface HistoricalDiff {
+  revisionId: string;
+  comparison: HistoryDiffComparison;
+  fromRevisionId: string | null;
+  toRevisionId: string;
+  bodyLines: HistoryDiffLine[];
+  propertiesLines: HistoryDiffLine[];
+  missingAssets: string[];
+}
+
 export interface HistoryModeTarget {
   noteId: string;
   noteTitle: string;
@@ -84,8 +103,9 @@ export type HistoryModeState =
       records: HistoryModeRecord[];
       nextCursor: string | null;
       selectedRevisionId: string | null;
-      selectedRevision: HistoricalRevision | null;
-      request: { kind: 'page' | 'refresh' | 'selection'; requestId: number } | null;
+      selectedComparison: HistoryDiffComparison;
+      selectedDiff: HistoricalDiff | null;
+      request: { kind: 'page' | 'refresh' | 'diff'; requestId: number } | null;
       error: string | null;
     }
   | {
@@ -119,20 +139,30 @@ export type HistoryModeEvent =
       requestId: number;
       target: HistoryModeTarget;
       page: HistoryModePage;
-      selectedRevision: HistoricalRevision | null;
+      selectedDiff: HistoricalDiff | null;
     }
   | { type: 'pageStarted'; requestId: number }
   | { type: 'pageLoaded'; requestId: number; page: HistoryModePage }
   | { type: 'pageFailed'; requestId: number; error: string }
   | { type: 'refreshStarted'; requestId: number }
-  | { type: 'refreshLoaded'; requestId: number; page: HistoryModePage }
-  | { type: 'selectionStarted'; requestId: number; revisionId: string }
   | {
-      type: 'selectionLoaded';
+      type: 'refreshLoaded';
       requestId: number;
-      revision: HistoricalRevision;
+      page: HistoryModePage;
+      selectedDiff?: HistoricalDiff;
     }
-  | { type: 'selectionFailed'; requestId: number; error: string }
+  | {
+      type: 'diffStarted';
+      requestId: number;
+      revisionId: string;
+      comparison: HistoryDiffComparison;
+    }
+  | {
+      type: 'diffLoaded';
+      requestId: number;
+      diff: HistoricalDiff;
+    }
+  | { type: 'diffFailed'; requestId: number; error: string }
   | { type: 'historyUnavailable'; error: string }
   | { type: 'noteUnavailable'; error: string }
   | { type: 'lifecycleChanged'; target: HistoryModeTarget }
@@ -242,8 +272,9 @@ export function transitionHistoryMode(
         workspace: state.workspace,
         records: event.page.records,
         nextCursor: event.page.nextCursor,
-        selectedRevisionId: event.selectedRevision?.revisionId ?? null,
-        selectedRevision: event.selectedRevision,
+        selectedRevisionId: event.selectedDiff?.revisionId ?? null,
+        selectedComparison: 'parent',
+        selectedDiff: event.selectedDiff,
         request: null,
         error: null
       };
@@ -259,12 +290,14 @@ export function transitionHistoryMode(
         },
         error: null
       };
-    case 'selectionStarted':
+    case 'diffStarted':
       if (state.phase !== 'open' || state.request !== null) return state;
       return {
         ...state,
         selectedRevisionId: event.revisionId,
-        request: { kind: 'selection', requestId: event.requestId },
+        selectedComparison: event.comparison,
+        selectedDiff: null,
+        request: { kind: 'diff', requestId: event.requestId },
         error: null
       };
     case 'pageLoaded':
@@ -293,20 +326,22 @@ export function transitionHistoryMode(
         ...state,
         records: event.page.records,
         nextCursor: event.page.nextCursor,
+        selectedDiff: event.selectedDiff ?? state.selectedDiff,
         request: null
       };
-    case 'selectionLoaded':
+    case 'diffLoaded':
       if (
         state.phase !== 'open' ||
-        state.request?.kind !== 'selection' ||
+        state.request?.kind !== 'diff' ||
         state.request.requestId !== event.requestId ||
-        state.selectedRevisionId !== event.revision.revisionId
+        state.selectedRevisionId !== event.diff.revisionId ||
+        state.selectedComparison !== event.diff.comparison
       ) {
         return state;
       }
-      return { ...state, selectedRevision: event.revision, request: null };
+      return { ...state, selectedDiff: event.diff, request: null };
     case 'pageFailed':
-    case 'selectionFailed':
+    case 'diffFailed':
       if (
         state.phase !== 'open' ||
         state.request?.requestId !== event.requestId

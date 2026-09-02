@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  HistoricalDiff,
   HistoricalRevision,
+  HistoryDiffComparison,
   HistoryModePage
 } from './historyModeMachine';
 
@@ -24,5 +26,17 @@ export function getHistoryModeRevision(
   return invoke<HistoricalRevision>('get_note_history_revision', {
     noteId,
     revisionId
+  });
+}
+
+export function getHistoryModeDiff(
+  noteId: string,
+  revisionId: string,
+  comparison: HistoryDiffComparison
+): Promise<HistoricalDiff> {
+  return invoke<HistoricalDiff>('get_note_history_diff', {
+    noteId,
+    revisionId,
+    comparison
   });
 }

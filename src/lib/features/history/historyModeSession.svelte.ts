@@ -1,7 +1,8 @@
 import {
   createInactiveHistoryModeState,
   transitionHistoryMode,
-  type HistoricalRevision,
+  type HistoricalDiff,
+  type HistoryDiffComparison,
   type HistoryModePage,
   type HistoryModeState,
   type HistoryModeTarget,
@@ -18,10 +19,11 @@ export interface HistoryModeSessionDeps {
     noteId: string,
     cursor: string | null
   ) => Promise<HistoryModePage>;
-  loadRevision: (
+  loadDiff: (
     noteId: string,
-    revisionId: string
-  ) => Promise<HistoricalRevision>;
+    revisionId: string,
+    comparison: HistoryDiffComparison
+  ) => Promise<HistoricalDiff>;
 }
 
 function errorMessage(error: unknown): string {
@@ -104,10 +106,10 @@ export class HistoryModeSession {
       const newestRevision = page.records.find(
         (record) => record.kind === 'revision'
       );
-      const selectedRevision = newestRevision
-        ? await this.#deps.loadRevision(target.noteId, newestRevision.revisionId)
+      const selectedDiff = newestRevision
+        ? await this.#deps.loadDiff(target.noteId, newestRevision.revisionId, 'parent')
         : null;
-      this.#dispatch({ type: 'entryLoaded', requestId, target, page, selectedRevision });
+      this.#dispatch({ type: 'entryLoaded', requestId, target, page, selectedDiff });
       if (page.records.length === 0) {
         this.#dispatch({
           type: 'noteUnavailable',
@@ -127,6 +129,27 @@ export class HistoryModeSession {
     }
   };
 
+  #loadSelectedDiff = async (
+    revisionId: string,
+    comparison: HistoryDiffComparison
+  ): Promise<void> => {
+    if (this.state.phase !== 'open') return;
+    const requestId = this.#nextRequestId++;
+    const noteId = this.state.target.noteId;
+    this.#dispatch({ type: 'diffStarted', requestId, revisionId, comparison });
+    try {
+      const diff = await this.#deps.loadDiff(noteId, revisionId, comparison);
+      this.#dispatch({ type: 'diffLoaded', requestId, diff });
+    } catch (error) {
+      this.#dispatch({
+        type: 'diffFailed',
+        requestId,
+        error: `That revision diff could not be opened: ${errorMessage(error)}`
+      });
+    }
+    await this.#runPendingRefresh();
+  };
+
   selectRevision = async (revisionId: string): Promise<void> => {
     if (
       this.state.phase !== 'open' ||
@@ -135,20 +158,20 @@ export class HistoryModeSession {
     ) {
       return;
     }
-    const requestId = this.#nextRequestId++;
-    const noteId = this.state.target.noteId;
-    this.#dispatch({ type: 'selectionStarted', requestId, revisionId });
-    try {
-      const revision = await this.#deps.loadRevision(noteId, revisionId);
-      this.#dispatch({ type: 'selectionLoaded', requestId, revision });
-    } catch (error) {
-      this.#dispatch({
-        type: 'selectionFailed',
-        requestId,
-        error: `That revision could not be opened: ${errorMessage(error)}`
-      });
+    await this.#loadSelectedDiff(revisionId, 'parent');
+  };
+
+  setComparison = async (comparison: HistoryDiffComparison): Promise<void> => {
+    if (
+      this.state.phase !== 'open' ||
+      this.state.request !== null ||
+      this.state.selectedRevisionId === null ||
+      this.state.selectedComparison === comparison
+    ) {
+      return;
     }
-    await this.#runPendingRefresh();
+    const revisionId = this.state.selectedRevisionId;
+    await this.#loadSelectedDiff(revisionId, comparison);
   };
 
   loadMore = async (): Promise<void> => {
@@ -186,7 +209,15 @@ export class HistoryModeSession {
     const { noteId } = this.state.target;
     this.#dispatch({ type: 'refreshStarted', requestId });
     try {
-      const page = await this.#deps.loadPage(noteId, null);
+      const pagePromise = this.#deps.loadPage(noteId, null);
+      const diffPromise =
+        this.state.selectedComparison === 'current' && this.state.selectedRevisionId
+          ? this.#deps.loadDiff(noteId, this.state.selectedRevisionId, 'current')
+          : null;
+      const [page, selectedDiff] = await Promise.all([
+        pagePromise,
+        diffPromise ?? Promise.resolve(undefined)
+      ]);
       if (page.records.length === 0) {
         this.#dispatch({
           type: 'noteUnavailable',
@@ -194,7 +225,7 @@ export class HistoryModeSession {
         });
         return;
       }
-      this.#dispatch({ type: 'refreshLoaded', requestId, page });
+      this.#dispatch({ type: 'refreshLoaded', requestId, page, selectedDiff });
     } catch (error) {
       this.#dispatch({
         type: 'historyUnavailable',
