@@ -26,7 +26,7 @@ use crate::{
     },
     state::{
         create_vault_folder as create_vault_folder_state, current_vault_info,
-        db_clear_last_opened_note, db_mark_note_opened, ensure_vault_scaffold,
+        db_clear_last_opened_note, db_mark_note_opened,
         list_vault_folders as list_vault_folders_state, notes_root, set_notes_root, vault_root,
         CreateVaultFolderResult, VaultFolderInfo, VaultInfo,
     },
@@ -303,7 +303,9 @@ pub(crate) fn list_vault_folders() -> Result<Vec<VaultFolderInfo>, String> {
 
 #[tauri::command]
 pub(crate) fn create_vault_folder(name: String) -> Result<CreateVaultFolderResult, String> {
-    create_vault_folder_state(&name)
+    let created = create_vault_folder_state(&name)?;
+    let _ = crate::services::note_timeline::ensure_vault_scaffold(Path::new(&created.created_path));
+    Ok(created)
 }
 
 #[tauri::command]
@@ -324,7 +326,7 @@ pub(crate) fn set_vault_directory(
     // remains true and the UI prompts for a restart. Best-effort: a
     // scaffold failure here must not block recording the new path.
     if let Ok(new_root) = vault_root() {
-        let _ = ensure_vault_scaffold(&new_root);
+        let _ = crate::services::note_timeline::ensure_vault_scaffold(&new_root);
     }
     if let Ok(status) = state.semantic.get_status() {
         state.events.semantic_status_changed(status);

@@ -23,8 +23,6 @@ pub(crate) const VAULT_CACHE_DIR_NAME: &str = "cache";
 pub(crate) const VAULT_MANIFEST_FILE_NAME: &str = "vault.json";
 /// Current manifest schema version. Bump when the manifest shape changes.
 pub(crate) const VAULT_MANIFEST_SCHEMA_VERSION: u32 = 2;
-pub(crate) const DEFAULT_HISTORY_FORMAT: &str = "sqlite-v1";
-pub(crate) const INITIAL_HISTORY_GENERATION: u64 = 1;
 
 static APP_DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 static DOCUMENTS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -278,7 +276,7 @@ pub(crate) fn create_vault_folder_in(
     } else {
         fs::create_dir(&created_path).map_err(|err| err.to_string())?;
     }
-    let _ = ensure_vault_scaffold(&created_path);
+    ensure_vault_directories(&created_path)?;
     Ok(CreateVaultFolderResult {
         created_path: created_path.to_string_lossy().into_owned(),
         folders: list_vault_folders_in(container)?,
@@ -478,15 +476,21 @@ fn write_vault_manifest_for(vault_root: &Path, manifest: &VaultManifest) -> Resu
     Ok(())
 }
 
-pub(crate) fn advance_vault_history_generation(vault_root: &Path) -> Result<(u64, u64), String> {
+pub(crate) fn advance_vault_history_generation(
+    vault_root: &Path,
+    history_format: &str,
+    initial_generation: u64,
+) -> Result<(u64, u64), String> {
     let mut manifest = read_vault_manifest_for(vault_root)?
         .map(Ok)
-        .unwrap_or_else(|| ensure_vault_scaffold(vault_root))?;
+        .unwrap_or_else(|| {
+            ensure_vault_scaffold_for_history(vault_root, history_format, initial_generation)
+        })?;
     let previous_generation = manifest.history_generation;
     manifest.history_generation = previous_generation
         .checked_add(1)
         .ok_or_else(|| "Note Timeline history generation is exhausted".to_string())?;
-    manifest.history_format = DEFAULT_HISTORY_FORMAT.to_string();
+    manifest.history_format = history_format.to_string();
     manifest.updated_at_millis = now_millis();
     write_vault_manifest_for(vault_root, &manifest)?;
     Ok((previous_generation, manifest.history_generation))
@@ -496,15 +500,12 @@ pub(crate) fn advance_vault_history_generation(vault_root: &Path) -> Result<(u64
 /// that a manifest is present. Idempotent: an existing manifest keeps its
 /// `vault_id` and `created_at_millis`, only bumping `updated_at_millis` (and
 /// `app_version`/`schema_version` if they drifted). Returns the manifest.
-pub(crate) fn ensure_vault_scaffold(vault_root: &Path) -> Result<VaultManifest, String> {
-    fs::create_dir_all(vault_data_dir_for(vault_root)).map_err(|err| err.to_string())?;
-    let cache_dir = vault_cache_dir_for(vault_root);
-    fs::create_dir_all(&cache_dir).map_err(|err| err.to_string())?;
-    // Reserve the rebuildable sidecar cache subdirs that the layout calls for.
-    // The lexical index is currently RAM-only, so this may stay empty; creating
-    // it keeps the on-disk layout stable if it starts persisting.
-    fs::create_dir_all(cache_dir.join("lexical")).map_err(|err| err.to_string())?;
-    fs::create_dir_all(cache_dir.join("graph")).map_err(|err| err.to_string())?;
+pub(crate) fn ensure_vault_scaffold_for_history(
+    vault_root: &Path,
+    initial_history_format: &str,
+    initial_history_generation: u64,
+) -> Result<VaultManifest, String> {
+    ensure_vault_directories(vault_root)?;
 
     let app_version = env!("CARGO_PKG_VERSION").to_string();
     let now = now_millis();
@@ -521,8 +522,8 @@ pub(crate) fn ensure_vault_scaffold(vault_root: &Path) -> Result<VaultManifest, 
         None => VaultManifest {
             vault_id: generate_vault_id(vault_root),
             schema_version: VAULT_MANIFEST_SCHEMA_VERSION,
-            history_format: DEFAULT_HISTORY_FORMAT.to_string(),
-            history_generation: INITIAL_HISTORY_GENERATION,
+            history_format: initial_history_format.to_string(),
+            history_generation: initial_history_generation,
             app_version,
             created_at_millis: now,
             updated_at_millis: now,
@@ -530,6 +531,18 @@ pub(crate) fn ensure_vault_scaffold(vault_root: &Path) -> Result<VaultManifest, 
     };
     write_vault_manifest_for(vault_root, &manifest)?;
     Ok(manifest)
+}
+
+fn ensure_vault_directories(vault_root: &Path) -> Result<(), String> {
+    fs::create_dir_all(vault_data_dir_for(vault_root)).map_err(|err| err.to_string())?;
+    let cache_dir = vault_cache_dir_for(vault_root);
+    fs::create_dir_all(&cache_dir).map_err(|err| err.to_string())?;
+    // Reserve the rebuildable sidecar cache subdirs that the layout calls for.
+    // The lexical index is currently RAM-only, so this may stay empty; creating
+    // it keeps the on-disk layout stable if it starts persisting.
+    fs::create_dir_all(cache_dir.join("lexical")).map_err(|err| err.to_string())?;
+    fs::create_dir_all(cache_dir.join("graph")).map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 pub(super) fn configured_app_data_dir() -> Result<Option<PathBuf>, String> {
@@ -603,7 +616,8 @@ mod tests {
         let vault = TestDir::new("config-scaffold");
         let root = vault.path();
 
-        let manifest = ensure_vault_scaffold(root).expect("scaffold");
+        let manifest =
+            ensure_vault_scaffold_for_history(root, "fixture-history-v1", 7).expect("scaffold");
 
         assert!(vault_data_dir_for(root).is_dir());
         assert!(vault_cache_dir_for(root).is_dir());
@@ -612,8 +626,8 @@ mod tests {
         assert!(vault_manifest_path_for(root).is_file());
         assert!(manifest.vault_id.starts_with("vlt_"));
         assert_eq!(manifest.schema_version, VAULT_MANIFEST_SCHEMA_VERSION);
-        assert_eq!(manifest.history_format, "sqlite-v1");
-        assert_eq!(manifest.history_generation, 1);
+        assert_eq!(manifest.history_format, "fixture-history-v1");
+        assert_eq!(manifest.history_generation, 7);
         assert!(manifest.created_at_millis > 0);
         assert!(manifest.updated_at_millis >= manifest.created_at_millis);
     }
@@ -624,8 +638,10 @@ mod tests {
         let vault = TestDir::new("config-scaffold-idempotent");
         let root = vault.path();
 
-        let first = ensure_vault_scaffold(root).expect("scaffold first");
-        let second = ensure_vault_scaffold(root).expect("scaffold second");
+        let first = ensure_vault_scaffold_for_history(root, "fixture-history-v1", 7)
+            .expect("scaffold first");
+        let second = ensure_vault_scaffold_for_history(root, "ignored-history-v2", 8)
+            .expect("scaffold second");
 
         // Identity is stable across re-scaffolds; only updated_at moves.
         assert_eq!(first.vault_id, second.vault_id);

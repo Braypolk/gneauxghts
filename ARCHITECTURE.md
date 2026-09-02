@@ -130,7 +130,9 @@ uninitialized note first, the timeline establishes that baseline atomically
 before the newer revision. Baselines record only when their content became
 known; they do not infer creation or change time from filesystem metadata.
 Initialization progress and per-note readiness are durable diagnostics, so an
-interrupted scan resumes idempotently after restart.
+interrupted scan resumes idempotently after restart. Per-note failures are
+retained as typed failed states, the vault enters a degraded phase, and a
+later scan clears each failure only after that note becomes ready.
 Each `AppState` completes that reconciliation successfully before its first
 history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live
@@ -139,8 +141,13 @@ in-process publication intent; a transient recovery failure remains retryable.
 The vault manifest selects the active history format and monotonic store
 generation. The SQLite metadata repeats the vault identity, format, and
 generation; disagreement fails open explicitly instead of accepting replaced
-or copied history. A development reset advances the manifest generation first,
-removes the superseded store, and rebuilds current notes as truthful baselines.
+or copied history. The SQLite implementation owns its initial format selection;
+general vault configuration only persists the supplied selector. An app-local
+observation record remembers the greatest generation opened for each Vault
+Identity, so rolling back the manifest and store together is also rejected. A
+development reset advances the manifest generation first, records its operation
+and generation boundary outside the replacement timeline, removes the
+superseded store, and rebuilds current notes as truthful baselines.
 
 ### Tasks
 

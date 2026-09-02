@@ -5,12 +5,18 @@ pub(crate) mod task_projection;
 #[allow(unused_imports)]
 pub(crate) use config::{
     advance_vault_history_generation, app_data_dir, create_vault_folder, current_vault_info,
-    default_notes_root, ensure_vault_scaffold, forgotten_notes_root, initialize_app_data_dir,
-    initialize_documents_dir, list_vault_folders, notes_root, read_vault_config,
-    read_vault_manifest_for, set_notes_root, set_notes_root_override, vault_data_dir,
-    vault_manifest_path_for, vault_root, write_vault_config, CreateVaultFolderResult, VaultConfig,
-    VaultFolderInfo, VaultInfo, VaultManifest, VAULT_CACHE_DIR_NAME,
+    default_notes_root, ensure_vault_scaffold_for_history, forgotten_notes_root,
+    initialize_app_data_dir, initialize_documents_dir, list_vault_folders, notes_root,
+    read_vault_config, read_vault_manifest_for, set_notes_root, set_notes_root_override,
+    vault_data_dir, vault_data_dir_for, vault_manifest_path_for, vault_root, write_vault_config,
+    CreateVaultFolderResult, VaultConfig, VaultFolderInfo, VaultInfo, VaultManifest,
+    VAULT_CACHE_DIR_NAME,
 };
+
+#[cfg(test)]
+pub(crate) fn ensure_vault_scaffold(vault_root: &std::path::Path) -> Result<VaultManifest, String> {
+    crate::services::note_timeline::ensure_vault_scaffold(vault_root)
+}
 #[allow(unused_imports)]
 pub(crate) use persistence::{
     atomic_write_note, db_clear_last_opened_note, db_load_note_activity, db_mark_note_opened,

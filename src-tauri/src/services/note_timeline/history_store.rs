@@ -11,8 +11,10 @@ use super::{
     VaultObservation, VaultObservationKind, VaultObservationSource,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use serde::{Deserialize, Serialize};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
 use std::{
+    collections::BTreeMap,
     fs,
     io::Cursor,
     path::{Path, PathBuf},
@@ -20,7 +22,9 @@ use std::{
 };
 
 const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
-const HISTORY_FORMAT: &str = "sqlite-v1";
+const HISTORY_OBSERVATIONS_FILE_NAME: &str = "note-timeline-history-observations.json";
+pub(super) const HISTORY_FORMAT: &str = "sqlite-v1";
+pub(super) const INITIAL_HISTORY_GENERATION: u64 = 1;
 const HISTORY_SCHEMA_VERSION: u64 = 5;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
@@ -30,6 +34,32 @@ const MAX_REPLAY_REVISIONS: u64 = 128;
 const MAX_ACCUMULATED_DELTA_BYTES: u64 = 256 * 1024;
 const MAX_DELTA_TO_FULL_RATIO: f64 = 0.65;
 const MAX_MEASURED_REPLAY: Duration = Duration::from_millis(50);
+
+static HISTORY_OBSERVATIONS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryObservations {
+    #[serde(default)]
+    vaults: BTreeMap<String, ObservedHistorySelection>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ObservedHistorySelection {
+    history_format: String,
+    generation: u64,
+    last_reset: Option<PersistedHistoryReset>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedHistoryReset {
+    operation_id: String,
+    previous_generation: u64,
+    generation: u64,
+    reset_at_millis: u64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PublicationIntentKind {
@@ -97,6 +127,21 @@ pub(super) fn replace_lifecycle_kind(note_id: &NoteIdentity, kind: &str) {
             params![kind, note_id.as_str()],
         )
         .expect("replace stored lifecycle kind");
+}
+
+#[cfg(test)]
+pub(super) fn replace_history_generation(generation: u64) {
+    Connection::open(
+        crate::state::vault_data_dir()
+            .expect("vault data directory")
+            .join(HISTORY_DATABASE_FILE_NAME),
+    )
+    .expect("open history store directly")
+    .execute(
+        "UPDATE history_metadata SET history_generation = ?1 WHERE singleton = 1",
+        params![generation],
+    )
+    .expect("replace history generation");
 }
 
 #[cfg(test)]
@@ -1195,7 +1240,19 @@ pub(super) fn baseline_initialization_progress() -> Result<BaselineInitializatio
 pub(super) fn note_baseline_initialization_state(
     note_id: &NoteIdentity,
 ) -> Result<NoteBaselineInitializationState, String> {
-    let root_revision = open_store()?
+    let connection = open_store()?;
+    let failure = connection
+        .query_row(
+            "SELECT error FROM baseline_initialization_failures WHERE note_id = ?1",
+            params![note_id.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Read per-note Baseline Revision failure: {error}"))?;
+    if let Some(error) = failure {
+        return Ok(NoteBaselineInitializationState::Failed { error });
+    }
+    let root_revision = connection
         .query_row(
             "SELECT source, known_since_millis
              FROM revisions
@@ -1217,6 +1274,32 @@ pub(super) fn note_baseline_initialization_state(
         }
         None => NoteBaselineInitializationState::Uninitialized,
     })
+}
+
+pub(super) fn record_baseline_initialization_failure(
+    note_id: &NoteIdentity,
+    path: &Path,
+    error: &str,
+) -> Result<(), String> {
+    open_store()?
+        .execute(
+            "INSERT INTO baseline_initialization_failures (note_id, path, error)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(note_id) DO UPDATE SET path = excluded.path, error = excluded.error",
+            params![note_id.as_str(), path.to_string_lossy().into_owned(), error],
+        )
+        .map_err(|store_error| format!("Record Baseline Revision failure: {store_error}"))?;
+    Ok(())
+}
+
+pub(super) fn clear_baseline_initialization_failure(note_id: &NoteIdentity) -> Result<(), String> {
+    open_store()?
+        .execute(
+            "DELETE FROM baseline_initialization_failures WHERE note_id = ?1",
+            params![note_id.as_str()],
+        )
+        .map_err(|error| format!("Clear Baseline Revision failure: {error}"))?;
+    Ok(())
 }
 
 pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader>, String> {
@@ -1447,8 +1530,26 @@ pub(super) fn reconstruct(
     })
 }
 
-pub(super) fn reset_development_store(vault_root: &Path) -> Result<(u64, u64), String> {
-    let generations = crate::state::advance_vault_history_generation(vault_root)?;
+pub(super) fn reset_development_store(
+    vault_root: &Path,
+) -> Result<(u64, u64, String, u64), String> {
+    let generations = crate::state::advance_vault_history_generation(
+        vault_root,
+        HISTORY_FORMAT,
+        INITIAL_HISTORY_GENERATION,
+    )?;
+    let operation_id = crate::note::generate_unique_id();
+    let reset_at_millis = crate::time::current_time_millis()
+        .map_err(|error| format!("Issue development history reset time: {error}"))?;
+    let manifest = crate::state::read_vault_manifest_for(vault_root)?
+        .ok_or_else(|| "Development history reset requires a vault manifest".to_string())?;
+    record_history_reset(
+        &manifest,
+        &operation_id,
+        generations.0,
+        generations.1,
+        reset_at_millis,
+    )?;
     let data_dir = crate::state::vault_data_dir()?;
     for path in [
         data_dir.join(HISTORY_DATABASE_FILE_NAME),
@@ -1467,14 +1568,142 @@ pub(super) fn reset_development_store(vault_root: &Path) -> Result<(u64, u64), S
         }
     }
     drop(open_store()?);
-    Ok(generations)
+    Ok((generations.0, generations.1, operation_id, reset_at_millis))
+}
+
+fn history_observations_path() -> Result<PathBuf, String> {
+    Ok(crate::state::app_data_dir()?.join(HISTORY_OBSERVATIONS_FILE_NAME))
+}
+
+fn read_history_observations(path: &Path) -> Result<HistoryObservations, String> {
+    if !path.is_file() {
+        return Ok(HistoryObservations::default());
+    }
+    let contents = fs::read_to_string(path)
+        .map_err(|error| format!("Read Note Timeline history observations: {error}"))?;
+    serde_json::from_str(&contents)
+        .map_err(|error| format!("Parse Note Timeline history observations: {error}"))
+}
+
+fn write_history_observations(
+    path: &Path,
+    observations: &HistoryObservations,
+) -> Result<(), String> {
+    let serialized = serde_json::to_vec_pretty(observations)
+        .map_err(|error| format!("Serialize Note Timeline history observations: {error}"))?;
+    let temporary = path.with_file_name(format!(
+        ".history-observations-{}.tmp",
+        crate::note::generate_unique_id()
+    ));
+    fs::write(&temporary, serialized)
+        .map_err(|error| format!("Write Note Timeline history observations: {error}"))?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!(
+            "Select Note Timeline history observations atomically: {error}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_and_remember_history_selection(
+    manifest: &crate::state::VaultManifest,
+) -> Result<(), String> {
+    let _guard = HISTORY_OBSERVATIONS_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
+    let path = history_observations_path()?;
+    let mut observations = read_history_observations(&path)?;
+    if let Some(observed) = observations.vaults.get(&manifest.vault_id) {
+        if manifest.history_generation < observed.generation {
+            return Err(format!(
+                "Note Timeline history generation rollback: vault selected generation {} after this app observed generation {}",
+                manifest.history_generation, observed.generation
+            ));
+        }
+        if manifest.history_generation == observed.generation
+            && manifest.history_format != observed.history_format
+        {
+            return Err(
+                "Note Timeline history format changed without a generation change".to_string(),
+            );
+        }
+        if manifest.history_generation == observed.generation
+            && manifest.history_format == observed.history_format
+        {
+            return Ok(());
+        }
+    }
+    let last_reset = observations
+        .vaults
+        .get(&manifest.vault_id)
+        .and_then(|observed| observed.last_reset.clone());
+    observations.vaults.insert(
+        manifest.vault_id.clone(),
+        ObservedHistorySelection {
+            history_format: manifest.history_format.clone(),
+            generation: manifest.history_generation,
+            last_reset,
+        },
+    );
+    write_history_observations(&path, &observations)
+}
+
+fn record_history_reset(
+    manifest: &crate::state::VaultManifest,
+    operation_id: &str,
+    previous_generation: u64,
+    generation: u64,
+    reset_at_millis: u64,
+) -> Result<(), String> {
+    let _guard = HISTORY_OBSERVATIONS_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
+    let path = history_observations_path()?;
+    let mut observations = read_history_observations(&path)?;
+    observations.vaults.insert(
+        manifest.vault_id.clone(),
+        ObservedHistorySelection {
+            history_format: manifest.history_format.clone(),
+            generation,
+            last_reset: Some(PersistedHistoryReset {
+                operation_id: operation_id.to_string(),
+                previous_generation,
+                generation,
+                reset_at_millis,
+            }),
+        },
+    );
+    write_history_observations(&path, &observations)
+}
+
+pub(super) fn latest_development_history_reset() -> Result<Option<(String, u64, u64, u64)>, String>
+{
+    let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
+        .ok_or_else(|| "Read development history reset without a vault manifest".to_string())?;
+    let _guard = HISTORY_OBSERVATIONS_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
+    let observations = read_history_observations(&history_observations_path()?)?;
+    Ok(observations
+        .vaults
+        .get(&manifest.vault_id)
+        .and_then(|observed| observed.last_reset.as_ref())
+        .map(|reset| {
+            (
+                reset.operation_id.clone(),
+                reset.previous_generation,
+                reset.generation,
+                reset.reset_at_millis,
+            )
+        }))
 }
 
 fn open_store() -> Result<Connection, String> {
     let vault_root = crate::state::vault_root()?;
     let manifest = crate::state::read_vault_manifest_for(&vault_root)?
         .map(Ok)
-        .unwrap_or_else(|| crate::state::ensure_vault_scaffold(&vault_root))?;
+        .unwrap_or_else(|| super::ensure_vault_scaffold(&vault_root))?;
     if manifest.history_format != HISTORY_FORMAT {
         return Err(format!(
             "Note Timeline history format mismatch: manifest selects `{}` but this build supports `{HISTORY_FORMAT}`",
@@ -1579,6 +1808,11 @@ fn open_store() -> Result<Connection, String> {
                singleton, phase, discovered_notes, baseline_revisions,
                ready_notes, failed_notes, last_error
              ) VALUES (1, 'notStarted', 0, 0, 0, 0, NULL);
+             CREATE TABLE IF NOT EXISTS baseline_initialization_failures (
+               note_id TEXT PRIMARY KEY,
+               path TEXT NOT NULL,
+               error TEXT NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS timeline_heads (
                note_id TEXT PRIMARY KEY,
                record_kind TEXT NOT NULL,
@@ -1629,8 +1863,8 @@ fn open_store() -> Result<Connection, String> {
                        singleton, vault_id, history_format, history_generation, schema_version
                      ) VALUES (1, ?1, ?2, ?3, ?4)",
                     params![
-                        manifest.vault_id,
-                        manifest.history_format,
+                        &manifest.vault_id,
+                        &manifest.history_format,
                         manifest.history_generation,
                         HISTORY_SCHEMA_VERSION
                     ],
@@ -1638,6 +1872,7 @@ fn open_store() -> Result<Connection, String> {
                 .map_err(|error| error.to_string())?;
         }
     }
+    validate_and_remember_history_selection(&manifest)?;
     Ok(connection)
 }
 

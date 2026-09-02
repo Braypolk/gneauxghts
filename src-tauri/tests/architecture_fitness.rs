@@ -32,6 +32,18 @@ fn assert_contains_none(source: &str, forbidden: &[&str]) {
     }
 }
 
+#[test]
+fn sqlite_history_format_selection_stays_inside_note_timeline_storage() {
+    let vault_config = repository_file("src-tauri/src/state/config.rs");
+    let history_store = repository_file("src-tauri/src/services/note_timeline/history_store.rs");
+
+    assert_contains_none(&vault_config, &["sqlite-v1"]);
+    assert_contains_all(
+        &history_store,
+        &["pub(super) const HISTORY_FORMAT: &str = \"sqlite-v1\""],
+    );
+}
+
 fn repository_rust_sources(relative_dir: &str) -> Vec<(PathBuf, String)> {
     fn collect(directory: &std::path::Path, sources: &mut Vec<(PathBuf, String)>) {
         for entry in fs::read_dir(directory).expect("read Rust source directory") {

@@ -128,7 +128,7 @@ pub fn run() {
             // its cache dir, and the vault manifest before any vault-local
             // DB or cache is opened. Idempotent and cheap; safe to run on
             // every launch.
-            state::ensure_vault_scaffold(&notes_dir)?;
+            services::note_timeline::ensure_vault_scaffold(&notes_dir)?;
             let vault_data_dir = state::vault_data_dir()?;
             let semantic = if cfg!(target_os = "ios") {
                 SemanticState::new_disabled("Semantic search is disabled on iPhone builds for now.")

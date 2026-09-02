@@ -92,7 +92,14 @@ the state; introduction and last-change time remain unknown. A mutation that
 beats background initialization establishes the current canonical state as its
 baseline in the same durable preparation transaction before the new revision.
 Repeated scans, watcher races, interruption, and restart never duplicate that
-baseline.
+baseline. Initialization failures produce durable degraded progress and a
+typed failed state for any resolved Note Identity; a successful retry clears
+that note's failure.
+The vault-local manifest and selected history store must agree on Vault
+Identity, storage format, and generation. The app also remembers the greatest
+generation it has opened outside the vault, so a synchronized rollback of both
+vault-local records is not silently accepted. Development resets retain an
+operation and generation diagnostic outside the replacement timelines.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
 During synchronous reconciliation, a failed lexical projection retains the
 exact identity-resolved payload in retry state independent of catalog file
