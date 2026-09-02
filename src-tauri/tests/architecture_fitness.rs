@@ -227,7 +227,8 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
     assert_contains_all(
         &watcher,
         &[
-            "fn observe_timeline_or_retain(",
+            "fn observe_timeline(",
+            "timeline.observe(observation)",
             "VaultObservation::renamed(",
             "VaultObservation::moved(",
             "VaultObservation::external_edit(",

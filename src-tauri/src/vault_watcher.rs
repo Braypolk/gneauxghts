@@ -11,12 +11,12 @@ use notify::{
     Watcher,
 };
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Condvar, LazyLock, Mutex,
+        Condvar, Mutex,
     },
     thread,
     time::{Duration, Instant, UNIX_EPOCH},
@@ -405,29 +405,13 @@ struct ObservedFile {
     filesystem_modified_millis: Option<u64>,
 }
 
-static PENDING_TIMELINE_OBSERVATIONS: LazyLock<Mutex<VecDeque<VaultObservation>>> =
-    LazyLock::new(|| Mutex::new(VecDeque::new()));
-
-fn observe_timeline_or_retain(timeline: &NoteTimeline<'_>, observation: VaultObservation) {
+fn observe_timeline(timeline: &NoteTimeline<'_>, observation: VaultObservation) {
     let path = observation.path().to_path_buf();
-    if let Err(error) = timeline.observe(observation.clone()) {
+    if let Err(error) = timeline.observe(observation) {
         eprintln!(
-            "Timeline observation for {} will be retried by reconciliation: {error}",
+            "Timeline observation for {} was retained for durable retry: {error}",
             path.display()
         );
-        if let Ok(mut pending) = PENDING_TIMELINE_OBSERVATIONS.lock() {
-            pending.push_back(observation);
-        }
-    }
-}
-
-fn retry_retained_timeline_observations(timeline: &NoteTimeline<'_>) {
-    let observations = PENDING_TIMELINE_OBSERVATIONS
-        .lock()
-        .map(|mut pending| pending.drain(..).collect::<Vec<_>>())
-        .unwrap_or_default();
-    for observation in observations {
-        observe_timeline_or_retain(timeline, observation);
     }
 }
 
@@ -440,7 +424,6 @@ fn flush_dirty_batch(
         return Ok(());
     };
     let timeline = NoteTimeline::new(&state);
-    retry_retained_timeline_observations(&timeline);
     state.semantic.report_user_activity();
 
     let resolved = resolve_batch(notes_dir, paths)?;
@@ -547,13 +530,13 @@ fn flush_dirty_batch(
         let markdown = &observed.markdown;
         let observed_at_millis = current_time_millis()?;
         if removed_path.parent() == new_path.parent() {
-            observe_timeline_or_retain(
+            observe_timeline(
                 &timeline,
                 VaultObservation::renamed(removed_path, new_path, observed_at_millis)
                     .with_canonical_markdown(markdown.clone()),
             );
         } else {
-            observe_timeline_or_retain(
+            observe_timeline(
                 &timeline,
                 VaultObservation::moved(removed_path, new_path, observed_at_millis)
                     .with_canonical_markdown(markdown.clone()),
@@ -581,7 +564,7 @@ fn flush_dirty_batch(
         if present_consumed[index] {
             continue;
         }
-        observe_timeline_or_retain(
+        observe_timeline(
             &timeline,
             VaultObservation::external_edit(
                 observed.path.clone(),
@@ -608,7 +591,7 @@ fn flush_dirty_batch(
         if removed_consumed[index] {
             continue;
         }
-        observe_timeline_or_retain(
+        observe_timeline(
             &timeline,
             VaultObservation::missing(path.clone(), current_time_millis()?),
         );
@@ -703,8 +686,7 @@ fn observe_reconciliation_state(
 ) -> Result<(), String> {
     let observed_at_millis = current_time_millis()?;
     let timeline = NoteTimeline::new(state);
-    retry_retained_timeline_observations(&timeline);
-    observe_timeline_or_retain(
+    observe_timeline(
         &timeline,
         VaultObservation::reconciliation_scan(notes_dir.to_path_buf(), observed_at_millis),
     );
@@ -739,7 +721,7 @@ fn observe_reconciliation_state(
             })?;
             observation = observation.with_canonical_markdown(markdown);
         }
-        observe_timeline_or_retain(&timeline, observation);
+        observe_timeline(&timeline, observation);
     }
     Ok(())
 }
@@ -836,15 +818,14 @@ fn is_hidden_vault_path(path: &Path, notes_dir: &Path) -> bool {
 mod tests {
     use super::{
         consume_self_save, is_watchable_markdown_path, next_reconcile_interval,
-        observe_timeline_or_retain, reconciliation_observations, record_expected_move,
-        record_expected_removal, record_expected_write, retry_retained_timeline_observations,
-        should_process_watch_event, stored_content_hash, PENDING_TIMELINE_OBSERVATIONS,
+        reconciliation_observations, record_expected_move, record_expected_removal,
+        record_expected_write, should_process_watch_event, stored_content_hash,
         RECONCILE_INTERVAL_MAX, RECONCILE_INTERVAL_MIN,
     };
     use crate::services::note_timeline::{
         inject_history_recovery_failure_once, reconstructed_revision_bodies_for_test,
-        LifecycleEventKind, NoteTimeline, VaultObservation, VaultObservationKind,
-        VaultObservationSource,
+        retained_observation_count_for_test, LifecycleEventKind, NoteTimeline, VaultObservation,
+        VaultObservationKind, VaultObservationSource,
     };
     use crate::{app::EventBus, index::AppState, semantic::SemanticState};
     use notify::{
@@ -1058,9 +1039,8 @@ mod tests {
     }
 
     #[test]
-    fn failed_history_append_retries_the_exact_observed_state_before_rereading_disk() {
+    fn failed_history_append_survives_restart_with_the_exact_observed_state() {
         let _guard = crate::test_support::lock_test_env();
-        PENDING_TIMELINE_OBSERVATIONS.lock().unwrap().clear();
         let app_data = crate::test_support::TestDir::new("watcher-history-retry-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
         let notes = crate::test_support::TestDir::new("watcher-history-retry-notes");
@@ -1092,23 +1072,44 @@ mod tests {
         .unwrap();
         let timeline = NoteTimeline::new(&restarted);
         inject_history_recovery_failure_once();
-        observe_timeline_or_retain(
-            &timeline,
-            VaultObservation::external_edit(path.clone(), 600, None)
-                .with_canonical_markdown(state_b),
-        );
+        assert!(timeline
+            .observe(
+                VaultObservation::external_edit(path.clone(), 600, None)
+                    .with_canonical_markdown(state_b),
+            )
+            .is_err());
+        assert_eq!(retained_observation_count_for_test(), 1);
+        drop(timeline);
+        drop(restarted);
 
         let state_c = std::fs::read_to_string(&path)
             .unwrap()
             .replacen("State B", "State C", 1);
-        std::fs::write(&path, state_c).unwrap();
-        retry_retained_timeline_observations(&timeline);
+        std::fs::write(&path, &state_c).unwrap();
+        let after_restart = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&after_restart);
+        timeline
+            .observe(VaultObservation::reconciliation_scan(
+                notes.path().to_path_buf(),
+                700,
+            ))
+            .unwrap();
+        timeline
+            .observe(
+                VaultObservation::reconciled_state(path, 701, None)
+                    .with_canonical_markdown(state_c),
+            )
+            .unwrap();
 
         assert_eq!(
-            reconstructed_revision_bodies_for_test(&restarted, &note_id).unwrap(),
-            vec!["State A", "State B"]
+            reconstructed_revision_bodies_for_test(&after_restart, &note_id).unwrap(),
+            vec!["State A", "State B", "State C"]
         );
-        assert!(PENDING_TIMELINE_OBSERVATIONS.lock().unwrap().is_empty());
+        assert_eq!(retained_observation_count_for_test(), 0);
         crate::state::set_notes_root_override(None).unwrap();
     }
 }

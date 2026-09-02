@@ -119,6 +119,11 @@ substitutes caller fallback bytes when that read fails.
 Known publication failures and proposal conflicts explicitly abandon their
 prepared intent; only an indeterminate post-publication finalization failure
 remains pending for restart recovery.
+External observations retain their exact captured Markdown in a vault-owned
+durable ledger before timeline application. `NoteTimeline` replays that ledger
+in order before later observations, authored publications, reconciliation, or
+history reads, so a transient failure or process restart cannot replace an
+already observed state with newer disk bytes.
 Each `AppState` completes that reconciliation successfully before its first
 history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live

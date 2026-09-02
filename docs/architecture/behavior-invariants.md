@@ -42,6 +42,12 @@ its local content and the external snapshot or deletion until the user chooses
 how to resolve the conflict. Navigation and destructive note actions cannot
 orphan an unresolved conflict.
 
+Every distinct external state captured by the watcher or reconciliation is
+retained durably before history application. A transient history failure or
+process restart replays that exact snapshot before a newer observation,
+authored publication, or history read; recovery never substitutes whatever
+bytes happen to be on disk later.
+
 ### Task mutations respect dirty documents
 
 A task mutation targeting a dirty open note changes the open document and then

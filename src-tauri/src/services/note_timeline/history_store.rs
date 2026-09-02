@@ -6,7 +6,8 @@
 use super::{
     HistoryIntentIdentity, LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind,
     MutationSource, NoteIdentity, NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision,
-    RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity,
+    RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity, VaultObservation,
+    VaultObservationKind, VaultObservationSource,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
@@ -20,7 +21,7 @@ use std::{
 const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_FORMAT: &str = "sqlite-v1";
 const HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 3;
+const HISTORY_SCHEMA_VERSION: u64 = 4;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -34,6 +35,11 @@ const MAX_MEASURED_REPLAY: Duration = Duration::from_millis(50);
 pub(super) enum PublicationIntentKind {
     Create,
     Update,
+}
+
+pub(super) struct RetainedObservation {
+    pub(super) sequence: i64,
+    pub(super) observation: VaultObservation,
 }
 
 #[cfg(test)]
@@ -505,6 +511,144 @@ fn push_op(ops: &mut Vec<DeltaOp>, operation: DeltaOp) {
         (Some(DeltaOp::Insert(existing)), DeltaOp::Insert(next)) => existing.extend(next),
         (_, operation) => ops.push(operation),
     }
+}
+
+fn observation_source_value(source: VaultObservationSource) -> &'static str {
+    match source {
+        VaultObservationSource::Watcher => "watcher",
+        VaultObservationSource::Reconciliation => "reconciliation",
+    }
+}
+
+fn observation_source_from_value(value: &str) -> Option<VaultObservationSource> {
+    match value {
+        "watcher" => Some(VaultObservationSource::Watcher),
+        "reconciliation" => Some(VaultObservationSource::Reconciliation),
+        _ => None,
+    }
+}
+
+fn observation_kind_value(kind: VaultObservationKind) -> &'static str {
+    match kind {
+        VaultObservationKind::CanonicalState => "canonicalState",
+        VaultObservationKind::ReconciliationScan => "reconciliationScan",
+        VaultObservationKind::Lifecycle(kind) => kind.as_storage_value(),
+    }
+}
+
+fn observation_kind_from_value(value: &str) -> Option<VaultObservationKind> {
+    match value {
+        "canonicalState" => Some(VaultObservationKind::CanonicalState),
+        "reconciliationScan" => Some(VaultObservationKind::ReconciliationScan),
+        value => LifecycleEventKind::from_storage_value(value).map(VaultObservationKind::Lifecycle),
+    }
+}
+
+pub(super) fn retain_observation(observation: &VaultObservation) -> Result<i64, String> {
+    let connection = open_store()?;
+    connection
+        .execute(
+            "INSERT INTO pending_observations (
+               source, kind, path, previous_path, observed_at_millis,
+               modified_at_millis, canonical_markdown
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                observation_source_value(observation.source),
+                observation_kind_value(observation.kind),
+                observation.path.to_string_lossy().into_owned(),
+                observation
+                    .previous_path
+                    .as_deref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                observation.observed_at_millis,
+                observation.modified_at_millis,
+                observation.canonical_markdown.as_deref(),
+            ],
+        )
+        .map_err(|error| format!("Retain Note Timeline observation: {error}"))?;
+    Ok(connection.last_insert_rowid())
+}
+
+pub(super) fn retained_observations() -> Result<Vec<RetainedObservation>, String> {
+    let connection = open_store()?;
+    let mut statement = connection
+        .prepare(
+            "SELECT sequence, source, kind, path, previous_path,
+                    observed_at_millis, modified_at_millis, canonical_markdown
+             FROM pending_observations
+             ORDER BY sequence ASC",
+        )
+        .map_err(|error| format!("Prepare retained Note Timeline observations: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, u64>(5)?,
+                row.get::<_, Option<u64>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+            ))
+        })
+        .map_err(|error| format!("Read retained Note Timeline observations: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Decode retained Note Timeline observations: {error}"))?;
+
+    rows.into_iter()
+        .map(
+            |(
+                sequence,
+                source,
+                kind,
+                path,
+                previous_path,
+                observed_at_millis,
+                modified_at_millis,
+                canonical_markdown,
+            )| {
+                let source = observation_source_from_value(&source).ok_or_else(|| {
+                    format!("Unknown retained Note Timeline observation source: {source}")
+                })?;
+                let kind = observation_kind_from_value(&kind).ok_or_else(|| {
+                    format!("Unknown retained Note Timeline observation kind: {kind}")
+                })?;
+                Ok(RetainedObservation {
+                    sequence,
+                    observation: VaultObservation {
+                        source,
+                        kind,
+                        path: PathBuf::from(path),
+                        previous_path: previous_path.map(PathBuf::from),
+                        observed_at_millis,
+                        modified_at_millis,
+                        canonical_markdown,
+                    },
+                })
+            },
+        )
+        .collect()
+}
+
+pub(super) fn acknowledge_observation(sequence: i64) -> Result<(), String> {
+    open_store()?
+        .execute(
+            "DELETE FROM pending_observations WHERE sequence = ?1",
+            params![sequence],
+        )
+        .map_err(|error| format!("Acknowledge Note Timeline observation: {error}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn retained_observation_count() -> u64 {
+    open_store()
+        .expect("open history store")
+        .query_row("SELECT COUNT(*) FROM pending_observations", [], |row| {
+            row.get(0)
+        })
+        .expect("count retained history observations")
 }
 
 pub(super) fn prepare_publication(
@@ -1149,6 +1293,16 @@ fn open_store() -> Result<Connection, String> {
              );
              CREATE INDEX IF NOT EXISTS lifecycle_events_by_note_time
                ON lifecycle_events(note_id, occurred_at_millis, event_id);
+             CREATE TABLE IF NOT EXISTS pending_observations (
+               sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+               source TEXT NOT NULL CHECK (source IN ('watcher', 'reconciliation')),
+               kind TEXT NOT NULL,
+               path TEXT NOT NULL,
+               previous_path TEXT,
+               observed_at_millis INTEGER NOT NULL,
+               modified_at_millis INTEGER,
+               canonical_markdown TEXT
+             );
              CREATE TABLE IF NOT EXISTS timeline_heads (
                note_id TEXT PRIMARY KEY,
                record_kind TEXT NOT NULL,

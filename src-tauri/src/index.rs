@@ -67,6 +67,11 @@ pub(crate) struct AppState {
     /// another in-process mutation from mistaking a live prepared intent for
     /// crash residue.
     note_timeline_history_recovered: Mutex<bool>,
+    /// Serializes replay of the vault-scoped durable observation ledger.
+    /// The ledger and its policy remain private to `NoteTimeline`; the lock
+    /// lives on the application state so two vault owners never share replay
+    /// coordination.
+    note_timeline_observation_replay: Mutex<()>,
 }
 
 /// Atomic counter of foreground IPC calls currently in flight on the hot
@@ -179,7 +184,16 @@ impl AppState {
             catalog_projection_retries,
             foreground_activity,
             note_timeline_history_recovered: Mutex::new(false),
+            note_timeline_observation_replay: Mutex::new(()),
         })
+    }
+
+    pub(crate) fn lock_note_timeline_observation_replay(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        self.note_timeline_observation_replay
+            .lock()
+            .map_err(|_| "Note Timeline observation replay lock poisoned".to_string())
     }
 
     pub(crate) fn ensure_note_timeline_history_recovered(&self) -> Result<(), String> {

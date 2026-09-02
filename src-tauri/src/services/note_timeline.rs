@@ -998,11 +998,13 @@ impl HistoryModeAccess<'_> {
     }
 
     pub(crate) fn revisions(&self) -> Result<Vec<NoteRevisionHeader>, String> {
+        NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::revisions(&self.note_id)
     }
 
     pub(crate) fn lifecycle_events(&self) -> Result<Vec<LifecycleEventHeader>, String> {
+        NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::lifecycle_events(&self.note_id)
     }
@@ -1011,6 +1013,7 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &RevisionIdentity,
     ) -> Result<ReconstructedNoteRevision, String> {
+        NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::reconstruct(&self.note_id, revision_id)
     }
@@ -1140,6 +1143,7 @@ impl<'a> NoteTimeline<'a> {
         retained_identity: Option<&NoteIdentity>,
         markdown: &str,
     ) -> Result<PreparedRevisionPublication, String> {
+        self.recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         let identity_prepared =
             self.prepare_publication(continuity_path, retained_identity, markdown)?;
@@ -1200,6 +1204,73 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn observe(
+        &self,
+        observation: VaultObservation,
+    ) -> Result<ObservationReceipt, String> {
+        let _replay = self.state.lock_note_timeline_observation_replay()?;
+        let observation = Self::capture_observed_markdown(observation)?;
+        if observation.kind == VaultObservationKind::ReconciliationScan {
+            self.replay_retained_observations(None)?;
+            return self.apply_observation(observation);
+        }
+
+        let requested_sequence = history_store::retain_observation(&observation)?;
+        self.replay_retained_observations(Some(requested_sequence))?
+            .ok_or_else(|| {
+                format!("Retained Note Timeline observation {requested_sequence} was not replayed")
+            })
+    }
+
+    fn recover_retained_observations(&self) -> Result<(), String> {
+        let _replay = self.state.lock_note_timeline_observation_replay()?;
+        self.replay_retained_observations(None).map(|_| ())
+    }
+
+    fn replay_retained_observations(
+        &self,
+        requested_sequence: Option<i64>,
+    ) -> Result<Option<ObservationReceipt>, String> {
+        let mut requested_receipt = None;
+        for retained in history_store::retained_observations()? {
+            let receipt = self
+                .apply_observation(retained.observation)
+                .map_err(|error| {
+                    format!(
+                        "Replay retained Note Timeline observation {}: {error}",
+                        retained.sequence
+                    )
+                })?;
+            history_store::acknowledge_observation(retained.sequence)?;
+            if requested_sequence == Some(retained.sequence) {
+                requested_receipt = Some(receipt);
+            }
+        }
+        Ok(requested_receipt)
+    }
+
+    fn capture_observed_markdown(
+        mut observation: VaultObservation,
+    ) -> Result<VaultObservation, String> {
+        let requires_markdown = matches!(observation.kind, VaultObservationKind::CanonicalState)
+            || matches!(
+                observation.kind,
+                VaultObservationKind::Lifecycle(
+                    LifecycleEventKind::Renamed | LifecycleEventKind::Moved
+                )
+            );
+        if requires_markdown && observation.canonical_markdown.is_none() {
+            observation.canonical_markdown =
+                Some(fs::read_to_string(&observation.path).map_err(|error| {
+                    format!(
+                        "Capture observed canonical note {}: {error}",
+                        observation.path.display()
+                    )
+                })?);
+        }
+        Ok(observation)
+    }
+
+    fn apply_observation(
         &self,
         observation: VaultObservation,
     ) -> Result<ObservationReceipt, String> {
@@ -1286,6 +1357,7 @@ impl<'a> NoteTimeline<'a> {
                             format!("Read observed moved note {}: {error}", path.display())
                         })
                     })?;
+                    self.state.ensure_note_timeline_history_recovered()?;
                     let transferred = self
                         .state
                         .prepare_note_identity_transfer(previous_path, &path)?;
@@ -1299,7 +1371,6 @@ impl<'a> NoteTimeline<'a> {
                         VaultObservationKind::Lifecycle(kind) => kind,
                         _ => unreachable!("matched lifecycle observation"),
                     };
-                    self.state.ensure_note_timeline_history_recovered()?;
                     history_store::record_observed_lifecycle_event(
                         &NoteIdentity::new(note_id),
                         lifecycle_kind,
@@ -1372,6 +1443,11 @@ pub(crate) fn inject_history_finalization_failure_once() {
 #[cfg(test)]
 pub(crate) fn prepared_history_intent_count_for_test(status: &str) -> u64 {
     history_store::prepared_intent_count(status)
+}
+
+#[cfg(test)]
+pub(crate) fn retained_observation_count_for_test() -> u64 {
+    history_store::retained_observation_count()
 }
 
 #[cfg(test)]
