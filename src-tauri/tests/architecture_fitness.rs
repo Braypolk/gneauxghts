@@ -479,6 +479,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     let post_publication =
         repository_file("src-tauri/src/services/note_timeline/post_publication.rs");
     let index = repository_file("src-tauri/src/index.rs");
+    let catalog = repository_file("src-tauri/src/services/note_catalog.rs");
     let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
     let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
     let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
@@ -520,8 +521,11 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
             "detached_identity_owners",
             "fn reserve_identity_transfer(",
             "expected_canonical_hash",
+            "catalog_projection_retries",
         ],
     );
+    assert_contains_all(&catalog, &["struct CatalogProjectionRetries"]);
+    assert_contains_none(&index, &["let mut candidate = index.clone()"]);
     assert_contains_all(&timeline, &["pub(crate) fn prepare_publication("]);
     assert_contains_all(
         &forgotten,

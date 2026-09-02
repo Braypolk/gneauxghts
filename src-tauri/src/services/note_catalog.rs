@@ -10,6 +10,7 @@ use crate::{
     note::DocumentKind,
 };
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -94,6 +95,72 @@ impl CatalogMutation {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct CatalogProjectionRetries {
+    lexical: Mutex<HashMap<PathBuf, CatalogMutation>>,
+}
+
+impl CatalogProjectionRetries {
+    fn retain_lexical(&self, mutation: &CatalogMutation) -> Result<(), String> {
+        self.lexical
+            .lock()
+            .map_err(|_| "Catalog projection retry lock poisoned".to_string())?
+            .insert(mutation.path().to_path_buf(), mutation.clone());
+        Ok(())
+    }
+
+    pub(crate) fn apply_lexical(
+        &self,
+        lexical: &LexicalIndex,
+        mutation: &CatalogMutation,
+    ) -> Result<(), String> {
+        match apply_lexical_projection(lexical, mutation) {
+            Ok(()) => {
+                self.lexical
+                    .lock()
+                    .map_err(|_| "Catalog projection retry lock poisoned".to_string())?
+                    .remove(mutation.path());
+                Ok(())
+            }
+            Err(error) => {
+                self.retain_lexical(mutation)?;
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn retry_lexical(&self, lexical: &LexicalIndex) -> Result<(), String> {
+        let pending = {
+            let mut retries = self
+                .lexical
+                .lock()
+                .map_err(|_| "Catalog projection retry lock poisoned".to_string())?;
+            std::mem::take(&mut *retries)
+        };
+        let mut first_error = None;
+        for mutation in pending.into_values() {
+            if let Err(error) = self.apply_lexical(lexical, &mutation) {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    pub(crate) fn apply_lexical_batch<'a>(
+        &self,
+        lexical: &LexicalIndex,
+        mutations: impl IntoIterator<Item = &'a CatalogMutation>,
+    ) -> Result<(), String> {
+        let mut first_error = None;
+        for mutation in mutations {
+            if let Err(error) = self.apply_lexical(lexical, mutation) {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+}
+
 pub(crate) struct DeferredCatalogProjection {
     pub(crate) mutation: CatalogMutation,
     pub(crate) lexical: bool,
@@ -125,13 +192,19 @@ impl DeferredCatalogProjection {
 pub(crate) struct NoteCatalog<'a> {
     notes_index: &'a Mutex<NotesIndex>,
     lexical: &'a Arc<LexicalIndex>,
+    retries: &'a CatalogProjectionRetries,
 }
 
 impl<'a> NoteCatalog<'a> {
-    pub(crate) fn new(notes_index: &'a Mutex<NotesIndex>, lexical: &'a Arc<LexicalIndex>) -> Self {
+    pub(crate) fn new(
+        notes_index: &'a Mutex<NotesIndex>,
+        lexical: &'a Arc<LexicalIndex>,
+        retries: &'a CatalogProjectionRetries,
+    ) -> Self {
         Self {
             notes_index,
             lexical,
+            retries,
         }
     }
 
@@ -141,49 +214,43 @@ impl<'a> NoteCatalog<'a> {
         note: IndexedNote,
         mode: CatalogWriteMode,
     ) -> Result<(), String> {
-        let mut index = self
+        let note = self
             .notes_index
             .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        let mut candidate = index.clone();
-        let note = candidate.upsert_note(path.clone(), note);
+            .map_err(|_| "Search index lock poisoned".to_string())?
+            .upsert_note(path.clone(), note);
         let plan = ProjectionPlan::for_upsert(mode, note.document_kind);
+        let mutation = CatalogMutation::Upsert {
+            path,
+            note: Box::new(note),
+        };
 
         if plan.lexical == ProjectionTiming::Synchronous {
-            self.lexical.upsert_note(&path, &note)?;
+            self.retries.apply_lexical(self.lexical, &mutation)?;
         }
 
         if plan.tasks == ProjectionTiming::Synchronous {
-            let _ = apply_task_projection(&CatalogMutation::Upsert {
-                path: path.clone(),
-                note: Box::new(note.clone()),
-            });
+            let _ = apply_task_projection(&mutation);
         }
-        *index = candidate;
         Ok(())
     }
 
     pub(crate) fn remove(&self, path: &Path, mode: CatalogWriteMode) -> Result<(), String> {
         let plan = ProjectionPlan::for_remove(mode);
-        let mut index = self
-            .notes_index
+        self.notes_index
             .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?;
-        let mut candidate = index.clone();
-
-        if plan.lexical == ProjectionTiming::Synchronous {
-            self.lexical.remove_note(path)?;
-        }
-
-        candidate.remove_note(path);
+            .map_err(|_| "Search index lock poisoned".to_string())?
+            .remove_note(path);
 
         let mutation = CatalogMutation::Remove {
             path: path.to_path_buf(),
         };
+        if plan.lexical == ProjectionTiming::Synchronous {
+            self.retries.apply_lexical(self.lexical, &mutation)?;
+        }
         if plan.tasks == ProjectionTiming::Synchronous {
             let _ = apply_task_projection(&mutation);
         }
-        *index = candidate;
         Ok(())
     }
 }
@@ -327,7 +394,8 @@ mod tests {
         let copy = "---\ngneauxghts:\n  id: shared-note-id\n  kind: note\n---\n\n- [ ] distinctive copied catalog task";
         let index = Mutex::new(NotesIndex::default());
         let lexical = Arc::new(LexicalIndex::new().unwrap());
-        let catalog = NoteCatalog::new(&index, &lexical);
+        let retries = CatalogProjectionRetries::default();
+        let catalog = NoteCatalog::new(&index, &lexical, &retries);
 
         catalog
             .upsert(
@@ -378,5 +446,34 @@ mod tests {
             crate::state::task_projection::load_tasks_for_note_id("shared-note-id").unwrap();
         assert_eq!(original_tasks.len(), 1);
         assert_eq!(original_tasks[0].text, "original catalog task");
+    }
+
+    #[test]
+    fn retained_lexical_payload_retries_independently_of_catalog_signatures() {
+        let notes = crate::test_support::TestDir::new("catalog-lexical-retry");
+        let path = notes.path().join("Retry.md");
+        let markdown =
+            "---\ngneauxghts:\n  id: retry-note-id\n  kind: note\n---\n\nDistinct retry payload";
+        let mutation = CatalogMutation::Upsert {
+            path: path.clone(),
+            note: Box::new(build_indexed_note(&path, markdown, 91)),
+        };
+        let lexical = LexicalIndex::new().unwrap();
+        let retries = CatalogProjectionRetries::default();
+        retries.retain_lexical(&mutation).unwrap();
+
+        retries.retry_lexical(&lexical).unwrap();
+
+        let results = lexical
+            .search(
+                "distinct retry",
+                "distinct retry",
+                &["distinct", "retry"],
+                10,
+                None,
+            )
+            .unwrap();
+        assert_eq!(results[0].result.note_id.as_deref(), Some("retry-note-id"));
+        assert!(retries.lexical.lock().unwrap().is_empty());
     }
 }

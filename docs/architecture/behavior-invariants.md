@@ -59,9 +59,10 @@ save into failure.
 If bytes were committed but a required projection degraded, the result carries
 the authoritative identity and a warning; callers do not retry the mutation.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
-During synchronous reconciliation, an identity-resolved catalog candidate does
-not advance its committed file signature until lexical projection succeeds;
-failure keeps or restores the dirty path so the projection remains retryable.
+During synchronous reconciliation, a failed lexical projection retains the
+exact identity-resolved payload in retry state independent of catalog file
+signatures. Retry neither depends on another filesystem change nor repeats
+identity resolution.
 
 ### Note Identity follows the note
 

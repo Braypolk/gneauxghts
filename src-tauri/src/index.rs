@@ -54,6 +54,7 @@ pub(crate) struct AppState {
     /// disk and the in-memory notes_index is updated; lexical/projection
     /// catch up shortly after.
     pub(crate) background_index_queue: crate::services::BackgroundIndexQueue,
+    catalog_projection_retries: crate::services::note_catalog::CatalogProjectionRetries,
     /// Counter of foreground IPC calls currently running on the hot path
     /// (note open / load session). The startup prewarm and the periodic
     /// background reconciler check it between per-note units of work and
@@ -166,6 +167,8 @@ impl AppState {
             interactive_invalidation: Mutex::new(InteractiveInvalidationState::default()),
             draft_cache: Mutex::new(DraftCache::default()),
             background_index_queue,
+            catalog_projection_retries:
+                crate::services::note_catalog::CatalogProjectionRetries::default(),
             foreground_activity,
         })
     }
@@ -249,7 +252,12 @@ impl AppState {
         path: PathBuf,
         note: IndexedNote,
     ) -> Result<(), String> {
-        crate::services::NoteCatalog::new(&self.notes_index, &self.lexical).upsert(
+        crate::services::NoteCatalog::new(
+            &self.notes_index,
+            &self.lexical,
+            &self.catalog_projection_retries,
+        )
+        .upsert(
             path.clone(),
             note,
             crate::services::note_catalog::CatalogWriteMode::Synchronous,
@@ -266,7 +274,12 @@ impl AppState {
         path: PathBuf,
         note: IndexedNote,
     ) -> Result<(), String> {
-        crate::services::NoteCatalog::new(&self.notes_index, &self.lexical).upsert(
+        crate::services::NoteCatalog::new(
+            &self.notes_index,
+            &self.lexical,
+            &self.catalog_projection_retries,
+        )
+        .upsert(
             path.clone(),
             note,
             crate::services::note_catalog::CatalogWriteMode::ManagedProjection,
@@ -275,7 +288,12 @@ impl AppState {
     }
 
     pub(crate) fn remove_note_indexes(&self, path: &Path) -> Result<(), String> {
-        crate::services::NoteCatalog::new(&self.notes_index, &self.lexical).remove(
+        crate::services::NoteCatalog::new(
+            &self.notes_index,
+            &self.lexical,
+            &self.catalog_projection_retries,
+        )
+        .remove(
             path,
             crate::services::note_catalog::CatalogWriteMode::Synchronous,
         )?;
@@ -320,6 +338,8 @@ impl AppState {
         _max_age: Duration,
         source: &str,
     ) -> Result<(), String> {
+        self.catalog_projection_retries
+            .retry_lexical(&self.lexical)?;
         let dirty_paths = {
             let mut invalidation = self
                 .interactive_invalidation
@@ -356,7 +376,6 @@ impl AppState {
     }
 
     fn apply_dirty_paths(&self, dirty_paths: Vec<PathBuf>) -> Result<bool, String> {
-        let retry_paths = dirty_paths.clone();
         let existing_signatures = {
             let index = self
                 .notes_index
@@ -375,36 +394,14 @@ impl AppState {
         let updates = collect_dirty_updates(dirty_paths, &existing_signatures)?;
         // Resolve stable identity once in the authoritative catalog before
         // any derived projection observes the update.
-        let staged = {
+        let (changed, updates) = {
             let mut index = self
                 .notes_index
                 .lock()
                 .map_err(|_| "Search index lock poisoned".to_string())?;
-            let mut candidate = index.clone();
-            let (changed, updates) = candidate.apply_pending_updates(updates);
-            let projection = updates.iter().try_for_each(|update| match update {
-                PendingIndexUpdate::Upsert(path, note) => self.lexical.upsert_note(path, note),
-                PendingIndexUpdate::Remove(path) => self.lexical.remove_note(path),
-            });
-            match projection {
-                Ok(()) => {
-                    candidate.mark_refreshed(changed);
-                    *index = candidate;
-                    Ok((changed, updates))
-                }
-                Err(error) => Err(error),
-            }
-        };
-        let (changed, updates) = match staged {
-            Ok(staged) => staged,
-            Err(error) => {
-                let mut invalidation = self
-                    .interactive_invalidation
-                    .lock()
-                    .map_err(|_| "Interactive invalidation lock poisoned".to_string())?;
-                invalidation.dirty_paths.extend(retry_paths);
-                return Err(error);
-            }
+            let (changed, updates) = index.apply_pending_updates(updates);
+            index.mark_refreshed(changed);
+            (changed, updates)
         };
         let projection_payloads: Vec<crate::services::note_catalog::CatalogMutation> = updates
             .iter()
@@ -420,9 +417,13 @@ impl AppState {
                 }
             })
             .collect();
+        let lexical_result = self
+            .catalog_projection_retries
+            .apply_lexical_batch(&self.lexical, &projection_payloads);
         for payload in projection_payloads {
             let _ = crate::services::note_catalog::apply_task_projection(&payload);
         }
+        lexical_result?;
         let mut invalidation = self
             .interactive_invalidation
             .lock()
@@ -440,6 +441,8 @@ impl AppState {
     where
         F: FnOnce(&[PathBuf], &HashSet<PathBuf>) -> Result<(), String>,
     {
+        self.catalog_projection_retries
+            .retry_lexical(&self.lexical)?;
         let (existing_signatures, existing_paths, managed_chat_paths) = {
             let index = self
                 .notes_index
@@ -481,18 +484,7 @@ impl AppState {
                 .notes_index
                 .lock()
                 .map_err(|_| "Search index lock poisoned".to_string())?;
-            let mut candidate = index.clone();
-            let (changed, updates) = candidate.apply_refresh_updates(updates, seen_paths);
-            // Commit the catalog signature only after required synchronous
-            // projections accept the same identity-resolved payload.
-            for (path, note) in &updates {
-                self.lexical.upsert_note(path, note)?;
-            }
-            for path in &stale_lexical_paths {
-                self.lexical.remove_note(path)?;
-            }
-            *index = candidate;
-            (changed, updates)
+            index.apply_refresh_updates(updates, seen_paths)
         };
         let projection_payloads: Vec<crate::services::note_catalog::CatalogMutation> = updates
             .iter()
@@ -506,9 +498,13 @@ impl AppState {
                 crate::services::note_catalog::CatalogMutation::Remove { path: path.clone() }
             }))
             .collect();
+        let lexical_result = self
+            .catalog_projection_retries
+            .apply_lexical_batch(&self.lexical, &projection_payloads);
         for payload in projection_payloads {
             let _ = crate::services::note_catalog::apply_task_projection(&payload);
         }
+        lexical_result?;
         let mut invalidation = self
             .interactive_invalidation
             .lock()
@@ -664,7 +660,7 @@ impl AppState {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
     by_id: HashMap<String, PathBuf>,

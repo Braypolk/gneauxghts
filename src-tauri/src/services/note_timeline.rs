@@ -849,10 +849,17 @@ impl<'a> NoteTimeline<'a> {
             .map(|path| self.state.indexed_note_identity(path))
             .transpose()?
             .flatten();
-        let authoritative_identity = retained_identity
+        let retained_identity = retained_identity
             .map(NoteIdentity::as_str)
-            .filter(|note_id| !note_id.trim().is_empty())
-            .or(catalog_identity.as_deref());
+            .filter(|note_id| !note_id.trim().is_empty());
+        if let (Some(retained), Some(catalog)) = (retained_identity, catalog_identity.as_deref()) {
+            if retained != catalog {
+                return Err(format!(
+                    "Note identity continuity conflict: retained identity {retained} does not match catalog identity {catalog}."
+                ));
+            }
+        }
+        let authoritative_identity = catalog_identity.as_deref().or(retained_identity);
         let embedded_identity = crate::note::parse_note(markdown)
             .frontmatter
             .managed
@@ -1044,6 +1051,35 @@ mod tests {
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Moved),
                 VaultObservationKind::Lifecycle(LifecycleEventKind::Missing),
             ]
+        );
+    }
+
+    #[test]
+    fn publication_rejects_retained_identity_that_conflicts_with_catalog_owner() {
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let path = PathBuf::from("/vault/Current.md");
+        let canonical = "---\ngneauxghts:\n  id: current-owner\n  kind: note\n---\n\nCurrent";
+        state.notes_index.lock().unwrap().upsert_note(
+            path.clone(),
+            crate::index::build_indexed_note(&path, canonical, 41),
+        );
+
+        let error = NoteTimeline::new(&state)
+            .prepare_publication(
+                Some(&path),
+                Some(&NoteIdentity::new("stale-proposal-owner")),
+                "Proposed authored content",
+            )
+            .expect_err("conflicting continuity evidence must not publish");
+
+        assert!(error.contains("identity continuity conflict"));
+        assert_eq!(
+            state.indexed_note_identity(&path).unwrap().as_deref(),
+            Some("current-owner")
         );
     }
 

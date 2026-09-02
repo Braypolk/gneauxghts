@@ -88,9 +88,10 @@ and immediately enters `NoteTimeline.mutate`, which updates the required
 in-memory note catalog through its private post-publication helper. Task,
 lexical, and semantic projections follow that same timeline-owned path.
 Lexical and semantic work may be queued after the canonical write.
-Synchronous reconciliation stages identity resolution in a candidate catalog
-and advances its file signature only after required lexical projection accepts
-the same payload, preserving a retry path on projection failure.
+Synchronous reconciliation resolves identity once, commits the catalog, and
+hands the exact resolved payload to lexical projection. A failed projection is
+retained in a small path-keyed retry ledger independent of file signatures, so
+retry does not clone or hold the whole catalog during lexical I/O.
 
 Once canonical bytes exist, the returned identity and path are authoritative.
 A later required-projection problem is returned as `commitWarning`; callers
