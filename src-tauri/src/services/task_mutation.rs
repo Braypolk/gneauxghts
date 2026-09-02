@@ -132,14 +132,7 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
             write_task_document_atomically(path, prepared.canonical_markdown())
         {
             let (_, history_intent) = prepared.into_parts();
-            timeline
-                .abandon_revision_publication(history_intent)
-                .map_err(|abandon_error| {
-                    format!(
-                        "{publication_error}; additionally failed to abandon its prepared Note Revision: {abandon_error}"
-                    )
-                })?;
-            return Err(publication_error);
+            return Err(history_intent.abandon_after_publication_failure(publication_error));
         }
         Ok(prepared)
     }

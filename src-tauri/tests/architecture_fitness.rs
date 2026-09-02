@@ -573,7 +573,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &[
             "pub(crate) fn persist_note_with_preparation<P, T>(",
             "with_note_file_mutation(||",
-            "abandon(context)",
+            "abandon_after_publication_failure(",
             "let outcome = finalize(",
         ],
     );
@@ -584,8 +584,16 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &[
             "pub(crate) struct HistoryIntentIdentity",
             "history_intent: HistoryIntentIdentity",
-            "pub(crate) fn abandon_revision_publication(",
+            "pub(crate) fn abandon_after_publication_failure(",
             "history_store::finalize_publication(&history_intent, source, &path, canonical)",
+        ],
+    );
+    assert_contains_all(
+        &proposals,
+        &[
+            "commit_prepared_note_review(",
+            "commit_prepared_note_creation_at_path(",
+            "prepared.canonical_markdown().to_string()",
         ],
     );
     assert_contains_none(

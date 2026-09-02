@@ -2,7 +2,7 @@ use crate::{
     chat::{ChatAgentProposal, ChatService, VaultAccess},
     index::AppState,
     proposals::{
-        commit_note_creation_at_path, commit_note_review as commit_review,
+        commit_prepared_note_creation_at_path, commit_prepared_note_review,
         plan_agent_creation_commit, plan_agent_update_commit, CommitNoteReviewResult,
         ProposalPreview,
     },
@@ -90,43 +90,38 @@ pub(crate) fn commit_agent_proposal(
             retained_identity.as_ref(),
             &committed_markdown,
         )?;
-        let (committed_markdown, history_intent) = prepared.into_parts();
         let publication_result = if proposal.kind == "update" {
-            commit_review(
+            commit_prepared_note_review(
                 &notes_dir,
                 intent.target_path.to_string_lossy().into_owned(),
                 expected_base_hash
                     .clone()
                     .expect("update proposal base hash was parsed"),
-                committed_markdown.clone(),
+                prepared.canonical_markdown().to_string(),
             )
         } else {
-            commit_note_creation_at_path(
+            commit_prepared_note_creation_at_path(
                 &notes_dir,
                 &intent.target_path,
                 create_title
                     .clone()
                     .expect("creation proposal title was parsed"),
-                committed_markdown.clone(),
+                prepared.canonical_markdown().to_string(),
             )
         };
         let mut result = match publication_result {
             Ok(result) => result,
             Err(publication_error) => {
-                timeline
-                    .abandon_revision_publication(history_intent)
-                    .map_err(|abandon_error| {
-                        format!(
-                            "{publication_error}; additionally failed to abandon its prepared Note Revision: {abandon_error}"
-                        )
-                    })?;
-                return Err(publication_error);
+                let (_, history_intent) = prepared.into_parts();
+                return Err(history_intent.abandon_after_publication_failure(publication_error));
             }
         };
         if result.applied.is_none() {
-            timeline.abandon_revision_publication(history_intent)?;
+            let (_, history_intent) = prepared.into_parts();
+            history_intent.abandon()?;
             return Ok(result);
         }
+        let (committed_markdown, history_intent) = prepared.into_parts();
         let synchronization =
             synchronize_applied_change(&state, &result, history_intent, committed_markdown);
         result.note_id = Some(synchronization.note_id);

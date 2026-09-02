@@ -14,12 +14,13 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
-    time::{Duration, Instant, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_FORMAT: &str = "sqlite-v1";
 const HISTORY_GENERATION: u64 = 1;
+const HISTORY_SCHEMA_VERSION: u64 = 2;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -83,6 +84,44 @@ pub(super) fn replace_lifecycle_kind(note_id: &NoteIdentity, kind: &str) {
             params![kind, note_id.as_str()],
         )
         .expect("replace stored lifecycle kind");
+}
+
+#[cfg(test)]
+pub(super) fn replace_lifecycle_payload_version(note_id: &NoteIdentity, version: i64) {
+    open_store()
+        .expect("open history store")
+        .execute(
+            "UPDATE lifecycle_events SET payload_version = ?1 WHERE note_id = ?2",
+            params![version, note_id.as_str()],
+        )
+        .expect("replace stored lifecycle payload version");
+}
+
+#[cfg(test)]
+pub(super) fn replace_revision_payload_version(note_id: &NoteIdentity, version: i64) {
+    open_store()
+        .expect("open history store")
+        .execute(
+            "UPDATE revisions SET payload_version = ?1 WHERE note_id = ?2",
+            params![version, note_id.as_str()],
+        )
+        .expect("replace stored revision payload version");
+}
+
+#[cfg(test)]
+pub(super) fn replace_revision_predecessor(
+    note_id: &NoteIdentity,
+    kind: Option<&str>,
+    identity: Option<&str>,
+) {
+    open_store()
+        .expect("open history store")
+        .execute(
+            "UPDATE revisions SET predecessor_kind = ?1, predecessor_id = ?2
+             WHERE note_id = ?3",
+            params![kind, identity, note_id.as_str()],
+        )
+        .expect("replace stored revision predecessor");
 }
 
 #[cfg(test)]
@@ -488,14 +527,17 @@ pub(super) fn prepare_publication(
     let connection = open_store()?;
     let intent_id = crate::note::generate_note_id();
     let revision_id = RevisionIdentity::issue().0;
+    let prepared_at_millis = crate::time::current_time_millis()
+        .map_err(|error| format!("Issue canonical publication time: {error}"))?;
     let lifecycle_event_id =
         (kind == PublicationIntentKind::Create).then(|| LifecycleEventIdentity::issue().0);
     connection
         .execute(
             "INSERT INTO prepared_intents (
                intent_id, revision_id, lifecycle_event_id, note_id, target_path,
-               source, prepared_at_millis, authored_payload, result_hash, status
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'prepared')",
+               source, prepared_at_millis, committed_at_millis, authored_payload,
+               result_hash, status
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?9, 'prepared')",
             params![
                 intent_id,
                 revision_id,
@@ -503,7 +545,7 @@ pub(super) fn prepare_publication(
                 note_id,
                 target_path.to_string_lossy().into_owned(),
                 source.as_storage_value(),
-                now_millis(),
+                prepared_at_millis,
                 authored_payload,
                 result_hash,
             ],
@@ -523,9 +565,6 @@ pub(super) fn finalize_publication(
     }
     let payload = AuthoredState::from_canonical(canonical_markdown).encode();
     let result_hash = hash(&payload);
-    let canonical_note_id = managed_note_identity(canonical_markdown)?;
-    let committed_at_millis = crate::time::current_time_millis()
-        .map_err(|error| format!("Record canonical publication time: {error}"))?;
     let mut connection = open_store()?;
     let intent = connection
         .query_row(
@@ -550,6 +589,25 @@ pub(super) fn finalize_publication(
                 target_path.display()
             )
         })?;
+    let canonical_note_id = match managed_note_identity(canonical_markdown) {
+        Ok(note_id) => note_id,
+        Err(error) => {
+            if intent.3 == "prepared" {
+                connection
+                    .execute(
+                        "UPDATE prepared_intents SET status = 'abandoned'
+                         WHERE intent_id = ?1 AND status = 'prepared'",
+                        params![history_intent.as_str()],
+                    )
+                    .map_err(|abandon_error| {
+                        format!(
+                            "{error}; additionally failed to abandon its prepared Note Revision: {abandon_error}"
+                        )
+                    })?;
+            }
+            return Err(error);
+        }
+    };
     if intent.0 != target_path.to_string_lossy()
         || intent.1 != source.as_storage_value()
         || intent.2 != result_hash
@@ -567,12 +625,7 @@ pub(super) fn finalize_publication(
         }
         return Err("Committed note does not match its exact durable history intent".to_string());
     }
-    finalize_intent(
-        &mut connection,
-        history_intent.as_str(),
-        &payload,
-        committed_at_millis,
-    )
+    finalize_intent(&mut connection, history_intent.as_str(), &payload)
 }
 
 pub(super) fn abandon_publication(history_intent: &HistoryIntentIdentity) -> Result<(), String> {
@@ -592,7 +645,7 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
     let mut statement = connection
         .prepare(
             "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id,
-                    committed_at_millis
+                    committed_at_millis, payload_version
              FROM revisions WHERE note_id = ?1",
         )
         .map_err(|error| error.to_string())?;
@@ -607,6 +660,7 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                 predecessor_id,
                 row.get::<_, String>(3)?,
                 row.get::<_, u64>(5)?,
+                row.get::<_, i64>(6)?,
             ))
         })
         .map_err(|error| error.to_string())?
@@ -614,16 +668,25 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
         .map_err(|error| error.to_string())?
         .into_iter()
         .map(
-            |(base, revision_id, predecessor_kind, predecessor_id, source, committed_at_millis)| {
+            |(
+                base,
+                revision_id,
+                predecessor_kind,
+                predecessor_id,
+                source,
+                committed_at_millis,
+                payload_version,
+            )| {
                 let source = MutationSource::from_storage_value(&source)
                     .ok_or_else(|| format!("Unknown stored Mutation Source `{source}`"))?;
+                let payload_version = parse_payload_version(payload_version)?;
                 Ok((
                     base,
                     NoteRevisionHeader {
                         identity: RevisionIdentity::from_persisted(revision_id),
                         note_identity: note_id.clone(),
-                        predecessor: parse_record_identity(predecessor_kind, predecessor_id),
-                        payload_version: PayloadVersion::V1,
+                        predecessor: parse_record_identity(predecessor_kind, predecessor_id)?,
+                        payload_version,
                         source,
                         committed_at_millis,
                     },
@@ -662,7 +725,7 @@ pub(super) fn lifecycle_events(
     let connection = open_store()?;
     let mut statement = connection
         .prepare(
-            "SELECT event_id, predecessor_kind, predecessor_id, kind
+            "SELECT event_id, predecessor_kind, predecessor_id, kind, payload_version
              FROM lifecycle_events WHERE note_id = ?1
              ORDER BY occurred_at_millis ASC, event_id ASC",
         )
@@ -676,23 +739,26 @@ pub(super) fn lifecycle_events(
                 predecessor_kind,
                 predecessor_id,
                 row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         })
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?
         .into_iter()
-        .map(|(event_id, predecessor_kind, predecessor_id, kind)| {
-            let kind = LifecycleEventKind::from_storage_value(&kind)
-                .ok_or_else(|| format!("Unknown stored Lifecycle Event Kind `{kind}`"))?;
-            Ok(LifecycleEventHeader {
-                identity: LifecycleEventIdentity::from_persisted(event_id),
-                note_identity: note_id.clone(),
-                predecessor: parse_record_identity(predecessor_kind, predecessor_id),
-                payload_version: PayloadVersion::V1,
-                kind,
-            })
-        })
+        .map(
+            |(event_id, predecessor_kind, predecessor_id, kind, payload_version)| {
+                let kind = LifecycleEventKind::from_storage_value(&kind)
+                    .ok_or_else(|| format!("Unknown stored Lifecycle Event Kind `{kind}`"))?;
+                Ok(LifecycleEventHeader {
+                    identity: LifecycleEventIdentity::from_persisted(event_id),
+                    note_identity: note_id.clone(),
+                    predecessor: parse_record_identity(predecessor_kind, predecessor_id)?,
+                    payload_version: parse_payload_version(payload_version)?,
+                    kind,
+                })
+            },
+        )
         .collect::<Result<Vec<_>, String>>()?;
     Ok(events)
 }
@@ -753,6 +819,7 @@ fn open_store() -> Result<Connection, String> {
                target_path TEXT NOT NULL,
                source TEXT NOT NULL,
                prepared_at_millis INTEGER NOT NULL,
+               committed_at_millis INTEGER NOT NULL,
                authored_payload BLOB NOT NULL,
                result_hash TEXT NOT NULL,
                status TEXT NOT NULL CHECK (status IN ('prepared', 'finalized', 'abandoned'))
@@ -820,7 +887,7 @@ fn open_store() -> Result<Connection, String> {
             if vault_id == manifest.vault_id
                 && format == HISTORY_FORMAT
                 && generation == HISTORY_GENERATION
-                && schema == 1 => {}
+                && schema == HISTORY_SCHEMA_VERSION => {}
         Some(_) => {
             return Err(
                 "Note Timeline history store identity or generation does not match the vault"
@@ -832,8 +899,13 @@ fn open_store() -> Result<Connection, String> {
                 .execute(
                     "INSERT INTO history_metadata (
                        singleton, vault_id, history_format, history_generation, schema_version
-                     ) VALUES (1, ?1, ?2, ?3, 1)",
-                    params![manifest.vault_id, HISTORY_FORMAT, HISTORY_GENERATION],
+                     ) VALUES (1, ?1, ?2, ?3, ?4)",
+                    params![
+                        manifest.vault_id,
+                        HISTORY_FORMAT,
+                        HISTORY_GENERATION,
+                        HISTORY_SCHEMA_VERSION
+                    ],
                 )
                 .map_err(|error| error.to_string())?;
         }
@@ -882,14 +954,8 @@ fn recover_pending_with_connection(connection: &Connection) -> Result<(), String
                     && canonical_payload == intended_payload
                     && managed_note_identity(&markdown).as_deref() == Ok(intended_note_id.as_str())
                 {
-                    let committed_at_millis = file_modified_at_millis(&path)?;
                     let mut recovered = open_existing_connection(connection)?;
-                    finalize_intent(
-                        &mut recovered,
-                        &intent_id,
-                        &canonical_payload,
-                        committed_at_millis,
-                    )?;
+                    finalize_intent(&mut recovered, &intent_id, &canonical_payload)?;
                 } else {
                     connection
                         .execute(
@@ -909,7 +975,12 @@ fn recover_pending_with_connection(connection: &Connection) -> Result<(), String
                     )
                     .map_err(|error| error.to_string())?;
             }
-            Err(_) => {}
+            Err(error) => {
+                return Err(format!(
+                    "Read pending canonical publication {}: {error}",
+                    path.display()
+                ));
+            }
         }
     }
     Ok(())
@@ -934,7 +1005,6 @@ fn finalize_intent(
     connection: &mut Connection,
     intent_id: &str,
     authored_payload: &[u8],
-    committed_at_millis: u64,
 ) -> Result<(), String> {
     let transaction = connection
         .transaction()
@@ -966,7 +1036,7 @@ fn finalize_intent(
         return Ok(());
     }
 
-    let occurred_at = committed_at_millis;
+    let occurred_at = intent.committed_at_millis;
     let mut predecessor = head
         .as_ref()
         .map(|head| (head.record_kind.clone(), head.record_id.clone()));
@@ -1097,6 +1167,7 @@ struct PreparedIntent {
     source: String,
     authored_payload: Vec<u8>,
     result_hash: String,
+    committed_at_millis: u64,
     status: String,
 }
 
@@ -1111,7 +1182,7 @@ fn load_intent(transaction: &Transaction<'_>, intent_id: &str) -> Result<Prepare
     transaction
         .query_row(
             "SELECT revision_id, lifecycle_event_id, note_id, source,
-                    authored_payload, result_hash, status
+                    authored_payload, result_hash, committed_at_millis, status
              FROM prepared_intents WHERE intent_id = ?1",
             params![intent_id],
             |row| {
@@ -1122,7 +1193,8 @@ fn load_intent(transaction: &Transaction<'_>, intent_id: &str) -> Result<Prepare
                     source: row.get(3)?,
                     authored_payload: row.get(4)?,
                     result_hash: row.get(5)?,
-                    status: row.get(6)?,
+                    committed_at_millis: row.get(6)?,
+                    status: row.get(7)?,
                 })
             },
         )
@@ -1211,15 +1283,27 @@ fn reconstruct_revision(connection: &Connection, revision_id: &str) -> Result<Ve
 fn parse_record_identity(
     kind: Option<String>,
     identity: Option<String>,
-) -> Option<TimelineRecordIdentity> {
+) -> Result<Option<TimelineRecordIdentity>, String> {
     match (kind.as_deref(), identity) {
-        (Some("revision"), Some(identity)) => Some(TimelineRecordIdentity::Revision(
+        (None, None) => Ok(None),
+        (Some("revision"), Some(identity)) => Ok(Some(TimelineRecordIdentity::Revision(
             RevisionIdentity::from_persisted(identity),
+        ))),
+        (Some("lifecycleEvent"), Some(identity)) => {
+            Ok(Some(TimelineRecordIdentity::LifecycleEvent(
+                LifecycleEventIdentity::from_persisted(identity),
+            )))
+        }
+        (kind, identity) => Err(format!(
+            "Invalid stored Timeline predecessor kind={kind:?} identity={identity:?}"
         )),
-        (Some("lifecycleEvent"), Some(identity)) => Some(TimelineRecordIdentity::LifecycleEvent(
-            LifecycleEventIdentity::from_persisted(identity),
-        )),
-        _ => None,
+    }
+}
+
+fn parse_payload_version(version: i64) -> Result<PayloadVersion, String> {
+    match version {
+        1 => Ok(PayloadVersion::V1),
+        _ => Err(format!("Unknown stored Payload Version `{version}`")),
     }
 }
 
@@ -1236,10 +1320,6 @@ fn read_u64(encoded: &[u8], offset: usize) -> Result<u64, String> {
         .map_err(|_| "Invalid fixed-width payload field".to_string())
 }
 
-fn now_millis() -> u64 {
-    crate::time::current_time_millis().unwrap_or(0)
-}
-
 fn managed_note_identity(markdown: &str) -> Result<String, String> {
     crate::note::parse_note(markdown)
         .frontmatter
@@ -1247,23 +1327,6 @@ fn managed_note_identity(markdown: &str) -> Result<String, String> {
         .map(|metadata| metadata.id)
         .filter(|identity| !identity.trim().is_empty())
         .ok_or_else(|| "Canonical history publication has no managed Note Identity".to_string())
-}
-
-fn file_modified_at_millis(path: &Path) -> Result<u64, String> {
-    let modified = fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .map_err(|error| {
-            format!(
-                "Read canonical publication time for {}: {error}",
-                path.display()
-            )
-        })?;
-    let millis = modified
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| format!("Canonical publication time precedes the Unix epoch: {error}"))?
-        .as_millis();
-    u64::try_from(millis)
-        .map_err(|_| "Canonical publication time exceeds supported range".to_string())
 }
 
 #[cfg(test)]

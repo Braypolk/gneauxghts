@@ -406,8 +406,29 @@ pub(crate) fn commit_note_review(
     let normalized = note::normalize_wikilink_markdown(&markdown);
     note::reject_chat_projection_write(&normalized)?;
     let prepared = note::prepare_note_markdown(&normalized, Some(&raw), Some(None))?.0;
-    let expected_write = vault_watcher::record_expected_write(&note_path, &prepared);
-    atomic_write_note(&note_path, prepared.as_bytes())?;
+    commit_prepared_note_review(notes_dir, path, expected_base_hash, prepared)
+}
+
+pub(crate) fn commit_prepared_note_review(
+    notes_dir: &Path,
+    path: String,
+    expected_base_hash: String,
+    canonical_markdown: String,
+) -> Result<CommitNoteReviewResult, String> {
+    let note_path = validate_existing_note_path(notes_dir, &path)?;
+    let raw = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
+    if content_hash(&raw) != expected_base_hash {
+        return Ok(CommitNoteReviewResult {
+            status: "conflict".to_string(),
+            applied: None,
+            note_id: None,
+            message: Some("Note changed on disk.".to_string()),
+            commit_warning: None,
+        });
+    }
+    note::reject_chat_projection_write(&canonical_markdown)?;
+    let expected_write = vault_watcher::record_expected_write(&note_path, &canonical_markdown);
+    atomic_write_note(&note_path, canonical_markdown.as_bytes())?;
     expected_write.commit();
     Ok(CommitNoteReviewResult {
         status: "committed".to_string(),
@@ -509,6 +530,7 @@ pub(crate) fn commit_note_creation(
     })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn commit_note_creation_at_path(
     notes_dir: &Path,
     target_path: &Path,
@@ -522,8 +544,22 @@ pub(crate) fn commit_note_creation_at_path(
     let normalized = note::normalize_wikilink_markdown(&markdown);
     note::reject_chat_projection_write(&normalized)?;
     let prepared = note::prepare_note_markdown(&normalized, None, Some(None))?.0;
-    let expected_write = vault_watcher::record_expected_write(&target_path, &prepared);
-    match create_note_without_overwrite(&target_path, prepared.as_bytes()) {
+    commit_prepared_note_creation_at_path(notes_dir, &target_path, title, prepared)
+}
+
+pub(crate) fn commit_prepared_note_creation_at_path(
+    notes_dir: &Path,
+    target_path: &Path,
+    title: String,
+    canonical_markdown: String,
+) -> Result<CommitNoteReviewResult, String> {
+    if title.trim().is_empty() {
+        return Err("A title is required for a new note.".to_string());
+    }
+    let target_path = canonical_agent_commit_target(notes_dir, target_path)?;
+    note::reject_chat_projection_write(&canonical_markdown)?;
+    let expected_write = vault_watcher::record_expected_write(&target_path, &canonical_markdown);
+    match create_note_without_overwrite(&target_path, canonical_markdown.as_bytes()) {
         Ok(()) => {
             expected_write.commit();
             Ok(CommitNoteReviewResult {
@@ -806,7 +842,7 @@ fn reject_chat_projection_path(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_note_creation, commit_note_review, preview_note_change,
+        commit_note_creation, commit_note_review, commit_prepared_note_review, preview_note_change,
         preview_note_change_from_working, preview_note_creation, preview_note_rewrite,
         preview_note_rewrite_from_working, ProposedTextEdit,
     };
@@ -1128,5 +1164,22 @@ mod tests {
         let saved = fs::read_to_string(path).expect("saved");
         assert!(saved.contains("custom: keep"));
         assert!(saved.ends_with("New"));
+    }
+
+    #[test]
+    fn prepared_review_publishes_exact_canonical_bytes() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("proposal-exact-review-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
+        let dir = setup("proposal-exact-review");
+        let (path, hash) = write_note(&dir, "Exact.md", "old");
+        let canonical = "---\ngneauxghts:\n  id: fixed-id\n  kind: note\n  updated_at: fixed-time\n---\n\nExact body\n";
+
+        let result =
+            commit_prepared_note_review(dir.path(), path.clone(), hash, canonical.to_string())
+                .expect("commit exact prepared bytes");
+
+        assert_eq!(result.status, "committed");
+        assert_eq!(fs::read_to_string(path).unwrap(), canonical);
     }
 }

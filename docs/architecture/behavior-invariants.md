@@ -68,9 +68,10 @@ If authoritative Markdown cannot be read after publication, history remains
 pending and the committed result carries a warning; caller fallback bytes are
 never finalized as history truth.
 Finalization verifies both authored bytes and managed Note Identity, and the
-revision's committed time is captured by the app at successful publication so
-a later restart cannot rewrite history time. Crash recovery uses the canonical
-file's modification time as publication evidence. Known write failures and
+revision's committed time is issued by the app into the durable intent
+immediately before publication, so immediate finalization and restart recovery
+use the same app-owned time and later filesystem metadata cannot rewrite
+history. Known write failures and
 conflicts abandon their prepared intents immediately; recoverable pending
 state is reserved for uncertain post-publication finalization.
 Pending-intent recovery must succeed once per application state before its

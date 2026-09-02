@@ -72,8 +72,8 @@ preparation through publication and history finalization. Identical authored
 content finalizes without another Note Revision; distinct content finalizes a
 versioned, hash-verified delta or compressed checkpoint. Exact finalization
 also verifies the managed Note Identity in the published file, and records the
-app-owned publication time rather than the later reconciliation time. Crash
-recovery uses the canonical file's modification time as publication evidence.
+app-owned publication time issued into the durable intent immediately before
+the write rather than filesystem metadata or later reconciliation time.
 
 History Mode and agent restore capabilities require grants whose constructors
 remain private to the timeline module. Ordinary chat can receive only the
