@@ -16,7 +16,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Cursor,
     path::{Path, PathBuf},
@@ -27,7 +27,7 @@ const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_OBSERVATIONS_FILE_NAME: &str = "note-timeline-history-observations.json";
 pub(super) const HISTORY_FORMAT: &str = "sqlite-v1";
 pub(super) const INITIAL_HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 6;
+const HISTORY_SCHEMA_VERSION: u64 = 7;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -40,6 +40,8 @@ const MAX_COMPACTION_PAGES_PER_PASS: u64 = 256;
 
 static HISTORY_OBSERVATIONS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static HISTORY_STORE_OPEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static ACTIVE_HISTORY_STORE_SESSIONS: std::sync::Mutex<BTreeSet<PathBuf>> =
+    std::sync::Mutex::new(BTreeSet::new());
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,8 +56,38 @@ struct ObservedHistorySelection {
     history_format: String,
     generation: u64,
     #[serde(default)]
+    store_instance_id: Option<String>,
+    #[serde(default)]
+    clean_close_sequence: u64,
+    #[serde(default)]
     allow_missing_store: bool,
+    #[serde(default)]
+    allow_legacy_migration: bool,
     last_reset: Option<PersistedHistoryReset>,
+}
+
+struct StorePortability {
+    instance_id: String,
+    clean_close_sequence: u64,
+    state: StorePortabilityState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StorePortabilityState {
+    Open,
+    Portable,
+}
+
+impl StorePortabilityState {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "open" => Ok(Self::Open),
+            "portable" => Ok(Self::Portable),
+            other => Err(format!(
+                "Note Timeline history store has invalid portability state `{other}`"
+            )),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -93,6 +125,7 @@ pub(super) enum FaultPoint {
     Baseline,
     Deletion,
     Migration,
+    Close,
 }
 
 #[cfg(test)]
@@ -113,6 +146,18 @@ pub(super) fn prepared_intent_count(status: &str) -> u64 {
             |row| row.get(0),
         )
         .expect("count prepared history intents")
+}
+
+#[cfg(test)]
+pub(super) fn prepared_intent_count_without_opening_store(status: &str) -> u64 {
+    Connection::open(history_database_path().expect("history database path"))
+        .expect("inspect closed history store")
+        .query_row(
+            "SELECT COUNT(*) FROM prepared_intents WHERE status = ?1",
+            params![status],
+            |row| row.get(0),
+        )
+        .expect("count prepared history intents without opening store")
 }
 
 #[cfg(test)]
@@ -155,6 +200,10 @@ pub(super) fn replace_history_generation(generation: u64) {
 #[cfg(test)]
 pub(super) fn remove_history_store() {
     let data_dir = crate::state::vault_data_dir().expect("vault data directory");
+    ACTIVE_HISTORY_STORE_SESSIONS
+        .lock()
+        .expect("history store sessions lock")
+        .remove(&data_dir.join(HISTORY_DATABASE_FILE_NAME));
     for path in [
         data_dir.join(HISTORY_DATABASE_FILE_NAME),
         data_dir.join(format!("{HISTORY_DATABASE_FILE_NAME}-wal")),
@@ -182,6 +231,30 @@ pub(super) fn auto_vacuum_mode_for_test() -> u64 {
         .expect("open history store")
         .query_row("PRAGMA auto_vacuum", [], |row| row.get(0))
         .expect("read history auto-vacuum mode")
+}
+
+#[cfg(test)]
+pub(super) fn hold_history_store_open_for_test() -> Connection {
+    let connection = open_store().expect("hold history store open");
+    connection
+        .pragma_update(None, "wal_autocheckpoint", 0_u64)
+        .expect("disable WAL autocheckpoint for recovery fixture");
+    connection
+}
+
+#[cfg(test)]
+pub(super) fn history_database_path_for_test(vault_root: &Path) -> PathBuf {
+    crate::state::vault_data_dir_for(vault_root).join(HISTORY_DATABASE_FILE_NAME)
+}
+
+#[cfg(test)]
+pub(super) fn history_wal_path_for_test(vault_root: &Path) -> PathBuf {
+    sqlite_sidecar_path(&history_database_path_for_test(vault_root), "-wal")
+}
+
+#[cfg(test)]
+pub(super) fn history_shm_path_for_test(vault_root: &Path) -> PathBuf {
+    sqlite_sidecar_path(&history_database_path_for_test(vault_root), "-shm")
 }
 
 #[cfg(test)]
@@ -1422,7 +1495,7 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
         .prepare(
             "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id,
                     known_since_millis, committed_at_millis, observed_at_millis,
-                    modified_at_millis, payload_version
+                    modified_at_millis, payload_version, result_hash
              FROM revisions WHERE note_id = ?1",
         )
         .map_err(|error| error.to_string())?;
@@ -1441,6 +1514,7 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                 row.get::<_, Option<u64>>(7)?,
                 row.get::<_, Option<u64>>(8)?,
                 row.get::<_, i64>(9)?,
+                row.get::<_, String>(10)?,
             ))
         })
         .map_err(|error| error.to_string())?
@@ -1459,6 +1533,7 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                 observed_at_millis,
                 modified_at_millis,
                 payload_version,
+                content_hash,
             )| {
                 let source = MutationSource::from_storage_value(&source)
                     .ok_or_else(|| format!("Unknown stored Mutation Source `{source}`"))?;
@@ -1490,6 +1565,7 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
                         payload_version,
                         source,
                         time_evidence,
+                        content_hash,
                     },
                 ))
             },
@@ -2097,6 +2173,90 @@ pub(super) fn compact(maximum_reclaim_bytes: u64) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn clean_close() -> Result<(), String> {
+    let connection = open_store()?;
+    recover_pending_with_connection(&connection)?;
+    let close_result = (|| {
+        connection
+            .execute(
+                "UPDATE history_metadata
+                 SET portability_state = 'portable',
+                     clean_close_sequence = clean_close_sequence + 1
+                 WHERE singleton = 1",
+                [],
+            )
+            .map_err(|error| format!("Record clean Note Timeline close: {error}"))?;
+        checkpoint_store(&connection, "clean close")?;
+        let (instance_id, clean_close_sequence, state) = connection
+            .query_row(
+                "SELECT store_instance_id, clean_close_sequence, portability_state
+                 FROM history_metadata WHERE singleton = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, String>(2)?)),
+            )
+            .map_err(|error| format!("Read clean Note Timeline close: {error}"))?;
+        let portability = StorePortability {
+            instance_id,
+            clean_close_sequence,
+            state: StorePortabilityState::parse(&state)?,
+        };
+        let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
+            .ok_or_else(|| "Clean close requires a vault manifest".to_string())?;
+        validate_and_remember_history_selection(&manifest, &portability, false)
+    })();
+    if let Err(error) = close_result {
+        return restore_open_after_failed_close(&connection, error, "failed clean-close recovery");
+    }
+    if let Err((connection, error)) = close_history_connection(connection) {
+        return restore_open_after_failed_close(
+            &connection,
+            error,
+            "failed connection-close recovery",
+        );
+    }
+    ACTIVE_HISTORY_STORE_SESSIONS
+        .lock()
+        .map_err(|_| "Note Timeline history store sessions lock poisoned".to_string())?
+        .remove(&history_database_path()?);
+    Ok(())
+}
+
+fn restore_open_after_failed_close(
+    connection: &Connection,
+    error: String,
+    checkpoint_purpose: &str,
+) -> Result<(), String> {
+    let reopen = connection
+        .execute(
+            "UPDATE history_metadata SET portability_state = 'open' WHERE singleton = 1",
+            [],
+        )
+        .map_err(|reopen_error| {
+            format!("Restore open Note Timeline state after failed close: {reopen_error}")
+        })
+        .and_then(|_| checkpoint_store(connection, checkpoint_purpose));
+    match reopen {
+        Ok(()) => Err(error),
+        Err(reopen_error) => Err(format!("{error}; {reopen_error}")),
+    }
+}
+
+fn close_history_connection(connection: Connection) -> Result<(), (Connection, String)> {
+    #[cfg(test)]
+    if take_fault(FaultPoint::Close) {
+        return Err((
+            connection,
+            "injected history connection close failure".to_string(),
+        ));
+    }
+    connection.close().map_err(|(connection, error)| {
+        (
+            connection,
+            format!("Close Note Timeline history connection: {error}"),
+        )
+    })
+}
+
 fn history_database_path() -> Result<PathBuf, String> {
     Ok(crate::state::vault_data_dir()?.join(HISTORY_DATABASE_FILE_NAME))
 }
@@ -2147,6 +2307,10 @@ pub(super) fn reset_development_store(
         reset_at_millis,
     )?;
     let data_dir = crate::state::vault_data_dir()?;
+    ACTIVE_HISTORY_STORE_SESSIONS
+        .lock()
+        .map_err(|_| "Note Timeline history store sessions lock poisoned".to_string())?
+        .remove(&data_dir.join(HISTORY_DATABASE_FILE_NAME));
     for path in [
         data_dir.join(HISTORY_DATABASE_FILE_NAME),
         data_dir.join(format!("{HISTORY_DATABASE_FILE_NAME}-wal")),
@@ -2204,6 +2368,8 @@ fn write_history_observations(
 
 fn validate_and_remember_history_selection(
     manifest: &crate::state::VaultManifest,
+    store: &StorePortability,
+    creating_store: bool,
 ) -> Result<(), String> {
     let _guard = HISTORY_OBSERVATIONS_LOCK
         .lock()
@@ -2224,12 +2390,24 @@ fn validate_and_remember_history_selection(
                 "Note Timeline history format changed without a generation change".to_string(),
             );
         }
-        if manifest.history_generation == observed.generation
-            && manifest.history_format == observed.history_format
-            && !observed.allow_missing_store
-        {
-            return Ok(());
+        if manifest.history_generation == observed.generation {
+            if let Some(observed_instance_id) = observed.store_instance_id.as_deref() {
+                if observed_instance_id != store.instance_id {
+                    return Err(
+                        "Note Timeline history store replacement requires explicit recovery"
+                            .to_string(),
+                    );
+                }
+            }
+            if observed.clean_close_sequence > store.clean_close_sequence {
+                return Err(format!(
+                    "Note Timeline clean-close watermark rollback: store has {} after this app observed {}",
+                    store.clean_close_sequence, observed.clean_close_sequence
+                ));
+            }
         }
+    } else if !creating_store && store.state == StorePortabilityState::Open {
+        return Err("Note Timeline unsupported live copy requires explicit recovery".to_string());
     }
     let last_reset = observations
         .vaults
@@ -2240,7 +2418,10 @@ fn validate_and_remember_history_selection(
         ObservedHistorySelection {
             history_format: manifest.history_format.clone(),
             generation: manifest.history_generation,
+            store_instance_id: Some(store.instance_id.clone()),
+            clean_close_sequence: store.clean_close_sequence,
             allow_missing_store: false,
+            allow_legacy_migration: false,
             last_reset,
         },
     );
@@ -2264,7 +2445,10 @@ fn record_history_reset(
         ObservedHistorySelection {
             history_format: manifest.history_format.clone(),
             generation,
+            store_instance_id: None,
+            clean_close_sequence: 0,
             allow_missing_store: true,
+            allow_legacy_migration: false,
             last_reset: Some(PersistedHistoryReset {
                 operation_id: operation_id.to_string(),
                 previous_generation,
@@ -2389,7 +2573,11 @@ fn open_store() -> Result<Connection, String> {
                     return Err("Note Timeline history store generation mismatch".to_string());
                 }
                 match schema {
-                    5 => migrate_schema_five_storage(&connection)?,
+                    5 => {
+                        authorize_legacy_portability_migration(&manifest)?;
+                        migrate_schema_five_storage(&connection)?;
+                    }
+                    6 => authorize_legacy_portability_migration(&manifest)?,
                     HISTORY_SCHEMA_VERSION => {}
                     _ => return Err("Note Timeline history store schema mismatch".to_string()),
                 }
@@ -2412,7 +2600,10 @@ fn open_store() -> Result<Connection, String> {
                vault_id TEXT NOT NULL,
                history_format TEXT NOT NULL,
                history_generation INTEGER NOT NULL,
-               schema_version INTEGER NOT NULL
+               schema_version INTEGER NOT NULL,
+               store_instance_id TEXT NOT NULL,
+               clean_close_sequence INTEGER NOT NULL,
+               portability_state TEXT NOT NULL CHECK (portability_state IN ('open', 'portable'))
              );
              CREATE TABLE IF NOT EXISTS prepared_intents (
                intent_id TEXT PRIMARY KEY,
@@ -2548,10 +2739,25 @@ fn open_store() -> Result<Connection, String> {
              );",
         )
         .map_err(|error| format!("Initialize Note Timeline history store: {error}"))?;
+    let schema = connection
+        .query_row(
+            "SELECT schema_version FROM history_metadata WHERE singleton = 1",
+            [],
+            |row| row.get::<_, u64>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if schema == Some(5) {
+        record_schema_six_migration(&connection)?;
+    }
+    if matches!(schema, Some(5 | 6)) {
+        migrate_schema_six_portability(&connection, &manifest)?;
+    }
     configure_wal_bounds(&connection)?;
     let metadata = connection
         .query_row(
-            "SELECT vault_id, history_format, history_generation, schema_version
+            "SELECT vault_id, history_format, history_generation, schema_version,
+                    store_instance_id, clean_close_sequence, portability_state
              FROM history_metadata WHERE singleton = 1",
             [],
             |row| {
@@ -2560,46 +2766,77 @@ fn open_store() -> Result<Connection, String> {
                     row.get::<_, String>(1)?,
                     row.get::<_, u64>(2)?,
                     row.get::<_, u64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, u64>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )
         .optional()
         .map_err(|error| error.to_string())?;
     match metadata {
-        Some((vault_id, _, _, _)) if vault_id != manifest.vault_id => {
+        Some((vault_id, _, _, _, _, _, _)) if vault_id != manifest.vault_id => {
             return Err("Note Timeline history store vault identity mismatch".to_string())
         }
-        Some((_, format, _, _)) if format != manifest.history_format => {
+        Some((_, format, _, _, _, _, _)) if format != manifest.history_format => {
             return Err("Note Timeline history store format mismatch".to_string())
         }
-        Some((_, _, generation, _)) if generation != manifest.history_generation => {
+        Some((_, _, generation, _, _, _, _)) if generation != manifest.history_generation => {
             return Err("Note Timeline history store generation mismatch".to_string())
         }
-        Some((_, _, _, 5)) => {
-            record_schema_six_migration(&connection)?;
-        }
-        Some((_, _, _, schema)) if schema != HISTORY_SCHEMA_VERSION => {
+        Some((_, _, _, schema, _, _, _)) if schema != HISTORY_SCHEMA_VERSION => {
             return Err("Note Timeline history store schema mismatch".to_string())
         }
-        Some(_) => {}
+        Some((_, _, _, _, instance_id, clean_close_sequence, portability_state)) => {
+            let portability = StorePortability {
+                instance_id,
+                clean_close_sequence,
+                state: StorePortabilityState::parse(&portability_state)?,
+            };
+            validate_and_remember_history_selection(&manifest, &portability, false)?;
+        }
         None => {
             ensure_store_creation_is_authorized(&manifest)?;
+            let store_instance_id = crate::note::generate_unique_id();
             connection
                 .execute(
                     "INSERT INTO history_metadata (
-                       singleton, vault_id, history_format, history_generation, schema_version
-                     ) VALUES (1, ?1, ?2, ?3, ?4)",
+                       singleton, vault_id, history_format, history_generation, schema_version,
+                       store_instance_id, clean_close_sequence, portability_state
+                     ) VALUES (1, ?1, ?2, ?3, ?4, ?5, 0, 'open')",
                     params![
                         &manifest.vault_id,
                         &manifest.history_format,
                         manifest.history_generation,
-                        HISTORY_SCHEMA_VERSION
+                        HISTORY_SCHEMA_VERSION,
+                        &store_instance_id,
                     ],
                 )
                 .map_err(|error| error.to_string())?;
+            validate_and_remember_history_selection(
+                &manifest,
+                &StorePortability {
+                    instance_id: store_instance_id,
+                    clean_close_sequence: 0,
+                    state: StorePortabilityState::Open,
+                },
+                true,
+            )?;
         }
     }
-    validate_and_remember_history_selection(&manifest)?;
+    let activate_session = ACTIVE_HISTORY_STORE_SESSIONS
+        .lock()
+        .map_err(|_| "Note Timeline history store sessions lock poisoned".to_string())?
+        .insert(path);
+    if activate_session {
+        connection
+            .execute(
+                "UPDATE history_metadata SET portability_state = 'open' WHERE singleton = 1",
+                [],
+            )
+            .map_err(|error| format!("Mark Note Timeline history store open: {error}"))?;
+        checkpoint_store(&connection, "open")?;
+    }
     Ok(connection)
 }
 
@@ -2624,9 +2861,143 @@ fn record_schema_six_migration(connection: &Connection) -> Result<(), String> {
         .execute(
             "UPDATE history_metadata SET schema_version = ?1
              WHERE singleton = 1 AND schema_version = 5",
-            params![HISTORY_SCHEMA_VERSION],
+            params![6],
         )
         .map_err(|error| format!("Record Note Timeline schema migration: {error}"))?;
+    Ok(())
+}
+
+fn migrate_schema_six_portability(
+    connection: &Connection,
+    manifest: &crate::state::VaultManifest,
+) -> Result<(), String> {
+    authorize_legacy_portability_migration(manifest)?;
+    connection
+        .execute_batch(
+            "ALTER TABLE history_metadata ADD COLUMN store_instance_id TEXT;
+             ALTER TABLE history_metadata ADD COLUMN clean_close_sequence INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE history_metadata ADD COLUMN portability_state TEXT NOT NULL DEFAULT 'open';",
+        )
+        .map_err(|error| format!("Add Note Timeline portability metadata: {error}"))?;
+    connection
+        .execute(
+            "UPDATE history_metadata
+             SET schema_version = ?1, store_instance_id = ?2
+             WHERE singleton = 1",
+            params![HISTORY_SCHEMA_VERSION, crate::note::generate_unique_id()],
+        )
+        .map_err(|error| format!("Record Note Timeline portability migration: {error}"))?;
+    Ok(())
+}
+
+fn authorize_legacy_portability_migration(
+    manifest: &crate::state::VaultManifest,
+) -> Result<(), String> {
+    let _guard = HISTORY_OBSERVATIONS_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
+    let observations = read_history_observations(&history_observations_path()?)?;
+    let observed = observations.vaults.get(&manifest.vault_id).ok_or_else(|| {
+        "Legacy Note Timeline store portability is unknown; explicit recovery is required"
+            .to_string()
+    })?;
+    if observed.history_format != manifest.history_format
+        || observed.generation != manifest.history_generation
+        || observed.allow_missing_store
+        || !observed.allow_legacy_migration
+    {
+        return Err(
+            "Legacy Note Timeline store requires explicit trust and migration recovery".to_string(),
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn trust_legacy_store_for_migration(
+    manifest: &crate::state::VaultManifest,
+) -> Result<(), String> {
+    let _open_guard = HISTORY_STORE_OPEN_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history store open lock poisoned".to_string())?;
+    let connection = Connection::open(history_database_path()?)
+        .map_err(|error| format!("Open legacy Note Timeline store for recovery: {error}"))?;
+    let (vault_id, history_format, history_generation, schema_version) = connection
+        .query_row(
+            "SELECT vault_id, history_format, history_generation, schema_version
+             FROM history_metadata WHERE singleton = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, u64>(3)?,
+                ))
+            },
+        )
+        .map_err(|error| format!("Read legacy Note Timeline store for recovery: {error}"))?;
+    if vault_id != manifest.vault_id
+        || history_format != manifest.history_format
+        || history_generation != manifest.history_generation
+        || !matches!(schema_version, 5 | 6)
+    {
+        return Err(
+            "Legacy Note Timeline store metadata does not match the selected vault".to_string(),
+        );
+    }
+    connection
+        .close()
+        .map_err(|(_, error)| format!("Close legacy Note Timeline recovery inspection: {error}"))?;
+
+    let _guard = HISTORY_OBSERVATIONS_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
+    let path = history_observations_path()?;
+    let mut observations = read_history_observations(&path)?;
+    if let Some(observed) = observations.vaults.get_mut(&manifest.vault_id) {
+        if observed.history_format != manifest.history_format
+            || observed.generation != manifest.history_generation
+            || observed.allow_missing_store
+            || observed.store_instance_id.is_some()
+        {
+            return Err(
+                "Legacy Note Timeline store does not match the observed selection and cannot be trusted"
+                    .to_string(),
+            );
+        }
+        observed.allow_legacy_migration = true;
+    } else {
+        observations.vaults.insert(
+            manifest.vault_id.clone(),
+            ObservedHistorySelection {
+                history_format: manifest.history_format.clone(),
+                generation: manifest.history_generation,
+                store_instance_id: None,
+                clean_close_sequence: 0,
+                allow_missing_store: false,
+                allow_legacy_migration: true,
+                last_reset: None,
+            },
+        );
+    }
+    write_history_observations(&path, &observations)
+}
+
+fn checkpoint_store(connection: &Connection, purpose: &str) -> Result<(), String> {
+    let (busy, remaining, _checkpointed) = connection
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, u64>(1)?,
+                row.get::<_, u64>(2)?,
+            ))
+        })
+        .map_err(|error| format!("Checkpoint Note Timeline for {purpose}: {error}"))?;
+    if busy != 0 || remaining != 0 {
+        return Err(format!(
+            "Checkpoint Note Timeline for {purpose} remained busy ({busy}) with {remaining} WAL frames"
+        ));
+    }
     Ok(())
 }
 
@@ -3240,6 +3611,25 @@ mod tests {
         );
         drop(legacy);
 
+        let mut observations = HistoryObservations::default();
+        observations.vaults.insert(
+            manifest.vault_id.clone(),
+            ObservedHistorySelection {
+                history_format: manifest.history_format.clone(),
+                generation: manifest.history_generation,
+                store_instance_id: None,
+                clean_close_sequence: 0,
+                allow_missing_store: false,
+                allow_legacy_migration: false,
+                last_reset: None,
+            },
+        );
+        write_history_observations(&history_observations_path().unwrap(), &observations).unwrap();
+        let error =
+            open_store().expect_err("an observed legacy store still requires explicit trust");
+        assert!(error.contains("explicit trust"));
+        trust_legacy_store_for_migration(&manifest).unwrap();
+
         inject_fault_once(FaultPoint::Migration);
         assert!(open_store()
             .unwrap_err()
@@ -3293,6 +3683,59 @@ mod tests {
                 })
                 .unwrap(),
             "retained"
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn unobserved_legacy_store_requires_explicit_trust_before_portability_migration() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-legacy-copy-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-legacy-copy-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let manifest = crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let database_path = history_database_path().unwrap();
+        fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        let legacy = Connection::open(&database_path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE history_metadata (
+                   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                   vault_id TEXT NOT NULL,
+                   history_format TEXT NOT NULL,
+                   history_generation INTEGER NOT NULL,
+                   schema_version INTEGER NOT NULL
+                 );",
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "INSERT INTO history_metadata (
+                   singleton, vault_id, history_format, history_generation, schema_version
+                 ) VALUES (1, ?1, ?2, ?3, 6)",
+                params![
+                    manifest.vault_id,
+                    manifest.history_format,
+                    manifest.history_generation
+                ],
+            )
+            .unwrap();
+        drop(legacy);
+
+        let error = open_store().expect_err("an unobserved legacy copy must not be trusted");
+        assert!(error.contains("portability is unknown"));
+        trust_legacy_store_for_migration(&manifest).unwrap();
+        let migrated = open_store().unwrap();
+        assert_eq!(
+            migrated
+                .query_row(
+                    "SELECT schema_version FROM history_metadata WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap(),
+            HISTORY_SCHEMA_VERSION
         );
         crate::state::set_notes_root_override(None).unwrap();
     }

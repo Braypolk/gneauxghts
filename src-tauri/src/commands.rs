@@ -26,7 +26,7 @@ use crate::{
     },
     state::{
         create_vault_folder as create_vault_folder_state, current_vault_info,
-        db_clear_last_opened_note, db_mark_note_opened,
+        db_clear_last_opened_note, db_mark_note_opened, default_notes_root,
         list_vault_folders as list_vault_folders_state, notes_root, set_notes_root, vault_root,
         CreateVaultFolderResult, VaultFolderInfo, VaultInfo,
     },
@@ -313,21 +313,47 @@ pub(crate) fn set_vault_directory(
     state: State<'_, AppState>,
     path: Option<String>,
 ) -> Result<VaultInfo, String> {
-    let info = match path.as_deref().map(str::trim) {
-        Some("") | None => set_notes_root(None),
-        Some(raw) => set_notes_root(Some(Path::new(raw))),
-    }?;
+    set_vault_directory_for_state(&state, path)
+}
+
+#[tauri::command]
+pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let root = vault_root()?;
+    crate::services::note_timeline::NoteTimeline::new(&state)
+        .trust_and_migrate_legacy_history(&root)
+}
+
+fn set_vault_directory_for_state(
+    state: &AppState,
+    path: Option<String>,
+) -> Result<VaultInfo, String> {
+    let requested_path = path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let selected_root = requested_path
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(default_notes_root)?;
+    crate::services::note_timeline::ensure_vault_scaffold(&selected_root)?;
+    let active_root = vault_root()?;
+    let active_identity = fs::canonicalize(&active_root).unwrap_or_else(|_| active_root.clone());
+    let selected_identity =
+        fs::canonicalize(&selected_root).unwrap_or_else(|_| selected_root.clone());
+    if selected_identity != active_identity {
+        crate::services::note_timeline::NoteTimeline::new(state).clean_close(&active_root)?;
+    }
+    let info = set_notes_root(requested_path.as_deref())?;
     // Scaffold the newly-selected vault's `.gneauxghts` data/cache dirs
     // and manifest up front so that, on the next launch, opening this
     // vault finds a clean, initialized layout. Vault-local DBs and the
     // HNSW cache still initialize lazily on that launch; live switching
     // is intentionally deferred (globals, DB handles, and the watcher
     // are bound once at startup), so `VaultInfo.requires_restart`
-    // remains true and the UI prompts for a restart. Best-effort: a
-    // scaffold failure here must not block recording the new path.
-    if let Ok(new_root) = vault_root() {
-        let _ = crate::services::note_timeline::ensure_vault_scaffold(&new_root);
-    }
+    // remains true and the UI prompts for a restart.
     if let Ok(status) = state.semantic.get_status() {
         state.events.semantic_status_changed(status);
     }
@@ -638,7 +664,7 @@ mod tests {
     };
     use super::{
         load_note_session_from_notes_dir, open_note_from_notes_dir, read_note_session_from_path,
-        NoteSession, RecentTaskItem, ResolvedNoteLink, TaskListItem,
+        set_vault_directory_for_state, NoteSession, RecentTaskItem, ResolvedNoteLink, TaskListItem,
     };
     use crate::{
         index::{build_indexed_note, NotesIndex},
@@ -650,6 +676,56 @@ mod tests {
     };
     use serde_json::json;
     use std::{fs, path::PathBuf};
+
+    #[test]
+    fn vault_switch_cleanly_closes_the_active_note_timeline_first() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("commands-vault-switch-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let active = TestDir::new("commands-vault-switch-active");
+        let selected = TestDir::new("commands-vault-switch-selected");
+        crate::state::set_notes_root_override(Some(active.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(active.path()).unwrap();
+        let note_path = active.path().join("Active.md");
+        fs::write(
+            &note_path,
+            "---\ngneauxghts:\n  id: switch-active-note\n  kind: note\n---\n\nActive",
+        )
+        .unwrap();
+        let state = crate::index::AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        crate::services::note_timeline::NoteTimeline::new(&state)
+            .initialize_existing_notes(active.path())
+            .unwrap();
+
+        set_vault_directory_for_state(&state, Some(selected.path().to_string_lossy().into_owned()))
+            .unwrap();
+
+        assert_eq!(
+            crate::state::read_vault_config()
+                .unwrap()
+                .notes_root
+                .as_deref(),
+            Some(selected.path().to_string_lossy().as_ref())
+        );
+        let error = crate::services::note_timeline::NoteTimeline::new(&state)
+            .prepare_revision_publication(
+                crate::services::note_timeline::MutationSource::Editor,
+                &note_path,
+                Some(&note_path),
+                Some(&crate::services::note_timeline::NoteIdentity::new(
+                    "switch-active-note",
+                )),
+                "Changed after switch",
+            )
+            .expect_err("vault switching must stop active-vault mutations");
+        assert!(error.contains("cleanly closed"));
+        assert!(state.note_timeline_is_cleanly_closed().unwrap());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
 
     #[test]
     fn load_note_session_from_notes_dir_clears_stale_last_opened_path() {

@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     time::UNIX_EPOCH,
     time::{Duration, Instant},
@@ -72,6 +72,35 @@ pub(crate) struct AppState {
     /// lives on the application state so two vault owners never share replay
     /// coordination.
     note_timeline_observation_replay: Mutex<()>,
+    note_timeline_operations: NoteTimelineOperationBarrier,
+}
+
+#[derive(Default)]
+struct NoteTimelineOperationState {
+    active: usize,
+    closing: bool,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct NoteTimelineOperationBarrier {
+    state: Mutex<NoteTimelineOperationState>,
+    settled: Condvar,
+}
+
+pub(crate) struct NoteTimelineOperationGuard<'a> {
+    barrier: &'a NoteTimelineOperationBarrier,
+}
+
+impl Drop for NoteTimelineOperationGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.barrier.state.lock() {
+            state.active = state.active.saturating_sub(1);
+            if state.active == 0 {
+                self.barrier.settled.notify_all();
+            }
+        }
+    }
 }
 
 /// Atomic counter of foreground IPC calls currently in flight on the hot
@@ -185,7 +214,75 @@ impl AppState {
             foreground_activity,
             note_timeline_history_recovered: Mutex::new(false),
             note_timeline_observation_replay: Mutex::new(()),
+            note_timeline_operations: NoteTimelineOperationBarrier::default(),
         })
+    }
+
+    pub(crate) fn begin_note_timeline_operation(
+        &self,
+    ) -> Result<NoteTimelineOperationGuard<'_>, String> {
+        let mut state = self
+            .note_timeline_operations
+            .state
+            .lock()
+            .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
+        if state.closed {
+            return Err("Note Timeline is cleanly closed for vault portability".to_string());
+        }
+        if state.closing {
+            return Err("Note Timeline is closing for vault portability".to_string());
+        }
+        state.active += 1;
+        Ok(NoteTimelineOperationGuard {
+            barrier: &self.note_timeline_operations,
+        })
+    }
+
+    pub(crate) fn close_note_timeline_operations<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut state = self
+            .note_timeline_operations
+            .state
+            .lock()
+            .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
+        if state.closed {
+            return Err(
+                "Note Timeline is already cleanly closed for vault portability".to_string(),
+            );
+        }
+        if state.closing {
+            return Err("Note Timeline clean close is already in progress".to_string());
+        }
+        state.closing = true;
+        while state.active != 0 {
+            state = self
+                .note_timeline_operations
+                .settled
+                .wait(state)
+                .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
+        }
+        drop(state);
+
+        let result = operation();
+        let mut state = self
+            .note_timeline_operations
+            .state
+            .lock()
+            .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
+        state.closing = false;
+        state.closed = result.is_ok();
+        self.note_timeline_operations.settled.notify_all();
+        result
+    }
+
+    pub(crate) fn note_timeline_is_cleanly_closed(&self) -> Result<bool, String> {
+        self.note_timeline_operations
+            .state
+            .lock()
+            .map(|state| state.closed)
+            .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())
     }
 
     pub(crate) fn lock_note_timeline_observation_replay(

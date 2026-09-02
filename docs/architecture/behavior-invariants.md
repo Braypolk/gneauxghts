@@ -100,6 +100,19 @@ Identity, storage format, and generation. The app also remembers the greatest
 generation it has opened outside the vault, so a synchronized rollback of both
 vault-local records is not silently accepted. Development resets retain an
 operation and generation diagnostic outside the replacement timelines.
+A clean close stops admitting Note Timeline operations, waits for admitted
+work, settles prepared intent, checkpoints and truncates the SQLite WAL, and
+advances a durable clean-close watermark before reporting the vault portable.
+Failure at any step reports an error and never claims portability. Application
+exit and vault switch cross this seam first. The observing installation may
+recover its own open store and WAL after interruption, while a new installation
+rejects an open main-file-only copy. Store-instance changes, same-generation
+watermark rollback, and manifest/store/app-observation mismatches require
+explicit recovery. A pre-portability schema is never assigned a store-instance
+identity merely because its vault identity and generation match an old local
+observation; migration requires the explicit legacy-trust recovery command,
+and that one-shot authorization is cleared when migration records the instance.
+SHM remains ephemeral and is never required backup data.
 Clearing one Note Timeline atomically removes every previously readable record
 and establishes the current canonical authored state as a fresh Baseline
 Revision. A vault clear applies the same boundary independently to every active

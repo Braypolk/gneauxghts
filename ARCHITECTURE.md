@@ -145,7 +145,15 @@ or copied history. The SQLite implementation owns its initial format selection;
 general vault configuration only persists the supplied selector. An app-local
 observation record remembers the greatest generation opened for each Vault
 Identity, so rolling back the manifest and store together is also rejected. A
-development reset advances the manifest generation first, records its operation
+stable store-instance identity and monotonic clean-close watermark extend that
+check within one generation. `NoteTimeline.clean_close` stops new operations,
+waits for admitted work, settles prepared intent and deletion recovery,
+checkpoints and truncates the WAL, and only then marks the store portable.
+Vault switch and application exit cross this seam before releasing the vault.
+The observing installation may recover its own open store and WAL after an
+interrupted run, while store replacement, watermark rollback, and a live
+main-file-only copy require explicit recovery. A development reset advances the
+manifest generation first, records its operation
 and generation boundary outside the replacement timeline, removes the
 superseded store, and rebuilds current notes as truthful baselines.
 Note and vault history clears, plus whole-note lifecycle purge, cross the same
@@ -165,10 +173,7 @@ SHM sidecar. A compaction pass only checkpoints a WAL that fits wholly inside
 its remaining byte budget, then bounds incremental vacuum work with that
 remainder.
 Schema-five stores migrate once behind the storage-opening barrier to enable
-incremental auto-vacuum before schema six is admitted.
-Detecting rollback to an older but internally valid store copy from the same
-generation requires the clean-close watermark and reconciliation work owned by
-Ticket 11; generation metadata alone does not claim to distinguish that case.
+incremental auto-vacuum before the current schema is admitted.
 See [ADR 0004](docs/adr/0004-treat-sqlite-as-the-first-note-timeline-store.md)
 for the initial store boundary and
 [ADR 0005](docs/adr/0005-remember-observed-history-generations-outside-the-vault.md)

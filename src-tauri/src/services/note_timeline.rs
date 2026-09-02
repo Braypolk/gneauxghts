@@ -350,6 +350,7 @@ pub(crate) struct NoteRevisionHeader {
     payload_version: PayloadVersion,
     source: MutationSource,
     time_evidence: RevisionTimeEvidence,
+    content_hash: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -382,6 +383,7 @@ impl NoteRevisionHeader {
             time_evidence: RevisionTimeEvidence::Committed {
                 committed_at_millis: 0,
             },
+            content_hash: String::new(),
         }
     }
 
@@ -395,6 +397,10 @@ impl NoteRevisionHeader {
 
     pub(crate) fn source(&self) -> MutationSource {
         self.source
+    }
+
+    pub(crate) fn content_hash(&self) -> &str {
+        &self.content_hash
     }
 
     pub(crate) fn time_evidence(&self) -> RevisionTimeEvidence {
@@ -1302,12 +1308,14 @@ impl HistoryModeAccess<'_> {
     }
 
     pub(crate) fn revisions(&self) -> Result<Vec<NoteRevisionHeader>, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::revisions(&self.note_id)
     }
 
     pub(crate) fn lifecycle_events(&self) -> Result<Vec<LifecycleEventHeader>, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::lifecycle_events(&self.note_id)
@@ -1317,6 +1325,7 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &RevisionIdentity,
     ) -> Result<ReconstructedNoteRevision, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::reconstruct(&self.note_id, revision_id)
@@ -1428,6 +1437,21 @@ impl<'a> NoteTimeline<'a> {
         Self { state }
     }
 
+    pub(crate) fn clean_close(&self, vault_root: &Path) -> Result<(), String> {
+        let vault_root = require_active_vault_root(vault_root)?;
+        crate::state::with_note_file_mutation(|| {
+            self.state.close_note_timeline_operations(|| {
+                let _replay = self.state.lock_note_timeline_observation_replay()?;
+                self.recover_pending_deletions()?;
+                self.replay_retained_observations(None)?;
+                self.state.ensure_note_timeline_history_recovered()?;
+                crate::state::read_vault_manifest_for(&vault_root)?
+                    .ok_or_else(|| "Clean close requires a vault manifest".to_string())?;
+                history_store::clean_close()
+            })
+        })
+    }
+
     fn with_settled_history_mutation<T>(
         &self,
         operation: impl FnOnce() -> Result<T, String>,
@@ -1442,6 +1466,7 @@ impl<'a> NoteTimeline<'a> {
     /// Settle durable purge work created after startup, then capture the
     /// generation that current-content query results must still match.
     pub(crate) fn begin_current_content_read(&self) -> Result<CurrentContentRead, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         let _replay = self.state.lock_note_timeline_observation_replay()?;
         self.recover_pending_deletions()?;
         Ok(CurrentContentRead {
@@ -1529,6 +1554,7 @@ impl<'a> NoteTimeline<'a> {
         &self,
         vault_root: &Path,
     ) -> Result<BaselineInitializationProgress, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         let vault_root = require_active_vault_root(vault_root)?;
         self.recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
@@ -1636,6 +1662,7 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn baseline_initialization_progress(
         &self,
     ) -> Result<BaselineInitializationProgress, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         history_store::baseline_initialization_progress()
     }
 
@@ -1643,6 +1670,7 @@ impl<'a> NoteTimeline<'a> {
         &self,
         note_id: &NoteIdentity,
     ) -> Result<NoteBaselineInitializationState, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         history_store::note_baseline_initialization_state(note_id)
     }
 
@@ -1652,6 +1680,7 @@ impl<'a> NoteTimeline<'a> {
     ) -> Result<DevelopmentHistoryReset, String> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
+            let _operation = self.state.begin_note_timeline_operation()?;
             let (previous_generation, generation, operation_id, reset_at_millis) = {
                 let _timeline = self.state.lock_note_timeline_observation_replay()?;
                 history_store::reset_development_store(&vault_root)?
@@ -1670,6 +1699,7 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn latest_development_history_reset(
         &self,
     ) -> Result<Option<DevelopmentHistoryReset>, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         let Some((operation_id, previous_generation, generation, reset_at_millis)) =
             history_store::latest_development_history_reset()?
         else {
@@ -1684,11 +1714,24 @@ impl<'a> NoteTimeline<'a> {
         }))
     }
 
+    pub(crate) fn trust_and_migrate_legacy_history(&self, vault_root: &Path) -> Result<(), String> {
+        let vault_root = require_active_vault_root(vault_root)?;
+        crate::state::with_note_file_mutation(|| {
+            let _operation = self.state.begin_note_timeline_operation()?;
+            let _timeline = self.state.lock_note_timeline_observation_replay()?;
+            let manifest = crate::state::read_vault_manifest_for(&vault_root)?
+                .ok_or_else(|| "Legacy history recovery requires a vault manifest".to_string())?;
+            history_store::trust_legacy_store_for_migration(&manifest)?;
+            history_store::baseline_initialization_progress().map(|_| ())
+        })
+    }
+
     pub(crate) fn clear_note_history(
         &self,
         note_id: &NoteIdentity,
     ) -> Result<HistoryDeletionReceipt, String> {
         crate::state::with_note_file_mutation(|| {
+            let _operation = self.state.begin_note_timeline_operation()?;
             self.with_settled_history_mutation(|| {
                 let path = history_store::current_path(note_id)?
                     .ok_or_else(|| "Cannot clear an unknown Note Timeline".to_string())?;
@@ -1723,6 +1766,7 @@ impl<'a> NoteTimeline<'a> {
     ) -> Result<HistoryDeletionReceipt, String> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
+            let _operation = self.state.begin_note_timeline_operation()?;
             self.with_settled_history_mutation(|| {
                 let mut seeds = Vec::new();
                 let mut seen_note_ids = HashSet::new();
@@ -1789,12 +1833,14 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn deletion_markers(&self) -> Result<Vec<DeletionMarker>, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         self.recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::deletion_markers()
     }
 
     pub(crate) fn history_storage_usage(&self) -> Result<HistoryStorageUsage, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         self.recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         history_store::storage_usage()
@@ -1805,6 +1851,7 @@ impl<'a> NoteTimeline<'a> {
         maximum_reclaim_bytes: u64,
     ) -> Result<HistoryCompactionReceipt, String> {
         crate::state::with_note_file_mutation(|| {
+            let _operation = self.state.begin_note_timeline_operation()?;
             self.with_settled_history_mutation(|| {
                 let before = history_store::storage_usage()?;
                 history_store::compact(maximum_reclaim_bytes)?;
@@ -1824,6 +1871,7 @@ impl<'a> NoteTimeline<'a> {
         retained_identity: Option<&NoteIdentity>,
         markdown: &str,
     ) -> Result<String, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         let catalog_identity = continuity_path
             .map(|path| self.state.indexed_note_identity(path))
             .transpose()?
@@ -1874,6 +1922,7 @@ impl<'a> NoteTimeline<'a> {
         retained_identity: Option<&NoteIdentity>,
         markdown: &str,
     ) -> Result<PreparedRevisionPublication, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         self.recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         let identity_prepared =
@@ -1956,6 +2005,7 @@ impl<'a> NoteTimeline<'a> {
         &self,
         observation: VaultObservation,
     ) -> Result<ObservationReceipt, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
         let _replay = self.state.lock_note_timeline_observation_replay()?;
         self.recover_pending_deletions()?;
         let observation = Self::capture_observed_markdown(observation)?;
@@ -2166,6 +2216,7 @@ impl<'a> NoteTimeline<'a> {
         } = operation;
         if kind == LifecycleEventKind::Purged {
             crate::state::with_note_file_mutation(|| {
+                let _timeline_operation = self.state.begin_note_timeline_operation()?;
                 self.with_settled_history_mutation(|| {
                     self.purge_note_under_mutation_boundary(&note_id, &path, occurred_at_millis)
                 })
@@ -2256,6 +2307,11 @@ pub(crate) fn inject_history_deletion_failure_once() {
 }
 
 #[cfg(test)]
+pub(crate) fn inject_history_clean_close_failure_once() {
+    history_store::inject_fault_once(history_store::FaultPoint::Close);
+}
+
+#[cfg(test)]
 fn inject_purge_staging_failure_once() {
     FAIL_NEXT_PURGE_STAGE.store(true, std::sync::atomic::Ordering::SeqCst);
 }
@@ -2275,6 +2331,13 @@ mod tests {
         sync::{Arc, Barrier},
         thread,
     };
+
+    fn copy_file(source: &Path, destination: &Path) {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::copy(source, destination).unwrap();
+    }
 
     fn prepare_test_history(
         source: MutationSource,
@@ -3619,6 +3682,355 @@ mod tests {
             .baseline_initialization_progress()
             .expect_err("mismatched selected generation must not open silently");
         assert!(error.contains("generation mismatch"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn clean_close_reports_portability_and_stops_new_timeline_mutations() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-clean-close-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-clean-close-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Portable.md");
+        fs::write(
+            &path,
+            "---\ngneauxghts:\n  id: portable-note\n  kind: note\n---\n\nPortable content",
+        )
+        .unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        timeline
+            .prepare_revision_publication(
+                MutationSource::Editor,
+                &path,
+                Some(&path),
+                Some(&NoteIdentity::new("portable-note")),
+                "Prepared but never published",
+            )
+            .unwrap();
+        assert_eq!(prepared_history_intent_count_for_test("prepared"), 1);
+
+        timeline.clean_close(notes.path()).unwrap();
+        assert_eq!(
+            history_store::prepared_intent_count_without_opening_store("prepared"),
+            0
+        );
+        let error = timeline
+            .prepare_revision_publication(
+                MutationSource::Editor,
+                &path,
+                Some(&path),
+                Some(&NoteIdentity::new("portable-note")),
+                "Portable content changed",
+            )
+            .expect_err("a cleanly closed application state must admit no new mutations");
+        assert!(error.contains("cleanly closed"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn failed_clean_close_reports_failure_and_allows_a_retry() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-failed-close-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-failed-close-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Retry.md");
+        fs::write(
+            &path,
+            "---\ngneauxghts:\n  id: retry-close-note\n  kind: note\n---\n\nRetry content",
+        )
+        .unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        inject_history_clean_close_failure_once();
+
+        let error = timeline
+            .clean_close(notes.path())
+            .expect_err("a failed checkpoint must not report portability");
+        assert!(error.contains("injected history connection close failure"));
+        timeline
+            .prepare_revision_publication(
+                MutationSource::Editor,
+                &path,
+                Some(&path),
+                Some(&NoteIdentity::new("retry-close-note")),
+                "Retry content changed",
+            )
+            .expect("failed close must leave mutation admission available for retry");
+        timeline.clean_close(notes.path()).unwrap();
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn opening_a_live_main_file_only_copy_requires_explicit_recovery() {
+        let _guard = crate::test_support::lock_test_env();
+        let source_app_data =
+            crate::test_support::TestDir::new("timeline-live-copy-source-app-data");
+        crate::state::initialize_app_data_dir(source_app_data.path().to_path_buf()).unwrap();
+        let source = crate::test_support::TestDir::new("timeline-live-copy-source");
+        crate::state::set_notes_root_override(Some(source.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(source.path()).unwrap();
+        let note_path = source.path().join("Live.md");
+        fs::write(
+            &note_path,
+            "---\ngneauxghts:\n  id: live-copy-note\n  kind: note\n---\n\nLive content",
+        )
+        .unwrap();
+        let source_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        NoteTimeline::new(&source_state)
+            .initialize_existing_notes(source.path())
+            .unwrap();
+
+        let copied = crate::test_support::TestDir::new("timeline-live-copy-destination");
+        copy_file(&note_path, &copied.path().join("Live.md"));
+        copy_file(
+            &source.path().join(".gneauxghts/vault.json"),
+            &copied.path().join(".gneauxghts/vault.json"),
+        );
+        copy_file(
+            &history_store::history_database_path_for_test(source.path()),
+            &history_store::history_database_path_for_test(copied.path()),
+        );
+        drop(source_state);
+
+        let destination_app_data =
+            crate::test_support::TestDir::new("timeline-live-copy-destination-app-data");
+        crate::state::initialize_app_data_dir(destination_app_data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(copied.path().to_path_buf())).unwrap();
+        let copied_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+
+        let error = NoteTimeline::new(&copied_state)
+            .baseline_initialization_progress()
+            .expect_err("a live main-file-only copy must not be accepted as portable");
+        assert!(error.contains("unsupported live copy"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn a_cleanly_copied_vault_reconstructs_identical_revision_identity_and_hash() {
+        let _guard = crate::test_support::lock_test_env();
+        let source_app_data =
+            crate::test_support::TestDir::new("timeline-portable-copy-source-app-data");
+        crate::state::initialize_app_data_dir(source_app_data.path().to_path_buf()).unwrap();
+        let source = crate::test_support::TestDir::new("timeline-portable-copy-source");
+        crate::state::set_notes_root_override(Some(source.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(source.path()).unwrap();
+        let source_note = source.path().join("Portable.md");
+        fs::write(
+            &source_note,
+            "---\ngneauxghts:\n  id: portable-copy-note\n  kind: note\n---\n\nPortable content",
+        )
+        .unwrap();
+        let source_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let source_timeline = NoteTimeline::new(&source_state);
+        source_timeline
+            .initialize_existing_notes(source.path())
+            .unwrap();
+        let source_access = source_timeline.history_mode(HistoryModeGrant::authorized(
+            NoteIdentity::new("portable-copy-note"),
+        ));
+        let source_header = source_access.revisions().unwrap()[0].clone();
+        let source_revision = source_access.reconstruct(source_header.identity()).unwrap();
+        source_timeline.clean_close(source.path()).unwrap();
+
+        let copied = crate::test_support::TestDir::new("timeline-portable-copy-destination");
+        copy_file(&source_note, &copied.path().join("Portable.md"));
+        copy_file(
+            &source.path().join(".gneauxghts/vault.json"),
+            &copied.path().join(".gneauxghts/vault.json"),
+        );
+        copy_file(
+            &history_store::history_database_path_for_test(source.path()),
+            &history_store::history_database_path_for_test(copied.path()),
+        );
+        drop(source_access);
+        drop(source_timeline);
+        drop(source_state);
+
+        let destination_app_data =
+            crate::test_support::TestDir::new("timeline-portable-copy-destination-app-data");
+        crate::state::initialize_app_data_dir(destination_app_data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(copied.path().to_path_buf())).unwrap();
+        let copied_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let copied_access = NoteTimeline::new(&copied_state).history_mode(
+            HistoryModeGrant::authorized(NoteIdentity::new("portable-copy-note")),
+        );
+
+        let copied_header = copied_access.revisions().unwrap()[0].clone();
+        let copied_revision = copied_access.reconstruct(copied_header.identity()).unwrap();
+        assert_eq!(copied_header.identity(), source_header.identity());
+        assert_eq!(copied_header.content_hash(), source_header.content_hash());
+        assert_eq!(copied_revision, source_revision);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn reopening_rejects_an_older_clean_close_watermark_from_the_same_generation() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-watermark-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-watermark-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        fs::write(
+            notes.path().join("Watermark.md"),
+            "---\ngneauxghts:\n  id: watermark-note\n  kind: note\n---\n\nWatermark content",
+        )
+        .unwrap();
+        let first_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let first_timeline = NoteTimeline::new(&first_state);
+        first_timeline
+            .initialize_existing_notes(notes.path())
+            .unwrap();
+        first_timeline.clean_close(notes.path()).unwrap();
+        let database = history_store::history_database_path_for_test(notes.path());
+        let older_clean_copy = notes.path().join(".gneauxghts/history-older.sqlite3");
+        fs::copy(&database, &older_clean_copy).unwrap();
+        drop(first_timeline);
+        drop(first_state);
+
+        let second_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let second_timeline = NoteTimeline::new(&second_state);
+        second_timeline.baseline_initialization_progress().unwrap();
+        second_timeline.clean_close(notes.path()).unwrap();
+        drop(second_timeline);
+        drop(second_state);
+        fs::copy(&older_clean_copy, &database).unwrap();
+
+        let rolled_back_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let error = NoteTimeline::new(&rolled_back_state)
+            .baseline_initialization_progress()
+            .expect_err("an older clean store from the same generation must require recovery");
+        assert!(error.contains("clean-close watermark rollback"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn app_restart_recovers_a_same_installation_store_from_wal_without_shm() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-wal-recovery-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let source = crate::test_support::TestDir::new("timeline-wal-recovery-source");
+        crate::state::set_notes_root_override(Some(source.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(source.path()).unwrap();
+        let source_note = source.path().join("Wal.md");
+        fs::write(
+            &source_note,
+            "---\ngneauxghts:\n  id: wal-recovery-note\n  kind: note\n---\n\nBefore recovery",
+        )
+        .unwrap();
+        let source_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        NoteTimeline::new(&source_state)
+            .initialize_existing_notes(source.path())
+            .unwrap();
+        let keepalive = history_store::hold_history_store_open_for_test();
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &source_state,
+            "Wal".to_string(),
+            "After recovery".to_string(),
+            Some(source_note.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        let source_access = NoteTimeline::new(&source_state).history_mode(
+            HistoryModeGrant::authorized(NoteIdentity::new("wal-recovery-note")),
+        );
+        let expected_header = source_access.revisions().unwrap().last().unwrap().clone();
+        let expected_revision = source_access
+            .reconstruct(expected_header.identity())
+            .unwrap();
+        let source_database = history_store::history_database_path_for_test(source.path());
+        let source_wal = history_store::history_wal_path_for_test(source.path());
+        assert!(fs::metadata(&source_wal).unwrap().len() > 0);
+
+        let restarted = crate::test_support::TestDir::new("timeline-wal-recovery-restarted");
+        copy_file(&source_note, &restarted.path().join("Wal.md"));
+        copy_file(
+            &source.path().join(".gneauxghts/vault.json"),
+            &restarted.path().join(".gneauxghts/vault.json"),
+        );
+        copy_file(
+            &source_database,
+            &history_store::history_database_path_for_test(restarted.path()),
+        );
+        copy_file(
+            &source_wal,
+            &history_store::history_wal_path_for_test(restarted.path()),
+        );
+        assert!(!history_store::history_shm_path_for_test(restarted.path()).exists());
+        drop(source_access);
+        drop(keepalive);
+        drop(source_state);
+
+        crate::state::set_notes_root_override(Some(restarted.path().to_path_buf())).unwrap();
+        let restarted_state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let restarted_access = NoteTimeline::new(&restarted_state).history_mode(
+            HistoryModeGrant::authorized(NoteIdentity::new("wal-recovery-note")),
+        );
+        let recovered_header = restarted_access
+            .revisions()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        let recovered_revision = restarted_access
+            .reconstruct(recovered_header.identity())
+            .unwrap();
+        assert_eq!(recovered_header.identity(), expected_header.identity());
+        assert_eq!(
+            recovered_header.content_hash(),
+            expected_header.content_hash()
+        );
+        assert_eq!(recovered_revision, expected_revision);
         crate::state::set_notes_root_override(None).unwrap();
     }
 

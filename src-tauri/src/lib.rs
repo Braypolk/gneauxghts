@@ -33,6 +33,7 @@ use state::{
 use std::ffi::OsString;
 use std::{path::PathBuf, thread};
 use tauri::{Manager, RunEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 #[cfg(target_os = "ios")]
 use tauri_plugin_keyring_store::WriteAccessibility;
 #[cfg(desktop)]
@@ -225,6 +226,7 @@ pub fn run() {
             commands::get_vault_info,
             commands::list_vault_folders,
             commands::create_vault_folder,
+            commands::trust_and_migrate_legacy_note_timeline_history,
             commands::asset_commands::read_image_asset_data_url,
             commands::asset_commands::store_pasted_image,
             commands::set_vault_directory,
@@ -328,7 +330,38 @@ pub fn run() {
             }
         }
 
-        if matches!(&event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
+        let mut exit_permitted = true;
+        if let RunEvent::ExitRequested { api, .. } = &event {
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                let clean_close = state.note_timeline_is_cleanly_closed().and_then(|closed| {
+                    if closed {
+                        Ok(())
+                    } else {
+                        state::vault_root()
+                            .and_then(|vault_root| {
+                                services::note_timeline::NoteTimeline::new(&state)
+                                    .clean_close(&vault_root)
+                            })
+                            .map(|_| ())
+                    }
+                });
+                if let Err(error) = clean_close {
+                    eprintln!("vault clean close failed: {error}");
+                    api.prevent_exit();
+                    exit_permitted = false;
+                    app_handle
+                        .dialog()
+                        .message(format!(
+                            "Gneauxghts could not safely close the vault, so the app remains open. Resolve the storage problem and quit again.\n\n{error}"
+                        ))
+                        .title("Vault could not be closed safely")
+                        .kind(MessageDialogKind::Error)
+                        .show(|_| {});
+                }
+            }
+        }
+
+        if exit_permitted && matches!(&event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
             if let Some(state) = app_handle.try_state::<AppState>() {
                 state.semantic.shutdown();
             }
