@@ -82,6 +82,8 @@ fn clean_task_commands_delegate_canonical_mutation_to_the_task_service() {
 #[test]
 fn ordinary_note_writers_use_typed_note_timeline_mutations() {
     let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
+    let chat_commands = repository_file("src-tauri/src/commands/chat_commands.rs");
+    let chat = repository_file("src-tauri/src/chat.rs");
     let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
     let tasks = repository_file("src-tauri/src/services/task_mutation.rs");
     let task_production = tasks
@@ -98,6 +100,23 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
             "pub(crate) fn persist_task_note_session_with_outcome(",
             "NoteMutation::task_action(",
             "commit_warning",
+        ],
+    );
+    assert_contains_all(
+        &chat_commands,
+        &[
+            "projection_conflict_conversion(",
+            "persist_note_session_with_outcome(",
+            "restore_projection_after_conflict(",
+        ],
+    );
+    assert_contains_none(
+        chat.split("#[cfg(test)]")
+            .next()
+            .expect("chat production source"),
+        &[
+            "unique_converted_note_path(",
+            "fs::write(&target, ordinary_note)",
         ],
     );
     assert_contains_all(
@@ -135,6 +154,7 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
 #[test]
 fn note_timeline_contracts_the_legacy_post_commit_boundary() {
     let services = repository_file("src-tauri/src/services/mod.rs");
+    let catalog = repository_file("src-tauri/src/services/note_catalog.rs");
     let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
     let post_publication =
         repository_file("src-tauri/src/services/note_timeline/post_publication.rs");
@@ -156,9 +176,19 @@ fn note_timeline_contracts_the_legacy_post_commit_boundary() {
         &[
             "pub(super) fn synchronize_canonical_file(",
             "pub(super) struct PublicationOutcome",
+            "struct PublicationCatalogOutcome",
         ],
     );
     assert_contains_none(&post_publication, &["pub(crate)", "pub fn"]);
+    assert_contains_none(
+        &catalog,
+        &[
+            "PublicationCatalogOutcome",
+            "synchronize_published_upsert",
+            "synchronize_published_remove",
+            "CatalogWriteMode::Save",
+        ],
+    );
     assert_contains_none(
         &architecture,
         &[

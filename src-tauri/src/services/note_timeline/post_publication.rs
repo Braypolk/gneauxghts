@@ -6,7 +6,9 @@
 //! required read-your-writes synchronization failure.
 
 use crate::index::{build_indexed_note, AppState, IndexedNote};
-use crate::services::{note_catalog::PublicationCatalogOutcome, NoteCatalog};
+use crate::services::note_catalog::{
+    apply_task_projection, CatalogMutation, DeferredCatalogProjection,
+};
 use serde::Serialize;
 use std::{
     fs,
@@ -104,6 +106,12 @@ struct CommittedNoteMutation {
     modified_millis: u64,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PublicationCatalogOutcome {
+    catalog_error: Option<String>,
+    task_projection_error: Option<String>,
+}
+
 trait PublicationSink {
     fn catalog_upsert(&self, path: PathBuf, note: IndexedNote) -> PublicationCatalogOutcome;
     fn catalog_remove(&self, path: &Path) -> PublicationCatalogOutcome;
@@ -132,21 +140,54 @@ struct AppStatePublicationSink<'a> {
 
 impl PublicationSink for AppStatePublicationSink<'_> {
     fn catalog_upsert(&self, path: PathBuf, note: IndexedNote) -> PublicationCatalogOutcome {
-        NoteCatalog::new(
-            &self.state.notes_index,
-            &self.state.lexical,
-            &self.state.background_index_queue,
-        )
-        .synchronize_published_upsert(path, note)
+        let mutation = CatalogMutation::Upsert {
+            path: path.clone(),
+            note: note.clone(),
+        };
+        let catalog_error = self
+            .state
+            .notes_index
+            .lock()
+            .map(|mut index| index.upsert_note(path, note))
+            .map_err(|_| "Search index lock poisoned".to_string())
+            .err();
+        let task_projection_error = apply_task_projection(&mutation).err();
+        self.state
+            .background_index_queue
+            .enqueue(DeferredCatalogProjection {
+                mutation,
+                lexical: true,
+                tasks: false,
+            });
+        PublicationCatalogOutcome {
+            catalog_error,
+            task_projection_error,
+        }
     }
 
     fn catalog_remove(&self, path: &Path) -> PublicationCatalogOutcome {
-        NoteCatalog::new(
-            &self.state.notes_index,
-            &self.state.lexical,
-            &self.state.background_index_queue,
-        )
-        .synchronize_published_remove(path)
+        let mutation = CatalogMutation::Remove {
+            path: path.to_path_buf(),
+        };
+        let catalog_error = self
+            .state
+            .notes_index
+            .lock()
+            .map(|mut index| index.remove_note(path))
+            .map_err(|_| "Search index lock poisoned".to_string())
+            .err();
+        let task_projection_error = apply_task_projection(&mutation).err();
+        self.state
+            .background_index_queue
+            .enqueue(DeferredCatalogProjection {
+                mutation,
+                lexical: true,
+                tasks: false,
+            });
+        PublicationCatalogOutcome {
+            catalog_error,
+            task_projection_error,
+        }
     }
 
     fn clear_dirty(&self, path: &Path) -> Result<(), String> {

@@ -1,6 +1,7 @@
 use super::{
     forgotten_note_commands::{register_forgotten_chat_folder, resolve_forgotten_target_path},
     index_bridge::remove_notes_index_entry,
+    note_persistence::persist_note_session_with_outcome,
     prepare_notes_dir, prepare_notes_dir_with_state, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
 use crate::{
@@ -1225,7 +1226,28 @@ pub(crate) fn chat_resolve_projection_conflict(
     conversation_id: String,
     action: String,
 ) -> Result<Option<String>, String> {
-    let converted = service.resolve_projection_conflict(&conversation_id, &action)?;
+    let converted = match action.as_str() {
+        "convert" => {
+            let conversion = service.projection_conflict_conversion(&conversation_id)?;
+            let outcome = persist_note_session_with_outcome(
+                &state,
+                conversion.title,
+                conversion.markdown,
+                None,
+            )?;
+            let path = outcome
+                .session
+                .and_then(|session| session.path)
+                .ok_or_else(|| "Converted note was not published".to_string())?;
+            service.restore_projection_after_conflict(&conversation_id)?;
+            Some(path)
+        }
+        "restore" => {
+            service.restore_projection_after_conflict(&conversation_id)?;
+            None
+        }
+        _ => return Err("Projection conflict action must be convert or restore".to_string()),
+    };
     let projection = service.recall_document(&conversation_id)?.path;
     state.events.vault_document_changed(
         &projection,

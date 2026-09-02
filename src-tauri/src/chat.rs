@@ -504,6 +504,11 @@ pub(crate) struct ChatService {
     inner: Arc<ChatServiceInner>,
 }
 
+pub(crate) struct ProjectionConflictConversion {
+    pub(crate) title: String,
+    pub(crate) markdown: String,
+}
+
 struct ChatServiceInner {
     db_path: PathBuf,
     notes_root: PathBuf,
@@ -3527,35 +3532,30 @@ impl ChatService {
         Ok(None)
     }
 
-    pub(crate) fn resolve_projection_conflict(
+    pub(crate) fn projection_conflict_conversion(
         &self,
         conversation_id: &str,
-        action: &str,
-    ) -> Result<Option<String>, String> {
-        if !self.projection_conflict(conversation_id)? && action != "restore" {
-            return Ok(None);
+    ) -> Result<ProjectionConflictConversion, String> {
+        let source = self
+            .changed_projection_path(conversation_id)?
+            .ok_or_else(|| "No externally changed projection was found".to_string())?;
+        if !source.exists() {
+            return Err(
+                "The changed projection was deleted; restore the transcript instead".to_string(),
+            );
         }
-        let mut converted_path = None;
-        if action == "convert" {
-            let source = self
-                .changed_projection_path(conversation_id)?
-                .ok_or_else(|| "No externally changed projection was found".to_string())?;
-            if !source.exists() {
-                return Err(
-                    "The changed projection was deleted; restore the transcript instead"
-                        .to_string(),
-                );
-            }
-            let content = fs::read_to_string(&source).map_err(|error| error.to_string())?;
-            let editable_body = crate::note::strip_frontmatter(&content);
-            let (ordinary_note, _) =
-                crate::note::prepare_note_markdown(&editable_body, None, None)?;
-            let target = unique_converted_note_path(&self.inner.notes_root, &editable_body);
-            fs::write(&target, ordinary_note).map_err(|error| error.to_string())?;
-            converted_path = Some(target.to_string_lossy().into_owned());
-        } else if action != "restore" {
-            return Err("Projection conflict action must be convert or restore".to_string());
-        }
+        let content = fs::read_to_string(&source).map_err(|error| error.to_string())?;
+        let markdown = crate::note::strip_frontmatter(&content);
+        Ok(ProjectionConflictConversion {
+            title: converted_note_title(&markdown),
+            markdown,
+        })
+    }
+
+    pub(crate) fn restore_projection_after_conflict(
+        &self,
+        conversation_id: &str,
+    ) -> Result<(), String> {
         self.connection()?
             .execute(
                 "UPDATE chat_conversations SET detached = 0 WHERE id = ?1",
@@ -3563,7 +3563,7 @@ impl ChatService {
             )
             .map_err(|error| error.to_string())?;
         self.write_projection(conversation_id, true)?;
-        Ok(converted_path)
+        Ok(())
     }
 
     pub(crate) fn mark_projection_detached_if_needed(
@@ -4555,25 +4555,13 @@ fn message_part(messages: &[ChatMessage], id: &str) -> i64 {
         .unwrap_or(1)
 }
 
-fn unique_converted_note_path(notes_root: &Path, content: &str) -> PathBuf {
-    let stem = content
+fn converted_note_title(content: &str) -> String {
+    content
         .lines()
         .find_map(|line| line.strip_prefix("# "))
         .map(slugify)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Converted chat".to_string());
-    for suffix in 0.. {
-        let name = if suffix == 0 {
-            format!("{stem}.md")
-        } else {
-            format!("{stem} {suffix}.md")
-        };
-        let path = notes_root.join(name);
-        if !path.exists() {
-            return path;
-        }
-    }
-    unreachable!()
+        .unwrap_or_else(|| "Converted chat".to_string())
 }
 
 fn generate_id(prefix: &str) -> String {
@@ -6753,7 +6741,7 @@ mod tests {
     }
 
     #[test]
-    fn conflict_conversion_preserves_edit_as_an_ordinary_note_then_restores_projection() {
+    fn conflict_conversion_prepares_an_ordinary_note_then_restores_projection() {
         let (_root, service) = service("chat-conflict-convert");
         let conversation = service
             .create_conversation(Some("Edited chat".into()), None)
@@ -6766,16 +6754,15 @@ mod tests {
         let original = fs::read_to_string(&projection).unwrap();
         fs::write(&projection, format!("{original}\nUser-added thought\n")).unwrap();
 
-        let converted = service
-            .resolve_projection_conflict(&conversation.summary.id, "convert")
-            .unwrap()
+        let conversion = service
+            .projection_conflict_conversion(&conversation.summary.id)
             .unwrap();
-        let converted_markdown = fs::read_to_string(converted).unwrap();
-        assert_eq!(
-            crate::note::document_kind(&converted_markdown),
-            crate::note::DocumentKind::Note
-        );
-        assert!(converted_markdown.contains("User-added thought"));
+        assert_eq!(conversion.title, "Edited chat");
+        assert!(conversion.markdown.contains("User-added thought"));
+
+        service
+            .restore_projection_after_conflict(&conversation.summary.id)
+            .unwrap();
         assert!(!fs::read_to_string(projection)
             .unwrap()
             .contains("User-added thought"));

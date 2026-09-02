@@ -19,8 +19,6 @@ use std::{
 pub(crate) enum CatalogWriteMode {
     /// Apply lexical and task projections before returning.
     Synchronous,
-    /// Keep the catalog and task projection current, but defer lexical work.
-    Save,
     /// Managed chat projections belong in catalog and lexical search, but
     /// never participate in the ordinary task projection.
     ManagedProjection,
@@ -55,11 +53,6 @@ impl ProjectionPlan {
                 tasks: ProjectionTiming::Synchronous,
                 task_action,
             },
-            CatalogWriteMode::Save => Self {
-                lexical: ProjectionTiming::Deferred,
-                tasks: ProjectionTiming::Synchronous,
-                task_action,
-            },
             CatalogWriteMode::ManagedProjection => Self {
                 lexical: ProjectionTiming::Synchronous,
                 tasks: ProjectionTiming::Excluded,
@@ -75,11 +68,6 @@ impl ProjectionPlan {
                 tasks: ProjectionTiming::Synchronous,
                 task_action: TaskProjectionAction::Remove,
             },
-            CatalogWriteMode::Save => Self {
-                lexical: ProjectionTiming::Deferred,
-                tasks: ProjectionTiming::Synchronous,
-                task_action: TaskProjectionAction::Remove,
-            },
             CatalogWriteMode::ManagedProjection => Self {
                 lexical: ProjectionTiming::Synchronous,
                 tasks: ProjectionTiming::Excluded,
@@ -87,12 +75,6 @@ impl ProjectionPlan {
             },
         }
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct PublicationCatalogOutcome {
-    pub(super) catalog_error: Option<String>,
-    pub(super) task_projection_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -215,68 +197,6 @@ impl<'a> NoteCatalog<'a> {
         }
         Ok(())
     }
-
-    /// Apply the synchronous post-commit boundary for canonical note bytes.
-    ///
-    /// Catalog/task errors are data, not command errors: by the time this is
-    /// called the filesystem write has already committed. Lexical work remains
-    /// deferred and is queued regardless of a synchronous projection failure.
-    pub(super) fn synchronize_published_upsert(
-        &self,
-        path: PathBuf,
-        note: IndexedNote,
-    ) -> PublicationCatalogOutcome {
-        let plan = ProjectionPlan::for_upsert(CatalogWriteMode::Save, note.document_kind);
-        let mutation = CatalogMutation::Upsert {
-            path: path.clone(),
-            note: note.clone(),
-        };
-        let catalog_error = self
-            .notes_index
-            .lock()
-            .map(|mut index| {
-                index.upsert_note(path, note);
-            })
-            .map_err(|_| "Search index lock poisoned".to_string())
-            .err();
-        let task_projection_error = apply_task_projection(&mutation).err();
-        self.background_queue.enqueue(
-            DeferredCatalogProjection::from_plan(mutation, plan)
-                .expect("save upsert always defers lexical projection"),
-        );
-        PublicationCatalogOutcome {
-            catalog_error,
-            task_projection_error,
-        }
-    }
-
-    /// Remove a previous path after a committed move. The in-memory catalog and
-    /// task projection are synchronous; lexical removal remains deferred.
-    pub(super) fn synchronize_published_remove(&self, path: &Path) -> PublicationCatalogOutcome {
-        let mutation = CatalogMutation::Remove {
-            path: path.to_path_buf(),
-        };
-        let catalog_error = self
-            .notes_index
-            .lock()
-            .map(|mut index| {
-                index.remove_note(path);
-            })
-            .map_err(|_| "Search index lock poisoned".to_string())
-            .err();
-        let task_projection_error = apply_task_projection(&mutation).err();
-        self.background_queue.enqueue(
-            DeferredCatalogProjection::from_plan(
-                mutation,
-                ProjectionPlan::for_remove(CatalogWriteMode::Save),
-            )
-            .expect("save remove always defers lexical projection"),
-        );
-        PublicationCatalogOutcome {
-            catalog_error,
-            task_projection_error,
-        }
-    }
 }
 
 pub(crate) fn task_projection_action(kind: DocumentKind) -> TaskProjectionAction {
@@ -361,20 +281,6 @@ mod tests {
                 TaskProjectionAction::Remove,
             ),
             (
-                CatalogWriteMode::Save,
-                DocumentKind::Note,
-                ProjectionTiming::Deferred,
-                ProjectionTiming::Synchronous,
-                TaskProjectionAction::Reconcile,
-            ),
-            (
-                CatalogWriteMode::Save,
-                DocumentKind::ChatIndex,
-                ProjectionTiming::Deferred,
-                ProjectionTiming::Synchronous,
-                TaskProjectionAction::Remove,
-            ),
-            (
                 CatalogWriteMode::ManagedProjection,
                 DocumentKind::ChatTranscript,
                 ProjectionTiming::Synchronous,
@@ -396,16 +302,11 @@ mod tests {
     }
 
     #[test]
-    fn remove_projection_policy_distinguishes_synchronous_deferred_and_managed_paths() {
+    fn remove_projection_policy_distinguishes_synchronous_and_managed_paths() {
         let cases = [
             (
                 CatalogWriteMode::Synchronous,
                 ProjectionTiming::Synchronous,
-                ProjectionTiming::Synchronous,
-            ),
-            (
-                CatalogWriteMode::Save,
-                ProjectionTiming::Deferred,
                 ProjectionTiming::Synchronous,
             ),
             (
@@ -421,19 +322,5 @@ mod tests {
             assert_eq!(plan.tasks, tasks);
             assert_eq!(plan.task_action, TaskProjectionAction::Remove);
         }
-    }
-
-    #[test]
-    fn publication_outcome_distinguishes_catalog_and_task_degradation() {
-        let healthy = PublicationCatalogOutcome::default();
-        let degraded = PublicationCatalogOutcome {
-            catalog_error: None,
-            task_projection_error: Some("task projection unavailable".to_string()),
-        };
-
-        assert!(healthy.catalog_error.is_none());
-        assert!(healthy.task_projection_error.is_none());
-        assert!(degraded.catalog_error.is_none());
-        assert!(degraded.task_projection_error.is_some());
     }
 }
