@@ -1225,12 +1225,46 @@ impl<'a> NoteTimeline<'a> {
                         format!("Read observed canonical note {}: {error}", path.display())
                     })
                 })?;
-                let note_id = self
-                    .state
-                    .resolve_observed_note_identity(&path, &markdown)?;
                 self.state.ensure_note_timeline_history_recovered()?;
+                let embedded_note_id = crate::note::parse_note(&markdown)
+                    .frontmatter
+                    .managed
+                    .map(|metadata| NoteIdentity::new(metadata.id))
+                    .filter(|identity| !identity.as_str().trim().is_empty());
+                let historical_path = embedded_note_id
+                    .as_ref()
+                    .map(history_store::current_path)
+                    .transpose()?
+                    .flatten();
+                let identity_history = historical_path.as_deref().filter(|historical_path| {
+                    source == VaultObservationSource::Reconciliation || *historical_path == path
+                });
+                let note_id = self.state.resolve_observed_note_identity(
+                    &path,
+                    &markdown,
+                    identity_history,
+                )?;
+                if let Some(previous_path) = historical_path.as_deref().filter(|previous_path| {
+                    source == VaultObservationSource::Reconciliation
+                        && *previous_path != path
+                        && !previous_path.exists()
+                }) {
+                    let relocation = if previous_path.parent() == path.parent() {
+                        LifecycleEventKind::Renamed
+                    } else {
+                        LifecycleEventKind::Moved
+                    };
+                    history_store::record_observed_lifecycle_event(
+                        &NoteIdentity::new(note_id.clone()),
+                        relocation,
+                        Some(previous_path),
+                        &path,
+                        observed_at_millis,
+                    )?;
+                }
                 history_store::record_external_revision(
                     &NoteIdentity::new(note_id.clone()),
+                    &path,
                     &markdown,
                     observed_at_millis,
                     modified_at_millis,
@@ -1247,8 +1281,10 @@ impl<'a> NoteTimeline<'a> {
                 LifecycleEventKind::Renamed | LifecycleEventKind::Moved,
             ) => {
                 if let Some(previous_path) = previous_path.as_deref() {
-                    let markdown = fs::read_to_string(&path).map_err(|error| {
-                        format!("Read observed moved note {}: {error}", path.display())
+                    let markdown = canonical_markdown.map(Ok).unwrap_or_else(|| {
+                        fs::read_to_string(&path).map_err(|error| {
+                            format!("Read observed moved note {}: {error}", path.display())
+                        })
                     })?;
                     let transferred = self
                         .state
@@ -1257,7 +1293,7 @@ impl<'a> NoteTimeline<'a> {
                         Some(note_id) => note_id,
                         None => self
                             .state
-                            .resolve_observed_note_identity(&path, &markdown)?,
+                            .resolve_observed_note_identity(&path, &markdown, None)?,
                     };
                     let lifecycle_kind = match kind {
                         VaultObservationKind::Lifecycle(kind) => kind,
@@ -1339,7 +1375,25 @@ pub(crate) fn prepared_history_intent_count_for_test(status: &str) -> u64 {
 }
 
 #[cfg(test)]
-fn inject_history_recovery_failure_once() {
+pub(crate) fn reconstructed_revision_bodies_for_test(
+    state: &AppState,
+    note_id: &str,
+) -> Result<Vec<String>, String> {
+    let timeline = NoteTimeline::new(state);
+    let history = timeline.history_mode(HistoryModeGrant::authorized(NoteIdentity::new(note_id)));
+    history
+        .revisions()?
+        .into_iter()
+        .map(|revision| {
+            history
+                .reconstruct(revision.identity())
+                .map(|revision| revision.body().to_string())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn inject_history_recovery_failure_once() {
     history_store::inject_fault_once(history_store::FaultPoint::Recover);
 }
 
@@ -2030,7 +2084,18 @@ mod tests {
 
         let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id));
         assert_eq!(history.revisions().unwrap().len(), 2);
-        assert_eq!(history.lifecycle_events().unwrap().len(), 1);
+        let events = history.lifecycle_events().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind() == LifecycleEventKind::Created)
+                .count(),
+            1
+        );
+        assert!(events
+            .iter()
+            .any(|event| event.kind() == LifecycleEventKind::Renamed));
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -2980,6 +3045,106 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[1].kind(), LifecycleEventKind::Renamed);
         assert_eq!(events[1].occurred_at_millis(), observed_at);
+        assert_eq!(events[1].previous_path(), Some(previous_path.as_path()));
+        assert_eq!(events[1].path(), Some(path.as_path()));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn app_title_only_rename_records_lifecycle_without_duplicate_revision() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-app-rename-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-app-rename-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Before".to_string(),
+            "Unchanged body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let previous_path = PathBuf::from(created.path.unwrap());
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let renamed = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "After".to_string(),
+            "Unchanged body".to_string(),
+            Some(previous_path.to_string_lossy().into_owned()),
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let path = PathBuf::from(renamed.path.unwrap());
+
+        let timeline = NoteTimeline::new(&state);
+        let history = timeline.history_mode(HistoryModeGrant::authorized(note_id));
+        assert_eq!(history.revisions().unwrap().len(), 1);
+        let events = history.lifecycle_events().unwrap();
+        assert_eq!(events.len(), 2);
+        let rename = events
+            .iter()
+            .find(|event| event.kind() == LifecycleEventKind::Renamed)
+            .unwrap();
+        assert_eq!(rename.previous_path(), Some(previous_path.as_path()));
+        assert_eq!(rename.path(), Some(path.as_path()));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn reconciliation_infers_a_missed_move_from_the_durable_current_path() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-missed-move-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-missed-move-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Before".to_string(),
+            "Unchanged body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let previous_path = PathBuf::from(created.path.unwrap());
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = notes.path().join("Nested").join("After.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::rename(&previous_path, &path).unwrap();
+        let markdown = fs::read_to_string(&path).unwrap();
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&restarted);
+        let observed_at = crate::time::current_time_millis().unwrap() + 1;
+
+        timeline
+            .observe(
+                VaultObservation::reconciled_state(path.clone(), observed_at, None)
+                    .with_canonical_markdown(markdown),
+            )
+            .unwrap();
+
+        let history = timeline.history_mode(HistoryModeGrant::authorized(note_id));
+        assert_eq!(history.revisions().unwrap().len(), 1);
+        let events = history.lifecycle_events().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].kind(), LifecycleEventKind::Moved);
         assert_eq!(events[1].previous_path(), Some(previous_path.as_path()));
         assert_eq!(events[1].path(), Some(path.as_path()));
         crate::state::set_notes_root_override(None).unwrap();

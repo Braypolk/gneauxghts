@@ -11,12 +11,12 @@ use notify::{
     Watcher,
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Condvar, Mutex,
+        Condvar, LazyLock, Mutex,
     },
     thread,
     time::{Duration, Instant, UNIX_EPOCH},
@@ -393,20 +393,41 @@ fn wait_for_flushable_batch(queue: &DirtyQueue) -> Vec<PathBuf> {
 /// Categorized view of a flushed batch after reading disk state.
 struct ResolvedBatch {
     /// Paths that still exist on disk, with their current content.
-    present: Vec<(PathBuf, String, u64, Option<u64>)>,
+    present: Vec<ObservedFile>,
     /// Paths that no longer exist (or were forgotten).
     removed: Vec<PathBuf>,
 }
 
-fn report_timeline_observation(
-    path: &Path,
-    result: Result<crate::services::note_timeline::ObservationReceipt, String>,
-) {
-    if let Err(error) = result {
+struct ObservedFile {
+    path: PathBuf,
+    markdown: String,
+    projection_modified_millis: u64,
+    filesystem_modified_millis: Option<u64>,
+}
+
+static PENDING_TIMELINE_OBSERVATIONS: LazyLock<Mutex<VecDeque<VaultObservation>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+
+fn observe_timeline_or_retain(timeline: &NoteTimeline<'_>, observation: VaultObservation) {
+    let path = observation.path().to_path_buf();
+    if let Err(error) = timeline.observe(observation.clone()) {
         eprintln!(
             "Timeline observation for {} will be retried by reconciliation: {error}",
             path.display()
         );
+        if let Ok(mut pending) = PENDING_TIMELINE_OBSERVATIONS.lock() {
+            pending.push_back(observation);
+        }
+    }
+}
+
+fn retry_retained_timeline_observations(timeline: &NoteTimeline<'_>) {
+    let observations = PENDING_TIMELINE_OBSERVATIONS
+        .lock()
+        .map(|mut pending| pending.drain(..).collect::<Vec<_>>())
+        .unwrap_or_default();
+    for observation in observations {
+        observe_timeline_or_retain(timeline, observation);
     }
 }
 
@@ -418,6 +439,8 @@ fn flush_dirty_batch(
     let Some(state) = app_handle.try_state::<AppState>() else {
         return Ok(());
     };
+    let timeline = NoteTimeline::new(&state);
+    retry_retained_timeline_observations(&timeline);
     state.semantic.report_user_activity();
 
     let resolved = resolve_batch(notes_dir, paths)?;
@@ -427,7 +450,13 @@ fn flush_dirty_batch(
     // Managed projection paths are authoritative in ai.sqlite3. External
     // edits/deletes become classified conflicts and never enter the generic
     // note, task, or semantic pipelines.
-    for (path, markdown, modified_millis, modified_evidence) in resolved.present {
+    for observed in resolved.present {
+        let ObservedFile {
+            path,
+            markdown,
+            projection_modified_millis,
+            filesystem_modified_millis,
+        } = observed;
         let owner = app_handle
             .try_state::<ChatService>()
             .and_then(|chat| chat.projection_owner_for_path(&path).ok().flatten());
@@ -446,7 +475,12 @@ fn flush_dirty_batch(
             state.events.chat_projection_conflict(chat_id, &path, false);
             continue;
         }
-        ordinary_present.push((path, markdown, modified_millis, modified_evidence));
+        ordinary_present.push(ObservedFile {
+            path,
+            markdown,
+            projection_modified_millis,
+            filesystem_modified_millis,
+        });
     }
     for path in resolved.removed {
         let owner = app_handle
@@ -485,8 +519,8 @@ fn flush_dirty_batch(
     // instead of delete + re-embed.
     let mut present_by_hash: HashMap<String, Vec<usize>> = HashMap::new();
     let mut present_content_hash: Vec<String> = Vec::with_capacity(resolved.present.len());
-    for (_, markdown, _, _) in &resolved.present {
-        present_content_hash.push(content_hash(markdown));
+    for observed in &resolved.present {
+        present_content_hash.push(content_hash(&observed.markdown));
     }
     for (index, hash) in present_content_hash.iter().enumerate() {
         present_by_hash.entry(hash.clone()).or_default().push(index);
@@ -508,32 +542,28 @@ fn flush_dirty_batch(
             continue;
         };
 
-        let (new_path, markdown, modified_millis, _) = &resolved.present[present_index];
+        let observed = &resolved.present[present_index];
+        let new_path = &observed.path;
+        let markdown = &observed.markdown;
         let observed_at_millis = current_time_millis()?;
         if removed_path.parent() == new_path.parent() {
-            report_timeline_observation(
-                new_path,
-                NoteTimeline::new(&state).observe(VaultObservation::renamed(
-                    removed_path,
-                    new_path,
-                    observed_at_millis,
-                )),
+            observe_timeline_or_retain(
+                &timeline,
+                VaultObservation::renamed(removed_path, new_path, observed_at_millis)
+                    .with_canonical_markdown(markdown.clone()),
             );
         } else {
-            report_timeline_observation(
-                new_path,
-                NoteTimeline::new(&state).observe(VaultObservation::moved(
-                    removed_path,
-                    new_path,
-                    observed_at_millis,
-                )),
+            observe_timeline_or_retain(
+                &timeline,
+                VaultObservation::moved(removed_path, new_path, observed_at_millis)
+                    .with_canonical_markdown(markdown.clone()),
             );
         }
         state.semantic.queue_note_move(
             removed_path,
             new_path,
             markdown.clone(),
-            *modified_millis,
+            observed.projection_modified_millis,
         )?;
         // The in-memory/lexical index is path-keyed too: drop the old entry
         // and refresh the new one.
@@ -547,32 +577,30 @@ fn flush_dirty_batch(
     }
 
     // Remaining present paths are plain creates/updates.
-    for (index, (path, markdown, modified_millis, modified_evidence)) in
-        resolved.present.iter().enumerate()
-    {
+    for (index, observed) in resolved.present.iter().enumerate() {
         if present_consumed[index] {
             continue;
         }
-        report_timeline_observation(
-            path,
-            NoteTimeline::new(&state).observe(
-                VaultObservation::external_edit(
-                    path.clone(),
-                    current_time_millis()?,
-                    *modified_evidence,
-                )
-                .with_canonical_markdown(markdown.clone()),
-            ),
+        observe_timeline_or_retain(
+            &timeline,
+            VaultObservation::external_edit(
+                observed.path.clone(),
+                current_time_millis()?,
+                observed.filesystem_modified_millis,
+            )
+            .with_canonical_markdown(observed.markdown.clone()),
         );
-        if !crate::note::semantic_recall_eligible(markdown) {
-            state.semantic.queue_delete_note(path)?;
+        if !crate::note::semantic_recall_eligible(&observed.markdown) {
+            state.semantic.queue_delete_note(&observed.path)?;
         } else {
-            state
-                .semantic
-                .queue_note_update(path, markdown.clone(), *modified_millis)?;
+            state.semantic.queue_note_update(
+                &observed.path,
+                observed.markdown.clone(),
+                observed.projection_modified_millis,
+            )?;
         }
-        state.mark_notes_index_dirty(path, "watcher")?;
-        state.events.vault_note_changed(path, false);
+        state.mark_notes_index_dirty(&observed.path, "watcher")?;
+        state.events.vault_note_changed(&observed.path, false);
     }
 
     // Remaining removed paths are genuine deletes.
@@ -580,12 +608,9 @@ fn flush_dirty_batch(
         if removed_consumed[index] {
             continue;
         }
-        report_timeline_observation(
-            path,
-            NoteTimeline::new(&state).observe(VaultObservation::missing(
-                path.clone(),
-                current_time_millis()?,
-            )),
+        observe_timeline_or_retain(
+            &timeline,
+            VaultObservation::missing(path.clone(), current_time_millis()?),
         );
         state.semantic.queue_delete_note(path)?;
         state.mark_notes_index_dirty(path, "watcher")?;
@@ -616,7 +641,12 @@ fn resolve_batch(notes_dir: &Path, paths: Vec<PathBuf>) -> Result<ResolvedBatch,
             .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
             .and_then(|duration| u64::try_from(duration.as_millis()).ok());
         let modified_millis = modified_evidence.unwrap_or(current_time_millis()?);
-        present.push((path, markdown, modified_millis, modified_evidence));
+        present.push(ObservedFile {
+            path,
+            markdown,
+            projection_modified_millis: modified_millis,
+            filesystem_modified_millis: modified_evidence,
+        });
     }
     Ok(ResolvedBatch { present, removed })
 }
@@ -624,7 +654,10 @@ fn resolve_batch(notes_dir: &Path, paths: Vec<PathBuf>) -> Result<ResolvedBatch,
 /// Look up the content hash the index currently has stored for a path, used to
 /// match a removed note against a content-identical newly-present note.
 fn stored_content_hash(state: &AppState, path: &Path) -> Option<String> {
-    state.semantic.stored_content_hash(path)
+    state
+        .semantic
+        .stored_content_hash(path)
+        .or_else(|| state.indexed_note_content_hash(path))
 }
 
 fn reconciliation_observations(
@@ -670,12 +703,10 @@ fn observe_reconciliation_state(
 ) -> Result<(), String> {
     let observed_at_millis = current_time_millis()?;
     let timeline = NoteTimeline::new(state);
-    report_timeline_observation(
-        notes_dir,
-        timeline.observe(VaultObservation::reconciliation_scan(
-            notes_dir.to_path_buf(),
-            observed_at_millis,
-        )),
+    retry_retained_timeline_observations(&timeline);
+    observe_timeline_or_retain(
+        &timeline,
+        VaultObservation::reconciliation_scan(notes_dir.to_path_buf(), observed_at_millis),
     );
 
     let known_paths = known_paths
@@ -708,8 +739,7 @@ fn observe_reconciliation_state(
             })?;
             observation = observation.with_canonical_markdown(markdown);
         }
-        let path = observation.path().to_path_buf();
-        report_timeline_observation(&path, timeline.observe(observation));
+        observe_timeline_or_retain(&timeline, observation);
     }
     Ok(())
 }
@@ -806,13 +836,17 @@ fn is_hidden_vault_path(path: &Path, notes_dir: &Path) -> bool {
 mod tests {
     use super::{
         consume_self_save, is_watchable_markdown_path, next_reconcile_interval,
-        reconciliation_observations, record_expected_move, record_expected_removal,
-        record_expected_write, should_process_watch_event, RECONCILE_INTERVAL_MAX,
-        RECONCILE_INTERVAL_MIN,
+        observe_timeline_or_retain, reconciliation_observations, record_expected_move,
+        record_expected_removal, record_expected_write, retry_retained_timeline_observations,
+        should_process_watch_event, stored_content_hash, PENDING_TIMELINE_OBSERVATIONS,
+        RECONCILE_INTERVAL_MAX, RECONCILE_INTERVAL_MIN,
     };
     use crate::services::note_timeline::{
-        LifecycleEventKind, VaultObservationKind, VaultObservationSource,
+        inject_history_recovery_failure_once, reconstructed_revision_bodies_for_test,
+        LifecycleEventKind, NoteTimeline, VaultObservation, VaultObservationKind,
+        VaultObservationSource,
     };
+    use crate::{app::EventBus, index::AppState, semantic::SemanticState};
     use notify::{
         event::{CreateKind, DataChange, MetadataKind, ModifyKind, RemoveKind, RenameMode},
         EventKind,
@@ -891,6 +925,28 @@ mod tests {
     #[test]
     fn reconcile_interval_relaxed_without_activity() {
         assert_eq!(next_reconcile_interval(None), RECONCILE_INTERVAL_MAX);
+    }
+
+    #[test]
+    fn rename_matching_uses_catalog_hash_when_semantic_indexing_is_unavailable() {
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let path = PathBuf::from("/vault/Rename.md");
+        let markdown = "Rename body";
+        state
+            .upsert_note_indexes(
+                path.clone(),
+                crate::index::build_indexed_note(&path, markdown, 1),
+            )
+            .unwrap();
+
+        assert_eq!(
+            stored_content_hash(&state, &path),
+            Some(crate::semantic::db::content_hash(markdown))
+        );
     }
 
     #[test]
@@ -999,5 +1055,60 @@ mod tests {
         assert!(!consume_self_save(&path));
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn failed_history_append_retries_the_exact_observed_state_before_rereading_disk() {
+        let _guard = crate::test_support::lock_test_env();
+        PENDING_TIMELINE_OBSERVATIONS.lock().unwrap().clear();
+        let app_data = crate::test_support::TestDir::new("watcher-history-retry-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("watcher-history-retry-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Retry".to_string(),
+            "State A".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let path = PathBuf::from(created.path.unwrap());
+        let note_id = created.note_id.unwrap();
+        let state_b = std::fs::read_to_string(&path)
+            .unwrap()
+            .replacen("State A", "State B", 1);
+        std::fs::write(&path, &state_b).unwrap();
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&restarted);
+        inject_history_recovery_failure_once();
+        observe_timeline_or_retain(
+            &timeline,
+            VaultObservation::external_edit(path.clone(), 600, None)
+                .with_canonical_markdown(state_b),
+        );
+
+        let state_c = std::fs::read_to_string(&path)
+            .unwrap()
+            .replacen("State B", "State C", 1);
+        std::fs::write(&path, state_c).unwrap();
+        retry_retained_timeline_observations(&timeline);
+
+        assert_eq!(
+            reconstructed_revision_bodies_for_test(&restarted, &note_id).unwrap(),
+            vec!["State A", "State B"]
+        );
+        assert!(PENDING_TIMELINE_OBSERVATIONS.lock().unwrap().is_empty());
+        crate::state::set_notes_root_override(None).unwrap();
     }
 }

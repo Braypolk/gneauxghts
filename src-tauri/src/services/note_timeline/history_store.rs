@@ -642,6 +642,7 @@ pub(super) fn abandon_publication(history_intent: &HistoryIntentIdentity) -> Res
 
 pub(super) fn record_external_revision(
     note_id: &NoteIdentity,
+    path: &Path,
     canonical_markdown: &str,
     observed_at_millis: u64,
     modified_at_millis: Option<u64>,
@@ -658,98 +659,26 @@ pub(super) fn record_external_revision(
         return Ok(());
     }
 
-    let revision_id = RevisionIdentity::issue().0;
-    let predecessor = head
-        .as_ref()
-        .map(|head| (head.record_kind.clone(), head.record_id.clone()));
-    let base_revision_id = head.as_ref().and_then(|head| head.revision_id.clone());
-    let base = base_revision_id
-        .as_deref()
-        .map(|revision_id| reconstruct_revision(&transaction, revision_id))
-        .transpose()?
-        .unwrap_or_default();
-    let delta = LineDelta::between(&base, &authored_payload).encode();
-    let prior_policy = base_revision_id
-        .as_deref()
-        .map(|revision_id| load_revision_policy(&transaction, revision_id))
-        .transpose()?
-        .unwrap_or_default();
-    let replay_started = Instant::now();
-    let replay_result = LineDelta::decode(&delta)?.apply(&base)?;
-    let replay_elapsed = replay_started.elapsed();
-    if replay_result != authored_payload {
-        return Err(
-            "Encoded external Note Revision did not reconstruct its observed state".to_string(),
-        );
-    }
-    let next_replay = prior_policy.replay_count.saturating_add(1);
-    let next_accumulated = prior_policy
-        .accumulated_delta_bytes
-        .saturating_add(delta.len() as u64);
-    let ratio = delta.len() as f64 / authored_payload.len().max(1) as f64;
-    let checkpoint = base_revision_id.is_none()
-        || next_replay >= MAX_REPLAY_REVISIONS
-        || next_accumulated >= MAX_ACCUMULATED_DELTA_BYTES
-        || ratio >= MAX_DELTA_TO_FULL_RATIO
-        || replay_elapsed >= MAX_MEASURED_REPLAY;
-    let (payload_kind, payload, replay_count, accumulated_delta_bytes, payload_version) =
-        if checkpoint {
-            (
-                "checkpoint",
-                zstd::stream::encode_all(Cursor::new(&authored_payload), 3)
-                    .map_err(|error| format!("Compress external Note Revision: {error}"))?,
-                0,
-                0,
-                CHECKPOINT_PAYLOAD_VERSION,
-            )
-        } else {
-            (
-                "delta",
-                delta,
-                next_replay,
-                next_accumulated,
-                DELTA_PAYLOAD_VERSION,
-            )
-        };
-    transaction
-        .execute(
-            "INSERT INTO revisions (
-               revision_id, note_id, predecessor_kind, predecessor_id, base_revision_id,
-               source, committed_at_millis, observed_at_millis, modified_at_millis,
-               payload_version, payload_kind, payload, base_hash, result_hash,
-               replay_count, accumulated_delta_bytes, intent_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 'externalEdit', NULL, ?6, ?7,
-                       ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL)",
-            params![
-                revision_id,
-                note_id.as_str(),
-                predecessor.as_ref().map(|value| value.0.as_str()),
-                predecessor.as_ref().map(|value| value.1.as_str()),
-                base_revision_id,
+    append_revision(
+        &transaction,
+        RevisionAppend {
+            revision_id: &RevisionIdentity::issue().0,
+            note_id: note_id.as_str(),
+            predecessor: head
+                .as_ref()
+                .map(|head| (head.record_kind.as_str(), head.record_id.as_str())),
+            base_revision_id: head.as_ref().and_then(|head| head.revision_id.as_deref()),
+            source: MutationSource::ExternalEdit,
+            time_evidence: RevisionTimeEvidence::Observed {
                 observed_at_millis,
                 modified_at_millis,
-                payload_version,
-                payload_kind,
-                payload,
-                (!base.is_empty()).then(|| hash(&base)),
-                result_hash,
-                replay_count,
-                accumulated_delta_bytes,
-            ],
-        )
-        .map_err(|error| format!("Record external Note Revision: {error}"))?;
-    transaction
-        .execute(
-            "INSERT INTO timeline_heads (note_id, record_kind, record_id, revision_id, result_hash)
-             VALUES (?1, 'revision', ?2, ?2, ?3)
-             ON CONFLICT(note_id) DO UPDATE SET
-               record_kind = excluded.record_kind,
-               record_id = excluded.record_id,
-               revision_id = excluded.revision_id,
-               result_hash = excluded.result_hash",
-            params![note_id.as_str(), revision_id, result_hash],
-        )
-        .map_err(|error| error.to_string())?;
+            },
+            authored_payload: &authored_payload,
+            result_hash: &result_hash,
+            intent_id: None,
+            path,
+        },
+    )?;
     transaction.commit().map_err(|error| error.to_string())
 }
 
@@ -810,22 +739,149 @@ pub(super) fn record_observed_lifecycle_event(
         .map_err(|error| format!("Record observed Lifecycle Event: {error}"))?;
     transaction
         .execute(
-            "INSERT INTO timeline_heads (note_id, record_kind, record_id, revision_id, result_hash)
-             VALUES (?1, 'lifecycleEvent', ?2, ?3, ?4)
+            "INSERT INTO timeline_heads (
+               note_id, record_kind, record_id, revision_id, result_hash, current_path
+             ) VALUES (?1, 'lifecycleEvent', ?2, ?3, ?4, ?5)
              ON CONFLICT(note_id) DO UPDATE SET
                record_kind = excluded.record_kind,
                record_id = excluded.record_id,
                revision_id = excluded.revision_id,
-               result_hash = excluded.result_hash",
+               result_hash = excluded.result_hash,
+               current_path = excluded.current_path",
             params![
                 note_id.as_str(),
                 event_id,
                 head.as_ref().and_then(|value| value.revision_id.as_deref()),
                 head.as_ref().and_then(|value| value.result_hash.as_deref()),
+                path.to_string_lossy().into_owned(),
             ],
         )
         .map_err(|error| error.to_string())?;
     transaction.commit().map_err(|error| error.to_string())
+}
+
+struct RevisionAppend<'a> {
+    revision_id: &'a str,
+    note_id: &'a str,
+    predecessor: Option<(&'a str, &'a str)>,
+    base_revision_id: Option<&'a str>,
+    source: MutationSource,
+    time_evidence: RevisionTimeEvidence,
+    authored_payload: &'a [u8],
+    result_hash: &'a str,
+    intent_id: Option<&'a str>,
+    path: &'a Path,
+}
+
+fn append_revision(
+    transaction: &Transaction<'_>,
+    append: RevisionAppend<'_>,
+) -> Result<(), String> {
+    let base = append
+        .base_revision_id
+        .map(|revision_id| reconstruct_revision(transaction, revision_id))
+        .transpose()?
+        .unwrap_or_default();
+    let delta = LineDelta::between(&base, append.authored_payload).encode();
+    let prior_policy = append
+        .base_revision_id
+        .map(|revision_id| load_revision_policy(transaction, revision_id))
+        .transpose()?
+        .unwrap_or_default();
+    let replay_started = Instant::now();
+    let replay_result = LineDelta::decode(&delta)?.apply(&base)?;
+    let replay_elapsed = replay_started.elapsed();
+    if replay_result != append.authored_payload {
+        return Err("Encoded Note Revision did not reconstruct its intended state".to_string());
+    }
+    let next_replay = prior_policy.replay_count.saturating_add(1);
+    let next_accumulated = prior_policy
+        .accumulated_delta_bytes
+        .saturating_add(delta.len() as u64);
+    let ratio = delta.len() as f64 / append.authored_payload.len().max(1) as f64;
+    let checkpoint = append.base_revision_id.is_none()
+        || next_replay >= MAX_REPLAY_REVISIONS
+        || next_accumulated >= MAX_ACCUMULATED_DELTA_BYTES
+        || ratio >= MAX_DELTA_TO_FULL_RATIO
+        || replay_elapsed >= MAX_MEASURED_REPLAY;
+    let (payload_kind, payload, replay_count, accumulated_delta_bytes, payload_version) =
+        if checkpoint {
+            (
+                "checkpoint",
+                zstd::stream::encode_all(Cursor::new(append.authored_payload), 3)
+                    .map_err(|error| format!("Compress Note Revision checkpoint: {error}"))?,
+                0,
+                0,
+                CHECKPOINT_PAYLOAD_VERSION,
+            )
+        } else {
+            (
+                "delta",
+                delta,
+                next_replay,
+                next_accumulated,
+                DELTA_PAYLOAD_VERSION,
+            )
+        };
+    let (committed_at_millis, observed_at_millis, modified_at_millis) = match append.time_evidence {
+        RevisionTimeEvidence::Committed {
+            committed_at_millis,
+        } => (Some(committed_at_millis), None, None),
+        RevisionTimeEvidence::Observed {
+            observed_at_millis,
+            modified_at_millis,
+        } => (None, Some(observed_at_millis), modified_at_millis),
+    };
+    transaction
+        .execute(
+            "INSERT INTO revisions (
+               revision_id, note_id, predecessor_kind, predecessor_id, base_revision_id,
+               source, committed_at_millis, observed_at_millis, modified_at_millis,
+               payload_version, payload_kind, payload, base_hash, result_hash,
+               replay_count, accumulated_delta_bytes, intent_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                       ?13, ?14, ?15, ?16, ?17)",
+            params![
+                append.revision_id,
+                append.note_id,
+                append.predecessor.map(|value| value.0),
+                append.predecessor.map(|value| value.1),
+                append.base_revision_id,
+                append.source.as_storage_value(),
+                committed_at_millis,
+                observed_at_millis,
+                modified_at_millis,
+                payload_version,
+                payload_kind,
+                payload,
+                (!base.is_empty()).then(|| hash(&base)),
+                append.result_hash,
+                replay_count,
+                accumulated_delta_bytes,
+                append.intent_id,
+            ],
+        )
+        .map_err(|error| format!("Append Note Revision: {error}"))?;
+    transaction
+        .execute(
+            "INSERT INTO timeline_heads (
+               note_id, record_kind, record_id, revision_id, result_hash, current_path
+             ) VALUES (?1, 'revision', ?2, ?2, ?3, ?4)
+             ON CONFLICT(note_id) DO UPDATE SET
+               record_kind = excluded.record_kind,
+               record_id = excluded.record_id,
+               revision_id = excluded.revision_id,
+               result_hash = excluded.result_hash,
+               current_path = excluded.current_path",
+            params![
+                append.note_id,
+                append.revision_id,
+                append.result_hash,
+                append.path.to_string_lossy().into_owned(),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader>, String> {
@@ -897,6 +953,18 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
         )
         .collect::<Result<Vec<_>, String>>()?;
     order_revision_chain(revisions)
+}
+
+pub(super) fn current_path(note_id: &NoteIdentity) -> Result<Option<PathBuf>, String> {
+    let connection = open_store()?;
+    connection
+        .query_row(
+            "SELECT current_path FROM timeline_heads WHERE note_id = ?1",
+            params![note_id.as_str()],
+            |row| row.get::<_, String>(0).map(PathBuf::from),
+        )
+        .optional()
+        .map_err(|error| error.to_string())
 }
 
 fn order_revision_chain(
@@ -1086,7 +1154,8 @@ fn open_store() -> Result<Connection, String> {
                record_kind TEXT NOT NULL,
                record_id TEXT NOT NULL,
                revision_id TEXT,
-               result_hash TEXT
+               result_hash TEXT,
+               current_path TEXT NOT NULL
              );",
         )
         .map_err(|error| format!("Initialize Note Timeline history store: {error}"))?;
@@ -1247,23 +1316,57 @@ fn finalize_intent(
         );
     }
     let head = load_head(&transaction, &intent.note_id)?;
-    if head.as_ref().and_then(|head| head.result_hash.as_deref())
-        == Some(intent.result_hash.as_str())
-    {
-        transaction
-            .execute(
-                "UPDATE prepared_intents SET status = 'finalized' WHERE intent_id = ?1",
-                params![intent_id],
-            )
-            .map_err(|error| error.to_string())?;
-        transaction.commit().map_err(|error| error.to_string())?;
-        return Ok(());
-    }
+    let content_is_unchanged = head.as_ref().and_then(|head| head.result_hash.as_deref())
+        == Some(intent.result_hash.as_str());
 
     let occurred_at = intent.committed_at_millis;
     let mut predecessor = head
         .as_ref()
         .map(|head| (head.record_kind.clone(), head.record_id.clone()));
+    if let Some(head) = head
+        .as_ref()
+        .filter(|head| head.current_path != intent.target_path)
+    {
+        let event_id = LifecycleEventIdentity::issue().0;
+        let kind = if head.current_path.parent() == intent.target_path.parent() {
+            LifecycleEventKind::Renamed
+        } else {
+            LifecycleEventKind::Moved
+        };
+        transaction
+            .execute(
+                "INSERT INTO lifecycle_events (
+                   event_id, note_id, predecessor_kind, predecessor_id, kind,
+                   occurred_at_millis, previous_path, path, payload_version, intent_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, NULL)",
+                params![
+                    event_id,
+                    intent.note_id,
+                    predecessor.as_ref().map(|value| value.0.as_str()),
+                    predecessor.as_ref().map(|value| value.1.as_str()),
+                    kind.as_storage_value(),
+                    occurred_at,
+                    head.current_path.to_string_lossy().into_owned(),
+                    intent.target_path.to_string_lossy().into_owned(),
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        predecessor = Some(("lifecycleEvent".to_string(), event_id.clone()));
+        if content_is_unchanged {
+            transaction
+                .execute(
+                    "UPDATE timeline_heads
+                     SET record_kind = 'lifecycleEvent', record_id = ?1, current_path = ?2
+                     WHERE note_id = ?3",
+                    params![
+                        event_id,
+                        intent.target_path.to_string_lossy().into_owned(),
+                        intent.note_id,
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+    }
     if let Some(event_id) = intent.lifecycle_event_id.as_deref() {
         transaction
             .execute(
@@ -1284,91 +1387,38 @@ fn finalize_intent(
         predecessor = Some(("lifecycleEvent".to_string(), event_id.to_string()));
     }
 
-    let base_revision_id = head.as_ref().and_then(|head| head.revision_id.clone());
-    let base = base_revision_id
-        .as_deref()
-        .map(|revision_id| reconstruct_revision(&transaction, revision_id))
-        .transpose()?
-        .unwrap_or_default();
-    let delta = LineDelta::between(&base, authored_payload).encode();
-    let prior_policy = base_revision_id
-        .as_deref()
-        .map(|revision_id| load_revision_policy(&transaction, revision_id))
-        .transpose()?
-        .unwrap_or_default();
-    let replay_started = Instant::now();
-    let replay_result = LineDelta::decode(&delta)?.apply(&base)?;
-    let replay_elapsed = replay_started.elapsed();
-    if replay_result != authored_payload {
-        return Err("Encoded Note Revision did not reconstruct its intended state".to_string());
+    if content_is_unchanged {
+        transaction
+            .execute(
+                "UPDATE prepared_intents SET status = 'finalized' WHERE intent_id = ?1",
+                params![intent_id],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        return Ok(());
     }
-    let next_replay = prior_policy.replay_count.saturating_add(1);
-    let next_accumulated = prior_policy
-        .accumulated_delta_bytes
-        .saturating_add(delta.len() as u64);
-    let ratio = delta.len() as f64 / authored_payload.len().max(1) as f64;
-    let checkpoint = base_revision_id.is_none()
-        || next_replay >= MAX_REPLAY_REVISIONS
-        || next_accumulated >= MAX_ACCUMULATED_DELTA_BYTES
-        || ratio >= MAX_DELTA_TO_FULL_RATIO
-        || replay_elapsed >= MAX_MEASURED_REPLAY;
-    let (payload_kind, payload, replay_count, accumulated_delta_bytes, payload_version) =
-        if checkpoint {
-            (
-                "checkpoint",
-                zstd::stream::encode_all(Cursor::new(authored_payload), 3)
-                    .map_err(|error| format!("Compress Note Revision checkpoint: {error}"))?,
-                0,
-                0,
-                CHECKPOINT_PAYLOAD_VERSION,
-            )
-        } else {
-            (
-                "delta",
-                delta,
-                next_replay,
-                next_accumulated,
-                DELTA_PAYLOAD_VERSION,
-            )
-        };
-    transaction
-        .execute(
-            "INSERT INTO revisions (
-               revision_id, note_id, predecessor_kind, predecessor_id, base_revision_id,
-               source, committed_at_millis, payload_version, payload_kind, payload,
-               base_hash, result_hash, replay_count, accumulated_delta_bytes, intent_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-            params![
-                intent.revision_id,
-                intent.note_id,
-                predecessor.as_ref().map(|value| value.0.as_str()),
-                predecessor.as_ref().map(|value| value.1.as_str()),
-                base_revision_id,
-                intent.source,
-                occurred_at,
-                payload_version,
-                payload_kind,
-                payload,
-                (!base.is_empty()).then(|| hash(&base)),
-                intent.result_hash,
-                replay_count,
-                accumulated_delta_bytes,
-                intent_id,
-            ],
-        )
-        .map_err(|error| format!("Finalize Note Revision: {error}"))?;
-    transaction
-        .execute(
-            "INSERT INTO timeline_heads (note_id, record_kind, record_id, revision_id, result_hash)
-             VALUES (?1, 'revision', ?2, ?2, ?3)
-             ON CONFLICT(note_id) DO UPDATE SET
-               record_kind = excluded.record_kind,
-               record_id = excluded.record_id,
-               revision_id = excluded.revision_id,
-               result_hash = excluded.result_hash",
-            params![intent.note_id, intent.revision_id, intent.result_hash],
-        )
-        .map_err(|error| error.to_string())?;
+
+    let source = MutationSource::from_storage_value(&intent.source)
+        .ok_or_else(|| format!("Unknown prepared Mutation Source `{}`", intent.source))?;
+    append_revision(
+        &transaction,
+        RevisionAppend {
+            revision_id: &intent.revision_id,
+            note_id: &intent.note_id,
+            predecessor: predecessor
+                .as_ref()
+                .map(|value| (value.0.as_str(), value.1.as_str())),
+            base_revision_id: head.as_ref().and_then(|head| head.revision_id.as_deref()),
+            source,
+            time_evidence: RevisionTimeEvidence::Committed {
+                committed_at_millis: occurred_at,
+            },
+            authored_payload,
+            result_hash: &intent.result_hash,
+            intent_id: Some(intent_id),
+            path: &intent.target_path,
+        },
+    )?;
     transaction
         .execute(
             "UPDATE prepared_intents SET status = 'finalized' WHERE intent_id = ?1",
@@ -1388,6 +1438,7 @@ struct PreparedIntent {
     revision_id: String,
     lifecycle_event_id: Option<String>,
     note_id: String,
+    target_path: PathBuf,
     source: String,
     authored_payload: Vec<u8>,
     result_hash: String,
@@ -1400,12 +1451,13 @@ struct TimelineHead {
     record_id: String,
     revision_id: Option<String>,
     result_hash: Option<String>,
+    current_path: PathBuf,
 }
 
 fn load_intent(transaction: &Transaction<'_>, intent_id: &str) -> Result<PreparedIntent, String> {
     transaction
         .query_row(
-            "SELECT revision_id, lifecycle_event_id, note_id, source,
+            "SELECT revision_id, lifecycle_event_id, note_id, target_path, source,
                     authored_payload, result_hash, committed_at_millis, status
              FROM prepared_intents WHERE intent_id = ?1",
             params![intent_id],
@@ -1414,11 +1466,12 @@ fn load_intent(transaction: &Transaction<'_>, intent_id: &str) -> Result<Prepare
                     revision_id: row.get(0)?,
                     lifecycle_event_id: row.get(1)?,
                     note_id: row.get(2)?,
-                    source: row.get(3)?,
-                    authored_payload: row.get(4)?,
-                    result_hash: row.get(5)?,
-                    committed_at_millis: row.get(6)?,
-                    status: row.get(7)?,
+                    target_path: PathBuf::from(row.get::<_, String>(3)?),
+                    source: row.get(4)?,
+                    authored_payload: row.get(5)?,
+                    result_hash: row.get(6)?,
+                    committed_at_millis: row.get(7)?,
+                    status: row.get(8)?,
                 })
             },
         )
@@ -1428,7 +1481,7 @@ fn load_intent(transaction: &Transaction<'_>, intent_id: &str) -> Result<Prepare
 fn load_head(transaction: &Transaction<'_>, note_id: &str) -> Result<Option<TimelineHead>, String> {
     transaction
         .query_row(
-            "SELECT record_kind, record_id, revision_id, result_hash
+            "SELECT record_kind, record_id, revision_id, result_hash, current_path
              FROM timeline_heads WHERE note_id = ?1",
             params![note_id],
             |row| {
@@ -1437,6 +1490,7 @@ fn load_head(transaction: &Transaction<'_>, note_id: &str) -> Result<Option<Time
                     record_id: row.get(1)?,
                     revision_id: row.get(2)?,
                     result_hash: row.get(3)?,
+                    current_path: PathBuf::from(row.get::<_, String>(4)?),
                 })
             },
         )

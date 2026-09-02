@@ -227,10 +227,11 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
     assert_contains_all(
         &watcher,
         &[
-            "NoteTimeline::new(&state).observe(VaultObservation::renamed(",
-            "NoteTimeline::new(&state).observe(VaultObservation::moved(",
+            "fn observe_timeline_or_retain(",
+            "VaultObservation::renamed(",
+            "VaultObservation::moved(",
             "VaultObservation::external_edit(",
-            "NoteTimeline::new(&state).observe(VaultObservation::missing(",
+            "VaultObservation::missing(",
             "fn observe_reconciliation_state(",
             "VaultObservation::reconciled_state(",
             "reconciliation_observations(",

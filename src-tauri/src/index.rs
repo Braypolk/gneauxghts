@@ -565,39 +565,26 @@ impl AppState {
             .map(|note| note.note_id.clone()))
     }
 
+    pub(crate) fn indexed_note_content_hash(&self, path: &Path) -> Option<String> {
+        self.notes_index.lock().ok().and_then(|index| {
+            index
+                .entries
+                .get(path)
+                .map(|note| note.canonical_hash.clone())
+        })
+    }
+
     pub(crate) fn resolve_observed_note_identity(
         &self,
         path: &Path,
         markdown: &str,
+        historical_owner: Option<&Path>,
     ) -> Result<String, String> {
-        let embedded = crate::note::parse_note(markdown)
-            .frontmatter
-            .managed
-            .map(|metadata| metadata.id)
-            .filter(|identity| !identity.trim().is_empty());
         let mut index = self
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        if let Some((note_id, _)) = index.stable_identity_evidence(path) {
-            return Ok(note_id);
-        }
-        let note_id = embedded
-            .filter(|candidate| {
-                index.by_id.get(candidate).is_none_or(|owner| owner == path)
-                    && index
-                        .detached_identity_owners
-                        .get(candidate)
-                        .is_none_or(|owner| owner.path == path)
-            })
-            .unwrap_or_else(crate::note::generate_note_id);
-        index.reserve_identity_transfer(
-            path,
-            path,
-            note_id.clone(),
-            blake3::hash(markdown.as_bytes()).to_hex().to_string(),
-        );
-        Ok(note_id)
+        Ok(index.resolve_observed_note_identity(path, markdown, historical_owner))
     }
 
     pub(crate) fn prepare_note_identity_transfer(
@@ -798,6 +785,49 @@ pub(crate) struct IndexedNote {
 }
 
 impl NotesIndex {
+    fn resolve_observed_note_identity(
+        &mut self,
+        path: &Path,
+        markdown: &str,
+        historical_owner: Option<&Path>,
+    ) -> String {
+        if let Some((note_id, _)) = self.stable_identity_evidence(path) {
+            return note_id;
+        }
+        let embedded = crate::note::parse_note(markdown)
+            .frontmatter
+            .managed
+            .map(|metadata| metadata.id)
+            .filter(|identity| !identity.trim().is_empty());
+        let historical_owner_is_live_elsewhere = historical_owner
+            .filter(|owner| *owner != path)
+            .is_some_and(Path::exists);
+        let missing_historical_owner =
+            historical_owner.filter(|owner| *owner != path && !owner.exists());
+        let note_id = embedded
+            .filter(|candidate| {
+                !historical_owner_is_live_elsewhere
+                    && self.by_id.get(candidate).is_none_or(|owner| {
+                        owner == path || missing_historical_owner == Some(owner.as_path())
+                    })
+                    && self
+                        .detached_identity_owners
+                        .get(candidate)
+                        .is_none_or(|owner| {
+                            owner.path == path
+                                || missing_historical_owner == Some(owner.path.as_path())
+                        })
+            })
+            .unwrap_or_else(crate::note::generate_note_id);
+        self.reserve_identity_transfer(
+            path,
+            missing_historical_owner.unwrap_or(path),
+            note_id.clone(),
+            blake3::hash(markdown.as_bytes()).to_hex().to_string(),
+        );
+        note_id
+    }
+
     pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) -> IndexedNote {
         if self
             .entries
