@@ -77,8 +77,13 @@ impl ProjectionPlan {
 
 #[derive(Clone)]
 pub(crate) enum CatalogMutation {
-    Upsert { path: PathBuf, note: IndexedNote },
-    Remove { path: PathBuf },
+    Upsert {
+        path: PathBuf,
+        note: Box<IndexedNote>,
+    },
+    Remove {
+        path: PathBuf,
+    },
 }
 
 impl CatalogMutation {
@@ -136,19 +141,22 @@ impl<'a> NoteCatalog<'a> {
         note: IndexedNote,
         mode: CatalogWriteMode,
     ) -> Result<(), String> {
+        let note = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?
+            .upsert_note(path.clone(), note);
         let plan = ProjectionPlan::for_upsert(mode, note.document_kind);
 
         if plan.lexical == ProjectionTiming::Synchronous {
             self.lexical.upsert_note(&path, &note)?;
         }
 
-        self.notes_index
-            .lock()
-            .map_err(|_| "Search index lock poisoned".to_string())?
-            .upsert_note(path.clone(), note.clone());
-
         if plan.tasks == ProjectionTiming::Synchronous {
-            let _ = apply_task_projection(&CatalogMutation::Upsert { path, note });
+            let _ = apply_task_projection(&CatalogMutation::Upsert {
+                path,
+                note: Box::new(note),
+            });
         }
         Ok(())
     }
@@ -231,6 +239,7 @@ fn projection_timestamp(modified_millis: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::build_indexed_note;
 
     #[test]
     fn upsert_projection_policy_covers_document_kinds_and_execution_modes() {
@@ -298,5 +307,71 @@ mod tests {
             assert_eq!(plan.tasks, tasks);
             assert_eq!(plan.task_action, TaskProjectionAction::Remove);
         }
+    }
+
+    #[test]
+    fn duplicate_identity_is_resolved_before_lexical_and_task_projection() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("catalog-resolved-identity-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(app_data.path().to_path_buf())).unwrap();
+        let notes = crate::test_support::TestDir::new("catalog-resolved-identity-notes");
+        let original_path = notes.path().join("Original.md");
+        let copy_path = notes.path().join("Copy.md");
+        let original = "---\ngneauxghts:\n  id: shared-note-id\n  kind: note\n---\n\n- [ ] original catalog task";
+        let copy = "---\ngneauxghts:\n  id: shared-note-id\n  kind: note\n---\n\n- [ ] distinctive copied catalog task";
+        let index = Mutex::new(NotesIndex::default());
+        let lexical = Arc::new(LexicalIndex::new().unwrap());
+        let catalog = NoteCatalog::new(&index, &lexical);
+
+        catalog
+            .upsert(
+                original_path.clone(),
+                build_indexed_note(&original_path, original, 41),
+                CatalogWriteMode::Synchronous,
+            )
+            .unwrap();
+        catalog
+            .upsert(
+                copy_path.clone(),
+                build_indexed_note(&copy_path, copy, 42),
+                CatalogWriteMode::Synchronous,
+            )
+            .unwrap();
+
+        let resolved_copy = index
+            .lock()
+            .unwrap()
+            .entries
+            .get(&copy_path)
+            .unwrap()
+            .clone();
+        let copy_id = resolved_copy.note_id.clone();
+        assert_ne!(copy_id, "shared-note-id");
+        let lexical_results = lexical
+            .search(
+                "distinctive copied",
+                "distinctive copied",
+                &["distinctive", "copied"],
+                10,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            lexical_results[0].result.note_id.as_deref(),
+            Some(copy_id.as_str())
+        );
+        apply_task_projection(&CatalogMutation::Upsert {
+            path: copy_path,
+            note: Box::new(resolved_copy),
+        })
+        .unwrap();
+        let copy_tasks = crate::state::task_projection::load_tasks_for_note_id(&copy_id).unwrap();
+        assert_eq!(copy_tasks.len(), 1);
+        assert_eq!(copy_tasks[0].text, "distinctive copied catalog task");
+        let original_tasks =
+            crate::state::task_projection::load_tasks_for_note_id("shared-note-id").unwrap();
+        assert_eq!(original_tasks.len(), 1);
+        assert_eq!(original_tasks[0].text, "original catalog task");
     }
 }

@@ -84,7 +84,7 @@ impl BackgroundIndexQueue {
     pub(crate) fn enqueue_upsert(&self, path: PathBuf, note: IndexedNote) {
         self.enqueue(DeferredCatalogProjection::all(CatalogMutation::Upsert {
             path,
-            note,
+            note: Box::new(note),
         }));
     }
 

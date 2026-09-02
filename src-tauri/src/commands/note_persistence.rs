@@ -3,7 +3,7 @@ use crate::{
     index::AppState,
     note,
     services::note_timeline::{NoteMutation, NoteMutationWarning, NoteTimeline},
-    state::{persist_note, validate_current_path},
+    state::{persist_note_with_identity, validate_current_path},
 };
 use std::path::{Path, PathBuf};
 
@@ -85,7 +85,18 @@ fn persist_note_session_with_source(
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let is_note_creation = current_path.is_none();
-    let persisted_path = persist_note(&notes_dir, &title, &markdown, current_path.as_deref())?;
+    let authoritative_note_id = current_path
+        .as_deref()
+        .map(|path| state.indexed_note_identity(path))
+        .transpose()?
+        .flatten();
+    let persisted_path = persist_note_with_identity(
+        &notes_dir,
+        &title,
+        &markdown,
+        current_path.as_deref(),
+        authoritative_note_id.as_deref(),
+    )?;
     let mutation_outcome = persisted_path.as_ref().map(|path| {
         let path = PathBuf::from(path);
         let mutation = if is_note_creation {

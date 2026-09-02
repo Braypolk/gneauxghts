@@ -363,16 +363,33 @@ pub(crate) fn is_forgotten_note_path(path: &Path, notes_dir: &Path) -> bool {
     path.starts_with(forgotten_notes_root(notes_dir))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn persist_note(
     notes_dir: &Path,
     title: &str,
     markdown: &str,
     current_path: Option<&Path>,
 ) -> Result<Option<String>, String> {
+    persist_note_with_identity(notes_dir, title, markdown, current_path, None)
+}
+
+pub(crate) fn persist_note_with_identity(
+    notes_dir: &Path,
+    title: &str,
+    markdown: &str,
+    current_path: Option<&Path>,
+    authoritative_note_id: Option<&str>,
+) -> Result<Option<String>, String> {
     let _file_mutation_guard = NOTE_FILE_MUTATION
         .lock()
         .map_err(|_| "Note file mutation lock poisoned".to_string())?;
-    persist_note_locked(notes_dir, title, markdown, current_path)
+    persist_note_locked(
+        notes_dir,
+        title,
+        markdown,
+        current_path,
+        authoritative_note_id,
+    )
 }
 
 fn persist_note_locked(
@@ -380,6 +397,7 @@ fn persist_note_locked(
     title: &str,
     markdown: &str,
     current_path: Option<&Path>,
+    authoritative_note_id: Option<&str>,
 ) -> Result<Option<String>, String> {
     let normalized_markdown = note::normalize_wikilink_markdown(markdown);
     note::reject_chat_projection_write(&normalized_markdown)?;
@@ -392,7 +410,10 @@ fn persist_note_locked(
         note::reject_chat_projection_write(existing_markdown)?;
     }
 
-    if title.trim().is_empty() && normalized_markdown.trim().is_empty() {
+    if title.trim().is_empty()
+        && normalized_markdown.trim().is_empty()
+        && authoritative_note_id.is_none()
+    {
         let target_path =
             resolve_target_path(notes_dir, title, &normalized_markdown, current_path)?;
         let Some(target_path) = target_path else {
@@ -413,10 +434,11 @@ fn persist_note_locked(
         return Ok(Some(target_path.to_string_lossy().into_owned()));
     }
 
-    let prepared_markdown = note::prepare_note_markdown(
+    let prepared_markdown = note::prepare_note_markdown_with_identity(
         &normalized_markdown,
         existing_markdown.as_deref(),
         Some(None),
+        authoritative_note_id,
     )?
     .0;
     let target_path = resolve_target_path(notes_dir, title, &prepared_markdown, current_path)?;

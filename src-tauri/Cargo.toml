@@ -33,6 +33,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 blake3 = "1.5"
+getrandom = "0.3"
 sha2 = "0.10"
 hnswlib-rs = "0.10"
 leiden-rs = { version = "0.8.1", default-features = false, features = ["rayon"] }

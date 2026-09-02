@@ -1,13 +1,9 @@
 use crate::time::current_time_millis;
-use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
-    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
-
-static NOTE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 const FRONTMATTER_DELIMITER: &str = "---";
 const NOTE_ID_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -301,6 +297,26 @@ pub(crate) fn prepare_note_markdown(
     Ok((enriched, metadata))
 }
 
+/// Prepare canonical Markdown while honoring identity already resolved by the
+/// catalog. This runs before an app-owned publication so repair is part of the
+/// original atomic write rather than a racy follow-up replacement.
+pub(crate) fn prepare_note_markdown_with_identity(
+    markdown: &str,
+    existing_markdown: Option<&str>,
+    trashed_at: Option<Option<String>>,
+    authoritative_note_id: Option<&str>,
+) -> Result<(String, ManagedNoteMetadata), String> {
+    let (mut prepared, mut metadata) =
+        prepare_note_markdown(markdown, existing_markdown, trashed_at)?;
+    if let Some(note_id) = authoritative_note_id.filter(|note_id| !note_id.trim().is_empty()) {
+        if metadata.id != note_id {
+            prepared = repair_managed_note_identity(&prepared, note_id)?;
+            metadata.id = note_id.to_string();
+        }
+    }
+    Ok((prepared, metadata))
+}
+
 /// Restore the timeline-owned identity during an app-owned commit without
 /// changing authored content or unrelated managed metadata.
 pub(crate) fn repair_managed_note_identity(
@@ -497,14 +513,7 @@ pub(crate) fn generate_note_id() -> String {
     let timestamp_millis = current_time_millis().unwrap_or(0);
     let mut bytes = [0u8; 16];
     bytes[..6].copy_from_slice(&timestamp_millis.to_be_bytes()[2..]);
-
-    let counter = NOTE_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let mut hasher = Hasher::new();
-    hasher.update(&timestamp_millis.to_be_bytes());
-    hasher.update(&counter.to_be_bytes());
-    hasher.update(&(std::process::id() as u64).to_be_bytes());
-    let hash = hasher.finalize();
-    bytes[6..].copy_from_slice(&hash.as_bytes()[..10]);
+    getrandom::fill(&mut bytes[6..]).expect("operating-system randomness is required for note IDs");
     encode_base32(bytes)
 }
 

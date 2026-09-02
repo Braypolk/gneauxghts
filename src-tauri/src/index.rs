@@ -143,7 +143,7 @@ struct InteractiveInvalidationState {
 }
 
 enum PendingIndexUpdate {
-    Upsert(PathBuf, IndexedNote),
+    Upsert(PathBuf, Box<IndexedNote>),
     Remove(PathBuf),
 }
 
@@ -372,9 +372,17 @@ impl AppState {
                 .collect::<HashMap<_, _>>()
         };
         let updates = collect_dirty_updates(dirty_paths, &existing_signatures)?;
-        // Phase 5 write-through: mirror dirty updates into the lexical
-        // index before they land in `notes_index`, so search no longer
-        // needs to clone+resync the full entries map on every query.
+        // Resolve stable identity once in the authoritative catalog before
+        // any derived projection observes the update.
+        let (changed, updates) = {
+            let mut index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            let (changed, updates) = index.apply_pending_updates(updates);
+            index.mark_refreshed(changed);
+            (changed, updates)
+        };
         for update in &updates {
             match update {
                 PendingIndexUpdate::Upsert(path, note) => {
@@ -399,15 +407,6 @@ impl AppState {
                 }
             })
             .collect();
-        let changed = {
-            let mut index = self
-                .notes_index
-                .lock()
-                .map_err(|_| "Search index lock poisoned".to_string())?;
-            let changed = index.apply_pending_updates(updates);
-            index.mark_refreshed(changed);
-            changed
-        };
         for payload in projection_payloads {
             let _ = crate::services::note_catalog::apply_task_projection(&payload);
         }
@@ -459,17 +458,22 @@ impl AppState {
         // disk later diverge, the chat conflict pipeline owns that state; a
         // generic reconciliation pass must not index the external edit.
         updates.retain(|(path, _)| !managed_chat_paths.contains(path));
-        // Phase 5 write-through: incrementally update the lexical mirror
-        // for every changed/added entry, and remove stale entries that
-        // disappeared from disk.
-        for (path, note) in &updates {
-            self.lexical.upsert_note(path, note)?;
-        }
         let stale_lexical_paths: Vec<PathBuf> = existing_paths
             .iter()
             .filter(|path| !seen_paths.contains(*path))
             .cloned()
             .collect();
+        let (changed, updates) = {
+            let mut index = self
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
+            index.apply_refresh_updates(updates, seen_paths)
+        };
+        // Project only the identity-resolved catalog payloads.
+        for (path, note) in &updates {
+            self.lexical.upsert_note(path, note)?;
+        }
         for path in &stale_lexical_paths {
             self.lexical.remove_note(path)?;
         }
@@ -478,20 +482,13 @@ impl AppState {
             .map(
                 |(path, note)| crate::services::note_catalog::CatalogMutation::Upsert {
                     path: path.clone(),
-                    note: note.clone(),
+                    note: Box::new(note.clone()),
                 },
             )
             .chain(stale_lexical_paths.iter().map(|path| {
                 crate::services::note_catalog::CatalogMutation::Remove { path: path.clone() }
             }))
             .collect();
-        let changed = {
-            let mut index = self
-                .notes_index
-                .lock()
-                .map_err(|_| "Search index lock poisoned".to_string())?;
-            index.apply_refresh_updates(updates, seen_paths)
-        };
         for payload in projection_payloads {
             let _ = crate::services::note_catalog::apply_task_projection(&payload);
         }
@@ -539,25 +536,23 @@ impl AppState {
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        let Some(note_id) = index.stable_identity(previous_path) else {
+        let Some((note_id, canonical_hash)) = index.stable_identity_evidence(previous_path) else {
             return Ok(None);
         };
-        index.reserve_identity_transfer(path, previous_path, note_id.clone());
+        index.reserve_identity_transfer(path, previous_path, note_id.clone(), canonical_hash);
         Ok(Some(note_id))
     }
 
-    pub(crate) fn prepare_known_note_identity_reattachment(
+    pub(crate) fn prepare_safe_note_identity_reattachment(
         &self,
-        previous_path: &Path,
         path: &Path,
-        note_id: String,
-    ) -> Result<(), String> {
+        note_id: &str,
+    ) -> Result<Option<PathBuf>, String> {
         let mut index = self
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        index.reserve_identity_transfer(path, previous_path, note_id);
-        Ok(())
+        Ok(index.prepare_safe_reattachment(path, note_id))
     }
 
     pub(crate) fn detach_indexed_note_identity(
@@ -568,11 +563,7 @@ impl AppState {
             .notes_index
             .lock()
             .map_err(|_| "Search index lock poisoned".to_string())?;
-        let note_id = index.stable_identity(path);
-        if note_id.is_some() {
-            index.remove_entry(path);
-        }
-        Ok(note_id)
+        Ok(index.detach_entry_preserving_identity(path))
     }
 
     /// Lightweight cold-start prewarm. Populates the in-memory
@@ -622,17 +613,7 @@ impl AppState {
             seen_paths,
         } = collect_refresh_updates(notes_dir, &existing_signatures)?;
 
-        // Capture payloads for the background queue before we move
-        // `updates` into the in-memory swap below. The queue applies
-        // each (path, note) to the lexical writer and to the SQLite
-        // task projection one entry at a time, yielding while the
-        // foreground is busy.
-        let queue_payloads: Vec<(PathBuf, IndexedNote)> = updates
-            .iter()
-            .map(|(path, note)| (path.clone(), note.clone()))
-            .collect();
-
-        let changed = {
+        let (changed, queue_payloads) = {
             let mut index = self
                 .notes_index
                 .lock()
@@ -671,6 +652,7 @@ pub(crate) struct NotesIndex {
     pub(crate) entries: HashMap<PathBuf, IndexedNote>,
     by_id: HashMap<String, PathBuf>,
     pending_identity_transfers: HashMap<PathBuf, PendingIdentityTransfer>,
+    detached_identity_owners: HashMap<String, DetachedIdentityOwner>,
     last_refresh_at: Option<Instant>,
     revision: u64,
 }
@@ -678,6 +660,12 @@ pub(crate) struct NotesIndex {
 struct PendingIdentityTransfer {
     note_id: String,
     previous_path: PathBuf,
+    expected_canonical_hash: String,
+}
+
+struct DetachedIdentityOwner {
+    path: PathBuf,
+    canonical_hash: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -718,6 +706,7 @@ pub(crate) struct IndexedNote {
     signature: FileSignature,
     pub(crate) note_id: String,
     identity_is_stable: bool,
+    canonical_hash: String,
     pub(crate) modified_millis: u64,
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
@@ -731,19 +720,24 @@ pub(crate) struct IndexedNote {
 }
 
 impl NotesIndex {
-    pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) -> bool {
+    pub(crate) fn upsert_note(&mut self, path: PathBuf, note: IndexedNote) -> IndexedNote {
         if self
             .entries
             .get(&path)
             .is_some_and(|existing_note| existing_note.signature() == note.signature())
+            && !self.pending_identity_transfers.contains_key(&path)
         {
-            return false;
+            return self
+                .entries
+                .get(&path)
+                .expect("signature match requires an indexed note")
+                .clone();
         }
 
-        self.insert_entry(path, note);
+        let resolved = self.insert_entry(path, note);
         self.last_refresh_at = Some(Instant::now());
         self.revision = self.revision.wrapping_add(1);
-        true
+        resolved
     }
 
     pub(crate) fn remove_note(&mut self, path: &Path) -> bool {
@@ -769,25 +763,38 @@ impl NotesIndex {
             .and_then(|path| self.entries.get(path).map(|note| (path, note)))
     }
 
-    fn stable_identity(&self, path: &Path) -> Option<String> {
+    fn stable_identity_evidence(&self, path: &Path) -> Option<(String, String)> {
         self.entries
             .get(path)
             .filter(|note| note.identity_is_stable)
-            .map(|note| note.note_id.clone())
+            .map(|note| (note.note_id.clone(), note.canonical_hash.clone()))
     }
 
-    fn reserve_identity_transfer(&mut self, path: &Path, previous_path: &Path, note_id: String) {
+    fn reserve_identity_transfer(
+        &mut self,
+        path: &Path,
+        previous_path: &Path,
+        note_id: String,
+        expected_canonical_hash: String,
+    ) {
         self.pending_identity_transfers.insert(
             path.to_path_buf(),
             PendingIdentityTransfer {
                 note_id,
                 previous_path: previous_path.to_path_buf(),
+                expected_canonical_hash,
             },
         );
     }
 
-    fn insert_entry(&mut self, path: PathBuf, mut note: IndexedNote) {
-        let identity_transfer = self.pending_identity_transfers.remove(&path);
+    fn insert_entry(&mut self, path: PathBuf, mut note: IndexedNote) -> IndexedNote {
+        let identity_transfer = self
+            .pending_identity_transfers
+            .remove(&path)
+            .filter(|transfer| {
+                (note.identity_is_stable && note.note_id == transfer.note_id)
+                    || note.canonical_hash == transfer.expected_canonical_hash
+            });
         if let Some(transfer) = &identity_transfer {
             note.note_id.clone_from(&transfer.note_id);
             note.identity_is_stable = true;
@@ -801,10 +808,16 @@ impl NotesIndex {
             .by_id
             .get(&note.note_id)
             .filter(|owner| *owner != &path);
+        let detached_owner = self
+            .detached_identity_owners
+            .get(&note.note_id)
+            .filter(|owner| owner.path != path);
         let owner_is_transfer_source = identity_transfer.as_ref().is_some_and(|transfer| {
             conflicting_owner.map(PathBuf::as_path) == Some(transfer.previous_path.as_path())
+                || detached_owner.map(|owner| owner.path.as_path())
+                    == Some(transfer.previous_path.as_path())
         });
-        if conflicting_owner.is_some() && !owner_is_transfer_source {
+        if (conflicting_owner.is_some() || detached_owner.is_some()) && !owner_is_transfer_source {
             note.note_id = note::generate_note_id();
             note.identity_is_stable = true;
         }
@@ -816,8 +829,52 @@ impl NotesIndex {
                 }
             }
         }
+        if identity_transfer.is_some()
+            || self
+                .detached_identity_owners
+                .get(&note.note_id)
+                .is_some_and(|owner| owner.path == path)
+        {
+            self.detached_identity_owners.remove(&note.note_id);
+        }
         self.by_id.insert(note.note_id.clone(), path.clone());
-        self.entries.insert(path, note);
+        self.entries.insert(path, note.clone());
+        note
+    }
+
+    fn detach_entry_preserving_identity(&mut self, path: &Path) -> Option<String> {
+        let removed = self.entries.remove(path)?;
+        if self.by_id.get(&removed.note_id).map(PathBuf::as_path) == Some(path) {
+            self.by_id.remove(&removed.note_id);
+        }
+        self.mark_refreshed(true);
+        if !removed.identity_is_stable {
+            return None;
+        }
+        self.detached_identity_owners.insert(
+            removed.note_id.clone(),
+            DetachedIdentityOwner {
+                path: path.to_path_buf(),
+                canonical_hash: removed.canonical_hash,
+            },
+        );
+        Some(removed.note_id)
+    }
+
+    fn prepare_safe_reattachment(&mut self, path: &Path, note_id: &str) -> Option<PathBuf> {
+        let owner = self.detached_identity_owners.get(note_id)?;
+        if owner.path != path {
+            return None;
+        }
+        let previous_path = owner.path.clone();
+        let expected_canonical_hash = owner.canonical_hash.clone();
+        self.reserve_identity_transfer(
+            path,
+            &previous_path,
+            note_id.to_string(),
+            expected_canonical_hash,
+        );
+        Some(previous_path)
     }
 
     fn remove_entry(&mut self, path: &Path) -> Option<IndexedNote> {
@@ -828,30 +885,38 @@ impl NotesIndex {
         Some(removed)
     }
 
-    fn apply_pending_updates(&mut self, updates: Vec<PendingIndexUpdate>) -> bool {
+    fn apply_pending_updates(
+        &mut self,
+        updates: Vec<PendingIndexUpdate>,
+    ) -> (bool, Vec<PendingIndexUpdate>) {
         let mut changed = false;
+        let mut resolved = Vec::with_capacity(updates.len());
         for update in updates {
             match update {
                 PendingIndexUpdate::Upsert(path, note) => {
-                    self.insert_entry(path, note);
+                    let note = self.insert_entry(path.clone(), *note);
+                    resolved.push(PendingIndexUpdate::Upsert(path, Box::new(note)));
                     changed = true;
                 }
                 PendingIndexUpdate::Remove(path) => {
                     changed = self.remove_entry(&path).is_some() || changed;
+                    resolved.push(PendingIndexUpdate::Remove(path));
                 }
             }
         }
-        changed
+        (changed, resolved)
     }
 
     fn apply_refresh_updates(
         &mut self,
         updates: Vec<(PathBuf, IndexedNote)>,
         seen_paths: HashSet<PathBuf>,
-    ) -> bool {
+    ) -> (bool, Vec<(PathBuf, IndexedNote)>) {
         let mut changed = false;
+        let mut resolved = Vec::with_capacity(updates.len());
         for (path, note) in updates {
-            self.insert_entry(path, note);
+            let note = self.insert_entry(path.clone(), note);
+            resolved.push((path, note));
             changed = true;
         }
 
@@ -866,7 +931,7 @@ impl NotesIndex {
         }
 
         self.mark_refreshed(changed);
-        changed
+        (changed, resolved)
     }
 
     fn mark_refreshed(&mut self, changed: bool) {
@@ -894,7 +959,7 @@ fn collect_dirty_updates(
             }
             updates.push(PendingIndexUpdate::Upsert(
                 path.clone(),
-                load_indexed_note(&path, signature)?,
+                Box::new(load_indexed_note(&path, signature)?),
             ));
         } else {
             updates.push(PendingIndexUpdate::Remove(path));
@@ -1171,11 +1236,13 @@ fn build_indexed_note_with_signature(
         .map(str::to_string);
     let note_id = managed_note_id.clone().unwrap_or_else(|| file_name.clone());
     let identity_is_stable = managed_note_id.is_some();
+    let canonical_hash = blake3::hash(markdown.as_bytes()).to_hex().to_string();
 
     IndexedNote {
         signature,
         note_id,
         identity_is_stable,
+        canonical_hash,
         modified_millis,
         created_at_millis,
         updated_at_millis,
@@ -1239,11 +1306,13 @@ fn build_current_override_with_signature(
         .map(str::to_string);
     let note_id = managed_note_id.clone().unwrap_or_else(|| file_name.clone());
     let identity_is_stable = managed_note_id.is_some();
+    let canonical_hash = blake3::hash(markdown.as_bytes()).to_hex().to_string();
 
     IndexedNote {
         signature,
         note_id,
         identity_is_stable,
+        canonical_hash,
         modified_millis,
         created_at_millis,
         updated_at_millis,

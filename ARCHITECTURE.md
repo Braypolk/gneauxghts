@@ -68,11 +68,14 @@ Note Identity follows the logical note rather than its current file path or
 authored-content length. The catalog preserves a known identity through empty
 content and damaged managed metadata, and reserves that association across
 rename, move, disappearance, and safe reattachment even when path refreshes
-arrive in either order. External observation never repairs Markdown. The next
-app-owned commit restores missing or damaged embedded identity metadata. If an
-observed copy repeats an identity already owned by another path, the original
-mapping wins and the copy receives a new globally unique identity before it
-can enter the catalog.
+arrive in either order. Reattachment requires the same missing path or an
+operation-correlated move; identity alone at an unrelated path is a copy, not
+continuity proof. External observation never repairs Markdown. The next
+app-owned commit restores missing or damaged embedded identity metadata in its
+original atomic publication. If an observed copy repeats an identity already
+owned by another path, the original mapping wins and the copy receives a new
+globally unique identity before any catalog, lexical, or task projection sees
+it.
 
 A save crosses the `note_persistence` command seam, publishes the vault file,
 and immediately enters `NoteTimeline.mutate`, which updates the required

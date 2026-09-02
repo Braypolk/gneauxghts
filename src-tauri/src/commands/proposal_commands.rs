@@ -2,7 +2,7 @@ use crate::{
     chat::{ChatAgentProposal, ChatService, VaultAccess},
     index::AppState,
     proposals::{
-        commit_note_creation_at_path, commit_note_review as commit_review,
+        commit_note_creation_at_path, commit_note_review_with_identity as commit_review,
         plan_agent_creation_commit, plan_agent_update_commit, CommitNoteReviewResult,
         ProposalPreview,
     },
@@ -82,6 +82,7 @@ pub(crate) fn commit_agent_proposal(
             intent.target_path.to_string_lossy().into_owned(),
             expected_base_hash.expect("update proposal base hash was parsed"),
             committed_markdown.clone(),
+            proposal.note_id.as_deref(),
         )
     } else {
         commit_note_creation_at_path(

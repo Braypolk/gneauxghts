@@ -252,18 +252,19 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
     assert_contains_all(
         &timeline,
         &[
-            "OBSERVED_MISSING_IDENTITIES",
-            "indexed_note_identity(&path)",
+            "prepare_safe_note_identity_reattachment(&path, note_id.as_str())",
+            "detach_indexed_note_identity(&path)",
             "LifecycleEventKind::Reattached",
         ],
     );
+    assert_contains_none(&timeline, &["OBSERVED_MISSING_IDENTITIES"]);
     assert_contains_all(
         &forgotten,
         &[
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(",
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::recovered(",
             "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::purged(",
-            "prepare_forgotten_note_markdown(&note_markdown, forgotten_at_rfc3339)",
+            "authoritative_note_id.as_deref()",
             "note_id: Some(note_id.clone())",
             "forgotten_note\n        .note_id",
         ],
@@ -478,6 +479,10 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     let post_publication =
         repository_file("src-tauri/src/services/note_timeline/post_publication.rs");
     let index = repository_file("src-tauri/src/index.rs");
+    let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
+    let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
+    let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
+    let tasks = repository_file("src-tauri/src/services/task_mutation.rs");
     let architecture = repository_file("ARCHITECTURE.md");
     let invariants = repository_file("docs/architecture/behavior-invariants.md");
 
@@ -488,7 +493,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
             "RevisionIdentity::issue()",
             "LifecycleEventIdentity::issue()",
             "prepare_note_identity_transfer(previous_path, &path)",
-            "prepare_known_note_identity_reattachment(",
+            "prepare_safe_note_identity_reattachment(",
             "detach_indexed_note_identity(&path)",
         ],
     );
@@ -502,18 +507,42 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     );
     assert_contains_all(
         &post_publication,
-        &[
-            "prepare_note_identity_transfer(previous_path, &path)",
-            "repair_managed_note_identity(&markdown, &note_id)",
-        ],
+        &["prepare_note_identity_transfer(previous_path, &path)"],
+    );
+    assert_contains_none(
+        &post_publication,
+        &["repair_managed_note_identity", "atomic_write_note"],
     );
     assert_contains_all(
         &index,
         &[
             "pending_identity_transfers",
+            "detached_identity_owners",
             "fn reserve_identity_transfer(",
-            "conflicting_owner.is_some() && !owner_is_transfer_source",
+            "expected_canonical_hash",
         ],
+    );
+    assert_contains_all(
+        &note_persistence,
+        &[
+            "persist_note_with_identity(",
+            "authoritative_note_id.as_deref()",
+        ],
+    );
+    assert_contains_all(
+        &forgotten,
+        &[
+            "prepare_note_markdown_with_identity(",
+            "forgotten_note.note_id.as_deref()",
+        ],
+    );
+    assert_contains_all(
+        &proposals,
+        &["commit_note_review_with_identity as commit_review"],
+    );
+    assert_contains_all(
+        &tasks,
+        &["repair_managed_note_identity(markdown, &note_id)"],
     );
     assert!(architecture.contains("Note Identity follows the logical note"));
     assert!(invariants.contains("Note Identity follows the note"));

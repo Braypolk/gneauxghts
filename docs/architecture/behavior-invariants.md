@@ -66,14 +66,17 @@ A managed ordinary note keeps its identity when its authored content becomes
 empty, its path changes, it is forgotten or recovered, or it temporarily
 disappears and safely reattaches. A known path whose embedded managed identity
 is missing or damaged retains its catalog identity without rewriting the file
-during observation; repair occurs only as part of the next app-owned commit.
+during observation; repair is included in the original atomic publication of
+the next app-owned commit. Identity at an unrelated path is insufficient to
+reattach a Missing Note unless the watcher correlated that path change as a
+move or rename.
 
 An observed file whose embedded identity is already owned by another path is
 a distinct copy. The existing owner keeps the identity and the copy receives a
 new globally unique identity, independent of catalog refresh order. Revision
 and Lifecycle Event identities are opaque, globally unique domain values with
-explicit predecessor relationships; database row IDs or insertion order never
-define timeline identity or lineage.
+operating-system random entropy and explicit predecessor relationships;
+database row IDs or insertion order never define timeline identity or lineage.
 
 ### Self-save suppression is operation-aware
 
