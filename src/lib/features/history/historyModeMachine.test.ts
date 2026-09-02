@@ -25,8 +25,12 @@ function revision(revisionId: string, occurredAtMillis: number) {
     revisionId,
     source: 'editor' as const,
     occurredAtMillis,
+    timelineOrdinal: occurredAtMillis,
     timeKind: 'committed' as const,
-    modifiedAtMillis: null
+    modifiedAtMillis: null,
+    editingSessionId: 'revision-1',
+    lineCount: 1,
+    characterCount: 10
   };
 }
 

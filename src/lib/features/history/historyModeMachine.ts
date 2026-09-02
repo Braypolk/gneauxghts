@@ -24,8 +24,12 @@ export interface HistoryRevisionRecord {
   revisionId: string;
   source: HistoryMutationSource;
   occurredAtMillis: number;
+  timelineOrdinal: number;
   timeKind: 'knownSince' | 'committed' | 'observed';
   modifiedAtMillis: number | null;
+  editingSessionId: string | null;
+  lineCount: number;
+  characterCount: number;
 }
 
 export interface HistoryLifecycleRecord {
@@ -34,6 +38,7 @@ export interface HistoryLifecycleRecord {
   eventId: string;
   eventKind: HistoryLifecycleEventKind;
   occurredAtMillis: number;
+  timelineOrdinal: number;
   previousPath: string | null;
   path: string | null;
 }
@@ -149,9 +154,15 @@ function mergeRecords(
   for (const record of incoming) {
     byId.set(record.recordId, record);
   }
-  return [...byId.values()].sort((left, right) =>
-    right.occurredAtMillis - left.occurredAtMillis ||
-    right.recordId.localeCompare(left.recordId)
+  return [...byId.values()].sort(compareHistoryRecordsNewestFirst);
+}
+
+export function compareHistoryRecordsNewestFirst(
+  left: HistoryModeRecord,
+  right: HistoryModeRecord
+): number {
+  return (
+    right.timelineOrdinal - left.timelineOrdinal
   );
 }
 

@@ -24,8 +24,12 @@ const firstPage: HistoryModePage = {
       revisionId: 'revision-1',
       source: 'editor',
       occurredAtMillis: 10,
+      timelineOrdinal: 1,
       timeKind: 'committed',
-      modifiedAtMillis: null
+      modifiedAtMillis: null,
+      editingSessionId: 'revision-1',
+      lineCount: 1,
+      characterCount: 10
     }
   ],
   nextCursor: null
@@ -164,8 +168,12 @@ describe('HistoryModeSession', () => {
           revisionId: 'revision-2',
           source: 'externalEdit',
           occurredAtMillis: 20,
+          timelineOrdinal: 2,
           timeKind: 'observed',
-          modifiedAtMillis: null
+          modifiedAtMillis: null,
+          editingSessionId: 'revision-2',
+          lineCount: 2,
+          characterCount: 20
         },
         ...firstPage.records
       ],
@@ -206,8 +214,12 @@ describe('HistoryModeSession', () => {
           revisionId: 'revision-2',
           source: 'editor',
           occurredAtMillis: 5,
+          timelineOrdinal: 0,
           timeKind: 'committed',
-          modifiedAtMillis: null
+          modifiedAtMillis: null,
+          editingSessionId: 'revision-2',
+          lineCount: 1,
+          characterCount: 10
         }
       ],
       nextCursor: null

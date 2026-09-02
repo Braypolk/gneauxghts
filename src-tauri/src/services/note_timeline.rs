@@ -13,7 +13,7 @@ use crate::{
 };
 use serde::Serialize;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -1459,14 +1459,19 @@ pub(crate) enum HistoryModeRecord {
         revision_id: String,
         source: MutationSource,
         occurred_at_millis: u64,
+        timeline_ordinal: usize,
         time_kind: HistoryModeRevisionTimeKind,
         modified_at_millis: Option<u64>,
+        editing_session_id: Option<String>,
+        line_count: usize,
+        character_count: usize,
     },
     LifecycleEvent {
         record_id: String,
         event_id: String,
         event_kind: LifecycleEventKind,
         occurred_at_millis: u64,
+        timeline_ordinal: usize,
         previous_path: Option<String>,
         path: Option<String>,
     },
@@ -1496,6 +1501,101 @@ impl HistoryModeRecord {
             } => *occurred_at_millis,
         }
     }
+
+    fn set_timeline_ordinal(&mut self, timeline_ordinal: usize) {
+        match self {
+            Self::Revision {
+                timeline_ordinal: ordinal,
+                ..
+            }
+            | Self::LifecycleEvent {
+                timeline_ordinal: ordinal,
+                ..
+            } => *ordinal = timeline_ordinal,
+        }
+    }
+}
+
+const EDITING_SESSION_IDLE_MILLIS: u64 = 5 * 60 * 1_000;
+
+fn assign_editing_sessions(records: &mut [HistoryModeRecord]) {
+    let mut current_session: Option<(MutationSource, u64, String)> = None;
+
+    for record in records.iter_mut().rev() {
+        match record {
+            HistoryModeRecord::LifecycleEvent { .. } => current_session = None,
+            HistoryModeRecord::Revision {
+                revision_id,
+                source,
+                occurred_at_millis,
+                editing_session_id,
+                ..
+            } => {
+                if *source == MutationSource::VersionRestore {
+                    *editing_session_id = None;
+                    current_session = None;
+                    continue;
+                }
+
+                let session_id = current_session
+                    .as_ref()
+                    .filter(|(session_source, previous_millis, _)| {
+                        session_source == source
+                            && occurred_at_millis.saturating_sub(*previous_millis)
+                                < EDITING_SESSION_IDLE_MILLIS
+                    })
+                    .map(|(_, _, session_id)| session_id.clone())
+                    .unwrap_or_else(|| revision_id.clone());
+                *editing_session_id = Some(session_id.clone());
+                current_session = Some((*source, *occurred_at_millis, session_id));
+            }
+        }
+    }
+}
+
+fn record_identity_value(identity: &TimelineRecordIdentity) -> String {
+    match identity {
+        TimelineRecordIdentity::Revision(identity) => identity.0.clone(),
+        TimelineRecordIdentity::LifecycleEvent(identity) => identity.0.clone(),
+    }
+}
+
+fn order_history_mode_records(
+    records: Vec<(HistoryModeRecord, Option<String>)>,
+) -> Result<Vec<HistoryModeRecord>, String> {
+    let record_count = records.len();
+    let mut by_predecessor = HashMap::with_capacity(record_count);
+    for (record, predecessor_id) in records {
+        if by_predecessor.insert(predecessor_id, record).is_some() {
+            return Err("Note Timeline record lineage is branched".to_string());
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(record_count);
+    let mut predecessor_id = None;
+    while let Some(mut record) = by_predecessor.remove(&predecessor_id) {
+        record.set_timeline_ordinal(ordered.len());
+        predecessor_id = Some(record.record_id().to_string());
+        ordered.push(record);
+    }
+    if !by_predecessor.is_empty() {
+        return Err("Note Timeline record lineage is missing or disconnected".to_string());
+    }
+
+    ordered.reverse();
+    assign_editing_sessions(&mut ordered);
+    Ok(ordered)
+}
+
+fn authored_content_counts(revision: &ReconstructedNoteRevision) -> (usize, usize) {
+    let frontmatter = revision
+        .unmanaged_frontmatter
+        .as_deref()
+        .unwrap_or_default();
+    (
+        frontmatter.lines().count() + revision.body.lines().count(),
+        frontmatter.chars().count() + revision.body.chars().count(),
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -1563,9 +1663,12 @@ impl HistoryModeAccess<'_> {
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<HistoryModePage, String> {
-        let revisions = self.revisions()?;
-        let lifecycle_events = self.lifecycle_events()?;
-        let mut records = Vec::with_capacity(revisions.len() + lifecycle_events.len());
+        let _operation = self.state.begin_note_timeline_operation()?;
+        NoteTimeline::new(self.state).recover_retained_observations()?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        let revisions = history_store::revisions(&self.note_id)?;
+        let lifecycle_events = history_store::lifecycle_events(&self.note_id)?;
+        let mut projected_records = Vec::with_capacity(revisions.len() + lifecycle_events.len());
         for revision in revisions {
             let (occurred_at_millis, time_kind, modified_at_millis) = match revision.time_evidence {
                 RevisionTimeEvidence::Baseline { known_since_millis } => (
@@ -1589,33 +1692,41 @@ impl HistoryModeAccess<'_> {
                     modified_at_millis,
                 ),
             };
-            records.push(HistoryModeRecord::Revision {
-                record_id: revision.identity.0.clone(),
-                revision_id: revision.identity.0,
-                source: revision.source,
-                occurred_at_millis,
-                time_kind,
-                modified_at_millis,
-            });
+            let predecessor_id = revision.predecessor.as_ref().map(record_identity_value);
+            projected_records.push((
+                HistoryModeRecord::Revision {
+                    record_id: revision.identity.0.clone(),
+                    revision_id: revision.identity.0,
+                    source: revision.source,
+                    occurred_at_millis,
+                    timeline_ordinal: 0,
+                    time_kind,
+                    modified_at_millis,
+                    editing_session_id: None,
+                    line_count: 0,
+                    character_count: 0,
+                },
+                predecessor_id,
+            ));
         }
-        records.extend(lifecycle_events.into_iter().map(|event| {
-            HistoryModeRecord::LifecycleEvent {
-                record_id: event.identity.0.clone(),
-                event_id: event.identity.0,
-                event_kind: event.kind,
-                occurred_at_millis: event.occurred_at_millis,
-                previous_path: event
-                    .previous_path
-                    .map(|path| path.to_string_lossy().into_owned()),
-                path: event.path.map(|path| path.to_string_lossy().into_owned()),
-            }
+        projected_records.extend(lifecycle_events.into_iter().map(|event| {
+            let predecessor_id = event.predecessor.as_ref().map(record_identity_value);
+            (
+                HistoryModeRecord::LifecycleEvent {
+                    record_id: event.identity.0.clone(),
+                    event_id: event.identity.0,
+                    event_kind: event.kind,
+                    occurred_at_millis: event.occurred_at_millis,
+                    timeline_ordinal: 0,
+                    previous_path: event
+                        .previous_path
+                        .map(|path| path.to_string_lossy().into_owned()),
+                    path: event.path.map(|path| path.to_string_lossy().into_owned()),
+                },
+                predecessor_id,
+            )
         }));
-        records.sort_by(|left, right| {
-            right
-                .occurred_at_millis()
-                .cmp(&left.occurred_at_millis())
-                .then_with(|| right.record_id().cmp(left.record_id()))
-        });
+        let records = order_history_mode_records(projected_records)?;
 
         let start = match cursor {
             Some(cursor) => records
@@ -1626,7 +1737,22 @@ impl HistoryModeAccess<'_> {
             None => 0,
         };
         let end = start.saturating_add(limit.clamp(1, 100)).min(records.len());
-        let page_records = records[start..end].to_vec();
+        let mut page_records = records[start..end].to_vec();
+        for record in &mut page_records {
+            if let HistoryModeRecord::Revision {
+                revision_id,
+                line_count,
+                character_count,
+                ..
+            } = record
+            {
+                let reconstructed = history_store::reconstruct(
+                    &self.note_id,
+                    &RevisionIdentity::from_persisted(revision_id.as_str()),
+                )?;
+                (*line_count, *character_count) = authored_content_counts(&reconstructed);
+            }
+        }
         let next_cursor = (end < records.len())
             .then(|| {
                 page_records
@@ -2872,6 +2998,150 @@ mod tests {
             None,
         )
         .expect("prepare test history intent")
+    }
+
+    fn projected_revision(
+        revision_id: &str,
+        source: MutationSource,
+        occurred_at_millis: u64,
+    ) -> HistoryModeRecord {
+        HistoryModeRecord::Revision {
+            record_id: revision_id.to_string(),
+            revision_id: revision_id.to_string(),
+            source,
+            occurred_at_millis,
+            timeline_ordinal: 0,
+            time_kind: HistoryModeRevisionTimeKind::Committed,
+            modified_at_millis: None,
+            editing_session_id: None,
+            line_count: 0,
+            character_count: 0,
+        }
+    }
+
+    fn editing_session_id(record: &HistoryModeRecord) -> Option<&str> {
+        match record {
+            HistoryModeRecord::Revision {
+                editing_session_id, ..
+            } => editing_session_id.as_deref(),
+            HistoryModeRecord::LifecycleEvent { .. } => None,
+        }
+    }
+
+    #[test]
+    fn editing_sessions_split_at_the_five_minute_boundary() {
+        let mut records = vec![
+            projected_revision("revision-4", MutationSource::Editor, 899_001),
+            projected_revision("revision-3", MutationSource::Editor, 599_000),
+            projected_revision("revision-2", MutationSource::Editor, 299_000),
+            projected_revision("revision-1", MutationSource::Editor, 0),
+        ];
+
+        assign_editing_sessions(&mut records);
+
+        assert_eq!(editing_session_id(&records[3]), Some("revision-1"));
+        assert_eq!(editing_session_id(&records[2]), Some("revision-1"));
+        assert_eq!(editing_session_id(&records[1]), Some("revision-3"));
+        assert_eq!(editing_session_id(&records[0]), Some("revision-4"));
+    }
+
+    #[test]
+    fn editing_sessions_split_on_source_lifecycle_and_version_restore_boundaries() {
+        let mut records = vec![
+            projected_revision("revision-6", MutationSource::TaskAction, 300_000),
+            projected_revision("restore", MutationSource::VersionRestore, 240_000),
+            projected_revision("revision-5", MutationSource::TaskAction, 180_000),
+            HistoryModeRecord::LifecycleEvent {
+                record_id: "event-1".to_string(),
+                event_id: "event-1".to_string(),
+                event_kind: LifecycleEventKind::Renamed,
+                occurred_at_millis: 150_000,
+                timeline_ordinal: 0,
+                previous_path: Some("/vault/Before.md".to_string()),
+                path: Some("/vault/After.md".to_string()),
+            },
+            projected_revision("revision-3", MutationSource::TaskAction, 120_000),
+            projected_revision("revision-2", MutationSource::TaskAction, 60_000),
+            projected_revision("revision-1", MutationSource::Editor, 0),
+        ];
+        let revision_ids_before = records
+            .iter()
+            .filter_map(HistoryModeRecord::revision_id)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+
+        assign_editing_sessions(&mut records);
+
+        assert_eq!(editing_session_id(&records[6]), Some("revision-1"));
+        assert_eq!(editing_session_id(&records[5]), Some("revision-2"));
+        assert_eq!(editing_session_id(&records[4]), Some("revision-2"));
+        assert_eq!(editing_session_id(&records[2]), Some("revision-5"));
+        assert_eq!(editing_session_id(&records[1]), None);
+        assert_eq!(editing_session_id(&records[0]), Some("revision-6"));
+        assert_eq!(
+            records
+                .iter()
+                .filter_map(HistoryModeRecord::revision_id)
+                .collect::<Vec<_>>(),
+            revision_ids_before
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn revision_summaries_count_unicode_authored_content_deterministically() {
+        let revision = ReconstructedNoteRevision {
+            unmanaged_frontmatter: Some("project: atlas\n".to_string()),
+            body: "Hello 🌍\nagain".to_string(),
+        };
+
+        assert_eq!(authored_content_counts(&revision), (3, 28));
+        assert_eq!(
+            authored_content_counts(&ReconstructedNoteRevision {
+                unmanaged_frontmatter: None,
+                body: String::new(),
+            }),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn timeline_order_and_session_boundaries_follow_predecessors_at_timestamp_ties() {
+        let ordered = order_history_mode_records(vec![
+            (
+                projected_revision("z-first", MutationSource::Editor, 100),
+                None,
+            ),
+            (
+                HistoryModeRecord::LifecycleEvent {
+                    record_id: "a-event".to_string(),
+                    event_id: "a-event".to_string(),
+                    event_kind: LifecycleEventKind::Renamed,
+                    occurred_at_millis: 100,
+                    timeline_ordinal: 0,
+                    previous_path: Some("/vault/Before.md".to_string()),
+                    path: Some("/vault/After.md".to_string()),
+                },
+                Some("z-first".to_string()),
+            ),
+            (
+                projected_revision("m-last", MutationSource::Editor, 100),
+                Some("a-event".to_string()),
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            ordered
+                .iter()
+                .map(HistoryModeRecord::record_id)
+                .collect::<Vec<_>>(),
+            vec!["m-last", "a-event", "z-first"]
+        );
+        assert_eq!(editing_session_id(&ordered[2]), Some("z-first"));
+        assert_eq!(editing_session_id(&ordered[0]), Some("m-last"));
     }
 
     #[test]
@@ -6920,6 +7190,9 @@ mod tests {
         assert!(serialized["records"][0]["recordId"].is_string());
         assert!(serialized["records"][0]["revisionId"].is_string());
         assert_eq!(serialized["records"][0]["timeKind"], "committed");
+        assert!(serialized["records"][0]["editingSessionId"].is_string());
+        assert_eq!(serialized["records"][0]["lineCount"], 1);
+        assert_eq!(serialized["records"][0]["characterCount"], 5);
         assert!(serialized.get("nextCursor").is_some());
         let cursor = first_page
             .next_cursor()

@@ -124,6 +124,20 @@ describe('document and pane state-machine boundaries', () => {
       'true'
     );
 
+    const editingSession = await $('[data-testid="editing-session-note-alpha-revision-31"]');
+    await editingSession.waitForExist();
+    const expandSession = await editingSession.$('button[aria-label="Expand Editing Session"]');
+    await expandSession.click();
+    await editingSession.$('button[aria-label="Collapse Editing Session"]').waitForExist();
+    expect(await editingSession.$$('[data-revision-id]')).toHaveLength(5);
+    const olderRevision = await editingSession.$('[data-revision-id="note-alpha-revision-34"]');
+    await olderRevision.click();
+    await browser.waitUntil(async () =>
+      (await $('[data-testid="historical-revision-content"]').getText()).includes(
+        'Historical revision 34'
+      )
+    );
+
     const loadOlder = await $('button=Load older history');
     await loadOlder.waitForClickable();
     await loadOlder.click();

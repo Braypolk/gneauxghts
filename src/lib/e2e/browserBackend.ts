@@ -145,14 +145,21 @@ function historyRecords(note: NoteFixture) {
   const now = 1_800_000_000_000;
   const revisions = Array.from({ length: 35 }, (_, index) => {
     const ordinal = 35 - index;
+    const source = ordinal === 35 ? 'editor' : ordinal % 6 === 0 ? 'externalEdit' : 'editor';
+    const sessionOrdinal =
+      source === 'externalEdit' ? ordinal : ordinal - ((ordinal - 1) % 6);
     return {
       kind: 'revision',
       recordId: `${note.noteId}-revision-${ordinal}`,
       revisionId: `${note.noteId}-revision-${ordinal}`,
-      source: ordinal === 35 ? 'editor' : ordinal % 6 === 0 ? 'externalEdit' : 'editor',
+      source,
       occurredAtMillis: now - index * 60_000,
+      timelineOrdinal: ordinal,
       timeKind: ordinal % 6 === 0 ? 'observed' : 'committed',
-      modifiedAtMillis: ordinal % 6 === 0 ? now - index * 60_000 - 5_000 : null
+      modifiedAtMillis: ordinal % 6 === 0 ? now - index * 60_000 - 5_000 : null,
+      editingSessionId: `${note.noteId}-revision-${sessionOrdinal}`,
+      lineCount: ordinal === 35 ? 80 : 3,
+      characterCount: ordinal === 35 ? note.markdown.length : 78
     };
   });
   return [
@@ -163,6 +170,7 @@ function historyRecords(note: NoteFixture) {
       eventId: `${note.noteId}-created`,
       eventKind: 'created',
       occurredAtMillis: now - 36 * 60_000,
+      timelineOrdinal: 0,
       previousPath: null,
       path: note.path
     }

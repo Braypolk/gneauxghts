@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import HistoryMode from './HistoryMode.svelte';
 import type { HistoryModeState } from './historyModeMachine';
 
-const openState: HistoryModeState = {
+const openState: Extract<HistoryModeState, { phase: 'open' }> = {
   phase: 'open',
   target: {
     noteId: 'note-1',
@@ -18,8 +18,25 @@ const openState: HistoryModeState = {
       revisionId: 'revision-2',
       source: 'externalEdit',
       occurredAtMillis: 2_000,
+      timelineOrdinal: 2,
       timeKind: 'observed',
-      modifiedAtMillis: 1_900
+      modifiedAtMillis: 1_900,
+      editingSessionId: 'revision-1',
+      lineCount: 2,
+      characterCount: 31
+    },
+    {
+      kind: 'revision',
+      recordId: 'revision-1',
+      revisionId: 'revision-1',
+      source: 'externalEdit',
+      occurredAtMillis: 1_800,
+      timelineOrdinal: 1,
+      timeKind: 'observed',
+      modifiedAtMillis: 1_700,
+      editingSessionId: 'revision-1',
+      lineCount: 1,
+      characterCount: 14
     },
     {
       kind: 'lifecycleEvent',
@@ -27,6 +44,7 @@ const openState: HistoryModeState = {
       eventId: 'event-1',
       eventKind: 'renamed',
       occurredAtMillis: 1_500,
+      timelineOrdinal: 0,
       previousPath: '/vault/Old.md',
       path: '/vault/Timeline note.md'
     }
@@ -58,13 +76,30 @@ describe('HistoryMode', () => {
     expect(body).toContain('Read only');
     expect(body).toContain('Timeline note');
     expect(body).toContain('External edit');
-    expect(body).toContain('Renamed');
-    expect(body).toContain('Old.md');
+    expect(body).toContain('2 revisions');
+    expect(body).toContain('2 lines');
+    expect(body).toContain('31 characters');
+    expect(body).toContain('Renamed Old.md to Timeline note.md');
     expect(body).toContain('# Historical body');
     expect(body).toContain('project: atlas');
     expect(body).toContain('Load older history');
     expect(body).not.toContain('contenteditable');
     expect(body).not.toContain('<textarea');
+  });
+
+  it('renders Editing Sessions collapsed by default', () => {
+    const body = render(HistoryMode, {
+      props: {
+        state: openState,
+        onExit: vi.fn(),
+        onSelectRevision: vi.fn(),
+        onLoadMore: vi.fn(),
+        onRetry: vi.fn()
+      }
+    }).body;
+
+    expect(body).toContain('aria-expanded="false"');
+    expect(body.match(/data-revision-id=/gu)).toBeNull();
   });
 
   it('keeps unavailable history escapable', () => {
