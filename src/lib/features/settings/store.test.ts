@@ -24,13 +24,28 @@ vi.mock('./loaders/settingsViewLoader', () => ({
   loadSettingsViewSlice: loadSettingsViewSliceMock
 }));
 
-describe('SettingsStore forgotten item actions', () => {
+describe('SettingsStore actions', () => {
   beforeEach(() => {
     invokeMock.mockReset();
     loadForgottenNotesSliceMock.mockReset();
     invokeMock.mockResolvedValue(undefined);
     loadForgottenNotesSliceMock.mockResolvedValue([]);
     loadSettingsViewSliceMock.mockResolvedValue({
+      historyHealth: {
+        state: 'healthy',
+        integrity: 'verified',
+        initialization: {
+          phase: 'complete',
+          discoveredNotes: 0,
+          baselineRevisions: 0,
+          readyNotes: 0,
+          failedNotes: 0
+        },
+        storage: { allocatedBytes: 4096, reclaimableBytes: 0 },
+        pendingRepairs: 0,
+        canRetry: false,
+        canReset: false
+      },
       semanticStatus: null,
       semanticSettings: null,
       semanticDebug: null,
@@ -102,5 +117,43 @@ describe('SettingsStore forgotten item actions', () => {
         }
       });
     });
+  });
+
+  it('retries and explicitly confirms destructive history recovery', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    const repaired = {
+      state: 'healthy',
+      integrity: 'verified',
+      initialization: {
+        phase: 'complete',
+        discoveredNotes: 1,
+        baselineRevisions: 1,
+        readyNotes: 1,
+        failedNotes: 0
+      },
+      storage: { allocatedBytes: 8192, reclaimableBytes: 0 },
+      pendingRepairs: 0,
+      canRetry: false,
+      canReset: false
+    };
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === 'retry_history_recovery') return repaired;
+      if (command === 'reset_corrupt_history') {
+        expect(args).toEqual({ confirmed: true });
+        return { operationId: 'reset-1' };
+      }
+      if (command === 'get_history_health') return repaired;
+      return undefined;
+    });
+
+    await store.retryHistory();
+    await store.resetCorruptHistory();
+
+    expect(invokeMock).toHaveBeenCalledWith('retry_history_recovery');
+    expect(invokeMock).toHaveBeenCalledWith('reset_corrupt_history', { confirmed: true });
+    expect(invokeMock).toHaveBeenCalledWith('get_history_health');
+    expect(store.historyHealth).toEqual(repaired);
+    expect(store.historyActionError).toBeNull();
   });
 });

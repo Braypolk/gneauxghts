@@ -4,10 +4,12 @@ import type {
   SemanticSettings,
   SemanticStatus
 } from '$lib/types/semantic';
+import type { HistoryHealthReport } from '$lib/types/history';
 import type { VaultInfo } from '$lib/types/vault';
 
 export interface SettingsViewPayload {
   vault: VaultInfo;
+  historyHealth: HistoryHealthReport;
   semanticStatus: SemanticStatus;
   semanticSettings: SemanticSettings;
   semanticDebug: SemanticDebugSnapshot;

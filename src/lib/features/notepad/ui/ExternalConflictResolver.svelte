@@ -93,6 +93,22 @@
       {/if}
     </div>
   </aside>
+{:else if status.kind === 'warning'}
+  <aside
+    class="absolute inset-x-4 top-[4.75rem] z-30 mx-auto max-w-xl rounded-xl border border-amber-500/35 bg-card/95 px-3 py-2 text-center shadow-sm backdrop-blur-xl sm:top-[5.25rem]"
+    role="status"
+    aria-label="Saved note synchronization warning"
+  >
+    <p class="text-xs font-medium text-foreground">
+      {status.hasUnsavedChanges ? 'Unsaved changes' : 'Saved to Markdown'}
+    </p>
+    <p class="mt-0.5 text-xs text-muted-foreground">
+      {status.label}
+      {status.repairAction === 'historySettings'
+        ? ' Retry history from Settings.'
+        : ' The app will keep retrying the remaining synchronization work.'}
+    </p>
+  </aside>
 {:else if status.kind === 'failed'}
   <p
     class="absolute inset-x-4 top-[4.75rem] z-30 mx-auto max-w-xl rounded-xl border border-destructive/30 bg-card/95 px-3 py-2 text-center text-xs text-destructive shadow-sm backdrop-blur-xl sm:top-[5.25rem]"

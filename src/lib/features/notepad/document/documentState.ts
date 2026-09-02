@@ -1,4 +1,5 @@
 import type { SessionSnapshot } from '$lib/features/notepad/session/session';
+import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
 import {
   createDocumentOperationState,
   isDocumentOperationTokenCurrent,
@@ -44,6 +45,10 @@ export interface DocumentSavedBaseline {
   identity: DocumentIdentity;
 }
 
+export interface DocumentPublicationState {
+  warning: CommittedMutationWarning | null;
+}
+
 export type ExternalRefreshSource =
   | 'watcher'
   | 'windowFocus'
@@ -75,6 +80,7 @@ export interface NoteDraftState {
   savedBaseline: DocumentSavedBaseline | null;
   operation: DocumentOperationState;
   externalSync: DocumentExternalSyncState;
+  publication: DocumentPublicationState;
 }
 
 function identityFromBoundary(
@@ -155,7 +161,8 @@ export function createDocumentState(
     identity: external.identity,
     savedBaseline: external.savedBaseline,
     operation: createDocumentOperationState(),
-    externalSync: createDocumentExternalSyncState()
+    externalSync: createDocumentExternalSyncState(),
+    publication: { warning: snapshot.commitWarning ?? null }
   };
   return document;
 }
@@ -202,7 +209,10 @@ export function documentToSessionSnapshot(
     lastSavedPath:
       baseline?.identity.kind === 'persisted'
         ? baseline.identity.path
-        : null
+        : null,
+    ...(document.publication.warning
+      ? { commitWarning: document.publication.warning }
+      : {})
   };
 }
 
@@ -305,6 +315,7 @@ export function applySessionSnapshotToDocument(
 
   document.identity = external.identity;
   document.savedBaseline = external.savedBaseline;
+  document.publication.warning = snapshot.commitWarning ?? null;
   if (!preserveWorking) {
     document.working = { ...external.content };
   }
@@ -380,6 +391,12 @@ export type DocumentStatusViewModel =
   | { kind: 'busy'; label: string }
   | { kind: 'failed'; label: string }
   | {
+      kind: 'warning';
+      label: string;
+      hasUnsavedChanges: boolean;
+      repairAction: 'historySettings' | 'automatic';
+    }
+  | {
       kind: 'conflict';
       label: 'Changed outside the app';
       externalKind: ExternalDocumentChange['kind'];
@@ -405,6 +422,18 @@ export function getDocumentStatusViewModel(
     return {
       kind: 'busy',
       label: document.operation.kind
+    };
+  }
+  if (document.publication.warning) {
+    return {
+      kind: 'warning',
+      label: document.publication.warning.message,
+      hasUnsavedChanges: !documentHasCleanBuffer(document),
+      repairAction: document.publication.warning.issues.some(
+        (issue) => issue.stage === 'historyFinalization'
+      )
+        ? 'historySettings'
+        : 'automatic'
     };
   }
   return !documentHasCleanBuffer(document)

@@ -5,6 +5,7 @@ import { appStore } from '$lib/app/appStore.svelte';
 import { atlasStore } from '$lib/features/atlas/atlasStore.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 import type { VaultFolderInfo, VaultInfo } from '$lib/types/vault';
+import type { HistoryHealthReport } from '$lib/types/history';
 import type {
   SemanticDebugSnapshot,
   SemanticModelDownloadResult,
@@ -23,6 +24,11 @@ import {
 } from './loaders/semanticLoader';
 import { loadSettingsViewSlice } from './loaders/settingsViewLoader';
 import {
+  loadHistoryHealthSlice,
+  resetCorruptHistory as requestCorruptHistoryReset,
+  retryHistoryRecovery
+} from './loaders/historyLoader';
+import {
   createVaultFolderSlice,
   listVaultFoldersSlice,
   loadVaultInfoSlice
@@ -34,6 +40,7 @@ type GeneralSection =
   | 'shortcuts'
   | 'forgetting'
   | 'vault'
+  | 'history'
   | 'ai'
   | 'search';
 type ForgottenAction = 'restore_forgotten_notes' | 'delete_forgotten_notes';
@@ -51,6 +58,9 @@ export class SettingsStore {
   semanticSettings = $state<SemanticSettings | null>(null);
   semanticDebug = $state<SemanticDebugSnapshot | null>(null);
   vaultInfo = $state<VaultInfo | null>(null);
+  historyHealth = $state<HistoryHealthReport | null>(null);
+  historyActionError = $state<string | null>(null);
+  isRunningHistoryAction = $state(false);
   vaultPathInput = $state('');
   activeVaultPath = $state('');
   vaultSaveError = $state<string | null>(null);
@@ -90,6 +100,7 @@ export class SettingsStore {
 
   setActiveGeneralSection(activeGeneralSection: GeneralSection) {
     this.activeGeneralSection = activeGeneralSection;
+    if (activeGeneralSection === 'history') void this.loadHistoryHealth();
   }
 
   setVaultPathInput(vaultPathInput: string) {
@@ -286,19 +297,22 @@ export class SettingsStore {
           this.semanticStatus = view.semanticStatus;
           this.semanticSettings = view.semanticSettings;
           this.semanticDebug = view.semanticDebug;
+          this.historyHealth = view.historyHealth;
           this.#applyVaultInfo(view.vault);
         } catch (bundledError) {
           console.warn(
             'get_settings_view failed, falling back to individual loads:',
             bundledError
           );
-          const [semantic, nextVaultInfo] = await Promise.all([
+          const [semantic, nextVaultInfo, historyHealth] = await Promise.all([
             loadSemanticSlice(),
-            loadVaultInfoSlice()
+            loadVaultInfoSlice(),
+            loadHistoryHealthSlice()
           ]);
           this.semanticStatus = semantic.status;
           this.semanticSettings = semantic.settings;
           this.semanticDebug = semantic.debug;
+          this.historyHealth = historyHealth;
           this.#applyVaultInfo(nextVaultInfo);
         }
         this.#syncSemanticPolling();
@@ -335,6 +349,43 @@ export class SettingsStore {
     })();
 
     return this.#forgottenNotesRequest;
+  };
+
+  loadHistoryHealth = async () => {
+    try {
+      this.historyHealth = await loadHistoryHealthSlice();
+      this.historyActionError = null;
+    } catch (error) {
+      console.error('Failed to load history health:', error);
+      this.historyActionError = String(error);
+    }
+  };
+
+  retryHistory = async () => {
+    this.isRunningHistoryAction = true;
+    this.historyActionError = null;
+    try {
+      this.historyHealth = await retryHistoryRecovery();
+    } catch (error) {
+      console.error('Failed to retry history recovery:', error);
+      this.historyActionError = String(error);
+    } finally {
+      this.isRunningHistoryAction = false;
+    }
+  };
+
+  resetCorruptHistory = async () => {
+    this.isRunningHistoryAction = true;
+    this.historyActionError = null;
+    try {
+      await requestCorruptHistoryReset();
+      this.historyHealth = await loadHistoryHealthSlice();
+    } catch (error) {
+      console.error('Failed to reset corrupt history:', error);
+      this.historyActionError = String(error);
+    } finally {
+      this.isRunningHistoryAction = false;
+    }
   };
 
   runForgottenAction = async (command: ForgottenAction, forgottenPaths: string[]) => {
@@ -512,6 +563,7 @@ export class SettingsStore {
         loadVaultInfo: () => this.loadVaultInfo(),
         loadForgottenNotes: () => this.loadForgottenNotes()
       });
+      void this.loadHistoryHealth();
     }, delayMs);
   }
 

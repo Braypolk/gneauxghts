@@ -325,6 +325,40 @@ pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
         .trust_and_migrate_legacy_history(&root)
 }
 
+#[tauri::command]
+pub(crate) fn get_history_health(
+    state: State<'_, AppState>,
+) -> Result<crate::services::note_timeline::HistoryHealthReport, String> {
+    crate::services::note_timeline::NoteTimeline::new(&state).history_health()
+}
+
+#[tauri::command]
+pub(crate) fn get_note_history_health(
+    state: State<'_, AppState>,
+    note_id: String,
+) -> Result<crate::services::note_timeline::NoteHistoryHealth, String> {
+    crate::services::note_timeline::NoteTimeline::new(&state)
+        .note_history_health(&crate::services::note_timeline::NoteIdentity::new(note_id))
+}
+
+#[tauri::command]
+pub(crate) fn retry_history_recovery(
+    state: State<'_, AppState>,
+) -> Result<crate::services::note_timeline::HistoryHealthReport, String> {
+    let root = vault_root()?;
+    crate::services::note_timeline::NoteTimeline::new(&state).retry_history_recovery(&root)
+}
+
+#[tauri::command]
+pub(crate) fn reset_corrupt_history(
+    state: State<'_, AppState>,
+    confirmed: bool,
+) -> Result<crate::services::note_timeline::HistoryResetReceipt, String> {
+    let root = vault_root()?;
+    crate::services::note_timeline::NoteTimeline::new(&state)
+        .reset_corrupt_history(&root, confirmed)
+}
+
 fn set_vault_directory_for_state(
     state: &AppState,
     path: Option<String>,
@@ -631,6 +665,7 @@ pub(crate) fn bootstrap_app(state: State<'_, AppState>) -> Result<BootstrapAppPa
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsViewPayload {
     vault: VaultInfo,
+    history_health: crate::services::note_timeline::HistoryHealthReport,
     semantic_status: SemanticStatus,
     semantic_settings: SemanticSettings,
     semantic_debug: SemanticDebugSnapshot,
@@ -639,11 +674,14 @@ pub(crate) struct SettingsViewPayload {
 #[tauri::command]
 pub(crate) fn get_settings_view(state: State<'_, AppState>) -> Result<SettingsViewPayload, String> {
     let vault = current_vault_info()?;
+    let history_health =
+        crate::services::note_timeline::NoteTimeline::new(&state).history_health()?;
     let semantic_status = state.semantic.get_status()?;
     let semantic_settings = state.semantic.get_settings()?;
     let semantic_debug = state.semantic.debug_snapshot()?;
     Ok(SettingsViewPayload {
         vault,
+        history_health,
         semantic_status,
         semantic_settings,
         semantic_debug,

@@ -29,7 +29,7 @@ interactive workspace state that is owned by the frontend.
 | --- | --- |
 | Pane membership, order, active pane, kind, and content references | `WorkspaceStore`; membership transitions use `paneLifecycleMachine.ts` |
 | Per-pane editor mount lifecycle | `PaneEditorSession` through `paneLifecycleMachine.ts` |
-| Open note content, identity, saved baseline, operation, and external conflict | `NoteDraftState` in `NotepadState.notesByKey`; transitions use the document machines |
+| Open note content, identity, saved baseline, operation, publication warning, and external conflict | `NoteDraftState` in `NotepadState.notesByKey`; transitions use the document machines |
 | Editor instances, save queues, timers, and resource bindings | `documentRegistry` and the document runtime |
 | Canonical note bytes | The Markdown file in the vault |
 | Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
@@ -133,6 +133,19 @@ Initialization progress and per-note readiness are durable diagnostics, so an
 interrupted scan resumes idempotently after restart. Per-note failures are
 retained as typed failed states, the vault enters a degraded phase, and a
 later scan clears each failure only after that note becomes ready.
+The same timeline boundary exposes storage-neutral vault and per-note health
+contracts. Vault health verifies store integrity and retained revision
+reconstruction, reports initialization plus allocated and reclaimable bytes,
+and distinguishes retryable warnings from unavailable or corrupt history.
+Each `AppState` caches that exhaustive integrity attestation for its selected
+vault, while corruption remains latched until an explicit reset replaces the
+store. Prepared writes consult the cached gate in constant time, so routine
+write cost continues to scale with the changed content rather than the full
+retained timeline.
+Settings can explicitly retry pending recovery. A confirmed reset is admitted
+only for unavailable or corrupt history; it advances the generation, rebuilds
+current Markdown as Baseline Revisions, and retains only a prose-free reset
+diagnostic outside the replacement timelines.
 Each `AppState` completes that reconciliation successfully before its first
 history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live

@@ -162,7 +162,8 @@ describe('architecture fitness: notepad state ownership', () => {
       'identity',
       'savedBaseline',
       'operation',
-      'externalSync'
+      'externalSync',
+      'publication'
     ]);
   });
 });

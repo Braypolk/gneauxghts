@@ -7,7 +7,10 @@ mod history_store;
 mod post_publication;
 
 use self::post_publication::{PublicationIssue, PublicationOutcome, PublicationStage};
-use crate::{index::AppState, path_utils::collect_markdown_files_recursively};
+use crate::{
+    index::{AppState, NoteTimelineIntegrityAttestation},
+    path_utils::collect_markdown_files_recursively,
+};
 use serde::Serialize;
 use std::{
     collections::HashSet,
@@ -40,6 +43,32 @@ pub(crate) fn ensure_vault_scaffold(
         history_store::HISTORY_FORMAT,
         history_store::INITIAL_HISTORY_GENERATION,
     )
+}
+
+pub(crate) fn ensure_history_integrity_attested(state: &AppState) -> Result<(), String> {
+    let mut attestation = state.lock_note_timeline_integrity()?;
+    match *attestation {
+        NoteTimelineIntegrityAttestation::Verified => return Ok(()),
+        NoteTimelineIntegrityAttestation::Corrupt => {
+            return Err(
+                "Note Timeline history is corrupt; canonical publication is blocked".to_string(),
+            );
+        }
+        NoteTimelineIntegrityAttestation::Unverified => {}
+    }
+    match history_store::integrity_snapshot() {
+        history_store::HistoryStoreIntegrity::Verified => {
+            *attestation = NoteTimelineIntegrityAttestation::Verified;
+            Ok(())
+        }
+        history_store::HistoryStoreIntegrity::Unavailable => {
+            Err("Note Timeline history store is unavailable".to_string())
+        }
+        history_store::HistoryStoreIntegrity::Corrupt => {
+            *attestation = NoteTimelineIntegrityAttestation::Corrupt;
+            Err("Note Timeline history is corrupt; canonical publication is blocked".to_string())
+        }
+    }
 }
 
 macro_rules! identity_type {
@@ -442,7 +471,8 @@ impl NoteRevisionHeader {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) enum BaselineInitializationPhase {
     NotStarted,
     Initializing,
@@ -450,7 +480,8 @@ pub(crate) enum BaselineInitializationPhase {
     Degraded,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct BaselineInitializationProgress {
     phase: BaselineInitializationPhase,
     discovered_notes: u64,
@@ -493,8 +524,9 @@ pub(crate) enum NoteBaselineInitializationState {
     Initialized { known_since_millis: Option<u64> },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DevelopmentHistoryReset {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryResetReceipt {
     operation_id: String,
     previous_generation: u64,
     generation: u64,
@@ -634,7 +666,8 @@ impl HistoryDeletionReceipt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryStorageUsage {
     allocated_bytes: u64,
     reclaimable_bytes: u64,
@@ -647,6 +680,108 @@ impl HistoryStorageUsage {
 
     pub(crate) fn reclaimable_bytes(&self) -> u64 {
         self.reclaimable_bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum HistoryHealthState {
+    Healthy,
+    Initializing,
+    Degraded,
+    Warning,
+    Unavailable,
+    Corrupt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum HistoryIntegrityState {
+    Verified,
+    Unavailable,
+    Corrupt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum NoteHistoryHealthState {
+    Healthy,
+    Initializing,
+    Degraded,
+    Unavailable,
+    Corrupt,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NoteHistoryHealth {
+    note_id: String,
+    state: NoteHistoryHealthState,
+    revision_count: u64,
+    lifecycle_event_count: u64,
+    revision_payload_bytes: u64,
+}
+
+impl NoteHistoryHealth {
+    pub(crate) fn state(&self) -> NoteHistoryHealthState {
+        self.state
+    }
+
+    pub(crate) fn revision_count(&self) -> u64 {
+        self.revision_count
+    }
+
+    pub(crate) fn lifecycle_event_count(&self) -> u64 {
+        self.lifecycle_event_count
+    }
+
+    pub(crate) fn revision_payload_bytes(&self) -> u64 {
+        self.revision_payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryHealthReport {
+    state: HistoryHealthState,
+    integrity: HistoryIntegrityState,
+    initialization: BaselineInitializationProgress,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage: Option<HistoryStorageUsage>,
+    pending_repairs: u64,
+    can_retry: bool,
+    can_reset: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_reset: Option<HistoryResetReceipt>,
+}
+
+impl HistoryHealthReport {
+    pub(crate) fn state(&self) -> HistoryHealthState {
+        self.state
+    }
+
+    pub(crate) fn integrity(&self) -> HistoryIntegrityState {
+        self.integrity
+    }
+
+    pub(crate) fn initialization(&self) -> &BaselineInitializationProgress {
+        &self.initialization
+    }
+
+    pub(crate) fn storage(&self) -> Option<&HistoryStorageUsage> {
+        self.storage.as_ref()
+    }
+
+    pub(crate) fn can_retry(&self) -> bool {
+        self.can_retry
+    }
+
+    pub(crate) fn can_reset(&self) -> bool {
+        self.can_reset
+    }
+
+    pub(crate) fn last_reset(&self) -> Option<&HistoryResetReceipt> {
+        self.last_reset.as_ref()
     }
 }
 
@@ -672,7 +807,7 @@ impl HistoryCompactionReceipt {
     }
 }
 
-impl DevelopmentHistoryReset {
+impl HistoryResetReceipt {
     pub(crate) fn operation_id(&self) -> &str {
         &self.operation_id
     }
@@ -1674,19 +1809,21 @@ impl<'a> NoteTimeline<'a> {
         history_store::note_baseline_initialization_state(note_id)
     }
 
-    pub(crate) fn reset_development_history(
-        &self,
-        vault_root: &Path,
-    ) -> Result<DevelopmentHistoryReset, String> {
+    pub(crate) fn reset_history(&self, vault_root: &Path) -> Result<HistoryResetReceipt, String> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
             let _operation = self.state.begin_note_timeline_operation()?;
             let (previous_generation, generation, operation_id, reset_at_millis) = {
                 let _timeline = self.state.lock_note_timeline_observation_replay()?;
-                history_store::reset_development_store(&vault_root)?
+                let mut recovered = self.state.lock_note_timeline_history_recovery()?;
+                let mut integrity = self.state.lock_note_timeline_integrity()?;
+                let receipt = history_store::reset_history_store(&vault_root)?;
+                *recovered = false;
+                *integrity = NoteTimelineIntegrityAttestation::Unverified;
+                receipt
             };
             let initialization = self.initialize_existing_notes(&vault_root)?;
-            Ok(DevelopmentHistoryReset {
+            Ok(HistoryResetReceipt {
                 operation_id,
                 previous_generation,
                 generation,
@@ -1696,22 +1833,212 @@ impl<'a> NoteTimeline<'a> {
         })
     }
 
-    pub(crate) fn latest_development_history_reset(
-        &self,
-    ) -> Result<Option<DevelopmentHistoryReset>, String> {
+    pub(crate) fn latest_history_reset(&self) -> Result<Option<HistoryResetReceipt>, String> {
         let _operation = self.state.begin_note_timeline_operation()?;
         let Some((operation_id, previous_generation, generation, reset_at_millis)) =
-            history_store::latest_development_history_reset()?
+            history_store::latest_history_reset()?
         else {
             return Ok(None);
         };
-        Ok(Some(DevelopmentHistoryReset {
+        Ok(Some(HistoryResetReceipt {
             operation_id,
             previous_generation,
             generation,
             reset_at_millis,
             initialization: history_store::baseline_initialization_progress()?,
         }))
+    }
+
+    pub(crate) fn history_health(&self) -> Result<HistoryHealthReport, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
+        let mut attestation = self.state.lock_note_timeline_integrity()?;
+        let health = if *attestation == NoteTimelineIntegrityAttestation::Corrupt {
+            history_store::HistoryStoreHealth::Corrupt
+        } else {
+            let health = history_store::health_snapshot();
+            match &health {
+                history_store::HistoryStoreHealth::Available(_) => {
+                    *attestation = NoteTimelineIntegrityAttestation::Verified;
+                }
+                history_store::HistoryStoreHealth::Corrupt => {
+                    *attestation = NoteTimelineIntegrityAttestation::Corrupt;
+                }
+                history_store::HistoryStoreHealth::Unavailable => {}
+            }
+            health
+        };
+        drop(attestation);
+        let initialization = match &health {
+            history_store::HistoryStoreHealth::Available(snapshot) => {
+                snapshot.initialization.clone()
+            }
+            history_store::HistoryStoreHealth::Unavailable
+            | history_store::HistoryStoreHealth::Corrupt => BaselineInitializationProgress {
+                phase: BaselineInitializationPhase::NotStarted,
+                discovered_notes: 0,
+                baseline_revisions: 0,
+                ready_notes: 0,
+                failed_notes: 0,
+                last_error: None,
+            },
+        };
+        let last_reset = history_store::latest_history_reset().ok().flatten().map(
+            |(operation_id, previous_generation, generation, reset_at_millis)| {
+                HistoryResetReceipt {
+                    operation_id,
+                    previous_generation,
+                    generation,
+                    reset_at_millis,
+                    initialization: initialization.clone(),
+                }
+            },
+        );
+        let report = match health {
+            history_store::HistoryStoreHealth::Available(snapshot) => {
+                let state = if snapshot.pending_repairs > 0 {
+                    HistoryHealthState::Warning
+                } else {
+                    match snapshot.initialization.phase {
+                        BaselineInitializationPhase::NotStarted
+                        | BaselineInitializationPhase::Initializing => {
+                            HistoryHealthState::Initializing
+                        }
+                        BaselineInitializationPhase::Degraded => HistoryHealthState::Degraded,
+                        BaselineInitializationPhase::Complete => HistoryHealthState::Healthy,
+                    }
+                };
+                HistoryHealthReport {
+                    state,
+                    integrity: HistoryIntegrityState::Verified,
+                    initialization: snapshot.initialization,
+                    storage: Some(snapshot.storage),
+                    pending_repairs: snapshot.pending_repairs,
+                    can_retry: matches!(
+                        state,
+                        HistoryHealthState::Warning | HistoryHealthState::Degraded
+                    ),
+                    can_reset: false,
+                    last_reset,
+                }
+            }
+            history_store::HistoryStoreHealth::Unavailable => HistoryHealthReport {
+                state: HistoryHealthState::Unavailable,
+                integrity: HistoryIntegrityState::Unavailable,
+                initialization,
+                storage: None,
+                pending_repairs: 0,
+                can_retry: true,
+                can_reset: true,
+                last_reset,
+            },
+            history_store::HistoryStoreHealth::Corrupt => HistoryHealthReport {
+                state: HistoryHealthState::Corrupt,
+                integrity: HistoryIntegrityState::Corrupt,
+                initialization,
+                storage: None,
+                pending_repairs: 0,
+                can_retry: true,
+                can_reset: true,
+                last_reset,
+            },
+        };
+        Ok(report)
+    }
+
+    pub(crate) fn note_history_health(
+        &self,
+        note_id: &NoteIdentity,
+    ) -> Result<NoteHistoryHealth, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
+        let mut attestation = self.state.lock_note_timeline_integrity()?;
+        if *attestation == NoteTimelineIntegrityAttestation::Corrupt {
+            return Ok(NoteHistoryHealth {
+                note_id: note_id.as_str().to_string(),
+                state: NoteHistoryHealthState::Corrupt,
+                revision_count: 0,
+                lifecycle_event_count: 0,
+                revision_payload_bytes: 0,
+            });
+        }
+        let (state, revision_count, lifecycle_event_count, revision_payload_bytes) =
+            match history_store::note_health_snapshot(note_id) {
+                history_store::NoteHistoryStoreHealth::Available(snapshot) => {
+                    let state = match snapshot.initialization {
+                        NoteBaselineInitializationState::Uninitialized => {
+                            NoteHistoryHealthState::Initializing
+                        }
+                        NoteBaselineInitializationState::Failed { .. } => {
+                            NoteHistoryHealthState::Degraded
+                        }
+                        NoteBaselineInitializationState::Initialized { .. } => {
+                            NoteHistoryHealthState::Healthy
+                        }
+                    };
+                    (
+                        state,
+                        snapshot.revision_count,
+                        snapshot.lifecycle_event_count,
+                        snapshot.revision_payload_bytes,
+                    )
+                }
+                history_store::NoteHistoryStoreHealth::Unavailable => {
+                    (NoteHistoryHealthState::Unavailable, 0, 0, 0)
+                }
+                history_store::NoteHistoryStoreHealth::Corrupt => {
+                    *attestation = NoteTimelineIntegrityAttestation::Corrupt;
+                    (NoteHistoryHealthState::Corrupt, 0, 0, 0)
+                }
+            };
+        drop(attestation);
+        Ok(NoteHistoryHealth {
+            note_id: note_id.as_str().to_string(),
+            state,
+            revision_count,
+            lifecycle_event_count,
+            revision_payload_bytes,
+        })
+    }
+
+    pub(crate) fn retry_history_recovery(
+        &self,
+        vault_root: &Path,
+    ) -> Result<HistoryHealthReport, String> {
+        let vault_root = require_active_vault_root(vault_root)?;
+        {
+            let _operation = self.state.begin_note_timeline_operation()?;
+            let _replay = self.state.lock_note_timeline_observation_replay()?;
+            self.recover_pending_deletions()?;
+            self.replay_retained_observations(None)?;
+            recover_pending_history(self.state)?;
+        }
+        if matches!(
+            self.history_health()?.state(),
+            HistoryHealthState::Initializing | HistoryHealthState::Degraded
+        ) {
+            self.initialize_existing_notes(&vault_root)?;
+        }
+        self.history_health()
+    }
+
+    pub(crate) fn reset_corrupt_history(
+        &self,
+        vault_root: &Path,
+        confirmed: bool,
+    ) -> Result<HistoryResetReceipt, String> {
+        if !confirmed {
+            return Err("Corrupt history reset requires explicit confirmation".to_string());
+        }
+        let health = self.history_health()?;
+        if !matches!(
+            health.state(),
+            HistoryHealthState::Corrupt | HistoryHealthState::Unavailable
+        ) {
+            return Err(
+                "History reset is available only when history is corrupt or unavailable"
+                    .to_string(),
+            );
+        }
+        self.reset_history(vault_root)
     }
 
     pub(crate) fn trust_and_migrate_legacy_history(&self, vault_root: &Path) -> Result<(), String> {
@@ -4097,7 +4424,7 @@ mod tests {
             .expect_err("initialization must use the active vault")
             .contains("vault root mismatch"));
         assert!(timeline
-            .reset_development_history(other.path())
+            .reset_history(other.path())
             .expect_err("reset must use the active vault")
             .contains("vault root mismatch"));
         assert_eq!(
@@ -4133,7 +4460,7 @@ mod tests {
         .unwrap();
         let timeline = NoteTimeline::new(&state);
         timeline.initialize_existing_notes(notes.path()).unwrap();
-        timeline.reset_development_history(notes.path()).unwrap();
+        timeline.reset_history(notes.path()).unwrap();
 
         let manifest_path = crate::state::vault_manifest_path_for(notes.path());
         let mut manifest: serde_json::Value =
@@ -4182,7 +4509,7 @@ mod tests {
             .identity()
             .clone();
 
-        let reset = timeline.reset_development_history(notes.path()).unwrap();
+        let reset = timeline.reset_history(notes.path()).unwrap();
 
         assert_eq!(reset.previous_generation(), 1);
         assert_eq!(reset.generation(), 2);
@@ -4218,12 +4545,287 @@ mod tests {
         )
         .unwrap();
         let durable_reset = NoteTimeline::new(&restarted)
-            .latest_development_history_reset()
+            .latest_history_reset()
             .unwrap()
             .expect("reset diagnostic survives replacement and restart");
         assert_eq!(durable_reset.operation_id(), operation_id);
         assert_eq!(durable_reset.previous_generation(), 1);
         assert_eq!(durable_reset.generation(), 2);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn history_health_reports_initialization_storage_and_per_note_usage() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-health-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-health-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        fs::write(
+            notes.path().join("Healthy.md"),
+            "---\ngneauxghts:\n  id: healthy-note\n  kind: note\n---\n\nReadable Markdown",
+        )
+        .unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+
+        let initializing = timeline.history_health().unwrap();
+        assert_eq!(initializing.state(), HistoryHealthState::Initializing);
+        assert_eq!(
+            initializing.initialization().phase(),
+            BaselineInitializationPhase::NotStarted
+        );
+
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        let healthy = timeline.history_health().unwrap();
+        assert_eq!(healthy.state(), HistoryHealthState::Healthy);
+        assert_eq!(healthy.integrity(), HistoryIntegrityState::Verified);
+        assert!(healthy.storage().unwrap().allocated_bytes() > 0);
+        assert!(!healthy.can_retry());
+        assert!(!healthy.can_reset());
+        let serialized = serde_json::to_value(&healthy).unwrap();
+        assert_eq!(serialized["state"], "healthy");
+        assert_eq!(serialized["integrity"], "verified");
+        assert_eq!(serialized["initialization"]["phase"], "complete");
+        assert_eq!(
+            serialized["storage"]["allocatedBytes"].as_u64().unwrap(),
+            healthy.storage().unwrap().allocated_bytes()
+        );
+
+        let note = timeline
+            .note_history_health(&NoteIdentity::new("healthy-note"))
+            .unwrap();
+        assert_eq!(note.state(), NoteHistoryHealthState::Healthy);
+        assert_eq!(note.revision_count(), 1);
+        assert_eq!(note.lifecycle_event_count(), 0);
+        assert!(note.revision_payload_bytes() > 0);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn unavailable_history_is_actionable_without_hiding_markdown() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-unavailable-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-unavailable-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Readable.md");
+        let markdown =
+            "---\ngneauxghts:\n  id: readable-note\n  kind: note\n---\n\nReadable Markdown";
+        fs::write(&path, markdown).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        history_store::remove_history_store();
+
+        let report = timeline.history_health().unwrap();
+        assert_eq!(report.state(), HistoryHealthState::Unavailable);
+        assert_eq!(report.integrity(), HistoryIntegrityState::Unavailable);
+        assert!(report.storage().is_none());
+        assert!(report.can_retry());
+        assert!(report.can_reset());
+        assert_eq!(fs::read_to_string(&path).unwrap(), markdown);
+
+        let error = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Readable".to_string(),
+            "Dirty editor work".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .expect_err("history preparation must still fail closed");
+        assert!(error.contains("history store"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), markdown);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn history_health_exposes_degraded_and_post_commit_warning_retry_paths() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-health-retry-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-health-retry-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        fs::write(
+            notes.path().join("Existing.md"),
+            "---\ngneauxghts:\n  id: retry-note\n  kind: note\n---\n\nExisting",
+        )
+        .unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        history_store::inject_fault_once(history_store::FaultPoint::Baseline);
+        let progress = timeline.initialize_existing_notes(notes.path()).unwrap();
+        assert_eq!(progress.phase(), BaselineInitializationPhase::Degraded);
+        assert_eq!(
+            timeline.history_health().unwrap().state(),
+            HistoryHealthState::Degraded
+        );
+        assert_eq!(
+            timeline
+                .note_history_health(&NoteIdentity::new("retry-note"))
+                .unwrap()
+                .state(),
+            NoteHistoryHealthState::Degraded
+        );
+
+        let retried = timeline.retry_history_recovery(notes.path()).unwrap();
+        assert_eq!(retried.state(), HistoryHealthState::Healthy);
+        assert_eq!(retried.initialization().failed_notes(), 0);
+
+        inject_history_finalization_failure_once();
+        let committed = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Existing".to_string(),
+            "Published despite finalization warning".to_string(),
+            Some(
+                notes
+                    .path()
+                    .join("Existing.md")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        assert!(committed.commit_warning.is_some());
+        let warning = timeline.history_health().unwrap();
+        assert_eq!(warning.state(), HistoryHealthState::Warning);
+        assert!(warning.can_retry());
+
+        let repaired = timeline.retry_history_recovery(notes.path()).unwrap();
+        assert_eq!(repaired.state(), HistoryHealthState::Healthy);
+        assert_eq!(
+            timeline
+                .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                    "retry-note"
+                )))
+                .revisions()
+                .unwrap()
+                .len(),
+            2
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn corrupt_note_history_can_be_confirmed_reset_and_diagnosed_after_restart() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-corrupt-reset-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-corrupt-reset-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Current.md");
+        let markdown =
+            "---\ngneauxghts:\n  id: corrupt-note\n  kind: note\n---\n\nCurrent readable state";
+        fs::write(&path, markdown).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        let original_revision = timeline
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                "corrupt-note",
+            )))
+            .revisions()
+            .unwrap()[0]
+            .identity()
+            .clone();
+        history_store::seed_revision_dependents_for_test(&original_revision);
+        assert_eq!(
+            history_store::revision_dependent_count_for_test(&NoteIdentity::new("corrupt-note")),
+            2
+        );
+        history_store::replace_revision_payload_version(&NoteIdentity::new("corrupt-note"), 99);
+
+        let report = timeline.history_health().unwrap();
+        assert_eq!(report.state(), HistoryHealthState::Corrupt);
+        assert_eq!(report.integrity(), HistoryIntegrityState::Corrupt);
+        assert!(report.can_reset());
+        assert_eq!(
+            timeline
+                .note_history_health(&NoteIdentity::new("corrupt-note"))
+                .unwrap()
+                .state(),
+            NoteHistoryHealthState::Corrupt
+        );
+        let blocked = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Current".to_string(),
+            "Dirty editor work must not publish".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .expect_err("corrupt history must block canonical publication");
+        assert!(blocked.contains("history is corrupt"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), markdown);
+        history_store::replace_revision_payload_version(&NoteIdentity::new("corrupt-note"), 1);
+        assert_eq!(
+            timeline.history_health().unwrap().state(),
+            HistoryHealthState::Corrupt,
+            "only an explicit reset may clear a latched corrupt state"
+        );
+        assert_eq!(
+            timeline
+                .note_history_health(&NoteIdentity::new("corrupt-note"))
+                .unwrap()
+                .state(),
+            NoteHistoryHealthState::Corrupt
+        );
+        assert!(timeline
+            .reset_corrupt_history(notes.path(), false)
+            .expect_err("reset requires explicit confirmation")
+            .contains("confirmation"));
+
+        let reset = timeline.reset_corrupt_history(notes.path(), true).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), markdown);
+        assert_eq!(reset.previous_generation(), 1);
+        assert_eq!(reset.generation(), 2);
+        let recovered = timeline.history_health().unwrap();
+        assert_eq!(recovered.state(), HistoryHealthState::Healthy);
+        assert_eq!(recovered.integrity(), HistoryIntegrityState::Verified);
+        assert!(recovered.last_reset().is_some());
+        assert!(timeline
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                "corrupt-note"
+            )))
+            .reconstruct(&original_revision)
+            .is_err());
+        assert_eq!(
+            history_store::revision_dependent_count_for_test(&NoteIdentity::new("corrupt-note")),
+            0
+        );
+
+        let operation_id = reset.operation_id().to_string();
+        drop(timeline);
+        drop(state);
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let after_restart = NoteTimeline::new(&restarted).history_health().unwrap();
+        assert_eq!(
+            after_restart.last_reset().unwrap().operation_id(),
+            operation_id
+        );
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -4252,6 +4854,45 @@ mod tests {
 
         assert!(error.contains("injected history preparation failure"));
         assert!(!notes.path().join("Blocked.md").exists());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn repeated_publication_preparation_reuses_one_integrity_attestation() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-integrity-cache-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-integrity-cache-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        history_store::reset_integrity_snapshot_count();
+
+        timeline
+            .prepare_revision_publication(
+                MutationSource::NoteCreation,
+                &notes.path().join("First.md"),
+                None,
+                None,
+                "first",
+            )
+            .unwrap();
+        timeline
+            .prepare_revision_publication(
+                MutationSource::NoteCreation,
+                &notes.path().join("Second.md"),
+                None,
+                None,
+                "second",
+            )
+            .unwrap();
+
+        assert_eq!(history_store::integrity_snapshot_count(), 1);
         crate::state::set_notes_root_override(None).unwrap();
     }
 

@@ -6,6 +6,7 @@
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
   import ChatSettingsPanel from '$lib/features/settings/ChatSettingsPanel.svelte';
   import EditorTextSizePanel from '$lib/features/settings/EditorTextSizePanel.svelte';
+  import HistorySettingsPanel from '$lib/features/settings/HistorySettingsPanel.svelte';
   import SettingsCard from '$lib/features/settings/SettingsCard.svelte';
   import SettingsLabel from '$lib/features/settings/SettingsLabel.svelte';
   import {
@@ -42,6 +43,7 @@
       description: 'Forget button timing and trash retention'
     },
     { id: 'vault', label: 'Vault', description: 'Vault folders and note storage' },
+    { id: 'history', label: 'History', description: 'Timeline health, storage, and recovery' },
     { id: 'ai', label: 'AI & Chat', description: 'Provider, API key, and chat defaults' },
     { id: 'search', label: 'Semantic search', description: 'Local index and embeddings' }
   ];
@@ -518,6 +520,14 @@
             </div>
           {/if}
         </div>
+            {:else if settings.activeGeneralSection === 'history'}
+              <HistorySettingsPanel
+                historyHealth={settings.historyHealth}
+                isRunningAction={settings.isRunningHistoryAction}
+                actionError={settings.historyActionError}
+                retryHistory={settings.retryHistory}
+                resetCorruptHistory={settings.resetCorruptHistory}
+              />
             {:else if settings.activeGeneralSection === 'search'}
       <SemanticSettingsPanel
         embedded

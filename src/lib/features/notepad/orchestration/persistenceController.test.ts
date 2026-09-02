@@ -10,6 +10,7 @@ import {
   getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
+  getDocumentStatusViewModel,
   getDocumentTitle,
   updateDocumentMarkdown,
 } from "$lib/features/notepad/document/documentState";
@@ -267,6 +268,20 @@ describe("persistenceController", () => {
     expect(getDocumentPath(note)).toBe("/vault/New note.md");
     expect(getDocumentNoteId(note)).toBe("note-new");
     expect(note.operation.kind).toBe("idle");
+    expect(note.publication.warning).toEqual(warning);
+    expect(getDocumentStatusViewModel(note)).toEqual({
+      kind: "warning",
+      label: "Canonical note file was saved; task projection is pending",
+      hasUnsavedChanges: false,
+      repairAction: "automatic",
+    });
+    updateDocumentMarkdown(note, "newer dirty work");
+    expect(getDocumentStatusViewModel(note)).toEqual({
+      kind: "warning",
+      label: "Canonical note file was saved; task projection is pending",
+      hasUnsavedChanges: true,
+      repairAction: "automatic",
+    });
     expect(warn).toHaveBeenCalledWith(
       "Note was saved, but required projections need repair:",
       warning,

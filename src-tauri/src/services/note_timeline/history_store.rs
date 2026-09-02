@@ -12,6 +12,7 @@ use super::{
     RevisionTimeEvidence, TimelineRecordIdentity, VaultObservation, VaultObservationKind,
     VaultObservationSource, BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
 };
+use rusqlite::OpenFlags;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
@@ -116,6 +117,37 @@ pub(super) struct BaselineSeed<'a> {
     pub(super) known_since_millis: u64,
 }
 
+pub(super) struct HistoryStoreHealthSnapshot {
+    pub(super) initialization: BaselineInitializationProgress,
+    pub(super) storage: HistoryStorageUsage,
+    pub(super) pending_repairs: u64,
+}
+
+pub(super) enum HistoryStoreHealth {
+    Available(HistoryStoreHealthSnapshot),
+    Unavailable,
+    Corrupt,
+}
+
+pub(super) enum HistoryStoreIntegrity {
+    Verified,
+    Unavailable,
+    Corrupt,
+}
+
+pub(super) struct NoteHistoryStoreSnapshot {
+    pub(super) initialization: NoteBaselineInitializationState,
+    pub(super) revision_count: u64,
+    pub(super) lifecycle_event_count: u64,
+    pub(super) revision_payload_bytes: u64,
+}
+
+pub(super) enum NoteHistoryStoreHealth {
+    Available(NoteHistoryStoreSnapshot),
+    Unavailable,
+    Corrupt,
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FaultPoint {
@@ -130,10 +162,23 @@ pub(super) enum FaultPoint {
 
 #[cfg(test)]
 static NEXT_FAULT: std::sync::Mutex<Option<FaultPoint>> = std::sync::Mutex::new(None);
+#[cfg(test)]
+static INTEGRITY_SNAPSHOT_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 #[cfg(test)]
 pub(super) fn inject_fault_once(point: FaultPoint) {
     *NEXT_FAULT.lock().expect("history fault lock") = Some(point);
+}
+
+#[cfg(test)]
+pub(super) fn reset_integrity_snapshot_count() {
+    INTEGRITY_SNAPSHOT_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(super) fn integrity_snapshot_count() -> usize {
+    INTEGRITY_SNAPSHOT_COUNT.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 #[cfg(test)]
@@ -1390,7 +1435,13 @@ pub(super) fn store_baseline_initialization_progress(
 }
 
 pub(super) fn baseline_initialization_progress() -> Result<BaselineInitializationProgress, String> {
-    let stored = open_store()?
+    baseline_initialization_progress_with_connection(&open_store()?)
+}
+
+fn baseline_initialization_progress_with_connection(
+    connection: &Connection,
+) -> Result<BaselineInitializationProgress, String> {
+    let stored = connection
         .query_row(
             "SELECT phase, discovered_notes, baseline_revisions,
                     ready_notes, failed_notes, last_error
@@ -1428,6 +1479,13 @@ pub(super) fn note_baseline_initialization_state(
     note_id: &NoteIdentity,
 ) -> Result<NoteBaselineInitializationState, String> {
     let connection = open_store()?;
+    note_baseline_initialization_state_with_connection(&connection, note_id)
+}
+
+fn note_baseline_initialization_state_with_connection(
+    connection: &Connection,
+    note_id: &NoteIdentity,
+) -> Result<NoteBaselineInitializationState, String> {
     let failure = connection
         .query_row(
             "SELECT error FROM baseline_initialization_failures WHERE note_id = ?1",
@@ -2127,6 +2185,176 @@ fn storage_usage_with_connection(connection: &Connection) -> Result<HistoryStora
     })
 }
 
+fn connection_integrity_is_verified(connection: &Connection) -> Result<bool, rusqlite::Error> {
+    let mut quick_check = connection.prepare("PRAGMA quick_check")?;
+    let results = quick_check
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if results.as_slice() != ["ok"] {
+        return Ok(false);
+    }
+    let foreign_key_failures =
+        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, u64>(0)
+        })?;
+    Ok(foreign_key_failures == 0)
+}
+
+fn sqlite_error_is_corruption(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+    )
+}
+
+fn failed_store_is_corrupt() -> bool {
+    let Ok(path) = history_database_path() else {
+        return false;
+    };
+    if !path.is_file() {
+        return false;
+    }
+    let connection = match Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+        Ok(connection) => connection,
+        Err(error) => return sqlite_error_is_corruption(&error),
+    };
+    match connection_integrity_is_verified(&connection) {
+        Ok(verified) => !verified,
+        Err(error) => sqlite_error_is_corruption(&error),
+    }
+}
+
+fn verify_revision_payloads(
+    connection: &Connection,
+    note_id: Option<&NoteIdentity>,
+) -> Result<(), String> {
+    let (query, parameter) = match note_id {
+        Some(note_id) => (
+            "SELECT revision_id FROM revisions WHERE note_id = ?1 ORDER BY revision_id",
+            Some(note_id.as_str()),
+        ),
+        None => (
+            "SELECT revision_id FROM revisions ORDER BY revision_id",
+            None,
+        ),
+    };
+    let mut statement = connection
+        .prepare(query)
+        .map_err(|error| format!("Prepare Note Timeline payload verification: {error}"))?;
+    let revision_ids = if let Some(note_id) = parameter {
+        statement
+            .query_map(params![note_id], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("Query Note Timeline payload verification: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Read Note Timeline payload verification: {error}"))?
+    } else {
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("Query Note Timeline payload verification: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Read Note Timeline payload verification: {error}"))?
+    };
+    for revision_id in revision_ids {
+        reconstruct_revision(connection, &revision_id)?;
+    }
+    Ok(())
+}
+
+pub(super) fn integrity_snapshot() -> HistoryStoreIntegrity {
+    #[cfg(test)]
+    INTEGRITY_SNAPSHOT_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let connection = match open_store() {
+        Ok(connection) => connection,
+        Err(_) if failed_store_is_corrupt() => return HistoryStoreIntegrity::Corrupt,
+        Err(_) => return HistoryStoreIntegrity::Unavailable,
+    };
+    if !matches!(connection_integrity_is_verified(&connection), Ok(true))
+        || verify_revision_payloads(&connection, None).is_err()
+    {
+        return HistoryStoreIntegrity::Corrupt;
+    }
+    HistoryStoreIntegrity::Verified
+}
+
+pub(super) fn health_snapshot() -> HistoryStoreHealth {
+    let connection = match open_store() {
+        Ok(connection) => connection,
+        Err(_) if failed_store_is_corrupt() => return HistoryStoreHealth::Corrupt,
+        Err(_) => return HistoryStoreHealth::Unavailable,
+    };
+    if !matches!(connection_integrity_is_verified(&connection), Ok(true))
+        || verify_revision_payloads(&connection, None).is_err()
+    {
+        return HistoryStoreHealth::Corrupt;
+    }
+    let initialization = match baseline_initialization_progress_with_connection(&connection) {
+        Ok(progress) => progress,
+        Err(_) => return HistoryStoreHealth::Corrupt,
+    };
+    let storage = match storage_usage_with_connection(&connection) {
+        Ok(storage) => storage,
+        Err(_) => return HistoryStoreHealth::Unavailable,
+    };
+    let pending_repairs = match connection.query_row(
+        "SELECT
+           (SELECT COUNT(*) FROM prepared_intents WHERE status = 'prepared')
+         + (SELECT COUNT(*) FROM pending_observations)
+         + (SELECT COUNT(*) FROM pending_deletions)",
+        [],
+        |row| row.get::<_, u64>(0),
+    ) {
+        Ok(count) => count,
+        Err(_) => return HistoryStoreHealth::Corrupt,
+    };
+    HistoryStoreHealth::Available(HistoryStoreHealthSnapshot {
+        initialization,
+        storage,
+        pending_repairs,
+    })
+}
+
+pub(super) fn note_health_snapshot(note_id: &NoteIdentity) -> NoteHistoryStoreHealth {
+    let connection = match open_store() {
+        Ok(connection) => connection,
+        Err(_) if failed_store_is_corrupt() => return NoteHistoryStoreHealth::Corrupt,
+        Err(_) => return NoteHistoryStoreHealth::Unavailable,
+    };
+    if !matches!(connection_integrity_is_verified(&connection), Ok(true)) {
+        return NoteHistoryStoreHealth::Corrupt;
+    }
+    let initialization =
+        match note_baseline_initialization_state_with_connection(&connection, note_id) {
+            Ok(initialization) => initialization,
+            Err(_) => return NoteHistoryStoreHealth::Corrupt,
+        };
+    let usage = connection.query_row(
+        "SELECT
+           (SELECT COUNT(*) FROM revisions WHERE note_id = ?1),
+           (SELECT COUNT(*) FROM lifecycle_events WHERE note_id = ?1),
+           COALESCE((SELECT SUM(LENGTH(payload)) FROM revisions WHERE note_id = ?1), 0)",
+        params![note_id.as_str()],
+        |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, u64>(1)?,
+                row.get::<_, u64>(2)?,
+            ))
+        },
+    );
+    let Ok((revision_count, lifecycle_event_count, revision_payload_bytes)) = usage else {
+        return NoteHistoryStoreHealth::Corrupt;
+    };
+    if verify_revision_payloads(&connection, Some(note_id)).is_err() {
+        return NoteHistoryStoreHealth::Corrupt;
+    }
+    NoteHistoryStoreHealth::Available(NoteHistoryStoreSnapshot {
+        initialization,
+        revision_count,
+        lifecycle_event_count,
+        revision_payload_bytes,
+    })
+}
+
 pub(super) fn storage_usage() -> Result<HistoryStorageUsage, String> {
     storage_usage_with_connection(&open_store()?)
 }
@@ -2286,9 +2514,7 @@ fn storage_file_bytes(path: &Path) -> Result<u64, String> {
     }
 }
 
-pub(super) fn reset_development_store(
-    vault_root: &Path,
-) -> Result<(u64, u64, String, u64), String> {
+pub(super) fn reset_history_store(vault_root: &Path) -> Result<(u64, u64, String, u64), String> {
     let generations = crate::state::advance_vault_history_generation(
         vault_root,
         HISTORY_FORMAT,
@@ -2296,9 +2522,9 @@ pub(super) fn reset_development_store(
     )?;
     let operation_id = crate::note::generate_unique_id();
     let reset_at_millis = crate::time::current_time_millis()
-        .map_err(|error| format!("Issue development history reset time: {error}"))?;
+        .map_err(|error| format!("Issue history reset time: {error}"))?;
     let manifest = crate::state::read_vault_manifest_for(vault_root)?
-        .ok_or_else(|| "Development history reset requires a vault manifest".to_string())?;
+        .ok_or_else(|| "History reset requires a vault manifest".to_string())?;
     record_history_reset(
         &manifest,
         &operation_id,
@@ -2490,10 +2716,9 @@ fn ensure_store_creation_is_authorized(
     ))
 }
 
-pub(super) fn latest_development_history_reset() -> Result<Option<(String, u64, u64, u64)>, String>
-{
+pub(super) fn latest_history_reset() -> Result<Option<(String, u64, u64, u64)>, String> {
     let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
-        .ok_or_else(|| "Read development history reset without a vault manifest".to_string())?;
+        .ok_or_else(|| "Read history reset without a vault manifest".to_string())?;
     let _guard = HISTORY_OBSERVATIONS_LOCK
         .lock()
         .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;

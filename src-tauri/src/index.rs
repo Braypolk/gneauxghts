@@ -67,12 +67,23 @@ pub(crate) struct AppState {
     /// another in-process mutation from mistaking a live prepared intent for
     /// crash residue.
     note_timeline_history_recovered: Mutex<bool>,
+    /// One exhaustive store verification is cached per application/vault
+    /// state. Corruption is latched until an explicit reset replaces the
+    /// store, keeping ordinary publication preparation O(changed content).
+    note_timeline_integrity: Mutex<NoteTimelineIntegrityAttestation>,
     /// Serializes replay of the vault-scoped durable observation ledger.
     /// The ledger and its policy remain private to `NoteTimeline`; the lock
     /// lives on the application state so two vault owners never share replay
     /// coordination.
     note_timeline_observation_replay: Mutex<()>,
     note_timeline_operations: NoteTimelineOperationBarrier,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NoteTimelineIntegrityAttestation {
+    Unverified,
+    Verified,
+    Corrupt,
 }
 
 #[derive(Default)]
@@ -213,6 +224,7 @@ impl AppState {
             catalog_projection_retries,
             foreground_activity,
             note_timeline_history_recovered: Mutex::new(false),
+            note_timeline_integrity: Mutex::new(NoteTimelineIntegrityAttestation::Unverified),
             note_timeline_observation_replay: Mutex::new(()),
             note_timeline_operations: NoteTimelineOperationBarrier::default(),
         })
@@ -294,16 +306,30 @@ impl AppState {
     }
 
     pub(crate) fn ensure_note_timeline_history_recovered(&self) -> Result<(), String> {
-        let mut recovered = self
-            .note_timeline_history_recovered
-            .lock()
-            .map_err(|_| "Note Timeline recovery lock poisoned".to_string())?;
+        let mut recovered = self.lock_note_timeline_history_recovery()?;
+        crate::services::note_timeline::ensure_history_integrity_attested(self)?;
         if *recovered {
             return Ok(());
         }
         crate::services::note_timeline::recover_pending_history(self)?;
         *recovered = true;
         Ok(())
+    }
+
+    pub(crate) fn lock_note_timeline_history_recovery(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, bool>, String> {
+        self.note_timeline_history_recovered
+            .lock()
+            .map_err(|_| "Note Timeline recovery lock poisoned".to_string())
+    }
+
+    pub(crate) fn lock_note_timeline_integrity(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, NoteTimelineIntegrityAttestation>, String> {
+        self.note_timeline_integrity
+            .lock()
+            .map_err(|_| "Note Timeline integrity attestation lock poisoned".to_string())
     }
 
     /// Acquire a guard that marks a foreground IPC call as in-flight.

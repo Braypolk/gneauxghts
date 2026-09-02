@@ -134,6 +134,20 @@ pages and checkpoint net reduction that the store can prove are reclaimable.
 The WAL autocheckpoint and retained-size limits keep normal persistent WAL
 allocation within the background pass budget; larger live WALs remain reported
 and are never truncated by a smaller pass.
+History health is observable without making current Markdown depend on the
+history store. Healthy, initializing, degraded, warning, unavailable, and
+corrupt states cross typed contracts; storage implementation errors do not
+become product concepts. Per-note diagnostics report readiness and logical
+retained usage. A retry settles pending observations, deletions, publication
+intents, and failed baselines without replaying an authoritative Markdown
+write.
+
+An unavailable or corrupt history store can be reset only after explicit
+confirmation. Reset never rewrites current Markdown: it advances the history
+generation, removes the affected retained histories and their labels and
+citations, creates truthful Baseline Revisions from current notes, and keeps a
+prose-free reset diagnostic across restart. Before reset, the UI directs the
+user to make a cleanly closed vault backup.
 A failed pre-commit save leaves navigation in the editor and remains retryable.
 During synchronous reconciliation, a failed lexical projection retains the
 exact identity-resolved payload in retry state independent of catalog file
