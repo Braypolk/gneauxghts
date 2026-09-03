@@ -1,3 +1,5 @@
+import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
+
 export interface ForgottenNoteSummary {
   forgottenPath: string;
   originalPath: string;
@@ -8,6 +10,7 @@ export interface ForgottenNoteSummary {
   purgeAtMillis: number;
   kind: 'note' | 'chat';
   conversationId?: string | null;
+  commitWarning?: CommittedMutationWarning | null;
 }
 
 export interface RestoredForgottenNote {
@@ -16,4 +19,5 @@ export interface RestoredForgottenNote {
   title: string;
   kind: 'note' | 'chat';
   conversationId?: string | null;
+  commitWarning?: CommittedMutationWarning | null;
 }

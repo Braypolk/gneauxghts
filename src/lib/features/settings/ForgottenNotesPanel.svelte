@@ -10,6 +10,8 @@
     selectedForgottenPaths,
     isLoadingForgottenNotes,
     isUpdatingForgottenNotes,
+    forgottenActionMessage = null,
+    forgottenActionError = null,
     loadForgottenNotes,
     runForgottenAction,
     toggleForgottenSelection,
@@ -22,6 +24,8 @@
     selectedForgottenPaths: string[];
     isLoadingForgottenNotes: boolean;
     isUpdatingForgottenNotes: boolean;
+    forgottenActionMessage?: string | null;
+    forgottenActionError?: string | null;
     loadForgottenNotes: () => Promise<void>;
     runForgottenAction: (command: ForgottenAction, forgottenPaths: string[]) => Promise<void>;
     toggleForgottenSelection: (forgottenPath: string, checked: boolean) => void;
@@ -59,6 +63,16 @@
   </div>
 
   <div class="mt-6 rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+    {#if forgottenActionMessage}
+      <p class="mb-4 rounded-2xl border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+        {forgottenActionMessage}
+      </p>
+    {/if}
+    {#if forgottenActionError}
+      <p class="mb-4 rounded-2xl border border-rose-300/70 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100">
+        {forgottenActionError}
+      </p>
+    {/if}
     <div class="flex flex-wrap items-center justify-between gap-3">
       <label class="inline-flex items-center gap-2 text-sm font-medium">
         <input

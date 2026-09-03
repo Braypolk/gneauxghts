@@ -280,8 +280,10 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
     assert_contains_all(
         &forgotten,
         &[
-            "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(",
-            "NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::recovered(",
+            "publish_lifecycle(",
+            "NoteLifecycleOperation::forgotten(",
+            "NoteLifecycleOperation::recovered(",
+            "publication.commit_warning().cloned()",
             "NoteTimeline::new(state).lifecycle(NoteLifecycleOperation::purged(",
             "retained_identity.as_ref()",
             "note_id: Some(note_id.clone())",

@@ -42,7 +42,9 @@ does not create an editor runtime, and cannot change pane membership or Note
 Draft State. Exiting restores the captured active pane and focus while the
 mounted editors retain their selection and scroll. The selected historical
 revision remains pinned when newer timeline records arrive, and History Mode
-never survives an application restart.
+never survives an application restart. A forgotten note retains its complete
+timeline but cannot enter History Mode or expose timeline records until
+Forgotten-Note Recovery returns it to the active vault.
 History Mode browsing and diff surfaces are read-only. It may add, edit, or
 remove a revision label and may clear retained history only after explicit
 confirmation through `NoteTimeline`; those metadata/history-retention actions
@@ -60,8 +62,8 @@ preserving current Note Identity, title, path, creation time, lifecycle state,
 and other managed metadata semantics with a fresh update time. The mutation
 appends a Version Restore revision without removing intervening revisions or
 Lifecycle Events, and the editor begins a fresh undo history so reversal must
-be another Version Restore. Forgotten notes remain inspectable but must be
-recovered before Version Restore, keeping recovery distinct from authored-state
+be another Version Restore. Forgotten notes must be recovered before timeline
+inspection or Version Restore, keeping recovery distinct from authored-state
 replacement. The selected authored payload, including exact line endings and
 unmanaged-frontmatter whitespace, is preserved byte-for-byte.
 

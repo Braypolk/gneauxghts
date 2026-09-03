@@ -560,6 +560,8 @@
           selectedForgottenPaths={settings.selectedForgottenPaths}
           isLoadingForgottenNotes={settings.isLoadingForgottenNotes}
           isUpdatingForgottenNotes={settings.isUpdatingForgottenNotes}
+          forgottenActionMessage={settings.forgottenActionMessage}
+          forgottenActionError={settings.forgottenActionError}
           loadForgottenNotes={settings.loadForgottenNotes}
           runForgottenAction={settings.runForgottenAction}
           toggleForgottenSelection={settings.toggleForgottenSelection}

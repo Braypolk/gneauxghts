@@ -1,13 +1,14 @@
-use super::index_bridge::{
-    read_indexed_note_from_path, remove_notes_index_entry, upsert_notes_index_entry,
-};
+use super::index_bridge::read_indexed_note_from_path;
 use super::{current_time_millis, ForgottenNoteSummary, RestoredForgottenNote};
 use crate::{
     chat::ChatService,
     index::{build_indexed_note, AppState},
     note,
     path_utils::unique_path_in_dir,
-    services::note_timeline::{NoteIdentity, NoteLifecycleOperation, NoteTimeline},
+    services::note_timeline::{
+        LifecyclePublicationFailure, MutationWarningStage, NoteIdentity, NoteLifecycleOperation,
+        NoteMutationWarning, NoteTimeline,
+    },
     state::{
         forgotten_notes_root, read_state, read_unpruned_state, validate_current_path, write_state,
         write_unpruned_state, ForgottenItemKind, PersistedForgottenNote,
@@ -49,25 +50,8 @@ pub(crate) fn forget_note(
             NoteTimeline::new(&state).prepare_publication(Some(note_path), None, &note_markdown)?;
         let (forgotten_markdown, note_id) =
             prepare_forgotten_note_markdown(&note_markdown, forgotten_at_rfc3339)?;
-
-        if note_path.exists() {
-            let expected_move = crate::vault_watcher::record_expected_move(
-                note_path,
-                &forgotten_path,
-                &forgotten_markdown,
-            );
-            fs::rename(note_path, &forgotten_path).map_err(|err| err.to_string())?;
-            fs::write(&forgotten_path, &forgotten_markdown).map_err(|err| err.to_string())?;
-            expected_move.commit();
-        }
-
+        let previous_persisted_state = persisted_state.clone();
         let raw_path = note_path.to_string_lossy().into_owned();
-        NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::forgotten(
-            NoteIdentity::new(note_id.clone()),
-            note_path.clone(),
-            forgotten_path.clone(),
-            forgotten_at_millis,
-        ))?;
         if persisted_state.last_opened_note_id.as_deref() == Some(note_id.as_str()) {
             persisted_state.last_opened_note_id = None;
         }
@@ -79,7 +63,7 @@ pub(crate) fn forget_note(
             .push(PersistedForgottenNote {
                 note_id: Some(note_id.clone()),
                 forgotten_path: forgotten_path.to_string_lossy().into_owned(),
-                original_path: raw_path.clone(),
+                original_path: raw_path,
                 title: previous_note
                     .as_ref()
                     .map(|note| note.title.clone())
@@ -96,15 +80,52 @@ pub(crate) fn forget_note(
                 kind: ForgottenItemKind::Note,
                 conversation_id: None,
             });
-        state.semantic.queue_delete_note(note_path)?;
-        let summary = build_forgotten_note_summary(
+        write_unpruned_state(&persisted_state)?;
+
+        let timeline = NoteTimeline::new(&state);
+        let publication = timeline.publish_lifecycle(
+            NoteLifecycleOperation::forgotten(
+                NoteIdentity::new(note_id.clone()),
+                note_path.clone(),
+                forgotten_path.clone(),
+                forgotten_at_millis,
+            ),
+            &forgotten_markdown,
+            || {
+                let expected_move = crate::vault_watcher::record_expected_move(
+                    note_path,
+                    &forgotten_path,
+                    &forgotten_markdown,
+                );
+                publish_note_move(
+                    note_path,
+                    &forgotten_path,
+                    &forgotten_markdown,
+                    &note_markdown,
+                )?;
+                expected_move.commit();
+                Ok(())
+            },
+        );
+        let publication = match publication {
+            Ok(publication) => publication,
+            Err(error) => {
+                return Err(match write_unpruned_state(&previous_persisted_state) {
+                    Ok(()) => error,
+                    Err(rollback_error) => format!(
+                        "{error}; additionally failed to roll back forgotten-note state: {rollback_error}"
+                    ),
+                });
+            }
+        };
+        let commit_warning = publication.commit_warning().cloned();
+        let mut summary = build_forgotten_note_summary(
             persisted_state
                 .forgotten_notes
                 .last()
                 .expect("forgotten note just inserted"),
         );
-        write_state(&notes_dir, &persisted_state)?;
-        remove_notes_index_entry(&state, note_path)?;
+        summary.commit_warning = commit_warning;
         return Ok(Some(summary));
     }
 
@@ -220,7 +241,7 @@ pub(crate) fn restore_forgotten_notes(
             continue;
         }
 
-        let restored_path = match forgotten_note.kind {
+        let (restored_path, commit_warning) = match forgotten_note.kind {
             ForgottenItemKind::Note => {
                 let restored_path = resolve_restore_target_path(
                     &notes_dir,
@@ -237,34 +258,54 @@ pub(crate) fn restore_forgotten_notes(
                 let restored_markdown =
                     note::prepare_note_markdown(&markdown, Some(&markdown), Some(None))?.0;
                 let timestamp_millis = current_time_millis()?;
-                let expected_move = crate::vault_watcher::record_expected_move(
-                    &forgotten_path,
-                    &restored_path,
-                    &restored_markdown,
-                );
-                fs::rename(&forgotten_path, &restored_path).map_err(|err| err.to_string())?;
-                fs::write(&restored_path, &restored_markdown).map_err(|err| err.to_string())?;
-                expected_move.commit();
-
-                if let Some(note_id) =
-                    note::note_id_from_path_or_markdown(Some(&restored_path), &restored_markdown)
-                {
-                    NoteTimeline::new(&state).lifecycle(NoteLifecycleOperation::recovered(
-                        NoteIdentity::new(note_id),
+                let retained_note_id =
+                    note::note_id_from_path_or_markdown(Some(&forgotten_path), &restored_markdown)
+                        .ok_or_else(|| "Forgotten note is missing its Note Identity".to_string())?;
+                let previous_original_path =
+                    persisted_state.forgotten_notes[index].original_path.clone();
+                persisted_state.forgotten_notes[index].original_path =
+                    restored_path.to_string_lossy().into_owned();
+                write_unpruned_state(&persisted_state)?;
+                let timeline = NoteTimeline::new(&state);
+                let publication = timeline.publish_lifecycle(
+                    NoteLifecycleOperation::recovered(
+                        NoteIdentity::new(retained_note_id),
                         forgotten_path.clone(),
                         restored_path.clone(),
                         timestamp_millis,
-                    ))?;
-                }
-
-                let note = build_indexed_note(&restored_path, &restored_markdown, timestamp_millis);
-                upsert_notes_index_entry(&state, restored_path.clone(), note)?;
-                state.semantic.queue_note_update(
-                    &restored_path,
-                    restored_markdown,
-                    timestamp_millis,
-                )?;
-                restored_path
+                    ),
+                    &restored_markdown,
+                    || {
+                        let expected_move = crate::vault_watcher::record_expected_move(
+                            &forgotten_path,
+                            &restored_path,
+                            &restored_markdown,
+                        );
+                        publish_note_move(
+                            &forgotten_path,
+                            &restored_path,
+                            &restored_markdown,
+                            &markdown,
+                        )?;
+                        expected_move.commit();
+                        Ok(())
+                    },
+                );
+                let publication = match publication {
+                    Ok(publication) => publication,
+                    Err(error) => {
+                        persisted_state.forgotten_notes[index].original_path =
+                            previous_original_path;
+                        return Err(match write_unpruned_state(&persisted_state) {
+                            Ok(()) => error,
+                            Err(rollback_error) => format!(
+                                "{error}; additionally failed to roll back forgotten-note recovery state: {rollback_error}"
+                            ),
+                        });
+                    }
+                };
+                let commit_warning = publication.commit_warning().cloned();
+                (restored_path, commit_warning)
             }
             ForgottenItemKind::Chat => {
                 let conversation_id = forgotten_note
@@ -295,19 +336,28 @@ pub(crate) fn restore_forgotten_notes(
                         "restored chat semantic recall update failed for {conversation_id}: {error}"
                     );
                 }
-                original_path
+                (original_path, None)
             }
         };
 
-        restored_notes.push(RestoredForgottenNote {
+        let mut restored_note = RestoredForgottenNote {
             forgotten_path: forgotten_note.forgotten_path,
             restored_path: restored_path.to_string_lossy().into_owned(),
             title: forgotten_note.title,
             kind: forgotten_item_kind_name(&forgotten_note.kind).to_string(),
             conversation_id: forgotten_note.conversation_id,
-        });
+            commit_warning,
+        };
         persisted_state.forgotten_notes.remove(index);
-        write_state(&notes_dir, &persisted_state)?;
+        if let Err(error) = write_unpruned_state(&persisted_state) {
+            merge_lifecycle_warning(
+                &mut restored_note.commit_warning,
+                MutationWarningStage::DirtyRecovery,
+                "The item was recovered, but recovery bookkeeping is awaiting retry",
+                error,
+            );
+        }
+        restored_notes.push(restored_note);
     }
 
     Ok(restored_notes)
@@ -384,7 +434,44 @@ pub(super) fn build_forgotten_note_summary(
         purge_at_millis: forgotten_note.purge_at_millis,
         kind: forgotten_item_kind_name(&forgotten_note.kind).to_string(),
         conversation_id: forgotten_note.conversation_id.clone(),
+        commit_warning: None,
     }
+}
+
+fn merge_lifecycle_warning(
+    warning: &mut Option<NoteMutationWarning>,
+    stage: MutationWarningStage,
+    message: &str,
+    issue: String,
+) {
+    let next = NoteMutationWarning::single(stage, message.to_string(), issue);
+    match warning {
+        Some(warning) => warning.merge(next),
+        None => *warning = Some(next),
+    }
+}
+
+fn publish_note_move(
+    source: &Path,
+    target: &Path,
+    canonical_markdown: &str,
+    rollback_markdown: &str,
+) -> Result<(), LifecyclePublicationFailure> {
+    fs::rename(source, target)
+        .map_err(|error| LifecyclePublicationFailure::not_published(error.to_string()))?;
+    if let Err(error) = crate::state::atomic_write_note(target, canonical_markdown.as_bytes()) {
+        let rollback = fs::rename(target, source).and_then(|_| {
+            crate::state::atomic_write_note(source, rollback_markdown.as_bytes())
+                .map_err(std::io::Error::other)
+        });
+        return Err(match rollback {
+            Ok(()) => LifecyclePublicationFailure::not_published(error),
+            Err(rollback_error) => LifecyclePublicationFailure::indeterminate(format!(
+                "{error}; additionally failed to roll back the lifecycle file move: {rollback_error}"
+            )),
+        });
+    }
+    Ok(())
 }
 
 fn validate_forgotten_path_inputs(
@@ -436,12 +523,22 @@ pub(super) fn cleanup_expired_forgotten_notes(
     notes_dir: &Path,
     state: &AppState,
 ) -> Result<(), String> {
+    NoteTimeline::new(state).recover_lifecycle_publications()?;
     let now = current_time_millis()?;
     let mut persisted_state = read_unpruned_state(notes_dir)?;
     let original_len = persisted_state.forgotten_notes.len();
     let mut kept_notes = Vec::with_capacity(original_len);
 
     for forgotten_note in persisted_state.forgotten_notes.drain(..) {
+        let forgotten_path = Path::new(&forgotten_note.forgotten_path);
+        let active_path = Path::new(&forgotten_note.original_path);
+        if forgotten_note.kind == ForgottenItemKind::Note
+            && !forgotten_path.exists()
+            && active_path.is_file()
+            && path_has_note_identity(state, active_path, forgotten_note.note_id.as_deref())
+        {
+            continue;
+        }
         if forgotten_note.purge_at_millis <= now {
             purge_forgotten_item(state, &forgotten_note, now, |conversation_id| {
                 ChatService::delete_persisted_conversation(
@@ -460,6 +557,24 @@ pub(super) fn cleanup_expired_forgotten_notes(
     }
 
     Ok(())
+}
+
+fn path_has_note_identity(state: &AppState, path: &Path, expected_note_id: Option<&str>) -> bool {
+    let Some(expected_note_id) = expected_note_id.filter(|note_id| !note_id.trim().is_empty())
+    else {
+        return false;
+    };
+    state
+        .indexed_note_identity(path)
+        .ok()
+        .flatten()
+        .as_deref()
+        .is_some_and(|note_id| note_id == expected_note_id)
+        || fs::read_to_string(path)
+            .ok()
+            .and_then(|markdown| note::note_id_from_path_or_markdown(Some(path), &markdown))
+            .as_deref()
+            == Some(expected_note_id)
 }
 
 fn purge_forgotten_item(
@@ -523,9 +638,336 @@ fn remove_forgotten_item_path(path: &Path, kind: &ForgottenItemKind) -> Result<(
 mod tests {
     use super::*;
     use crate::{
+        services::note_timeline::MutationSource,
         state::set_notes_root_override,
         test_support::{lock_test_env, TestDir},
     };
+    use tauri::Manager;
+
+    fn test_context() -> tauri::Context<tauri::test::MockRuntime> {
+        tauri::test::mock_context(tauri::test::noop_assets())
+    }
+
+    #[test]
+    fn forgotten_note_timelines_survive_each_retention_window_and_restart_until_expiry() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("forgotten-timeline-retention-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf())
+            .expect("initialize app data");
+        let notes = TestDir::new("forgotten-timeline-retention-notes");
+        set_notes_root_override(Some(notes.path().to_path_buf())).expect("override notes root");
+        crate::state::ensure_vault_scaffold(notes.path()).expect("create vault scaffold");
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(test_context())
+            .expect("build test app");
+        let state = app.state::<AppState>();
+        let mut retained = Vec::new();
+
+        for retention_days in [1, 7, 30] {
+            let title = format!("Retain for {retention_days} days");
+            let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                title.clone(),
+                "Earlier retained body".to_string(),
+                None,
+            )
+            .expect("create retained note")
+            .session
+            .expect("created note session");
+            let note_id = NoteIdentity::new(created.note_id.expect("created note identity"));
+            let active_path = PathBuf::from(created.path.expect("created note path"));
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                title.clone(),
+                "Current retained body".to_string(),
+                Some(active_path.to_string_lossy().into_owned()),
+            )
+            .expect("append retained revision");
+            let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+            let revisions = access.revisions().expect("read active revisions");
+            assert_eq!(
+                revisions
+                    .iter()
+                    .map(|revision| revision.source())
+                    .collect::<Vec<_>>(),
+                vec![MutationSource::NoteCreation, MutationSource::Editor]
+            );
+            let first_revision = revisions[0].identity().as_str().to_string();
+
+            let summary = forget_note(
+                app.state(),
+                Some(active_path.to_string_lossy().into_owned()),
+                retention_days,
+            )
+            .expect("forget note")
+            .expect("forgotten note summary");
+            assert_eq!(summary.purge_after_days, retention_days);
+            assert_eq!(
+                summary.purge_at_millis - summary.forgotten_at_millis,
+                u64::from(retention_days) * FORGOTTEN_DAY_MILLIS
+            );
+            assert_eq!(state.indexed_note_identity(&active_path).unwrap(), None);
+            retained.push((
+                note_id,
+                active_path,
+                PathBuf::from(summary.forgotten_path),
+                first_revision,
+            ));
+        }
+        assert_eq!(
+            read_unpruned_state(notes.path())
+                .expect("read forgotten state")
+                .forgotten_notes
+                .iter()
+                .map(|note| note.purge_after_days)
+                .collect::<Vec<_>>(),
+            vec![1, 7, 30]
+        );
+        drop(app);
+
+        let restarted = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("restart app state");
+        let chat_service = ChatService::new(
+            notes.path().to_path_buf(),
+            crate::state::vault_data_dir().expect("resolve vault data"),
+        )
+        .expect("construct chat service");
+        let restarted_app = tauri::test::mock_builder()
+            .manage(restarted)
+            .manage(chat_service)
+            .build(test_context())
+            .expect("build restarted test app");
+        let restarted = restarted_app.state::<AppState>();
+        cleanup_expired_forgotten_notes(notes.path(), restarted.inner())
+            .expect("retain unexpired forgotten notes");
+        let after_restart = read_unpruned_state(notes.path()).expect("read retained state");
+        assert_eq!(
+            after_restart
+                .forgotten_notes
+                .iter()
+                .map(|note| note.purge_after_days)
+                .collect::<Vec<_>>(),
+            vec![1, 7, 30]
+        );
+        for (note_id, _, forgotten_path, first_revision) in &retained {
+            assert!(forgotten_path.is_file());
+            let access = NoteTimeline::new(&restarted).open_history_mode(note_id.clone());
+            assert!(access.page(None, 50).unwrap_err().contains("Recover"));
+            assert!(access
+                .revision(first_revision)
+                .unwrap_err()
+                .contains("Recover"));
+        }
+
+        let (recovered_id, original_path, recovered_from, first_revision) = retained.remove(1);
+        fs::write(&original_path, "Unrelated current note").expect("reuse original path");
+        let restored = restore_forgotten_notes(
+            restarted_app.state(),
+            restarted_app.state(),
+            vec![recovered_from.to_string_lossy().into_owned()],
+        )
+        .expect("recover forgotten note");
+        assert_eq!(restored.len(), 1);
+        let restored_path = PathBuf::from(&restored[0].restored_path);
+        assert_ne!(restored_path, original_path);
+        assert_eq!(
+            fs::read_to_string(&original_path).expect("read reused path"),
+            "Unrelated current note"
+        );
+        assert_eq!(
+            note::note_id_from_path_or_markdown(
+                Some(&restored_path),
+                &fs::read_to_string(&restored_path).expect("read recovered note"),
+            )
+            .as_deref(),
+            Some(recovered_id.as_str())
+        );
+        let recovered_access =
+            NoteTimeline::new(&restarted).open_history_mode(recovered_id.clone());
+        assert_eq!(recovered_access.revisions().unwrap().len(), 2);
+        assert_eq!(
+            recovered_access.revision(&first_revision).unwrap().body(),
+            "Earlier retained body"
+        );
+
+        let mut expired = read_unpruned_state(notes.path()).expect("read recovered state");
+        for forgotten_note in &mut expired.forgotten_notes {
+            forgotten_note.purge_at_millis = 0;
+        }
+        write_unpruned_state(&expired).expect("expire forgotten notes");
+        cleanup_expired_forgotten_notes(notes.path(), restarted.inner())
+            .expect("purge expired forgotten notes");
+
+        assert!(read_unpruned_state(notes.path())
+            .expect("read purged state")
+            .forgotten_notes
+            .is_empty());
+        for (note_id, _, forgotten_path, _) in retained {
+            assert!(!forgotten_path.exists());
+            let access = NoteTimeline::new(&restarted).open_history_mode(note_id);
+            assert!(access
+                .page(None, 50)
+                .expect("read purged timeline")
+                .records()
+                .is_empty());
+        }
+        assert!(restored_path.is_file());
+        assert_eq!(recovered_access.revisions().unwrap().len(), 2);
+        set_notes_root_override(None).expect("clear notes root override");
+    }
+
+    #[test]
+    fn forgotten_note_recovery_never_overwrites_a_reused_original_path() {
+        let root = TestDir::new("forgotten-note-recovery-collision");
+        let original_path = root.path().join("Recovered.md");
+        fs::write(&original_path, "Unrelated current note").expect("occupy original path");
+
+        let restored_path = resolve_restore_target_path(root.path(), &original_path);
+
+        assert_ne!(restored_path, original_path);
+        assert_eq!(
+            fs::read_to_string(&original_path).expect("read occupied path"),
+            "Unrelated current note"
+        );
+        assert!(!restored_path.exists());
+    }
+
+    #[test]
+    fn failed_forgotten_publication_rolls_back_file_state_and_lifecycle_intent() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("forgotten-publication-rollback-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf())
+            .expect("initialize app data");
+        let notes = TestDir::new("forgotten-publication-rollback-notes");
+        set_notes_root_override(Some(notes.path().to_path_buf())).expect("override notes root");
+        crate::state::ensure_vault_scaffold(notes.path()).expect("create vault scaffold");
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(test_context())
+            .expect("build test app");
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            app.state::<AppState>().inner(),
+            "Rollback forgotten publication".to_string(),
+            "Still active".to_string(),
+            None,
+        )
+        .expect("create note")
+        .session
+        .expect("created note session");
+        let note_id = NoteIdentity::new(created.note_id.expect("note identity"));
+        let active_path = PathBuf::from(created.path.expect("active path"));
+        let original_markdown = fs::read_to_string(&active_path).expect("read active note");
+        crate::state::inject_note_publication_failure_once();
+
+        let error = forget_note(
+            app.state(),
+            Some(active_path.to_string_lossy().into_owned()),
+            7,
+        )
+        .expect_err("forget publication should fail");
+
+        assert!(error.contains("injected note publication failure"));
+        assert_eq!(
+            fs::read_to_string(&active_path).expect("read rolled-back note"),
+            original_markdown
+        );
+        assert!(read_unpruned_state(notes.path())
+            .expect("read rolled-back state")
+            .forgotten_notes
+            .is_empty());
+        assert_eq!(
+            crate::services::note_timeline::retained_observation_count_for_test(),
+            0
+        );
+        let events = NoteTimeline::new(app.state::<AppState>().inner())
+            .open_history_mode(note_id)
+            .lifecycle_events()
+            .expect("read lifecycle events");
+        assert_eq!(events.len(), 1);
+        set_notes_root_override(None).expect("clear notes root override");
+    }
+
+    #[test]
+    fn committed_forget_surfaces_and_recovers_deferred_lifecycle_finalization() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("forgotten-finalization-recovery-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf())
+            .expect("initialize app data");
+        let notes = TestDir::new("forgotten-finalization-recovery-notes");
+        set_notes_root_override(Some(notes.path().to_path_buf())).expect("override notes root");
+        crate::state::ensure_vault_scaffold(notes.path()).expect("create vault scaffold");
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(test_context())
+            .expect("build test app");
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            app.state::<AppState>().inner(),
+            "Deferred forgotten lifecycle".to_string(),
+            "Retained body".to_string(),
+            None,
+        )
+        .expect("create note")
+        .session
+        .expect("created note session");
+        let note_id = NoteIdentity::new(created.note_id.expect("note identity"));
+        let active_path = PathBuf::from(created.path.expect("active path"));
+        crate::services::note_timeline::inject_lifecycle_finalization_failure_once();
+
+        let summary = forget_note(
+            app.state(),
+            Some(active_path.to_string_lossy().into_owned()),
+            7,
+        )
+        .expect("forget remains committed")
+        .expect("forgotten summary");
+
+        assert!(summary
+            .commit_warning
+            .as_ref()
+            .is_some_and(|warning| warning
+                .issues()
+                .iter()
+                .any(|issue| issue.stage() == MutationWarningStage::HistoryFinalization)));
+        assert_eq!(
+            crate::services::note_timeline::retained_observation_count_for_test(),
+            1
+        );
+        let timeline = NoteTimeline::new(app.state::<AppState>().inner());
+        timeline
+            .recover_lifecycle_publications()
+            .expect("retry lifecycle publication");
+        assert_eq!(
+            crate::services::note_timeline::retained_observation_count_for_test(),
+            0
+        );
+        assert_eq!(
+            timeline
+                .open_history_mode(note_id)
+                .lifecycle_events()
+                .expect_err("forgotten history stays gated"),
+            "Recover the forgotten note before accessing its Note Timeline"
+        );
+        set_notes_root_override(None).expect("clear notes root override");
+    }
 
     #[test]
     fn chat_folder_uses_the_forgotten_item_recovery_lifecycle() {

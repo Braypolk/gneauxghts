@@ -183,6 +183,8 @@ pub(crate) struct ForgottenNoteSummary {
     kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_warning: Option<crate::services::note_timeline::NoteMutationWarning>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -194,6 +196,8 @@ pub(crate) struct RestoredForgottenNote {
     kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     conversation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_warning: Option<crate::services::note_timeline::NoteMutationWarning>,
 }
 
 /// Minimum interval between background passes of `cleanup_expired_forgotten_notes`.

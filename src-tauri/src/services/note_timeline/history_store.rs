@@ -158,6 +158,7 @@ pub(super) enum FaultPoint {
     Deletion,
     Migration,
     Close,
+    Lifecycle,
 }
 
 #[cfg(test)]
@@ -1182,6 +1183,10 @@ pub(super) fn record_observed_lifecycle_event(
     path: &Path,
     occurred_at_millis: u64,
 ) -> Result<(), String> {
+    #[cfg(test)]
+    if take_fault(FaultPoint::Lifecycle) {
+        return Err("injected lifecycle finalization failure".to_string());
+    }
     let mut connection = open_store()?;
     let transaction = connection
         .transaction()

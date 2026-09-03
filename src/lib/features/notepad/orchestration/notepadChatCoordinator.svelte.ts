@@ -356,6 +356,12 @@ export class NotepadChatCoordinator<TPaneId extends string> {
         forgotten.forgottenPath
       ]);
       if (!restored) return;
+      if (restored.commitWarning) {
+        console.warn(
+          'Forgotten item was recovered with incomplete timeline synchronization:',
+          restored.commitWarning
+        );
+      }
 
       this.recentlyForgotten = null;
       const conversationId =

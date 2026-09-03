@@ -8,7 +8,7 @@ mod post_publication;
 
 use self::post_publication::{PublicationIssue, PublicationOutcome, PublicationStage};
 use crate::{
-    index::{AppState, NoteTimelineIntegrityAttestation},
+    index::{build_indexed_note, AppState, NoteTimelineIntegrityAttestation},
     path_utils::collect_markdown_files_recursively,
 };
 use serde::{Deserialize, Serialize};
@@ -305,6 +305,32 @@ impl NoteMutationWarning {
         self.message = format!("{}; {}", self.message, other.message);
         self.issues.extend(other.issues);
     }
+}
+
+fn merge_note_mutation_warning(
+    warning: &mut Option<NoteMutationWarning>,
+    stage: MutationWarningStage,
+    message: &str,
+    issue: String,
+) {
+    let next = NoteMutationWarning::single(stage, message.to_string(), issue);
+    match warning {
+        Some(warning) => warning.merge(next),
+        None => *warning = Some(next),
+    }
+}
+
+fn merge_optional_note_mutation_warning(
+    mut warning: Option<NoteMutationWarning>,
+    other: Option<NoteMutationWarning>,
+) -> Option<NoteMutationWarning> {
+    if let Some(other) = other {
+        match &mut warning {
+            Some(warning) => warning.merge(other),
+            None => warning = Some(other),
+        }
+    }
+    warning
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1372,6 +1398,37 @@ pub(crate) struct LifecycleReceipt {
     occurred_at_millis: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LifecyclePublicationResult {
+    receipt: LifecycleReceipt,
+    commit_warning: Option<NoteMutationWarning>,
+}
+
+pub(crate) enum LifecyclePublicationFailure {
+    NotPublished(String),
+    Indeterminate(String),
+}
+
+impl LifecyclePublicationFailure {
+    pub(crate) fn not_published(message: String) -> Self {
+        Self::NotPublished(message)
+    }
+
+    pub(crate) fn indeterminate(message: String) -> Self {
+        Self::Indeterminate(message)
+    }
+}
+
+impl LifecyclePublicationResult {
+    pub(crate) fn receipt(&self) -> &LifecycleReceipt {
+        &self.receipt
+    }
+
+    pub(crate) fn commit_warning(&self) -> Option<&NoteMutationWarning> {
+        self.commit_warning.as_ref()
+    }
+}
+
 impl LifecycleReceipt {
     pub(crate) fn kind(&self) -> LifecycleEventKind {
         self.kind
@@ -1964,22 +2021,37 @@ impl HistoryModeRevision {
     }
 }
 
+fn require_recovered_note(note_id: &NoteIdentity) -> Result<(), String> {
+    let Some(path) = history_store::current_path(note_id)? else {
+        return Ok(());
+    };
+    let notes_root = crate::state::notes_root()?;
+    if crate::state::is_forgotten_note_path(&path, &notes_root) {
+        return Err("Recover the forgotten note before accessing its Note Timeline".to_string());
+    }
+    Ok(())
+}
+
 impl HistoryModeAccess<'_> {
     pub(crate) fn note_id(&self) -> &NoteIdentity {
         &self.note_id
     }
 
-    pub(crate) fn revisions(&self) -> Result<Vec<NoteRevisionHeader>, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+    fn prepare_access(&self) -> Result<crate::index::NoteTimelineOperationGuard<'_>, String> {
+        let operation = self.state.begin_note_timeline_operation()?;
         NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
+        require_recovered_note(&self.note_id)?;
+        Ok(operation)
+    }
+
+    pub(crate) fn revisions(&self) -> Result<Vec<NoteRevisionHeader>, String> {
+        let _operation = self.prepare_access()?;
         history_store::revisions(&self.note_id)
     }
 
     pub(crate) fn lifecycle_events(&self) -> Result<Vec<LifecycleEventHeader>, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        NoteTimeline::new(self.state).recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        let _operation = self.prepare_access()?;
         history_store::lifecycle_events(&self.note_id)
     }
 
@@ -1987,9 +2059,7 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &RevisionIdentity,
     ) -> Result<ReconstructedNoteRevision, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        NoteTimeline::new(self.state).recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        let _operation = self.prepare_access()?;
         history_store::reconstruct(&self.note_id, revision_id)
     }
 
@@ -1998,9 +2068,7 @@ impl HistoryModeAccess<'_> {
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<HistoryModePage, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        NoteTimeline::new(self.state).recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        let _operation = self.prepare_access()?;
         let revisions = history_store::revisions(&self.note_id)?;
         let revision_labels = history_store::revision_labels(&self.note_id)?;
         let lifecycle_events = history_store::lifecycle_events(&self.note_id)?;
@@ -2143,9 +2211,7 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &str,
     ) -> Result<HistoryRestorePreview, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        NoteTimeline::new(self.state).recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        let _operation = self.prepare_access()?;
         let (_, _, current_authored_content_hash) = self.current_restore_state()?;
         let selected_id = RevisionIdentity::from_persisted(revision_id.trim());
         let selected = history_store::reconstruct(&self.note_id, &selected_id)?;
@@ -2166,17 +2232,9 @@ impl HistoryModeAccess<'_> {
             return Err("Version Restore confirmation requires its preview hash".to_string());
         }
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
+            let _operation = self.prepare_access()?;
             let timeline = NoteTimeline::new(self.state);
-            timeline.recover_retained_observations()?;
-            self.state.ensure_note_timeline_history_recovered()?;
             let (path, current, current_hash) = self.current_restore_state()?;
-            let notes_root = crate::state::notes_root()?;
-            if crate::state::is_forgotten_note_path(&path, &notes_root) {
-                return Err(
-                    "Recover the forgotten note before performing a Version Restore".to_string(),
-                );
-            }
             if current_hash != expected_current_authored_content_hash {
                 return Err(
                     "Current authored content changed after this restore preview was created"
@@ -2279,9 +2337,7 @@ impl HistoryModeAccess<'_> {
         revision_id: &RevisionIdentity,
         mutation: impl FnOnce(&NoteIdentity, &RevisionIdentity) -> Result<(), String>,
     ) -> Result<(), String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        NoteTimeline::new(self.state).recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        let _operation = self.prepare_access()?;
         mutation(&self.note_id, revision_id)
     }
 
@@ -2297,9 +2353,7 @@ impl HistoryModeAccess<'_> {
         revision_id: &str,
         comparison: HistoryDiffComparison,
     ) -> Result<HistoryModeDiff, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        NoteTimeline::new(self.state).recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        let _operation = self.prepare_access()?;
         let revision_id = RevisionIdentity::from_persisted(revision_id);
         let revisions = history_store::revisions(&self.note_id)?;
         let selected_index = revisions
@@ -2366,7 +2420,18 @@ pub(crate) struct CurrentContentAccess<'a> {
 
 impl CurrentContentAccess<'_> {
     pub(crate) fn allows(&self, note_id: &NoteIdentity) -> bool {
-        self.scope.allows(note_id)
+        if !self.scope.allows(note_id) {
+            return false;
+        }
+        let path = match history_store::current_path(note_id) {
+            Ok(Some(path)) => path,
+            Ok(None) => return true,
+            Err(_) => return false,
+        };
+        let Ok(notes_root) = crate::state::notes_root() else {
+            return false;
+        };
+        !crate::state::is_forgotten_note_path(&path, &notes_root)
     }
 }
 
@@ -2397,6 +2462,7 @@ pub(crate) struct ObservationReceipt {
     previous_path: Option<PathBuf>,
     observed_at_millis: u64,
     modified_at_millis: Option<u64>,
+    commit_warning: Option<NoteMutationWarning>,
 }
 
 impl ObservationReceipt {
@@ -2422,6 +2488,10 @@ impl ObservationReceipt {
 
     pub(crate) fn modified_at_millis(&self) -> Option<u64> {
         self.modified_at_millis
+    }
+
+    pub(crate) fn commit_warning(&self) -> Option<&NoteMutationWarning> {
+        self.commit_warning.as_ref()
     }
 }
 
@@ -2952,6 +3022,7 @@ impl<'a> NoteTimeline<'a> {
         crate::state::with_note_file_mutation(|| {
             let _operation = self.state.begin_note_timeline_operation()?;
             self.with_settled_history_mutation(|| {
+                require_recovered_note(note_id)?;
                 let path = history_store::current_path(note_id)?
                     .ok_or_else(|| "Cannot clear an unknown Note Timeline".to_string())?;
                 let canonical_markdown = fs::read_to_string(&path).map_err(|error| {
@@ -3328,6 +3399,7 @@ impl<'a> NoteTimeline<'a> {
             modified_at_millis,
             canonical_markdown,
         } = observation;
+        let mut lifecycle_projection_warning = None;
         match kind {
             VaultObservationKind::ReconciliationScan => {
                 self.state.ensure_note_timeline_history_recovered()?;
@@ -3435,6 +3507,132 @@ impl<'a> NoteTimeline<'a> {
                     )?;
                 }
             }
+            VaultObservationKind::Lifecycle(
+                kind @ (LifecycleEventKind::Forgotten | LifecycleEventKind::Recovered),
+            ) => {
+                if !path.exists()
+                    && previous_path
+                        .as_deref()
+                        .is_some_and(|previous_path| previous_path.exists())
+                {
+                    return Ok(ObservationReceipt {
+                        source,
+                        kind: VaultObservationKind::Lifecycle(kind),
+                        path,
+                        previous_path,
+                        observed_at_millis,
+                        modified_at_millis,
+                        commit_warning: None,
+                    });
+                }
+                let intended_markdown = canonical_markdown.ok_or_else(|| {
+                    "App-owned lifecycle observation is missing intended canonical Markdown"
+                        .to_string()
+                })?;
+                let mut published_markdown = fs::read_to_string(&path).map_err(|error| {
+                    format!(
+                        "Read app-owned lifecycle publication {}: {error}",
+                        path.display()
+                    )
+                })?;
+                let mut authoritative_authored_edit = false;
+                if published_markdown != intended_markdown {
+                    let intended_note_id = crate::note::parse_note(&intended_markdown)
+                        .frontmatter
+                        .managed
+                        .map(|metadata| metadata.id)
+                        .filter(|note_id| !note_id.trim().is_empty());
+                    let published_note_id = crate::note::parse_note(&published_markdown)
+                        .frontmatter
+                        .managed
+                        .map(|metadata| metadata.id)
+                        .filter(|note_id| !note_id.trim().is_empty());
+                    if intended_note_id.is_none() || intended_note_id != published_note_id {
+                        return Err(format!(
+                            "App-owned lifecycle publication at {} does not match its durable intent",
+                            path.display()
+                        ));
+                    }
+                    if history_store::authored_content_hash(&published_markdown)
+                        == history_store::authored_content_hash(&intended_markdown)
+                    {
+                        crate::state::atomic_write_note(&path, intended_markdown.as_bytes())
+                            .map_err(|error| {
+                                format!(
+                                    "Repair app-owned lifecycle publication {}: {error}",
+                                    path.display()
+                                )
+                            })?;
+                        published_markdown = intended_markdown;
+                    } else {
+                        authoritative_authored_edit = true;
+                    }
+                }
+                self.state.ensure_note_timeline_history_recovered()?;
+                let note_id = crate::note::parse_note(&published_markdown)
+                    .frontmatter
+                    .managed
+                    .map(|metadata| NoteIdentity::new(metadata.id))
+                    .filter(|identity| !identity.as_str().trim().is_empty())
+                    .ok_or_else(|| {
+                        "App-owned lifecycle publication requires a managed Note Identity"
+                            .to_string()
+                    })?;
+                history_store::record_observed_lifecycle_event(
+                    &note_id,
+                    kind,
+                    previous_path.as_deref(),
+                    &path,
+                    observed_at_millis,
+                )?;
+                if authoritative_authored_edit {
+                    let authoritative_observed_at_millis = crate::time::current_time_millis()
+                        .map_err(|error| {
+                            format!(
+                                "Issue external lifecycle-recovery observation time for {}: {error}",
+                                path.display()
+                            )
+                        })?;
+                    history_store::record_external_revision(
+                        &note_id,
+                        &path,
+                        &published_markdown,
+                        authoritative_observed_at_millis,
+                        modified_at_millis,
+                    )?;
+                    merge_note_mutation_warning(
+                        &mut lifecycle_projection_warning,
+                        MutationWarningStage::HistoryFinalization,
+                        "The note lifecycle changed and a newer external edit was preserved",
+                        format!(
+                            "Authoritative authored content at {} differed from its retained lifecycle publication",
+                            path.display()
+                        ),
+                    );
+                }
+                lifecycle_projection_warning = match kind {
+                    LifecycleEventKind::Forgotten => {
+                        let projection_warning = previous_path
+                            .as_deref()
+                            .and_then(|path| self.synchronize_forgotten_projection(path));
+                        merge_optional_note_mutation_warning(
+                            lifecycle_projection_warning,
+                            projection_warning,
+                        )
+                    }
+                    LifecycleEventKind::Recovered => merge_optional_note_mutation_warning(
+                        lifecycle_projection_warning,
+                        self.synchronize_recovered_projection(
+                            &path,
+                            published_markdown.clone(),
+                            observed_at_millis,
+                        ),
+                    ),
+                    _ => None,
+                };
+                CURRENT_CONTENT_GENERATION.fetch_add(1, Ordering::AcqRel);
+                crate::commands::search_commands::invalidate_result_caches()?;
+            }
             _ => {}
         }
         Ok(ObservationReceipt {
@@ -3444,6 +3642,7 @@ impl<'a> NoteTimeline<'a> {
             previous_path,
             observed_at_millis,
             modified_at_millis,
+            commit_warning: lifecycle_projection_warning,
         })
     }
 
@@ -3458,14 +3657,17 @@ impl<'a> NoteTimeline<'a> {
             previous_path,
             occurred_at_millis,
         } = operation;
-        if kind == LifecycleEventKind::Purged {
-            crate::state::with_note_file_mutation(|| {
-                let _timeline_operation = self.state.begin_note_timeline_operation()?;
-                self.with_settled_history_mutation(|| {
-                    self.purge_note_under_mutation_boundary(&note_id, &path, occurred_at_millis)
-                })
-            })?;
+        if kind != LifecycleEventKind::Purged {
+            return Err(
+                "Forgotten and Recovered transitions require lifecycle publication".to_string(),
+            );
         }
+        crate::state::with_note_file_mutation(|| {
+            let _timeline_operation = self.state.begin_note_timeline_operation()?;
+            self.with_settled_history_mutation(|| {
+                self.purge_note_under_mutation_boundary(&note_id, &path, occurred_at_millis)
+            })
+        })?;
         Ok(LifecycleReceipt {
             kind,
             note_id,
@@ -3473,6 +3675,181 @@ impl<'a> NoteTimeline<'a> {
             previous_path,
             occurred_at_millis,
         })
+    }
+
+    /// Durably retain, publish, and finalize one app-owned Forgotten or
+    /// Recovered transition while holding the timeline mutation/replay seam.
+    pub(crate) fn publish_lifecycle(
+        &self,
+        operation: NoteLifecycleOperation,
+        canonical_markdown: &str,
+        publish: impl FnOnce() -> Result<(), LifecyclePublicationFailure>,
+    ) -> Result<LifecyclePublicationResult, String> {
+        if !matches!(
+            operation.kind,
+            LifecycleEventKind::Forgotten | LifecycleEventKind::Recovered
+        ) {
+            return Err(
+                "Only Forgotten or Recovered lifecycle publications can be prepared".to_string(),
+            );
+        }
+        let embedded_note_id = crate::note::parse_note(canonical_markdown)
+            .frontmatter
+            .managed
+            .map(|metadata| metadata.id)
+            .filter(|note_id| !note_id.trim().is_empty())
+            .ok_or_else(|| {
+                "Lifecycle publication preparation requires a managed Note Identity".to_string()
+            })?;
+        if embedded_note_id != operation.note_id.as_str() {
+            return Err(
+                "Lifecycle publication identity does not match its Note Timeline".to_string(),
+            );
+        }
+
+        crate::state::with_note_file_mutation(|| {
+            let _timeline_operation = self.state.begin_note_timeline_operation()?;
+            let _replay = self.state.lock_note_timeline_observation_replay()?;
+            self.recover_pending_deletions()?;
+            self.replay_retained_observations(None)?;
+            self.state.ensure_note_timeline_history_recovered()?;
+            let observation = VaultObservation::lifecycle(
+                VaultObservationSource::Reconciliation,
+                operation.kind,
+                operation.path.clone(),
+                operation.previous_path.clone(),
+                operation.occurred_at_millis,
+            )
+            .with_canonical_markdown(canonical_markdown.to_string());
+            let sequence = history_store::retain_observation(&observation)?;
+            let (commit_warning, publication_indeterminate) = match publish() {
+                Ok(()) => {
+                    let warning = match self.replay_retained_observations(Some(sequence)) {
+                        Ok(Some(receipt)) => receipt.commit_warning().cloned(),
+                        Ok(None) => Some(NoteMutationWarning::single(
+                            MutationWarningStage::HistoryFinalization,
+                            "The note lifecycle changed, but its Note Timeline record is awaiting recovery"
+                                .to_string(),
+                            format!("Retained lifecycle observation {sequence} was not replayed"),
+                        )),
+                        Err(error) => Some(NoteMutationWarning::single(
+                            MutationWarningStage::HistoryFinalization,
+                            "The note lifecycle changed, but its Note Timeline record is awaiting recovery"
+                                .to_string(),
+                            error,
+                        )),
+                    };
+                    (warning, false)
+                }
+                Err(LifecyclePublicationFailure::NotPublished(error)) => {
+                    return Err(match history_store::acknowledge_observation(sequence) {
+                        Ok(()) => error,
+                        Err(abandon_error) => format!(
+                            "{error}; additionally failed to abandon its lifecycle intent: {abandon_error}"
+                        ),
+                    });
+                }
+                Err(LifecyclePublicationFailure::Indeterminate(error)) => (
+                    Some(NoteMutationWarning::single(
+                        MutationWarningStage::HistoryFinalization,
+                        "The note lifecycle publication is awaiting recovery".to_string(),
+                        error,
+                    )),
+                    true,
+                ),
+            };
+            if publication_indeterminate {
+                let _ = self
+                    .state
+                    .mark_notes_index_dirty(&operation.path, "lifecycle-publication-retry");
+                if let Some(previous_path) = operation.previous_path.as_deref() {
+                    let _ = self
+                        .state
+                        .mark_notes_index_dirty(previous_path, "lifecycle-publication-retry");
+                }
+            }
+            Ok(LifecyclePublicationResult {
+                receipt: LifecycleReceipt {
+                    kind: operation.kind,
+                    note_id: operation.note_id,
+                    path: operation.path,
+                    previous_path: operation.previous_path,
+                    occurred_at_millis: operation.occurred_at_millis,
+                },
+                commit_warning,
+            })
+        })
+    }
+
+    pub(crate) fn recover_lifecycle_publications(&self) -> Result<(), String> {
+        let _timeline_operation = self.state.begin_note_timeline_operation()?;
+        let _replay = self.state.lock_note_timeline_observation_replay()?;
+        self.recover_pending_deletions()?;
+        self.replay_retained_observations(None).map(|_| ())
+    }
+
+    fn synchronize_forgotten_projection(&self, path: &Path) -> Option<NoteMutationWarning> {
+        let mut warning = None;
+        if let Err(error) = self.state.semantic.queue_delete_note(path) {
+            merge_note_mutation_warning(
+                &mut warning,
+                MutationWarningStage::SemanticUpdate,
+                "The note was forgotten with incomplete search synchronization",
+                error,
+            );
+            let _ = self
+                .state
+                .mark_notes_index_dirty(path, "forgotten-note-semantic-retry");
+        }
+        if let Err(error) = self.state.remove_note_indexes(path) {
+            merge_note_mutation_warning(
+                &mut warning,
+                MutationWarningStage::CatalogRemove,
+                "The note was forgotten with incomplete search synchronization",
+                error,
+            );
+            let _ = self
+                .state
+                .mark_notes_index_dirty(path, "forgotten-note-catalog-retry");
+        }
+        warning
+    }
+
+    fn synchronize_recovered_projection(
+        &self,
+        path: &Path,
+        canonical_markdown: String,
+        modified_at_millis: u64,
+    ) -> Option<NoteMutationWarning> {
+        let mut warning = None;
+        let note = build_indexed_note(path, &canonical_markdown, modified_at_millis);
+        if let Err(error) = self.state.upsert_note_indexes(path.to_path_buf(), note) {
+            merge_note_mutation_warning(
+                &mut warning,
+                MutationWarningStage::CatalogUpsert,
+                "The note was recovered with incomplete search synchronization",
+                error,
+            );
+            let _ = self
+                .state
+                .mark_notes_index_dirty(path, "recovered-note-catalog-retry");
+        }
+        if let Err(error) =
+            self.state
+                .semantic
+                .queue_note_update(path, canonical_markdown, modified_at_millis)
+        {
+            merge_note_mutation_warning(
+                &mut warning,
+                MutationWarningStage::SemanticUpdate,
+                "The note was recovered with incomplete search synchronization",
+                error,
+            );
+            let _ = self
+                .state
+                .mark_notes_index_dirty(path, "recovered-note-semantic-retry");
+        }
+        warning
     }
 
     pub(crate) fn history_mode(&self, grant: HistoryModeGrant) -> HistoryModeAccess<'a> {
@@ -3557,6 +3934,11 @@ pub(crate) fn inject_history_deletion_failure_once() {
 #[cfg(test)]
 pub(crate) fn inject_history_clean_close_failure_once() {
     history_store::inject_fault_once(history_store::FaultPoint::Close);
+}
+
+#[cfg(test)]
+pub(crate) fn inject_lifecycle_finalization_failure_once() {
+    history_store::inject_fault_once(history_store::FaultPoint::Lifecycle);
 }
 
 #[cfg(test)]
@@ -7425,6 +7807,9 @@ mod tests {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("timeline-capabilities-app-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-capabilities-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
         let state = AppState::new(
             SemanticState::new_disabled("disabled"),
             EventBus::disabled(),
@@ -7447,6 +7832,7 @@ mod tests {
         assert_eq!(restore.note_id(), &note_id);
         assert_eq!(restore.revision_id(), &revision_id);
         assert_eq!(restore.turn_id(), &TurnIdentity::new("turn-1"));
+        crate::state::set_notes_root_override(None).unwrap();
     }
 
     #[test]
@@ -7912,31 +8298,68 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_returns_the_typed_identity_and_paths() {
+    fn lifecycle_publication_returns_the_typed_identity_and_paths() {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("timeline-lifecycle-app-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-lifecycle-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
         let state = AppState::new(
             SemanticState::new_disabled("disabled"),
             EventBus::disabled(),
         )
         .expect("construct app state");
-        let note_id = NoteIdentity::new("note-1");
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Lifecycle receipt".to_string(),
+            "Retained body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let active_path = PathBuf::from(created.path.unwrap());
+        let forgotten_path =
+            crate::state::forgotten_notes_root(notes.path()).join("Lifecycle receipt.md");
+        fs::create_dir_all(forgotten_path.parent().unwrap()).unwrap();
+        let current = fs::read_to_string(&active_path).unwrap();
+        let forgotten_markdown = crate::note::prepare_note_markdown(
+            &current,
+            Some(&current),
+            Some(Some("2026-09-03T12:00:00.000Z".to_string())),
+        )
+        .unwrap()
+        .0;
 
-        let receipt = NoteTimeline::new(&state)
-            .lifecycle(NoteLifecycleOperation::forgotten(
-                note_id.clone(),
-                PathBuf::from("/vault/Note.md"),
-                PathBuf::from("/vault/.forgotten/Note.md"),
-                42,
-            ))
+        let publication = NoteTimeline::new(&state)
+            .publish_lifecycle(
+                NoteLifecycleOperation::forgotten(
+                    note_id.clone(),
+                    active_path.clone(),
+                    forgotten_path.clone(),
+                    42,
+                ),
+                &forgotten_markdown,
+                || {
+                    fs::rename(&active_path, &forgotten_path).map_err(|error| {
+                        LifecyclePublicationFailure::not_published(error.to_string())
+                    })?;
+                    fs::write(&forgotten_path, &forgotten_markdown).map_err(|error| {
+                        LifecyclePublicationFailure::not_published(error.to_string())
+                    })
+                },
+            )
             .unwrap();
+        let receipt = publication.receipt();
 
         assert_eq!(receipt.kind(), LifecycleEventKind::Forgotten);
         assert_eq!(receipt.note_id(), &note_id);
-        assert_eq!(receipt.path(), Path::new("/vault/.forgotten/Note.md"));
-        assert_eq!(receipt.previous_path(), Some(Path::new("/vault/Note.md")));
+        assert_eq!(receipt.path(), forgotten_path);
+        assert_eq!(receipt.previous_path(), Some(active_path.as_path()));
         assert_eq!(receipt.occurred_at_millis(), 42);
+        crate::state::set_notes_root_override(None).unwrap();
     }
 
     #[test]
@@ -8385,7 +8808,96 @@ mod tests {
     }
 
     #[test]
-    fn version_restore_requires_forgotten_note_recovery_and_preserves_lifecycle_status() {
+    fn lifecycle_recovery_preserves_a_newer_same_identity_external_edit() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data =
+            crate::test_support::TestDir::new("timeline-lifecycle-external-edit-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-lifecycle-external-edit-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Externally edited lifecycle".to_string(),
+            "Published body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let active_path = PathBuf::from(created.path.unwrap());
+        let forgotten_path =
+            crate::state::forgotten_notes_root(notes.path()).join("Externally edited lifecycle.md");
+        fs::create_dir_all(forgotten_path.parent().unwrap()).unwrap();
+        let current = fs::read_to_string(&active_path).unwrap();
+        let forgotten_markdown = crate::note::prepare_note_markdown(
+            &current,
+            Some(&current),
+            Some(Some("2026-09-03T12:00:00.000Z".to_string())),
+        )
+        .unwrap()
+        .0;
+        inject_lifecycle_finalization_failure_once();
+
+        let publication = NoteTimeline::new(&state)
+            .publish_lifecycle(
+                NoteLifecycleOperation::forgotten(
+                    note_id.clone(),
+                    active_path.clone(),
+                    forgotten_path.clone(),
+                    42,
+                ),
+                &forgotten_markdown,
+                || {
+                    fs::rename(&active_path, &forgotten_path).map_err(|error| {
+                        LifecyclePublicationFailure::not_published(error.to_string())
+                    })?;
+                    fs::write(&forgotten_path, &forgotten_markdown).map_err(|error| {
+                        LifecyclePublicationFailure::not_published(error.to_string())
+                    })
+                },
+            )
+            .unwrap();
+        assert!(publication.commit_warning().is_some());
+        assert_eq!(retained_observation_count_for_test(), 1);
+
+        let externally_edited = crate::note::replace_authored_content(
+            &fs::read_to_string(&forgotten_path).unwrap(),
+            None,
+            "Edited after lifecycle publication",
+        )
+        .unwrap();
+        fs::write(&forgotten_path, &externally_edited).unwrap();
+        let before_recovery = crate::time::current_time_millis().unwrap();
+
+        NoteTimeline::new(&state)
+            .recover_lifecycle_publications()
+            .unwrap();
+
+        assert_eq!(retained_observation_count_for_test(), 0);
+        assert_eq!(
+            crate::note::parse_note(&fs::read_to_string(&forgotten_path).unwrap()).body,
+            "Edited after lifecycle publication"
+        );
+        let external_revision = history_store::revisions(&note_id)
+            .unwrap()
+            .into_iter()
+            .find(|revision| revision.source() == MutationSource::ExternalEdit)
+            .expect("preserved authored state is observed as an external revision");
+        assert!(external_revision
+            .observed_at_millis()
+            .is_some_and(|observed_at| observed_at >= before_recovery));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn forgotten_note_history_requires_recovery_before_inspection_or_version_restore() {
         let _guard = crate::test_support::lock_test_env();
         let app_data =
             crate::test_support::TestDir::new("timeline-forgotten-version-restore-app-data");
@@ -8431,25 +8943,35 @@ mod tests {
         let forgotten_root = crate::state::forgotten_notes_root(notes.path());
         fs::create_dir_all(&forgotten_root).unwrap();
         let forgotten_path = forgotten_root.join("Forgotten history.md");
-        fs::rename(&active_path, &forgotten_path).unwrap();
-        fs::write(&forgotten_path, &forgotten_markdown).unwrap();
-        history_store::record_observed_lifecycle_event(
-            &note_id,
-            LifecycleEventKind::Forgotten,
-            Some(&active_path),
-            &forgotten_path,
-            1,
-        )
-        .unwrap();
-
-        let preview = access.restore_preview(earlier_revision.as_str()).unwrap();
-        let error = access
-            .confirm_restore(
-                earlier_revision.as_str(),
-                preview.current_authored_content_hash(),
+        let forgotten_at_millis = crate::time::current_time_millis().unwrap() + 100;
+        let active_content_read = NoteTimeline::new(&state)
+            .begin_current_content_read()
+            .unwrap();
+        let forgotten_publication = NoteTimeline::new(&state)
+            .publish_lifecycle(
+                NoteLifecycleOperation::forgotten(
+                    note_id.clone(),
+                    active_path.clone(),
+                    forgotten_path.clone(),
+                    forgotten_at_millis,
+                ),
+                &forgotten_markdown,
+                || {
+                    fs::rename(&active_path, &forgotten_path).map_err(|error| {
+                        LifecyclePublicationFailure::not_published(error.to_string())
+                    })?;
+                    fs::write(&forgotten_path, &forgotten_markdown).map_err(|error| {
+                        LifecyclePublicationFailure::not_published(error.to_string())
+                    })
+                },
             )
-            .expect_err("forgotten notes must be recovered before restoring content");
-        assert!(error.contains("Recover the forgotten note"));
+            .unwrap();
+        assert_eq!(
+            forgotten_publication.receipt().kind(),
+            LifecycleEventKind::Forgotten
+        );
+        assert!(forgotten_publication.commit_warning().is_none());
+        assert_eq!(retained_observation_count_for_test(), 0);
         assert!(!active_path.exists());
         assert!(forgotten_path.exists());
         let still_forgotten =
@@ -8459,7 +8981,95 @@ mod tests {
             still_forgotten.frontmatter.managed.unwrap().trashed_at,
             Some(forgotten_at)
         );
+        drop(access);
+        drop(state);
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        assert!(access.page(None, 50).unwrap_err().contains("Recover"));
+        assert_eq!(retained_observation_count_for_test(), 0);
+        assert!(!active_content_read.is_current());
+        let current_content =
+            NoteTimeline::new(&state).current_content(AllowedScope::only(note_id.clone()));
+        assert!(NoteTimeline::new(&state)
+            .clear_note_history(&note_id)
+            .unwrap_err()
+            .contains("Recover the forgotten note"));
+        for error in [
+            access.revision(earlier_revision.as_str()).unwrap_err(),
+            access
+                .restore_preview(earlier_revision.as_str())
+                .unwrap_err(),
+        ] {
+            assert!(error.contains("Recover the forgotten note"));
+        }
+        assert!(!current_content.allows(&note_id));
+        drop(current_content);
+
+        let recovered_markdown = crate::note::prepare_note_markdown(
+            &fs::read_to_string(&forgotten_path).unwrap(),
+            Some(&fs::read_to_string(&forgotten_path).unwrap()),
+            Some(None),
+        )
+        .unwrap()
+        .0;
+        let recovered_publication = NoteTimeline::new(&state)
+            .publish_lifecycle(
+                NoteLifecycleOperation::recovered(
+                    note_id,
+                    forgotten_path.clone(),
+                    active_path.clone(),
+                    forgotten_at_millis + 1,
+                ),
+                &recovered_markdown,
+                || {
+                    fs::rename(&forgotten_path, &active_path).map_err(|error| {
+                        LifecyclePublicationFailure::not_published(error.to_string())
+                    })?;
+                    fs::write(&active_path, &recovered_markdown).map_err(|error| {
+                        LifecyclePublicationFailure::not_published(error.to_string())
+                    })
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            recovered_publication.receipt().kind(),
+            LifecycleEventKind::Recovered
+        );
+        assert!(recovered_publication.commit_warning().is_none());
+
+        let current_content =
+            NoteTimeline::new(&state).current_content(AllowedScope::only(access.note_id().clone()));
         assert_eq!(access.revisions().unwrap().len(), 2);
+        assert!(current_content.allows(access.note_id()));
+        assert_eq!(
+            access
+                .lifecycle_events()
+                .unwrap()
+                .into_iter()
+                .map(|event| event.kind())
+                .collect::<Vec<_>>(),
+            vec![
+                LifecycleEventKind::Created,
+                LifecycleEventKind::Forgotten,
+                LifecycleEventKind::Recovered,
+            ]
+        );
+        let preview = access.restore_preview(earlier_revision.as_str()).unwrap();
+        access
+            .confirm_restore(
+                earlier_revision.as_str(),
+                preview.current_authored_content_hash(),
+            )
+            .unwrap();
+        assert_eq!(
+            crate::note::parse_note(&fs::read_to_string(active_path).unwrap()).body,
+            "Earlier body"
+        );
+        assert_eq!(access.revisions().unwrap().len(), 3);
         crate::state::set_notes_root_override(None).unwrap();
     }
 }

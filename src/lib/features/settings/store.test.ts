@@ -83,6 +83,30 @@ describe('SettingsStore actions', () => {
     expect(store.isUpdatingForgottenNotes).toBe(false);
   });
 
+  it('surfaces committed recovery warnings in settings', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    invokeMock.mockResolvedValue([
+      {
+        forgottenPath: '/vault/.forgotten/Note.md',
+        restoredPath: '/vault/Note.md',
+        title: 'Note',
+        kind: 'note',
+        commitWarning: {
+          message: 'Timeline recovery is pending.',
+          issues: [{ stage: 'historyFinalization', message: 'store unavailable' }]
+        }
+      }
+    ]);
+
+    await store.runForgottenAction('restore_forgotten_notes', [
+      '/vault/.forgotten/Note.md'
+    ]);
+
+    expect(store.forgottenActionMessage).toBe('Timeline recovery is pending.');
+    expect(store.forgottenActionError).toBeNull();
+  });
+
   it('routes Retry now through the focused semantic command adapter', async () => {
     const { createSettingsStore } = await import('./store.svelte');
     const store = createSettingsStore();

@@ -3,7 +3,10 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { appStore } from '$lib/app/appStore.svelte';
 import { atlasStore } from '$lib/features/atlas/atlasStore.svelte';
-import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
+import type {
+  ForgottenNoteSummary,
+  RestoredForgottenNote
+} from '$lib/types/forgottenNotes';
 import type { VaultFolderInfo, VaultInfo } from '$lib/types/vault';
 import type { HistoryHealthReport } from '$lib/types/history';
 import type {
@@ -78,6 +81,8 @@ export class SettingsStore {
   selectedForgottenPaths = $state<string[]>([]);
   isLoadingForgottenNotes = $state(false);
   isUpdatingForgottenNotes = $state(false);
+  forgottenActionMessage = $state<string | null>(null);
+  forgottenActionError = $state<string | null>(null);
   isSaving = $state(false);
   isRunningAction = $state(false);
   semanticLayerError = $state<string | null>(null);
@@ -415,14 +420,32 @@ export class SettingsStore {
     if (forgottenPaths.length === 0) return;
 
     this.isUpdatingForgottenNotes = true;
+    this.forgottenActionMessage = null;
+    this.forgottenActionError = null;
     try {
-      await invoke(command, { forgottenPaths });
+      let restored: RestoredForgottenNote[] = [];
+      if (command === 'restore_forgotten_notes') {
+        restored =
+          (await invoke<RestoredForgottenNote[]>(command, { forgottenPaths })) ?? [];
+      } else {
+        await invoke(command, { forgottenPaths });
+      }
+      for (const note of restored) {
+        if (note.commitWarning) {
+          console.warn(
+            'Forgotten item was recovered with incomplete timeline synchronization:',
+            note.commitWarning
+          );
+          this.forgottenActionMessage = note.commitWarning.message;
+        }
+      }
       this.setSelectedForgottenPaths((current) =>
         current.filter((path) => !forgottenPaths.includes(path))
       );
       await this.loadForgottenNotes();
     } catch (error) {
       console.error(`Failed to run ${command}:`, error);
+      this.forgottenActionError = String(error);
     } finally {
       this.isUpdatingForgottenNotes = false;
     }

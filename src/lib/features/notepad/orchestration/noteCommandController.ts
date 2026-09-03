@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
 import {
   locationsEqual,
   type NavLocation
@@ -323,6 +324,7 @@ export function createNoteCommandController<
     };
     const hasDraftContent = hasContent(draft);
     let forgottenPath: string | null = null;
+    let lifecycleWarning: CommittedMutationWarning | null = null;
 
     if (notePathToClear) {
       dispatchDocumentOperation(note, {
@@ -335,6 +337,13 @@ export function createNoteCommandController<
           notePathToClear,
           deps.base.forgottenNoteRetentionPreference()
         );
+        if (summary?.commitWarning) {
+          console.warn(
+            'Note was forgotten with incomplete timeline synchronization:',
+            summary.commitWarning
+          );
+          lifecycleWarning = summary.commitWarning;
+        }
         if (
           !isDocumentOperationCurrent(note, operationToken)
         ) {
@@ -368,6 +377,7 @@ export function createNoteCommandController<
       workspace,
       note.key
     );
+    freshDraft.publication.warning = lifecycleWarning;
     cleanupNoteRuntime(note.key);
     derivedViews.setRecentlyForgotten(
       canRestore && hasDraftContent
@@ -389,9 +399,19 @@ export function createNoteCommandController<
         const restoredNotes = await restoreForgottenNotes([
           forgottenNote.forgottenPath
         ]);
+        if (restoredNotes[0]?.commitWarning) {
+          console.warn(
+            'Note was recovered with incomplete timeline synchronization:',
+            restoredNotes[0].commitWarning
+          );
+        }
         const restoredPath = restoredNotes[0]?.restoredPath;
         if (!restoredPath) return;
         await openNotePath(restoredPath);
+        if (restoredNotes[0]?.commitWarning) {
+          panes.getNavigationDocument().publication.warning =
+            restoredNotes[0].commitWarning;
+        }
         return;
       } catch (error) {
         console.error('Failed to restore forgotten note:', error);

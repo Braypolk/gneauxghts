@@ -1,9 +1,5 @@
 use crate::index::{build_indexed_note, AppState, IndexedNote};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    time::UNIX_EPOCH,
-};
+use std::{fs, path::Path, time::UNIX_EPOCH};
 use tauri::State;
 
 fn read_modified_millis(path: &Path) -> Result<u64, String> {
@@ -16,14 +12,6 @@ fn read_modified_millis(path: &Path) -> Result<u64, String> {
         .as_millis();
 
     Ok(modified.min(u128::from(u64::MAX)) as u64)
-}
-
-pub(super) fn upsert_notes_index_entry(
-    state: &State<'_, AppState>,
-    path: PathBuf,
-    note: IndexedNote,
-) -> Result<(), String> {
-    state.upsert_note_indexes(path, note)
 }
 
 pub(super) fn remove_notes_index_entry(
