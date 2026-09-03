@@ -18,6 +18,7 @@ export interface HistoryModeSessionDeps {
   captureWorkspace: (paneId: string) => HistoryWorkspaceSnapshot;
   readTarget: (paneId: string) => HistoryModeTarget | null;
   restoreWorkspace: (snapshot: HistoryWorkspaceSnapshot) => void | Promise<void>;
+  restoreEditorState: (snapshot: HistoryWorkspaceSnapshot) => void | Promise<void>;
   restoreFocus: (snapshot: HistoryWorkspaceSnapshot) => void | Promise<void>;
   loadPage: (
     noteId: string,
@@ -66,6 +67,21 @@ export class HistoryModeSession {
     this.state = transitionHistoryMode(this.state, event);
   }
 
+  #restoreAfterFailedEntry = async (workspace: HistoryWorkspaceSnapshot) => {
+    const restoreSteps = [
+      this.#deps.restoreWorkspace,
+      this.#deps.restoreEditorState,
+      this.#deps.restoreFocus
+    ];
+    for (const restore of restoreSteps) {
+      try {
+        await restore(workspace);
+      } catch {
+        // Preserve the actionable entry error while attempting every recovery step.
+      }
+    }
+  };
+
   enter = async (paneId: string): Promise<void> => {
     if (this.state.phase !== 'inactive') return;
     const workspace = this.#deps.captureWorkspace(paneId);
@@ -93,8 +109,7 @@ export class HistoryModeSession {
         requestId,
         error: `History Mode could not open because the latest changes were not saved: ${errorMessage(error)}`
       });
-      await this.#deps.restoreWorkspace(workspace);
-      await this.#deps.restoreFocus(workspace);
+      await this.#restoreAfterFailedEntry(workspace);
       return;
     }
 
@@ -105,8 +120,7 @@ export class HistoryModeSession {
         requestId,
         error: 'History Mode could not identify the saved note.'
       });
-      await this.#deps.restoreWorkspace(workspace);
-      await this.#deps.restoreFocus(workspace);
+      await this.#restoreAfterFailedEntry(workspace);
       return;
     }
 
@@ -150,8 +164,7 @@ export class HistoryModeSession {
         error: `History Mode is unavailable: ${errorMessage(error)}`
       });
       if (origin === 'entry' && workspace) {
-        await this.#deps.restoreWorkspace(workspace);
-        await this.#deps.restoreFocus(workspace);
+        await this.#restoreAfterFailedEntry(workspace);
       }
     }
   };
@@ -507,15 +520,29 @@ export class HistoryModeSession {
       return;
     }
     this.#dispatch({ type: 'workspaceRestored' });
+    let editorRestoreError: unknown = null;
+    try {
+      await this.#deps.restoreEditorState(workspace);
+    } catch (error) {
+      editorRestoreError = error;
+    }
     try {
       await this.#deps.restoreFocus(workspace);
-      this.#dispatch({ type: 'exitCompleted' });
     } catch (error) {
       this.#dispatch({
         type: 'exitCompleted',
         error: `The workspace was restored, but focus could not be restored: ${errorMessage(error)}`
       });
+      return;
     }
+    if (editorRestoreError) {
+      this.#dispatch({
+        type: 'exitCompleted',
+        error: `The workspace was restored, but the editor state could not be restored: ${errorMessage(editorRestoreError)}`
+      });
+      return;
+    }
+    this.#dispatch({ type: 'exitCompleted' });
   };
 
   dismissEntryError = () => {

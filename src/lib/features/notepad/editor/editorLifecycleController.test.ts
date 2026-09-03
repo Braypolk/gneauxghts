@@ -255,6 +255,21 @@ describe('editorLifecycleController reading-position persistence', () => {
     expect(h.scrollDOM.scrollTop).toBe(1850);
   });
 
+  it('restores an explicit reversed selection and scroll snapshot', async () => {
+    vi.mocked(restoreCursorPosition).mockReturnValue(true);
+    const h = harness(0);
+    const viewState = { anchor: 18, head: 7, scrollTop: 1850 };
+
+    await expect(
+      h.controller.restoreEditorViewStateForDocument(h.document, viewState)
+    ).resolves.toBe(true);
+
+    expect(restoreCursorPosition).toHaveBeenCalledWith(h.editor, viewState, {
+      scrollIntoView: false
+    });
+    expect(h.scrollDOM.scrollTop).toBe(1850);
+  });
+
   it('still reveals the cursor for notes saved before scroll was tracked', () => {
     saveEditorViewState(notePath, { anchor: 12, head: 12 }, 'primary', 'long-id');
     vi.mocked(restoreCursorPosition).mockReturnValue(true);

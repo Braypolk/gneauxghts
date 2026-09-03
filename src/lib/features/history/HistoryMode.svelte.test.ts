@@ -10,7 +10,14 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
     noteTitle: 'Timeline note',
     notePath: '/vault/Timeline note.md'
   },
-  workspace: { activePaneId: 'notepad-pane-1', focusTarget: 'editor' },
+  workspace: {
+    activePaneId: 'notepad-pane-1',
+    focusTarget: 'editor',
+    editor: {
+      noteId: 'note-1',
+      viewState: { anchor: 18, head: 7, scrollTop: 640 }
+    }
+  },
   records: [
     {
       kind: 'revision',
@@ -92,7 +99,42 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
 };
 
 describe('HistoryMode', () => {
+  it.each([
+    ['collapsed cursor', { anchor: 6, head: 6, scrollTop: 0 }],
+    ['forward selection', { anchor: 2, head: 12, scrollTop: 320 }],
+    ['reversed selection', { anchor: 14, head: 4, scrollTop: 640 }]
+  ])('keeps the captured %s opaque and unchanged', (_label, viewState) => {
+    const state: Extract<HistoryModeState, { phase: 'open' }> = {
+      ...openState,
+      workspace: {
+        ...openState.workspace,
+        editor: { noteId: 'note-1', viewState }
+      }
+    };
+
+    const body = render(HistoryMode, {
+      props: {
+        state,
+        onExit: vi.fn(),
+        onSelectRevision: vi.fn(),
+        onSetComparison: vi.fn(),
+        onPreviewRestore: vi.fn(),
+        onCancelRestore: vi.fn(),
+        onConfirmRestore: vi.fn(),
+        onNameRevision: vi.fn(),
+        onRemoveRevisionName: vi.fn(),
+        onClearHistory: vi.fn(),
+        onLoadMore: vi.fn(),
+        onRetry: vi.fn()
+      }
+    }).body;
+
+    expect(body).toContain('Read only');
+    expect(state.workspace.editor?.viewState).toEqual(viewState);
+  });
+
   it('renders revisions and lifecycle events as a global read-only surface', () => {
+    const entryViewState = openState.workspace.editor?.viewState;
     const body = render(HistoryMode, {
       props: {
         state: openState,
@@ -136,6 +178,7 @@ describe('HistoryMode', () => {
     expect(body).toContain('Load older history');
     expect(body).not.toContain('contenteditable');
     expect(body).not.toContain('<textarea');
+    expect(openState.workspace.editor?.viewState).toBe(entryViewState);
   });
 
   it('renders Editing Sessions collapsed by default', () => {

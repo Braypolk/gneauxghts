@@ -5,6 +5,38 @@ import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 
 describe('paneEditorLifecycle', () => {
+  it('restores an exact captured view state through the serialized pane owner', async () => {
+    const document = createNoteDraftState(createEmptySessionSnapshot());
+    const restoreEditorViewStateForDocument = vi.fn().mockResolvedValue(true);
+    const runtime = {
+      controller: null as unknown | null,
+      refs: { editorRoot: {} }
+    };
+    const lifecycle = createPaneEditorLifecycle({
+      getPaneIds: () => ['pane'],
+      getPaneRuntime: () => runtime as never,
+      getEditorLifecycleController: () =>
+        ({
+          createEditor: async () => {
+            runtime.controller = { view: {} };
+          },
+          restoreCursorPositionForDocument: vi.fn(),
+          restoreEditorViewStateForDocument
+        }) as never,
+      getPaneDocument: () => document,
+      paneShouldMountEditor: () => true,
+      closeWikilinkAutocomplete: vi.fn()
+    });
+    const viewState = { anchor: 18, head: 7, scrollTop: 640 };
+    await lifecycle.mountPaneEditor('pane');
+
+    await expect(
+      lifecycle.restoreViewState('pane', document, viewState)
+    ).resolves.toBe('applied');
+
+    expect(restoreEditorViewStateForDocument).toHaveBeenCalledWith(document, viewState);
+  });
+
   it('discovers panes dynamically when ensuring editors', async () => {
     type PaneId = 'pane-1' | 'pane-2';
     const paneIds: PaneId[] = ['pane-1'];

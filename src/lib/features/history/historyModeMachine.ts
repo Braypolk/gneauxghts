@@ -1,5 +1,6 @@
 import type { HistoryStorageUsage, NoteHistoryHealth } from '$lib/types/history';
 import type { NoteSession } from '$lib/features/notepad/model/types';
+import type { EditorViewState } from '$lib/features/notepad/editor/editorViewState';
 
 export type HistoryMutationSource =
   | 'editor'
@@ -103,6 +104,10 @@ export interface HistoryWorkspaceSnapshot {
   activePaneId: string;
   focusTarget: 'editor' | 'title' | 'chat';
   focusElement?: HTMLElement | null;
+  editor: {
+    noteId: string;
+    viewState: EditorViewState;
+  } | null;
 }
 
 export type HistoryModeState =

@@ -34,6 +34,58 @@ async function editorText() {
   return editor.getText();
 }
 
+async function setEditorSelection(anchor: number, head: number) {
+  const content = await $('[data-testid="note-editor"] .cm-content');
+  const selection = await browser.execute(
+    (element: HTMLElement, requestedAnchor: number, requestedHead: number) => {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let textNode = walker.nextNode();
+      while (textNode && (textNode.textContent?.length ?? 0) < 16) {
+        textNode = walker.nextNode();
+      }
+      if (!textNode) throw new Error('Editor has no selectable text node');
+      const length = textNode.textContent?.length ?? 0;
+      const boundedAnchor = Math.max(0, Math.min(requestedAnchor, length));
+      const boundedHead = Math.max(0, Math.min(requestedHead, length));
+      const domSelection = window.getSelection();
+      if (!domSelection) throw new Error('Browser selection is unavailable');
+      element.focus();
+      domSelection.setBaseAndExtent(
+        textNode,
+        boundedAnchor,
+        textNode,
+        boundedHead
+      );
+      document.dispatchEvent(new Event('selectionchange'));
+      return { anchor: boundedAnchor, head: boundedHead };
+    },
+    content,
+    anchor,
+    head
+  );
+  await browser.pause(60);
+  return selection;
+}
+
+async function readEditorSelection() {
+  const content = await $('[data-testid="note-editor"] .cm-content');
+  return browser.execute((element: HTMLElement) => {
+    const selection = window.getSelection();
+    if (
+      !selection?.anchorNode ||
+      !selection.focusNode ||
+      !element.contains(selection.anchorNode) ||
+      !element.contains(selection.focusNode)
+    ) {
+      return null;
+    }
+    return {
+      anchor: selection.anchorOffset,
+      head: selection.focusOffset
+    };
+  }, content);
+}
+
 describe('document and pane state-machine boundaries', () => {
   beforeEach(async () => {
     await browser.url('/');
@@ -236,6 +288,86 @@ describe('document and pane state-machine boundaries', () => {
     await browser.refresh();
     await waitForNote('Alpha note');
     expect(await $('[data-testid="history-mode"]').isExisting()).toBe(false);
+  });
+
+  it('restores collapsed, ranged, and reversed editor selections after refreshed history', async () => {
+    const expectedMarkdown = await editorText();
+
+    const roundTrip = async (
+      anchor: number,
+      head: number,
+      { refresh = false, scroll = false } = {}
+    ) => {
+      const expectedSelection = await setEditorSelection(anchor, head);
+      const scroller = await $('[data-testid="note-editor"] .cm-scroller');
+      if (scroll) {
+        await browser.execute((element: HTMLElement) => {
+          element.scrollTop = Math.max(320, element.scrollHeight * 0.6);
+          element.dispatchEvent(new Event('scroll'));
+        }, scroller);
+      }
+      const expectedScroll = await browser.execute(
+        (element: HTMLElement) => element.scrollTop,
+        scroller
+      );
+
+      const openHistory = await $('button[aria-label="Open note history"]');
+      await browser.execute((element: HTMLElement) => element.click(), openHistory);
+      const history = await $('[data-testid="history-mode"]');
+      await history.waitForExist();
+      await $('[data-testid="historical-revision-diff"]').waitForExist({ timeout: 20_000 });
+
+      if (refresh) {
+        const callsBefore = await browser.execute(() =>
+          (window.__GNEAUXGHTS_E2E__?.invocations ?? []).filter(
+            (entry) => entry.command === 'get_note_history_page'
+          ).length
+        );
+        await browser.execute(() => {
+          window.__GNEAUXGHTS_E2E__?.delayNextHistoryPage();
+          window.dispatchEvent(new Event('focus'));
+        });
+        const loadMore = await $('button=Load older history');
+        await browser.waitUntil(async () => !(await loadMore.isEnabled()), {
+          interval: 10,
+          timeoutMsg: 'Expected History Mode refresh to become active'
+        });
+        await browser.waitUntil(async () => {
+          const callsAfter = await browser.execute(() =>
+            (window.__GNEAUXGHTS_E2E__?.invocations ?? []).filter(
+              (entry) => entry.command === 'get_note_history_page'
+            ).length
+          );
+          return callsAfter > callsBefore;
+        });
+        await loadMore.waitForEnabled({
+          timeoutMsg: 'Expected History Mode refresh to complete before exit'
+        });
+      }
+
+      await $('button[aria-label="Back to workspace"]').click();
+      await history.waitForExist({ reverse: true });
+      await browser.waitUntil(
+        async () => {
+          const restored = await readEditorSelection();
+          return (
+            restored?.anchor === expectedSelection.anchor &&
+            restored.head === expectedSelection.head
+          );
+        },
+        { timeoutMsg: 'Expected exact editor selection direction to be restored' }
+      );
+      const restoredScroll = await browser.execute(
+        (element: HTMLElement) => element.scrollTop,
+        scroller
+      );
+      expect(Math.abs(restoredScroll - expectedScroll)).toBeLessThanOrEqual(2);
+      expect(await editorText()).toBe(expectedMarkdown);
+    };
+
+    await roundTrip(6, 6);
+    await roundTrip(2, 12);
+    await roundTrip(14, 4, { refresh: true, scroll: true });
   });
 
   it('confirms a complete Version Restore and isolates ordinary editor undo', async () => {

@@ -254,6 +254,18 @@ export function createEditorLifecycleController({
     );
   }
 
+  function applyEditorViewState(position: EditorViewState) {
+    const savedScrollTop = position.scrollTop;
+    const hasSavedScroll = typeof savedScrollTop === 'number';
+    const restored = restoreCursorPosition(getController(), position, {
+      scrollIntoView: !hasSavedScroll
+    });
+    const scrollSettled = restored && hasSavedScroll
+      ? settleEditorScrollTop(savedScrollTop)
+      : null;
+    return { restored, scrollSettled };
+  }
+
   function restoreCursorPositionForDocument(
     document: NoteDraftState = getDocumentSession(),
     position: EditorViewState | null = loadViewStateForDocument(document)
@@ -264,16 +276,23 @@ export function createEditorLifecycleController({
 
     // A saved scroll offset is the more faithful restore: the reader may have
     // scrolled well away from the cursor before leaving.
-    const hasSavedScroll = typeof position.scrollTop === 'number';
-    const restored = restoreCursorPosition(getController(), position, {
-      scrollIntoView: !hasSavedScroll
-    });
-
-    if (restored && typeof position.scrollTop === 'number') {
-      void settleEditorScrollTop(position.scrollTop);
-    }
-
+    const { restored } = applyEditorViewState(position);
     return restored;
+  }
+
+  async function restoreEditorViewStateForDocument(
+    document: NoteDraftState,
+    position: EditorViewState
+  ) {
+    if (getDocumentSession() !== document || !getDocumentPath(document)) {
+      return false;
+    }
+    const { restored, scrollSettled } = applyEditorViewState(position);
+    if (!restored) {
+      return false;
+    }
+    await scrollSettled;
+    return getDocumentSession() === document;
   }
 
   async function replaceEditorContent(
@@ -495,6 +514,7 @@ export function createEditorLifecycleController({
     captureEditorViewState,
     saveCursorPositionForDocument,
     restoreCursorPositionForDocument,
+    restoreEditorViewStateForDocument,
     replaceEditorContent,
     replaceEditorContentInPlace,
     replaceEditorContentInPlaceForDocument

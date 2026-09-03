@@ -486,6 +486,7 @@ export function installBrowserE2eBackend() {
   let callbackId = 0;
   let activeNote = notes.get('note-alpha')!;
   const pinnedNoteIds = new Set<string>();
+  let nextHistoryPageDelayMillis = 0;
 
   const invoke = async (command: string, rawArgs: unknown = {}) => {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
@@ -515,6 +516,11 @@ export function installBrowserE2eBackend() {
       return session(saved);
     }
     if (command === 'get_note_history_page') {
+      if (nextHistoryPageDelayMillis > 0) {
+        const delayMillis = nextHistoryPageDelayMillis;
+        nextHistoryPageDelayMillis = 0;
+        await new Promise((resolve) => window.setTimeout(resolve, delayMillis));
+      }
       const note = notes.get(String(args.noteId ?? ''));
       if (!note) throw new Error('Unknown Note Identity');
       const records = historyRecords(note);
@@ -742,6 +748,9 @@ export function installBrowserE2eBackend() {
 
   window.__GNEAUXGHTS_E2E__ = {
     invocations,
+    delayNextHistoryPage(delayMillis = 75) {
+      nextHistoryPageDelayMillis = delayMillis;
+    },
     snapshot() {
       return {
         activeNoteId: activeNote.noteId,
@@ -757,6 +766,7 @@ declare global {
     __TAURI_INTERNALS__: Record<string, unknown>;
     __GNEAUXGHTS_E2E__?: {
       invocations: InvokeRecord[];
+      delayNextHistoryPage(delayMillis?: number): void;
       snapshot(): {
         activeNoteId: string;
         notes: NoteFixture[];

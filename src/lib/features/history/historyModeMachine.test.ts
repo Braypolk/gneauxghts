@@ -15,7 +15,8 @@ const target: HistoryModeTarget = {
 
 const workspace: HistoryWorkspaceSnapshot = {
   activePaneId: 'notepad-pane-1',
-  focusTarget: 'editor'
+  focusTarget: 'editor',
+  editor: null
 };
 
 function revision(revisionId: string, occurredAtMillis: number) {

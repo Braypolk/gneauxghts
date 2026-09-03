@@ -219,6 +219,29 @@ class PaneEditorSession<TPaneId extends string> {
     });
   }
 
+  restoreViewState(
+    document: NoteDraftState,
+    position: EditorViewState
+  ): Promise<PaneEditorOperationResult> {
+    return this.#enqueue(async () => {
+      if (this.#isDisposalRequested()) return 'disposed';
+      if (this.deps.getPaneDocument(this.paneId) !== document) {
+        return 'stale';
+      }
+      const runtime = this.deps.getPaneRuntime(this.paneId);
+      this.#assertStableResourceInvariant(runtime);
+      if (!runtime.controller) return 'unavailable';
+
+      const restored = await this.deps
+        .getEditorLifecycleController(this.paneId)
+        .restoreEditorViewStateForDocument(document, position);
+      if (this.deps.getPaneDocument(this.paneId) !== document) {
+        return 'stale';
+      }
+      return restored ? 'applied' : 'unavailable';
+    });
+  }
+
   replaceContent(
     markdown: string,
     options: PaneEditorReplaceOptions = {}
@@ -380,6 +403,14 @@ export function createPaneEditorLifecycle<
       .captureEditorViewState();
   }
 
+  function restoreViewState(
+    paneId: TPaneId,
+    document: NoteDraftState,
+    position: EditorViewState
+  ) {
+    return getSession(paneId).restoreViewState(document, position);
+  }
+
   function replaceContent(
     paneId: TPaneId,
     markdown: string,
@@ -437,6 +468,7 @@ export function createPaneEditorLifecycle<
     mountPaneEditor,
     destroyPaneEditor,
     captureViewState,
+    restoreViewState,
     saveCursorPosition,
     replaceContent,
     replaceContentInPlace,

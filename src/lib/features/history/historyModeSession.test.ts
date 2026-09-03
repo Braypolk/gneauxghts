@@ -16,7 +16,11 @@ const target: HistoryModeTarget = {
 };
 const workspace: HistoryWorkspaceSnapshot = {
   activePaneId: 'notepad-pane-1',
-  focusTarget: 'editor'
+  focusTarget: 'editor',
+  editor: {
+    noteId: 'note-1',
+    viewState: { anchor: 18, head: 7, scrollTop: 640 }
+  }
 };
 const firstPage: HistoryModePage = {
   records: [
@@ -77,6 +81,7 @@ function setup(overrides: Partial<ConstructorParameters<typeof HistoryModeSessio
     captureWorkspace: vi.fn(() => workspace),
     readTarget: vi.fn(() => target),
     restoreWorkspace: vi.fn(),
+    restoreEditorState: vi.fn(),
     restoreFocus: vi.fn(),
     loadPage: vi.fn().mockResolvedValue(firstPage),
     loadDiff: vi.fn().mockResolvedValue(revisionDiff),
@@ -374,24 +379,90 @@ describe('HistoryModeSession', () => {
     expect(restoreWorkspace).toHaveBeenCalledWith(workspace);
   });
 
+  it('contains failed-entry recovery errors and still attempts focus restoration', async () => {
+    const restoreWorkspace = vi.fn().mockRejectedValue(new Error('pane unavailable'));
+    const restoreEditorState = vi.fn().mockRejectedValue(new Error('editor unavailable'));
+    const restoreFocus = vi.fn();
+    const { session } = setup({
+      flushWorkspace: vi.fn().mockRejectedValue(new Error('disk full')),
+      restoreWorkspace,
+      restoreEditorState,
+      restoreFocus
+    });
+
+    await expect(session.enter('notepad-pane-1')).resolves.toBeUndefined();
+
+    expect(restoreWorkspace).toHaveBeenCalledWith(workspace);
+    expect(restoreEditorState).toHaveBeenCalledWith(workspace);
+    expect(restoreFocus).toHaveBeenCalledWith(workspace);
+    expect(session.state).toEqual({
+      phase: 'inactive',
+      entryError: 'History Mode could not open because the latest changes were not saved: disk full'
+    });
+  });
+
   it('restores the captured workspace and focus on exit', async () => {
     const phases: string[] = [];
     let session!: HistoryModeSession;
     const restoreWorkspace = vi.fn(() => {
       phases.push(session.state.phase);
     });
+    const restoreEditorState = vi.fn(() => {
+      phases.push(session.state.phase);
+    });
     const restoreFocus = vi.fn(() => {
       phases.push(session.state.phase);
     });
-    ({ session } = setup({ restoreWorkspace, restoreFocus }));
+    ({ session } = setup({ restoreWorkspace, restoreEditorState, restoreFocus }));
     await session.enter('notepad-pane-1');
 
     await session.exit();
 
     expect(restoreWorkspace).toHaveBeenCalledWith(workspace);
+    expect(restoreEditorState).toHaveBeenCalledWith(workspace);
     expect(restoreFocus).toHaveBeenCalledWith(workspace);
-    expect(phases).toEqual(['exiting', 'restoring']);
+    expect(phases).toEqual(['exiting', 'restoring', 'restoring']);
     expect(session.state).toEqual({ phase: 'inactive', entryError: null });
+  });
+
+  it('still restores focus and reports an editor-state restore failure precisely', async () => {
+    const restoreEditorState = vi.fn().mockRejectedValue(new Error('editor unavailable'));
+    const restoreFocus = vi.fn();
+    const { session } = setup({ restoreEditorState, restoreFocus });
+    await session.enter('notepad-pane-1');
+
+    await session.exit();
+
+    expect(restoreFocus).toHaveBeenCalledWith(workspace);
+    expect(session.state).toEqual({
+      phase: 'inactive',
+      entryError: 'The workspace was restored, but the editor state could not be restored: editor unavailable'
+    });
+  });
+
+  it('keeps the entry editor snapshot unchanged while history refreshes', async () => {
+    const renamedTarget = {
+      ...target,
+      noteTitle: 'Renamed note',
+      notePath: '/vault/Renamed note.md'
+    };
+    const readTarget = vi
+      .fn()
+      .mockReturnValueOnce(target)
+      .mockReturnValueOnce(target)
+      .mockReturnValue(renamedTarget);
+    const { session } = setup({ readTarget });
+    await session.enter('notepad-pane-1');
+
+    await session.refresh();
+    await session.nameRevision('revision-1', 'Milestone');
+    await session.synchronizeAfterLifecycleChange();
+
+    expect(session.state).toMatchObject({
+      phase: 'open',
+      target: renamedTarget,
+      workspace
+    });
   });
 
   it('retries unavailable history without recapturing or replacing the original focus', async () => {

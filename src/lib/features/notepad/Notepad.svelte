@@ -690,6 +690,9 @@
     flushWorkspace: workspacePersistence.flushAllForNavigation,
     captureWorkspace: (paneId) => {
       const resolvedPaneId = paneId as PaneId;
+      const editorViewState = paneLifecycle.captureViewState(resolvedPaneId);
+      const paneDocument = getPaneDocumentSession(resolvedPaneId);
+      const editorNoteId = getDocumentNoteId(paneDocument);
       const focusTarget: HistoryWorkspaceSnapshot["focusTarget"] =
         document.activeElement === getPaneTitleInput(resolvedPaneId)
           ? "title"
@@ -703,6 +706,12 @@
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null,
+        editor: editorViewState && editorNoteId
+          ? {
+              noteId: editorNoteId,
+              viewState: editorViewState,
+            }
+          : null,
       };
     },
     readTarget: (paneId) => {
@@ -719,6 +728,22 @@
       const paneId = snapshot.activePaneId as PaneId;
       workspaceStore.setActivePaneId(paneId);
       await tick();
+    },
+    restoreEditorState: async (snapshot) => {
+      if (!snapshot.editor) return;
+      const paneId = snapshot.activePaneId as PaneId;
+      const paneDocument = getPaneDocumentSession(paneId);
+      if (getDocumentNoteId(paneDocument) !== snapshot.editor.noteId) {
+        throw new Error("The original note is no longer open in its pane.");
+      }
+      const outcome = await paneLifecycle.restoreViewState(
+        paneId,
+        paneDocument,
+        snapshot.editor.viewState,
+      );
+      if (outcome !== "applied") {
+        throw new Error(`The editor view is ${outcome}.`);
+      }
     },
     restoreFocus: async (snapshot) => {
       const paneId = snapshot.activePaneId as PaneId;

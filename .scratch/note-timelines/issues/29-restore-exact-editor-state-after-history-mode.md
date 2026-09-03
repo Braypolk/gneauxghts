@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Capture the complete editor selection, including anchor and head direction, when History Mode opens.
-- [ ] Restore selection, scroll position, focus target, and active pane without changing current note content or undo history.
-- [ ] Preserve the entry snapshot while revision pages, diffs, names, or lifecycle state refresh in an open History Mode session.
-- [ ] Restore safely when the original selection is no longer valid, using a deterministic bounded fallback.
-- [ ] Add component and browser end-to-end assertions for collapsed cursors, ranged selections, reversed selections, scrolling, refresh while open, and exit.
+- [x] Capture the complete editor selection, including anchor and head direction, when History Mode opens.
+- [x] Restore selection, scroll position, focus target, and active pane without changing current note content or undo history.
+- [x] Preserve the entry snapshot while revision pages, diffs, names, or lifecycle state refresh in an open History Mode session.
+- [x] Restore safely when the original selection is no longer valid, using a deterministic bounded fallback.
+- [x] Add component and browser end-to-end assertions for collapsed cursors, ranged selections, reversed selections, scrolling, refresh while open, and exit.

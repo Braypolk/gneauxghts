@@ -7,7 +7,10 @@ import {
 import type { EditorView } from '@codemirror/view';
 import { describe, expect, it, vi } from 'vitest';
 import { EditorDocumentRuntime } from './editorDocumentRuntime';
-import { replaceEditorDocument } from './editorViewController';
+import {
+  replaceEditorDocument,
+  restoreCursorPosition
+} from './editorViewController';
 import type { EditorController } from './types';
 
 function pane(
@@ -119,6 +122,26 @@ describe('EditorDocumentRuntime', () => {
     ]);
     expect(runtime.undo(fixture.controller.paneKey)).toBe(true);
     expect(runtime.markdown).toBe('historical body');
+  });
+
+  it('restores a reversed selection with a bounded fallback without changing the document', () => {
+    const runtime = new EditorDocumentRuntime('tiny');
+    const fixture = pane(runtime, 'tiny', 0);
+    const revisionBefore = runtime.revision;
+
+    expect(
+      restoreCursorPosition(
+        fixture.controller,
+        { anchor: 99, head: 2 },
+        { scrollIntoView: false }
+      )
+    ).toBe(true);
+
+    expect(fixture.readState().selection.main.anchor).toBe(4);
+    expect(fixture.readState().selection.main.head).toBe(2);
+    expect(runtime.markdown).toBe('tiny');
+    expect(runtime.revision).toBe(revisionBefore);
+    expect(runtime.undo(fixture.controller.paneKey)).toBe(false);
   });
 
   it('replaces every attached pane with clamped selections and one callback', () => {
