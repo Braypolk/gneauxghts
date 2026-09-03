@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Return a bounded first page and continuation state for each requested Missing Note timeline instead of traversing every revision before responding.
-- [ ] Let recovery UI request subsequent pages incrementally through the same deterministic ordering used by ordinary History Mode.
-- [ ] Preserve Missing Note metadata, recovery eligibility, revision naming, and Lifecycle Events while pages are loaded.
-- [ ] Keep cursors stable across restart and reject stale or mismatched continuation state with a stable product error.
-- [ ] Add command, component, and end-to-end coverage proving a deeply revised Missing Note can be opened and recovered without eager full-history loading.
+- [x] Return a bounded first page and continuation state for each requested Missing Note timeline instead of traversing every revision before responding.
+- [x] Let recovery UI request subsequent pages incrementally through the same deterministic ordering used by ordinary History Mode.
+- [x] Preserve Missing Note metadata, recovery eligibility, revision naming, and Lifecycle Events while pages are loaded.
+- [x] Keep cursors stable across restart and reject stale or mismatched continuation state with a stable product error.
+- [x] Add command, component, and end-to-end coverage proving a deeply revised Missing Note can be opened and recovered without eager full-history loading.

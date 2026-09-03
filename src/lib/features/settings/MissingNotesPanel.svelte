@@ -7,9 +7,11 @@
     missingNotes,
     isLoading,
     isUpdating,
+    loadingTimelineNoteId,
     actionMessage = null,
     actionError = null,
     loadMissingNotes,
+    loadMoreHistory,
     recoverMissingNote,
     deleteMissingNote,
     formatTimestamp,
@@ -18,9 +20,11 @@
     missingNotes: MissingNoteSummary[];
     isLoading: boolean;
     isUpdating: boolean;
+    loadingTimelineNoteId: string | null;
     actionMessage?: string | null;
     actionError?: string | null;
     loadMissingNotes: () => Promise<void>;
+    loadMoreHistory: (noteId: string) => Promise<void>;
     recoverMissingNote: (noteId: string) => Promise<void>;
     deleteMissingNote: (noteId: string) => Promise<void>;
     formatTimestamp: (value: number | null) => string;
@@ -49,7 +53,10 @@
         Recovery uses the last retained revision and will not overwrite a file that now occupies the old path.
       </p>
     </div>
-    <SettingsRefreshButton disabled={isLoading || isUpdating} onclick={() => void loadMissingNotes()} />
+    <SettingsRefreshButton
+      disabled={isLoading || isUpdating || loadingTimelineNoteId !== null}
+      onclick={() => void loadMissingNotes()}
+    />
   </div>
 
   {#if actionMessage}
@@ -84,7 +91,7 @@
           </div>
 
           <details class="mt-4 rounded-xl border border-border/60 bg-background/60 px-3 py-2">
-            <summary class="cursor-pointer text-xs font-medium">Retained timeline · {note.timeline.records.length} records</summary>
+            <summary class="cursor-pointer text-xs font-medium">Retained timeline · {note.timeline.records.length} loaded records</summary>
             <ol class="mt-3 space-y-2">
               {#each note.timeline.records as record (record.recordId)}
                 <li class="text-xs text-muted-foreground">
@@ -96,6 +103,16 @@
                 </li>
               {/each}
             </ol>
+            {#if note.timeline.nextCursor}
+              <button
+                class="mt-3 rounded-full border border-border bg-background px-3 py-2 text-xs font-medium disabled:opacity-50"
+                type="button"
+                disabled={loadingTimelineNoteId !== null}
+                onclick={() => void loadMoreHistory(note.noteId)}
+              >
+                {loadingTimelineNoteId === note.noteId ? 'Loading older history…' : 'Load older history'}
+              </button>
+            {/if}
           </details>
 
           {#if pendingDelete === note.noteId}

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.fn();
 const loadForgottenNotesSliceMock = vi.fn();
 const loadMissingNotesSliceMock = vi.fn();
+const loadMissingNoteTimelinePageMock = vi.fn();
 const loadSettingsViewSliceMock = vi.fn();
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
@@ -20,7 +21,8 @@ vi.mock('$lib/features/atlas/atlasStore.svelte', () => ({
 }));
 vi.mock('./loaders/forgottenLoader', () => ({
   loadForgottenNotesSlice: loadForgottenNotesSliceMock,
-  loadMissingNotesSlice: loadMissingNotesSliceMock
+  loadMissingNotesSlice: loadMissingNotesSliceMock,
+  loadMissingNoteTimelinePage: loadMissingNoteTimelinePageMock
 }));
 vi.mock('./loaders/settingsViewLoader', () => ({
   loadSettingsViewSlice: loadSettingsViewSliceMock
@@ -31,9 +33,11 @@ describe('SettingsStore actions', () => {
     invokeMock.mockReset();
     loadForgottenNotesSliceMock.mockReset();
     loadMissingNotesSliceMock.mockReset();
+    loadMissingNoteTimelinePageMock.mockReset();
     invokeMock.mockResolvedValue(undefined);
     loadForgottenNotesSliceMock.mockResolvedValue([]);
     loadMissingNotesSliceMock.mockResolvedValue([]);
+    loadMissingNoteTimelinePageMock.mockResolvedValue({ records: [], nextCursor: null });
     loadSettingsViewSliceMock.mockResolvedValue({
       historyHealth: {
         state: 'healthy',
@@ -131,6 +135,166 @@ describe('SettingsStore actions', () => {
     });
     expect(loadMissingNotesSliceMock).toHaveBeenCalledTimes(2);
     expect(store.isUpdatingMissingNotes).toBe(false);
+  });
+
+  it('loads older Missing Note history without replacing its recovery metadata', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    store.missingNotes = [
+      {
+        noteId: 'missing-note-1',
+        path: '/vault/Ideas.md',
+        title: 'Ideas',
+        fileName: 'Ideas.md',
+        missingAtMillis: 10,
+        retentionDays: 7,
+        purgeAtMillis: 20,
+        timeline: {
+          nextCursor: 'page-2',
+          records: [
+            {
+              kind: 'lifecycleEvent',
+              recordId: 'missing-event',
+              eventId: 'missing-event',
+              eventKind: 'missing',
+              occurredAtMillis: 10,
+              timelineOrdinal: 2,
+              previousPath: null,
+              path: '/vault/Ideas.md'
+            }
+          ]
+        }
+      }
+    ];
+    loadMissingNoteTimelinePageMock.mockResolvedValue({
+      nextCursor: null,
+      records: [
+        {
+          kind: 'revision',
+          recordId: 'revision-1',
+          revisionId: 'revision-1',
+          source: 'editor',
+          occurredAtMillis: 5,
+          timelineOrdinal: 1,
+          timeKind: 'committed',
+          modifiedAtMillis: null,
+          editingSessionId: null,
+          revisionLabel: 'Before deletion',
+          lineCount: 1,
+          characterCount: 4
+        }
+      ]
+    });
+
+    await store.loadMoreMissingNoteHistory('missing-note-1');
+
+    expect(loadMissingNoteTimelinePageMock).toHaveBeenCalledWith(
+      'missing-note-1',
+      'page-2'
+    );
+    expect(store.missingNotes[0]).toMatchObject({
+      path: '/vault/Ideas.md',
+      missingAtMillis: 10,
+      retentionDays: 7,
+      purgeAtMillis: 20
+    });
+    expect(store.missingNotes[0].timeline.records.map((record) => record.recordId)).toEqual([
+      'missing-event',
+      'revision-1'
+    ]);
+    expect(store.missingNotes[0].timeline.nextCursor).toBeNull();
+    expect(store.loadingMissingTimelineNoteId).toBeNull();
+  });
+
+  it('ignores an older Missing Note page when a later refresh replaces the timeline', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    store.missingNotes = [
+      {
+        noteId: 'missing-note-1',
+        path: '/vault/Ideas.md',
+        title: 'Ideas',
+        fileName: 'Ideas.md',
+        missingAtMillis: 10,
+        retentionDays: 7,
+        purgeAtMillis: 20,
+        timeline: { records: [], nextCursor: 'page-2' }
+      }
+    ];
+    let resolvePage!: (value: unknown) => void;
+    loadMissingNoteTimelinePageMock.mockImplementation(
+      () => new Promise((resolve) => (resolvePage = resolve))
+    );
+    loadMissingNotesSliceMock.mockResolvedValue([
+      {
+        ...store.missingNotes[0],
+        timeline: {
+          records: [
+            {
+              kind: 'lifecycleEvent',
+              recordId: 'refreshed-missing-event',
+              eventId: 'refreshed-missing-event',
+              eventKind: 'missing',
+              occurredAtMillis: 12,
+              timelineOrdinal: 3,
+              previousPath: null,
+              path: '/vault/Ideas.md'
+            }
+          ],
+          nextCursor: 'refreshed-page-2'
+        }
+      }
+    ]);
+
+    const paging = store.loadMoreMissingNoteHistory('missing-note-1');
+    await store.loadForgottenNotes();
+    resolvePage({
+      records: [
+        {
+          kind: 'revision',
+          recordId: 'stale-revision',
+          revisionId: 'stale-revision'
+        }
+      ],
+      nextCursor: null
+    });
+    await paging;
+
+    expect(store.missingNotes[0].timeline.records.map((record) => record.recordId)).toEqual([
+      'refreshed-missing-event'
+    ]);
+    expect(store.missingNotes[0].timeline.nextCursor).toBe('refreshed-page-2');
+    expect(store.loadingMissingTimelineNoteId).toBeNull();
+  });
+
+  it('ignores an older Missing Note page error after a later refresh succeeds', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    store.missingNotes = [
+      {
+        noteId: 'missing-note-1',
+        path: '/vault/Ideas.md',
+        title: 'Ideas',
+        fileName: 'Ideas.md',
+        missingAtMillis: 10,
+        retentionDays: 7,
+        purgeAtMillis: 20,
+        timeline: { records: [], nextCursor: 'page-2' }
+      }
+    ];
+    let rejectPage!: (reason: unknown) => void;
+    loadMissingNoteTimelinePageMock.mockImplementation(
+      () => new Promise((_, reject) => (rejectPage = reject))
+    );
+    loadMissingNotesSliceMock.mockResolvedValue(store.missingNotes);
+
+    const paging = store.loadMoreMissingNoteHistory('missing-note-1');
+    await store.loadForgottenNotes();
+    rejectPage(new Error('stale paging failure'));
+    await paging;
+
+    expect(store.missingActionError).toBeNull();
+    expect(store.loadingMissingTimelineNoteId).toBeNull();
   });
 
   it('routes Retry now through the focused semantic command adapter', async () => {

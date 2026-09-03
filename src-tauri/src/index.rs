@@ -306,8 +306,26 @@ impl AppState {
     }
 
     pub(crate) fn ensure_note_timeline_history_recovered(&self) -> Result<(), String> {
+        self.ensure_note_timeline_history_recovered_with_integrity(true)
+    }
+
+    /// Complete crash recovery without the vault-wide payload sweep. Bounded
+    /// readers verify every revision they return; health and write paths still
+    /// require and cache the exhaustive integrity attestation.
+    pub(crate) fn ensure_note_timeline_history_recovered_for_bounded_read(
+        &self,
+    ) -> Result<(), String> {
+        self.ensure_note_timeline_history_recovered_with_integrity(false)
+    }
+
+    fn ensure_note_timeline_history_recovered_with_integrity(
+        &self,
+        require_exhaustive_integrity: bool,
+    ) -> Result<(), String> {
         let mut recovered = self.lock_note_timeline_history_recovery()?;
-        crate::services::note_timeline::ensure_history_integrity_attested(self)?;
+        if require_exhaustive_integrity {
+            crate::services::note_timeline::ensure_history_integrity_attested(self)?;
+        }
         if *recovered {
             return Ok(());
         }

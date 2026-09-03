@@ -499,7 +499,7 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
     assert_contains_all(
         &history_store,
         &[
-            "use rusqlite::{params, Connection, OptionalExtension, Transaction};",
+            "use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};",
             "PRAGMA journal_mode=WAL;",
             "PRAGMA foreign_keys=ON;",
             "PRAGMA synchronous=FULL;",
@@ -517,6 +517,7 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
 fn history_mode_commands_use_only_the_role_limited_note_timeline_access() {
     let commands = repository_file("src-tauri/src/commands/history_commands.rs");
     let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let history_store = repository_file("src-tauri/src/services/note_timeline/history_store.rs");
     let lib = repository_file("src-tauri/src/lib.rs");
 
     assert_contains_all(
@@ -542,8 +543,22 @@ fn history_mode_commands_use_only_the_role_limited_note_timeline_access() {
         &lib,
         &[
             "commands::history_commands::get_note_history_page",
+            "commands::history_commands::get_missing_note_history_page",
             "commands::history_commands::get_note_history_revision",
         ],
+    );
+    let bounded_missing_page = history_store
+        .split("pub(super) fn bounded_timeline_page(")
+        .nth(1)
+        .and_then(|source| source.split("pub(super) fn current_path(").next())
+        .expect("bounded Missing Note paging implementation");
+    assert_contains_all(
+        bounded_missing_page,
+        &["record_count", "next_record.take()"],
+    );
+    assert_contains_none(
+        bounded_missing_page,
+        &["COUNT(", "fn revisions(", "fn lifecycle_events("],
     );
 }
 

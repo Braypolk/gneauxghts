@@ -564,9 +564,11 @@
           missingNotes={settings.missingNotes}
           isLoading={settings.isLoadingForgottenNotes}
           isUpdating={settings.isUpdatingMissingNotes}
+          loadingTimelineNoteId={settings.loadingMissingTimelineNoteId}
           actionMessage={settings.missingActionMessage}
           actionError={settings.missingActionError}
           loadMissingNotes={settings.loadForgottenNotes}
+          loadMoreHistory={settings.loadMoreMissingNoteHistory}
           recoverMissingNote={settings.recoverMissingNote}
           deleteMissingNote={settings.deleteMissingNote}
           {formatTimestamp}

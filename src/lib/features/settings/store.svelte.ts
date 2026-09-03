@@ -9,6 +9,7 @@ import type {
   RestoredForgottenNote
 } from '$lib/types/forgottenNotes';
 import type { MissingNoteSummary, RecoveredMissingNote } from '$lib/types/missingNotes';
+import { compareHistoryRecordsNewestFirst } from '$lib/features/history/historyModeMachine';
 import type { VaultFolderInfo, VaultInfo } from '$lib/types/vault';
 import type { HistoryHealthReport } from '$lib/types/history';
 import type {
@@ -21,7 +22,11 @@ import {
   refreshSettingsAfterVaultChange,
   refreshSettingsForVisibility
 } from './refreshCoordinator';
-import { loadForgottenNotesSlice, loadMissingNotesSlice } from './loaders/forgottenLoader';
+import {
+  loadForgottenNotesSlice,
+  loadMissingNoteTimelinePage,
+  loadMissingNotesSlice
+} from './loaders/forgottenLoader';
 import {
   loadSemanticSlice,
   loadSemanticStatusSlice,
@@ -87,6 +92,7 @@ export class SettingsStore {
   forgottenActionMessage = $state<string | null>(null);
   forgottenActionError = $state<string | null>(null);
   isUpdatingMissingNotes = $state(false);
+  loadingMissingTimelineNoteId = $state<string | null>(null);
   missingActionMessage = $state<string | null>(null);
   missingActionError = $state<string | null>(null);
   isSaving = $state(false);
@@ -99,6 +105,7 @@ export class SettingsStore {
   #semanticStatusRequest: Promise<void> | null = null;
   #semanticStateRequest: Promise<void> | null = null;
   #forgottenNotesRequest: Promise<void> | null = null;
+  #missingNotesGeneration = 0;
   #disposeVaultNoteChanged: (() => void) | null = null;
   #disposeSemanticStatus: (() => void) | null = null;
 
@@ -344,6 +351,7 @@ export class SettingsStore {
     }
 
     this.isLoadingForgottenNotes = true;
+    const missingNotesGeneration = ++this.#missingNotesGeneration;
 
     this.#forgottenNotesRequest = (async () => {
       try {
@@ -352,7 +360,9 @@ export class SettingsStore {
           loadMissingNotesSlice()
         ]);
         this.forgottenNotes = forgottenNotes;
-        this.missingNotes = missingNotes;
+        if (missingNotesGeneration === this.#missingNotesGeneration) {
+          this.missingNotes = missingNotes;
+        }
         this.selectedForgottenPaths = this.selectedForgottenPaths.filter((path) =>
           forgottenNotes.some((note) => note.forgottenPath === path)
         );
@@ -482,6 +492,39 @@ export class SettingsStore {
       await this.loadForgottenNotes();
     } finally {
       this.isUpdatingMissingNotes = false;
+    }
+  };
+
+  loadMoreMissingNoteHistory = async (noteId: string) => {
+    const missing = this.missingNotes.find((note) => note.noteId === noteId);
+    const cursor = missing?.timeline.nextCursor;
+    if (!missing || !cursor || this.loadingMissingTimelineNoteId) return;
+
+    this.loadingMissingTimelineNoteId = noteId;
+    const missingNotesGeneration = this.#missingNotesGeneration;
+    this.missingActionError = null;
+    try {
+      const page = await loadMissingNoteTimelinePage(noteId, cursor);
+      if (missingNotesGeneration !== this.#missingNotesGeneration) return;
+      const current = this.missingNotes.find((note) => note.noteId === noteId);
+      if (!current || current.timeline.nextCursor !== cursor) return;
+      const recordsById = new Map(
+        current.timeline.records.map((record) => [record.recordId, record])
+      );
+      for (const record of page.records) recordsById.set(record.recordId, record);
+      const timeline = {
+        records: [...recordsById.values()].sort(compareHistoryRecordsNewestFirst),
+        nextCursor: page.nextCursor
+      };
+      this.missingNotes = this.missingNotes.map((note) =>
+        note.noteId === noteId ? { ...note, timeline } : note
+      );
+    } catch (error) {
+      if (missingNotesGeneration !== this.#missingNotesGeneration) return;
+      console.error('Failed to load older Missing Note history:', error);
+      this.missingActionError = String(error);
+    } finally {
+      this.loadingMissingTimelineNoteId = null;
     }
   };
 

@@ -13,7 +13,7 @@ use super::{
     VaultObservationSource, BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
 };
 use rusqlite::OpenFlags;
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{Deserialize, Serialize};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
 use std::{
@@ -28,7 +28,7 @@ const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_OBSERVATIONS_FILE_NAME: &str = "note-timeline-history-observations.json";
 pub(super) const HISTORY_FORMAT: &str = "sqlite-v1";
 pub(super) const INITIAL_HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 8;
+const HISTORY_SCHEMA_VERSION: u64 = 9;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -217,6 +217,21 @@ pub(super) fn replace_revision_source(note_id: &NoteIdentity, source: &str) {
             params![source, note_id.as_str()],
         )
         .expect("replace stored revision source");
+}
+
+#[cfg(test)]
+pub(super) fn replace_one_revision_source(
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+    source: &str,
+) {
+    open_store()
+        .expect("open history store")
+        .execute(
+            "UPDATE revisions SET source = ?1 WHERE note_id = ?2 AND revision_id = ?3",
+            params![source, note_id.as_str(), revision_id.0],
+        )
+        .expect("replace one stored revision source");
 }
 
 #[cfg(test)]
@@ -1178,6 +1193,7 @@ fn append_baseline_if_absent(
             result_hash: &result_hash,
             intent_id: None,
             path,
+            record_count: head.as_ref().map_or(1, |head| head.record_count + 1),
         },
     )?;
     Ok(true)
@@ -1220,6 +1236,7 @@ pub(super) fn record_external_revision(
             result_hash: &result_hash,
             intent_id: None,
             path,
+            record_count: head.as_ref().map_or(1, |head| head.record_count + 1),
         },
     )?;
     transaction.commit().map_err(|error| error.to_string())
@@ -1323,20 +1340,23 @@ fn record_observed_lifecycle_event_with_missing_record(
     transaction
         .execute(
             "INSERT INTO timeline_heads (
-               note_id, record_kind, record_id, revision_id, result_hash, current_path
-             ) VALUES (?1, 'lifecycleEvent', ?2, ?3, ?4, ?5)
+               note_id, record_kind, record_id, revision_id, result_hash, current_path,
+               record_count
+             ) VALUES (?1, 'lifecycleEvent', ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(note_id) DO UPDATE SET
                record_kind = excluded.record_kind,
                record_id = excluded.record_id,
                revision_id = excluded.revision_id,
                result_hash = excluded.result_hash,
-               current_path = excluded.current_path",
+               current_path = excluded.current_path,
+               record_count = excluded.record_count",
             params![
                 note_id.as_str(),
                 event_id,
                 head.as_ref().and_then(|value| value.revision_id.as_deref()),
                 head.as_ref().and_then(|value| value.result_hash.as_deref()),
                 path.to_string_lossy().into_owned(),
+                head.as_ref().map_or(1, |head| head.record_count + 1),
             ],
         )
         .map_err(|error| error.to_string())?;
@@ -1447,6 +1467,7 @@ struct RevisionAppend<'a> {
     result_hash: &'a str,
     intent_id: Option<&'a str>,
     path: &'a Path,
+    record_count: usize,
 }
 
 fn append_revision(
@@ -1547,19 +1568,22 @@ fn append_revision(
     transaction
         .execute(
             "INSERT INTO timeline_heads (
-               note_id, record_kind, record_id, revision_id, result_hash, current_path
-             ) VALUES (?1, 'revision', ?2, ?2, ?3, ?4)
+               note_id, record_kind, record_id, revision_id, result_hash, current_path,
+               record_count
+             ) VALUES (?1, 'revision', ?2, ?2, ?3, ?4, ?5)
              ON CONFLICT(note_id) DO UPDATE SET
                record_kind = excluded.record_kind,
                record_id = excluded.record_id,
                revision_id = excluded.revision_id,
                result_hash = excluded.result_hash,
-               current_path = excluded.current_path",
+               current_path = excluded.current_path,
+               record_count = excluded.record_count",
             params![
                 append.note_id,
                 append.revision_id,
                 append.result_hash,
                 append.path.to_string_lossy().into_owned(),
+                append.record_count,
             ],
         )
         .map_err(|error| error.to_string())?;
@@ -1742,6 +1766,116 @@ pub(super) fn clear_baseline_initialization_failure(note_id: &NoteIdentity) -> R
     Ok(())
 }
 
+struct StoredRevisionHeader {
+    revision_id: String,
+    predecessor_kind: Option<String>,
+    predecessor_id: Option<String>,
+    source: String,
+    base_revision_id: Option<String>,
+    known_since_millis: Option<u64>,
+    committed_at_millis: Option<u64>,
+    observed_at_millis: Option<u64>,
+    modified_at_millis: Option<u64>,
+    payload_version: i64,
+    content_hash: String,
+}
+
+impl StoredRevisionHeader {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            revision_id: row.get(0)?,
+            predecessor_kind: row.get(1)?,
+            predecessor_id: row.get(2)?,
+            source: row.get(3)?,
+            base_revision_id: row.get(4)?,
+            known_since_millis: row.get(5)?,
+            committed_at_millis: row.get(6)?,
+            observed_at_millis: row.get(7)?,
+            modified_at_millis: row.get(8)?,
+            payload_version: row.get(9)?,
+            content_hash: row.get(10)?,
+        })
+    }
+
+    fn into_domain(
+        self,
+        note_id: &NoteIdentity,
+    ) -> Result<(Option<String>, NoteRevisionHeader), String> {
+        let source = MutationSource::from_storage_value(&self.source)
+            .ok_or_else(|| format!("Unknown stored Mutation Source `{}`", self.source))?;
+        let time_evidence = match (
+            self.known_since_millis,
+            self.committed_at_millis,
+            self.observed_at_millis,
+        ) {
+            (Some(known_since_millis), None, None) => {
+                RevisionTimeEvidence::Baseline { known_since_millis }
+            }
+            (None, Some(committed_at_millis), None) => RevisionTimeEvidence::Committed {
+                committed_at_millis,
+            },
+            (None, None, Some(observed_at_millis)) => RevisionTimeEvidence::Observed {
+                observed_at_millis,
+                modified_at_millis: self.modified_at_millis,
+            },
+            _ => return Err("Stored Note Revision has invalid time evidence".to_string()),
+        };
+        Ok((
+            self.base_revision_id,
+            NoteRevisionHeader {
+                identity: RevisionIdentity::from_persisted(self.revision_id),
+                note_identity: note_id.clone(),
+                predecessor: parse_record_identity(self.predecessor_kind, self.predecessor_id)?,
+                payload_version: parse_payload_version(self.payload_version)?,
+                source,
+                time_evidence,
+                content_hash: self.content_hash,
+            },
+        ))
+    }
+}
+
+struct StoredLifecycleHeader {
+    event_id: String,
+    predecessor_kind: Option<String>,
+    predecessor_id: Option<String>,
+    kind: String,
+    occurred_at_millis: u64,
+    previous_path: Option<String>,
+    path: Option<String>,
+    payload_version: i64,
+}
+
+impl StoredLifecycleHeader {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            event_id: row.get(0)?,
+            predecessor_kind: row.get(1)?,
+            predecessor_id: row.get(2)?,
+            kind: row.get(3)?,
+            occurred_at_millis: row.get(4)?,
+            previous_path: row.get(5)?,
+            path: row.get(6)?,
+            payload_version: row.get(7)?,
+        })
+    }
+
+    fn into_domain(self, note_id: &NoteIdentity) -> Result<LifecycleEventHeader, String> {
+        let kind = LifecycleEventKind::from_storage_value(&self.kind)
+            .ok_or_else(|| format!("Unknown stored Lifecycle Event Kind `{}`", self.kind))?;
+        Ok(LifecycleEventHeader {
+            identity: LifecycleEventIdentity::from_persisted(self.event_id),
+            note_identity: note_id.clone(),
+            predecessor: parse_record_identity(self.predecessor_kind, self.predecessor_id)?,
+            payload_version: parse_payload_version(self.payload_version)?,
+            kind,
+            occurred_at_millis: self.occurred_at_millis,
+            previous_path: self.previous_path.map(PathBuf::from),
+            path: self.path.map(PathBuf::from),
+        })
+    }
+}
+
 pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader>, String> {
     let connection = open_store()?;
     let mut statement = connection
@@ -1753,78 +1887,151 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
         )
         .map_err(|error| error.to_string())?;
     let revisions = statement
-        .query_map(params![note_id.as_str()], |row| {
-            let predecessor_kind = row.get::<_, Option<String>>(1)?;
-            let predecessor_id = row.get::<_, Option<String>>(2)?;
-            Ok((
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(0)?,
-                predecessor_kind,
-                predecessor_id,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<u64>>(5)?,
-                row.get::<_, Option<u64>>(6)?,
-                row.get::<_, Option<u64>>(7)?,
-                row.get::<_, Option<u64>>(8)?,
-                row.get::<_, i64>(9)?,
-                row.get::<_, String>(10)?,
-            ))
-        })
+        .query_map(params![note_id.as_str()], StoredRevisionHeader::from_row)
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?
         .into_iter()
-        .map(
-            |(
-                base,
-                revision_id,
-                predecessor_kind,
-                predecessor_id,
-                source,
-                known_since_millis,
-                committed_at_millis,
-                observed_at_millis,
-                modified_at_millis,
-                payload_version,
-                content_hash,
-            )| {
-                let source = MutationSource::from_storage_value(&source)
-                    .ok_or_else(|| format!("Unknown stored Mutation Source `{source}`"))?;
-                let payload_version = parse_payload_version(payload_version)?;
-                let time_evidence =
-                    match (known_since_millis, committed_at_millis, observed_at_millis) {
-                        (Some(known_since_millis), None, None) => {
-                            RevisionTimeEvidence::Baseline { known_since_millis }
-                        }
-                        (None, Some(committed_at_millis), None) => {
-                            RevisionTimeEvidence::Committed {
-                                committed_at_millis,
-                            }
-                        }
-                        (None, None, Some(observed_at_millis)) => RevisionTimeEvidence::Observed {
-                            observed_at_millis,
-                            modified_at_millis,
-                        },
-                        _ => {
-                            return Err("Stored Note Revision has invalid time evidence".to_string())
-                        }
-                    };
+        .map(|stored| stored.into_domain(note_id))
+        .collect::<Result<Vec<_>, String>>()?;
+    order_revision_chain(revisions)
+}
+
+/// One storage-neutral timeline record loaded by following the durable
+/// predecessor chain. A page never materializes headers outside its bound.
+pub(super) enum BoundedTimelineRecord {
+    Revision {
+        header: NoteRevisionHeader,
+        label: Option<String>,
+    },
+    LifecycleEvent(LifecycleEventHeader),
+}
+
+pub(super) struct BoundedTimelinePage {
+    pub(super) records: Vec<BoundedTimelineRecord>,
+    pub(super) next_record: Option<TimelineRecordIdentity>,
+    pub(super) total_records: usize,
+}
+
+pub(super) enum BoundedTimelinePageRead {
+    Page(BoundedTimelinePage),
+    CursorUnavailable,
+}
+
+fn bounded_revision_record(
+    connection: &Connection,
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+) -> Result<Option<BoundedTimelineRecord>, String> {
+    let stored = connection
+        .query_row(
+            "SELECT revisions.revision_id, revisions.predecessor_kind,
+                    revisions.predecessor_id, revisions.source, revisions.base_revision_id,
+                    revisions.known_since_millis, revisions.committed_at_millis,
+                    revisions.observed_at_millis, revisions.modified_at_millis,
+                    revisions.payload_version, revisions.result_hash,
+                    (SELECT label FROM named_revision_labels labels
+                     WHERE labels.revision_id = revisions.revision_id
+                     ORDER BY labels.label_id LIMIT 1)
+             FROM revisions
+             WHERE revisions.note_id = ?1 AND revisions.revision_id = ?2",
+            params![note_id.as_str(), revision_id.0],
+            |row| Ok((StoredRevisionHeader::from_row(row)?, row.get(11)?)),
+        )
+        .optional()
+        .map_err(|error| format!("Read bounded Note Revision header: {error}"))?;
+    let Some((stored, label)) = stored else {
+        return Ok(None);
+    };
+    let (_, header) = stored.into_domain(note_id)?;
+    Ok(Some(BoundedTimelineRecord::Revision { header, label }))
+}
+
+fn bounded_lifecycle_record(
+    connection: &Connection,
+    note_id: &NoteIdentity,
+    event_id: &LifecycleEventIdentity,
+) -> Result<Option<BoundedTimelineRecord>, String> {
+    let stored = connection
+        .query_row(
+            "SELECT event_id, predecessor_kind, predecessor_id, kind, occurred_at_millis,
+                    previous_path, path, payload_version
+             FROM lifecycle_events WHERE note_id = ?1 AND event_id = ?2",
+            params![note_id.as_str(), event_id.0],
+            StoredLifecycleHeader::from_row,
+        )
+        .optional()
+        .map_err(|error| format!("Read bounded Lifecycle Event header: {error}"))?;
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
+    Ok(Some(BoundedTimelineRecord::LifecycleEvent(
+        stored.into_domain(note_id)?,
+    )))
+}
+
+pub(super) fn bounded_timeline_page(
+    note_id: &NoteIdentity,
+    start: Option<TimelineRecordIdentity>,
+    limit: usize,
+) -> Result<BoundedTimelinePageRead, String> {
+    let connection = open_store()?;
+    let page_size = limit.clamp(1, 100);
+    let head = connection
+        .query_row(
+            "SELECT record_kind, record_id, record_count
+             FROM timeline_heads WHERE note_id = ?1",
+            params![note_id.as_str()],
+            |row| {
                 Ok((
-                    base,
-                    NoteRevisionHeader {
-                        identity: RevisionIdentity::from_persisted(revision_id),
-                        note_identity: note_id.clone(),
-                        predecessor: parse_record_identity(predecessor_kind, predecessor_id)?,
-                        payload_version,
-                        source,
-                        time_evidence,
-                        content_hash,
-                    },
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, usize>(2)?,
                 ))
             },
         )
-        .collect::<Result<Vec<_>, String>>()?;
-    order_revision_chain(revisions)
+        .optional()
+        .map_err(|error| format!("Read bounded Note Timeline head: {error}"))?;
+    let total_records = head.as_ref().map_or(0, |(_, _, count)| *count);
+    let is_continuation = start.is_some();
+    let mut next_record = match start {
+        Some(start) => Some(start),
+        None => head
+            .map(|(kind, identity, _)| parse_record_identity(Some(kind), Some(identity)))
+            .transpose()?
+            .flatten(),
+    };
+    let mut records = Vec::with_capacity(page_size);
+    for _ in 0..page_size {
+        let Some(identity) = next_record.take() else {
+            break;
+        };
+        let record = match &identity {
+            TimelineRecordIdentity::Revision(revision_id) => {
+                bounded_revision_record(&connection, note_id, revision_id)?
+            }
+            TimelineRecordIdentity::LifecycleEvent(event_id) => {
+                bounded_lifecycle_record(&connection, note_id, event_id)?
+            }
+        };
+        let Some(record) = record else {
+            return if is_continuation && records.is_empty() {
+                Ok(BoundedTimelinePageRead::CursorUnavailable)
+            } else {
+                Err("Note Timeline record lineage is missing or disconnected".to_string())
+            };
+        };
+        next_record = match &record {
+            BoundedTimelineRecord::Revision { header, .. } => header.predecessor.clone(),
+            BoundedTimelineRecord::LifecycleEvent(event) => event.predecessor.clone(),
+        };
+        records.push(record);
+    }
+    Ok(BoundedTimelinePageRead::Page(BoundedTimelinePage {
+        records,
+        next_record,
+        total_records,
+    }))
 }
 
 pub(super) fn current_path(note_id: &NoteIdentity) -> Result<Option<PathBuf>, String> {
@@ -1917,49 +2124,12 @@ pub(super) fn lifecycle_events(
         )
         .map_err(|error| error.to_string())?;
     let events = statement
-        .query_map(params![note_id.as_str()], |row| {
-            let predecessor_kind = row.get::<_, Option<String>>(1)?;
-            let predecessor_id = row.get::<_, Option<String>>(2)?;
-            Ok((
-                row.get::<_, String>(0)?,
-                predecessor_kind,
-                predecessor_id,
-                row.get::<_, String>(3)?,
-                row.get::<_, u64>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, i64>(7)?,
-            ))
-        })
+        .query_map(params![note_id.as_str()], StoredLifecycleHeader::from_row)
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?
         .into_iter()
-        .map(
-            |(
-                event_id,
-                predecessor_kind,
-                predecessor_id,
-                kind,
-                occurred_at_millis,
-                previous_path,
-                path,
-                payload_version,
-            )| {
-                let kind = LifecycleEventKind::from_storage_value(&kind)
-                    .ok_or_else(|| format!("Unknown stored Lifecycle Event Kind `{kind}`"))?;
-                Ok(LifecycleEventHeader {
-                    identity: LifecycleEventIdentity::from_persisted(event_id),
-                    note_identity: note_id.clone(),
-                    predecessor: parse_record_identity(predecessor_kind, predecessor_id)?,
-                    payload_version: parse_payload_version(payload_version)?,
-                    kind,
-                    occurred_at_millis,
-                    previous_path: previous_path.map(PathBuf::from),
-                    path: path.map(PathBuf::from),
-                })
-            },
-        )
+        .map(|stored| stored.into_domain(note_id))
         .collect::<Result<Vec<_>, String>>()?;
     Ok(events)
 }
@@ -3244,7 +3414,7 @@ fn open_store() -> Result<Connection, String> {
                         migrate_schema_five_storage(&connection)?;
                     }
                     6 => authorize_legacy_portability_migration(&manifest)?,
-                    7 => {}
+                    7 | 8 => {}
                     HISTORY_SCHEMA_VERSION => {}
                     _ => return Err("Note Timeline history store schema mismatch".to_string()),
                 }
@@ -3392,7 +3562,8 @@ fn open_store() -> Result<Connection, String> {
                record_id TEXT NOT NULL,
                revision_id TEXT,
                result_hash TEXT,
-               current_path TEXT NOT NULL
+               current_path TEXT NOT NULL,
+               record_count INTEGER NOT NULL
              );
              CREATE INDEX IF NOT EXISTS timeline_heads_by_current_path
                ON timeline_heads(current_path);
@@ -3443,6 +3614,9 @@ fn open_store() -> Result<Connection, String> {
     }
     if matches!(schema, Some(5 | 6 | 7)) {
         migrate_schema_eight_missing_notes(&connection)?;
+    }
+    if matches!(schema, Some(5 | 6 | 7 | 8)) {
+        migrate_schema_nine_timeline_counts(&connection)?;
     }
     configure_wal_bounds(&connection)?;
     let metadata = connection
@@ -3615,9 +3789,50 @@ fn migrate_schema_eight_missing_notes(connection: &Connection) -> Result<(), Str
     connection
         .execute(
             "UPDATE history_metadata SET schema_version = ?1 WHERE singleton = 1",
-            params![HISTORY_SCHEMA_VERSION],
+            params![8],
         )
         .map_err(|error| format!("Record Missing Note schema migration: {error}"))?;
+    Ok(())
+}
+
+fn migrate_schema_nine_timeline_counts(connection: &Connection) -> Result<(), String> {
+    let has_record_count = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(timeline_heads)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        columns.iter().any(|column| column == "record_count")
+    };
+    if !has_record_count {
+        connection
+            .execute(
+                "ALTER TABLE timeline_heads ADD COLUMN record_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| format!("Add Note Timeline head record counts: {error}"))?;
+    }
+    connection
+        .execute(
+            "UPDATE timeline_heads
+             SET record_count =
+               (SELECT COUNT(*) FROM revisions
+                WHERE revisions.note_id = timeline_heads.note_id)
+               +
+               (SELECT COUNT(*) FROM lifecycle_events
+                WHERE lifecycle_events.note_id = timeline_heads.note_id)",
+            [],
+        )
+        .map_err(|error| format!("Backfill Note Timeline head record counts: {error}"))?;
+    connection
+        .execute(
+            "UPDATE history_metadata SET schema_version = ?1 WHERE singleton = 1",
+            params![HISTORY_SCHEMA_VERSION],
+        )
+        .map_err(|error| format!("Record Note Timeline paging migration: {error}"))?;
     Ok(())
 }
 
@@ -3869,6 +4084,7 @@ fn finalize_intent(
     let head = load_head(&transaction, &intent.note_id)?;
     let content_is_unchanged = head.as_ref().and_then(|head| head.result_hash.as_deref())
         == Some(intent.result_hash.as_str());
+    let mut record_count = head.as_ref().map_or(0, |head| head.record_count);
 
     let occurred_at = intent.committed_at_millis;
     let mut predecessor = head
@@ -3902,16 +4118,19 @@ fn finalize_intent(
                 ],
             )
             .map_err(|error| error.to_string())?;
+        record_count += 1;
         predecessor = Some(("lifecycleEvent".to_string(), event_id.clone()));
         if content_is_unchanged {
             transaction
                 .execute(
                     "UPDATE timeline_heads
-                     SET record_kind = 'lifecycleEvent', record_id = ?1, current_path = ?2
-                     WHERE note_id = ?3",
+                     SET record_kind = 'lifecycleEvent', record_id = ?1, current_path = ?2,
+                         record_count = ?3
+                     WHERE note_id = ?4",
                     params![
                         event_id,
                         intent.target_path.to_string_lossy().into_owned(),
+                        record_count,
                         intent.note_id,
                     ],
                 )
@@ -3919,7 +4138,7 @@ fn finalize_intent(
         }
     }
     if let Some(event_id) = intent.lifecycle_event_id.as_deref() {
-        transaction
+        let inserted = transaction
             .execute(
                 "INSERT OR IGNORE INTO lifecycle_events (
                    event_id, note_id, predecessor_kind, predecessor_id, kind,
@@ -3935,6 +4154,7 @@ fn finalize_intent(
                 ],
             )
             .map_err(|error| error.to_string())?;
+        record_count += inserted;
         predecessor = Some(("lifecycleEvent".to_string(), event_id.to_string()));
     }
 
@@ -3968,6 +4188,7 @@ fn finalize_intent(
             result_hash: &intent.result_hash,
             intent_id: Some(intent_id),
             path: &intent.target_path,
+            record_count: record_count + 1,
         },
     )?;
     transaction
@@ -4003,6 +4224,7 @@ struct TimelineHead {
     revision_id: Option<String>,
     result_hash: Option<String>,
     current_path: PathBuf,
+    record_count: usize,
 }
 
 fn load_intent(transaction: &Transaction<'_>, intent_id: &str) -> Result<PreparedIntent, String> {
@@ -4032,7 +4254,7 @@ fn load_intent(transaction: &Transaction<'_>, intent_id: &str) -> Result<Prepare
 fn load_head(transaction: &Transaction<'_>, note_id: &str) -> Result<Option<TimelineHead>, String> {
     transaction
         .query_row(
-            "SELECT record_kind, record_id, revision_id, result_hash, current_path
+            "SELECT record_kind, record_id, revision_id, result_hash, current_path, record_count
              FROM timeline_heads WHERE note_id = ?1",
             params![note_id],
             |row| {
@@ -4042,6 +4264,7 @@ fn load_head(transaction: &Transaction<'_>, note_id: &str) -> Result<Option<Time
                     revision_id: row.get(2)?,
                     result_hash: row.get(3)?,
                     current_path: PathBuf::from(row.get::<_, String>(4)?),
+                    record_count: row.get(5)?,
                 })
             },
         )

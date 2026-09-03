@@ -230,6 +230,7 @@ pub fn run() {
             commands::get_history_health,
             commands::get_note_history_health,
             commands::history_commands::get_note_history_page,
+            commands::history_commands::get_missing_note_history_page,
             commands::history_commands::get_note_history_revision,
             commands::history_commands::get_note_history_diff,
             commands::history_commands::preview_note_revision_restore,

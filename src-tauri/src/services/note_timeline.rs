@@ -11,6 +11,7 @@ use crate::{
     index::{build_indexed_note, AppState, NoteTimelineIntegrityAttestation},
     path_utils::{collect_markdown_files_recursively, unique_path_in_dir},
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_SAFE, Engine as _};
 use serde::{Deserialize, Serialize};
 use similar::{capture_diff_slices, Algorithm, DiffOp};
 use std::{
@@ -1854,11 +1855,153 @@ fn authored_content_counts(revision: &ReconstructedNoteRevision) -> (usize, usiz
     )
 }
 
+fn project_revision_header(
+    revision: NoteRevisionHeader,
+    revision_label: Option<String>,
+    timeline_ordinal: usize,
+    counts: (usize, usize),
+) -> HistoryModeRecord {
+    let revision_id = revision.identity.0;
+    let (occurred_at_millis, time_kind, modified_at_millis) = match revision.time_evidence {
+        RevisionTimeEvidence::Baseline { known_since_millis } => (
+            known_since_millis,
+            HistoryModeRevisionTimeKind::KnownSince,
+            None,
+        ),
+        RevisionTimeEvidence::Committed {
+            committed_at_millis,
+        } => (
+            committed_at_millis,
+            HistoryModeRevisionTimeKind::Committed,
+            None,
+        ),
+        RevisionTimeEvidence::Observed {
+            observed_at_millis,
+            modified_at_millis,
+        } => (
+            observed_at_millis,
+            HistoryModeRevisionTimeKind::Observed,
+            modified_at_millis,
+        ),
+    };
+    HistoryModeRecord::Revision {
+        record_id: revision_id.clone(),
+        revision_id,
+        source: revision.source,
+        occurred_at_millis,
+        timeline_ordinal,
+        time_kind,
+        modified_at_millis,
+        editing_session_id: None,
+        revision_label,
+        line_count: counts.0,
+        character_count: counts.1,
+    }
+}
+
+fn project_lifecycle_header(
+    event: LifecycleEventHeader,
+    timeline_ordinal: usize,
+) -> HistoryModeRecord {
+    let event_id = event.identity.0;
+    HistoryModeRecord::LifecycleEvent {
+        record_id: event_id.clone(),
+        event_id,
+        event_kind: event.kind,
+        occurred_at_millis: event.occurred_at_millis,
+        timeline_ordinal,
+        previous_path: event
+            .previous_path
+            .map(|path| path.to_string_lossy().into_owned()),
+        path: event.path.map(|path| path.to_string_lossy().into_owned()),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryModePage {
     records: Vec<HistoryModeRecord>,
     next_cursor: Option<String>,
+}
+
+const MISSING_HISTORY_CURSOR_VERSION: u8 = 1;
+pub(crate) const MISSING_HISTORY_CURSOR_ERROR: &str =
+    "Missing Note history continuation is stale or belongs to another Note Timeline";
+
+/// Opaque continuation bound to one vault generation and Note Timeline. It
+/// names the next predecessor directly, so it remains valid across restart.
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MissingHistoryCursor {
+    version: u8,
+    vault_id: String,
+    history_generation: u64,
+    note_id: String,
+    next_record_kind: MissingHistoryCursorRecordKind,
+    next_record_id: String,
+    next_timeline_ordinal: usize,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum MissingHistoryCursorRecordKind {
+    Revision,
+    LifecycleEvent,
+}
+
+impl MissingHistoryCursor {
+    fn decode(encoded: &str) -> Result<Self, String> {
+        let bytes = BASE64_URL_SAFE
+            .decode(encoded)
+            .map_err(|_| MISSING_HISTORY_CURSOR_ERROR.to_string())?;
+        serde_json::from_slice(&bytes).map_err(|_| MISSING_HISTORY_CURSOR_ERROR.to_string())
+    }
+
+    fn encode(&self) -> Result<String, String> {
+        serde_json::to_vec(self)
+            .map(|bytes| BASE64_URL_SAFE.encode(bytes))
+            .map_err(|error| format!("Encode Missing Note history continuation: {error}"))
+    }
+
+    fn record_identity(&self) -> TimelineRecordIdentity {
+        match self.next_record_kind {
+            MissingHistoryCursorRecordKind::Revision => TimelineRecordIdentity::Revision(
+                RevisionIdentity::from_persisted(self.next_record_id.clone()),
+            ),
+            MissingHistoryCursorRecordKind::LifecycleEvent => {
+                TimelineRecordIdentity::LifecycleEvent(LifecycleEventIdentity::from_persisted(
+                    self.next_record_id.clone(),
+                ))
+            }
+        }
+    }
+
+    fn for_record(
+        note_id: &NoteIdentity,
+        vault_id: &str,
+        history_generation: u64,
+        record: &TimelineRecordIdentity,
+        next_timeline_ordinal: usize,
+    ) -> Self {
+        let (next_record_kind, next_record_id) = match record {
+            TimelineRecordIdentity::Revision(identity) => {
+                (MissingHistoryCursorRecordKind::Revision, identity.0.clone())
+            }
+            TimelineRecordIdentity::LifecycleEvent(identity) => (
+                MissingHistoryCursorRecordKind::LifecycleEvent,
+                identity.0.clone(),
+            ),
+        };
+        Self {
+            version: MISSING_HISTORY_CURSOR_VERSION,
+            vault_id: vault_id.to_string(),
+            history_generation,
+            note_id: note_id.as_str().to_string(),
+            next_record_kind,
+            next_record_id,
+            next_timeline_ordinal,
+        }
+    }
 }
 
 impl HistoryModePage {
@@ -1868,11 +2011,6 @@ impl HistoryModePage {
 
     pub(crate) fn next_cursor(&self) -> Option<&str> {
         self.next_cursor.as_deref()
-    }
-
-    pub(crate) fn append(&mut self, page: Self) {
-        self.records.extend(page.records);
-        self.next_cursor = page.next_cursor;
     }
 }
 
@@ -2250,62 +2388,20 @@ impl HistoryModeAccess<'_> {
         let mut projected_records = Vec::with_capacity(revisions.len() + lifecycle_events.len());
         for revision in revisions {
             let revision_id = revision.identity.0.clone();
-            let (occurred_at_millis, time_kind, modified_at_millis) = match revision.time_evidence {
-                RevisionTimeEvidence::Baseline { known_since_millis } => (
-                    known_since_millis,
-                    HistoryModeRevisionTimeKind::KnownSince,
-                    None,
-                ),
-                RevisionTimeEvidence::Committed {
-                    committed_at_millis,
-                } => (
-                    committed_at_millis,
-                    HistoryModeRevisionTimeKind::Committed,
-                    None,
-                ),
-                RevisionTimeEvidence::Observed {
-                    observed_at_millis,
-                    modified_at_millis,
-                } => (
-                    observed_at_millis,
-                    HistoryModeRevisionTimeKind::Observed,
-                    modified_at_millis,
-                ),
-            };
             let predecessor_id = revision.predecessor.as_ref().map(record_identity_value);
             projected_records.push((
-                HistoryModeRecord::Revision {
-                    record_id: revision_id.clone(),
-                    revision_id: revision_id.clone(),
-                    source: revision.source,
-                    occurred_at_millis,
-                    timeline_ordinal: 0,
-                    time_kind,
-                    modified_at_millis,
-                    editing_session_id: None,
-                    revision_label: revision_labels.get(&revision_id).cloned(),
-                    line_count: 0,
-                    character_count: 0,
-                },
+                project_revision_header(
+                    revision,
+                    revision_labels.get(&revision_id).cloned(),
+                    0,
+                    (0, 0),
+                ),
                 predecessor_id,
             ));
         }
         projected_records.extend(lifecycle_events.into_iter().map(|event| {
             let predecessor_id = event.predecessor.as_ref().map(record_identity_value);
-            (
-                HistoryModeRecord::LifecycleEvent {
-                    record_id: event.identity.0.clone(),
-                    event_id: event.identity.0,
-                    event_kind: event.kind,
-                    occurred_at_millis: event.occurred_at_millis,
-                    timeline_ordinal: 0,
-                    previous_path: event
-                        .previous_path
-                        .map(|path| path.to_string_lossy().into_owned()),
-                    path: event.path.map(|path| path.to_string_lossy().into_owned()),
-                },
-                predecessor_id,
-            )
+            (project_lifecycle_header(event, 0), predecessor_id)
         }));
         let records = order_history_mode_records(projected_records)?;
 
@@ -4232,7 +4328,8 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn missing_notes(&self) -> Result<Vec<MissingNoteRecord>, String> {
         let _operation = self.state.begin_note_timeline_operation()?;
         self.recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        self.state
+            .ensure_note_timeline_history_recovered_for_bounded_read()?;
         history_store::missing_notes()
     }
 
@@ -4244,15 +4341,88 @@ impl<'a> NoteTimeline<'a> {
     ) -> Result<HistoryModePage, String> {
         let _operation = self.state.begin_note_timeline_operation()?;
         self.recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        self.state
+            .ensure_note_timeline_history_recovered_for_bounded_read()?;
+        let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
+            .ok_or_else(|| "Missing Note history requires a vault manifest".to_string())?;
+        let continuation = cursor.map(MissingHistoryCursor::decode).transpose()?;
+        if continuation.as_ref().is_some_and(|continuation| {
+            continuation.version != MISSING_HISTORY_CURSOR_VERSION
+                || continuation.vault_id != manifest.vault_id
+                || continuation.note_id != note_id.as_str()
+                || continuation.history_generation != manifest.history_generation
+        }) {
+            return Err(MISSING_HISTORY_CURSOR_ERROR.to_string());
+        }
         if history_store::missing_note(&note_id)?.is_none() {
-            return Err("Missing Note is no longer available for recovery".to_string());
+            return Err(if continuation.is_some() {
+                MISSING_HISTORY_CURSOR_ERROR.to_string()
+            } else {
+                "Missing Note is no longer available for recovery".to_string()
+            });
         }
-        HistoryModeAccess {
-            state: self.state,
-            note_id,
+        let start = continuation
+            .as_ref()
+            .map(MissingHistoryCursor::record_identity);
+        let page = match history_store::bounded_timeline_page(&note_id, start, limit)? {
+            history_store::BoundedTimelinePageRead::Page(page) => page,
+            history_store::BoundedTimelinePageRead::CursorUnavailable => {
+                return Err(MISSING_HISTORY_CURSOR_ERROR.to_string())
+            }
+        };
+        // Ordinary History Mode ordinals are oldest-first before its records
+        // are reversed. Carrying the next absolute ordinal keeps each bounded
+        // slice in that same deterministic order without loading older rows.
+        let first_ordinal = match &continuation {
+            Some(continuation) if continuation.next_timeline_ordinal < page.total_records => {
+                continuation.next_timeline_ordinal
+            }
+            Some(_) => return Err(MISSING_HISTORY_CURSOR_ERROR.to_string()),
+            None => page.total_records.saturating_sub(1),
+        };
+        let record_count = page.records.len();
+        let mut records = Vec::with_capacity(record_count);
+        for (index, record) in page.records.into_iter().enumerate() {
+            let timeline_ordinal = first_ordinal.saturating_sub(index);
+            let projected = match record {
+                history_store::BoundedTimelineRecord::Revision { header, label } => {
+                    let revision_id = header.identity.clone();
+                    let reconstructed = history_store::reconstruct(&note_id, &revision_id)?;
+                    project_revision_header(
+                        header,
+                        label,
+                        timeline_ordinal,
+                        authored_content_counts(&reconstructed),
+                    )
+                }
+                history_store::BoundedTimelineRecord::LifecycleEvent(event) => {
+                    project_lifecycle_header(event, timeline_ordinal)
+                }
+            };
+            records.push(projected);
         }
-        .page_retained(cursor, limit)
+        let next_cursor = match page.next_record {
+            Some(next_record) => {
+                let next_ordinal = first_ordinal.checked_sub(record_count).ok_or_else(|| {
+                    "Note Timeline record count does not match its lineage".to_string()
+                })?;
+                Some(
+                    MissingHistoryCursor::for_record(
+                        &note_id,
+                        &manifest.vault_id,
+                        manifest.history_generation,
+                        &next_record,
+                        next_ordinal,
+                    )
+                    .encode()?,
+                )
+            }
+            None => None,
+        };
+        Ok(HistoryModePage {
+            records,
+            next_cursor,
+        })
     }
 
     pub(crate) fn recover_missing_note(
@@ -4448,6 +4618,16 @@ pub(crate) fn recover_pending_history(state: &AppState) -> Result<(), String> {
 }
 
 #[cfg(test)]
+pub(crate) fn reset_history_integrity_snapshot_count_for_test() {
+    history_store::reset_integrity_snapshot_count();
+}
+
+#[cfg(test)]
+pub(crate) fn history_integrity_snapshot_count_for_test() -> usize {
+    history_store::integrity_snapshot_count()
+}
+
+#[cfg(test)]
 pub(crate) fn inject_history_finalization_failure_once() {
     history_store::inject_fault_once(history_store::FaultPoint::Finalize);
 }
@@ -4493,6 +4673,15 @@ pub(crate) fn inject_history_baseline_failure_once() {
 #[cfg(test)]
 pub(crate) fn corrupt_note_revision_payload_for_test(note_id: &NoteIdentity) {
     history_store::replace_revision_payload_version(note_id, 99);
+}
+
+#[cfg(test)]
+pub(crate) fn replace_one_revision_source_for_test(
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+    source: &str,
+) {
+    history_store::replace_one_revision_source(note_id, revision_id, source);
 }
 
 #[cfg(test)]

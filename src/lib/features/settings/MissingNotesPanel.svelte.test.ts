@@ -16,7 +16,7 @@ describe('MissingNotesPanel', () => {
             retentionDays: 7,
             purgeAtMillis: 1_800_604_800_000,
             timeline: {
-              nextCursor: null,
+              nextCursor: 'page-2',
               records: [
                 {
                   kind: 'lifecycleEvent',
@@ -48,9 +48,11 @@ describe('MissingNotesPanel', () => {
         ],
         isLoading: false,
         isUpdating: false,
+        loadingTimelineNoteId: null,
         actionMessage: null,
         actionError: null,
         loadMissingNotes: vi.fn(),
+        loadMoreHistory: vi.fn(),
         recoverMissingNote: vi.fn(),
         deleteMissingNote: vi.fn(),
         formatTimestamp: () => 'Sep 3, 2026',
@@ -60,6 +62,8 @@ describe('MissingNotesPanel', () => {
 
     expect(body).toContain('Missing Notes');
     expect(body).toContain('Before deletion');
+    expect(body).toContain('2 loaded records');
+    expect(body).toContain('Load older history');
     expect(body).toContain('Editor revision');
     expect(body).toContain('Recover');
     expect(body).toContain('Permanently delete');

@@ -85,31 +85,31 @@ let missingNotes = [
     retentionDays: 7,
     purgeAtMillis: 1_800_604_800_000,
     timeline: {
-      nextCursor: null,
+      nextCursor: 'missing-note-page-2',
       records: [
-        {
-          kind: 'revision',
-          recordId: 'note-missing-revision-1',
-          revisionId: 'note-missing-revision-1',
-          source: 'editor',
-          occurredAtMillis: 1_799_999_000_000,
-          timelineOrdinal: 0,
-          timeKind: 'committed',
-          modifiedAtMillis: null,
-          editingSessionId: null,
-          revisionLabel: 'Before external deletion',
-          lineCount: 1,
-          characterCount: 25
-        },
         {
           kind: 'lifecycleEvent',
           recordId: 'note-missing-event-1',
           eventId: 'note-missing-event-1',
           eventKind: 'missing',
           occurredAtMillis: 1_800_000_000_000,
-          timelineOrdinal: 1,
+          timelineOrdinal: 2,
           previousPath: null,
           path: '/e2e/Missing outline.md'
+        },
+        {
+          kind: 'revision',
+          recordId: 'note-missing-revision-2',
+          revisionId: 'note-missing-revision-2',
+          source: 'editor',
+          occurredAtMillis: 1_799_999_000_000,
+          timelineOrdinal: 1,
+          timeKind: 'committed',
+          modifiedAtMillis: null,
+          editingSessionId: null,
+          revisionLabel: null,
+          lineCount: 1,
+          characterCount: 25
         }
       ]
     }
@@ -619,6 +619,35 @@ export function installBrowserE2eBackend() {
     }
     if (command === 'list_forgotten_notes') return forgottenNotes;
     if (command === 'list_missing_notes') return missingNotes;
+    if (command === 'get_missing_note_history_page') {
+      if (
+        args.noteId !== 'note-missing' ||
+        args.cursor !== 'missing-note-page-2'
+      ) {
+        throw new Error(
+          'Missing Note history continuation is stale or belongs to another Note Timeline'
+        );
+      }
+      return {
+        nextCursor: null,
+        records: [
+          {
+            kind: 'revision',
+            recordId: 'note-missing-revision-1',
+            revisionId: 'note-missing-revision-1',
+            source: 'noteCreation',
+            occurredAtMillis: 1_799_000_000_000,
+            timelineOrdinal: 0,
+            timeKind: 'committed',
+            modifiedAtMillis: null,
+            editingSessionId: null,
+            revisionLabel: 'Before external deletion',
+            lineCount: 1,
+            characterCount: 20
+          }
+        ]
+      };
+    }
     if (command === 'recover_missing_note') {
       const noteId = String(args.noteId ?? '');
       const missing = missingNotes.find((note) => note.noteId === noteId);

@@ -379,10 +379,16 @@ describe('document and pane state-machine boundaries', () => {
       (await $('body').getText()).includes('Missing outline')
     );
 
-    const timeline = await $('summary=Retained timeline · 2 records');
+    const timeline = await $('summary=Retained timeline · 2 loaded records');
     await timeline.click();
-    expect(await $('body').getText()).toContain('Before external deletion');
-    expect(await $('body').getText()).toContain('Missing event');
+    const body = await $('body').getText();
+    expect(body).not.toContain('Before external deletion');
+    expect(body).toContain('Missing event');
+
+    await $('button=Load older history').click();
+    await browser.waitUntil(async () =>
+      (await $('body').getText()).includes('Before external deletion')
+    );
 
     await $('button=Recover').click();
     await browser.waitUntil(async () =>
@@ -405,6 +411,7 @@ describe('document and pane state-machine boundaries', () => {
     );
     const commands = snapshot?.invocations.map((entry) => entry.command) ?? [];
     expect(commands).toContain('list_missing_notes');
+    expect(commands).toContain('get_missing_note_history_page');
     expect(commands).toContain('recover_missing_note');
   });
 
