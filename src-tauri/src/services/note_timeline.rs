@@ -109,6 +109,10 @@ impl RevisionIdentity {
     pub(crate) fn from_persisted(value: impl Into<String>) -> Self {
         Self(value.into())
     }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl LifecycleEventIdentity {
@@ -1440,6 +1444,49 @@ pub(crate) struct HistoryModeAccess<'a> {
     note_id: NoteIdentity,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryRestorePreview {
+    revision_id: String,
+    current_authored_content_hash: String,
+    unmanaged_frontmatter: Option<String>,
+    body: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HistoryRestoreResult {
+    revision_id: RevisionIdentity,
+    mutation: NoteMutationResult,
+}
+
+impl HistoryRestoreResult {
+    pub(crate) fn revision_id(&self) -> &RevisionIdentity {
+        &self.revision_id
+    }
+
+    pub(crate) fn mutation(&self) -> &NoteMutationResult {
+        &self.mutation
+    }
+}
+
+impl HistoryRestorePreview {
+    pub(crate) fn revision_id(&self) -> &str {
+        &self.revision_id
+    }
+
+    pub(crate) fn current_authored_content_hash(&self) -> &str {
+        &self.current_authored_content_hash
+    }
+
+    pub(crate) fn unmanaged_frontmatter(&self) -> Option<&str> {
+        self.unmanaged_frontmatter.as_deref()
+    }
+
+    pub(crate) fn body(&self) -> &str {
+        &self.body
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum HistoryModeRevisionTimeKind {
@@ -1908,6 +1955,10 @@ fn missing_binary_assets(markdown: &str) -> Result<Vec<String>, String> {
 }
 
 impl HistoryModeRevision {
+    pub(crate) fn unmanaged_frontmatter(&self) -> Option<&str> {
+        self.unmanaged_frontmatter.as_deref()
+    }
+
     pub(crate) fn body(&self) -> &str {
         &self.body
     }
@@ -2059,6 +2110,153 @@ impl HistoryModeAccess<'_> {
             revision_id: revision_id.to_string(),
             unmanaged_frontmatter: reconstructed.unmanaged_frontmatter,
             body: reconstructed.body,
+        })
+    }
+
+    fn current_restore_state(&self) -> Result<(PathBuf, String, String), String> {
+        let path = history_store::current_path(&self.note_id)?
+            .ok_or_else(|| "This Note Timeline has no current path to restore".to_string())?;
+        let canonical = fs::read_to_string(&path)
+            .map_err(|error| format!("Read current note before Version Restore: {error}"))?;
+        let current_note_id = crate::note::parse_note(&canonical)
+            .frontmatter
+            .managed
+            .map(|metadata| metadata.id)
+            .filter(|identity| !identity.trim().is_empty())
+            .ok_or_else(|| "Current note has no managed Note Identity".to_string())?;
+        if current_note_id != self.note_id.as_str() {
+            return Err("Current note identity no longer matches this Note Timeline".to_string());
+        }
+        let hash = history_store::authored_content_hash(&canonical);
+        let retained_hash = history_store::current_content_hash(&self.note_id)?
+            .ok_or_else(|| "This Note Timeline has no current authored state".to_string())?;
+        if hash != retained_hash {
+            return Err(
+                "Current authored content has not been captured by the Note Timeline; retry after synchronization"
+                    .to_string(),
+            );
+        }
+        Ok((path, canonical, hash))
+    }
+
+    pub(crate) fn restore_preview(
+        &self,
+        revision_id: &str,
+    ) -> Result<HistoryRestorePreview, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
+        NoteTimeline::new(self.state).recover_retained_observations()?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        let (_, _, current_authored_content_hash) = self.current_restore_state()?;
+        let selected_id = RevisionIdentity::from_persisted(revision_id.trim());
+        let selected = history_store::reconstruct(&self.note_id, &selected_id)?;
+        Ok(HistoryRestorePreview {
+            revision_id: selected_id.0,
+            current_authored_content_hash,
+            unmanaged_frontmatter: selected.unmanaged_frontmatter,
+            body: selected.body,
+        })
+    }
+
+    pub(crate) fn confirm_restore(
+        &self,
+        revision_id: &str,
+        expected_current_authored_content_hash: &str,
+    ) -> Result<HistoryRestoreResult, String> {
+        if expected_current_authored_content_hash.trim().is_empty() {
+            return Err("Version Restore confirmation requires its preview hash".to_string());
+        }
+        crate::state::with_note_file_mutation(|| {
+            let _operation = self.state.begin_note_timeline_operation()?;
+            let timeline = NoteTimeline::new(self.state);
+            timeline.recover_retained_observations()?;
+            self.state.ensure_note_timeline_history_recovered()?;
+            let (path, current, current_hash) = self.current_restore_state()?;
+            let notes_root = crate::state::notes_root()?;
+            if crate::state::is_forgotten_note_path(&path, &notes_root) {
+                return Err(
+                    "Recover the forgotten note before performing a Version Restore".to_string(),
+                );
+            }
+            if current_hash != expected_current_authored_content_hash {
+                return Err(
+                    "Current authored content changed after this restore preview was created"
+                        .to_string(),
+                );
+            }
+            let selected = history_store::reconstruct(
+                &self.note_id,
+                &RevisionIdentity::from_persisted(revision_id.trim()),
+            )?;
+            let selected_authored_hash = history_store::authored_parts_hash(
+                selected.unmanaged_frontmatter(),
+                selected.body(),
+            );
+            let replacement = crate::note::replace_authored_content(
+                &current,
+                selected.unmanaged_frontmatter(),
+                selected.body(),
+            )?;
+            let replacement_hash = history_store::authored_content_hash(&replacement);
+            if replacement_hash != selected_authored_hash {
+                return Err(
+                    "Version Restore could not preserve the selected authored content exactly"
+                        .to_string(),
+                );
+            }
+            if replacement_hash == current_hash {
+                return Err(
+                    "Selected revision already matches current authored content".to_string()
+                );
+            }
+            let prepared = timeline.prepare_exact_revision_publication(
+                MutationSource::VersionRestore,
+                &path,
+                Some(&path),
+                Some(&self.note_id),
+                &replacement,
+            )?;
+            if history_store::authored_content_hash(prepared.canonical_markdown())
+                != selected_authored_hash
+            {
+                return Err(prepared.into_parts().1.abandon_after_publication_failure(
+                    "Version Restore preparation changed the selected authored content".to_string(),
+                ));
+            }
+            let still_current = fs::read_to_string(&path)
+                .map_err(|error| format!("Recheck current note before Version Restore: {error}"))?;
+            if history_store::authored_content_hash(&still_current)
+                != expected_current_authored_content_hash
+            {
+                return Err(prepared.into_parts().1.abandon_after_publication_failure(
+                    "Current authored content changed while Version Restore was being prepared"
+                        .to_string(),
+                ));
+            }
+            let (canonical_markdown, history_intent) = prepared.into_parts();
+            let restored_revision_id =
+                match history_store::publication_revision_identity(&history_intent) {
+                    Ok(revision_id) => revision_id,
+                    Err(error) => {
+                        return Err(history_intent.abandon_after_publication_failure(error));
+                    }
+                };
+            let expected_write =
+                crate::vault_watcher::record_expected_write(&path, &canonical_markdown);
+            if let Err(error) =
+                crate::state::atomic_write_note(&path, canonical_markdown.as_bytes())
+            {
+                return Err(history_intent.abandon_after_publication_failure(error));
+            }
+            expected_write.commit();
+            Ok(HistoryRestoreResult {
+                revision_id: restored_revision_id,
+                mutation: timeline.mutate(NoteMutation::version_restore(
+                    history_intent,
+                    path.clone(),
+                    Some(path),
+                    canonical_markdown,
+                )),
+            })
         })
     }
 
@@ -2959,6 +3157,31 @@ impl<'a> NoteTimeline<'a> {
             Some(None),
         )?
         .0;
+        self.prepare_canonical_revision_publication(source, target_path, continuity_path, canonical)
+    }
+
+    fn prepare_exact_revision_publication(
+        &self,
+        source: MutationSource,
+        target_path: &Path,
+        continuity_path: Option<&Path>,
+        retained_identity: Option<&NoteIdentity>,
+        markdown: &str,
+    ) -> Result<PreparedRevisionPublication, String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
+        self.recover_retained_observations()?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        let canonical = self.prepare_publication(continuity_path, retained_identity, markdown)?;
+        self.prepare_canonical_revision_publication(source, target_path, continuity_path, canonical)
+    }
+
+    fn prepare_canonical_revision_publication(
+        &self,
+        source: MutationSource,
+        target_path: &Path,
+        continuity_path: Option<&Path>,
+        canonical: String,
+    ) -> Result<PreparedRevisionPublication, String> {
         let baseline_markdown = continuity_path
             .filter(|path| path.is_file())
             .map(fs::read_to_string)
@@ -7881,6 +8104,362 @@ mod tests {
             .records()
             .iter()
             .all(|record| record.revision_id() != Some(selected_id.as_str())));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn version_restore_is_complete_hash_bound_append_only_and_reversible_after_restart() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-version-restore-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-version-restore-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Current title".to_string(),
+            "---\nproject: original\n---\n\nEarlier body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let mut path = PathBuf::from(created.path.unwrap());
+        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let earlier_revision_id = access.revisions().unwrap()[0].identity().clone();
+
+        let renamed = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Renamed current title".to_string(),
+            "---\nproject: current\n---\n\nCurrent body".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        path = PathBuf::from(renamed.session.unwrap().path.unwrap());
+        let before_restore = fs::read_to_string(&path).unwrap();
+        let before_metadata = crate::note::parse_note(&before_restore)
+            .frontmatter
+            .managed
+            .unwrap();
+        let preview = access
+            .restore_preview(earlier_revision_id.as_str())
+            .unwrap();
+        assert_eq!(preview.revision_id(), earlier_revision_id.as_str());
+        assert_eq!(preview.unmanaged_frontmatter(), Some("project: original\n"));
+        assert_eq!(preview.body(), "Earlier body");
+
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Renamed current title".to_string(),
+            "---\nproject: concurrent\n---\n\nConcurrent edit".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        let stale_error = access
+            .confirm_restore(
+                earlier_revision_id.as_str(),
+                preview.current_authored_content_hash(),
+            )
+            .expect_err("concurrent authored edit invalidates preview");
+        assert!(stale_error.contains("Current authored content changed"));
+        assert_eq!(
+            crate::note::parse_note(&fs::read_to_string(&path).unwrap()).body,
+            "Concurrent edit"
+        );
+
+        let pre_restore_revision_id = access
+            .revisions()
+            .unwrap()
+            .last()
+            .unwrap()
+            .identity()
+            .clone();
+        let lifecycle_before_restore = access.lifecycle_events().unwrap();
+        assert!(lifecycle_before_restore
+            .iter()
+            .any(|event| event.kind() == LifecycleEventKind::Renamed));
+        let preview = access
+            .restore_preview(earlier_revision_id.as_str())
+            .unwrap();
+        let restored = access
+            .confirm_restore(
+                earlier_revision_id.as_str(),
+                preview.current_authored_content_hash(),
+            )
+            .unwrap();
+        assert_eq!(restored.mutation().note_id(), &note_id);
+        assert_eq!(restored.mutation().path(), path.as_path());
+        let restored_markdown = fs::read_to_string(&path).unwrap();
+        let restored_note = crate::note::parse_note(&restored_markdown);
+        assert_eq!(
+            restored_note.frontmatter.raw_other.as_deref(),
+            Some("project: original")
+        );
+        assert_eq!(restored_note.body, "Earlier body");
+        let restored_metadata = restored_note.frontmatter.managed.unwrap();
+        assert_eq!(restored_metadata.id, before_metadata.id);
+        assert_eq!(restored_metadata.created_at, before_metadata.created_at);
+        assert_eq!(restored_metadata.trashed_at, before_metadata.trashed_at);
+        assert_eq!(restored_metadata.kind, before_metadata.kind);
+        assert_eq!(path.file_stem().unwrap(), "Renamed current title");
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let restarted_access = NoteTimeline::new(&restarted).open_history_mode(note_id.clone());
+        let revisions = restarted_access.revisions().unwrap();
+        assert_eq!(
+            restarted_access.lifecycle_events().unwrap(),
+            lifecycle_before_restore
+        );
+        assert_eq!(revisions.len(), 4);
+        assert_eq!(
+            revisions.last().unwrap().source(),
+            MutationSource::VersionRestore
+        );
+        assert_eq!(restored.revision_id(), revisions.last().unwrap().identity());
+        assert_eq!(
+            reconstructed_revision_bodies_for_test(&restarted, note_id.as_str()).unwrap(),
+            vec![
+                "Earlier body",
+                "Current body",
+                "Concurrent edit",
+                "Earlier body"
+            ]
+        );
+
+        let reverse_preview = restarted_access
+            .restore_preview(pre_restore_revision_id.as_str())
+            .unwrap();
+        restarted_access
+            .confirm_restore(
+                pre_restore_revision_id.as_str(),
+                reverse_preview.current_authored_content_hash(),
+            )
+            .unwrap();
+        let reversed = restarted_access.revisions().unwrap();
+        assert_eq!(reversed.len(), 5);
+        assert_eq!(
+            reversed.last().unwrap().source(),
+            MutationSource::VersionRestore
+        );
+        assert_eq!(
+            crate::note::parse_note(&fs::read_to_string(&path).unwrap()).body,
+            "Concurrent edit"
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn version_restore_can_replace_current_authored_content_with_empty_content() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-empty-version-restore-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-empty-version-restore-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Empty history".to_string(),
+            String::new(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let empty_revision = access.revisions().unwrap()[0].identity().clone();
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Empty history".to_string(),
+            "Not empty now".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+
+        let preview = access.restore_preview(empty_revision.as_str()).unwrap();
+        access
+            .confirm_restore(
+                empty_revision.as_str(),
+                preview.current_authored_content_hash(),
+            )
+            .unwrap();
+
+        let canonical = fs::read_to_string(&path).unwrap();
+        let parsed = crate::note::parse_note(&canonical);
+        assert_eq!(parsed.body, "");
+        assert_eq!(parsed.frontmatter.raw_other, None);
+        assert_eq!(parsed.frontmatter.managed.unwrap().id, note_id.as_str());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn version_restore_preserves_exact_historical_frontmatter_and_line_endings() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-exact-version-restore-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-exact-version-restore-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Exact history".to_string(),
+            "Initial body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        let exact_unmanaged = "project: atlas\r\n\r\nflag: true\r\n";
+        let exact_body = "Historical first\r\nHistorical second\r\n";
+        let exact = crate::note::replace_authored_content(
+            &fs::read_to_string(&path).unwrap(),
+            Some(exact_unmanaged),
+            exact_body,
+        )
+        .unwrap();
+        fs::write(&path, &exact).unwrap();
+        NoteTimeline::new(&state)
+            .observe(VaultObservation::external_edit(path.clone(), 10, Some(9)))
+            .unwrap();
+        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let exact_revision = access
+            .revisions()
+            .unwrap()
+            .last()
+            .unwrap()
+            .identity()
+            .clone();
+
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Exact history".to_string(),
+            "Current body".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        let preview = access.restore_preview(exact_revision.as_str()).unwrap();
+        assert_eq!(preview.unmanaged_frontmatter(), Some(exact_unmanaged));
+        assert_eq!(preview.body(), exact_body);
+        let restored = access
+            .confirm_restore(
+                exact_revision.as_str(),
+                preview.current_authored_content_hash(),
+            )
+            .unwrap();
+
+        let restored_markdown = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            history_store::authored_content_hash(&restored_markdown),
+            history_store::authored_parts_hash(Some(exact_unmanaged), exact_body)
+        );
+        let restored_revision = access.revision(restored.revision_id().as_str()).unwrap();
+        assert_eq!(
+            restored_revision.unmanaged_frontmatter(),
+            Some(exact_unmanaged)
+        );
+        assert_eq!(restored_revision.body(), exact_body);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn version_restore_requires_forgotten_note_recovery_and_preserves_lifecycle_status() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data =
+            crate::test_support::TestDir::new("timeline-forgotten-version-restore-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-forgotten-version-restore-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Forgotten history".to_string(),
+            "Earlier body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let active_path = PathBuf::from(created.path.unwrap());
+        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let earlier_revision = access.revisions().unwrap()[0].identity().clone();
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Forgotten history".to_string(),
+            "Current body".to_string(),
+            Some(active_path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+
+        let current = fs::read_to_string(&active_path).unwrap();
+        let forgotten_at = "2026-09-03T12:00:00.000Z".to_string();
+        let forgotten_markdown = crate::note::prepare_note_markdown(
+            &current,
+            Some(&current),
+            Some(Some(forgotten_at.clone())),
+        )
+        .unwrap()
+        .0;
+        let forgotten_root = crate::state::forgotten_notes_root(notes.path());
+        fs::create_dir_all(&forgotten_root).unwrap();
+        let forgotten_path = forgotten_root.join("Forgotten history.md");
+        fs::rename(&active_path, &forgotten_path).unwrap();
+        fs::write(&forgotten_path, &forgotten_markdown).unwrap();
+        history_store::record_observed_lifecycle_event(
+            &note_id,
+            LifecycleEventKind::Forgotten,
+            Some(&active_path),
+            &forgotten_path,
+            1,
+        )
+        .unwrap();
+
+        let preview = access.restore_preview(earlier_revision.as_str()).unwrap();
+        let error = access
+            .confirm_restore(
+                earlier_revision.as_str(),
+                preview.current_authored_content_hash(),
+            )
+            .expect_err("forgotten notes must be recovered before restoring content");
+        assert!(error.contains("Recover the forgotten note"));
+        assert!(!active_path.exists());
+        assert!(forgotten_path.exists());
+        let still_forgotten =
+            crate::note::parse_note(&fs::read_to_string(&forgotten_path).unwrap());
+        assert_eq!(still_forgotten.body, "Current body");
+        assert_eq!(
+            still_forgotten.frontmatter.managed.unwrap().trashed_at,
+            Some(forgotten_at)
+        );
+        assert_eq!(access.revisions().unwrap().len(), 2);
         crate::state::set_notes_root_override(None).unwrap();
     }
 }

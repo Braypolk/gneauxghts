@@ -7,8 +7,11 @@ import {
   type HistoryModePage,
   type HistoryModeState,
   type HistoryModeTarget,
+  type HistoryRestoreCommit,
+  type HistoryRestorePreview,
   type HistoryWorkspaceSnapshot
 } from './historyModeMachine';
+import type { NoteSession } from '$lib/features/notepad/model/types';
 
 export interface HistoryModeSessionDeps {
   flushWorkspace: () => Promise<void>;
@@ -25,6 +28,16 @@ export interface HistoryModeSessionDeps {
     revisionId: string,
     comparison: HistoryDiffComparison
   ) => Promise<HistoricalDiff>;
+  loadRestorePreview: (
+    noteId: string,
+    revisionId: string
+  ) => Promise<HistoryRestorePreview>;
+  restoreRevision: (
+    noteId: string,
+    revisionId: string,
+    expectedCurrentAuthoredContentHash: string
+  ) => Promise<HistoryRestoreCommit>;
+  adoptRestoredRevision: (restored: NoteSession) => Promise<void>;
   nameRevision: (noteId: string, revisionId: string, label: string) => Promise<void>;
   removeRevisionName: (noteId: string, revisionId: string) => Promise<void>;
   clearNoteHistory: (noteId: string) => Promise<void>;
@@ -186,6 +199,106 @@ export class HistoryModeSession {
     }
     const revisionId = this.state.selectedRevisionId;
     await this.#loadSelectedDiff(revisionId, comparison);
+  };
+
+  previewRestore = async (): Promise<void> => {
+    if (
+      this.state.phase !== 'open' ||
+      this.state.request !== null ||
+      this.state.selectedRevisionId === null
+    ) {
+      return;
+    }
+    const requestId = this.#nextRequestId++;
+    const noteId = this.state.target.noteId;
+    const revisionId = this.state.selectedRevisionId;
+    this.#dispatch({ type: 'restorePreviewStarted', requestId });
+    try {
+      const preview = await this.#deps.loadRestorePreview(noteId, revisionId);
+      this.#dispatch({ type: 'restorePreviewLoaded', requestId, preview });
+    } catch (error) {
+      this.#dispatch({
+        type: 'restoreFailed',
+        requestId,
+        error: `Version Restore preview could not be created: ${errorMessage(error)}`
+      });
+    }
+    await this.#runPendingRefresh();
+  };
+
+  cancelRestore = (): void => {
+    this.#dispatch({ type: 'restoreCancelled' });
+  };
+
+  confirmRestore = async (): Promise<void> => {
+    if (
+      this.state.phase !== 'open' ||
+      this.state.request !== null ||
+      !this.state.restorePreview
+    ) {
+      return;
+    }
+    const requestId = this.#nextRequestId++;
+    const noteId = this.state.target.noteId;
+    const preview = this.state.restorePreview;
+    this.#dispatch({ type: 'restoreCommitStarted', requestId });
+    let restored: HistoryRestoreCommit;
+    try {
+      restored = await this.#deps.restoreRevision(
+        noteId,
+        preview.revisionId,
+        preview.currentAuthoredContentHash
+      );
+    } catch (error) {
+      this.#dispatch({
+        type: 'restoreFailed',
+        requestId,
+        error: `Version Restore was not committed: ${errorMessage(error)}`
+      });
+      await this.#runPendingRefresh();
+      return;
+    }
+
+    try {
+      await this.#deps.adoptRestoredRevision(restored.session);
+    } catch (error) {
+      this.#dispatch({
+        type: 'historyUnavailable',
+        error: `Version Restore committed, but the workspace could not adopt it: ${errorMessage(error)}`
+      });
+      return;
+    }
+
+    try {
+      const diagnosticsPromise = this.#deps.loadDiagnostics(noteId).catch(() => null);
+      const page = await this.#deps.loadPage(noteId, null);
+      const restoredRevision = page.records.find(
+        (record) =>
+          record.kind === 'revision' && record.revisionId === restored.revisionId
+      );
+      if (!restoredRevision || restoredRevision.kind !== 'revision') {
+        throw new Error('The new Version Restore revision is unavailable.');
+      }
+      const selectedDiff = await this.#deps.loadDiff(
+        noteId,
+        restoredRevision.revisionId,
+        'parent'
+      );
+      const diagnostics = await diagnosticsPromise;
+      this.#dispatch({
+        type: 'restoreCommitted',
+        requestId,
+        page,
+        selectedDiff,
+        diagnostics
+      });
+    } catch (error) {
+      this.#dispatch({
+        type: 'historyUnavailable',
+        error: `Version Restore committed, but its new revision could not be displayed: ${errorMessage(error)}`
+      });
+    }
+    await this.#runPendingRefresh();
   };
 
   #refreshAfterRevisionNameChange = async (

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HistoryModeSession } from './historyModeSession.svelte';
 import type {
   HistoricalDiff,
+  HistoryRestorePreview,
   HistoryModePage,
   HistoryRevisionRecord,
   HistoryModeTarget,
@@ -53,6 +54,23 @@ const revisionDiff: HistoricalDiff = {
   missingAssets: []
 };
 
+const restorePreview: HistoryRestorePreview = {
+  revisionId: 'revision-1',
+  currentAuthoredContentHash: 'current-hash',
+  unmanagedFrontmatter: 'project: atlas',
+  body: 'saved body'
+};
+const restoredNote = {
+  noteId: 'note-1',
+  title: 'A note',
+  markdown: 'saved body',
+  path: '/vault/A note.md'
+};
+const restoreCommit = {
+  revisionId: 'revision-restored',
+  session: restoredNote
+};
+
 function setup(overrides: Partial<ConstructorParameters<typeof HistoryModeSession>[0]> = {}) {
   const deps: ConstructorParameters<typeof HistoryModeSession>[0] = {
     flushWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -62,6 +80,9 @@ function setup(overrides: Partial<ConstructorParameters<typeof HistoryModeSessio
     restoreFocus: vi.fn(),
     loadPage: vi.fn().mockResolvedValue(firstPage),
     loadDiff: vi.fn().mockResolvedValue(revisionDiff),
+    loadRestorePreview: vi.fn().mockResolvedValue(restorePreview),
+    restoreRevision: vi.fn().mockResolvedValue(restoreCommit),
+    adoptRestoredRevision: vi.fn().mockResolvedValue(undefined),
     nameRevision: vi.fn().mockResolvedValue(undefined),
     removeRevisionName: vi.fn().mockResolvedValue(undefined),
     clearNoteHistory: vi.fn().mockResolvedValue(undefined),
@@ -122,6 +143,112 @@ describe('HistoryModeSession', () => {
       phase: 'open',
       selectedRevisionId: 'revision-1',
       records: [{ revisionId: 'revision-1', revisionLabel: null }]
+    });
+  });
+
+  it('previews and explicitly confirms a complete Version Restore before refreshing history', async () => {
+    const restoredRevision: HistoryRevisionRecord = {
+      ...(firstPage.records[0] as HistoryRevisionRecord),
+      recordId: 'revision-restored',
+      revisionId: 'revision-restored',
+      source: 'versionRestore',
+      occurredAtMillis: 20,
+      timelineOrdinal: 2,
+      editingSessionId: null
+    };
+    const restoredPage = { records: [restoredRevision, ...firstPage.records], nextCursor: null };
+    const restoredDiff = {
+      ...revisionDiff,
+      revisionId: 'revision-restored',
+      fromRevisionId: 'revision-1',
+      toRevisionId: 'revision-restored'
+    };
+    const loadPage = vi.fn().mockResolvedValueOnce(firstPage).mockResolvedValueOnce(restoredPage);
+    const loadDiff = vi.fn().mockResolvedValueOnce(revisionDiff).mockResolvedValueOnce(restoredDiff);
+    const { session, deps } = setup({ loadPage, loadDiff });
+    await session.enter('notepad-pane-1');
+
+    await session.previewRestore();
+    expect(deps.loadRestorePreview).toHaveBeenCalledWith('note-1', 'revision-1');
+    expect(session.state).toMatchObject({ phase: 'open', restorePreview });
+    expect(deps.restoreRevision).not.toHaveBeenCalled();
+
+    await session.confirmRestore();
+
+    expect(deps.restoreRevision).toHaveBeenCalledWith(
+      'note-1',
+      'revision-1',
+      'current-hash'
+    );
+    expect(deps.adoptRestoredRevision).toHaveBeenCalledWith(restoredNote);
+    expect(session.state).toMatchObject({
+      phase: 'open',
+      selectedRevisionId: 'revision-restored',
+      selectedDiff: restoredDiff,
+      restorePreview: null
+    });
+  });
+
+  it('invalidates a stale restore preview after current authored content changes', async () => {
+    const { session, deps } = setup({
+      restoreRevision: vi.fn().mockRejectedValue(
+        new Error('Current authored content changed after this restore preview was created')
+      )
+    });
+    await session.enter('notepad-pane-1');
+    await session.previewRestore();
+
+    await session.confirmRestore();
+
+    expect(deps.loadPage).toHaveBeenCalledTimes(1);
+    expect(session.state).toMatchObject({
+      phase: 'open',
+      restorePreview: null,
+      error: 'Version Restore was not committed: Current authored content changed after this restore preview was created'
+    });
+  });
+
+  it('reports editor adoption failure as post-commit without retrying the restore', async () => {
+    const { session, deps } = setup({
+      adoptRestoredRevision: vi.fn().mockRejectedValue(new Error('editor unavailable'))
+    });
+    await session.enter('notepad-pane-1');
+    await session.previewRestore();
+
+    await session.confirmRestore();
+
+    expect(deps.restoreRevision).toHaveBeenCalledOnce();
+    expect(session.state).toMatchObject({
+      phase: 'historyUnavailable',
+      error: 'Version Restore committed, but the workspace could not adopt it: editor unavailable'
+    });
+  });
+
+  it('does not misidentify an older Version Restore when the exact committed revision is unavailable', async () => {
+    const olderRestore: HistoryRevisionRecord = {
+      ...(firstPage.records[0] as HistoryRevisionRecord),
+      recordId: 'revision-restored-older',
+      revisionId: 'revision-restored-older',
+      source: 'versionRestore',
+      occurredAtMillis: 15,
+      timelineOrdinal: 2,
+      editingSessionId: null
+    };
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValueOnce({ records: [olderRestore, ...firstPage.records], nextCursor: null });
+    const { session, deps } = setup({ loadPage });
+    await session.enter('notepad-pane-1');
+    await session.previewRestore();
+
+    await session.confirmRestore();
+
+    expect(deps.adoptRestoredRevision).toHaveBeenCalledWith(restoredNote);
+    expect(deps.loadDiff).toHaveBeenCalledTimes(1);
+    expect(session.state).toMatchObject({
+      phase: 'historyUnavailable',
+      error: 'Version Restore committed, but its new revision could not be displayed: The new Version Restore revision is unavailable.'
     });
   });
 

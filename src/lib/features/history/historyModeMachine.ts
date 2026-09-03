@@ -1,4 +1,5 @@
 import type { HistoryStorageUsage, NoteHistoryHealth } from '$lib/types/history';
+import type { NoteSession } from '$lib/features/notepad/model/types';
 
 export type HistoryMutationSource =
   | 'editor'
@@ -64,6 +65,15 @@ export interface HistoricalRevision {
   body: string;
 }
 
+export interface HistoryRestorePreview extends HistoricalRevision {
+  currentAuthoredContentHash: string;
+}
+
+export interface HistoryRestoreCommit {
+  revisionId: string;
+  session: NoteSession;
+}
+
 export type HistoryDiffComparison = 'parent' | 'current';
 
 export interface HistoryDiffLine {
@@ -113,8 +123,12 @@ export type HistoryModeState =
       selectedRevisionId: string | null;
       selectedComparison: HistoryDiffComparison;
       selectedDiff: HistoricalDiff | null;
+      restorePreview?: HistoryRestorePreview | null;
       diagnostics: HistoryModeDiagnostics | null;
-      request: { kind: 'page' | 'refresh' | 'diff'; requestId: number } | null;
+      request: {
+        kind: 'page' | 'refresh' | 'diff' | 'restorePreview' | 'restoreCommit';
+        requestId: number;
+      } | null;
       error: string | null;
     }
   | {
@@ -186,6 +200,18 @@ export type HistoryModeEvent =
       diff: HistoricalDiff;
     }
   | { type: 'diffFailed'; requestId: number; error: string }
+  | { type: 'restorePreviewStarted'; requestId: number }
+  | { type: 'restorePreviewLoaded'; requestId: number; preview: HistoryRestorePreview }
+  | { type: 'restoreCancelled' }
+  | { type: 'restoreCommitStarted'; requestId: number }
+  | {
+      type: 'restoreCommitted';
+      requestId: number;
+      page: HistoryModePage;
+      selectedDiff: HistoricalDiff;
+      diagnostics: HistoryModeDiagnostics | null;
+    }
+  | { type: 'restoreFailed'; requestId: number; error: string }
   | { type: 'historyUnavailable'; error: string }
   | { type: 'noteUnavailable'; error: string }
   | { type: 'lifecycleChanged'; target: HistoryModeTarget }
@@ -298,6 +324,7 @@ export function transitionHistoryMode(
         selectedRevisionId: event.selectedDiff?.revisionId ?? null,
         selectedComparison: 'parent',
         selectedDiff: event.selectedDiff,
+        restorePreview: null,
         diagnostics: event.diagnostics,
         request: null,
         error: null
@@ -321,7 +348,49 @@ export function transitionHistoryMode(
         selectedRevisionId: event.revisionId,
         selectedComparison: event.comparison,
         selectedDiff: null,
+        restorePreview: null,
         request: { kind: 'diff', requestId: event.requestId },
+        error: null
+      };
+    case 'restorePreviewStarted':
+      if (
+        state.phase !== 'open' ||
+        state.request !== null ||
+        state.selectedRevisionId === null
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        restorePreview: null,
+        request: { kind: 'restorePreview', requestId: event.requestId },
+        error: null
+      };
+    case 'restorePreviewLoaded':
+      if (
+        state.phase !== 'open' ||
+        state.request?.kind !== 'restorePreview' ||
+        state.request.requestId !== event.requestId ||
+        state.selectedRevisionId !== event.preview.revisionId
+      ) {
+        return state;
+      }
+      return { ...state, restorePreview: event.preview, request: null };
+    case 'restoreCancelled':
+      return state.phase === 'open' && state.request === null
+        ? { ...state, restorePreview: null }
+        : state;
+    case 'restoreCommitStarted':
+      if (
+        state.phase !== 'open' ||
+        state.request !== null ||
+        !state.restorePreview
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        request: { kind: 'restoreCommit', requestId: event.requestId },
         error: null
       };
     case 'pageLoaded':
@@ -360,6 +429,7 @@ export function transitionHistoryMode(
         records,
         nextCursor: event.page.nextCursor,
         selectedDiff: event.selectedDiff ?? state.selectedDiff,
+        restorePreview: null,
         request: null
       };
     case 'historyReplaced':
@@ -377,6 +447,27 @@ export function transitionHistoryMode(
         selectedRevisionId: event.selectedDiff.revisionId,
         selectedComparison: 'parent',
         selectedDiff: event.selectedDiff,
+        restorePreview: null,
+        diagnostics: event.diagnostics,
+        request: null,
+        error: null
+      };
+    case 'restoreCommitted':
+      if (
+        state.phase !== 'open' ||
+        state.request?.kind !== 'restoreCommit' ||
+        state.request.requestId !== event.requestId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        records: event.page.records,
+        nextCursor: event.page.nextCursor,
+        selectedRevisionId: event.selectedDiff.revisionId,
+        selectedComparison: 'parent',
+        selectedDiff: event.selectedDiff,
+        restorePreview: null,
         diagnostics: event.diagnostics,
         request: null,
         error: null
@@ -412,13 +503,19 @@ export function transitionHistoryMode(
       return { ...state, selectedDiff: event.diff, request: null };
     case 'pageFailed':
     case 'diffFailed':
+    case 'restoreFailed':
       if (
         state.phase !== 'open' ||
         state.request?.requestId !== event.requestId
       ) {
         return state;
       }
-      return { ...state, request: null, error: event.error };
+      return {
+        ...state,
+        restorePreview: event.type === 'restoreFailed' ? null : state.restorePreview,
+        request: null,
+        error: event.error
+      };
     case 'historyUnavailable':
       return unavailableState(state, 'historyUnavailable', event.error);
     case 'noteUnavailable':

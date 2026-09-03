@@ -35,7 +35,7 @@ interactive workspace state that is owned by the frontend.
 | Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
 | Canonical task toggle and delete behavior | `TaskMutationService` |
 | Pane navigation and document-departure ordering | `paneNavigationTransitionPipeline` |
-| Global authored-content-read-only history browsing, bounded revision-label and confirmed history-clear actions, entry/exit, paging, and workspace return | `HistoryModeSession` through `historyModeMachine.ts`; it overlays rather than joins pane or document ownership |
+| Global history browsing, bounded revision-label, confirmed history-clear, and complete Version Restore actions, entry/exit, paging, and workspace return | `HistoryModeSession` through `historyModeMachine.ts`; it overlays rather than joins pane or document ownership |
 | Chat availability, selection, and request lifecycle | `ChatControllerStore.machine` |
 | Durable conversations, runs, events, context, and proposal status | `ChatService` |
 | One active proposal review | `ProposalReviewSession.workflow` through `proposalReviewMachine` |
@@ -230,9 +230,14 @@ membership, note context, editor resources, selection, and scroll are neither
 recreated nor transferred to a history pane. Exit restores the captured active
 pane and focus. The session itself is intentionally not persisted; restart
 returns to the normal persisted workspace.
-Revision naming and confirmed note-history clear are the only current writes
-admitted from this surface, and both cross the typed `NoteTimeline` command
-seam. They never mutate canonical Markdown, pane state, or `NoteDraftState`.
+Revision naming and confirmed note-history clear remain metadata-only writes.
+A complete Version Restore is the sole authored-content write admitted from
+this surface: its preview is bound to the current authored-content hash, its
+confirmation crosses the canonical `NoteTimeline` mutation seam, and its
+committed content is adopted by `NoteDraftState` while the shared editor
+runtime starts a fresh undo history. The mutation preserves the selected
+authored payload exactly and returns its prepared Revision Identity so the
+session cannot mistake an older restore for the new result.
 
 - Reducers choose state; controllers execute effects.
 - Async results are serialized by an owner or correlated with an operation,

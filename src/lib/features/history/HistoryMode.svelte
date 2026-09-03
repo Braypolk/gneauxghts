@@ -16,6 +16,9 @@
     onExit: () => void | Promise<void>;
     onSelectRevision: (revisionId: string) => void | Promise<void>;
     onSetComparison: (comparison: HistoryDiffComparison) => void | Promise<void>;
+    onPreviewRestore: () => void | Promise<void>;
+    onCancelRestore: () => void;
+    onConfirmRestore: () => void | Promise<void>;
     onNameRevision: (revisionId: string, label: string) => void | Promise<void>;
     onRemoveRevisionName: (revisionId: string) => void | Promise<void>;
     onClearHistory: () => void | Promise<void>;
@@ -28,6 +31,9 @@
     onExit,
     onSelectRevision,
     onSetComparison,
+    onPreviewRestore,
+    onCancelRestore,
+    onConfirmRestore,
     onNameRevision,
     onRemoveRevisionName,
     onClearHistory,
@@ -237,6 +243,41 @@
               onRemove={onRemoveRevisionName}
             />
           {/key}
+          <section class="mb-5 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4" aria-label="Version Restore">
+            <p class="text-sm font-semibold">Restore complete revision</p>
+            <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Preview replacing the complete current body and unmanaged properties. The current title, path, identity, creation time, and lifecycle state stay unchanged.
+            </p>
+            <button
+              type="button"
+              class="mt-3 rounded-full border border-amber-600/40 px-4 py-2 text-sm font-medium text-amber-800 disabled:opacity-50 dark:text-amber-200"
+              disabled={historyState.request !== null}
+              onclick={() => void onPreviewRestore()}
+            >{historyState.request?.kind === 'restorePreview' ? 'Preparing preview…' : 'Preview complete replacement'}</button>
+          </section>
+        {/if}
+        {#if historyState.restorePreview}
+          <div class="mb-5 rounded-2xl border border-destructive/35 bg-destructive/5 p-4" role="alertdialog" aria-label="Complete replacement preview">
+            <p class="text-sm font-semibold">Complete replacement preview</p>
+            <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Confirming replaces all current user-authored content and creates a new auditable Version Restore. Ordinary undo cannot cross this boundary.
+            </p>
+            <pre class="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-background p-3 text-xs">{historyState.restorePreview.unmanagedFrontmatter ? `---\n${historyState.restorePreview.unmanagedFrontmatter}\n---\n\n` : ''}{historyState.restorePreview.body}</pre>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                class="rounded-full bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground disabled:opacity-50"
+                disabled={historyState.request !== null}
+                onclick={() => void onConfirmRestore()}
+              >{historyState.request?.kind === 'restoreCommit' ? 'Restoring…' : 'Confirm Version Restore'}</button>
+              <button
+                type="button"
+                class="rounded-full border border-border px-4 py-2 text-sm font-medium disabled:opacity-50"
+                disabled={historyState.request !== null}
+                onclick={onCancelRestore}
+              >Cancel</button>
+            </div>
+          </div>
         {/if}
         {#if historyState.selectedRevisionId}
           <div class="mb-5 inline-flex rounded-full border border-border bg-muted/50 p-1" aria-label="Diff comparison">

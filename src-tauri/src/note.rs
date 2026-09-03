@@ -297,6 +297,38 @@ pub(crate) fn prepare_note_markdown(
     Ok((enriched, metadata))
 }
 
+/// Replace only the user-authored state of a canonical note. Managed metadata
+/// remains current lifecycle truth; only its update time advances.
+pub(crate) fn replace_authored_content(
+    current_markdown: &str,
+    unmanaged_frontmatter: Option<&str>,
+    body: &str,
+) -> Result<String, String> {
+    let current = parse_note(current_markdown);
+    let mut metadata = current
+        .frontmatter
+        .managed
+        .ok_or_else(|| "Version Restore requires managed Note metadata".to_string())?;
+    metadata.updated_at = current_timestamp_rfc3339()?;
+    let managed_frontmatter = compose_managed_frontmatter(&metadata);
+    let frontmatter = match unmanaged_frontmatter {
+        Some(unmanaged) if !unmanaged.is_empty() => {
+            if !unmanaged.ends_with('\n') {
+                return Err(
+                    "Historical unmanaged frontmatter has no terminating line ending".to_string(),
+                );
+            }
+            format!("{unmanaged}{managed_frontmatter}")
+        }
+        _ => managed_frontmatter,
+    };
+    Ok(if body.is_empty() {
+        format!("{FRONTMATTER_DELIMITER}\n{frontmatter}\n{FRONTMATTER_DELIMITER}\n")
+    } else {
+        format!("{FRONTMATTER_DELIMITER}\n{frontmatter}\n{FRONTMATTER_DELIMITER}\n\n{body}")
+    })
+}
+
 /// Restore the timeline-owned identity during an app-owned commit without
 /// changing authored content or unrelated managed metadata.
 pub(crate) fn repair_managed_note_identity(
@@ -444,6 +476,11 @@ fn compose_frontmatter(raw_other: Option<&str>, metadata: &ManagedNoteMetadata) 
         }
     }
 
+    sections.push(compose_managed_frontmatter(metadata));
+    sections.join("\n")
+}
+
+fn compose_managed_frontmatter(metadata: &ManagedNoteMetadata) -> String {
     let trashed_at = metadata
         .trashed_at
         .clone()
@@ -465,8 +502,7 @@ fn compose_frontmatter(raw_other: Option<&str>, metadata: &ManagedNoteMetadata) 
     if let Some(projection_hash) = metadata.projection_hash.as_deref() {
         managed.push_str(&format!("\n  projection_hash: {projection_hash}"));
     }
-    sections.push(managed);
-    sections.join("\n")
+    managed
 }
 
 fn normalize_markdown(markdown: &str) -> String {
@@ -599,7 +635,7 @@ mod tests {
     use super::{
         document_kind, extract_file_name_title_and_body, normalize_wikilink_markdown, parse_note,
         parse_rfc3339_millis, prepare_note_markdown, reject_chat_projection_write,
-        timestamp_millis_to_rfc3339, DocumentKind,
+        replace_authored_content, timestamp_millis_to_rfc3339, DocumentKind,
     };
 
     #[test]
@@ -705,6 +741,33 @@ mod tests {
         assert!(prepared.contains("# Title\n\nBody"));
         assert_eq!(metadata.id, "01TEST");
         assert_eq!(metadata.trashed_at, None);
+    }
+
+    #[test]
+    fn replacing_authored_content_preserves_managed_lifecycle_metadata_and_refreshes_time() {
+        let current = "---\nproject: current\ngneauxghts:\n  id: note-1\n  created_at: 2020-01-01T00:00:00Z\n  updated_at: 2020-01-02T00:00:00Z\n  trashed_at: 2020-01-03T00:00:00Z\n  kind: note\n---\n\nCurrent body";
+
+        let replaced = replace_authored_content(
+            current,
+            Some("project: historical\r\n\r\nflag: true\r\n"),
+            "Historical body\r\nwith exact line endings",
+        )
+        .unwrap();
+        assert!(replaced.contains("project: historical\r\n\r\nflag: true\r\ngneauxghts:"));
+        assert!(replaced.ends_with("Historical body\r\nwith exact line endings"));
+        let parsed = parse_note(&replaced);
+        let metadata = parsed.frontmatter.managed.unwrap();
+
+        assert_eq!(
+            parsed.frontmatter.raw_other.as_deref(),
+            Some("project: historical\n\nflag: true")
+        );
+        assert_eq!(parsed.body, "Historical body\nwith exact line endings");
+        assert_eq!(metadata.id, "note-1");
+        assert_eq!(metadata.created_at, "2020-01-01T00:00:00Z");
+        assert_eq!(metadata.trashed_at.as_deref(), Some("2020-01-03T00:00:00Z"));
+        assert_eq!(metadata.kind, DocumentKind::Note);
+        assert_ne!(metadata.updated_at, "2020-01-02T00:00:00Z");
     }
 
     #[test]

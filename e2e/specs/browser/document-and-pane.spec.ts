@@ -238,6 +238,51 @@ describe('document and pane state-machine boundaries', () => {
     expect(await $('[data-testid="history-mode"]').isExisting()).toBe(false);
   });
 
+  it('confirms a complete Version Restore and isolates ordinary editor undo', async () => {
+    const openHistory = await $('button[aria-label="Open note history"]');
+    await browser.execute((element: HTMLElement) => element.click(), openHistory);
+    const history = await $('[data-testid="history-mode"]');
+    await history.waitForExist();
+    const editingSession = await $('[data-testid="editing-session-note-alpha-revision-31"]');
+    await editingSession.$('button[aria-label="Expand Editing Session"]').click();
+    await editingSession.$('[data-revision-id="note-alpha-revision-34"]').click();
+    await browser.waitUntil(async () =>
+      (await $('[data-testid="historical-revision-diff"]').getText()).includes(
+        'Historical revision 34'
+      )
+    );
+
+    await $('button=Preview complete replacement').click();
+    const preview = await $('[aria-label="Complete replacement preview"]');
+    await preview.waitForExist();
+    expect(await preview.getText()).toContain('Historical revision 34 of Alpha note');
+    expect(await preview.getText()).toContain('Confirm Version Restore');
+    expect(await preview.$$('textarea')).toHaveLength(0);
+    await preview.$('button=Confirm Version Restore').click();
+    await browser.waitUntil(async () => (await history.getText()).includes('Version restore'));
+
+    await $('button[aria-label="Back to workspace"]').click();
+    await history.waitForExist({ reverse: true });
+    const restoredText = await editorText();
+    expect(restoredText).toContain('Historical revision 34 of Alpha note');
+    const editor = await $('[data-testid="note-editor"] .cm-content');
+    await editor.click();
+    const focusedRestoredText = await editorText();
+    await browser.keys(['Meta', 'z']);
+    expect(await editorText()).toBe(focusedRestoredText);
+
+    const restoreInvocation = await browser.execute(() =>
+      window.__GNEAUXGHTS_E2E__?.invocations.find(
+        (entry) => entry.command === 'restore_note_revision'
+      )
+    );
+    expect(restoreInvocation?.args).toMatchObject({
+      noteId: 'note-alpha',
+      revisionId: 'note-alpha-revision-34',
+      confirmed: true
+    });
+  });
+
   it('pins notes above recents and reveals search shortcuts on modifier hold', async () => {
     const pinCurrent = await $('button[aria-label="Pin note"]');
     await pinCurrent.waitForClickable();

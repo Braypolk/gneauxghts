@@ -6,7 +6,9 @@ import {
   getHistoryModePage,
   getHistoryModeRevision,
   nameHistoryRevision,
-  removeHistoryRevisionName
+  previewHistoryRevisionRestore,
+  removeHistoryRevisionName,
+  restoreHistoryRevision
 } from './historyApi';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -81,6 +83,24 @@ describe('historyApi', () => {
     });
     expect(invoke).toHaveBeenNthCalledWith(3, 'clear_note_history', {
       noteId: 'note-1',
+      confirmed: true
+    });
+  });
+
+  it('binds confirmed Version Restore to the authored hash returned by its preview', async () => {
+    invoke.mockResolvedValue(undefined);
+
+    await previewHistoryRevisionRestore('note-1', 'revision-1');
+    await restoreHistoryRevision('note-1', 'revision-1', 'current-hash');
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'preview_note_revision_restore', {
+      noteId: 'note-1',
+      revisionId: 'revision-1'
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, 'restore_note_revision', {
+      noteId: 'note-1',
+      revisionId: 'revision-1',
+      expectedCurrentAuthoredContentHash: 'current-hash',
       confirmed: true
     });
   });

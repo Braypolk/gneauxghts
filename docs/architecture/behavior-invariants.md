@@ -43,10 +43,27 @@ Draft State. Exiting restores the captured active pane and focus while the
 mounted editors retain their selection and scroll. The selected historical
 revision remains pinned when newer timeline records arrive, and History Mode
 never survives an application restart.
-History Mode is read-only for authored note content. It may add, edit, or
+History Mode browsing and diff surfaces are read-only. It may add, edit, or
 remove a revision label and may clear retained history only after explicit
-confirmation through `NoteTimeline`; these actions never mutate canonical
-Markdown, pane membership, editor state, or Note Draft State.
+confirmation through `NoteTimeline`; those metadata/history-retention actions
+never mutate canonical Markdown, pane membership, editor state, or Note Draft
+State. Complete Version Restore is the one authored-content mutation described
+below.
+
+### Version Restore is complete, deliberate, and append-only
+
+History Mode may replace authored note content only through an explicit
+complete-replacement preview and confirmation. The preview is bound to the
+current authored-content hash; a concurrent canonical edit invalidates it.
+Confirmation restores the selected body and unmanaged frontmatter while
+preserving current Note Identity, title, path, creation time, lifecycle state,
+and other managed metadata semantics with a fresh update time. The mutation
+appends a Version Restore revision without removing intervening revisions or
+Lifecycle Events, and the editor begins a fresh undo history so reversal must
+be another Version Restore. Forgotten notes remain inspectable but must be
+recovered before Version Restore, keeping recovery distinct from authored-state
+replacement. The selected authored payload, including exact line endings and
+unmanaged-frontmatter whitespace, is preserved byte-for-byte.
 
 ## Documents, tasks, and persistence
 

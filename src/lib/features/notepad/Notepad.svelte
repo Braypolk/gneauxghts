@@ -20,6 +20,7 @@
   import { type SearchMode } from "$lib/features/notepad/search/search";
   import {
     markNoteOpened,
+    createSessionSnapshot,
     saveNoteSession,
     saveTaskNoteSession,
     type ForgottenNote,
@@ -110,7 +111,9 @@
     getHistoryModeDiagnostics,
     getHistoryModePage,
     nameHistoryRevision,
+    previewHistoryRevisionRestore,
     removeHistoryRevisionName,
+    restoreHistoryRevision,
   } from "$lib/features/history/historyApi";
   import { HistoryModeSession } from "$lib/features/history/historyModeSession.svelte";
   import type { HistoryWorkspaceSnapshot } from "$lib/features/history/historyModeMachine";
@@ -734,6 +737,39 @@
     },
     loadPage: getHistoryModePage,
     loadDiff: getHistoryModeDiff,
+    loadRestorePreview: previewHistoryRevisionRestore,
+    restoreRevision: (noteId, revisionId, expectedCurrentAuthoredContentHash) =>
+      restoreHistoryRevision(
+        noteId,
+        revisionId,
+        expectedCurrentAuthoredContentHash,
+      ),
+    adoptRestoredRevision: async (restored) => {
+      const noteId = restored.noteId;
+      if (!noteId) {
+        throw new Error("The committed restore returned no Note Identity.");
+      }
+      const restoredDocument = Object.values(notepadState.notesByKey).find(
+        (candidate) => getDocumentNoteId(candidate) === noteId,
+      );
+      if (!restoredDocument) {
+        throw new Error("The restored note is no longer open in the workspace.");
+      }
+      await documentEditing.applySnapshot(
+        restoredDocument,
+        createSessionSnapshot(restored),
+        async (markdown) => {
+          const applied = await documents.replaceDocumentContentInPlace(
+            restoredDocument,
+            markdown,
+          );
+          if (applied !== "applied") {
+            throw new Error("The editor could not adopt the restored content.");
+          }
+        },
+        { autosave: false },
+      );
+    },
     nameRevision: nameHistoryRevision,
     removeRevisionName: removeHistoryRevisionName,
     clearNoteHistory,
@@ -1612,6 +1648,9 @@
       onExit={historyMode.exit}
       onSelectRevision={historyMode.selectRevision}
       onSetComparison={historyMode.setComparison}
+      onPreviewRestore={historyMode.previewRestore}
+      onCancelRestore={historyMode.cancelRestore}
+      onConfirmRestore={historyMode.confirmRestore}
       onNameRevision={historyMode.nameRevision}
       onRemoveRevisionName={historyMode.removeRevisionName}
       onClearHistory={historyMode.clearHistory}

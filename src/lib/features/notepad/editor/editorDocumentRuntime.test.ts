@@ -101,6 +101,26 @@ describe('EditorDocumentRuntime', () => {
     expect(second.onMarkdownChange).toHaveBeenCalledOnce();
   });
 
+  it('starts a fresh undo history after a complete Version Restore', () => {
+    const runtime = new EditorDocumentRuntime('before restore');
+    const fixture = pane(runtime, 'before restore', 14);
+    runtime.dispatchFromPane(fixture.controller, [
+      fixture.readState().update({
+        changes: { from: 14, insert: ' with local edit' }
+      })
+    ]);
+
+    expect(runtime.replaceMarkdown('historical body', { flushHistory: true })).toBe(true);
+    expect(runtime.undo(fixture.controller.paneKey)).toBe(false);
+    expect(runtime.markdown).toBe('historical body');
+
+    runtime.dispatchFromPane(fixture.controller, [
+      fixture.readState().update({ changes: { from: 15, insert: '!' } })
+    ]);
+    expect(runtime.undo(fixture.controller.paneKey)).toBe(true);
+    expect(runtime.markdown).toBe('historical body');
+  });
+
   it('replaces every attached pane with clamped selections and one callback', () => {
     const runtime = new EditorDocumentRuntime('long document');
     const first = pane(runtime, 'long document', 2);

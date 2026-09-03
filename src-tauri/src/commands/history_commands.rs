@@ -1,11 +1,20 @@
 use crate::{
+    commands::{note_persistence::build_note_session_from_mutation, NoteSession},
     index::AppState,
     services::note_timeline::{
-        HistoryDiffComparison, HistoryModeDiff, HistoryModePage, HistoryModeRevision, NoteIdentity,
-        NoteTimeline, RevisionIdentity,
+        HistoryDiffComparison, HistoryModeDiff, HistoryModePage, HistoryModeRevision,
+        HistoryRestorePreview, NoteIdentity, NoteTimeline, RevisionIdentity,
     },
 };
+use serde::Serialize;
 use tauri::State;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VersionRestoreCommit {
+    revision_id: String,
+    session: NoteSession,
+}
 
 fn history_access<'a>(
     state: &'a AppState,
@@ -53,6 +62,44 @@ pub(crate) fn get_note_history_diff(
         return Err("History Mode requires a Revision Identity".to_string());
     }
     history_access(&state, note_id)?.diff(revision_id, comparison)
+}
+
+#[tauri::command]
+pub(crate) fn preview_note_revision_restore(
+    state: State<'_, AppState>,
+    note_id: String,
+    revision_id: String,
+) -> Result<HistoryRestorePreview, String> {
+    let revision_id = revision_id.trim();
+    if revision_id.is_empty() {
+        return Err("Version Restore requires a Revision Identity".to_string());
+    }
+    history_access(&state, note_id)?.restore_preview(revision_id)
+}
+
+#[tauri::command]
+pub(crate) fn restore_note_revision(
+    state: State<'_, AppState>,
+    note_id: String,
+    revision_id: String,
+    expected_current_authored_content_hash: String,
+    confirmed: bool,
+) -> Result<VersionRestoreCommit, String> {
+    if !confirmed {
+        return Err("Version Restore requires explicit confirmation".to_string());
+    }
+    let revision_id = revision_id.trim();
+    if revision_id.is_empty() {
+        return Err("Version Restore requires a Revision Identity".to_string());
+    }
+    let restored = history_access(&state, note_id)?
+        .confirm_restore(revision_id, &expected_current_authored_content_hash)?;
+    let outcome = restored.mutation();
+    outcome.report_degraded("Version Restore");
+    Ok(VersionRestoreCommit {
+        revision_id: restored.revision_id().as_str().to_string(),
+        session: build_note_session_from_mutation(outcome),
+    })
 }
 
 #[tauri::command]

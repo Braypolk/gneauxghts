@@ -52,6 +52,16 @@ const notes = new Map<string, NoteFixture>([
   ]
 ]);
 const historyLabels = new Map<string, string>();
+const historyRestores = new Map<
+  string,
+  {
+    revisionId: string;
+    sourceRevisionId: string;
+    unmanagedFrontmatter: string | null;
+    body: string;
+    previousBody: string;
+  }
+>();
 const clearedHistoryNoteIds = new Set<string>();
 let forgottenNotes = [
   {
@@ -231,7 +241,24 @@ function historyRecords(note: NoteFixture) {
       characterCount: ordinal === 35 ? note.markdown.length : 78
     };
   });
+  const restore = historyRestores.get(note.noteId);
   return [
+    ...(restore
+      ? [{
+          kind: 'revision',
+          recordId: restore.revisionId,
+          revisionId: restore.revisionId,
+          source: 'versionRestore',
+          occurredAtMillis: now + 30_000,
+          timelineOrdinal: 36,
+          timeKind: 'committed',
+          modifiedAtMillis: null,
+          editingSessionId: null,
+          revisionLabel: null,
+          lineCount: restore.body.split('\n').length,
+          characterCount: restore.body.length
+        }]
+      : []),
     ...revisions.slice(0, 5),
     {
       kind: 'lifecycleEvent',
@@ -258,6 +285,14 @@ function historyRecords(note: NoteFixture) {
 }
 
 function historicalRevision(note: NoteFixture, revisionId: string) {
+  const restore = historyRestores.get(note.noteId);
+  if (restore?.revisionId === revisionId) {
+    return {
+      revisionId,
+      unmanagedFrontmatter: restore.unmanagedFrontmatter,
+      body: restore.body
+    };
+  }
   if (revisionId === `${note.noteId}-baseline-after-clear`) {
     return { revisionId, unmanagedFrontmatter: null, body: note.markdown };
   }
@@ -281,7 +316,7 @@ function historicalRevision(note: NoteFixture, revisionId: string) {
     body: fixture
       ? fixture.body
       : ordinal === 35
-        ? note.markdown
+        ? restore?.previousBody ?? note.markdown
         : `Historical revision ${ordinal} of ${note.title}\n\nThis content is read only.${ordinal === 34 ? '\n\n![[missing-diagram.png]]' : ''}`
   };
 }
@@ -291,6 +326,22 @@ function historicalDiff(
   revisionId: string,
   comparison: 'parent' | 'current'
 ) {
+  const restore = historyRestores.get(note.noteId);
+  if (restore?.revisionId === revisionId) {
+    const previous = historicalRevision(note, `${note.noteId}-revision-35`);
+    return {
+      revisionId,
+      comparison,
+      fromRevisionId: `${note.noteId}-revision-35`,
+      toRevisionId: revisionId,
+      bodyLines: [
+        { kind: 'removed', text: previous.body, oldLineNumber: 1, newLineNumber: null },
+        { kind: 'added', text: restore.body, oldLineNumber: null, newLineNumber: 1 }
+      ],
+      propertiesLines: [],
+      missingAssets: []
+    };
+  }
   if (revisionId === `${note.noteId}-baseline-after-clear`) {
     return {
       revisionId,
@@ -453,6 +504,34 @@ export function installBrowserE2eBackend() {
         String(args.revisionId ?? ''),
         args.comparison === 'current' ? 'current' : 'parent'
       );
+    }
+    if (command === 'preview_note_revision_restore') {
+      const note = notes.get(String(args.noteId ?? ''));
+      if (!note) throw new Error('Unknown Note Identity');
+      return {
+        ...historicalRevision(note, String(args.revisionId ?? '')),
+        currentAuthoredContentHash: `e2e:${note.markdown}`
+      };
+    }
+    if (command === 'restore_note_revision') {
+      if (args.confirmed !== true) throw new Error('Explicit confirmation required');
+      const note = notes.get(String(args.noteId ?? ''));
+      if (!note) throw new Error('Unknown Note Identity');
+      if (args.expectedCurrentAuthoredContentHash !== `e2e:${note.markdown}`) {
+        throw new Error('Current authored content changed after this restore preview was created');
+      }
+      const selected = historicalRevision(note, String(args.revisionId ?? ''));
+      const restored = {
+        revisionId: `${note.noteId}-version-restore-1`,
+        sourceRevisionId: selected.revisionId,
+        unmanagedFrontmatter: selected.unmanagedFrontmatter,
+        body: selected.body,
+        previousBody: note.markdown
+      };
+      historyRestores.set(note.noteId, restored);
+      note.markdown = restored.body;
+      activeNote = note;
+      return { revisionId: restored.revisionId, session: session(note) };
     }
     if (command === 'name_note_revision') {
       historyLabels.set(String(args.revisionId ?? ''), String(args.label ?? '').trim());

@@ -232,6 +232,8 @@ pub fn run() {
             commands::history_commands::get_note_history_page,
             commands::history_commands::get_note_history_revision,
             commands::history_commands::get_note_history_diff,
+            commands::history_commands::preview_note_revision_restore,
+            commands::history_commands::restore_note_revision,
             commands::history_commands::name_note_revision,
             commands::history_commands::remove_note_revision_name,
             commands::history_commands::clear_note_history,

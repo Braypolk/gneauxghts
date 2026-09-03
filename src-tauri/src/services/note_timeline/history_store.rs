@@ -1046,6 +1046,19 @@ pub(super) fn finalize_publication(
     finalize_intent(&mut connection, history_intent.as_str(), &payload)
 }
 
+pub(super) fn publication_revision_identity(
+    history_intent: &HistoryIntentIdentity,
+) -> Result<RevisionIdentity, String> {
+    open_store()?
+        .query_row(
+            "SELECT revision_id FROM prepared_intents WHERE intent_id = ?1",
+            params![history_intent.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .map(RevisionIdentity::from_persisted)
+        .map_err(|error| format!("Read prepared Note Revision identity: {error}"))
+}
+
 pub(super) fn abandon_publication(history_intent: &HistoryIntentIdentity) -> Result<(), String> {
     let connection = open_store()?;
     connection
@@ -1641,6 +1654,19 @@ pub(super) fn current_path(note_id: &NoteIdentity) -> Result<Option<PathBuf>, St
             |row| row.get::<_, String>(0).map(PathBuf::from),
         )
         .optional()
+        .map_err(|error| error.to_string())
+}
+
+pub(super) fn current_content_hash(note_id: &NoteIdentity) -> Result<Option<String>, String> {
+    let connection = open_store()?;
+    connection
+        .query_row(
+            "SELECT result_hash FROM timeline_heads WHERE note_id = ?1",
+            params![note_id.as_str()],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map(|value| value.flatten())
         .map_err(|error| error.to_string())
 }
 
@@ -3737,6 +3763,20 @@ fn parse_payload_version(version: i64) -> Result<PayloadVersion, String> {
 
 fn hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
+}
+
+pub(super) fn authored_content_hash(markdown: &str) -> String {
+    hash(&AuthoredState::from_canonical(markdown).encode())
+}
+
+pub(super) fn authored_parts_hash(unmanaged_frontmatter: Option<&str>, body: &str) -> String {
+    hash(
+        &AuthoredState {
+            unmanaged_frontmatter: unmanaged_frontmatter.map(str::to_string),
+            body: body.to_string(),
+        }
+        .encode(),
+    )
 }
 
 fn read_u64(encoded: &[u8], offset: usize) -> Result<u64, String> {

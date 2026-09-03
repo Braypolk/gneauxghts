@@ -99,6 +99,9 @@ describe('HistoryMode', () => {
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
         onSetComparison: vi.fn(),
+        onPreviewRestore: vi.fn(),
+        onCancelRestore: vi.fn(),
+        onConfirmRestore: vi.fn(),
         onNameRevision: vi.fn(),
         onRemoveRevisionName: vi.fn(),
         onClearHistory: vi.fn(),
@@ -119,6 +122,7 @@ describe('HistoryMode', () => {
     expect(body).toContain('project: atlas');
     expect(body).toContain('Previous revision');
     expect(body).toContain('Current note');
+    expect(body).toContain('Restore complete revision');
     expect(body).toContain('Release candidate');
     expect(body).toContain('aria-label="Revision name"');
     expect(body).toContain('Remove name');
@@ -141,6 +145,9 @@ describe('HistoryMode', () => {
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
         onSetComparison: vi.fn(),
+        onPreviewRestore: vi.fn(),
+        onCancelRestore: vi.fn(),
+        onConfirmRestore: vi.fn(),
         onNameRevision: vi.fn(),
         onRemoveRevisionName: vi.fn(),
         onClearHistory: vi.fn(),
@@ -166,6 +173,9 @@ describe('HistoryMode', () => {
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
         onSetComparison: vi.fn(),
+        onPreviewRestore: vi.fn(),
+        onCancelRestore: vi.fn(),
+        onConfirmRestore: vi.fn(),
         onNameRevision: vi.fn(),
         onRemoveRevisionName: vi.fn(),
         onClearHistory: vi.fn(),
@@ -177,5 +187,40 @@ describe('HistoryMode', () => {
     expect(body).toContain('History became unavailable.');
     expect(body).toContain('Retry');
     expect(body).toContain('Back to workspace');
+  });
+
+  it('renders a complete replacement preview with explicit confirmation', () => {
+    const state: HistoryModeState = {
+      ...openState,
+      restorePreview: {
+            revisionId: 'revision-2',
+            currentAuthoredContentHash: 'current-hash',
+            unmanagedFrontmatter: 'project: atlas',
+            body: '# Historical body\n\nComplete replacement'
+          }
+    };
+    const body = render(HistoryMode, {
+      props: {
+        state,
+        onExit: vi.fn(),
+        onSelectRevision: vi.fn(),
+        onSetComparison: vi.fn(),
+        onPreviewRestore: vi.fn(),
+        onCancelRestore: vi.fn(),
+        onConfirmRestore: vi.fn(),
+        onNameRevision: vi.fn(),
+        onRemoveRevisionName: vi.fn(),
+        onClearHistory: vi.fn(),
+        onLoadMore: vi.fn(),
+        onRetry: vi.fn()
+      }
+    }).body;
+
+    expect(body).toContain('Complete replacement preview');
+    expect(body).toContain('project: atlas');
+    expect(body).toContain('# Historical body');
+    expect(body).toContain('Confirm Version Restore');
+    expect(body).toContain('Cancel');
+    expect(body).not.toContain('<textarea');
   });
 });

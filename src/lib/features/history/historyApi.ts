@@ -5,7 +5,9 @@ import type {
   HistoricalRevision,
   HistoryDiffComparison,
   HistoryModeDiagnostics,
-  HistoryModePage
+  HistoryModePage,
+  HistoryRestoreCommit,
+  HistoryRestorePreview
 } from './historyModeMachine';
 
 const HISTORY_PAGE_SIZE = 30;
@@ -40,6 +42,29 @@ export function getHistoryModeDiff(
     noteId,
     revisionId,
     comparison
+  });
+}
+
+export function previewHistoryRevisionRestore(
+  noteId: string,
+  revisionId: string
+): Promise<HistoryRestorePreview> {
+  return invoke<HistoryRestorePreview>('preview_note_revision_restore', {
+    noteId,
+    revisionId
+  });
+}
+
+export function restoreHistoryRevision(
+  noteId: string,
+  revisionId: string,
+  expectedCurrentAuthoredContentHash: string
+): Promise<HistoryRestoreCommit> {
+  return invoke<HistoryRestoreCommit>('restore_note_revision', {
+    noteId,
+    revisionId,
+    expectedCurrentAuthoredContentHash,
+    confirmed: true
   });
 }
 

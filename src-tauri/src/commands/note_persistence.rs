@@ -2,7 +2,9 @@ use super::{prepare_notes_dir, NoteSession};
 use crate::{
     index::AppState,
     note,
-    services::note_timeline::{MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline},
+    services::note_timeline::{
+        MutationSource, NoteMutation, NoteMutationResult, NoteMutationWarning, NoteTimeline,
+    },
     state::{persist_note_with_preparation, validate_current_path},
 };
 use std::path::Path;
@@ -47,6 +49,19 @@ fn build_saved_note_session(
         path: persisted_path,
         commit_warning,
     }
+}
+
+pub(crate) fn build_note_session_from_mutation(outcome: &NoteMutationResult) -> NoteSession {
+    let path = outcome.path().to_string_lossy().into_owned();
+    let title = file_stem_title(Some(&path)).unwrap_or_default();
+    build_saved_note_session(
+        Some(outcome.note_id().as_str().to_string()),
+        &title,
+        "",
+        Some(path),
+        outcome.canonical_markdown(),
+        outcome.warning().cloned(),
+    )
 }
 
 pub(crate) fn persist_note_session_with_outcome(
