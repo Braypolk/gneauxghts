@@ -2581,6 +2581,7 @@ pub(super) fn integrity_snapshot() -> HistoryStoreIntegrity {
         Err(_) => return HistoryStoreIntegrity::Unavailable,
     };
     if !matches!(connection_integrity_is_verified(&connection), Ok(true))
+        || !matches!(history_reset_rebuild_is_pending(&connection), Ok(false))
         || verify_revision_payloads(&connection, None).is_err()
     {
         return HistoryStoreIntegrity::Corrupt;
@@ -2595,6 +2596,7 @@ pub(super) fn health_snapshot() -> HistoryStoreHealth {
         Err(_) => return HistoryStoreHealth::Unavailable,
     };
     if !matches!(connection_integrity_is_verified(&connection), Ok(true))
+        || !matches!(history_reset_rebuild_is_pending(&connection), Ok(false))
         || verify_revision_payloads(&connection, None).is_err()
     {
         return HistoryStoreHealth::Corrupt;
@@ -2631,7 +2633,9 @@ pub(super) fn note_health_snapshot(note_id: &NoteIdentity) -> NoteHistoryStoreHe
         Err(_) if failed_store_is_corrupt() => return NoteHistoryStoreHealth::Corrupt,
         Err(_) => return NoteHistoryStoreHealth::Unavailable,
     };
-    if !matches!(connection_integrity_is_verified(&connection), Ok(true)) {
+    if !matches!(connection_integrity_is_verified(&connection), Ok(true))
+        || !matches!(history_reset_rebuild_is_pending(&connection), Ok(false))
+    {
         return NoteHistoryStoreHealth::Corrupt;
     }
     let initialization =
@@ -2869,6 +2873,26 @@ pub(super) fn reset_history_store(vault_root: &Path) -> Result<(u64, u64, String
     Ok((generations.0, generations.1, operation_id, reset_at_millis))
 }
 
+pub(super) fn complete_history_reset_rebuild() -> Result<(), String> {
+    open_store()?
+        .execute(
+            "UPDATE history_reset_rebuild SET pending = 0 WHERE singleton = 1",
+            [],
+        )
+        .map_err(|error| format!("Mark history reset replacement complete: {error}"))?;
+    Ok(())
+}
+
+fn history_reset_rebuild_is_pending(connection: &Connection) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT pending FROM history_reset_rebuild WHERE singleton = 1",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|error| format!("Read history reset rebuild state: {error}"))
+}
+
 fn history_observations_path() -> Result<PathBuf, String> {
     Ok(crate::state::app_data_dir()?.join(HISTORY_OBSERVATIONS_FILE_NAME))
 }
@@ -3028,6 +3052,25 @@ fn ensure_store_creation_is_authorized(
     ))
 }
 
+fn store_creation_is_history_reset_replacement(
+    manifest: &crate::state::VaultManifest,
+) -> Result<bool, String> {
+    let _guard = HISTORY_OBSERVATIONS_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
+    let observations = read_history_observations(&history_observations_path()?)?;
+    Ok(observations
+        .vaults
+        .get(&manifest.vault_id)
+        .is_some_and(|observed| {
+            observed.allow_missing_store
+                && observed
+                    .last_reset
+                    .as_ref()
+                    .is_some_and(|reset| reset.generation == manifest.history_generation)
+        }))
+}
+
 pub(super) fn latest_history_reset() -> Result<Option<(String, u64, u64, u64)>, String> {
     let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
         .ok_or_else(|| "Read history reset without a vault manifest".to_string())?;
@@ -3067,6 +3110,8 @@ fn open_store() -> Result<Connection, String> {
     fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
     let path = history_database_path()?;
     let creating_store = !path.is_file();
+    let creating_reset_replacement =
+        creating_store && store_creation_is_history_reset_replacement(&manifest)?;
     if creating_store {
         ensure_store_creation_is_authorized(&manifest)?;
     }
@@ -3142,6 +3187,10 @@ fn open_store() -> Result<Connection, String> {
                store_instance_id TEXT NOT NULL,
                clean_close_sequence INTEGER NOT NULL,
                portability_state TEXT NOT NULL CHECK (portability_state IN ('open', 'portable'))
+             );
+             CREATE TABLE IF NOT EXISTS history_reset_rebuild (
+               singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+               pending INTEGER NOT NULL CHECK (pending IN (0, 1))
              );
              CREATE TABLE IF NOT EXISTS prepared_intents (
                intent_id TEXT PRIMARY KEY,
@@ -3288,6 +3337,12 @@ fn open_store() -> Result<Connection, String> {
              );",
         )
         .map_err(|error| format!("Initialize Note Timeline history store: {error}"))?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO history_reset_rebuild (singleton, pending) VALUES (1, ?1)",
+            params![creating_reset_replacement],
+        )
+        .map_err(|error| format!("Initialize history reset rebuild state: {error}"))?;
     let schema = connection
         .query_row(
             "SELECT schema_version FROM history_metadata WHERE singleton = 1",

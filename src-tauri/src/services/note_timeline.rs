@@ -683,20 +683,77 @@ struct HistoryClearBaseline {
 }
 
 #[derive(Clone, Debug)]
-enum InactiveBaselineContext {
+enum ExistingBaselineCandidate {
+    Active {
+        path: PathBuf,
+    },
     Forgotten {
+        path: PathBuf,
         note_id: Option<NoteIdentity>,
         original_path: PathBuf,
         forgotten_at_millis: u64,
     },
-    Missing(MissingNoteRecord),
+    Missing {
+        record: MissingNoteRecord,
+        canonical_markdown: String,
+    },
 }
 
-#[derive(Clone, Debug)]
-struct ExistingBaselineCandidate {
-    path: PathBuf,
-    canonical_markdown: Option<String>,
-    inactive: Option<InactiveBaselineContext>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BaselineInitializationHistory {
+    SettleExistingStore,
+    RebuildReplacementStore,
+}
+
+impl ExistingBaselineCandidate {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Active { path } | Self::Forgotten { path, .. } => path,
+            Self::Missing { record, .. } => record.path(),
+        }
+    }
+
+    fn canonical_markdown(&self) -> Option<&str> {
+        match self {
+            Self::Missing {
+                canonical_markdown, ..
+            } => Some(canonical_markdown),
+            Self::Active { .. } | Self::Forgotten { .. } => None,
+        }
+    }
+
+    fn retained_note_id(&self) -> Option<NoteIdentity> {
+        match self {
+            Self::Active { .. } => None,
+            Self::Forgotten { note_id, .. } => note_id.clone(),
+            Self::Missing { record, .. } => Some(record.note_id().clone()),
+        }
+    }
+
+    fn is_inactive(&self) -> bool {
+        !matches!(self, Self::Active { .. })
+    }
+
+    fn record_inactive_lifecycle(&self, note_id: &NoteIdentity) -> Result<(), String> {
+        match self {
+            Self::Active { .. } => Ok(()),
+            Self::Forgotten {
+                path,
+                original_path,
+                forgotten_at_millis,
+                ..
+            } => history_store::record_observed_lifecycle_event(
+                note_id,
+                LifecycleEventKind::Forgotten,
+                Some(original_path),
+                path,
+                *forgotten_at_millis,
+            ),
+            Self::Missing { record, .. } => {
+                history_store::record_observed_missing_lifecycle_event(record)
+            }
+        }
+    }
 }
 
 impl HistoryDeletionReceipt {
@@ -2787,18 +2844,25 @@ impl<'a> NoteTimeline<'a> {
         &self,
         vault_root: &Path,
     ) -> Result<BaselineInitializationProgress, String> {
-        self.initialize_existing_notes_with_candidates(vault_root, Vec::new())
+        self.initialize_existing_notes_with_candidates(
+            vault_root,
+            Vec::new(),
+            BaselineInitializationHistory::SettleExistingStore,
+        )
     }
 
     fn initialize_existing_notes_with_candidates(
         &self,
         vault_root: &Path,
         additional_candidates: Vec<ExistingBaselineCandidate>,
+        history: BaselineInitializationHistory,
     ) -> Result<BaselineInitializationProgress, String> {
         let _operation = self.state.begin_note_timeline_operation()?;
         let vault_root = require_active_vault_root(vault_root)?;
-        self.recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        if history == BaselineInitializationHistory::SettleExistingStore {
+            self.recover_retained_observations()?;
+            self.state.ensure_note_timeline_history_recovered()?;
+        }
         let mut progress = BaselineInitializationProgress {
             phase: BaselineInitializationPhase::Initializing,
             discovered_notes: 0,
@@ -2810,36 +2874,27 @@ impl<'a> NoteTimeline<'a> {
         history_store::store_baseline_initialization_progress(&progress)?;
         let mut candidates = collect_markdown_files_recursively(&vault_root)?
             .into_iter()
-            .map(|path| ExistingBaselineCandidate {
-                path,
-                canonical_markdown: None,
-                inactive: None,
-            })
+            .map(|path| ExistingBaselineCandidate::Active { path })
             .collect::<Vec<_>>();
         candidates.extend(
             crate::state::read_state(&vault_root)?
                 .forgotten_notes
                 .into_iter()
                 .filter(|forgotten| forgotten.kind == crate::state::ForgottenItemKind::Note)
-                .map(|forgotten| ExistingBaselineCandidate {
+                .map(|forgotten| ExistingBaselineCandidate::Forgotten {
                     path: PathBuf::from(forgotten.forgotten_path),
-                    canonical_markdown: None,
-                    inactive: Some(InactiveBaselineContext::Forgotten {
-                        note_id: forgotten.note_id.map(NoteIdentity::new),
-                        original_path: PathBuf::from(forgotten.original_path),
-                        forgotten_at_millis: forgotten.forgotten_at_millis,
-                    }),
+                    note_id: forgotten.note_id.map(NoteIdentity::new),
+                    original_path: PathBuf::from(forgotten.original_path),
+                    forgotten_at_millis: forgotten.forgotten_at_millis,
                 }),
         );
         candidates.extend(additional_candidates);
-        candidates.sort_by(|left, right| left.path.cmp(&right.path));
+        candidates.sort_by(|left, right| left.path().cmp(right.path()));
         for candidate in candidates {
-            let ExistingBaselineCandidate {
-                path,
-                canonical_markdown,
-                inactive,
-            } = candidate;
-            let markdown = match canonical_markdown
+            let path = candidate.path().to_path_buf();
+            let markdown = match candidate
+                .canonical_markdown()
+                .map(str::to_owned)
                 .map(Ok)
                 .unwrap_or_else(|| fs::read_to_string(&path).map_err(|error| error.to_string()))
             {
@@ -2855,18 +2910,17 @@ impl<'a> NoteTimeline<'a> {
                 }
             };
             let parsed = crate::note::parse_note(&markdown);
-            let Some(metadata) = parsed.frontmatter.managed else {
+            let metadata = parsed.frontmatter.managed.as_ref();
+            if metadata.is_some_and(|metadata| metadata.kind.is_chat_projection()) {
                 continue;
-            };
-            if metadata.kind.is_chat_projection() {
+            }
+            let retained_note_id = candidate.retained_note_id();
+            if metadata.is_none() && retained_note_id.is_none() {
                 continue;
             }
             progress.discovered_notes += 1;
-            let embedded_note_id =
-                (!metadata.id.trim().is_empty()).then(|| NoteIdentity::new(metadata.id.clone()));
-            let retained_note_id = inactive.as_ref().and_then(|inactive| match inactive {
-                InactiveBaselineContext::Forgotten { note_id, .. } => note_id.clone(),
-                InactiveBaselineContext::Missing(missing) => Some(missing.note_id().clone()),
+            let embedded_note_id = metadata.and_then(|metadata| {
+                (!metadata.id.trim().is_empty()).then(|| NoteIdentity::new(metadata.id.clone()))
             });
             let mut resolved_note_id = None;
             let initialized = (|| {
@@ -2905,24 +2959,9 @@ impl<'a> NoteTimeline<'a> {
                     &markdown,
                     known_since_millis,
                 )?;
-                if let Some(inactive) = inactive.as_ref() {
+                if candidate.is_inactive() {
                     if baseline_inserted || history_store::lifecycle_events(&note_id)?.is_empty() {
-                        match inactive {
-                            InactiveBaselineContext::Forgotten {
-                                original_path,
-                                forgotten_at_millis,
-                                ..
-                            } => history_store::record_observed_lifecycle_event(
-                                &note_id,
-                                LifecycleEventKind::Forgotten,
-                                Some(original_path),
-                                &path,
-                                *forgotten_at_millis,
-                            )?,
-                            InactiveBaselineContext::Missing(missing) => {
-                                history_store::record_observed_missing_lifecycle_event(missing)?
-                            }
-                        }
+                        candidate.record_inactive_lifecycle(&note_id)?;
                     }
                 }
                 history_store::clear_baseline_initialization_failure(&note_id)?;
@@ -2985,19 +3024,24 @@ impl<'a> NoteTimeline<'a> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
             let _operation = self.state.begin_note_timeline_operation()?;
-            let recoverable_missing = self.recoverable_missing_baseline_candidates();
-            let (previous_generation, generation, operation_id, reset_at_millis) = {
-                let _timeline = self.state.lock_note_timeline_observation_replay()?;
+            let _timeline = self.state.lock_note_timeline_observation_replay()?;
+            self.recover_pending_deletions()?;
+            self.replay_retained_observations(None)?;
+            history_store::recover_pending()?;
+            let recoverable_missing = self.recoverable_missing_baseline_candidates()?;
+            let (previous_generation, generation, operation_id, reset_at_millis) =
+                history_store::reset_history_store(&vault_root)?;
+            {
                 let mut recovered = self.state.lock_note_timeline_history_recovery()?;
                 let mut integrity = self.state.lock_note_timeline_integrity()?;
-                let receipt = history_store::reset_history_store(&vault_root)?;
                 *recovered = false;
                 *integrity = NoteTimelineIntegrityAttestation::Unverified;
-                receipt
-            };
-            let initialization = match self
-                .initialize_existing_notes_with_candidates(&vault_root, recoverable_missing)
-            {
+            }
+            let initialization = match self.initialize_existing_notes_with_candidates(
+                &vault_root,
+                recoverable_missing,
+                BaselineInitializationHistory::RebuildReplacementStore,
+            ) {
                 Ok(initialization)
                     if initialization.phase() == BaselineInitializationPhase::Complete =>
                 {
@@ -3021,6 +3065,16 @@ impl<'a> NoteTimeline<'a> {
                     ));
                 }
             };
+            if let Err(error) = history_store::complete_history_reset_rebuild() {
+                *self.state.lock_note_timeline_integrity()? =
+                    NoteTimelineIntegrityAttestation::Corrupt;
+                return Err(format!(
+                    "History reset replacement could not be made available: {error}"
+                ));
+            }
+            *self.state.lock_note_timeline_history_recovery()? = true;
+            *self.state.lock_note_timeline_integrity()? =
+                NoteTimelineIntegrityAttestation::Verified;
             Ok(HistoryResetReceipt {
                 operation_id,
                 previous_generation,
@@ -3031,23 +3085,36 @@ impl<'a> NoteTimeline<'a> {
         })
     }
 
-    fn recoverable_missing_baseline_candidates(&self) -> Vec<ExistingBaselineCandidate> {
+    fn recoverable_missing_baseline_candidates(
+        &self,
+    ) -> Result<Vec<ExistingBaselineCandidate>, String> {
         // Reset can retain a Missing Note only when its latest authored state
         // still reconstructs and verifies. It must never invent replacement
         // content from an unavailable or corrupt revision.
-        let Ok(missing_notes) = history_store::missing_notes() else {
-            return Vec::new();
-        };
+        let missing_notes = history_store::missing_notes()
+            .map_err(|error| format!("Read Missing Notes before history reset: {error}"))?;
         missing_notes
             .into_iter()
-            .filter_map(|missing| {
-                let retained = history_store::reconstruct_latest(missing.note_id()).ok()?;
+            .map(|missing| {
+                let retained =
+                    history_store::reconstruct_latest(missing.note_id()).map_err(|error| {
+                        format!(
+                            "Reconstruct Missing Note {} before history reset: {error}",
+                            missing.note_id().as_str()
+                        )
+                    })?;
                 let canonical_markdown =
-                    canonical_markdown_for_recovered_note(missing.note_id(), &retained).ok()?;
-                Some(ExistingBaselineCandidate {
-                    path: missing.path().to_path_buf(),
-                    canonical_markdown: Some(canonical_markdown),
-                    inactive: Some(InactiveBaselineContext::Missing(missing)),
+                    canonical_markdown_for_recovered_note(missing.note_id(), &retained).map_err(
+                        |error| {
+                            format!(
+                                "Canonicalize Missing Note {} before history reset: {error}",
+                                missing.note_id().as_str()
+                            )
+                        },
+                    )?;
+                Ok(ExistingBaselineCandidate::Missing {
+                    record: missing,
+                    canonical_markdown,
                 })
             })
             .collect()
@@ -6753,6 +6820,14 @@ mod tests {
             .expect_err("an incomplete replacement must not become available");
 
         assert!(error.contains("did not rebuild completely"));
+        drop(timeline);
+        drop(state);
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&restarted);
         assert_eq!(
             timeline.history_health().unwrap().state(),
             HistoryHealthState::Corrupt
@@ -6776,6 +6851,55 @@ mod tests {
                 .revisions()
                 .unwrap()
                 .len(),
+            1
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn development_reset_refuses_to_discard_an_unreconstructable_missing_note() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-reset-bad-missing-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-reset-bad-missing-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Unreconstructable missing".to_string(),
+            "Retained body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        fs::remove_file(&path).unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline
+            .observe(VaultObservation::missing(
+                path,
+                crate::time::current_time_millis().unwrap() + 1,
+            ))
+            .unwrap();
+        corrupt_note_revision_payload_for_test(&note_id);
+
+        let error = timeline
+            .reset_corrupt_history(notes.path(), true)
+            .expect_err("reset must not erase an unreconstructable Missing Note");
+
+        assert!(error.contains("Reconstruct"));
+        assert_eq!(
+            crate::state::read_vault_manifest_for(notes.path())
+                .unwrap()
+                .unwrap()
+                .history_generation,
             1
         );
         crate::state::set_notes_root_override(None).unwrap();

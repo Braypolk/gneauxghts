@@ -884,6 +884,9 @@ mod tests {
         .expect("forgotten note summary");
         let forgotten_path = PathBuf::from(&forgotten.forgotten_path);
         let retained_deadline = forgotten.purge_at_millis;
+        fs::write(&forgotten_path, "Current retained body")
+            .expect("damage only the forgotten note's managed metadata");
+        let damaged_forgotten_bytes = fs::read(&forgotten_path).expect("read damaged note");
         corrupt_note_revision_payload_for_test(&note_id);
         let timeline = NoteTimeline::new(app.state::<AppState>().inner());
         assert_eq!(
@@ -900,6 +903,10 @@ mod tests {
 
         assert_eq!(reset.initialization().discovered_notes(), 1);
         assert_eq!(reset.initialization().baseline_revisions(), 1);
+        assert_eq!(
+            fs::read(&forgotten_path).expect("read untouched forgotten note"),
+            damaged_forgotten_bytes
+        );
         assert!(NoteTimeline::new(app.state::<AppState>().inner())
             .open_history_mode(note_id.clone())
             .page(None, 50)
