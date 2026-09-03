@@ -24,6 +24,7 @@ import {
 } from './loaders/semanticLoader';
 import { loadSettingsViewSlice } from './loaders/settingsViewLoader';
 import {
+  clearVaultHistory as requestVaultHistoryClear,
   loadHistoryHealthSlice,
   resetCorruptHistory as requestCorruptHistoryReset,
   retryHistoryRecovery
@@ -383,6 +384,28 @@ export class SettingsStore {
     } catch (error) {
       console.error('Failed to reset corrupt history:', error);
       this.historyActionError = String(error);
+    } finally {
+      this.isRunningHistoryAction = false;
+    }
+  };
+
+  clearVaultHistory = async () => {
+    this.isRunningHistoryAction = true;
+    this.historyActionError = null;
+    try {
+      await requestVaultHistoryClear();
+    } catch (error) {
+      console.error('Failed to clear vault history:', error);
+      this.historyActionError = String(error);
+      this.isRunningHistoryAction = false;
+      return;
+    }
+
+    try {
+      this.historyHealth = await loadHistoryHealthSlice();
+    } catch (error) {
+      console.error('Vault history was cleared, but storage reporting could not refresh:', error);
+      this.historyActionError = `Vault history was cleared, but storage reporting could not refresh: ${String(error)}`;
     } finally {
       this.isRunningHistoryAction = false;
     }

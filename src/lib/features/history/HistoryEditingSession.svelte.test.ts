@@ -20,6 +20,7 @@ const session: EditingSessionTimelineItem = {
       timeKind: 'observed',
       modifiedAtMillis: 1_900,
       editingSessionId: 'revision-1',
+      revisionLabel: 'Release candidate',
       lineCount: 2,
       characterCount: 31
     },
@@ -33,6 +34,7 @@ const session: EditingSessionTimelineItem = {
       timeKind: 'knownSince',
       modifiedAtMillis: null,
       editingSessionId: 'revision-1',
+      revisionLabel: null,
       lineCount: 1,
       characterCount: 14
     }

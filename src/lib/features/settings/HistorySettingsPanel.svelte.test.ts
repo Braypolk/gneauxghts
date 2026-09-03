@@ -29,7 +29,8 @@ function renderPanel(historyHealth: HistoryHealthReport) {
       isRunningAction: false,
       actionError: null,
       retryHistory: vi.fn(),
-      resetCorruptHistory: vi.fn()
+      resetCorruptHistory: vi.fn(),
+      clearVaultHistory: vi.fn()
     }
   }).body;
 }
@@ -42,6 +43,10 @@ describe('HistorySettingsPanel health and recovery states', () => {
     expect(body).toContain('4 of 4 notes ready');
     expect(body).toContain('2 KB allocated');
     expect(body).toContain('512 bytes reclaimable');
+    expect(body).toContain('Clear vault history');
+    expect(body).toContain('active notes');
+    expect(body).toContain('new Baseline Revisions');
+    expect(body).toContain('Missing and forgotten timelines are retained');
   });
 
   it.each([

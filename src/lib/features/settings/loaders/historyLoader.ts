@@ -20,3 +20,7 @@ export function loadNoteHistoryHealth(noteId: string) {
 export function resetCorruptHistory() {
   return invoke<HistoryResetDiagnostic>('reset_corrupt_history', { confirmed: true });
 }
+
+export function clearVaultHistory() {
+  return invoke<void>('clear_vault_history', { confirmed: true });
+}

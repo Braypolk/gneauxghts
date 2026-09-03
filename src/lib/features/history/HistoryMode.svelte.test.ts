@@ -22,6 +22,7 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
       timeKind: 'observed',
       modifiedAtMillis: 1_900,
       editingSessionId: 'revision-1',
+      revisionLabel: 'Release candidate',
       lineCount: 2,
       characterCount: 31
     },
@@ -35,6 +36,7 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
       timeKind: 'observed',
       modifiedAtMillis: 1_700,
       editingSessionId: 'revision-1',
+      revisionLabel: null,
       lineCount: 1,
       characterCount: 14
     },
@@ -75,6 +77,16 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
     ],
     missingAssets: []
   },
+  diagnostics: {
+    note: {
+      noteId: 'note-1',
+      state: 'healthy',
+      revisionCount: 2,
+      lifecycleEventCount: 1,
+      revisionPayloadBytes: 512
+    },
+    storage: { allocatedBytes: 4096, reclaimableBytes: 1024 }
+  },
   request: null,
   error: null
 };
@@ -87,6 +99,9 @@ describe('HistoryMode', () => {
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
         onSetComparison: vi.fn(),
+        onNameRevision: vi.fn(),
+        onRemoveRevisionName: vi.fn(),
+        onClearHistory: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }
@@ -104,6 +119,16 @@ describe('HistoryMode', () => {
     expect(body).toContain('project: atlas');
     expect(body).toContain('Previous revision');
     expect(body).toContain('Current note');
+    expect(body).toContain('Release candidate');
+    expect(body).toContain('aria-label="Revision name"');
+    expect(body).toContain('Remove name');
+    expect(body).toContain('Clear note history');
+    expect(body).toContain('new Baseline Revision');
+    expect(body).toContain('reclaimable storage');
+    expect(body).toContain('Note history healthy');
+    expect(body).toContain('512 bytes retained revision content');
+    expect(body).toContain('4,096 bytes allocated');
+    expect(body).toContain('1,024 bytes reclaimable');
     expect(body).toContain('Load older history');
     expect(body).not.toContain('contenteditable');
     expect(body).not.toContain('<textarea');
@@ -116,6 +141,9 @@ describe('HistoryMode', () => {
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
         onSetComparison: vi.fn(),
+        onNameRevision: vi.fn(),
+        onRemoveRevisionName: vi.fn(),
+        onClearHistory: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }
@@ -138,6 +166,9 @@ describe('HistoryMode', () => {
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
         onSetComparison: vi.fn(),
+        onNameRevision: vi.fn(),
+        onRemoveRevisionName: vi.fn(),
+        onClearHistory: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }

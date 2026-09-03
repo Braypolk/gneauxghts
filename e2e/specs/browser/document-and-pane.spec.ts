@@ -144,6 +144,23 @@ describe('document and pane state-machine boundaries', () => {
     expect(await properties.getText()).toContain('project: atlas');
     expect(await properties.getText()).toContain('project: zeus');
 
+    const revisionName = await $('input[aria-label="Revision name"]');
+    await revisionName.setValue('Release candidate');
+    await $('button=Add name').click();
+    await browser.waitUntil(async () => (await history.getText()).includes('Release candidate'));
+    const renamedRevision = await $('input[aria-label="Revision name"]');
+    await renamedRevision.setValue('Milestone');
+    await $('button=Save name').click();
+    await browser.waitUntil(async () => (await history.getText()).includes('Milestone'));
+
+    const duplicateRevision = await editingSession.$('[data-revision-id="note-alpha-revision-32"]');
+    await duplicateRevision.click();
+    await $('input[aria-label="Revision name"]').setValue('Milestone');
+    await $('button=Add name').click();
+    await browser.waitUntil(async () => (await history.getText()).match(/Milestone/gu)?.length === 2);
+    await $('button=Remove name').click();
+    await browser.waitUntil(async () => (await history.getText()).match(/Milestone/gu)?.length === 1);
+
     expect(await history.getText()).toContain('Renamed Alpha old.md to alpha.md');
     expect(await $$('[data-revision-id="note-alpha-title-only-rename"]')).toHaveLength(0);
 
@@ -191,6 +208,15 @@ describe('document and pane state-machine boundaries', () => {
     await loadOlder.click();
     await browser.waitUntil(async () => !(await $('button=Load older history').isExisting()));
     expect(await history.getText()).toContain('Created');
+
+    const clearHistory = await (await $('main')).$('button=Clear note history');
+    await clearHistory.click();
+    const confirmClear = await $('button=Confirm clear note history');
+    await confirmClear.waitForClickable();
+    await confirmClear.click();
+    await browser.waitUntil(async () => !(await $('button=Load older history').isExisting()));
+    expect(await history.getText()).not.toContain('Renamed Alpha old.md to alpha.md');
+    expect(await history.getText()).toContain('Alpha line 1');
 
     const back = await $('button[aria-label="Back to workspace"]');
     await back.click();
@@ -264,6 +290,37 @@ describe('document and pane state-machine boundaries', () => {
       window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta' }));
     });
     await browser.waitUntil(async () => (await currentScope.getText()).includes('This note'));
+  });
+
+  it('confirms vault clear and permanent purge while reporting reclaimable storage', async () => {
+    const openSettings = await $('a[aria-label="Settings"]');
+    await browser.execute((element: HTMLElement) => element.click(), openSettings);
+    await $('[aria-label="Settings categories"]').waitForExist();
+    const historyCategory = await $('[aria-label="Settings categories"] button:nth-of-type(5)');
+    await historyCategory.waitForExist();
+    await browser.execute((element: HTMLElement) => element.click(), historyCategory);
+    await browser.waitUntil(async () => (await $('body').getText()).includes('16 KB allocated'));
+    expect(await $('body').getText()).toContain('512 bytes reclaimable');
+
+    await $('button=Clear vault history').click();
+    await $('button=Confirm clear vault history').click();
+    await browser.waitUntil(async () => (await $('body').getText()).includes('12 KB reclaimable'));
+
+    await $('button=Forgotten Items').click();
+    await browser.waitUntil(async () => (await $('body').getText()).includes('Forgotten draft'));
+    await $('button=Permanently delete').click();
+    const confirmation = await $('[role="alertdialog"]');
+    await confirmation.waitForExist();
+    expect(await confirmation.getText()).toContain('complete Note Timeline');
+    expect(await confirmation.getText()).toContain('cannot be undone');
+    await $('button=Confirm permanent deletion').click();
+    await browser.waitUntil(async () => !(await $('*=Forgotten draft').isExisting()));
+
+    const commands = await browser.execute(() =>
+      window.__GNEAUXGHTS_E2E__?.invocations.map((entry) => entry.command) ?? []
+    );
+    expect(commands).toContain('clear_vault_history');
+    expect(commands).toContain('delete_forgotten_notes');
   });
 
   it('keeps Markdown fidelity stable in the real editor DOM', async () => {

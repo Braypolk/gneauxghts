@@ -25,6 +25,7 @@ function revision(
     timeKind: 'committed',
     modifiedAtMillis: null,
     editingSessionId,
+    revisionLabel: null,
     lineCount: 2,
     characterCount: 20
   };

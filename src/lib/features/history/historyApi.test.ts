@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  clearNoteHistory,
   getHistoryModeDiff,
+  getHistoryModeDiagnostics,
   getHistoryModePage,
-  getHistoryModeRevision
+  getHistoryModeRevision,
+  nameHistoryRevision,
+  removeHistoryRevisionName
 } from './historyApi';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -57,5 +61,56 @@ describe('historyApi', () => {
       revisionId: 'revision-1',
       comparison: 'current'
     });
+  });
+
+  it('uses confirmed, note-scoped commands to manage retained history', async () => {
+    invoke.mockResolvedValue(undefined);
+
+    await nameHistoryRevision('note-1', 'revision-1', 'Milestone');
+    await removeHistoryRevisionName('note-1', 'revision-1');
+    await clearNoteHistory('note-1');
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'name_note_revision', {
+      noteId: 'note-1',
+      revisionId: 'revision-1',
+      label: 'Milestone'
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, 'remove_note_revision_name', {
+      noteId: 'note-1',
+      revisionId: 'revision-1'
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, 'clear_note_history', {
+      noteId: 'note-1',
+      confirmed: true
+    });
+  });
+
+  it('loads per-note usage with vault allocation and reclamation', async () => {
+    invoke
+      .mockResolvedValueOnce({
+        noteId: 'note-1',
+        state: 'healthy',
+        revisionCount: 3,
+        lifecycleEventCount: 1,
+        revisionPayloadBytes: 512
+      })
+      .mockResolvedValueOnce({
+        storage: { allocatedBytes: 4096, reclaimableBytes: 1024 }
+      });
+
+    await expect(getHistoryModeDiagnostics('note-1')).resolves.toEqual({
+      note: {
+        noteId: 'note-1',
+        state: 'healthy',
+        revisionCount: 3,
+        lifecycleEventCount: 1,
+        revisionPayloadBytes: 512
+      },
+      storage: { allocatedBytes: 4096, reclaimableBytes: 1024 }
+    });
+    expect(invoke).toHaveBeenNthCalledWith(1, 'get_note_history_health', {
+      noteId: 'note-1'
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, 'get_history_health');
   });
 });

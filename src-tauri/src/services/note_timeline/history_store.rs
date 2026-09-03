@@ -1870,6 +1870,112 @@ pub(super) fn clear_note_history(
         .map_err(|error| format!("Commit Note Timeline clear: {error}"))
 }
 
+pub(super) fn revision_labels(note_id: &NoteIdentity) -> Result<BTreeMap<String, String>, String> {
+    let connection = open_store()?;
+    let mut statement = connection
+        .prepare(
+            "SELECT labels.revision_id, labels.label
+             FROM named_revision_labels labels
+             JOIN revisions revisions ON revisions.revision_id = labels.revision_id
+             WHERE revisions.note_id = ?1
+             ORDER BY labels.label_id",
+        )
+        .map_err(|error| format!("Prepare Named Revision labels: {error}"))?;
+    let rows = statement
+        .query_map(params![note_id.as_str()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("Query Named Revision labels: {error}"))?;
+    rows.collect::<Result<BTreeMap<_, _>, _>>()
+        .map_err(|error| format!("Read Named Revision labels: {error}"))
+}
+
+fn require_revision_owned_by_note(
+    transaction: &Transaction<'_>,
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+) -> Result<(), String> {
+    let exists = transaction
+        .query_row(
+            "SELECT 1 FROM revisions WHERE revision_id = ?1 AND note_id = ?2",
+            params![revision_id.0, note_id.as_str()],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|error| format!("Find Named Revision target: {error}"))?
+        .is_some();
+    if exists {
+        Ok(())
+    } else {
+        Err("Selected Note Revision is no longer available".to_string())
+    }
+}
+
+pub(super) fn name_revision(
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+    label: &str,
+) -> Result<(), String> {
+    mutate_owned_revision_label(
+        note_id,
+        revision_id,
+        "Commit Named Revision label",
+        |transaction| {
+            transaction
+                .execute(
+                    "DELETE FROM named_revision_labels WHERE revision_id = ?1",
+                    params![revision_id.0],
+                )
+                .map_err(|error| format!("Replace Named Revision label: {error}"))?;
+            transaction
+                .execute(
+                    "INSERT INTO named_revision_labels (label_id, revision_id, label)
+                     VALUES (?1, ?2, ?3)",
+                    params![crate::note::generate_unique_id(), revision_id.0, label],
+                )
+                .map_err(|error| format!("Store Named Revision label: {error}"))?;
+            Ok(())
+        },
+    )
+}
+
+fn mutate_owned_revision_label(
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+    commit_context: &str,
+    mutation: impl FnOnce(&Transaction<'_>) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut connection = open_store()?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| error.to_string())?;
+    require_revision_owned_by_note(&transaction, note_id, revision_id)?;
+    mutation(&transaction)?;
+    transaction
+        .commit()
+        .map_err(|error| format!("{commit_context}: {error}"))
+}
+
+pub(super) fn remove_revision_name(
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+) -> Result<(), String> {
+    mutate_owned_revision_label(
+        note_id,
+        revision_id,
+        "Commit Named Revision label removal",
+        |transaction| {
+            transaction
+                .execute(
+                    "DELETE FROM named_revision_labels WHERE revision_id = ?1",
+                    params![revision_id.0],
+                )
+                .map_err(|error| format!("Remove Named Revision label: {error}"))?;
+            Ok(())
+        },
+    )
+}
+
 pub(super) fn clear_vault_history(
     seeds: &[HistoryClearBaseline],
     marker: &DeletionMarker,

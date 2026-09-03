@@ -1,3 +1,5 @@
+import type { HistoryStorageUsage, NoteHistoryHealth } from '$lib/types/history';
+
 export type HistoryMutationSource =
   | 'editor'
   | 'taskAction'
@@ -28,6 +30,7 @@ export interface HistoryRevisionRecord {
   timeKind: 'knownSince' | 'committed' | 'observed';
   modifiedAtMillis: number | null;
   editingSessionId: string | null;
+  revisionLabel: string | null;
   lineCount: number;
   characterCount: number;
 }
@@ -48,6 +51,11 @@ export type HistoryModeRecord = HistoryRevisionRecord | HistoryLifecycleRecord;
 export interface HistoryModePage {
   records: HistoryModeRecord[];
   nextCursor: string | null;
+}
+
+export interface HistoryModeDiagnostics {
+  note: NoteHistoryHealth;
+  storage: HistoryStorageUsage | null;
 }
 
 export interface HistoricalRevision {
@@ -105,6 +113,7 @@ export type HistoryModeState =
       selectedRevisionId: string | null;
       selectedComparison: HistoryDiffComparison;
       selectedDiff: HistoricalDiff | null;
+      diagnostics: HistoryModeDiagnostics | null;
       request: { kind: 'page' | 'refresh' | 'diff'; requestId: number } | null;
       error: string | null;
     }
@@ -140,6 +149,7 @@ export type HistoryModeEvent =
       target: HistoryModeTarget;
       page: HistoryModePage;
       selectedDiff: HistoricalDiff | null;
+      diagnostics: HistoryModeDiagnostics | null;
     }
   | { type: 'pageStarted'; requestId: number }
   | { type: 'pageLoaded'; requestId: number; page: HistoryModePage }
@@ -150,6 +160,19 @@ export type HistoryModeEvent =
       requestId: number;
       page: HistoryModePage;
       selectedDiff?: HistoricalDiff;
+    }
+  | {
+      type: 'historyReplaced';
+      requestId: number;
+      page: HistoryModePage;
+      selectedDiff: HistoricalDiff;
+      diagnostics: HistoryModeDiagnostics | null;
+    }
+  | {
+      type: 'revisionNameChanged';
+      requestId: number;
+      revisionId: string;
+      label: string | null;
     }
   | {
       type: 'diffStarted';
@@ -275,6 +298,7 @@ export function transitionHistoryMode(
         selectedRevisionId: event.selectedDiff?.revisionId ?? null,
         selectedComparison: 'parent',
         selectedDiff: event.selectedDiff,
+        diagnostics: event.diagnostics,
         request: null,
         error: null
       };
@@ -322,12 +346,58 @@ export function transitionHistoryMode(
       ) {
         return state;
       }
+      const selectedRecord = state.records.find(
+        (record) =>
+          record.kind === 'revision' && record.revisionId === state.selectedRevisionId
+      );
+      const records =
+        selectedRecord &&
+        !event.page.records.some((record) => record.recordId === selectedRecord.recordId)
+          ? mergeRecords(event.page.records, [selectedRecord])
+          : event.page.records;
+      return {
+        ...state,
+        records,
+        nextCursor: event.page.nextCursor,
+        selectedDiff: event.selectedDiff ?? state.selectedDiff,
+        request: null
+      };
+    case 'historyReplaced':
+      if (
+        state.phase !== 'open' ||
+        state.request?.kind !== 'refresh' ||
+        state.request.requestId !== event.requestId
+      ) {
+        return state;
+      }
       return {
         ...state,
         records: event.page.records,
         nextCursor: event.page.nextCursor,
-        selectedDiff: event.selectedDiff ?? state.selectedDiff,
-        request: null
+        selectedRevisionId: event.selectedDiff.revisionId,
+        selectedComparison: 'parent',
+        selectedDiff: event.selectedDiff,
+        diagnostics: event.diagnostics,
+        request: null,
+        error: null
+      };
+    case 'revisionNameChanged':
+      if (
+        state.phase !== 'open' ||
+        state.request?.kind !== 'refresh' ||
+        state.request.requestId !== event.requestId
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        records: state.records.map((record) =>
+          record.kind === 'revision' && record.revisionId === event.revisionId
+            ? { ...record, revisionLabel: event.label }
+            : record
+        ),
+        request: null,
+        error: null
       };
     case 'diffLoaded':
       if (

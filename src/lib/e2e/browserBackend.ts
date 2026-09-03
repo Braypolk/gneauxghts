@@ -51,6 +51,21 @@ const notes = new Map<string, NoteFixture>([
     }
   ]
 ]);
+const historyLabels = new Map<string, string>();
+const clearedHistoryNoteIds = new Set<string>();
+let forgottenNotes = [
+  {
+    kind: 'note',
+    title: 'Forgotten draft',
+    fileName: 'Forgotten draft.md',
+    originalPath: '/e2e/Forgotten draft.md',
+    forgottenPath: '/e2e/.forgotten/forgotten-draft',
+    forgottenAtMillis: 1_799_000_000_000,
+    purgeAfterDays: 30,
+    purgeAtMillis: 1_801_592_000_000
+  }
+];
+let historyStorage = { allocatedBytes: 16_384, reclaimableBytes: 512 };
 
 const semanticStatus = {
   settings: {
@@ -103,6 +118,41 @@ const semanticStatus = {
   rebuildReason: null
 };
 
+function historyHealth() {
+  return {
+    state: 'healthy',
+    integrity: 'verified',
+    initialization: {
+      phase: 'complete',
+      discoveredNotes: notes.size,
+      baselineRevisions: notes.size,
+      readyNotes: notes.size,
+      failedNotes: 0,
+      lastError: null
+    },
+    storage: historyStorage,
+    pendingRepairs: 0,
+    canRetry: false,
+    canReset: false,
+    lastReset: null
+  };
+}
+
+function vaultInfo() {
+  return {
+    currentPath: '/e2e',
+    defaultPath: '/e2e',
+    forgottenPath: '/e2e/.forgotten',
+    isDefault: true,
+    noteCount: notes.size,
+    requiresRestart: false,
+    canConfigurePath: false,
+    canPickArbitraryPath: false,
+    vaultContainerPath: '/e2e',
+    pathConfigurationNote: null
+  };
+}
+
 function session(note: NoteFixture) {
   return {
     noteId: note.noteId,
@@ -143,6 +193,24 @@ function findNote(args: Record<string, unknown>) {
 
 function historyRecords(note: NoteFixture) {
   const now = 1_800_000_000_000;
+  if (clearedHistoryNoteIds.has(note.noteId)) {
+    return [
+      {
+        kind: 'revision',
+        recordId: `${note.noteId}-baseline-after-clear`,
+        revisionId: `${note.noteId}-baseline-after-clear`,
+        source: 'baselineInitialization',
+        occurredAtMillis: now + 60_000,
+        timelineOrdinal: 0,
+        timeKind: 'knownSince',
+        modifiedAtMillis: null,
+        editingSessionId: `${note.noteId}-baseline-after-clear`,
+        revisionLabel: null,
+        lineCount: note.markdown.split('\n').length,
+        characterCount: note.markdown.length
+      }
+    ];
+  }
   const revisions = Array.from({ length: 35 }, (_, index) => {
     const ordinal = 35 - index;
     const source = ordinal === 35 ? 'editor' : ordinal % 6 === 0 ? 'externalEdit' : 'editor';
@@ -158,6 +226,7 @@ function historyRecords(note: NoteFixture) {
       timeKind: ordinal % 6 === 0 ? 'observed' : 'committed',
       modifiedAtMillis: ordinal % 6 === 0 ? now - index * 60_000 - 5_000 : null,
       editingSessionId: `${note.noteId}-revision-${sessionOrdinal}`,
+      revisionLabel: historyLabels.get(`${note.noteId}-revision-${ordinal}`) ?? null,
       lineCount: ordinal === 35 ? 80 : 3,
       characterCount: ordinal === 35 ? note.markdown.length : 78
     };
@@ -189,6 +258,9 @@ function historyRecords(note: NoteFixture) {
 }
 
 function historicalRevision(note: NoteFixture, revisionId: string) {
+  if (revisionId === `${note.noteId}-baseline-after-clear`) {
+    return { revisionId, unmanagedFrontmatter: null, body: note.markdown };
+  }
   const ordinal = Number(revisionId.split('-').at(-1));
   const fixture = {
     29: { unmanagedFrontmatter: null, body: 'Deleted to create an empty note.\n' },
@@ -219,6 +291,24 @@ function historicalDiff(
   revisionId: string,
   comparison: 'parent' | 'current'
 ) {
+  if (revisionId === `${note.noteId}-baseline-after-clear`) {
+    return {
+      revisionId,
+      comparison,
+      fromRevisionId: null,
+      toRevisionId: revisionId,
+      bodyLines: [
+        {
+          kind: 'added',
+          text: note.markdown,
+          oldLineNumber: null,
+          newLineNumber: 1
+        }
+      ],
+      propertiesLines: [],
+      missingAssets: []
+    };
+  }
   const ordinal = Number(revisionId.split('-').at(-1));
   const selected = historicalRevision(note, revisionId);
   const compared =
@@ -311,18 +401,7 @@ export function installBrowserE2eBackend() {
 
     if (command === 'bootstrap_app') {
       return {
-        vault: {
-          currentPath: '/e2e',
-          defaultPath: '/e2e',
-          forgottenPath: '/e2e/.forgotten',
-          isDefault: true,
-          noteCount: notes.size,
-          requiresRestart: false,
-          canConfigurePath: false,
-          canPickArbitraryPath: false,
-          vaultContainerPath: '/e2e',
-          pathConfigurationNote: null
-        },
+        vault: vaultInfo(),
         noteSession: session(activeNote),
         semanticStatus,
         indexRevision: 1
@@ -374,6 +453,58 @@ export function installBrowserE2eBackend() {
         String(args.revisionId ?? ''),
         args.comparison === 'current' ? 'current' : 'parent'
       );
+    }
+    if (command === 'name_note_revision') {
+      historyLabels.set(String(args.revisionId ?? ''), String(args.label ?? '').trim());
+      return null;
+    }
+    if (command === 'remove_note_revision_name') {
+      historyLabels.delete(String(args.revisionId ?? ''));
+      return null;
+    }
+    if (command === 'clear_note_history') {
+      if (args.confirmed !== true) throw new Error('Explicit confirmation required');
+      const noteId = String(args.noteId ?? '');
+      clearedHistoryNoteIds.add(noteId);
+      for (const revisionId of historyLabels.keys()) {
+        if (revisionId.startsWith(`${noteId}-revision-`)) historyLabels.delete(revisionId);
+      }
+      return null;
+    }
+    if (command === 'get_settings_view') {
+      return {
+        vault: vaultInfo(),
+        historyHealth: historyHealth(),
+        semanticStatus,
+        semanticSettings: semanticStatus.settings,
+        semanticDebug: null
+      };
+    }
+    if (command === 'get_history_health') return historyHealth();
+    if (command === 'get_note_history_health') {
+      const noteId = String(args.noteId ?? '');
+      const note = notes.get(noteId);
+      return {
+        noteId,
+        state: note ? 'healthy' : 'unavailable',
+        revisionCount: clearedHistoryNoteIds.has(noteId) ? 1 : 2,
+        lifecycleEventCount: 0,
+        revisionPayloadBytes: note?.markdown.length ?? 0
+      };
+    }
+    if (command === 'list_forgotten_notes') return forgottenNotes;
+    if (command === 'delete_forgotten_notes') {
+      const deleted = Array.isArray(args.forgottenPaths)
+        ? new Set(args.forgottenPaths.map(String))
+        : new Set<string>();
+      forgottenNotes = forgottenNotes.filter((note) => !deleted.has(note.forgottenPath));
+      historyStorage = { allocatedBytes: 16_384, reclaimableBytes: 8_192 };
+      return null;
+    }
+    if (command === 'clear_vault_history') {
+      if (args.confirmed !== true) throw new Error('Explicit confirmation required');
+      historyStorage = { allocatedBytes: 16_384, reclaimableBytes: 12_288 };
+      return null;
     }
     if (command === 'search_notes_hybrid') {
       const query = String(args.query ?? '').toLowerCase();

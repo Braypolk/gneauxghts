@@ -43,6 +43,10 @@ Draft State. Exiting restores the captured active pane and focus while the
 mounted editors retain their selection and scroll. The selected historical
 revision remains pinned when newer timeline records arrive, and History Mode
 never survives an application restart.
+History Mode is read-only for authored note content. It may add, edit, or
+remove a revision label and may clear retained history only after explicit
+confirmation through `NoteTimeline`; these actions never mutate canonical
+Markdown, pane membership, editor state, or Note Draft State.
 
 ## Documents, tasks, and persistence
 

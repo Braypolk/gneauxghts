@@ -8,6 +8,7 @@
   import HistoryDiff from './HistoryDiff.svelte';
   import HistoryEditingSession from './HistoryEditingSession.svelte';
   import HistoryRevisionSummary from './HistoryRevisionSummary.svelte';
+  import RevisionNameEditor from './RevisionNameEditor.svelte';
   import { buildHistoryTimelineItems, formatHistoryTime } from './historyTimeline';
 
   interface Props {
@@ -15,6 +16,9 @@
     onExit: () => void | Promise<void>;
     onSelectRevision: (revisionId: string) => void | Promise<void>;
     onSetComparison: (comparison: HistoryDiffComparison) => void | Promise<void>;
+    onNameRevision: (revisionId: string, label: string) => void | Promise<void>;
+    onRemoveRevisionName: (revisionId: string) => void | Promise<void>;
+    onClearHistory: () => void | Promise<void>;
     onLoadMore: () => void | Promise<void>;
     onRetry: () => void | Promise<void>;
   }
@@ -24,14 +28,22 @@
     onExit,
     onSelectRevision,
     onSetComparison,
+    onNameRevision,
+    onRemoveRevisionName,
+    onClearHistory,
     onLoadMore,
     onRetry
   }: Props = $props();
   let expandedSessionIds = $state<string[]>([]);
+  let confirmingClear = $state(false);
 
   function fileName(path: string | null) {
     if (!path) return null;
     return path.split(/[\\/]/u).at(-1) ?? path;
+  }
+
+  function formatByteCount(bytes: number) {
+    return `${bytes.toLocaleString('en-US')} ${bytes === 1 ? 'byte' : 'bytes'}`;
   }
 
   function lifecycleSummary(record: HistoryLifecycleRecord) {
@@ -64,6 +76,19 @@
   const timelineItems = $derived(
     historyState.phase === 'open' ? buildHistoryTimelineItems(historyState.records) : []
   );
+  const selectedRevision = $derived(
+    historyState.phase === 'open'
+      ? historyState.records.find(
+          (record) =>
+            record.kind === 'revision' && record.revisionId === historyState.selectedRevisionId
+        )
+      : undefined
+  );
+
+  async function clearHistory() {
+    await onClearHistory();
+    confirmingClear = false;
+  }
 
   function sessionExpanded(sessionId: string) {
     return expandedSessionIds.includes(sessionId);
@@ -186,8 +211,32 @@
       </aside>
 
       <main class="min-h-0 overflow-y-auto p-4 sm:p-6 md:p-8" aria-label="Historical revision">
+        {#if historyState.diagnostics}
+          <section class="mb-5 rounded-2xl border border-border bg-muted/30 px-4 py-3" aria-label="Note history health and storage">
+            <p class="text-sm font-semibold">Note history {historyState.diagnostics.note.state}</p>
+            <p class="mt-1 text-xs text-muted-foreground">
+              {historyState.diagnostics.note.revisionCount} retained revisions · {historyState.diagnostics.note.lifecycleEventCount} lifecycle events · {formatByteCount(historyState.diagnostics.note.revisionPayloadBytes)} retained revision content
+            </p>
+            {#if historyState.diagnostics.storage}
+              <p class="mt-1 text-xs text-muted-foreground">
+                Vault storage: {formatByteCount(historyState.diagnostics.storage.allocatedBytes)} allocated · {formatByteCount(historyState.diagnostics.storage.reclaimableBytes)} reclaimable
+              </p>
+            {/if}
+          </section>
+        {/if}
         {#if historyState.error}
           <p class="mb-4 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{historyState.error}</p>
+        {/if}
+        {#if selectedRevision?.kind === 'revision'}
+          {#key selectedRevision.revisionId + ':' + (selectedRevision.revisionLabel ?? '')}
+            <RevisionNameEditor
+              revisionId={selectedRevision.revisionId}
+              label={selectedRevision.revisionLabel}
+              disabled={historyState.request !== null}
+              onSave={onNameRevision}
+              onRemove={onRemoveRevisionName}
+            />
+          {/key}
         {/if}
         {#if historyState.selectedRevisionId}
           <div class="mb-5 inline-flex rounded-full border border-border bg-muted/50 p-1" aria-label="Diff comparison">
@@ -226,6 +275,36 @@
               : 'This page contains lifecycle events but no selectable revision.'}
           </p>
         {/if}
+
+        <section class="mt-8 rounded-2xl border border-destructive/25 bg-destructive/5 p-4" aria-label="Clear note history">
+          <p class="text-sm font-semibold">Clear note history</p>
+          <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Remove this note's retained timeline and make its current content a new Baseline Revision. The old history becomes inaccessible immediately; allocated pages appear as reclaimable storage while bounded compaction proceeds.
+          </p>
+          {#if confirmingClear}
+            <div class="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                class="rounded-full bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground disabled:opacity-50"
+                disabled={historyState.request !== null}
+                onclick={() => void clearHistory()}
+              >Confirm clear note history</button>
+              <button
+                type="button"
+                class="rounded-full border border-border px-4 py-2 text-sm font-medium disabled:opacity-50"
+                disabled={historyState.request !== null}
+                onclick={() => (confirmingClear = false)}
+              >Cancel</button>
+            </div>
+          {:else}
+            <button
+              type="button"
+              class="mt-3 rounded-full border border-destructive/40 px-4 py-2 text-sm font-medium text-destructive disabled:opacity-50"
+              disabled={historyState.request !== null}
+              onclick={() => (confirmingClear = true)}
+            >Clear note history</button>
+          {/if}
+        </section>
       </main>
     </div>
   {/if}

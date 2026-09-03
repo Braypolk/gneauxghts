@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] Add, edit, and remove a durable user-supplied label attached to a Note Revision without duplicating revision content.
-- [ ] Allow duplicate labels and continue using opaque revision identity for all references and citations.
-- [ ] Expose confirmed clear-note history in History Mode and establish the current state as a new honest Baseline Revision.
-- [ ] Expose confirmed vault-wide clear in Settings and establish baselines for active notes.
-- [ ] Expose confirmed permanent note purge in the applicable lifecycle interface and explain that the complete Note Timeline is removed.
-- [ ] Show allocated and reclaimable storage after logical deletion while bounded compaction proceeds.
-- [ ] Do not expose individual revision deletion or a history-disable setting.
-- [ ] Add persistence, component, and end-to-end tests for labels, duplicate names, label removal, clear, purge, restart, and compaction reporting.
+- [x] Add, edit, and remove a durable user-supplied label attached to a Note Revision without duplicating revision content.
+- [x] Allow duplicate labels and continue using opaque revision identity for all references and citations.
+- [x] Expose confirmed clear-note history in History Mode and establish the current state as a new honest Baseline Revision.
+- [x] Expose confirmed vault-wide clear in Settings and establish baselines for active notes.
+- [x] Expose confirmed permanent note purge in the applicable lifecycle interface and explain that the complete Note Timeline is removed.
+- [x] Show allocated and reclaimable storage after logical deletion while bounded compaction proceeds.
+- [x] Do not expose individual revision deletion or a history-disable setting.
+- [x] Add persistence, component, and end-to-end tests for labels, duplicate names, label removal, clear, purge, restart, and compaction reporting.

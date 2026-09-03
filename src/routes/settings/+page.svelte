@@ -527,6 +527,7 @@
                 actionError={settings.historyActionError}
                 retryHistory={settings.retryHistory}
                 resetCorruptHistory={settings.resetCorruptHistory}
+                clearVaultHistory={settings.clearVaultHistory}
               />
             {:else if settings.activeGeneralSection === 'search'}
       <SemanticSettingsPanel

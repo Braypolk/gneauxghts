@@ -156,4 +156,56 @@ describe('SettingsStore actions', () => {
     expect(store.historyHealth).toEqual(repaired);
     expect(store.historyActionError).toBeNull();
   });
+
+  it('explicitly confirms vault-wide history clear and refreshes storage reporting', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    const afterClear = {
+      state: 'healthy',
+      integrity: 'verified',
+      initialization: {
+        phase: 'complete',
+        discoveredNotes: 2,
+        baselineRevisions: 2,
+        readyNotes: 2,
+        failedNotes: 0
+      },
+      storage: { allocatedBytes: 16_384, reclaimableBytes: 8_192 },
+      pendingRepairs: 0,
+      canRetry: false,
+      canReset: false
+    };
+    invokeMock.mockImplementation(async (command, args) => {
+      if (command === 'clear_vault_history') {
+        expect(args).toEqual({ confirmed: true });
+        return undefined;
+      }
+      if (command === 'get_history_health') return afterClear;
+      return undefined;
+    });
+
+    await store.clearVaultHistory();
+
+    expect(invokeMock).toHaveBeenCalledWith('clear_vault_history', { confirmed: true });
+    expect(store.historyHealth).toEqual(afterClear);
+    expect(store.historyActionError).toBeNull();
+  });
+
+  it('reports a committed vault clear honestly when storage reporting cannot refresh', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    invokeMock.mockImplementation(async (command) => {
+      if (command === 'clear_vault_history') return undefined;
+      if (command === 'get_history_health') throw new Error('history health unavailable');
+      return undefined;
+    });
+
+    await store.clearVaultHistory();
+
+    expect(invokeMock).toHaveBeenCalledWith('clear_vault_history', { confirmed: true });
+    expect(store.historyActionError).toBe(
+      'Vault history was cleared, but storage reporting could not refresh: Error: history health unavailable'
+    );
+    expect(store.isRunningHistoryAction).toBe(false);
+  });
 });

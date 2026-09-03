@@ -7,16 +7,24 @@
     isRunningAction,
     actionError,
     retryHistory,
-    resetCorruptHistory
+    resetCorruptHistory,
+    clearVaultHistory
   }: {
     historyHealth: HistoryHealthReport | null;
     isRunningAction: boolean;
     actionError: string | null;
     retryHistory: () => void | Promise<void>;
     resetCorruptHistory: () => void | Promise<void>;
+    clearVaultHistory: () => void | Promise<void>;
   } = $props();
 
   let confirmingReset = $state(false);
+  let confirmingClear = $state(false);
+
+  async function clearAllHistory() {
+    await clearVaultHistory();
+    confirmingClear = false;
+  }
 
   const stateCopy: Record<HistoryHealthState, { title: string; detail: string }> = {
     healthy: {
@@ -132,6 +140,39 @@
         {/if}
       </SettingsCard>
     {/if}
+
+    <SettingsCard class="border-destructive/25">
+      <p class="text-sm font-medium">Clear vault history</p>
+      <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
+        Remove retained history for all active notes and establish their current content as new Baseline Revisions. Missing and forgotten timelines are retained.
+      </p>
+      <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
+        Old history becomes inaccessible immediately. Allocated pages may remain listed as reclaimable storage while bounded compaction proceeds.
+      </p>
+      {#if confirmingClear}
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="rounded-full bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground disabled:opacity-50"
+            disabled={isRunningAction || historyHealth.integrity !== 'verified'}
+            onclick={() => void clearAllHistory()}
+          >{isRunningAction ? 'Clearing…' : 'Confirm clear vault history'}</button>
+          <button
+            type="button"
+            class="rounded-full px-3 py-1.5 text-xs text-muted-foreground"
+            disabled={isRunningAction}
+            onclick={() => (confirmingClear = false)}
+          >Cancel</button>
+        </div>
+      {:else}
+        <button
+          type="button"
+          class="mt-3 rounded-full border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive disabled:opacity-50"
+          disabled={isRunningAction || historyHealth.integrity !== 'verified'}
+          onclick={() => (confirmingClear = true)}
+        >Clear vault history</button>
+      {/if}
+    </SettingsCard>
 
     {#if historyHealth.lastReset}
       <SettingsCard>

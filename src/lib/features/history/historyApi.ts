@@ -1,8 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { HistoryStorageUsage, NoteHistoryHealth } from '$lib/types/history';
 import type {
   HistoricalDiff,
   HistoricalRevision,
   HistoryDiffComparison,
+  HistoryModeDiagnostics,
   HistoryModePage
 } from './historyModeMachine';
 
@@ -39,4 +41,33 @@ export function getHistoryModeDiff(
     revisionId,
     comparison
   });
+}
+
+export function nameHistoryRevision(
+  noteId: string,
+  revisionId: string,
+  label: string
+): Promise<void> {
+  return invoke('name_note_revision', { noteId, revisionId, label });
+}
+
+export function removeHistoryRevisionName(
+  noteId: string,
+  revisionId: string
+): Promise<void> {
+  return invoke('remove_note_revision_name', { noteId, revisionId });
+}
+
+export function clearNoteHistory(noteId: string): Promise<void> {
+  return invoke('clear_note_history', { noteId, confirmed: true });
+}
+
+export async function getHistoryModeDiagnostics(
+  noteId: string
+): Promise<HistoryModeDiagnostics> {
+  const [note, vault] = await Promise.all([
+    invoke<NoteHistoryHealth>('get_note_history_health', { noteId }),
+    invoke<{ storage?: HistoryStorageUsage }>('get_history_health')
+  ]);
+  return { note, storage: vault.storage ?? null };
 }

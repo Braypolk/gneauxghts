@@ -104,7 +104,14 @@
   import { paneHasCapability } from "$lib/features/notepad/workspace/paneCapabilities";
   import { createWorkspacePersistenceService } from "$lib/features/notepad/workspace/workspacePersistenceService";
   import HistoryMode from "$lib/features/history/HistoryMode.svelte";
-  import { getHistoryModeDiff, getHistoryModePage } from "$lib/features/history/historyApi";
+  import {
+    clearNoteHistory,
+    getHistoryModeDiff,
+    getHistoryModeDiagnostics,
+    getHistoryModePage,
+    nameHistoryRevision,
+    removeHistoryRevisionName,
+  } from "$lib/features/history/historyApi";
   import { HistoryModeSession } from "$lib/features/history/historyModeSession.svelte";
   import type { HistoryWorkspaceSnapshot } from "$lib/features/history/historyModeMachine";
   import {
@@ -727,6 +734,10 @@
     },
     loadPage: getHistoryModePage,
     loadDiff: getHistoryModeDiff,
+    nameRevision: nameHistoryRevision,
+    removeRevisionName: removeHistoryRevisionName,
+    clearNoteHistory,
+    loadDiagnostics: getHistoryModeDiagnostics,
   });
 
   // ---------------------------------------------------------------------------
@@ -1601,6 +1612,9 @@
       onExit={historyMode.exit}
       onSelectRevision={historyMode.selectRevision}
       onSetComparison={historyMode.setComparison}
+      onNameRevision={historyMode.nameRevision}
+      onRemoveRevisionName={historyMode.removeRevisionName}
+      onClearHistory={historyMode.clearHistory}
       onLoadMore={historyMode.loadMore}
       onRetry={historyMode.retry}
     />

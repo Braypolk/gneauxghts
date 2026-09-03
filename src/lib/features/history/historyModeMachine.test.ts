@@ -29,6 +29,7 @@ function revision(revisionId: string, occurredAtMillis: number) {
     timeKind: 'committed' as const,
     modifiedAtMillis: null,
     editingSessionId: 'revision-1',
+    revisionLabel: null,
     lineCount: 1,
     characterCount: 10
   };
@@ -89,7 +90,8 @@ describe('historyModeMachine', () => {
       requestId: 4,
       target,
       page: page([revision('revision-2', 20), revision('revision-1', 10)]),
-      selectedDiff: diff('revision-2', 'second')
+      selectedDiff: diff('revision-2', 'second'),
+      diagnostics: null
     });
 
     const refreshing = transitionHistoryMode(open, {
@@ -113,6 +115,42 @@ describe('historyModeMachine', () => {
     });
   });
 
+  it('keeps a selected older revision pinned when a refresh page omits it', () => {
+    const entering = transitionHistoryMode(
+      createInactiveHistoryModeState(),
+      { type: 'entryStarted', requestId: 4, target, workspace }
+    );
+    const older = revision('revision-older', 1);
+    const open = transitionHistoryMode(entering, {
+      type: 'entryLoaded',
+      requestId: 4,
+      target,
+      page: page([revision('revision-2', 20), older]),
+      selectedDiff: diff('revision-older', 'older'),
+      diagnostics: null
+    });
+    const refreshing = transitionHistoryMode(open, {
+      type: 'refreshStarted',
+      requestId: 5
+    });
+
+    const refreshed = transitionHistoryMode(refreshing, {
+      type: 'refreshLoaded',
+      requestId: 5,
+      page: page([revision('revision-3', 30), revision('revision-2', 20)])
+    });
+
+    expect(refreshed).toMatchObject({
+      phase: 'open',
+      selectedRevisionId: 'revision-older',
+      records: [
+        { revisionId: 'revision-3' },
+        { revisionId: 'revision-2' },
+        { revisionId: 'revision-older' }
+      ]
+    });
+  });
+
   it('appends older pages without duplicating records', () => {
     const entering = transitionHistoryMode(
       createInactiveHistoryModeState(),
@@ -123,7 +161,8 @@ describe('historyModeMachine', () => {
       requestId: 1,
       target,
       page: page([revision('revision-3', 30), revision('revision-2', 20)], 'revision-2'),
-      selectedDiff: diff('revision-3', 'third')
+      selectedDiff: diff('revision-3', 'third'),
+      diagnostics: null
     });
     const loading = transitionHistoryMode(open, {
       type: 'pageStarted',
@@ -154,7 +193,8 @@ describe('historyModeMachine', () => {
       requestId: 1,
       target,
       page: page([revision('revision-1', 10)]),
-      selectedDiff: diff('revision-1', 'first')
+      selectedDiff: diff('revision-1', 'first'),
+      diagnostics: null
     });
 
     const unavailable = transitionHistoryMode(open, {

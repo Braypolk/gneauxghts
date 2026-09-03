@@ -3,6 +3,7 @@ import {
   transitionHistoryMode,
   type HistoricalDiff,
   type HistoryDiffComparison,
+  type HistoryModeDiagnostics,
   type HistoryModePage,
   type HistoryModeState,
   type HistoryModeTarget,
@@ -24,6 +25,10 @@ export interface HistoryModeSessionDeps {
     revisionId: string,
     comparison: HistoryDiffComparison
   ) => Promise<HistoricalDiff>;
+  nameRevision: (noteId: string, revisionId: string, label: string) => Promise<void>;
+  removeRevisionName: (noteId: string, revisionId: string) => Promise<void>;
+  clearNoteHistory: (noteId: string) => Promise<void>;
+  loadDiagnostics: (noteId: string) => Promise<HistoryModeDiagnostics>;
 }
 
 function errorMessage(error: unknown): string {
@@ -102,6 +107,7 @@ export class HistoryModeSession {
     workspace: HistoryWorkspaceSnapshot
   ): Promise<void> => {
     try {
+      const diagnosticsPromise = this.#deps.loadDiagnostics(target.noteId).catch(() => null);
       const page = await this.#deps.loadPage(target.noteId, null);
       const newestRevision = page.records.find(
         (record) => record.kind === 'revision'
@@ -109,7 +115,15 @@ export class HistoryModeSession {
       const selectedDiff = newestRevision
         ? await this.#deps.loadDiff(target.noteId, newestRevision.revisionId, 'parent')
         : null;
-      this.#dispatch({ type: 'entryLoaded', requestId, target, page, selectedDiff });
+      const diagnostics = await diagnosticsPromise;
+      this.#dispatch({
+        type: 'entryLoaded',
+        requestId,
+        target,
+        page,
+        selectedDiff,
+        diagnostics
+      });
       if (page.records.length === 0) {
         this.#dispatch({
           type: 'noteUnavailable',
@@ -172,6 +186,82 @@ export class HistoryModeSession {
     }
     const revisionId = this.state.selectedRevisionId;
     await this.#loadSelectedDiff(revisionId, comparison);
+  };
+
+  #refreshAfterRevisionNameChange = async (
+    revisionId: string,
+    label: string | null,
+    action: (noteId: string, revisionId: string) => Promise<void>
+  ): Promise<void> => {
+    if (this.state.phase !== 'open' || this.state.request !== null) return;
+    const requestId = this.#nextRequestId++;
+    const noteId = this.state.target.noteId;
+    this.#dispatch({ type: 'refreshStarted', requestId });
+    try {
+      try {
+        await action(noteId, revisionId);
+        this.#dispatch({ type: 'revisionNameChanged', requestId, revisionId, label });
+      } catch (error) {
+        this.#dispatch({
+          type: 'pageFailed',
+          requestId,
+          error: `That revision name could not be saved: ${errorMessage(error)}`
+        });
+      }
+    } finally {
+      await this.#runPendingRefresh();
+    }
+  };
+
+  nameRevision = async (revisionId: string, label: string): Promise<void> => {
+    await this.#refreshAfterRevisionNameChange(revisionId, label.trim(), (noteId, selectedRevisionId) =>
+      this.#deps.nameRevision(noteId, selectedRevisionId, label)
+    );
+  };
+
+  removeRevisionName = async (revisionId: string): Promise<void> => {
+    await this.#refreshAfterRevisionNameChange(
+      revisionId,
+      null,
+      this.#deps.removeRevisionName
+    );
+  };
+
+  clearHistory = async (): Promise<void> => {
+    if (this.state.phase !== 'open' || this.state.request !== null) return;
+    const requestId = this.#nextRequestId++;
+    const noteId = this.state.target.noteId;
+    this.#dispatch({ type: 'refreshStarted', requestId });
+    try {
+      try {
+        await this.#deps.clearNoteHistory(noteId);
+      } catch (error) {
+        this.#dispatch({
+          type: 'pageFailed',
+          requestId,
+          error: `Note history could not be cleared: ${errorMessage(error)}`
+        });
+        return;
+      }
+      try {
+        const diagnosticsPromise = this.#deps.loadDiagnostics(noteId).catch(() => null);
+        const page = await this.#deps.loadPage(noteId, null);
+        const baseline = page.records.find((record) => record.kind === 'revision');
+        if (!baseline || baseline.kind !== 'revision') {
+          throw new Error('The new Baseline Revision is unavailable.');
+        }
+        const selectedDiff = await this.#deps.loadDiff(noteId, baseline.revisionId, 'parent');
+        const diagnostics = await diagnosticsPromise;
+        this.#dispatch({ type: 'historyReplaced', requestId, page, selectedDiff, diagnostics });
+      } catch (error) {
+        this.#dispatch({
+          type: 'historyUnavailable',
+          error: `Note history was cleared, but the new Baseline Revision could not be displayed: ${errorMessage(error)}`
+        });
+      }
+    } finally {
+      await this.#runPendingRefresh();
+    }
   };
 
   loadMore = async (): Promise<void> => {

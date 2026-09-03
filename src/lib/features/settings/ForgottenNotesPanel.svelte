@@ -29,6 +29,15 @@
     formatTimestamp: (value: number | null) => string;
     formatForgottenRetention: (days: number) => string;
   } = $props();
+
+  let pendingPermanentDelete = $state<string[]>([]);
+
+  async function confirmPermanentDelete() {
+    const targets = pendingPermanentDelete;
+    if (targets.length === 0) return;
+    await runForgottenAction('delete_forgotten_notes', targets);
+    pendingPermanentDelete = [];
+  }
 </script>
 
 <div class="border-t border-border/70 px-6 py-5">
@@ -37,6 +46,9 @@
       <p class="text-sm font-medium">Forgotten Items</p>
       <p class="mt-0.5 text-xs text-muted-foreground">
         Review notes and chats in `.forgotten`, then restore or permanently delete them.
+      </p>
+      <p class="mt-1 text-xs text-muted-foreground">
+        Permanently deleting a note removes its file and complete Note Timeline. This cannot be undone.
       </p>
     </div>
 
@@ -71,9 +83,9 @@
           class="rounded-full border border-rose-300/70 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200"
           type="button"
           disabled={selectedForgottenPaths.length === 0 || isUpdatingForgottenNotes}
-          onclick={() => void runForgottenAction('delete_forgotten_notes', selectedForgottenPaths)}
+          onclick={() => (pendingPermanentDelete = [...selectedForgottenPaths])}
         >
-          Delete selected
+          Permanently delete selected
         </button>
       </div>
     </div>
@@ -131,14 +143,37 @@
                   class="rounded-full border border-rose-300/70 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200"
                   type="button"
                   disabled={isUpdatingForgottenNotes}
-                  onclick={() => void runForgottenAction('delete_forgotten_notes', [note.forgottenPath])}
+                  onclick={() => (pendingPermanentDelete = [note.forgottenPath])}
                 >
-                  Delete
+                  Permanently delete
                 </button>
               </div>
             </div>
           </div>
         {/each}
+      </div>
+    {/if}
+
+    {#if pendingPermanentDelete.length > 0}
+      <div class="mt-4 rounded-2xl border border-rose-300/70 bg-rose-50 px-4 py-4 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100" role="alertdialog" aria-label="Confirm permanent deletion">
+        <p class="text-sm font-semibold">Permanently delete {pendingPermanentDelete.length === 1 ? 'this item' : `${pendingPermanentDelete.length} items`}?</p>
+        <p class="mt-1 text-xs leading-relaxed">
+          For every selected note, its complete Note Timeline and retained revision names are removed with the file. This cannot be undone.
+        </p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="rounded-full bg-rose-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            disabled={isUpdatingForgottenNotes}
+            onclick={() => void confirmPermanentDelete()}
+          >{isUpdatingForgottenNotes ? 'Deleting…' : 'Confirm permanent deletion'}</button>
+          <button
+            type="button"
+            class="rounded-full border border-rose-300 px-4 py-2 text-sm font-medium disabled:opacity-50 dark:border-rose-800"
+            disabled={isUpdatingForgottenNotes}
+            onclick={() => (pendingPermanentDelete = [])}
+          >Cancel</button>
+        </div>
       </div>
     {/if}
   </div>

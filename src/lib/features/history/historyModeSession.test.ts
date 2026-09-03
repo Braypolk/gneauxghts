@@ -29,6 +29,7 @@ const firstPage: HistoryModePage = {
       timeKind: 'committed',
       modifiedAtMillis: null,
       editingSessionId: 'revision-1',
+      revisionLabel: null,
       lineCount: 1,
       characterCount: 10
     }
@@ -61,6 +62,19 @@ function setup(overrides: Partial<ConstructorParameters<typeof HistoryModeSessio
     restoreFocus: vi.fn(),
     loadPage: vi.fn().mockResolvedValue(firstPage),
     loadDiff: vi.fn().mockResolvedValue(revisionDiff),
+    nameRevision: vi.fn().mockResolvedValue(undefined),
+    removeRevisionName: vi.fn().mockResolvedValue(undefined),
+    clearNoteHistory: vi.fn().mockResolvedValue(undefined),
+    loadDiagnostics: vi.fn().mockResolvedValue({
+      note: {
+        noteId: 'note-1',
+        state: 'healthy',
+        revisionCount: 1,
+        lifecycleEventCount: 0,
+        revisionPayloadBytes: 10
+      },
+      storage: { allocatedBytes: 4096, reclaimableBytes: 0 }
+    }),
     ...overrides
   };
   return { session: new HistoryModeSession(deps), deps };
@@ -88,6 +102,130 @@ describe('HistoryModeSession', () => {
       selectedComparison: 'parent',
       selectedDiff: revisionDiff
     });
+  });
+
+  it('names, edits, and removes the selected revision without changing its identity', async () => {
+    const { session, deps } = setup();
+    await session.enter('notepad-pane-1');
+
+    await session.nameRevision('revision-1', 'Milestone');
+    expect(deps.nameRevision).toHaveBeenCalledWith('note-1', 'revision-1', 'Milestone');
+    expect(session.state).toMatchObject({
+      phase: 'open',
+      selectedRevisionId: 'revision-1',
+      records: [{ revisionId: 'revision-1', revisionLabel: 'Milestone' }]
+    });
+
+    await session.removeRevisionName('revision-1');
+    expect(deps.removeRevisionName).toHaveBeenCalledWith('note-1', 'revision-1');
+    expect(session.state).toMatchObject({
+      phase: 'open',
+      selectedRevisionId: 'revision-1',
+      records: [{ revisionId: 'revision-1', revisionLabel: null }]
+    });
+  });
+
+  it('replaces cleared history with the new truthful baseline', async () => {
+    const baselinePage: HistoryModePage = {
+      records: [
+        {
+          ...(firstPage.records[0] as HistoryRevisionRecord),
+          recordId: 'baseline-after-clear',
+          revisionId: 'baseline-after-clear',
+          source: 'baselineInitialization',
+          timeKind: 'knownSince',
+          revisionLabel: null
+        }
+      ],
+      nextCursor: null
+    };
+    const baselineDiff: HistoricalDiff = {
+      ...revisionDiff,
+      revisionId: 'baseline-after-clear',
+      toRevisionId: 'baseline-after-clear'
+    };
+    const loadPage = vi.fn().mockResolvedValueOnce(firstPage).mockResolvedValueOnce(baselinePage);
+    const loadDiff = vi.fn().mockResolvedValueOnce(revisionDiff).mockResolvedValueOnce(baselineDiff);
+    const { session, deps } = setup({ loadPage, loadDiff });
+    await session.enter('notepad-pane-1');
+
+    await session.clearHistory();
+
+    expect(deps.clearNoteHistory).toHaveBeenCalledWith('note-1');
+    expect(session.state).toMatchObject({
+      phase: 'open',
+      selectedRevisionId: 'baseline-after-clear',
+      selectedDiff: baselineDiff,
+      records: [{ revisionId: 'baseline-after-clear' }]
+    });
+  });
+
+  it('keeps an older loaded revision pinned while changing its name', async () => {
+    const olderRevision: HistoryRevisionRecord = {
+      ...(firstPage.records[0] as HistoryRevisionRecord),
+      recordId: 'revision-older',
+      revisionId: 'revision-older',
+      timelineOrdinal: 0
+    };
+    const { session, deps } = setup({
+      loadPage: vi.fn().mockResolvedValue({
+        records: [...firstPage.records, olderRevision],
+        nextCursor: 'revision-older'
+      }),
+      loadDiff: vi.fn().mockImplementation(async (_noteId, revisionId) => ({
+        ...revisionDiff,
+        revisionId,
+        toRevisionId: revisionId
+      }))
+    });
+    await session.enter('notepad-pane-1');
+    await session.selectRevision('revision-older');
+
+    await session.nameRevision('revision-older', 'Milestone');
+
+    expect(session.state).toMatchObject({
+      phase: 'open',
+      selectedRevisionId: 'revision-older',
+      records: [
+        { revisionId: 'revision-1' },
+        { revisionId: 'revision-older', revisionLabel: 'Milestone' }
+      ]
+    });
+    expect(deps.loadPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('drains a refresh queued during a revision name write', async () => {
+    let finishName!: () => void;
+    const nameRevision = vi.fn(
+      () => new Promise<void>((resolve) => (finishName = resolve))
+    );
+    const loadPage = vi.fn().mockResolvedValue(firstPage);
+    const { session } = setup({ nameRevision, loadPage });
+    await session.enter('notepad-pane-1');
+
+    const naming = session.nameRevision('revision-1', 'Milestone');
+    await session.refresh();
+    expect(loadPage).toHaveBeenCalledTimes(1);
+
+    finishName();
+    await naming;
+
+    expect(loadPage).toHaveBeenCalledTimes(2);
+    expect(session.state).toMatchObject({ phase: 'open', selectedRevisionId: 'revision-1' });
+  });
+
+  it('reports a committed clear honestly when only the new baseline refresh fails', async () => {
+    const loadPage = vi.fn().mockResolvedValueOnce(firstPage).mockRejectedValueOnce(new Error('offline'));
+    const { session } = setup({ loadPage });
+    await session.enter('notepad-pane-1');
+
+    await session.clearHistory();
+
+    expect(session.state).toMatchObject({
+      phase: 'historyUnavailable',
+      error: 'Note history was cleared, but the new Baseline Revision could not be displayed: offline'
+    });
+    expect('records' in session.state).toBe(false);
   });
 
   it('leaves the workspace active and reports a clear error when saving fails', async () => {
@@ -185,6 +323,7 @@ describe('HistoryModeSession', () => {
           timeKind: 'observed',
           modifiedAtMillis: null,
           editingSessionId: 'revision-2',
+          revisionLabel: null,
           lineCount: 2,
           characterCount: 20
         },
@@ -235,6 +374,7 @@ describe('HistoryModeSession', () => {
           timeKind: 'committed',
           modifiedAtMillis: null,
           editingSessionId: 'revision-2',
+          revisionLabel: null,
           lineCount: 1,
           characterCount: 10
         }

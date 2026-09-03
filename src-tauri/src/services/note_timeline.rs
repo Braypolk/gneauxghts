@@ -106,7 +106,7 @@ impl RevisionIdentity {
         Self(crate::note::generate_unique_id())
     }
 
-    fn from_persisted(value: impl Into<String>) -> Self {
+    pub(crate) fn from_persisted(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 }
@@ -1464,6 +1464,7 @@ pub(crate) enum HistoryModeRecord {
         time_kind: HistoryModeRevisionTimeKind,
         modified_at_millis: Option<u64>,
         editing_session_id: Option<String>,
+        revision_label: Option<String>,
         line_count: usize,
         character_count: usize,
     },
@@ -1488,6 +1489,13 @@ impl HistoryModeRecord {
     pub(crate) fn revision_id(&self) -> Option<&str> {
         match self {
             Self::Revision { revision_id, .. } => Some(revision_id),
+            Self::LifecycleEvent { .. } => None,
+        }
+    }
+
+    pub(crate) fn revision_label(&self) -> Option<&str> {
+        match self {
+            Self::Revision { revision_label, .. } => revision_label.as_deref(),
             Self::LifecycleEvent { .. } => None,
         }
     }
@@ -1943,9 +1951,11 @@ impl HistoryModeAccess<'_> {
         NoteTimeline::new(self.state).recover_retained_observations()?;
         self.state.ensure_note_timeline_history_recovered()?;
         let revisions = history_store::revisions(&self.note_id)?;
+        let revision_labels = history_store::revision_labels(&self.note_id)?;
         let lifecycle_events = history_store::lifecycle_events(&self.note_id)?;
         let mut projected_records = Vec::with_capacity(revisions.len() + lifecycle_events.len());
         for revision in revisions {
+            let revision_id = revision.identity.0.clone();
             let (occurred_at_millis, time_kind, modified_at_millis) = match revision.time_evidence {
                 RevisionTimeEvidence::Baseline { known_since_millis } => (
                     known_since_millis,
@@ -1971,14 +1981,15 @@ impl HistoryModeAccess<'_> {
             let predecessor_id = revision.predecessor.as_ref().map(record_identity_value);
             projected_records.push((
                 HistoryModeRecord::Revision {
-                    record_id: revision.identity.0.clone(),
-                    revision_id: revision.identity.0,
+                    record_id: revision_id.clone(),
+                    revision_id: revision_id.clone(),
                     source: revision.source,
                     occurred_at_millis,
                     timeline_ordinal: 0,
                     time_kind,
                     modified_at_millis,
                     editing_session_id: None,
+                    revision_label: revision_labels.get(&revision_id).cloned(),
                     line_count: 0,
                     character_count: 0,
                 },
@@ -2049,6 +2060,38 @@ impl HistoryModeAccess<'_> {
             unmanaged_frontmatter: reconstructed.unmanaged_frontmatter,
             body: reconstructed.body,
         })
+    }
+
+    pub(crate) fn name_revision(
+        &self,
+        revision_id: &RevisionIdentity,
+        label: &str,
+    ) -> Result<(), String> {
+        let label = label.trim();
+        if label.is_empty() {
+            return Err("A Named Revision label cannot be empty".to_string());
+        }
+        self.mutate_revision_label(revision_id, |note_id, revision_id| {
+            history_store::name_revision(note_id, revision_id, label)
+        })
+    }
+
+    fn mutate_revision_label(
+        &self,
+        revision_id: &RevisionIdentity,
+        mutation: impl FnOnce(&NoteIdentity, &RevisionIdentity) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let _operation = self.state.begin_note_timeline_operation()?;
+        NoteTimeline::new(self.state).recover_retained_observations()?;
+        self.state.ensure_note_timeline_history_recovered()?;
+        mutation(&self.note_id, revision_id)
+    }
+
+    pub(crate) fn remove_revision_name(
+        &self,
+        revision_id: &RevisionIdentity,
+    ) -> Result<(), String> {
+        self.mutate_revision_label(revision_id, history_store::remove_revision_name)
     }
 
     pub(crate) fn diff(
@@ -3356,6 +3399,7 @@ mod tests {
             time_kind: HistoryModeRevisionTimeKind::Committed,
             modified_at_millis: None,
             editing_session_id: None,
+            revision_label: None,
             line_count: 0,
             character_count: 0,
         }
@@ -3368,6 +3412,103 @@ mod tests {
             } => editing_session_id.as_deref(),
             HistoryModeRecord::LifecycleEvent { .. } => None,
         }
+    }
+
+    #[test]
+    fn named_revisions_survive_restart_allow_duplicates_and_never_change_content() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-named-revisions-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-named-revisions-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Named history".to_string(),
+            "First state".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let path = PathBuf::from(created.path.unwrap());
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Named history".to_string(),
+            "Second state".to_string(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+
+        let history = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let revisions = history.revisions().unwrap();
+        let first_id = revisions[0].identity().0.clone();
+        let second_id = revisions[1].identity().0.clone();
+        let bodies_before = revisions
+            .iter()
+            .map(|revision| history.reconstruct(revision.identity()).unwrap().body)
+            .collect::<Vec<_>>();
+        history
+            .name_revision(&RevisionIdentity::from_persisted(&first_id), "Milestone")
+            .unwrap();
+        history
+            .name_revision(&RevisionIdentity::from_persisted(&second_id), "Milestone")
+            .unwrap();
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let restarted_history = NoteTimeline::new(&restarted).open_history_mode(note_id);
+        let page = restarted_history.page(None, 100).unwrap();
+        assert_eq!(
+            page.records()
+                .iter()
+                .filter_map(HistoryModeRecord::revision_label)
+                .collect::<Vec<_>>(),
+            vec!["Milestone", "Milestone"]
+        );
+
+        restarted_history
+            .name_revision(&RevisionIdentity::from_persisted(&first_id), "Foundation")
+            .unwrap();
+        restarted_history
+            .remove_revision_name(&RevisionIdentity::from_persisted(&second_id))
+            .unwrap();
+        let page = restarted_history.page(None, 100).unwrap();
+        assert_eq!(
+            page.records()
+                .iter()
+                .filter_map(HistoryModeRecord::revision_label)
+                .collect::<Vec<_>>(),
+            vec!["Foundation"]
+        );
+        let revisions_after = restarted_history.revisions().unwrap();
+        assert_eq!(
+            revisions_after
+                .iter()
+                .map(|revision| restarted_history
+                    .reconstruct(revision.identity())
+                    .unwrap()
+                    .body)
+                .collect::<Vec<_>>(),
+            bodies_before
+        );
+        assert_eq!(
+            revisions_after
+                .iter()
+                .map(|revision| revision.identity().0.clone())
+                .collect::<Vec<_>>(),
+            vec![first_id, second_id]
+        );
+        crate::state::set_notes_root_override(None).unwrap();
     }
 
     #[test]
