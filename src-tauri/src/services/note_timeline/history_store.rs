@@ -7,8 +7,8 @@ use super::{
     BaselineInitializationPhase, BaselineInitializationProgress, DeletionMarker,
     DeletionOperationIdentity, DeletionScope, HistoryClearBaseline, HistoryDeletionKind,
     HistoryIntentIdentity, HistoryStorageUsage, LifecycleEventHeader, LifecycleEventIdentity,
-    LifecycleEventKind, MutationSource, NoteBaselineInitializationState, NoteIdentity,
-    NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision, RevisionIdentity,
+    LifecycleEventKind, MissingNoteRecord, MutationSource, NoteBaselineInitializationState,
+    NoteIdentity, NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision, RevisionIdentity,
     RevisionTimeEvidence, TimelineRecordIdentity, VaultObservation, VaultObservationKind,
     VaultObservationSource, BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
 };
@@ -28,7 +28,7 @@ const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_OBSERVATIONS_FILE_NAME: &str = "note-timeline-history-observations.json";
 pub(super) const HISTORY_FORMAT: &str = "sqlite-v1";
 pub(super) const INITIAL_HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 7;
+const HISTORY_SCHEMA_VERSION: u64 = 8;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -291,6 +291,17 @@ pub(super) fn hold_history_store_open_for_test() -> Connection {
 #[cfg(test)]
 pub(super) fn history_database_path_for_test(vault_root: &Path) -> PathBuf {
     crate::state::vault_data_dir_for(vault_root).join(HISTORY_DATABASE_FILE_NAME)
+}
+
+#[cfg(test)]
+pub(super) fn mark_store_as_schema_seven_for_test() {
+    Connection::open(history_database_path().expect("resolve history database"))
+        .expect("open history database")
+        .execute(
+            "UPDATE history_metadata SET schema_version = 7 WHERE singleton = 1",
+            [],
+        )
+        .expect("mark history database as schema seven");
 }
 
 #[cfg(test)]
@@ -811,8 +822,8 @@ pub(super) fn retain_observation(observation: &VaultObservation) -> Result<i64, 
         .execute(
             "INSERT INTO pending_observations (
                source, kind, path, previous_path, observed_at_millis,
-               modified_at_millis, canonical_markdown
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+               modified_at_millis, canonical_markdown, missing_retention_days
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 observation_source_value(observation.source),
                 observation_kind_value(observation.kind),
@@ -824,6 +835,7 @@ pub(super) fn retain_observation(observation: &VaultObservation) -> Result<i64, 
                 observation.observed_at_millis,
                 observation.modified_at_millis,
                 observation.canonical_markdown.as_deref(),
+                observation.missing_retention_days,
             ],
         )
         .map_err(|error| format!("Retain Note Timeline observation: {error}"))?;
@@ -835,7 +847,8 @@ pub(super) fn retained_observations() -> Result<Vec<RetainedObservation>, String
     let mut statement = connection
         .prepare(
             "SELECT sequence, source, kind, path, previous_path,
-                    observed_at_millis, modified_at_millis, canonical_markdown
+                    observed_at_millis, modified_at_millis, canonical_markdown,
+                    missing_retention_days
              FROM pending_observations
              ORDER BY sequence ASC",
         )
@@ -851,6 +864,7 @@ pub(super) fn retained_observations() -> Result<Vec<RetainedObservation>, String
                 row.get::<_, u64>(5)?,
                 row.get::<_, Option<u64>>(6)?,
                 row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<u32>>(8)?,
             ))
         })
         .map_err(|error| format!("Read retained Note Timeline observations: {error}"))?
@@ -868,6 +882,7 @@ pub(super) fn retained_observations() -> Result<Vec<RetainedObservation>, String
                 observed_at_millis,
                 modified_at_millis,
                 canonical_markdown,
+                missing_retention_days,
             )| {
                 let source = observation_source_from_value(&source).ok_or_else(|| {
                     format!("Unknown retained Note Timeline observation source: {source}")
@@ -885,6 +900,7 @@ pub(super) fn retained_observations() -> Result<Vec<RetainedObservation>, String
                         observed_at_millis,
                         modified_at_millis,
                         canonical_markdown,
+                        missing_retention_days,
                     },
                 })
             },
@@ -1183,6 +1199,40 @@ pub(super) fn record_observed_lifecycle_event(
     path: &Path,
     occurred_at_millis: u64,
 ) -> Result<(), String> {
+    if kind == LifecycleEventKind::Missing {
+        return Err("Missing lifecycle evidence requires a captured recovery record".to_string());
+    }
+    record_observed_lifecycle_event_with_missing_record(
+        note_id,
+        kind,
+        previous_path,
+        path,
+        occurred_at_millis,
+        None,
+    )
+}
+
+pub(super) fn record_observed_missing_lifecycle_event(
+    record: &MissingNoteRecord,
+) -> Result<(), String> {
+    record_observed_lifecycle_event_with_missing_record(
+        record.note_id(),
+        LifecycleEventKind::Missing,
+        None,
+        record.path(),
+        record.missing_at_millis(),
+        Some(record),
+    )
+}
+
+fn record_observed_lifecycle_event_with_missing_record(
+    note_id: &NoteIdentity,
+    kind: LifecycleEventKind,
+    previous_path: Option<&Path>,
+    path: &Path,
+    occurred_at_millis: u64,
+    missing_record: Option<&MissingNoteRecord>,
+) -> Result<(), String> {
     #[cfg(test)]
     if take_fault(FaultPoint::Lifecycle) {
         return Err("injected lifecycle finalization failure".to_string());
@@ -1212,6 +1262,7 @@ pub(super) fn record_observed_lifecycle_event(
                 .map_err(|error| error.to_string())?
                 .is_some();
             if duplicate {
+                synchronize_missing_record(&transaction, note_id, kind, missing_record)?;
                 transaction.commit().map_err(|error| error.to_string())?;
                 return Ok(());
             }
@@ -1256,7 +1307,100 @@ pub(super) fn record_observed_lifecycle_event(
             ],
         )
         .map_err(|error| error.to_string())?;
+    synchronize_missing_record(&transaction, note_id, kind, missing_record)?;
     transaction.commit().map_err(|error| error.to_string())
+}
+
+fn synchronize_missing_record(
+    transaction: &Transaction<'_>,
+    note_id: &NoteIdentity,
+    kind: LifecycleEventKind,
+    missing_record: Option<&MissingNoteRecord>,
+) -> Result<(), String> {
+    match kind {
+        LifecycleEventKind::Missing => {
+            let record = missing_record
+                .ok_or_else(|| "Missing lifecycle event has no retention evidence".to_string())?;
+            if record.note_id != *note_id {
+                return Err(
+                    "Missing lifecycle retention identity does not match its timeline".to_string(),
+                );
+            }
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO missing_notes (
+                       note_id, path, title, missing_at_millis, retention_days, purge_at_millis
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        note_id.as_str(),
+                        record.path.to_string_lossy().into_owned(),
+                        record.title.as_str(),
+                        record.missing_at_millis,
+                        record.retention_days,
+                        record.purge_at_millis,
+                    ],
+                )
+                .map_err(|error| format!("Capture Missing Note recovery deadline: {error}"))?;
+        }
+        LifecycleEventKind::Reattached | LifecycleEventKind::Recovered => {
+            transaction
+                .execute(
+                    "DELETE FROM missing_notes WHERE note_id = ?1",
+                    params![note_id.as_str()],
+                )
+                .map_err(|error| format!("Complete Missing Note recovery: {error}"))?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub(super) fn missing_notes() -> Result<Vec<MissingNoteRecord>, String> {
+    let connection = open_store()?;
+    let mut statement = connection
+        .prepare(
+            "SELECT note_id, path, title, missing_at_millis, retention_days, purge_at_millis
+             FROM missing_notes
+             ORDER BY missing_at_millis DESC, note_id ASC",
+        )
+        .map_err(|error| format!("Prepare Missing Note recovery list: {error}"))?;
+    let records = statement
+        .query_map([], |row| {
+            Ok(MissingNoteRecord {
+                note_id: NoteIdentity::new(row.get::<_, String>(0)?),
+                path: PathBuf::from(row.get::<_, String>(1)?),
+                title: row.get(2)?,
+                missing_at_millis: row.get(3)?,
+                retention_days: row.get(4)?,
+                purge_at_millis: row.get(5)?,
+            })
+        })
+        .map_err(|error| format!("Read Missing Note recovery list: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Decode Missing Note recovery list: {error}"))?;
+    Ok(records)
+}
+
+pub(super) fn missing_note(note_id: &NoteIdentity) -> Result<Option<MissingNoteRecord>, String> {
+    let connection = open_store()?;
+    connection
+        .query_row(
+            "SELECT path, title, missing_at_millis, retention_days, purge_at_millis
+             FROM missing_notes WHERE note_id = ?1",
+            params![note_id.as_str()],
+            |row| {
+                Ok(MissingNoteRecord {
+                    note_id: note_id.clone(),
+                    path: PathBuf::from(row.get::<_, String>(0)?),
+                    title: row.get(1)?,
+                    missing_at_millis: row.get(2)?,
+                    retention_days: row.get(3)?,
+                    purge_at_millis: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Read Missing Note recovery state: {error}"))
 }
 
 struct RevisionAppend<'a> {
@@ -1679,9 +1823,12 @@ pub(super) fn note_identity_for_current_path(path: &Path) -> Result<Option<NoteI
     let connection = open_store()?;
     let mut statement = connection
         .prepare(
-            "SELECT note_id FROM timeline_heads
-             WHERE current_path = ?1
-             ORDER BY note_id
+            "SELECT heads.note_id FROM timeline_heads heads
+             LEFT JOIN lifecycle_events events
+               ON heads.record_kind = 'lifecycleEvent' AND events.event_id = heads.record_id
+             WHERE heads.current_path = ?1
+               AND COALESCE(events.kind, '') != 'missing'
+             ORDER BY heads.note_id
              LIMIT 2",
         )
         .map_err(|error| error.to_string())?;
@@ -1809,6 +1956,28 @@ pub(super) fn reconstruct(
     })
 }
 
+pub(super) fn reconstruct_latest(
+    note_id: &NoteIdentity,
+) -> Result<ReconstructedNoteRevision, String> {
+    let connection = open_store()?;
+    let revision_id = connection
+        .query_row(
+            "SELECT revision_id FROM timeline_heads WHERE note_id = ?1",
+            params![note_id.as_str()],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .flatten()
+        .ok_or_else(|| "Missing Note has no retained revision to recover".to_string())?;
+    let encoded = reconstruct_revision(&connection, &revision_id)?;
+    let state = AuthoredState::decode(&encoded)?;
+    Ok(ReconstructedNoteRevision {
+        unmanaged_frontmatter: state.unmanaged_frontmatter,
+        body: state.body,
+    })
+}
+
 fn insert_deletion_marker(
     transaction: &Transaction<'_>,
     marker: &DeletionMarker,
@@ -1837,6 +2006,12 @@ fn delete_note_timeline_records(
     transaction: &Transaction<'_>,
     note_id: &NoteIdentity,
 ) -> Result<(), String> {
+    transaction
+        .execute(
+            "DELETE FROM missing_notes WHERE note_id = ?1",
+            params![note_id.as_str()],
+        )
+        .map_err(|error| format!("Delete Missing Note recovery state: {error}"))?;
     transaction
         .execute(
             "DELETE FROM timeline_heads WHERE note_id = ?1",
@@ -2940,6 +3115,7 @@ fn open_store() -> Result<Connection, String> {
                         migrate_schema_five_storage(&connection)?;
                     }
                     6 => authorize_legacy_portability_migration(&manifest)?,
+                    7 => {}
                     HISTORY_SCHEMA_VERSION => {}
                     _ => return Err("Note Timeline history store schema mismatch".to_string()),
                 }
@@ -3046,8 +3222,19 @@ fn open_store() -> Result<Connection, String> {
                previous_path TEXT,
                observed_at_millis INTEGER NOT NULL,
                modified_at_millis INTEGER,
-               canonical_markdown TEXT
+               canonical_markdown TEXT,
+               missing_retention_days INTEGER
              );
+             CREATE TABLE IF NOT EXISTS missing_notes (
+               note_id TEXT PRIMARY KEY,
+               path TEXT NOT NULL,
+               title TEXT NOT NULL,
+               missing_at_millis INTEGER NOT NULL,
+               retention_days INTEGER NOT NULL CHECK (retention_days IN (1, 7, 30)),
+               purge_at_millis INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS missing_notes_by_deadline
+               ON missing_notes(purge_at_millis, note_id);
              CREATE TABLE IF NOT EXISTS baseline_initialization (
                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                phase TEXT NOT NULL CHECK (phase IN ('notStarted', 'initializing', 'complete', 'degraded')),
@@ -3114,6 +3301,9 @@ fn open_store() -> Result<Connection, String> {
     }
     if matches!(schema, Some(5 | 6)) {
         migrate_schema_six_portability(&connection, &manifest)?;
+    }
+    if matches!(schema, Some(5 | 6 | 7)) {
+        migrate_schema_eight_missing_notes(&connection)?;
     }
     configure_wal_bounds(&connection)?;
     let metadata = connection
@@ -3249,6 +3439,46 @@ fn migrate_schema_six_portability(
             params![HISTORY_SCHEMA_VERSION, crate::note::generate_unique_id()],
         )
         .map_err(|error| format!("Record Note Timeline portability migration: {error}"))?;
+    Ok(())
+}
+
+fn migrate_schema_eight_missing_notes(connection: &Connection) -> Result<(), String> {
+    let has_retention_column = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(pending_observations)")
+            .map_err(|error| error.to_string())?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        columns
+            .iter()
+            .any(|column| column == "missing_retention_days")
+    };
+    if !has_retention_column {
+        connection
+            .execute(
+                "ALTER TABLE pending_observations ADD COLUMN missing_retention_days INTEGER",
+                [],
+            )
+            .map_err(|error| format!("Add Missing Note retention evidence: {error}"))?;
+    }
+    let retention_days = crate::state::forgotten_note_retention_days()?;
+    connection
+        .execute(
+            "UPDATE pending_observations
+             SET missing_retention_days = ?1
+             WHERE kind = 'missing' AND missing_retention_days IS NULL",
+            params![retention_days],
+        )
+        .map_err(|error| format!("Backfill retained Missing Note observations: {error}"))?;
+    connection
+        .execute(
+            "UPDATE history_metadata SET schema_version = ?1 WHERE singleton = 1",
+            params![HISTORY_SCHEMA_VERSION],
+        )
+        .map_err(|error| format!("Record Missing Note schema migration: {error}"))?;
     Ok(())
 }
 
@@ -4060,6 +4290,113 @@ mod tests {
                 .unwrap(),
             "retained"
         );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn opening_schema_seven_store_adds_missing_note_retention_evidence_without_data_loss() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-schema-seven-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-schema-seven-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let manifest = crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        crate::state::set_forgotten_note_retention_days(30).unwrap();
+        let database_path = history_database_path().unwrap();
+        fs::create_dir_all(database_path.parent().unwrap()).unwrap();
+        let legacy = Connection::open(&database_path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE history_metadata (
+                   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                   vault_id TEXT NOT NULL,
+                   history_format TEXT NOT NULL,
+                   history_generation INTEGER NOT NULL,
+                   schema_version INTEGER NOT NULL,
+                   store_instance_id TEXT NOT NULL,
+                   clean_close_sequence INTEGER NOT NULL,
+                   portability_state TEXT NOT NULL
+                 );
+                 CREATE TABLE pending_observations (
+                   sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                   source TEXT NOT NULL,
+                   kind TEXT NOT NULL,
+                   path TEXT NOT NULL,
+                   previous_path TEXT,
+                   observed_at_millis INTEGER NOT NULL,
+                   modified_at_millis INTEGER,
+                   canonical_markdown TEXT
+                 );
+                 INSERT INTO pending_observations (
+                   source, kind, path, observed_at_millis
+                 ) VALUES ('watcher', 'missing', '/retained.md', 42);",
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "INSERT INTO history_metadata (
+                   singleton, vault_id, history_format, history_generation, schema_version,
+                   store_instance_id, clean_close_sequence, portability_state
+                 ) VALUES (1, ?1, ?2, ?3, 7, 'schema-seven-store', 0, 'portable')",
+                params![
+                    manifest.vault_id,
+                    manifest.history_format,
+                    manifest.history_generation
+                ],
+            )
+            .unwrap();
+        drop(legacy);
+
+        let migrated = open_store().unwrap();
+        assert_eq!(
+            migrated
+                .query_row(
+                    "SELECT schema_version FROM history_metadata WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, u64>(0),
+                )
+                .unwrap(),
+            HISTORY_SCHEMA_VERSION
+        );
+        assert_eq!(
+            migrated
+                .query_row(
+                    "SELECT path FROM pending_observations WHERE sequence = 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "/retained.md"
+        );
+        assert_eq!(
+            migrated
+                .query_row(
+                    "SELECT missing_retention_days FROM pending_observations WHERE sequence = 1",
+                    [],
+                    |row| row.get::<_, Option<u32>>(0),
+                )
+                .unwrap(),
+            Some(30)
+        );
+        assert_eq!(
+            retained_observations()
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap()
+                .observation
+                .missing_retention_days,
+            Some(30)
+        );
+        assert!(migrated
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'missing_notes'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()
+            .unwrap()
+            .is_some());
         crate::state::set_notes_root_override(None).unwrap();
     }
 

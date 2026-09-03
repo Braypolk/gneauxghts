@@ -16,6 +16,106 @@ pub(crate) struct VersionRestoreCommit {
     session: NoteSession,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MissingNoteSummary {
+    note_id: String,
+    path: String,
+    title: String,
+    file_name: String,
+    missing_at_millis: u64,
+    retention_days: u32,
+    purge_at_millis: u64,
+    timeline: HistoryModePage,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecoveredMissingNote {
+    note_id: String,
+    restored_path: String,
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_warning: Option<crate::services::note_timeline::NoteMutationWarning>,
+}
+
+#[tauri::command]
+pub(crate) fn list_missing_notes(
+    state: State<'_, AppState>,
+) -> Result<Vec<MissingNoteSummary>, String> {
+    super::prepare_notes_dir_with_state(true, Some(&state))?;
+    let timeline = NoteTimeline::new(&state);
+    timeline
+        .missing_notes()?
+        .into_iter()
+        .map(|missing| {
+            let mut page =
+                timeline.missing_note_history_page(missing.note_id().clone(), None, 100)?;
+            while let Some(cursor) = page.next_cursor().map(str::to_string) {
+                page.append(timeline.missing_note_history_page(
+                    missing.note_id().clone(),
+                    Some(&cursor),
+                    100,
+                )?);
+            }
+            Ok(MissingNoteSummary {
+                note_id: missing.note_id().as_str().to_string(),
+                path: missing.path().to_string_lossy().into_owned(),
+                title: missing.title().to_string(),
+                file_name: missing
+                    .path()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                missing_at_millis: missing.missing_at_millis(),
+                retention_days: missing.retention_days(),
+                purge_at_millis: missing.purge_at_millis(),
+                timeline: page,
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub(crate) fn recover_missing_note(
+    state: State<'_, AppState>,
+    note_id: String,
+) -> Result<RecoveredMissingNote, String> {
+    let note_id = NoteIdentity::new(note_id.trim());
+    if note_id.as_str().is_empty() {
+        return Err("Missing Note recovery requires a Note Identity".to_string());
+    }
+    let result = NoteTimeline::new(&state).recover_missing_note(note_id.clone())?;
+    Ok(RecoveredMissingNote {
+        note_id: note_id.as_str().to_string(),
+        restored_path: result.receipt().path().to_string_lossy().into_owned(),
+        title: result
+            .receipt()
+            .path()
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        commit_warning: result.commit_warning().cloned(),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn delete_missing_notes(
+    state: State<'_, AppState>,
+    note_ids: Vec<String>,
+) -> Result<(), String> {
+    let note_ids = note_ids
+        .into_iter()
+        .map(|note_id| NoteIdentity::new(note_id.trim()))
+        .collect::<Vec<_>>();
+    if note_ids.iter().any(|note_id| note_id.as_str().is_empty()) {
+        return Err("Missing Note deletion requires Note Identities".to_string());
+    }
+    NoteTimeline::new(&state).purge_missing_notes(&note_ids, crate::time::current_time_millis()?)
+}
+
 fn history_access<'a>(
     state: &'a AppState,
     note_id: String,

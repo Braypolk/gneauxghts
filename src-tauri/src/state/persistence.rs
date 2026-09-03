@@ -524,6 +524,17 @@ fn persist_note_locked(
 /// Publish a fully-written note in one rename. Keeping the temporary file next
 /// to its destination makes the rename atomic on the vault filesystem.
 pub(crate) fn atomic_write_note(path: &Path, contents: &[u8]) -> Result<(), String> {
+    atomic_publish_note(path, contents, false)
+}
+
+/// Publish a fully-written note only if the destination is still unoccupied.
+/// Linking the adjacent temporary file is atomic and never replaces a file
+/// that appeared after the caller selected the recovery path.
+pub(crate) fn atomic_create_note(path: &Path, contents: &[u8]) -> Result<(), String> {
+    atomic_publish_note(path, contents, true)
+}
+
+fn atomic_publish_note(path: &Path, contents: &[u8], create_only: bool) -> Result<(), String> {
     #[cfg(test)]
     if take_note_publication_failure() {
         return Err("injected note publication failure".to_string());
@@ -548,7 +559,12 @@ pub(crate) fn atomic_write_note(path: &Path, contents: &[u8]) -> Result<(), Stri
             .map_err(|err| err.to_string())?;
         file.write_all(contents).map_err(|err| err.to_string())?;
         file.sync_all().map_err(|err| err.to_string())?;
-        fs::rename(&temporary, path).map_err(|err| err.to_string())?;
+        if create_only {
+            fs::hard_link(&temporary, path).map_err(|err| err.to_string())?;
+            let _ = fs::remove_file(&temporary);
+        } else {
+            fs::rename(&temporary, path).map_err(|err| err.to_string())?;
+        }
         Ok(())
     })();
     if write_result.is_err() {
@@ -785,7 +801,8 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS app_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                last_opened_note_id TEXT
+                last_opened_note_id TEXT,
+                forgotten_note_retention_days INTEGER NOT NULL DEFAULT 7
             );
             CREATE TABLE IF NOT EXISTS app_state_recent_note_ids (
                 position INTEGER PRIMARY KEY,
@@ -827,7 +844,53 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
     migrate_note_activity_columns(connection)?;
     migrate_last_chat_columns(connection)?;
     migrate_forgotten_item_columns(connection)?;
+    migrate_forgotten_retention_column(connection)?;
     Ok(())
+}
+
+fn migrate_forgotten_retention_column(connection: &Connection) -> Result<(), String> {
+    if !has_column(connection, "app_state", "forgotten_note_retention_days")? {
+        connection
+            .execute(
+                "ALTER TABLE app_state
+                 ADD COLUMN forgotten_note_retention_days INTEGER NOT NULL DEFAULT 7",
+                [],
+            )
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn forgotten_note_retention_days() -> Result<u32, String> {
+    with_state_database(|connection| {
+        connection
+            .query_row(
+                "SELECT forgotten_note_retention_days FROM app_state WHERE id = ?1",
+                params![APP_STATE_SINGLETON_ID],
+                |row| read_u32_column(row, 0),
+            )
+            .optional()
+            .map(|value| value.unwrap_or(7))
+            .map_err(|err| err.to_string())
+    })
+}
+
+pub(crate) fn set_forgotten_note_retention_days(retention_days: u32) -> Result<(), String> {
+    if !matches!(retention_days, 1 | 7 | 30) {
+        return Err("Unsupported forgotten note retention window".to_string());
+    }
+    with_state_database(|connection| {
+        connection
+            .execute(
+                "INSERT INTO app_state (id, forgotten_note_retention_days)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(id) DO UPDATE SET
+                   forgotten_note_retention_days = excluded.forgotten_note_retention_days",
+                params![APP_STATE_SINGLETON_ID, retention_days],
+            )
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
 }
 
 fn migrate_forgotten_item_columns(connection: &Connection) -> Result<(), String> {

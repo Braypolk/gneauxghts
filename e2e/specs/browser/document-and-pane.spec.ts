@@ -353,7 +353,9 @@ describe('document and pane state-machine boundaries', () => {
 
     await $('button=Forgotten Items').click();
     await browser.waitUntil(async () => (await $('body').getText()).includes('Forgotten draft'));
-    await $('button=Permanently delete').click();
+    const permanentDeleteButtons = await $$('button=Permanently delete');
+    expect(permanentDeleteButtons).toHaveLength(2);
+    await permanentDeleteButtons[1]!.click();
     const confirmation = await $('[role="alertdialog"]');
     await confirmation.waitForExist();
     expect(await confirmation.getText()).toContain('complete Note Timeline');
@@ -366,6 +368,44 @@ describe('document and pane state-machine boundaries', () => {
     );
     expect(commands).toContain('clear_vault_history');
     expect(commands).toContain('delete_forgotten_notes');
+  });
+
+  it('inspects and safely recovers an externally deleted note', async () => {
+    const openSettings = await $('a[aria-label="Settings"]');
+    await browser.execute((element: HTMLElement) => element.click(), openSettings);
+    await $('[aria-label="Settings categories"]').waitForExist();
+    await $('button=Forgotten Items').click();
+    await browser.waitUntil(async () =>
+      (await $('body').getText()).includes('Missing outline')
+    );
+
+    const timeline = await $('summary=Retained timeline · 2 records');
+    await timeline.click();
+    expect(await $('body').getText()).toContain('Before external deletion');
+    expect(await $('body').getText()).toContain('Missing event');
+
+    await $('button=Recover').click();
+    await browser.waitUntil(async () =>
+      (await $('body').getText()).includes(
+        'Recovered Missing Note to /e2e/Missing outline Recovered Note.md.'
+      )
+    );
+    expect(
+      await $('//article[.//p[normalize-space()="Missing outline"]]').isExisting()
+    ).toBe(false);
+
+    const snapshot = await browser.execute(() =>
+      window.__GNEAUXGHTS_E2E__?.snapshot()
+    );
+    expect(snapshot?.notes.find((note) => note.noteId === 'note-missing')?.path).toBe(
+      '/e2e/Missing outline Recovered Note.md'
+    );
+    expect(snapshot?.notes.find((note) => note.noteId === 'note-alpha')?.path).toBe(
+      '/e2e/alpha.md'
+    );
+    const commands = snapshot?.invocations.map((entry) => entry.command) ?? [];
+    expect(commands).toContain('list_missing_notes');
+    expect(commands).toContain('recover_missing_note');
   });
 
   it('keeps Markdown fidelity stable in the real editor DOM', async () => {

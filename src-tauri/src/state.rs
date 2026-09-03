@@ -19,17 +19,17 @@ pub(crate) fn ensure_vault_scaffold(vault_root: &std::path::Path) -> Result<Vaul
 }
 #[allow(unused_imports)]
 pub(crate) use persistence::{
-    atomic_write_note, db_clear_last_opened_note, db_load_note_activity, db_mark_note_opened,
-    db_set_last_chat_location, db_set_note_collapsed, db_set_note_hidden, db_set_note_order,
-    db_set_note_pinned, db_touch_note_activity, derive_file_stem,
-    derive_file_stem_from_title_and_markdown, effective_open_count, is_forgotten_note_path,
-    is_valid_note_path, persist_note_with_preparation, prune_recent_note_ids,
-    prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup, read_unpruned_state,
-    resolve_note_id_from_path, resolve_note_path_by_id, touch_recent_note_id,
-    validate_current_path, with_note_file_mutation, write_last_opened_and_recents, write_state,
-    write_state_with_lookup, write_unpruned_state, ForgottenItemKind, NoteActivity, NoteIdLookup,
-    NoteIdPathResolver, PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS,
-    OPEN_COUNT_DECAY_INTERVAL_MS,
+    atomic_create_note, atomic_write_note, db_clear_last_opened_note, db_load_note_activity,
+    db_mark_note_opened, db_set_last_chat_location, db_set_note_collapsed, db_set_note_hidden,
+    db_set_note_order, db_set_note_pinned, db_touch_note_activity, derive_file_stem,
+    derive_file_stem_from_title_and_markdown, effective_open_count, forgotten_note_retention_days,
+    is_forgotten_note_path, is_valid_note_path, persist_note_with_preparation,
+    prune_recent_note_ids, prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup,
+    read_unpruned_state, resolve_note_id_from_path, resolve_note_path_by_id,
+    set_forgotten_note_retention_days, touch_recent_note_id, validate_current_path,
+    with_note_file_mutation, write_last_opened_and_recents, write_state, write_state_with_lookup,
+    write_unpruned_state, ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver,
+    PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 #[cfg(test)]
 pub(crate) use persistence::{inject_note_publication_failure_once, persist_note};
@@ -66,6 +66,20 @@ mod tests {
     fn derive_file_stem_prefers_explicit_title() {
         let stem = derive_file_stem_from_title_and_markdown("  Title From Input  ", "Body text");
         assert_eq!(stem, "Title From Input");
+    }
+
+    #[test]
+    fn atomic_create_note_never_replaces_an_occupied_path() {
+        let temp = TestDir::new("state-atomic-create-note");
+        let occupied = temp.path().join("Occupied.md");
+        fs::write(&occupied, "Unrelated content").unwrap();
+
+        assert!(super::atomic_create_note(&occupied, b"Recovered content").is_err());
+        assert_eq!(fs::read_to_string(&occupied).unwrap(), "Unrelated content");
+
+        let available = temp.path().join("Available.md");
+        super::atomic_create_note(&available, b"Recovered content").unwrap();
+        assert_eq!(fs::read_to_string(available).unwrap(), "Recovered content");
     }
 
     #[test]

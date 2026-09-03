@@ -45,6 +45,8 @@ revision remains pinned when newer timeline records arrive, and History Mode
 never survives an application restart. A forgotten note retains its complete
 timeline but cannot enter History Mode or expose timeline records until
 Forgotten-Note Recovery returns it to the active vault.
+An externally deleted note follows the same ordinary-access gate while it is
+Missing, but its retained timeline remains inspectable from recovery UI.
 History Mode browsing and diff surfaces are read-only. It may add, edit, or
 remove a revision label and may clear retained history only after explicit
 confirmation through `NoteTimeline`; those metadata/history-retention actions
@@ -62,10 +64,11 @@ preserving current Note Identity, title, path, creation time, lifecycle state,
 and other managed metadata semantics with a fresh update time. The mutation
 appends a Version Restore revision without removing intervening revisions or
 Lifecycle Events, and the editor begins a fresh undo history so reversal must
-be another Version Restore. Forgotten notes must be recovered before timeline
-inspection or Version Restore, keeping recovery distinct from authored-state
-replacement. The selected authored payload, including exact line endings and
-unmanaged-frontmatter whitespace, is preserved byte-for-byte.
+be another Version Restore. Forgotten and Missing notes must be recovered
+before ordinary timeline inspection or Version Restore, keeping lifecycle
+recovery distinct from authored-state replacement. The selected authored
+payload, including exact line endings and unmanaged-frontmatter whitespace, is
+preserved byte-for-byte.
 
 ## Documents, tasks, and persistence
 
@@ -160,6 +163,8 @@ pages. A whole-note purge durably prepares its deletion before atomically stagin
 the canonical file under hidden vault data; pending deletion recovery uses that
 filesystem evidence before history reads and observation replay, and the purged
 Note Identity cannot acquire new records even when the original path is reused.
+Missing-note purge uses the same durable deletion boundary without staging or
+deleting an unrelated file that may have reused the missing note's old path.
 Allocated and reclaimable byte totals remain distinct, and physical compaction
 is separately budgeted across WAL checkpoint and incremental-vacuum work and
 never chooses what history to retain. Allocated totals include the live SQLite

@@ -25,6 +25,16 @@ use tauri::State;
 const FORGOTTEN_DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
 
 #[tauri::command]
+pub(crate) fn get_forgotten_note_retention_days() -> Result<u32, String> {
+    crate::state::forgotten_note_retention_days()
+}
+
+#[tauri::command]
+pub(crate) fn set_forgotten_note_retention_days(retention_days: u32) -> Result<(), String> {
+    crate::state::set_forgotten_note_retention_days(retention_days)
+}
+
+#[tauri::command]
 pub(crate) fn forget_note(
     state: State<'_, AppState>,
     current_path: Option<String>,
@@ -525,6 +535,7 @@ pub(super) fn cleanup_expired_forgotten_notes(
 ) -> Result<(), String> {
     NoteTimeline::new(state).recover_lifecycle_publications()?;
     let now = current_time_millis()?;
+    NoteTimeline::new(state).purge_expired_missing_notes(now)?;
     let mut persisted_state = read_unpruned_state(notes_dir)?;
     let original_len = persisted_state.forgotten_notes.len();
     let mut kept_notes = Vec::with_capacity(original_len);

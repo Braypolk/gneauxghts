@@ -11,6 +11,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getAppShellViewGeneration } from '$lib/ui/appShellNavigation.svelte';
   import { installBrowserE2eBackend } from '$lib/e2e/browserBackend';
+  import { loadForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 
   installBrowserE2eBackend();
   if (import.meta.env.DEV && import.meta.env.VITE_E2E_NATIVE === 'true') {
@@ -22,6 +23,7 @@
 
   onMount(() => {
     void initializeTheme();
+    void loadForgottenNoteRetentionPreference().catch(() => undefined);
     // Bootstrap the unified AppStore once at the layout level so backend
     // events have a single subscriber and feature stores can read
     // vault/semantic/AI snapshots from one place.

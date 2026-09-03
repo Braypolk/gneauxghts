@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeMock = vi.fn();
 const loadForgottenNotesSliceMock = vi.fn();
+const loadMissingNotesSliceMock = vi.fn();
 const loadSettingsViewSliceMock = vi.fn();
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
@@ -18,7 +19,8 @@ vi.mock('$lib/features/atlas/atlasStore.svelte', () => ({
   atlasStore: { invalidateCachedResponse: vi.fn() }
 }));
 vi.mock('./loaders/forgottenLoader', () => ({
-  loadForgottenNotesSlice: loadForgottenNotesSliceMock
+  loadForgottenNotesSlice: loadForgottenNotesSliceMock,
+  loadMissingNotesSlice: loadMissingNotesSliceMock
 }));
 vi.mock('./loaders/settingsViewLoader', () => ({
   loadSettingsViewSlice: loadSettingsViewSliceMock
@@ -28,8 +30,10 @@ describe('SettingsStore actions', () => {
   beforeEach(() => {
     invokeMock.mockReset();
     loadForgottenNotesSliceMock.mockReset();
+    loadMissingNotesSliceMock.mockReset();
     invokeMock.mockResolvedValue(undefined);
     loadForgottenNotesSliceMock.mockResolvedValue([]);
+    loadMissingNotesSliceMock.mockResolvedValue([]);
     loadSettingsViewSliceMock.mockResolvedValue({
       historyHealth: {
         state: 'healthy',
@@ -105,6 +109,28 @@ describe('SettingsStore actions', () => {
 
     expect(store.forgottenActionMessage).toBe('Timeline recovery is pending.');
     expect(store.forgottenActionError).toBeNull();
+  });
+
+  it('routes Missing Note recovery and purge through identity-scoped commands', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    invokeMock.mockResolvedValue({
+      noteId: 'missing-note-1',
+      restoredPath: '/vault/Missing note.md',
+      title: 'Missing note'
+    });
+
+    await store.recoverMissingNote('missing-note-1');
+    await store.deleteMissingNote('missing-note-2');
+
+    expect(invokeMock).toHaveBeenCalledWith('recover_missing_note', {
+      noteId: 'missing-note-1'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('delete_missing_notes', {
+      noteIds: ['missing-note-2']
+    });
+    expect(loadMissingNotesSliceMock).toHaveBeenCalledTimes(2);
+    expect(store.isUpdatingMissingNotes).toBe(false);
   });
 
   it('routes Retry now through the focused semantic command adapter', async () => {

@@ -2,11 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { appStore } from '$lib/app/appStore.svelte';
+import { loadForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import { atlasStore } from '$lib/features/atlas/atlasStore.svelte';
 import type {
   ForgottenNoteSummary,
   RestoredForgottenNote
 } from '$lib/types/forgottenNotes';
+import type { MissingNoteSummary, RecoveredMissingNote } from '$lib/types/missingNotes';
 import type { VaultFolderInfo, VaultInfo } from '$lib/types/vault';
 import type { HistoryHealthReport } from '$lib/types/history';
 import type {
@@ -19,7 +21,7 @@ import {
   refreshSettingsAfterVaultChange,
   refreshSettingsForVisibility
 } from './refreshCoordinator';
-import { loadForgottenNotesSlice } from './loaders/forgottenLoader';
+import { loadForgottenNotesSlice, loadMissingNotesSlice } from './loaders/forgottenLoader';
 import {
   loadSemanticSlice,
   loadSemanticStatusSlice,
@@ -78,11 +80,15 @@ export class SettingsStore {
   activeTab = $state<SettingsTab>('general');
   activeGeneralSection = $state<GeneralSection>('appearance');
   forgottenNotes = $state<ForgottenNoteSummary[]>([]);
+  missingNotes = $state<MissingNoteSummary[]>([]);
   selectedForgottenPaths = $state<string[]>([]);
   isLoadingForgottenNotes = $state(false);
   isUpdatingForgottenNotes = $state(false);
   forgottenActionMessage = $state<string | null>(null);
   forgottenActionError = $state<string | null>(null);
+  isUpdatingMissingNotes = $state(false);
+  missingActionMessage = $state<string | null>(null);
+  missingActionError = $state<string | null>(null);
   isSaving = $state(false);
   isRunningAction = $state(false);
   semanticLayerError = $state<string | null>(null);
@@ -341,8 +347,12 @@ export class SettingsStore {
 
     this.#forgottenNotesRequest = (async () => {
       try {
-        const forgottenNotes = await loadForgottenNotesSlice();
+        const [forgottenNotes, missingNotes] = await Promise.all([
+          loadForgottenNotesSlice(),
+          loadMissingNotesSlice()
+        ]);
         this.forgottenNotes = forgottenNotes;
+        this.missingNotes = missingNotes;
         this.selectedForgottenPaths = this.selectedForgottenPaths.filter((path) =>
           forgottenNotes.some((note) => note.forgottenPath === path)
         );
@@ -448,6 +458,46 @@ export class SettingsStore {
       this.forgottenActionError = String(error);
     } finally {
       this.isUpdatingForgottenNotes = false;
+    }
+  };
+
+  recoverMissingNote = async (noteId: string) => {
+    this.isUpdatingMissingNotes = true;
+    this.missingActionMessage = null;
+    this.missingActionError = null;
+    try {
+      const recovered = await invoke<RecoveredMissingNote>('recover_missing_note', { noteId });
+      if (recovered.commitWarning) {
+        console.warn(
+          'Missing Note was recovered with incomplete timeline synchronization:',
+          recovered.commitWarning
+        );
+      }
+      this.missingActionMessage =
+        recovered.commitWarning?.message ?? `Recovered Missing Note to ${recovered.restoredPath}.`;
+      await this.loadForgottenNotes();
+    } catch (error) {
+      console.error('Failed to recover Missing Note:', error);
+      this.missingActionError = String(error);
+      await this.loadForgottenNotes();
+    } finally {
+      this.isUpdatingMissingNotes = false;
+    }
+  };
+
+  deleteMissingNote = async (noteId: string) => {
+    this.isUpdatingMissingNotes = true;
+    this.missingActionMessage = null;
+    this.missingActionError = null;
+    try {
+      await invoke('delete_missing_notes', { noteIds: [noteId] });
+      this.missingActionMessage = 'Missing Note timeline permanently deleted.';
+      await this.loadForgottenNotes();
+    } catch (error) {
+      console.error('Failed to permanently delete Missing Note:', error);
+      this.missingActionError = String(error);
+    } finally {
+      this.isUpdatingMissingNotes = false;
     }
   };
 
@@ -574,6 +624,7 @@ export class SettingsStore {
         path: this.vaultPathInput.trim() === '' ? null : this.vaultPathInput.trim()
       });
       this.#applyVaultInfo(nextVaultInfo, true);
+      await loadForgottenNoteRetentionPreference();
     } catch (error) {
       console.error('Failed to save vault directory:', error);
       this.vaultSaveError = String(error);

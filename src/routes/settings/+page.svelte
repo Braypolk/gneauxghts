@@ -2,6 +2,7 @@
   import { Monitor, Moon, RefreshCcw, Sun, FolderOpen } from '@lucide/svelte';
   import { onDestroy, onMount } from 'svelte';
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
+  import MissingNotesPanel from '$lib/features/settings/MissingNotesPanel.svelte';
   import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
   import ChatSettingsPanel from '$lib/features/settings/ChatSettingsPanel.svelte';
@@ -29,6 +30,7 @@
     type ThemePreference
   } from '$lib/theme.svelte';
   import { createSettingsStore, type GeneralSection, type SettingsTab } from '$lib/features/settings/store.svelte';
+  import { logDevError } from '$lib/logDevError';
 
   const generalSectionsNav: {
     id: GeneralSection;
@@ -288,7 +290,11 @@
                             name="forgotten-note-retention"
                             value={option.id}
                             checked={appSettings.forgottenNoteRetentionPreference === option.id}
-                            onchange={() => setForgottenNoteRetentionPreference(option.id)}
+                            onchange={() => {
+                              void setForgottenNoteRetentionPreference(option.id).catch((error) => {
+                                logDevError('Failed to update forgotten-note retention', error);
+                              });
+                            }}
                           />
                           <span>{option.label}</span>
                         </label>
@@ -554,6 +560,18 @@
         </div>
       </div>
       {:else}
+        <MissingNotesPanel
+          missingNotes={settings.missingNotes}
+          isLoading={settings.isLoadingForgottenNotes}
+          isUpdating={settings.isUpdatingMissingNotes}
+          actionMessage={settings.missingActionMessage}
+          actionError={settings.missingActionError}
+          loadMissingNotes={settings.loadForgottenNotes}
+          recoverMissingNote={settings.recoverMissingNote}
+          deleteMissingNote={settings.deleteMissingNote}
+          {formatTimestamp}
+          {formatForgottenRetention}
+        />
         <ForgottenNotesPanel
           forgottenNotes={settings.forgottenNotes}
           {allForgottenSelected}

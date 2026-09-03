@@ -1,8 +1,10 @@
+import { invoke } from '@tauri-apps/api/core';
+
 export type ForgetButtonDurationPreference = 'none' | 'short' | 'medium' | 'long';
 export type ForgottenNoteRetentionPreference = 1 | 7 | 30;
 
 const FORGET_BUTTON_DURATION_STORAGE_KEY = 'gneauxghts.forget-button-duration';
-const FORGOTTEN_NOTE_RETENTION_STORAGE_KEY = 'gneauxghts.forgotten-note-retention-days';
+let retentionPreferenceWrite: Promise<void> = Promise.resolve();
 
 const FORGET_BUTTON_DURATION_MS: Record<ForgetButtonDurationPreference, number> = {
   none: 0,
@@ -64,20 +66,36 @@ class AppSettingsStore {
   forgetButtonDurationPreference = $state<ForgetButtonDurationPreference>(
     readStoredForgetButtonDurationPreference()
   );
-  forgottenNoteRetentionPreference = $state<ForgottenNoteRetentionPreference>(
-    readStoredForgottenNoteRetentionPreference()
-  );
+  forgottenNoteRetentionPreference = $state<ForgottenNoteRetentionPreference>(7);
 
   setForgetButtonDurationPreference = (nextPreference: ForgetButtonDurationPreference): void => {
     this.forgetButtonDurationPreference = nextPreference;
     persistForgetButtonDurationPreference(nextPreference);
   };
 
-  setForgottenNoteRetentionPreference = (
+  setForgottenNoteRetentionPreference = async (
     nextPreference: ForgottenNoteRetentionPreference
-  ): void => {
-    this.forgottenNoteRetentionPreference = nextPreference;
-    persistForgottenNoteRetentionPreference(nextPreference);
+  ): Promise<void> => {
+    const write = retentionPreferenceWrite.catch(() => undefined).then(async () => {
+      if (!isBrowser()) return;
+      await invoke('set_forgotten_note_retention_days', { retentionDays: nextPreference });
+      this.forgottenNoteRetentionPreference = nextPreference;
+    });
+    retentionPreferenceWrite = write;
+    await write;
+  };
+
+  loadForgottenNoteRetentionPreference = async (): Promise<void> => {
+    const load = retentionPreferenceWrite.catch(() => undefined).then(async () => {
+      if (!isBrowser()) return;
+      const preference = await invoke<number>('get_forgotten_note_retention_days');
+      if (preference !== 1 && preference !== 7 && preference !== 30) {
+        throw new Error(`Unsupported forgotten-note retention preference: ${preference}`);
+      }
+      this.forgottenNoteRetentionPreference = preference;
+    });
+    retentionPreferenceWrite = load;
+    await load;
   };
 }
 
@@ -95,10 +113,14 @@ export function resolveForgetButtonDurationMs(
   return FORGET_BUTTON_DURATION_MS[preference];
 }
 
-export function setForgottenNoteRetentionPreference(
+export async function setForgottenNoteRetentionPreference(
   nextPreference: ForgottenNoteRetentionPreference
-): void {
-  appSettings.setForgottenNoteRetentionPreference(nextPreference);
+): Promise<void> {
+  await appSettings.setForgottenNoteRetentionPreference(nextPreference);
+}
+
+export function loadForgottenNoteRetentionPreference(): Promise<void> {
+  return appSettings.loadForgottenNoteRetentionPreference();
 }
 
 function readStoredForgetButtonDurationPreference(): ForgetButtonDurationPreference {
@@ -119,19 +141,6 @@ function readStoredForgetButtonDurationPreference(): ForgetButtonDurationPrefere
   return 'medium';
 }
 
-function readStoredForgottenNoteRetentionPreference(): ForgottenNoteRetentionPreference {
-  if (!isBrowser()) {
-    return 7;
-  }
-
-  const storedPreference = window.localStorage.getItem(FORGOTTEN_NOTE_RETENTION_STORAGE_KEY);
-  if (storedPreference === '1') return 1;
-  if (storedPreference === '7') return 7;
-  if (storedPreference === '30') return 30;
-
-  return 7;
-}
-
 function persistForgetButtonDurationPreference(
   preference: ForgetButtonDurationPreference
 ): void {
@@ -140,16 +149,6 @@ function persistForgetButtonDurationPreference(
   }
 
   window.localStorage.setItem(FORGET_BUTTON_DURATION_STORAGE_KEY, preference);
-}
-
-function persistForgottenNoteRetentionPreference(
-  preference: ForgottenNoteRetentionPreference
-): void {
-  if (!isBrowser()) {
-    return;
-  }
-
-  window.localStorage.setItem(FORGOTTEN_NOTE_RETENTION_STORAGE_KEY, String(preference));
 }
 
 function isBrowser(): boolean {
