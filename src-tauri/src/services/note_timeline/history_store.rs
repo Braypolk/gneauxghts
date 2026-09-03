@@ -266,6 +266,26 @@ pub(super) fn remove_history_store() {
 }
 
 #[cfg(test)]
+pub(super) fn replace_history_store_with_malformed_file_for_test() {
+    let database = history_database_path().expect("history database path");
+    ACTIVE_HISTORY_STORE_SESSIONS
+        .lock()
+        .expect("history store sessions lock")
+        .remove(&database);
+    for sidecar in [
+        sqlite_sidecar_path(&database, "-wal"),
+        sqlite_sidecar_path(&database, "-shm"),
+    ] {
+        match fs::remove_file(sidecar) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("remove history sidecar fixture: {error}"),
+        }
+    }
+    fs::write(database, b"not a sqlite database").expect("write malformed history store");
+}
+
+#[cfg(test)]
 pub(super) fn history_store_exists() -> bool {
     crate::state::vault_data_dir()
         .expect("vault data directory")
@@ -2884,6 +2904,13 @@ pub(super) fn reset_history_store(vault_root: &Path) -> Result<(u64, u64, String
     }
     drop(open_store()?);
     Ok((generations.0, generations.1, operation_id, reset_at_millis))
+}
+
+pub(super) fn store_is_queryable_for_reset() -> bool {
+    // Explicit reset may replace a physically unreadable store, but a store
+    // that can still be queried must first preserve all reconstructable
+    // inactive timelines or fail before advancing the generation.
+    open_store().is_ok()
 }
 
 pub(super) fn complete_history_reset_rebuild() -> Result<(), String> {

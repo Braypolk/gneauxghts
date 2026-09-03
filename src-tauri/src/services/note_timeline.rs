@@ -707,8 +707,8 @@ enum BaselineInitializationHistory {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResetHistorySource {
-    ReadableStore,
-    UnavailableStore,
+    RequireReadableStore,
+    PreserveWhenReadable,
 }
 
 impl ExistingBaselineCandidate {
@@ -3027,7 +3027,7 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn reset_history(&self, vault_root: &Path) -> Result<HistoryResetReceipt, String> {
-        self.reset_history_from(vault_root, ResetHistorySource::ReadableStore)
+        self.reset_history_from(vault_root, ResetHistorySource::RequireReadableStore)
     }
 
     fn reset_history_from(
@@ -3039,14 +3039,15 @@ impl<'a> NoteTimeline<'a> {
         crate::state::with_note_file_mutation(|| {
             let _operation = self.state.begin_note_timeline_operation()?;
             let _timeline = self.state.lock_note_timeline_observation_replay()?;
-            let recoverable_missing = match source {
-                ResetHistorySource::ReadableStore => {
-                    self.recover_pending_deletions()?;
-                    self.replay_retained_observations(None)?;
-                    history_store::recover_pending()?;
-                    self.recoverable_missing_baseline_candidates()?
-                }
-                ResetHistorySource::UnavailableStore => Vec::new(),
+            let preserve_old_store = source == ResetHistorySource::RequireReadableStore
+                || history_store::store_is_queryable_for_reset();
+            let recoverable_missing = if preserve_old_store {
+                self.recover_pending_deletions()?;
+                self.replay_retained_observations(None)?;
+                history_store::recover_pending()?;
+                self.recoverable_missing_baseline_candidates()?
+            } else {
+                Vec::new()
             };
             let (previous_generation, generation, operation_id, reset_at_millis) =
                 history_store::reset_history_store(&vault_root)?;
@@ -3344,12 +3345,7 @@ impl<'a> NoteTimeline<'a> {
                     .to_string(),
             );
         }
-        let source = if health.state() == HistoryHealthState::Unavailable {
-            ResetHistorySource::UnavailableStore
-        } else {
-            ResetHistorySource::ReadableStore
-        };
-        self.reset_history_from(vault_root, source)
+        self.reset_history_from(vault_root, ResetHistorySource::PreserveWhenReadable)
     }
 
     pub(crate) fn trust_and_migrate_legacy_history(&self, vault_root: &Path) -> Result<(), String> {
@@ -7293,6 +7289,49 @@ mod tests {
         assert_eq!(
             after_restart.last_reset().unwrap().operation_id(),
             operation_id
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn malformed_history_store_can_be_confirmed_reset_from_canonical_markdown() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-malformed-reset-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-malformed-reset-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Readable.md");
+        let markdown =
+            "---\ngneauxghts:\n  id: malformed-reset-note\n  kind: note\n---\n\nReadable truth";
+        fs::write(&path, markdown).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let timeline = NoteTimeline::new(&state);
+        timeline.initialize_existing_notes(notes.path()).unwrap();
+        history_store::replace_history_store_with_malformed_file_for_test();
+        assert_eq!(
+            timeline.history_health().unwrap().state(),
+            HistoryHealthState::Corrupt
+        );
+
+        let reset = timeline
+            .reset_corrupt_history(notes.path(), true)
+            .expect("replace malformed history from canonical Markdown");
+
+        assert_eq!(reset.previous_generation(), 1);
+        assert_eq!(reset.generation(), 2);
+        assert_eq!(fs::read_to_string(&path).unwrap(), markdown);
+        assert_eq!(
+            timeline
+                .open_history_mode(NoteIdentity::new("malformed-reset-note"))
+                .revisions()
+                .unwrap()
+                .len(),
+            1
         );
         crate::state::set_notes_root_override(None).unwrap();
     }
