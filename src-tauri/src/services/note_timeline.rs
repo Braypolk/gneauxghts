@@ -705,6 +705,12 @@ enum BaselineInitializationHistory {
     RebuildReplacementStore,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResetHistorySource {
+    ReadableStore,
+    UnavailableStore,
+}
+
 impl ExistingBaselineCandidate {
     fn path(&self) -> &Path {
         match self {
@@ -3021,14 +3027,27 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn reset_history(&self, vault_root: &Path) -> Result<HistoryResetReceipt, String> {
+        self.reset_history_from(vault_root, ResetHistorySource::ReadableStore)
+    }
+
+    fn reset_history_from(
+        &self,
+        vault_root: &Path,
+        source: ResetHistorySource,
+    ) -> Result<HistoryResetReceipt, String> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
             let _operation = self.state.begin_note_timeline_operation()?;
             let _timeline = self.state.lock_note_timeline_observation_replay()?;
-            self.recover_pending_deletions()?;
-            self.replay_retained_observations(None)?;
-            history_store::recover_pending()?;
-            let recoverable_missing = self.recoverable_missing_baseline_candidates()?;
+            let recoverable_missing = match source {
+                ResetHistorySource::ReadableStore => {
+                    self.recover_pending_deletions()?;
+                    self.replay_retained_observations(None)?;
+                    history_store::recover_pending()?;
+                    self.recoverable_missing_baseline_candidates()?
+                }
+                ResetHistorySource::UnavailableStore => Vec::new(),
+            };
             let (previous_generation, generation, operation_id, reset_at_millis) =
                 history_store::reset_history_store(&vault_root)?;
             {
@@ -3325,7 +3344,12 @@ impl<'a> NoteTimeline<'a> {
                     .to_string(),
             );
         }
-        self.reset_history(vault_root)
+        let source = if health.state() == HistoryHealthState::Unavailable {
+            ResetHistorySource::UnavailableStore
+        } else {
+            ResetHistorySource::ReadableStore
+        };
+        self.reset_history_from(vault_root, source)
     }
 
     pub(crate) fn trust_and_migrate_legacy_history(&self, vault_root: &Path) -> Result<(), String> {
@@ -6820,6 +6844,7 @@ mod tests {
             .expect_err("an incomplete replacement must not become available");
 
         assert!(error.contains("did not rebuild completely"));
+        history_store::clear_reset_rebuild_marker_for_test();
         drop(timeline);
         drop(state);
         let restarted = AppState::new(
@@ -7069,6 +7094,25 @@ mod tests {
         .expect_err("history preparation must still fail closed");
         assert!(error.contains("history store"));
         assert_eq!(fs::read_to_string(&path).unwrap(), markdown);
+
+        let reset = timeline
+            .reset_corrupt_history(notes.path(), true)
+            .expect("unavailable history can be replaced from canonical Markdown");
+        assert_eq!(reset.previous_generation(), 1);
+        assert_eq!(reset.generation(), 2);
+        assert_eq!(
+            reset.initialization().phase(),
+            BaselineInitializationPhase::Complete
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), markdown);
+        assert_eq!(
+            timeline
+                .open_history_mode(NoteIdentity::new("readable-note"))
+                .revisions()
+                .unwrap()
+                .len(),
+            1
+        );
         crate::state::set_notes_root_override(None).unwrap();
     }
 

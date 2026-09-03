@@ -64,6 +64,8 @@ struct ObservedHistorySelection {
     allow_missing_store: bool,
     #[serde(default)]
     allow_legacy_migration: bool,
+    #[serde(default)]
+    reset_rebuild_pending: bool,
     last_reset: Option<PersistedHistoryReset>,
 }
 
@@ -384,6 +386,17 @@ pub(super) fn replace_revision_payload_version(note_id: &NoteIdentity, version: 
             params![version, note_id.as_str()],
         )
         .expect("replace stored revision payload version");
+}
+
+#[cfg(test)]
+pub(super) fn clear_reset_rebuild_marker_for_test() {
+    open_store()
+        .expect("open history store")
+        .execute(
+            "UPDATE history_reset_rebuild SET pending = 0 WHERE singleton = 1",
+            [],
+        )
+        .expect("clear in-store reset rebuild marker");
 }
 
 #[cfg(test)]
@@ -2880,17 +2893,23 @@ pub(super) fn complete_history_reset_rebuild() -> Result<(), String> {
             [],
         )
         .map_err(|error| format!("Mark history reset replacement complete: {error}"))?;
-    Ok(())
+    mark_observed_history_reset_rebuild_complete()
 }
 
 fn history_reset_rebuild_is_pending(connection: &Connection) -> Result<bool, String> {
-    connection
+    let stored_pending = connection
         .query_row(
             "SELECT pending FROM history_reset_rebuild WHERE singleton = 1",
             [],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|error| format!("Read history reset rebuild state: {error}"))
+        .map_err(|error| format!("Read history reset rebuild state: {error}"))?;
+    if stored_pending {
+        return Ok(true);
+    }
+    let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
+        .ok_or_else(|| "Read reset rebuild state without a vault manifest".to_string())?;
+    observed_history_reset_rebuild_is_pending(&manifest)
 }
 
 fn history_observations_path() -> Result<PathBuf, String> {
@@ -2975,6 +2994,10 @@ fn validate_and_remember_history_selection(
         .vaults
         .get(&manifest.vault_id)
         .and_then(|observed| observed.last_reset.clone());
+    let reset_rebuild_pending = observations
+        .vaults
+        .get(&manifest.vault_id)
+        .is_some_and(|observed| observed.reset_rebuild_pending);
     observations.vaults.insert(
         manifest.vault_id.clone(),
         ObservedHistorySelection {
@@ -2984,6 +3007,7 @@ fn validate_and_remember_history_selection(
             clean_close_sequence: store.clean_close_sequence,
             allow_missing_store: false,
             allow_legacy_migration: false,
+            reset_rebuild_pending,
             last_reset,
         },
     );
@@ -3011,6 +3035,7 @@ fn record_history_reset(
             clean_close_sequence: 0,
             allow_missing_store: true,
             allow_legacy_migration: false,
+            reset_rebuild_pending: true,
             last_reset: Some(PersistedHistoryReset {
                 operation_id: operation_id.to_string(),
                 previous_generation,
@@ -3019,6 +3044,32 @@ fn record_history_reset(
             }),
         },
     );
+    write_history_observations(&path, &observations)
+}
+
+fn mark_observed_history_reset_rebuild_complete() -> Result<(), String> {
+    let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
+        .ok_or_else(|| "Complete reset rebuild without a vault manifest".to_string())?;
+    let _guard = HISTORY_OBSERVATIONS_LOCK
+        .lock()
+        .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
+    let path = history_observations_path()?;
+    let mut observations = read_history_observations(&path)?;
+    let observed = observations
+        .vaults
+        .get_mut(&manifest.vault_id)
+        .ok_or_else(|| {
+            "Complete reset rebuild without an observed history selection".to_string()
+        })?;
+    if observed.generation != manifest.history_generation
+        || observed
+            .last_reset
+            .as_ref()
+            .is_none_or(|reset| reset.generation != manifest.history_generation)
+    {
+        return Err("Complete reset rebuild for a different history generation".to_string());
+    }
+    observed.reset_rebuild_pending = false;
     write_history_observations(&path, &observations)
 }
 
@@ -3055,6 +3106,12 @@ fn ensure_store_creation_is_authorized(
 fn store_creation_is_history_reset_replacement(
     manifest: &crate::state::VaultManifest,
 ) -> Result<bool, String> {
+    observed_history_reset_rebuild_is_pending(manifest)
+}
+
+fn observed_history_reset_rebuild_is_pending(
+    manifest: &crate::state::VaultManifest,
+) -> Result<bool, String> {
     let _guard = HISTORY_OBSERVATIONS_LOCK
         .lock()
         .map_err(|_| "Note Timeline history observations lock poisoned".to_string())?;
@@ -3063,7 +3120,7 @@ fn store_creation_is_history_reset_replacement(
         .vaults
         .get(&manifest.vault_id)
         .is_some_and(|observed| {
-            observed.allow_missing_store
+            observed.reset_rebuild_pending
                 && observed
                     .last_reset
                     .as_ref()
@@ -3623,6 +3680,7 @@ pub(super) fn trust_legacy_store_for_migration(
                 clean_close_sequence: 0,
                 allow_missing_store: false,
                 allow_legacy_migration: true,
+                reset_rebuild_pending: false,
                 last_reset: None,
             },
         );
@@ -4282,6 +4340,7 @@ mod tests {
                 clean_close_sequence: 0,
                 allow_missing_store: false,
                 allow_legacy_migration: false,
+                reset_rebuild_pending: false,
                 last_reset: None,
             },
         );
