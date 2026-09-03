@@ -2,7 +2,7 @@
 
 **What to build:** The app can explain when and how content still present in a note was introduced, last changed, or returned through Version Restore without treating deleted historical prose as current knowledge.
 
-**Blocked by:** 08: Record external revisions and Lifecycle Events; 09: Initialize existing vaults with Baseline Revisions; 17: Restore a complete earlier revision.
+**Blocked by:** 08: Record external revisions and Lifecycle Events; 09: Initialize existing vaults with Baseline Revisions; 17: Restore a complete earlier revision; 34: Prove the native Phase 1–3 integration journey.
 
 **Status:** ready-for-agent
 
