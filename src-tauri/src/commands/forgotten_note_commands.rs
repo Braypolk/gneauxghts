@@ -649,7 +649,10 @@ fn remove_forgotten_item_path(path: &Path, kind: &ForgottenItemKind) -> Result<(
 mod tests {
     use super::*;
     use crate::{
-        services::note_timeline::MutationSource,
+        services::note_timeline::{
+            corrupt_note_revision_payload_for_test, HistoryDiffComparison, HistoryHealthState,
+            LifecycleEventKind, MutationSource,
+        },
         state::set_notes_root_override,
         test_support::{lock_test_env, TestDir},
     };
@@ -833,6 +836,155 @@ mod tests {
         }
         assert!(restored_path.is_file());
         assert_eq!(recovered_access.revisions().unwrap().len(), 2);
+        set_notes_root_override(None).expect("clear notes root override");
+    }
+
+    #[test]
+    fn history_reset_rebaselines_a_forgotten_note_for_recovery_after_restart() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("forgotten-reset-recovery-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf())
+            .expect("initialize app data");
+        let notes = TestDir::new("forgotten-reset-recovery-notes");
+        set_notes_root_override(Some(notes.path().to_path_buf())).expect("override notes root");
+        crate::state::ensure_vault_scaffold(notes.path()).expect("create vault scaffold");
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("construct app state");
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(test_context())
+            .expect("build test app");
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            app.state::<AppState>().inner(),
+            "Reset forgotten history".to_string(),
+            "Earlier body".to_string(),
+            None,
+        )
+        .expect("create note")
+        .session
+        .expect("created note session");
+        let note_id = NoteIdentity::new(created.note_id.expect("note identity"));
+        let active_path = PathBuf::from(created.path.expect("active path"));
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            app.state::<AppState>().inner(),
+            "Reset forgotten history".to_string(),
+            "Current retained body".to_string(),
+            Some(active_path.to_string_lossy().into_owned()),
+        )
+        .expect("append current revision");
+        let forgotten = forget_note(
+            app.state(),
+            Some(active_path.to_string_lossy().into_owned()),
+            30,
+        )
+        .expect("forget note")
+        .expect("forgotten note summary");
+        let forgotten_path = PathBuf::from(&forgotten.forgotten_path);
+        let retained_deadline = forgotten.purge_at_millis;
+        corrupt_note_revision_payload_for_test(&note_id);
+        let timeline = NoteTimeline::new(app.state::<AppState>().inner());
+        assert_eq!(
+            timeline
+                .history_health()
+                .expect("detect corruption")
+                .state(),
+            HistoryHealthState::Corrupt
+        );
+
+        let reset = timeline
+            .reset_corrupt_history(notes.path(), true)
+            .expect("reset and rebuild history");
+
+        assert_eq!(reset.initialization().discovered_notes(), 1);
+        assert_eq!(reset.initialization().baseline_revisions(), 1);
+        assert!(NoteTimeline::new(app.state::<AppState>().inner())
+            .open_history_mode(note_id.clone())
+            .page(None, 50)
+            .expect_err("forgotten timeline remains gated")
+            .contains("Recover"));
+        drop(app);
+
+        let restarted_state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .expect("restart app state");
+        let chat_service = ChatService::new(
+            notes.path().to_path_buf(),
+            crate::state::vault_data_dir().expect("resolve vault data"),
+        )
+        .expect("construct chat service");
+        let restarted_app = tauri::test::mock_builder()
+            .manage(restarted_state)
+            .manage(chat_service)
+            .build(test_context())
+            .expect("build restarted test app");
+        let retained = read_unpruned_state(notes.path()).expect("read forgotten state");
+        assert_eq!(retained.forgotten_notes.len(), 1);
+        assert_eq!(
+            retained.forgotten_notes[0].note_id.as_deref(),
+            Some(note_id.as_str())
+        );
+        assert_eq!(
+            retained.forgotten_notes[0].forgotten_path,
+            forgotten.forgotten_path
+        );
+        assert_eq!(
+            retained.forgotten_notes[0].purge_at_millis,
+            retained_deadline
+        );
+
+        let restored = restore_forgotten_notes(
+            restarted_app.state(),
+            restarted_app.state(),
+            vec![forgotten_path.to_string_lossy().into_owned()],
+        )
+        .expect("recover forgotten note");
+        assert_eq!(restored.len(), 1);
+        let restored_path = PathBuf::from(&restored[0].restored_path);
+        let access =
+            NoteTimeline::new(restarted_app.state::<AppState>().inner()).open_history_mode(note_id);
+        let revisions = access.revisions().expect("read rebuilt revisions");
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(
+            revisions[0].source(),
+            MutationSource::BaselineInitialization
+        );
+        assert_eq!(
+            access
+                .reconstruct(revisions[0].identity())
+                .expect("reconstruct rebuilt baseline")
+                .body(),
+            "Current retained body"
+        );
+        assert_eq!(
+            access
+                .lifecycle_events()
+                .expect("read rebuilt lifecycle")
+                .into_iter()
+                .map(|event| event.kind())
+                .collect::<Vec<_>>(),
+            vec![LifecycleEventKind::Forgotten, LifecycleEventKind::Recovered]
+        );
+        access
+            .diff(
+                revisions[0].identity().as_str(),
+                HistoryDiffComparison::Current,
+            )
+            .expect("diff rebuilt baseline");
+        access
+            .restore_preview(revisions[0].identity().as_str())
+            .expect("prepare Version Restore from rebuilt baseline");
+        assert_eq!(
+            crate::note::parse_note(
+                &fs::read_to_string(restored_path).expect("read recovered canonical note")
+            )
+            .body,
+            "Current retained body"
+        );
         set_notes_root_override(None).expect("clear notes root override");
     }
 
