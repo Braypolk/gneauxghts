@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Define closed errors for history access and history-changing operations, including unavailable, corrupt, stale, ineligible, missing, and invalid-request states.
-- [ ] Preserve diagnostic causes for logs while preventing storage paths, query text, and reconstruction internals from crossing the command interface.
-- [ ] Map every command failure to a stable frontend representation and a useful user-facing recovery action where one exists.
-- [ ] Establish shared contract fixtures for mutation sources, lifecycle kinds, time kinds, history health, cursors, and command errors across Rust and TypeScript.
-- [ ] Add contract tests that fail when either side adds, removes, or changes a serialized timeline state without updating the other.
+- [x] Define closed errors for history access and history-changing operations, including unavailable, corrupt, stale, ineligible, missing, and invalid-request states.
+- [x] Preserve diagnostic causes for logs while preventing storage paths, query text, and reconstruction internals from crossing the command interface.
+- [x] Map every command failure to a stable frontend representation and a useful user-facing recovery action where one exists.
+- [x] Establish shared contract fixtures for mutation sources, lifecycle kinds, time kinds, history health, cursors, and command errors across Rust and TypeScript.
+- [x] Add contract tests that fail when either side adds, removes, or changes a serialized timeline state without updating the other.

@@ -1,26 +1,14 @@
 import type { HistoryStorageUsage, NoteHistoryHealth } from '$lib/types/history';
 import type { NoteSession } from '$lib/features/notepad/model/types';
 import type { EditorViewState } from '$lib/features/notepad/editor/editorViewState';
+import type {
+  HistoryLifecycleEventKind,
+  HistoryMutationSource,
+  HistoryTimeKind,
+  HistoryCursor
+} from '$lib/contracts/historyCommand';
 
-export type HistoryMutationSource =
-  | 'editor'
-  | 'taskAction'
-  | 'acceptedChatProposal'
-  | 'externalEdit'
-  | 'versionRestore'
-  | 'noteCreation'
-  | 'baselineInitialization'
-  | 'recoveryReconciliation';
-
-export type HistoryLifecycleEventKind =
-  | 'created'
-  | 'renamed'
-  | 'moved'
-  | 'forgotten'
-  | 'recovered'
-  | 'missing'
-  | 'reattached'
-  | 'purged';
+export type { HistoryLifecycleEventKind, HistoryMutationSource };
 
 export interface HistoryRevisionRecord {
   kind: 'revision';
@@ -29,7 +17,7 @@ export interface HistoryRevisionRecord {
   source: HistoryMutationSource;
   occurredAtMillis: number;
   timelineOrdinal: number;
-  timeKind: 'knownSince' | 'committed' | 'observed';
+  timeKind: HistoryTimeKind;
   modifiedAtMillis: number | null;
   editingSessionId: string | null;
   revisionLabel: string | null;
@@ -52,7 +40,7 @@ export type HistoryModeRecord = HistoryRevisionRecord | HistoryLifecycleRecord;
 
 export interface HistoryModePage {
   records: HistoryModeRecord[];
-  nextCursor: string | null;
+  nextCursor: HistoryCursor;
 }
 
 export interface HistoryModeDiagnostics {

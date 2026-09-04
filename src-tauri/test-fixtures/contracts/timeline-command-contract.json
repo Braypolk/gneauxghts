@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "mutationSources": [
+    "editor",
+    "taskAction",
+    "acceptedChatProposal",
+    "externalEdit",
+    "versionRestore",
+    "noteCreation",
+    "baselineInitialization",
+    "recoveryReconciliation"
+  ],
+  "lifecycleKinds": [
+    "created",
+    "renamed",
+    "moved",
+    "forgotten",
+    "recovered",
+    "missing",
+    "reattached",
+    "purged"
+  ],
+  "timeKinds": ["knownSince", "committed", "observed"],
+  "historyHealthStates": [
+    "healthy",
+    "initializing",
+    "degraded",
+    "warning",
+    "unavailable",
+    "corrupt"
+  ],
+  "noteHistoryHealthStates": [
+    "healthy",
+    "initializing",
+    "degraded",
+    "unavailable",
+    "corrupt"
+  ],
+  "historyIntegrityStates": ["verified", "unavailable", "corrupt"],
+  "baselineInitializationPhases": [
+    "notStarted",
+    "initializing",
+    "complete",
+    "degraded"
+  ],
+  "cursors": {
+    "initial": null,
+    "continuation": "opaque-timeline-cursor"
+  },
+  "commandErrorStates": [
+    "unavailable",
+    "corrupt",
+    "stale",
+    "ineligible",
+    "missing",
+    "invalidRequest"
+  ],
+  "recoveryActions": [
+    "retry",
+    "refresh",
+    "recoverNote",
+    "backUpAndReset",
+    "correctRequest"
+  ],
+  "commandErrors": [
+    {
+      "state": "unavailable",
+      "message": "History is unavailable right now.",
+      "recoveryAction": "retry"
+    },
+    {
+      "state": "corrupt",
+      "message": "History data is damaged and must be reset before it can be used.",
+      "recoveryAction": "backUpAndReset"
+    },
+    {
+      "state": "stale",
+      "message": "History changed before this action finished.",
+      "recoveryAction": "refresh"
+    },
+    {
+      "state": "ineligible",
+      "message": "This note must be recovered before its history can be used.",
+      "recoveryAction": "recoverNote"
+    },
+    {
+      "state": "missing",
+      "message": "The requested history item is no longer available.",
+      "recoveryAction": "refresh"
+    },
+    {
+      "state": "invalidRequest",
+      "message": "The history request is invalid.",
+      "recoveryAction": "correctRequest"
+    }
+  ]
+}

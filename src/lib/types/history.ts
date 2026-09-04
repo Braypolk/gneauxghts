@@ -1,17 +1,15 @@
-export type HistoryHealthState =
-  | 'healthy'
-  | 'initializing'
-  | 'degraded'
-  | 'warning'
-  | 'unavailable'
-  | 'corrupt';
+import type {
+  BaselineInitializationPhase,
+  HistoryHealthState,
+  HistoryIntegrityState,
+  NoteHistoryHealthState
+} from '$lib/contracts/historyCommand';
 
-export type HistoryIntegrityState = 'verified' | 'unavailable' | 'corrupt';
-export type BaselineInitializationPhase =
-  | 'notStarted'
-  | 'initializing'
-  | 'complete'
-  | 'degraded';
+export type {
+  BaselineInitializationPhase,
+  HistoryHealthState,
+  HistoryIntegrityState
+};
 
 export interface BaselineInitializationProgress {
   phase: BaselineInitializationPhase;
@@ -48,7 +46,7 @@ export interface HistoryHealthReport {
 
 export interface NoteHistoryHealth {
   noteId: string;
-  state: 'healthy' | 'initializing' | 'degraded' | 'unavailable' | 'corrupt';
+  state: NoteHistoryHealthState;
   revisionCount: number;
   lifecycleEventCount: number;
   revisionPayloadBytes: number;

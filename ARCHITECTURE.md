@@ -151,6 +151,11 @@ Each `AppState` completes that reconciliation successfully before its first
 history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live
 in-process publication intent; a transient recovery failure remains retryable.
+History-facing Tauri commands translate private storage, reconstruction, and
+coordination failures into a closed product contract: unavailable, corrupt,
+stale, ineligible, missing, or invalid request, each paired with a stable
+message and recovery action. Diagnostic causes remain in backend logs and do
+not cross the command seam.
 
 The vault manifest selects the active history format and monotonic store
 generation. The SQLite metadata repeats the vault identity, format, and

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { invokeHistoryCommand } from '$lib/contracts/historyCommand';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 import type { MissingNoteSummary } from '$lib/types/missingNotes';
 import type { HistoryModePage } from '$lib/features/history/historyModeMachine';
@@ -10,11 +11,11 @@ export function loadForgottenNotesSlice() {
 }
 
 export function loadMissingNotesSlice() {
-  return invoke<MissingNoteSummary[]>('list_missing_notes');
+  return invokeHistoryCommand<MissingNoteSummary[]>('list_missing_notes');
 }
 
 export function loadMissingNoteTimelinePage(noteId: string, cursor: string) {
-  return invoke<HistoryModePage>('get_missing_note_history_page', {
+  return invokeHistoryCommand<HistoryModePage>('get_missing_note_history_page', {
     noteId,
     cursor,
     limit: MISSING_NOTE_HISTORY_PAGE_SIZE

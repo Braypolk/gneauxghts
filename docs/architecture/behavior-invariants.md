@@ -181,6 +181,11 @@ retained usage. A retry settles pending observations, deletions, publication
 intents, and failed baselines without replaying an authoritative Markdown
 write.
 
+Every history read or history-changing command failure crosses the frontend
+boundary as a closed Note Timeline state with stable recovery guidance.
+Storage paths, query text, database errors, and reconstruction details remain
+backend diagnostics and never become user-visible command errors.
+
 An unavailable or corrupt history store can be reset only after explicit
 confirmation. Reset never rewrites current Markdown: it advances the history
 generation, removes the affected retained histories and their labels and

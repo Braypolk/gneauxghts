@@ -418,7 +418,7 @@ describe('SettingsStore actions', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('clear_vault_history', { confirmed: true });
     expect(store.historyActionError).toBe(
-      'Vault history was cleared, but storage reporting could not refresh: Error: history health unavailable'
+      'Vault history was cleared, but storage reporting could not refresh: History is unavailable right now.'
     );
     expect(store.isRunningHistoryAction).toBe(false);
   });

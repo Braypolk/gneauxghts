@@ -370,6 +370,43 @@ fn dirty_document_task_prepare_contract_is_registered_and_fixture_backed() {
 }
 
 #[test]
+fn timeline_commands_expose_only_the_closed_command_error_contract() {
+    let history_commands = repository_file("src-tauri/src/commands/history_commands.rs");
+    let root_commands = repository_file("src-tauri/src/commands.rs");
+    let production_history_commands = history_commands
+        .split("#[cfg(test)]\nmod tests")
+        .next()
+        .expect("history command production source");
+
+    assert_contains_all(
+        production_history_commands,
+        &[
+            "pub(crate) struct HistoryCommandError",
+            "pub(crate) type HistoryCommandResult<T>",
+            "HistoryCommandError::from_cause",
+        ],
+    );
+    assert_contains_none(
+        production_history_commands,
+        &["-> Result<", "Result<Vec<MissingNoteSummary>, String>"],
+    );
+
+    for command in [
+        "trust_and_migrate_legacy_note_timeline_history",
+        "get_history_health",
+        "get_note_history_health",
+        "retry_history_recovery",
+        "reset_corrupt_history",
+    ] {
+        let function = rust_function(&root_commands, command);
+        assert!(
+            function.contains("history_commands::HistoryCommandResult<"),
+            "{command} must return the closed Note Timeline command error"
+        );
+    }
+}
+
+#[test]
 fn chat_requests_use_typed_intent_and_one_correlated_run_context() {
     let chat = repository_file("src-tauri/src/chat.rs");
     let commands = repository_file("src-tauri/src/commands/chat_commands.rs");

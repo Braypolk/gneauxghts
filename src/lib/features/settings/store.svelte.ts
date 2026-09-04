@@ -1,4 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
+import {
+  historyCommandMessage,
+  invokeHistoryCommand
+} from '$lib/contracts/historyCommand';
 import { open } from '@tauri-apps/plugin-dialog';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { appStore } from '$lib/app/appStore.svelte';
@@ -383,7 +387,7 @@ export class SettingsStore {
       this.historyActionError = null;
     } catch (error) {
       console.error('Failed to load history health:', error);
-      this.historyActionError = String(error);
+      this.historyActionError = historyCommandMessage(error);
     }
   };
 
@@ -394,7 +398,7 @@ export class SettingsStore {
       this.historyHealth = await retryHistoryRecovery();
     } catch (error) {
       console.error('Failed to retry history recovery:', error);
-      this.historyActionError = String(error);
+      this.historyActionError = historyCommandMessage(error);
     } finally {
       this.isRunningHistoryAction = false;
     }
@@ -408,7 +412,7 @@ export class SettingsStore {
       this.historyHealth = await loadHistoryHealthSlice();
     } catch (error) {
       console.error('Failed to reset corrupt history:', error);
-      this.historyActionError = String(error);
+      this.historyActionError = historyCommandMessage(error);
     } finally {
       this.isRunningHistoryAction = false;
     }
@@ -421,7 +425,7 @@ export class SettingsStore {
       await requestVaultHistoryClear();
     } catch (error) {
       console.error('Failed to clear vault history:', error);
-      this.historyActionError = String(error);
+      this.historyActionError = historyCommandMessage(error);
       this.isRunningHistoryAction = false;
       return;
     }
@@ -430,7 +434,7 @@ export class SettingsStore {
       this.historyHealth = await loadHistoryHealthSlice();
     } catch (error) {
       console.error('Vault history was cleared, but storage reporting could not refresh:', error);
-      this.historyActionError = `Vault history was cleared, but storage reporting could not refresh: ${String(error)}`;
+      this.historyActionError = `Vault history was cleared, but storage reporting could not refresh: ${historyCommandMessage(error)}`;
     } finally {
       this.isRunningHistoryAction = false;
     }
@@ -476,7 +480,10 @@ export class SettingsStore {
     this.missingActionMessage = null;
     this.missingActionError = null;
     try {
-      const recovered = await invoke<RecoveredMissingNote>('recover_missing_note', { noteId });
+      const recovered = await invokeHistoryCommand<RecoveredMissingNote>(
+        'recover_missing_note',
+        { noteId }
+      );
       if (recovered.commitWarning) {
         console.warn(
           'Missing Note was recovered with incomplete timeline synchronization:',
@@ -488,7 +495,7 @@ export class SettingsStore {
       await this.loadForgottenNotes();
     } catch (error) {
       console.error('Failed to recover Missing Note:', error);
-      this.missingActionError = String(error);
+      this.missingActionError = historyCommandMessage(error);
       await this.loadForgottenNotes();
     } finally {
       this.isUpdatingMissingNotes = false;
@@ -522,7 +529,7 @@ export class SettingsStore {
     } catch (error) {
       if (missingNotesGeneration !== this.#missingNotesGeneration) return;
       console.error('Failed to load older Missing Note history:', error);
-      this.missingActionError = String(error);
+      this.missingActionError = historyCommandMessage(error);
     } finally {
       this.loadingMissingTimelineNoteId = null;
     }
@@ -533,12 +540,12 @@ export class SettingsStore {
     this.missingActionMessage = null;
     this.missingActionError = null;
     try {
-      await invoke('delete_missing_notes', { noteIds: [noteId] });
+      await invokeHistoryCommand<void>('delete_missing_notes', { noteIds: [noteId] });
       this.missingActionMessage = 'Missing Note timeline permanently deleted.';
       await this.loadForgottenNotes();
     } catch (error) {
       console.error('Failed to permanently delete Missing Note:', error);
-      this.missingActionError = String(error);
+      this.missingActionError = historyCommandMessage(error);
     } finally {
       this.isUpdatingMissingNotes = false;
     }

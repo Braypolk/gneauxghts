@@ -324,47 +324,89 @@ pub(crate) fn set_vault_directory(
 #[tauri::command]
 pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
     state: State<'_, AppState>,
-) -> Result<(), String> {
-    let root = vault_root()?;
+) -> history_commands::HistoryCommandResult<()> {
+    let root = vault_root().map_err(|error| {
+        history_commands::HistoryCommandError::from_cause(
+            "trust_and_migrate_legacy_note_timeline_history",
+            error,
+        )
+    })?;
     state
         .note_timeline()
         .trust_and_migrate_legacy_history(&root)
+        .map_err(|error| {
+            history_commands::HistoryCommandError::from_cause(
+                "trust_and_migrate_legacy_note_timeline_history",
+                error,
+            )
+        })
 }
 
 #[tauri::command]
 pub(crate) fn get_history_health(
     state: State<'_, AppState>,
-) -> Result<crate::services::note_timeline::HistoryHealthReport, String> {
-    state.note_timeline().history_health()
+) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
+    state.note_timeline().history_health().map_err(|error| {
+        history_commands::HistoryCommandError::from_cause("get_history_health", error)
+    })
 }
 
 #[tauri::command]
 pub(crate) fn get_note_history_health(
     state: State<'_, AppState>,
     note_id: String,
-) -> Result<crate::services::note_timeline::NoteHistoryHealth, String> {
+) -> history_commands::HistoryCommandResult<crate::services::note_timeline::NoteHistoryHealth> {
+    if note_id.trim().is_empty() {
+        return Err(history_commands::HistoryCommandError::invalid_request(
+            "get_note_history_health",
+            "Note history health requires a Note Identity",
+        ));
+    }
     state
         .note_timeline()
-        .note_history_health(&crate::services::note_timeline::NoteIdentity::new(note_id))
+        .note_history_health(&crate::services::note_timeline::NoteIdentity::new(
+            note_id.trim(),
+        ))
+        .map_err(|error| {
+            history_commands::HistoryCommandError::from_cause("get_note_history_health", error)
+        })
 }
 
 #[tauri::command]
 pub(crate) fn retry_history_recovery(
     state: State<'_, AppState>,
-) -> Result<crate::services::note_timeline::HistoryHealthReport, String> {
-    let root = vault_root()?;
-    state.note_timeline().retry_history_recovery(&root)
+) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
+    let root = vault_root().map_err(|error| {
+        history_commands::HistoryCommandError::from_cause("retry_history_recovery", error)
+    })?;
+    state
+        .note_timeline()
+        .retry_history_recovery(&root)
+        .map_err(|error| {
+            history_commands::HistoryCommandError::from_cause("retry_history_recovery", error)
+        })
 }
 
 #[tauri::command]
 pub(crate) fn reset_corrupt_history(
     state: State<'_, AppState>,
     confirmed: bool,
-) -> Result<crate::services::note_timeline::HistoryResetReceipt, String> {
-    let root = vault_root()?;
+) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryResetReceipt> {
+    if !confirmed {
+        return Err(history_commands::HistoryCommandError::invalid_request(
+            "reset_corrupt_history",
+            "Corrupt history reset requires explicit confirmation",
+        ));
+    }
+    let root = vault_root().map_err(|error| {
+        history_commands::HistoryCommandError::from_cause("reset_corrupt_history", error)
+    })?;
     state
         .note_timeline()
         .reset_corrupt_history(&root, confirmed)
+        .map_err(|error| {
+            history_commands::HistoryCommandError::from_cause("reset_corrupt_history", error)
+        })
 }
 
 fn set_vault_directory_for_state(
