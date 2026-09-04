@@ -779,10 +779,15 @@ mod tests {
         for (note_id, _, forgotten_path, first_revision) in &retained {
             assert!(forgotten_path.is_file());
             let access = restarted.note_timeline().open_history_mode(note_id.clone());
-            assert!(access.page(None, 50).unwrap_err().contains("Recover"));
+            assert!(access
+                .page(None, 50)
+                .unwrap_err()
+                .to_string()
+                .contains("Recover"));
             assert!(access
                 .revision(first_revision)
                 .unwrap_err()
+                .to_string()
                 .contains("Recover"));
         }
 
@@ -919,6 +924,7 @@ mod tests {
             .open_history_mode(note_id.clone())
             .page(None, 50)
             .expect_err("forgotten timeline remains gated")
+            .to_string()
             .contains("Recover"));
         drop(app);
 
@@ -1144,7 +1150,8 @@ mod tests {
             timeline
                 .open_history_mode(note_id)
                 .lifecycle_events()
-                .expect_err("forgotten history stays gated"),
+                .expect_err("forgotten history stays gated")
+                .to_string(),
             "Recover the forgotten note before accessing its Note Timeline"
         );
         set_notes_root_override(None).expect("clear notes root override");

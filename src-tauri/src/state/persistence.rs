@@ -396,12 +396,15 @@ pub(crate) fn persist_note(
     })
 }
 
-pub(crate) fn with_note_file_mutation<T>(
-    operation: impl FnOnce() -> Result<T, String>,
-) -> Result<T, String> {
+pub(crate) fn with_note_file_mutation<T, E>(
+    operation: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E>
+where
+    E: From<String>,
+{
     let _file_mutation_guard = NOTE_FILE_MUTATION
         .lock()
-        .map_err(|_| "Note file mutation lock poisoned".to_string())?;
+        .map_err(|_| E::from("Note file mutation lock poisoned".to_string()))?;
     operation()
 }
 

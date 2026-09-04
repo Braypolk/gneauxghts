@@ -2179,6 +2179,21 @@ pub(super) fn reconstruct(
     })
 }
 
+pub(super) fn owns_revision(
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+) -> Result<bool, String> {
+    open_store()?
+        .query_row(
+            "SELECT 1 FROM revisions WHERE note_id = ?1 AND revision_id = ?2",
+            params![note_id.as_str(), revision_id.0],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|row| row.is_some())
+        .map_err(|error| format!("Find Note Revision: {error}"))
+}
+
 pub(super) fn reconstruct_latest(
     note_id: &NoteIdentity,
 ) -> Result<ReconstructedNoteRevision, String> {

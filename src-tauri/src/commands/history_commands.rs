@@ -2,7 +2,7 @@ use crate::{
     commands::{note_persistence::build_note_session_from_mutation, NoteSession},
     index::AppState,
     services::note_timeline::{
-        HistoryDiffComparison, HistoryModeDiff, HistoryModePage, HistoryModeRevision,
+        HistoryDiffComparison, HistoryError, HistoryModeDiff, HistoryModePage, HistoryModeRevision,
         HistoryRestorePreview, NoteIdentity, RevisionIdentity,
     },
 };
@@ -102,59 +102,17 @@ impl HistoryCommandError {
         Self::with_cause(operation, HistoryCommandErrorState::InvalidRequest, cause)
     }
 
-    pub(crate) fn from_cause(operation: &str, cause: impl AsRef<str>) -> Self {
-        let cause = cause.as_ref();
-        let normalized = cause.to_ascii_lowercase();
-        let state = if [
-            "corrupt",
-            "integrity",
-            "lineage",
-            "payload",
-            "delta",
-            "hash mismatch",
-            "unknown stored",
-            "did not reconstruct",
-        ]
-        .iter()
-        .any(|marker| normalized.contains(marker))
-        {
-            HistoryCommandErrorState::Corrupt
-        } else if [
-            "cursor",
-            "continuation",
-            "changed after",
-            "changed while",
-            "stale",
-        ]
-        .iter()
-        .any(|marker| normalized.contains(marker))
-        {
-            HistoryCommandErrorState::Stale
-        } else if [
-            "recover the missing note",
-            "recover the forgotten note",
-            "already matches current authored content",
-            "available only when history is corrupt or unavailable",
-        ]
-        .iter()
-        .any(|marker| normalized.contains(marker))
-        {
-            HistoryCommandErrorState::Ineligible
-        } else if [
-            "unknown note revision",
-            "does not belong to this note timeline",
-            "has no current path",
-            "has no current authored state",
-            "no retained revision",
-            "no longer available",
-            "deadline expired",
-        ]
-        .iter()
-        .any(|marker| normalized.contains(marker))
-        {
-            HistoryCommandErrorState::Missing
-        } else {
-            HistoryCommandErrorState::Unavailable
+    pub(crate) fn unavailable(operation: &str, cause: impl Into<String>) -> Self {
+        Self::from_history_error(operation, HistoryError::Unavailable(cause.into()))
+    }
+
+    pub(crate) fn from_history_error(operation: &str, error: HistoryError) -> Self {
+        let (state, cause) = match error {
+            HistoryError::Unavailable(cause) => (HistoryCommandErrorState::Unavailable, cause),
+            HistoryError::Corrupt(cause) => (HistoryCommandErrorState::Corrupt, cause),
+            HistoryError::Stale(cause) => (HistoryCommandErrorState::Stale, cause),
+            HistoryError::Ineligible(cause) => (HistoryCommandErrorState::Ineligible, cause),
+            HistoryError::Missing(cause) => (HistoryCommandErrorState::Missing, cause),
         };
         Self::with_cause(operation, state, cause)
     }
@@ -174,8 +132,16 @@ impl HistoryCommandError {
 
 pub(crate) type HistoryCommandResult<T> = Result<T, HistoryCommandError>;
 
-fn command_error(operation: &'static str) -> impl FnOnce(String) -> HistoryCommandError {
-    move |cause| HistoryCommandError::from_cause(operation, cause)
+fn command_error(operation: &'static str) -> impl FnOnce(HistoryError) -> HistoryCommandError {
+    move |error| HistoryCommandError::from_history_error(operation, error)
+}
+
+fn unavailable_command_error(
+    operation: &'static str,
+) -> impl FnOnce(String) -> HistoryCommandError {
+    move |cause| {
+        HistoryCommandError::from_history_error(operation, HistoryError::Unavailable(cause))
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -213,7 +179,7 @@ pub(crate) fn list_missing_notes(
     state: State<'_, AppState>,
 ) -> HistoryCommandResult<Vec<MissingNoteSummary>> {
     super::prepare_notes_dir_with_state(true, Some(&state))
-        .map_err(command_error("list_missing_notes"))?;
+        .map_err(unavailable_command_error("list_missing_notes"))?;
     let timeline = state.note_timeline();
     timeline
         .missing_notes()
@@ -321,7 +287,8 @@ pub(crate) fn delete_missing_notes(
         .note_timeline()
         .purge_missing_notes(
             &note_ids,
-            crate::time::current_time_millis().map_err(command_error("delete_missing_notes"))?,
+            crate::time::current_time_millis()
+                .map_err(unavailable_command_error("delete_missing_notes"))?,
         )
         .map_err(command_error("delete_missing_notes"))
 }
@@ -528,7 +495,8 @@ pub(crate) fn clear_vault_history(
             "Clearing vault history requires explicit confirmation",
         ));
     }
-    let vault_root = crate::state::vault_root().map_err(command_error("clear_vault_history"))?;
+    let vault_root =
+        crate::state::vault_root().map_err(unavailable_command_error("clear_vault_history"))?;
     state
         .note_timeline()
         .clear_vault_history(&vault_root)
@@ -660,7 +628,10 @@ mod tests {
     fn timeline_command_errors_preserve_diagnostics_only_in_logs() {
         let cause =
             "Prepare query SELECT payload at /vault/.gneauxghts/history.sqlite3: corrupt payload";
-        let error = HistoryCommandError::from_cause("get_note_history_revision", cause);
+        let error = HistoryCommandError::from_history_error(
+            "get_note_history_revision",
+            HistoryError::Corrupt(cause.to_string()),
+        );
         let serialized = serde_json::to_string(&error).expect("serialize command error");
 
         assert_eq!(error.state, HistoryCommandErrorState::Corrupt);
@@ -678,30 +649,32 @@ mod tests {
     }
 
     #[test]
-    fn timeline_command_causes_map_to_closed_product_states() {
-        for (cause, expected) in [
+    fn typed_timeline_errors_map_to_closed_product_states() {
+        for (error, expected) in [
             (
-                "unable to open database file",
+                HistoryError::Unavailable("unable to open database file".to_string()),
                 HistoryCommandErrorState::Unavailable,
             ),
             (
-                "Note Revision payload did not reconstruct",
+                HistoryError::Corrupt("damaged retained data".to_string()),
                 HistoryCommandErrorState::Corrupt,
             ),
             (
-                "History page cursor is no longer available",
+                HistoryError::Stale("expired continuation".to_string()),
                 HistoryCommandErrorState::Stale,
             ),
             (
-                "Recover the missing note before accessing its Note Timeline",
+                HistoryError::Ineligible("recovery required".to_string()),
                 HistoryCommandErrorState::Ineligible,
             ),
-            ("Unknown Note Revision", HistoryCommandErrorState::Missing),
+            (
+                HistoryError::Missing("revision removed".to_string()),
+                HistoryCommandErrorState::Missing,
+            ),
         ] {
             assert_eq!(
-                HistoryCommandError::from_cause("test_operation", cause).state,
-                expected,
-                "unexpected command state for {cause}"
+                HistoryCommandError::from_history_error("test_operation", error).state,
+                expected
             );
         }
         assert_eq!(

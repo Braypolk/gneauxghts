@@ -1721,6 +1721,60 @@ pub(crate) struct HistoryModeAccess<'a> {
     note_id: NoteIdentity,
 }
 
+#[derive(Debug)]
+pub(crate) enum HistoryError {
+    Unavailable(String),
+    Corrupt(String),
+    Stale(String),
+    Ineligible(String),
+    Missing(String),
+}
+
+impl HistoryError {
+    fn into_diagnostic(self) -> String {
+        match self {
+            Self::Unavailable(cause)
+            | Self::Corrupt(cause)
+            | Self::Stale(cause)
+            | Self::Ineligible(cause)
+            | Self::Missing(cause) => cause,
+        }
+    }
+}
+
+impl std::fmt::Display for HistoryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let cause = match self {
+            Self::Unavailable(cause)
+            | Self::Corrupt(cause)
+            | Self::Stale(cause)
+            | Self::Ineligible(cause)
+            | Self::Missing(cause) => cause,
+        };
+        formatter.write_str(cause)
+    }
+}
+
+impl std::error::Error for HistoryError {}
+
+fn history_failure(cause: impl Into<String>) -> HistoryError {
+    let cause = cause.into();
+    if matches!(
+        history_store::health_snapshot(),
+        history_store::HistoryStoreHealth::Corrupt
+    ) {
+        HistoryError::Corrupt(cause)
+    } else {
+        HistoryError::Unavailable(cause)
+    }
+}
+
+impl From<String> for HistoryError {
+    fn from(cause: String) -> Self {
+        history_failure(cause)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct HistoryRestorePreview {
@@ -2115,32 +2169,37 @@ fn retained_history_page(
     cursor: Option<&str>,
     limit: usize,
     invalid_cursor: &str,
-) -> Result<HistoryModePage, String> {
-    let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
-        .ok_or_else(|| "History paging requires a vault manifest".to_string())?;
+) -> Result<HistoryModePage, HistoryError> {
+    let vault_root = crate::state::vault_root().map_err(history_failure)?;
+    let manifest = crate::state::read_vault_manifest_for(&vault_root)
+        .map_err(history_failure)?
+        .ok_or_else(|| history_failure("History paging requires a vault manifest"))?;
     let continuation = cursor
         .map(|cursor| HistoryCursor::decode(cursor, invalid_cursor))
-        .transpose()?;
+        .transpose()
+        .map_err(HistoryError::Stale)?;
     if continuation.as_ref().is_some_and(|continuation| {
         continuation.version != HISTORY_CURSOR_VERSION
             || continuation.vault_id != manifest.vault_id
             || continuation.note_id != note_id.as_str()
             || continuation.history_generation != manifest.history_generation
     }) {
-        return Err(invalid_cursor.to_string());
+        return Err(HistoryError::Stale(invalid_cursor.to_string()));
     }
     let start = continuation.as_ref().map(HistoryCursor::record_identity);
-    let page = match history_store::bounded_timeline_page(note_id, start, limit)? {
+    let page = match history_store::bounded_timeline_page(note_id, start, limit)
+        .map_err(history_failure)?
+    {
         history_store::BoundedTimelinePageRead::Page(page) => page,
         history_store::BoundedTimelinePageRead::CursorUnavailable => {
-            return Err(invalid_cursor.to_string())
+            return Err(HistoryError::Stale(invalid_cursor.to_string()))
         }
     };
     let first_ordinal = match &continuation {
         Some(continuation) if continuation.next_timeline_ordinal < page.total_records => {
             continuation.next_timeline_ordinal
         }
-        Some(_) => return Err(invalid_cursor.to_string()),
+        Some(_) => return Err(HistoryError::Stale(invalid_cursor.to_string())),
         None => page.total_records.saturating_sub(1),
     };
     let record_count = page.records.len();
@@ -2148,12 +2207,10 @@ fn retained_history_page(
         Vec::with_capacity(record_count + usize::from(page.session_predecessor.is_some()));
     for (index, record) in page.records.into_iter().enumerate() {
         let timeline_ordinal = first_ordinal.saturating_sub(index);
-        records.push(project_bounded_history_record(
-            note_id,
-            record,
-            timeline_ordinal,
-            true,
-        )?);
+        records.push(
+            project_bounded_history_record(note_id, record, timeline_ordinal, true)
+                .map_err(history_failure)?,
+        );
     }
     if let Some(predecessor) = page.session_predecessor {
         records.push(project_bounded_history_record(
@@ -2170,7 +2227,7 @@ fn retained_history_page(
     let next_cursor = match page.next_record {
         Some(next_record) => {
             let next_ordinal = first_ordinal.checked_sub(record_count).ok_or_else(|| {
-                "Note Timeline record count does not match its lineage".to_string()
+                history_failure("Note Timeline record count does not match its lineage")
             })?;
             Some(
                 HistoryCursor::for_record(
@@ -2180,7 +2237,8 @@ fn retained_history_page(
                     &next_record,
                     next_ordinal,
                 )
-                .encode()?,
+                .encode()
+                .map_err(history_failure)?,
             )
         }
         None => None,
@@ -2484,18 +2542,30 @@ impl HistoryModeRevision {
     }
 }
 
-fn require_recovered_note(note_id: &NoteIdentity) -> Result<(), String> {
+fn recovered_note_ineligibility(note_id: &NoteIdentity) -> Result<Option<String>, String> {
     if history_store::missing_note(note_id)?.is_some() {
-        return Err("Recover the missing note before accessing its Note Timeline".to_string());
+        return Ok(Some(
+            "Recover the missing note before accessing its Note Timeline".to_string(),
+        ));
     }
     let Some(path) = history_store::current_path(note_id)? else {
-        return Ok(());
+        return Ok(None);
     };
     let notes_root = crate::state::notes_root()?;
     if crate::state::is_forgotten_note_path(&path, &notes_root) {
-        return Err("Recover the forgotten note before accessing its Note Timeline".to_string());
+        return Ok(Some(
+            "Recover the forgotten note before accessing its Note Timeline".to_string(),
+        ));
     }
-    Ok(())
+    Ok(None)
+}
+
+fn require_recovered_note(note_id: &NoteIdentity) -> Result<(), String> {
+    if let Some(cause) = recovered_note_ineligibility(note_id)? {
+        Err(cause)
+    } else {
+        Ok(())
+    }
 }
 
 fn canonical_markdown_for_recovered_note(
@@ -2514,15 +2584,23 @@ fn canonical_markdown_for_recovered_note(
 fn prepare_recovered_note_access(
     state: &AppState,
     note_id: &NoteIdentity,
-) -> Result<OperationGuard, String> {
+) -> Result<OperationGuard, HistoryError> {
     let timeline = state.note_timeline();
-    let operation = timeline.runtime.begin_operation()?;
-    timeline.runtime.with_observation_replay(|| {
-        timeline.recover_pending_deletions()?;
-        timeline.replay_retained_observations(None)?;
-        timeline.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
-        require_recovered_note(note_id)
-    })?;
+    let operation = timeline
+        .runtime
+        .begin_operation()
+        .map_err(history_failure)?;
+    timeline
+        .runtime
+        .with_observation_replay(|| {
+            timeline.recover_pending_deletions()?;
+            timeline.replay_retained_observations(None)?;
+            timeline.ensure_history_recovered(RecoveryIntegrity::Exhaustive)
+        })
+        .map_err(history_failure)?;
+    if let Some(cause) = recovered_note_ineligibility(note_id).map_err(history_failure)? {
+        return Err(HistoryError::Ineligible(cause));
+    }
     Ok(operation)
 }
 
@@ -2531,38 +2609,49 @@ impl HistoryModeAccess<'_> {
         &self.note_id
     }
 
-    fn prepare_access(&self) -> Result<OperationGuard, String> {
+    fn prepare_access(&self) -> Result<OperationGuard, HistoryError> {
         prepare_recovered_note_access(self.state, &self.note_id)
     }
 
-    pub(crate) fn revisions(&self) -> Result<Vec<NoteRevisionHeader>, String> {
+    pub(crate) fn revisions(&self) -> Result<Vec<NoteRevisionHeader>, HistoryError> {
         let _operation = self.prepare_access()?;
-        history_store::revisions(&self.note_id)
+        history_store::revisions(&self.note_id).map_err(history_failure)
     }
 
-    pub(crate) fn lifecycle_events(&self) -> Result<Vec<LifecycleEventHeader>, String> {
+    pub(crate) fn lifecycle_events(&self) -> Result<Vec<LifecycleEventHeader>, HistoryError> {
         let _operation = self.prepare_access()?;
-        history_store::lifecycle_events(&self.note_id)
+        history_store::lifecycle_events(&self.note_id).map_err(history_failure)
     }
 
     pub(crate) fn reconstruct(
         &self,
         revision_id: &RevisionIdentity,
-    ) -> Result<ReconstructedNoteRevision, String> {
+    ) -> Result<ReconstructedNoteRevision, HistoryError> {
         let _operation = self.prepare_access()?;
-        history_store::reconstruct(&self.note_id, revision_id)
+        self.require_revision(revision_id)?;
+        history_store::reconstruct(&self.note_id, revision_id).map_err(history_failure)
+    }
+
+    fn require_revision(&self, revision_id: &RevisionIdentity) -> Result<(), HistoryError> {
+        if history_store::owns_revision(&self.note_id, revision_id).map_err(history_failure)? {
+            Ok(())
+        } else {
+            Err(HistoryError::Missing(
+                "Selected Note Revision is no longer available".to_string(),
+            ))
+        }
     }
 
     pub(crate) fn page(
         &self,
         cursor: Option<&str>,
         limit: usize,
-    ) -> Result<HistoryModePage, String> {
+    ) -> Result<HistoryModePage, HistoryError> {
         let _operation = self.prepare_access()?;
         retained_history_page(&self.note_id, cursor, limit, HISTORY_CURSOR_ERROR)
     }
 
-    pub(crate) fn revision(&self, revision_id: &str) -> Result<HistoryModeRevision, String> {
+    pub(crate) fn revision(&self, revision_id: &str) -> Result<HistoryModeRevision, HistoryError> {
         let reconstructed = self.reconstruct(&RevisionIdentity::from_persisted(revision_id))?;
         Ok(HistoryModeRevision {
             revision_id: revision_id.to_string(),
@@ -2571,28 +2660,40 @@ impl HistoryModeAccess<'_> {
         })
     }
 
-    fn current_restore_state(&self) -> Result<(PathBuf, String, String), String> {
-        let path = history_store::current_path(&self.note_id)?
-            .ok_or_else(|| "This Note Timeline has no current path to restore".to_string())?;
-        let canonical = fs::read_to_string(&path)
-            .map_err(|error| format!("Read current note before Version Restore: {error}"))?;
+    fn current_restore_state(&self) -> Result<(PathBuf, String, String), HistoryError> {
+        let path = history_store::current_path(&self.note_id)
+            .map_err(history_failure)?
+            .ok_or_else(|| {
+                HistoryError::Missing(
+                    "This Note Timeline has no current path to restore".to_string(),
+                )
+            })?;
+        let canonical = fs::read_to_string(&path).map_err(|error| {
+            history_failure(format!("Read current note before Version Restore: {error}"))
+        })?;
         let current_note_id = crate::note::parse_note(&canonical)
             .frontmatter
             .managed
             .map(|metadata| metadata.id)
             .filter(|identity| !identity.trim().is_empty())
-            .ok_or_else(|| "Current note has no managed Note Identity".to_string())?;
+            .ok_or_else(|| history_failure("Current note has no managed Note Identity"))?;
         if current_note_id != self.note_id.as_str() {
-            return Err("Current note identity no longer matches this Note Timeline".to_string());
+            return Err(history_failure(
+                "Current note identity no longer matches this Note Timeline",
+            ));
         }
         let hash = history_store::authored_content_hash(&canonical);
-        let retained_hash = history_store::current_content_hash(&self.note_id)?
-            .ok_or_else(|| "This Note Timeline has no current authored state".to_string())?;
+        let retained_hash = history_store::current_content_hash(&self.note_id)
+            .map_err(history_failure)?
+            .ok_or_else(|| {
+                HistoryError::Missing(
+                    "This Note Timeline has no current authored state".to_string(),
+                )
+            })?;
         if hash != retained_hash {
-            return Err(
-                "Current authored content has not been captured by the Note Timeline; retry after synchronization"
-                    .to_string(),
-            );
+            return Err(history_failure(
+                "Current authored content has not been captured by the Note Timeline; retry after synchronization",
+            ));
         }
         Ok((path, canonical, hash))
     }
@@ -2600,11 +2701,13 @@ impl HistoryModeAccess<'_> {
     pub(crate) fn restore_preview(
         &self,
         revision_id: &str,
-    ) -> Result<HistoryRestorePreview, String> {
+    ) -> Result<HistoryRestorePreview, HistoryError> {
         let _operation = self.prepare_access()?;
         let (_, _, current_authored_content_hash) = self.current_restore_state()?;
         let selected_id = RevisionIdentity::from_persisted(revision_id.trim());
-        let selected = history_store::reconstruct(&self.note_id, &selected_id)?;
+        self.require_revision(&selected_id)?;
+        let selected =
+            history_store::reconstruct(&self.note_id, &selected_id).map_err(history_failure)?;
         Ok(HistoryRestorePreview {
             revision_id: selected_id.0,
             current_authored_content_hash,
@@ -2617,24 +2720,25 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &str,
         expected_current_authored_content_hash: &str,
-    ) -> Result<HistoryRestoreResult, String> {
+    ) -> Result<HistoryRestoreResult, HistoryError> {
         if expected_current_authored_content_hash.trim().is_empty() {
-            return Err("Version Restore confirmation requires its preview hash".to_string());
+            return Err(history_failure(
+                "Version Restore confirmation requires its preview hash",
+            ));
         }
         crate::state::with_note_file_mutation(|| {
             let _operation = self.prepare_access()?;
             let timeline = self.state.note_timeline();
             let (path, current, current_hash) = self.current_restore_state()?;
             if current_hash != expected_current_authored_content_hash {
-                return Err(
+                return Err(HistoryError::Stale(
                     "Current authored content changed after this restore preview was created"
                         .to_string(),
-                );
+                ));
             }
-            let selected = history_store::reconstruct(
-                &self.note_id,
-                &RevisionIdentity::from_persisted(revision_id.trim()),
-            )?;
+            let selected_id = RevisionIdentity::from_persisted(revision_id.trim());
+            self.require_revision(&selected_id)?;
+            let selected = history_store::reconstruct(&self.note_id, &selected_id)?;
             let selected_authored_hash = history_store::authored_parts_hash(
                 selected.unmanaged_frontmatter(),
                 selected.body(),
@@ -2646,15 +2750,15 @@ impl HistoryModeAccess<'_> {
             )?;
             let replacement_hash = history_store::authored_content_hash(&replacement);
             if replacement_hash != selected_authored_hash {
-                return Err(
+                return Err(history_failure(
                     "Version Restore could not preserve the selected authored content exactly"
                         .to_string(),
-                );
+                ));
             }
             if replacement_hash == current_hash {
-                return Err(
-                    "Selected revision already matches current authored content".to_string()
-                );
+                return Err(HistoryError::Ineligible(
+                    "Selected revision already matches current authored content".to_string(),
+                ));
             }
             let prepared = timeline.prepare_exact_revision_publication(
                 MutationSource::VersionRestore,
@@ -2666,8 +2770,11 @@ impl HistoryModeAccess<'_> {
             if history_store::authored_content_hash(prepared.canonical_markdown())
                 != selected_authored_hash
             {
-                return Err(prepared.into_parts().1.abandon_after_publication_failure(
-                    "Version Restore preparation changed the selected authored content".to_string(),
+                return Err(history_failure(
+                    prepared.into_parts().1.abandon_after_publication_failure(
+                        "Version Restore preparation changed the selected authored content"
+                            .to_string(),
+                    ),
                 ));
             }
             let still_current = fs::read_to_string(&path)
@@ -2675,9 +2782,11 @@ impl HistoryModeAccess<'_> {
             if history_store::authored_content_hash(&still_current)
                 != expected_current_authored_content_hash
             {
-                return Err(prepared.into_parts().1.abandon_after_publication_failure(
-                    "Current authored content changed while Version Restore was being prepared"
-                        .to_string(),
+                return Err(HistoryError::Stale(
+                    prepared.into_parts().1.abandon_after_publication_failure(
+                        "Current authored content changed while Version Restore was being prepared"
+                            .to_string(),
+                    ),
                 ));
             }
             let (canonical_markdown, history_intent) = prepared.into_parts();
@@ -2685,7 +2794,9 @@ impl HistoryModeAccess<'_> {
                 match history_store::publication_revision_identity(&history_intent) {
                     Ok(revision_id) => revision_id,
                     Err(error) => {
-                        return Err(history_intent.abandon_after_publication_failure(error));
+                        return Err(history_failure(
+                            history_intent.abandon_after_publication_failure(error),
+                        ));
                     }
                 };
             let expected_write =
@@ -2693,7 +2804,9 @@ impl HistoryModeAccess<'_> {
             if let Err(error) =
                 crate::state::atomic_write_note(&path, canonical_markdown.as_bytes())
             {
-                return Err(history_intent.abandon_after_publication_failure(error));
+                return Err(history_failure(
+                    history_intent.abandon_after_publication_failure(error),
+                ));
             }
             expected_write.commit();
             Ok(HistoryRestoreResult {
@@ -2712,10 +2825,10 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &RevisionIdentity,
         label: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), HistoryError> {
         let label = label.trim();
         if label.is_empty() {
-            return Err("A Named Revision label cannot be empty".to_string());
+            return Err(history_failure("A Named Revision label cannot be empty"));
         }
         self.mutate_revision_label(revision_id, |note_id, revision_id| {
             history_store::name_revision(note_id, revision_id, label)
@@ -2726,15 +2839,16 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &RevisionIdentity,
         mutation: impl FnOnce(&NoteIdentity, &RevisionIdentity) -> Result<(), String>,
-    ) -> Result<(), String> {
+    ) -> Result<(), HistoryError> {
         let _operation = self.prepare_access()?;
-        mutation(&self.note_id, revision_id)
+        self.require_revision(revision_id)?;
+        mutation(&self.note_id, revision_id).map_err(history_failure)
     }
 
     pub(crate) fn remove_revision_name(
         &self,
         revision_id: &RevisionIdentity,
-    ) -> Result<(), String> {
+    ) -> Result<(), HistoryError> {
         self.mutate_revision_label(revision_id, history_store::remove_revision_name)
     }
 
@@ -2742,15 +2856,18 @@ impl HistoryModeAccess<'_> {
         &self,
         revision_id: &str,
         comparison: HistoryDiffComparison,
-    ) -> Result<HistoryModeDiff, String> {
+    ) -> Result<HistoryModeDiff, HistoryError> {
         let _operation = self.prepare_access()?;
         let revision_id = RevisionIdentity::from_persisted(revision_id);
-        let revisions = history_store::revisions(&self.note_id)?;
+        let revisions = history_store::revisions(&self.note_id).map_err(history_failure)?;
         let selected_index = revisions
             .iter()
             .position(|revision| revision.identity() == &revision_id)
-            .ok_or_else(|| "Selected Note Revision is no longer available".to_string())?;
-        let selected = history_store::reconstruct(&self.note_id, &revision_id)?;
+            .ok_or_else(|| {
+                HistoryError::Missing("Selected Note Revision is no longer available".to_string())
+            })?;
+        let selected =
+            history_store::reconstruct(&self.note_id, &revision_id).map_err(history_failure)?;
         let (from_revision_id, to_revision_id, from, to) = match comparison {
             HistoryDiffComparison::Parent => {
                 let parent = selected_index
@@ -2759,6 +2876,7 @@ impl HistoryModeAccess<'_> {
                         let identity = revisions[index].identity();
                         history_store::reconstruct(&self.note_id, identity)
                             .map(|revision| (Some(identity.0.clone()), revision))
+                            .map_err(history_failure)
                     })
                     .transpose()?;
                 let (from_revision_id, from) = parent.unwrap_or((
@@ -2779,8 +2897,11 @@ impl HistoryModeAccess<'_> {
                 let current_id = revisions
                     .last()
                     .map(NoteRevisionHeader::identity)
-                    .ok_or_else(|| "No current Note Revision is available".to_string())?;
-                let current = history_store::reconstruct(&self.note_id, current_id)?;
+                    .ok_or_else(|| {
+                        HistoryError::Missing("No current Note Revision is available".to_string())
+                    })?;
+                let current = history_store::reconstruct(&self.note_id, current_id)
+                    .map_err(history_failure)?;
                 (
                     Some(revision_id.0.clone()),
                     current_id.0.clone(),
@@ -2798,7 +2919,7 @@ impl HistoryModeAccess<'_> {
             to_revision_id,
             body_lines: diff_lines(&from.body, &to.body),
             properties_lines: diff_lines(old_properties, new_properties),
-            missing_assets: missing_binary_assets(&selected.body)?,
+            missing_assets: missing_binary_assets(&selected.body).map_err(history_failure)?,
         })
     }
 }
@@ -3634,50 +3755,59 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn retry_history_recovery(
         &self,
         vault_root: &Path,
-    ) -> Result<HistoryHealthReport, String> {
-        let vault_root = require_active_vault_root(vault_root)?;
-        {
-            let _operation = self.runtime.begin_operation()?;
-            self.runtime.with_observation_replay(|| {
-                self.recover_pending_deletions()?;
-                self.replay_retained_observations(None)?;
-                self.runtime.retry_history_recovery(|| {
-                    history_store::recover_pending()?;
-                    self.recover_pending_deletions()
-                })
-            })?;
-        }
-        if matches!(
-            self.history_health()?.state(),
-            HistoryHealthState::Initializing | HistoryHealthState::Degraded
-        ) {
-            self.initialize_existing_notes(&vault_root)?;
-        }
-        self.history_health()
+    ) -> Result<HistoryHealthReport, HistoryError> {
+        let result = (|| -> Result<HistoryHealthReport, String> {
+            let vault_root = require_active_vault_root(vault_root)?;
+            {
+                let _operation = self.runtime.begin_operation()?;
+                self.runtime.with_observation_replay(|| {
+                    self.recover_pending_deletions()?;
+                    self.replay_retained_observations(None)?;
+                    self.runtime.retry_history_recovery(|| {
+                        history_store::recover_pending()?;
+                        self.recover_pending_deletions()
+                    })
+                })?;
+            }
+            if matches!(
+                self.history_health()?.state(),
+                HistoryHealthState::Initializing | HistoryHealthState::Degraded
+            ) {
+                self.initialize_existing_notes(&vault_root)?;
+            }
+            self.history_health()
+        })();
+        result.map_err(history_failure)
     }
 
     pub(crate) fn reset_corrupt_history(
         &self,
         vault_root: &Path,
         confirmed: bool,
-    ) -> Result<HistoryResetReceipt, String> {
+    ) -> Result<HistoryResetReceipt, HistoryError> {
         if !confirmed {
-            return Err("Corrupt history reset requires explicit confirmation".to_string());
+            return Err(history_failure(
+                "Corrupt history reset requires explicit confirmation",
+            ));
         }
-        let health = self.history_health()?;
+        let health = self.history_health().map_err(history_failure)?;
         if !matches!(
             health.state(),
             HistoryHealthState::Corrupt | HistoryHealthState::Unavailable
         ) {
-            return Err(
+            return Err(HistoryError::Ineligible(
                 "History reset is available only when history is corrupt or unavailable"
                     .to_string(),
-            );
+            ));
         }
         self.reset_history_from(vault_root, ResetHistorySource::PreserveWhenReadable)
+            .map_err(history_failure)
     }
 
-    pub(crate) fn trust_and_migrate_legacy_history(&self, vault_root: &Path) -> Result<(), String> {
+    pub(crate) fn trust_and_migrate_legacy_history(
+        &self,
+        vault_root: &Path,
+    ) -> Result<(), HistoryError> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
             let _operation = self.runtime.begin_operation()?;
@@ -3690,12 +3820,24 @@ impl<'a> NoteTimeline<'a> {
                 history_store::baseline_initialization_progress().map(|_| ())
             })
         })
+        .map_err(history_failure)
     }
 
     pub(crate) fn clear_note_history(
         &self,
         note_id: &NoteIdentity,
-    ) -> Result<HistoryDeletionReceipt, String> {
+    ) -> Result<HistoryDeletionReceipt, HistoryError> {
+        if let Some(cause) = recovered_note_ineligibility(note_id).map_err(history_failure)? {
+            return Err(HistoryError::Ineligible(cause));
+        }
+        if history_store::current_path(note_id)
+            .map_err(history_failure)?
+            .is_none()
+        {
+            return Err(HistoryError::Missing(
+                "Cannot clear an unknown Note Timeline".to_string(),
+            ));
+        }
         crate::state::with_note_file_mutation(|| {
             let _operation = self.runtime.begin_operation()?;
             let _current_content_mutation = self.begin_current_content_mutation()?;
@@ -3726,13 +3868,14 @@ impl<'a> NoteTimeline<'a> {
                 })
             })
         })
+        .map_err(history_failure)
     }
 
     pub(crate) fn clear_vault_history(
         &self,
         vault_root: &Path,
-    ) -> Result<HistoryDeletionReceipt, String> {
-        let vault_root = require_active_vault_root(vault_root)?;
+    ) -> Result<HistoryDeletionReceipt, HistoryError> {
+        let vault_root = require_active_vault_root(vault_root).map_err(history_failure)?;
         crate::state::with_note_file_mutation(|| {
             let _operation = self.runtime.begin_operation()?;
             let _current_content_mutation = self.begin_current_content_mutation()?;
@@ -3799,6 +3942,7 @@ impl<'a> NoteTimeline<'a> {
                 })
             })
         })
+        .map_err(history_failure)
     }
 
     pub(crate) fn deletion_markers(&self) -> Result<Vec<DeletionMarker>, String> {
@@ -4576,11 +4720,13 @@ impl<'a> NoteTimeline<'a> {
         warning
     }
 
-    pub(crate) fn missing_notes(&self) -> Result<Vec<MissingNoteRecord>, String> {
-        let _operation = self.runtime.begin_operation()?;
-        self.recover_retained_observations()?;
-        self.ensure_history_recovered(RecoveryIntegrity::Bounded)?;
-        history_store::missing_notes()
+    pub(crate) fn missing_notes(&self) -> Result<Vec<MissingNoteRecord>, HistoryError> {
+        let _operation = self.runtime.begin_operation().map_err(history_failure)?;
+        self.recover_retained_observations()
+            .map_err(history_failure)?;
+        self.ensure_history_recovered(RecoveryIntegrity::Bounded)
+            .map_err(history_failure)?;
+        history_store::missing_notes().map_err(history_failure)
     }
 
     pub(crate) fn missing_note_history_page(
@@ -4588,15 +4734,22 @@ impl<'a> NoteTimeline<'a> {
         note_id: NoteIdentity,
         cursor: Option<&str>,
         limit: usize,
-    ) -> Result<HistoryModePage, String> {
-        let _operation = self.runtime.begin_operation()?;
-        self.recover_retained_observations()?;
-        self.ensure_history_recovered(RecoveryIntegrity::Bounded)?;
-        if history_store::missing_note(&note_id)?.is_none() {
+    ) -> Result<HistoryModePage, HistoryError> {
+        let _operation = self.runtime.begin_operation().map_err(history_failure)?;
+        self.recover_retained_observations()
+            .map_err(history_failure)?;
+        self.ensure_history_recovered(RecoveryIntegrity::Bounded)
+            .map_err(history_failure)?;
+        if history_store::missing_note(&note_id)
+            .map_err(history_failure)?
+            .is_none()
+        {
             return Err(if cursor.is_some() {
-                MISSING_HISTORY_CURSOR_ERROR.to_string()
+                HistoryError::Stale(MISSING_HISTORY_CURSOR_ERROR.to_string())
             } else {
-                "Missing Note is no longer available for recovery".to_string()
+                HistoryError::Missing(
+                    "Missing Note is no longer available for recovery".to_string(),
+                )
             });
         }
         retained_history_page(&note_id, cursor, limit, MISSING_HISTORY_CURSOR_ERROR)
@@ -4605,8 +4758,8 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn recover_missing_note(
         &self,
         note_id: NoteIdentity,
-    ) -> Result<LifecyclePublicationResult, String> {
-        crate::state::with_note_file_mutation(|| {
+    ) -> Result<LifecyclePublicationResult, HistoryError> {
+        let result = crate::state::with_note_file_mutation(|| {
             let _operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
                 let recovered_at_millis = crate::time::current_time_millis()?;
@@ -4646,7 +4799,7 @@ impl<'a> NoteTimeline<'a> {
                 }
                 self.publish_lifecycle_under_mutation_boundary(
                     NoteLifecycleOperation::recovered(
-                        note_id,
+                        note_id.clone(),
                         preferred_path,
                         target_path.clone(),
                         recovered_at_millis,
@@ -4664,6 +4817,13 @@ impl<'a> NoteTimeline<'a> {
                     },
                 )
             })
+        });
+        result.map_err(|cause| {
+            if matches!(history_store::missing_note(&note_id), Ok(None)) {
+                HistoryError::Missing(cause)
+            } else {
+                history_failure(cause)
+            }
         })
     }
 
@@ -4690,23 +4850,23 @@ impl<'a> NoteTimeline<'a> {
         &self,
         note_ids: &[NoteIdentity],
         occurred_at_millis: u64,
-    ) -> Result<(), String> {
+    ) -> Result<(), HistoryError> {
         let selected = note_ids
             .iter()
             .map(|note_id| note_id.as_str())
             .collect::<HashSet<_>>();
+        let missing = history_store::missing_notes().map_err(history_failure)?;
+        for note_id in note_ids {
+            if !missing.iter().any(|missing| missing.note_id() == note_id) {
+                return Err(HistoryError::Missing(format!(
+                    "Missing Note {} is no longer available for deletion",
+                    note_id.as_str()
+                )));
+            }
+        }
         crate::state::with_note_file_mutation(|| {
             let _operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
-                let missing = history_store::missing_notes()?;
-                for note_id in note_ids {
-                    if !missing.iter().any(|missing| missing.note_id() == note_id) {
-                        return Err(format!(
-                            "Missing Note {} is no longer available for deletion",
-                            note_id.as_str()
-                        ));
-                    }
-                }
                 for missing in missing
                     .into_iter()
                     .filter(|missing| selected.contains(missing.note_id().as_str()))
@@ -4720,6 +4880,7 @@ impl<'a> NoteTimeline<'a> {
                 Ok(())
             })
         })
+        .map_err(history_failure)
     }
 
     fn synchronize_recovered_projection(
@@ -4782,7 +4943,8 @@ impl<'a> NoteTimeline<'a> {
         &self,
         grant: ExplicitRestoreGrant,
     ) -> Result<AgentRestoreAccess<'a>, String> {
-        let _operation = prepare_recovered_note_access(self.state, &grant.note_id)?;
+        let _operation = prepare_recovered_note_access(self.state, &grant.note_id)
+            .map_err(HistoryError::into_diagnostic)?;
         Ok(AgentRestoreAccess {
             _state: self.state,
             grant,
@@ -4823,12 +4985,14 @@ pub(crate) fn reconstructed_revision_bodies_for_test(
     let timeline = state.note_timeline();
     let history = timeline.history_mode(HistoryModeGrant::authorized(NoteIdentity::new(note_id)));
     history
-        .revisions()?
+        .revisions()
+        .map_err(HistoryError::into_diagnostic)?
         .into_iter()
         .map(|revision| {
             history
                 .reconstruct(revision.identity())
                 .map(|revision| revision.body().to_string())
+                .map_err(HistoryError::into_diagnostic)
         })
         .collect()
 }
@@ -5643,10 +5807,10 @@ mod tests {
             history.reconstruct(revisions[0].identity()).unwrap().body(),
             "Current canonical state without managed identity metadata"
         );
-        assert_eq!(
-            history.reconstruct(&removed_revision).unwrap_err(),
-            "Unknown Note Revision"
-        );
+        assert!(matches!(
+            history.reconstruct(&removed_revision),
+            Err(HistoryError::Missing(_))
+        ));
         let markers = timeline.deletion_markers().unwrap();
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].scope(), &DeletionScope::Note(note_id));
@@ -5819,10 +5983,10 @@ mod tests {
         let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
         assert!(history.revisions().unwrap().is_empty());
         assert!(history.lifecycle_events().unwrap().is_empty());
-        assert_eq!(
-            history.reconstruct(&removed_revision).unwrap_err(),
-            "Unknown Note Revision"
-        );
+        assert!(matches!(
+            history.reconstruct(&removed_revision),
+            Err(HistoryError::Missing(_))
+        ));
         assert_eq!(
             history_store::revision_dependent_count_for_test(&note_id),
             0
@@ -6016,7 +6180,9 @@ mod tests {
             ))
             .unwrap_err();
 
-        assert!(error.contains("injected history deletion interruption"));
+        assert!(error
+            .to_string()
+            .contains("injected history deletion interruption"));
         assert!(!path.exists());
         let replacement =
             "---\ngneauxghts:\n  id: replacement-note\n  kind: note\n---\n\nReplacement";
@@ -6077,7 +6243,9 @@ mod tests {
             .clear_note_history(&note_id)
             .unwrap_err();
 
-        assert!(error.contains("injected history deletion interruption"));
+        assert!(error
+            .to_string()
+            .contains("injected history deletion interruption"));
         let history = state
             .note_timeline()
             .history_mode(HistoryModeGrant::authorized(note_id.clone()));
@@ -7299,6 +7467,7 @@ mod tests {
             .open_history_mode(NoteIdentity::new("reset-rebuild-note"))
             .revisions()
             .expect_err("partial replacement remains inaccessible")
+            .to_string()
             .contains("corrupt"));
 
         let retry = timeline
@@ -7357,7 +7526,7 @@ mod tests {
             .reset_corrupt_history(notes.path(), true)
             .expect_err("reset must not erase an unreconstructable Missing Note");
 
-        assert!(error.contains("Reconstruct"));
+        assert!(error.to_string().contains("Reconstruct"));
         assert_eq!(
             crate::state::read_vault_manifest_for(notes.path())
                 .unwrap()
@@ -7698,6 +7867,7 @@ mod tests {
         assert!(timeline
             .reset_corrupt_history(notes.path(), false)
             .expect_err("reset requires explicit confirmation")
+            .to_string()
             .contains("confirmation"));
 
         let reset = timeline.reset_corrupt_history(notes.path(), true).unwrap();
@@ -8143,6 +8313,7 @@ mod tests {
         assert!(history
             .revisions()
             .unwrap_err()
+            .to_string()
             .contains("injected history recovery failure"));
         assert!(history.revisions().unwrap().is_empty());
         crate::state::set_notes_root_override(None).unwrap();
@@ -8193,6 +8364,7 @@ mod tests {
         assert!(history
             .revisions()
             .unwrap_err()
+            .to_string()
             .contains("Read pending canonical publication"));
         assert_eq!(history_store::prepared_intent_count("prepared"), 1);
 
@@ -8400,6 +8572,7 @@ mod tests {
         assert!(history
             .revisions()
             .unwrap_err()
+            .to_string()
             .contains("Unknown stored Mutation Source `futureSource`"));
 
         history_store::replace_revision_source(&note_id, "noteCreation");
@@ -8407,6 +8580,7 @@ mod tests {
         assert!(history
             .revisions()
             .unwrap_err()
+            .to_string()
             .contains("Unknown stored Payload Version `99`"));
 
         history_store::replace_revision_payload_version(&note_id, 1);
@@ -8414,6 +8588,7 @@ mod tests {
         assert!(history
             .revisions()
             .unwrap_err()
+            .to_string()
             .contains("Invalid stored Timeline predecessor"));
 
         history_store::replace_revision_predecessor(
@@ -8429,6 +8604,7 @@ mod tests {
         assert!(history
             .lifecycle_events()
             .unwrap_err()
+            .to_string()
             .contains("Unknown stored Lifecycle Event Kind `futureEvent`"));
 
         history_store::replace_lifecycle_kind(&note_id, "created");
@@ -8436,6 +8612,7 @@ mod tests {
         assert!(history
             .lifecycle_events()
             .unwrap_err()
+            .to_string()
             .contains("Unknown stored Payload Version `99`"));
         crate::state::set_notes_root_override(None).unwrap();
     }
@@ -9710,7 +9887,7 @@ mod tests {
             );
             let access = state.note_timeline().open_history_mode(note_id.clone());
             assert_eq!(
-                access.revisions().unwrap_err(),
+                access.revisions().unwrap_err().to_string(),
                 "Recover the missing note before accessing its Note Timeline"
             );
             assert!(!state
@@ -9757,7 +9934,7 @@ mod tests {
                 .note_timeline()
                 .open_history_mode(record.note_id().clone());
             assert_eq!(
-                access.revisions().unwrap_err(),
+                access.revisions().unwrap_err().to_string(),
                 "Recover the missing note before accessing its Note Timeline"
             );
             assert_eq!(
@@ -10209,7 +10386,7 @@ mod tests {
 
         let error = timeline.recover_missing_note(note_id.clone()).unwrap_err();
 
-        assert!(error.contains("deadline expired"));
+        assert!(error.to_string().contains("deadline expired"));
         assert!(!path.exists());
         assert!(history_store::missing_note(&note_id).unwrap().is_none());
         assert!(history_store::revisions(&note_id).unwrap().is_empty());
@@ -10535,7 +10712,9 @@ mod tests {
                 preview.current_authored_content_hash(),
             )
             .expect_err("concurrent authored edit invalidates preview");
-        assert!(stale_error.contains("Current authored content changed"));
+        assert!(stale_error
+            .to_string()
+            .contains("Current authored content changed"));
         assert_eq!(
             crate::note::parse_note(&fs::read_to_string(&path).unwrap()).body,
             "Concurrent edit"
@@ -10951,7 +11130,11 @@ mod tests {
         )
         .unwrap();
         let access = state.note_timeline().open_history_mode(note_id.clone());
-        assert!(access.page(None, 50).unwrap_err().contains("Recover"));
+        assert!(access
+            .page(None, 50)
+            .unwrap_err()
+            .to_string()
+            .contains("Recover"));
         assert_eq!(retained_observation_count_for_test(), 0);
         let current_content = state
             .note_timeline()
@@ -10960,6 +11143,7 @@ mod tests {
             .note_timeline()
             .clear_note_history(&note_id)
             .unwrap_err()
+            .to_string()
             .contains("Recover the forgotten note"));
         for error in [
             access.revision(earlier_revision.as_str()).unwrap_err(),
@@ -10967,7 +11151,7 @@ mod tests {
                 .restore_preview(earlier_revision.as_str())
                 .unwrap_err(),
         ] {
-            assert!(error.contains("Recover the forgotten note"));
+            assert!(error.to_string().contains("Recover the forgotten note"));
         }
         assert!(!current_content.allows(&note_id));
         drop(current_content);

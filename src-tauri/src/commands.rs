@@ -326,7 +326,7 @@ pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
     state: State<'_, AppState>,
 ) -> history_commands::HistoryCommandResult<()> {
     let root = vault_root().map_err(|error| {
-        history_commands::HistoryCommandError::from_cause(
+        history_commands::HistoryCommandError::unavailable(
             "trust_and_migrate_legacy_note_timeline_history",
             error,
         )
@@ -335,7 +335,7 @@ pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
         .note_timeline()
         .trust_and_migrate_legacy_history(&root)
         .map_err(|error| {
-            history_commands::HistoryCommandError::from_cause(
+            history_commands::HistoryCommandError::from_history_error(
                 "trust_and_migrate_legacy_note_timeline_history",
                 error,
             )
@@ -347,7 +347,7 @@ pub(crate) fn get_history_health(
     state: State<'_, AppState>,
 ) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
     state.note_timeline().history_health().map_err(|error| {
-        history_commands::HistoryCommandError::from_cause("get_history_health", error)
+        history_commands::HistoryCommandError::unavailable("get_history_health", error)
     })
 }
 
@@ -368,7 +368,7 @@ pub(crate) fn get_note_history_health(
             note_id.trim(),
         ))
         .map_err(|error| {
-            history_commands::HistoryCommandError::from_cause("get_note_history_health", error)
+            history_commands::HistoryCommandError::unavailable("get_note_history_health", error)
         })
 }
 
@@ -377,13 +377,16 @@ pub(crate) fn retry_history_recovery(
     state: State<'_, AppState>,
 ) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
     let root = vault_root().map_err(|error| {
-        history_commands::HistoryCommandError::from_cause("retry_history_recovery", error)
+        history_commands::HistoryCommandError::unavailable("retry_history_recovery", error)
     })?;
     state
         .note_timeline()
         .retry_history_recovery(&root)
         .map_err(|error| {
-            history_commands::HistoryCommandError::from_cause("retry_history_recovery", error)
+            history_commands::HistoryCommandError::from_history_error(
+                "retry_history_recovery",
+                error,
+            )
         })
 }
 
@@ -399,13 +402,16 @@ pub(crate) fn reset_corrupt_history(
         ));
     }
     let root = vault_root().map_err(|error| {
-        history_commands::HistoryCommandError::from_cause("reset_corrupt_history", error)
+        history_commands::HistoryCommandError::unavailable("reset_corrupt_history", error)
     })?;
     state
         .note_timeline()
         .reset_corrupt_history(&root, confirmed)
         .map_err(|error| {
-            history_commands::HistoryCommandError::from_cause("reset_corrupt_history", error)
+            history_commands::HistoryCommandError::from_history_error(
+                "reset_corrupt_history",
+                error,
+            )
         })
 }
 
