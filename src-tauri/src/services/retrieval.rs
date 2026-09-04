@@ -1,7 +1,7 @@
 use crate::{
     index::AppState,
     note::DocumentKind,
-    services::note_timeline::{AllowedScope, CurrentContentItem, CurrentContentReference},
+    services::note_timeline::{AllowedScope, CurrentContentItem},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -26,8 +26,8 @@ pub(crate) struct VaultRetrievalItem {
 }
 
 impl CurrentContentItem for VaultRetrievalItem {
-    fn current_content_reference(&self) -> CurrentContentReference<'_> {
-        CurrentContentReference::ordinary_note(Some(&self.note_id), self.note_path.to_str())
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+        Some((Some(&self.note_id), self.note_path.to_str()))
     }
 }
 

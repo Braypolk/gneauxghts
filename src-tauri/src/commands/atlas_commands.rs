@@ -5,10 +5,7 @@ use crate::{
     semantic::atlas::{
         AtlasChatVisibilityKey, AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse,
     },
-    services::note_timeline::{
-        AllowedScope, CurrentContentEligibility, CurrentContentItem, CurrentContentProjection,
-        CurrentContentReference,
-    },
+    services::note_timeline::{AllowedScope, CurrentContentItem, CurrentContentProjection},
     state::db_load_note_activity,
 };
 use std::collections::HashSet;
@@ -17,28 +14,30 @@ use tauri::State;
 type AtlasChatVisibility = AtlasChatVisibilityKey;
 
 impl CurrentContentItem for crate::semantic::atlas::AtlasNode {
-    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
         if self.document_kind == DocumentKind::Note {
-            CurrentContentReference::ordinary_note(self.note_id.as_deref(), Some(&self.note_path))
+            Some((self.note_id.as_deref(), Some(&self.note_path)))
         } else {
-            CurrentContentReference::non_note()
+            None
         }
     }
 }
 
 impl CurrentContentItem for crate::semantic::atlas::AtlasSearchMatch {
-    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
         if self.document_kind == DocumentKind::Note {
-            CurrentContentReference::ordinary_note(self.note_id.as_deref(), Some(&self.note_path))
+            Some((self.note_id.as_deref(), Some(&self.note_path)))
         } else {
-            CurrentContentReference::non_note()
+            None
         }
     }
 }
 
 impl CurrentContentProjection for VaultAtlasResponse {
-    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
-        eligibility.retain_items(&mut self.nodes);
+    type Item = crate::semantic::atlas::AtlasNode;
+
+    fn retain_current(&mut self, retains: &mut dyn FnMut(&Self::Item) -> bool) {
+        self.nodes.retain(retains);
         let node_ids = self
             .nodes
             .iter()
@@ -75,21 +74,13 @@ impl CurrentContentProjection for VaultAtlasResponse {
                 .retain(|cloud_id| cloud_ids.contains(cloud_id));
         }
     }
-
-    fn invalidate(&mut self) {
-        self.nodes.clear();
-        self.links.clear();
-        self.clouds.clear();
-    }
 }
 
 impl CurrentContentProjection for AtlasSearchResponse {
-    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
-        eligibility.retain_items(&mut self.matches);
-    }
+    type Item = crate::semantic::atlas::AtlasSearchMatch;
 
-    fn invalidate(&mut self) {
-        self.matches.clear();
+    fn retain_current(&mut self, retains: &mut dyn FnMut(&Self::Item) -> bool) {
+        self.matches.retain(retains);
     }
 }
 

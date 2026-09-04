@@ -11,10 +11,7 @@ use crate::{
         RelatedNoteMatch, RelatedNotesResponse, SemanticChunkMatch,
     },
     services::{
-        note_timeline::{
-            AllowedScope, CurrentContentEligibility, CurrentContentItem, CurrentContentProjection,
-            CurrentContentReference,
-        },
+        note_timeline::{AllowedScope, CurrentContentItem, CurrentContentProjection},
         resolve_current_document, CurrentDocumentRequest,
     },
     state::{
@@ -312,14 +309,11 @@ pub(crate) struct RecentFocusBundle {
 }
 
 impl CurrentContentProjection for RecentFocusBundle {
-    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
-        eligibility.retain_items(&mut self.pinned_notes);
-        eligibility.retain_items(&mut self.recent_notes);
-    }
+    type Item = NoteSearchResult;
 
-    fn invalidate(&mut self) {
-        self.pinned_notes.clear();
-        self.recent_notes.clear();
+    fn retain_current(&mut self, retains: &mut dyn FnMut(&NoteSearchResult) -> bool) {
+        self.pinned_notes.retain(&mut *retains);
+        self.recent_notes.retain(retains);
     }
 }
 
@@ -361,45 +355,38 @@ pub(crate) struct RetrievalContextResponse {
 }
 
 impl CurrentContentItem for RetrievalContextItem {
-    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
         if self.document_kind == crate::note::DocumentKind::Note {
-            CurrentContentReference::ordinary_note(
-                self.note_id.as_deref(),
-                self.note_path.as_deref(),
-            )
+            Some((self.note_id.as_deref(), self.note_path.as_deref()))
         } else {
-            CurrentContentReference::non_note()
+            None
         }
     }
 }
 
 impl CurrentContentItem for RelatedNoteMatch {
-    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
         if self.document_kind == crate::note::DocumentKind::Note {
-            CurrentContentReference::ordinary_note(None, Some(&self.note_path))
+            Some((None, Some(&self.note_path)))
         } else {
-            CurrentContentReference::non_note()
+            None
         }
     }
 }
 
 impl CurrentContentProjection for RetrievalContextResponse {
-    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
-        eligibility.retain_items(&mut self.items);
-    }
+    type Item = RetrievalContextItem;
 
-    fn invalidate(&mut self) {
-        self.items.clear();
+    fn retain_current(&mut self, retains: &mut dyn FnMut(&RetrievalContextItem) -> bool) {
+        self.items.retain(retains);
     }
 }
 
 impl CurrentContentProjection for RelatedNotesResponse {
-    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
-        eligibility.retain_items(&mut self.items);
-    }
+    type Item = RelatedNoteMatch;
 
-    fn invalidate(&mut self) {
-        self.items.clear();
+    fn retain_current(&mut self, retains: &mut dyn FnMut(&RelatedNoteMatch) -> bool) {
+        self.items.retain(retains);
     }
 }
 

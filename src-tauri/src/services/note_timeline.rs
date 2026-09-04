@@ -2931,43 +2931,24 @@ pub(crate) struct CurrentContentAccess<'a> {
 }
 
 pub(crate) trait CurrentContentProjection {
-    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>);
-    fn invalidate(&mut self);
+    type Item: CurrentContentItem;
+
+    fn retain_current(&mut self, retains: &mut dyn FnMut(&Self::Item) -> bool);
 }
 
 pub(crate) trait CurrentContentItem {
-    fn current_content_reference(&self) -> CurrentContentReference<'_>;
-}
-
-pub(crate) enum CurrentContentReference<'a> {
-    OrdinaryNote {
-        note_id: Option<&'a str>,
-        note_path: Option<&'a str>,
-    },
-    NonNote,
-}
-
-impl<'a> CurrentContentReference<'a> {
-    pub(crate) fn ordinary_note(note_id: Option<&'a str>, note_path: Option<&'a str>) -> Self {
-        Self::OrdinaryNote { note_id, note_path }
-    }
-
-    pub(crate) fn non_note() -> Self {
-        Self::NonNote
-    }
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)>;
 }
 
 impl<T: CurrentContentItem> CurrentContentProjection for Vec<T> {
-    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
-        eligibility.retain_items(self);
-    }
+    type Item = T;
 
-    fn invalidate(&mut self) {
-        self.clear();
+    fn retain_current(&mut self, retains: &mut dyn FnMut(&T) -> bool) {
+        self.retain(retains);
     }
 }
 
-pub(crate) struct CurrentContentEligibility<'a> {
+struct CurrentContentEligibility<'a> {
     scope: &'a AllowedScope,
     active_notes: HashMap<String, PathBuf>,
     active_paths: HashMap<PathBuf, String>,
@@ -2993,17 +2974,9 @@ impl CurrentContentEligibility<'_> {
         path.as_ref().is_none_or(|path| path == active_path)
     }
 
-    pub(crate) fn retains<T: CurrentContentItem>(&self, item: &T) -> bool {
-        match item.current_content_reference() {
-            CurrentContentReference::OrdinaryNote { note_id, note_path } => {
-                self.allows_note(note_id, note_path)
-            }
-            CurrentContentReference::NonNote => true,
-        }
-    }
-
-    pub(crate) fn retain_items<T: CurrentContentItem>(&self, items: &mut Vec<T>) {
-        items.retain(|item| self.retains(item));
+    fn retains<T: CurrentContentItem>(&self, item: &T) -> bool {
+        item.current_note_identity()
+            .is_none_or(|(note_id, note_path)| self.allows_note(note_id, note_path))
     }
 }
 
@@ -3053,10 +3026,9 @@ impl CurrentContentAccess<'_> {
         version: CurrentContentVersion,
         mut projection: T,
     ) -> Result<T, String> {
-        projection.retain_current(&self.eligibility()?);
-        if !self.runtime.current_content_is_current(version)? {
-            projection.invalidate();
-        }
+        let eligibility = self.eligibility()?;
+        let current = self.runtime.current_content_is_current(version)?;
+        projection.retain_current(&mut |item| current && eligibility.retains(item));
         Ok(projection)
     }
 
@@ -5064,8 +5036,8 @@ mod tests {
     }
 
     impl CurrentContentItem for TestCurrentContentItem {
-        fn current_content_reference(&self) -> CurrentContentReference<'_> {
-            CurrentContentReference::ordinary_note(Some(&self.note_id), Some(&self.note_path))
+        fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+            Some((Some(&self.note_id), Some(&self.note_path)))
         }
     }
 

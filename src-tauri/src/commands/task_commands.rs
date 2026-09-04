@@ -5,8 +5,8 @@ use super::{
 use crate::{
     index::AppState,
     services::note_timeline::{
-        AllowedScope, CurrentContentEligibility, CurrentContentItem, CurrentContentProjection,
-        CurrentContentReference, MutationWarningStage, NoteMutationWarning,
+        AllowedScope, CurrentContentItem, CurrentContentProjection, MutationWarningStage,
+        NoteMutationWarning,
     },
     services::task_mutation::{
         PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
@@ -24,34 +24,31 @@ use std::collections::HashSet;
 use tauri::State;
 
 impl CurrentContentItem for RecentTaskItem {
-    fn current_content_reference(&self) -> CurrentContentReference<'_> {
-        CurrentContentReference::ordinary_note(Some(&self.note_id), Some(&self.note_path))
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+        Some((Some(&self.note_id), Some(&self.note_path)))
     }
 }
 
 impl CurrentContentItem for TaskListGroup {
-    fn current_content_reference(&self) -> CurrentContentReference<'_> {
-        CurrentContentReference::ordinary_note(Some(&self.note_id), Some(&self.note_path))
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+        Some((Some(&self.note_id), Some(&self.note_path)))
     }
 }
 
 impl CurrentContentItem for TaskListGroupPatch {
-    fn current_content_reference(&self) -> CurrentContentReference<'_> {
-        CurrentContentReference::ordinary_note(Some(&self.note_id), self.note_path.as_deref())
+    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+        Some((Some(&self.note_id), self.note_path.as_deref()))
     }
 }
 
 impl CurrentContentProjection for TaskListGroupPatch {
-    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
-        if !eligibility.retains(self) {
+    type Item = Self;
+
+    fn retain_current(&mut self, retains: &mut dyn FnMut(&Self) -> bool) {
+        if !retains(self) {
             self.note_path = None;
             self.group = None;
         }
-    }
-
-    fn invalidate(&mut self) {
-        self.note_path = None;
-        self.group = None;
     }
 }
 

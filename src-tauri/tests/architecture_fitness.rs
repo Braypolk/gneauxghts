@@ -383,12 +383,16 @@ fn timeline_commands_expose_only_the_closed_command_error_contract() {
         &[
             "pub(crate) struct HistoryCommandError",
             "pub(crate) type HistoryCommandResult<T>",
-            "HistoryCommandError::from_cause",
+            "HistoryCommandError::from_history_error",
         ],
     );
     assert_contains_none(
         production_history_commands,
-        &["-> Result<", "Result<Vec<MissingNoteSummary>, String>"],
+        &[
+            "HistoryCommandError::from_cause",
+            "to_ascii_lowercase",
+            "Result<Vec<MissingNoteSummary>, String>",
+        ],
     );
 
     for command in [
@@ -587,9 +591,8 @@ fn current_content_consumers_cross_one_timeline_owned_read_interface() {
         &timeline,
         &[
             "pub(crate) trait CurrentContentProjection",
-            "pub(crate) enum CurrentContentReference",
-            "CurrentContentReference::OrdinaryNote",
-            "pub(crate) fn retain_items<",
+            "pub(crate) trait CurrentContentItem",
+            "fn current_note_identity(&self)",
             "pub(crate) fn read<",
             "pub(crate) async fn read_async<",
             "pub(crate) fn current_content(",
@@ -600,7 +603,10 @@ fn current_content_consumers_cross_one_timeline_owned_read_interface() {
         &timeline,
         &[
             "pub(crate) struct CurrentContentRead",
+            "pub(crate) struct CurrentContentEligibility",
+            "pub(crate) enum CurrentContentReference",
             "begin_current_content_read",
+            "fn invalidate(&mut self)",
         ],
     );
 
