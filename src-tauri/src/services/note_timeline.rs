@@ -204,27 +204,19 @@ impl From<PublicationStage> for MutationWarningStage {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct NoteTimelineIssue {
     stage: MutationWarningStage,
+    #[serde(serialize_with = "serialize_issue_recovery_message")]
     message: String,
 }
 
-impl Serialize for NoteTimelineIssue {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-
-        let mut state = serializer.serialize_struct("NoteTimelineIssue", 2)?;
-        state.serialize_field("stage", &self.stage)?;
-        state.serialize_field(
-            "message",
-            "A post-commit update is awaiting automatic recovery.",
-        )?;
-        state.end()
-    }
+fn serialize_issue_recovery_message<S>(_: &String, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str("A post-commit update is awaiting automatic recovery.")
 }
 
 impl NoteTimelineIssue {
@@ -246,28 +238,23 @@ impl From<PublicationIssue> for NoteTimelineIssue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct NoteMutationWarning {
+    #[serde(skip)]
     payload_version: PayloadVersion,
+    #[serde(serialize_with = "serialize_warning_recovery_message")]
     message: String,
     issues: Vec<NoteTimelineIssue>,
 }
 
-impl Serialize for NoteMutationWarning {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-
-        let mut state = serializer.serialize_struct("NoteMutationWarning", 2)?;
-        state.serialize_field(
-            "message",
-            "The change was saved, but a follow-up update is awaiting automatic recovery.",
-        )?;
-        state.serialize_field("issues", &self.issues)?;
-        state.end()
-    }
+fn serialize_warning_recovery_message<S>(_: &String, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(
+        "The change was saved, but a follow-up update is awaiting automatic recovery.",
+    )
 }
 
 impl NoteMutationWarning {
@@ -519,7 +506,24 @@ pub(crate) struct BaselineInitializationProgress {
     baseline_revisions: u64,
     ready_notes: u64,
     failed_notes: u64,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_initialization_error"
+    )]
     last_error: Option<String>,
+}
+
+fn serialize_initialization_error<S>(
+    error: &Option<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    error
+        .as_ref()
+        .map(|_| "Some notes could not be initialized. Retry history recovery.")
+        .serialize(serializer)
 }
 
 impl BaselineInitializationProgress {
@@ -881,10 +885,6 @@ impl HistoryHealthReport {
 
     pub(crate) fn storage(&self) -> Option<&HistoryStorageUsage> {
         self.storage.as_ref()
-    }
-
-    pub(crate) fn pending_repairs(&self) -> u64 {
-        self.pending_repairs
     }
 
     pub(crate) fn can_retry(&self) -> bool {
@@ -1600,14 +1600,6 @@ pub(crate) enum LifecyclePublicationFailure {
     NotPublished(String),
     Indeterminate(String),
 }
-
-#[derive(Debug)]
-pub(crate) enum LifecycleCommandError {
-    History(String),
-    Publication(String),
-}
-
-const LIFECYCLE_PUBLICATION_CAUSE_PREFIX: &str = "__gneauxghts_lifecycle_publication_cause__:";
 
 impl LifecyclePublicationFailure {
     pub(crate) fn not_published(message: String) -> Self {
@@ -4379,22 +4371,6 @@ impl<'a> NoteTimeline<'a> {
         operation: NoteLifecycleOperation,
         canonical_markdown: &str,
         publish: impl FnOnce() -> Result<(), LifecyclePublicationFailure>,
-    ) -> Result<LifecyclePublicationResult, LifecycleCommandError> {
-        self.publish_lifecycle_inner(operation, canonical_markdown, publish)
-            .map_err(|cause| {
-                if let Some(cause) = cause.strip_prefix(LIFECYCLE_PUBLICATION_CAUSE_PREFIX) {
-                    LifecycleCommandError::Publication(cause.to_string())
-                } else {
-                    LifecycleCommandError::History(cause)
-                }
-            })
-    }
-
-    fn publish_lifecycle_inner(
-        &self,
-        operation: NoteLifecycleOperation,
-        canonical_markdown: &str,
-        publish: impl FnOnce() -> Result<(), LifecyclePublicationFailure>,
     ) -> Result<LifecyclePublicationResult, String> {
         crate::state::with_note_file_mutation(|| {
             let _timeline_operation = self.runtime.begin_operation()?;
@@ -4469,13 +4445,12 @@ impl<'a> NoteTimeline<'a> {
                 (warning, false)
             }
             Err(LifecyclePublicationFailure::NotPublished(error)) => {
-                let cause = match history_store::acknowledge_observation(sequence) {
+                return Err(match history_store::acknowledge_observation(sequence) {
                     Ok(()) => error,
                     Err(abandon_error) => format!(
                         "{error}; additionally failed to abandon its lifecycle intent: {abandon_error}"
                     ),
-                };
-                return Err(format!("{LIFECYCLE_PUBLICATION_CAUSE_PREFIX}{cause}"));
+                });
             }
             Err(LifecyclePublicationFailure::Indeterminate(error)) => (
                 Some(NoteMutationWarning::single(
@@ -10344,7 +10319,7 @@ mod tests {
     }
 
     #[test]
-    fn warning_serialization_retains_shape_but_redacts_diagnostic_cause() {
+    fn warning_serialization_redacts_diagnostic_causes() {
         let warning = NoteMutationWarning::single(
             MutationWarningStage::CatalogUpsert,
             "Saved at /private/vault/Note.md after SELECT failed".to_string(),
@@ -10362,7 +10337,23 @@ mod tests {
                 }]
             })
         );
-        let serialized = serialized.to_string();
+        assert!(!serialized.to_string().contains("/private"));
+        assert!(!serialized.to_string().contains("SELECT"));
+    }
+
+    #[test]
+    fn initialization_serialization_redacts_diagnostic_causes() {
+        let progress = BaselineInitializationProgress {
+            phase: BaselineInitializationPhase::Degraded,
+            discovered_notes: 1,
+            baseline_revisions: 0,
+            ready_notes: 0,
+            failed_notes: 1,
+            last_error: Some("SELECT baseline FROM /private/timeline.db".to_string()),
+        };
+
+        let serialized = serde_json::to_string(&progress).unwrap();
+        assert!(serialized.contains("Some notes could not be initialized"));
         assert!(!serialized.contains("SELECT"));
         assert!(!serialized.contains("/private"));
     }

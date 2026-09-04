@@ -1,4 +1,4 @@
-import { invokeTimelineAwareCommand } from '$lib/contracts/timelineAwareCommand';
+import { invoke } from '@tauri-apps/api/core';
 import type {
   SemanticDebugSnapshot,
   SemanticSettings,
@@ -16,9 +16,5 @@ export interface SettingsViewPayload {
 }
 
 export function loadSettingsViewSlice() {
-  return invokeTimelineAwareCommand<SettingsViewPayload>(
-    'get_settings_view',
-    undefined,
-    'Settings are unavailable right now.'
-  );
+  return invoke<SettingsViewPayload>('get_settings_view');
 }

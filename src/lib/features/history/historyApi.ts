@@ -1,5 +1,4 @@
 import { invokeHistoryCommand } from '$lib/contracts/historyCommand';
-import type { HistoryCursor } from '$lib/contracts/historyCommand';
 import type { HistoryStorageUsage, NoteHistoryHealth } from '$lib/types/history';
 import type {
   HistoricalDiff,
@@ -15,7 +14,7 @@ const HISTORY_PAGE_SIZE = 30;
 
 export function getHistoryModePage(
   noteId: string,
-  cursor: HistoryCursor = null
+  cursor: string | null = null
 ): Promise<HistoryModePage> {
   return invokeHistoryCommand<HistoryModePage>('get_note_history_page', {
     noteId,

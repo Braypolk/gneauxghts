@@ -1,19 +1,43 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  BASELINE_INITIALIZATION_PHASES,
-  HISTORY_COMMAND_ERROR_STATES,
   HISTORY_COMMAND_ERRORS,
-  HISTORY_COMMAND_RECOVERY_ACTIONS,
-  HISTORY_HEALTH_STATES,
-  HISTORY_INTEGRITY_STATES,
-  HISTORY_LIFECYCLE_KINDS,
-  HISTORY_MUTATION_SOURCES,
-  HISTORY_NOTE_HEALTH_STATES,
-  HISTORY_TIME_KINDS,
-  type HistoryCursor,
   type HistoryCommandError
 } from './historyCommand';
+import type {
+  HistoryLifecycleEventKind,
+  HistoryMutationSource
+} from '$lib/features/history/historyModeMachine';
+import type {
+  BaselineInitializationPhase,
+  HistoryHealthState,
+  HistoryIntegrityState
+} from '$lib/types/history';
+
+const MUTATION_SOURCES = [
+  'editor', 'taskAction', 'acceptedChatProposal', 'externalEdit',
+  'versionRestore', 'noteCreation', 'baselineInitialization', 'recoveryReconciliation'
+] as const satisfies readonly HistoryMutationSource[];
+const LIFECYCLE_KINDS = [
+  'created', 'renamed', 'moved', 'forgotten', 'recovered', 'missing', 'reattached', 'purged'
+] as const satisfies readonly HistoryLifecycleEventKind[];
+const TIME_KINDS = ['knownSince', 'committed', 'observed'] as const;
+const HEALTH_STATES = [
+  'healthy', 'initializing', 'degraded', 'warning', 'unavailable', 'corrupt'
+] as const satisfies readonly HistoryHealthState[];
+const NOTE_HEALTH_STATES = [
+  'healthy', 'initializing', 'degraded', 'unavailable', 'corrupt'
+] as const;
+const INTEGRITY_STATES = [
+  'verified', 'unavailable', 'corrupt'
+] as const satisfies readonly HistoryIntegrityState[];
+const INITIALIZATION_PHASES = [
+  'notStarted', 'initializing', 'complete', 'degraded'
+] as const satisfies readonly BaselineInitializationPhase[];
+const ERROR_STATES = HISTORY_COMMAND_ERRORS.map((error) => error.state);
+const RECOVERY_ACTIONS = [
+  'retry', 'refresh', 'recoverNote', 'backUpAndReset', 'correctRequest'
+] as const;
 
 interface TimelineContractFixture {
   version: number;
@@ -24,7 +48,7 @@ interface TimelineContractFixture {
   noteHistoryHealthStates: string[];
   historyIntegrityStates: string[];
   baselineInitializationPhases: string[];
-  cursors: { initial: HistoryCursor; continuation: HistoryCursor };
+  cursors: { initial: string | null; continuation: string | null };
   commandErrorStates: string[];
   recoveryActions: string[];
   commandErrors: HistoryCommandError[];
@@ -43,17 +67,15 @@ const fixture = JSON.parse(
 describe('Note Timeline command contract fixture', () => {
   it('matches every closed TypeScript timeline vocabulary', () => {
     expect(fixture.version).toBe(1);
-    expect(fixture.mutationSources).toEqual(HISTORY_MUTATION_SOURCES);
-    expect(fixture.lifecycleKinds).toEqual(HISTORY_LIFECYCLE_KINDS);
-    expect(fixture.timeKinds).toEqual(HISTORY_TIME_KINDS);
-    expect(fixture.historyHealthStates).toEqual(HISTORY_HEALTH_STATES);
-    expect(fixture.noteHistoryHealthStates).toEqual(HISTORY_NOTE_HEALTH_STATES);
-    expect(fixture.historyIntegrityStates).toEqual(HISTORY_INTEGRITY_STATES);
-    expect(fixture.baselineInitializationPhases).toEqual(
-      BASELINE_INITIALIZATION_PHASES
-    );
-    expect(fixture.commandErrorStates).toEqual(HISTORY_COMMAND_ERROR_STATES);
-    expect(fixture.recoveryActions).toEqual(HISTORY_COMMAND_RECOVERY_ACTIONS);
+    expect(fixture.mutationSources).toEqual(MUTATION_SOURCES);
+    expect(fixture.lifecycleKinds).toEqual(LIFECYCLE_KINDS);
+    expect(fixture.timeKinds).toEqual(TIME_KINDS);
+    expect(fixture.historyHealthStates).toEqual(HEALTH_STATES);
+    expect(fixture.noteHistoryHealthStates).toEqual(NOTE_HEALTH_STATES);
+    expect(fixture.historyIntegrityStates).toEqual(INTEGRITY_STATES);
+    expect(fixture.baselineInitializationPhases).toEqual(INITIALIZATION_PHASES);
+    expect(fixture.commandErrorStates).toEqual(ERROR_STATES);
+    expect(fixture.recoveryActions).toEqual(RECOVERY_ACTIONS);
     expect(fixture.commandErrors).toEqual(HISTORY_COMMAND_ERRORS);
   });
 
@@ -63,7 +85,7 @@ describe('Note Timeline command contract fixture', () => {
       continuation: 'opaque-timeline-cursor'
     });
     expect(fixture.commandErrors.map((error) => error.state)).toEqual(
-      HISTORY_COMMAND_ERROR_STATES
+      ERROR_STATES
     );
     for (const error of fixture.commandErrors) {
       expect(Object.keys(error).sort()).toEqual([
@@ -72,7 +94,7 @@ describe('Note Timeline command contract fixture', () => {
         'state'
       ]);
       expect(error.message).not.toHaveLength(0);
-      expect(HISTORY_COMMAND_RECOVERY_ACTIONS).toContain(error.recoveryAction);
+      expect(RECOVERY_ACTIONS).toContain(error.recoveryAction);
     }
   });
 });

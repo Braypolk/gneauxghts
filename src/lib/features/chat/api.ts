@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { invokeTimelineAwareCommand } from '$lib/contracts/timelineAwareCommand';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   ChatConversation,
@@ -558,11 +557,10 @@ export class TauriChatApi implements ChatApi {
     return invoke<ChatAgentProposal[]>(CHAT_COMMANDS.listPendingProposals, { conversationId });
   }
   commitAgentProposal(proposalId: string, markdown?: string) {
-    return invokeTimelineAwareCommand<CommitNoteReviewResult>(
-      CHAT_COMMANDS.commitAgentProposal,
-      { proposalId, markdown },
-      'The proposal could not be committed right now.'
-    );
+    return invoke<CommitNoteReviewResult>(CHAT_COMMANDS.commitAgentProposal, {
+      proposalId,
+      markdown
+    });
   }
   dismissAgentProposal(proposalId: string) {
     return invoke<ChatAgentProposal>(CHAT_COMMANDS.dismissAgentProposal, { proposalId });

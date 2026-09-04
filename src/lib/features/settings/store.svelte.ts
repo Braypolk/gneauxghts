@@ -3,10 +3,6 @@ import {
   historyCommandMessage,
   invokeHistoryCommand
 } from '$lib/contracts/historyCommand';
-import {
-  forgottenItemCommandMessage,
-  invokeForgottenItemCommand
-} from '$lib/contracts/forgottenItemCommand';
 import { open } from '@tauri-apps/plugin-dialog';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { appStore } from '$lib/app/appStore.svelte';
@@ -454,11 +450,9 @@ export class SettingsStore {
       let restored: RestoredForgottenNote[] = [];
       if (command === 'restore_forgotten_notes') {
         restored =
-          (await invokeForgottenItemCommand<RestoredForgottenNote[]>(command, {
-            forgottenPaths
-          })) ?? [];
+          (await invoke<RestoredForgottenNote[]>(command, { forgottenPaths })) ?? [];
       } else {
-        await invokeForgottenItemCommand<void>(command, { forgottenPaths });
+        await invoke(command, { forgottenPaths });
       }
       for (const note of restored) {
         if (note.commitWarning) {
@@ -475,7 +469,7 @@ export class SettingsStore {
       await this.loadForgottenNotes();
     } catch (error) {
       console.error(`Failed to run ${command}:`, error);
-      this.forgottenActionError = forgottenItemCommandMessage(error);
+      this.forgottenActionError = String(error);
     } finally {
       this.isUpdatingForgottenNotes = false;
     }

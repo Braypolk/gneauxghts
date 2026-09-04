@@ -1,4 +1,4 @@
-use super::{history_commands::tag_history_cause, prepare_notes_dir, NoteSession};
+use super::{prepare_notes_dir, NoteSession};
 use crate::{
     index::AppState,
     note,
@@ -124,7 +124,6 @@ fn persist_note_session_with_source(
                     canonical,
                 )
                 .map(|prepared| prepared.into_parts())
-                .map_err(tag_history_cause)
         },
         |history_intent, publication_error| {
             history_intent.abandon_after_publication_failure(publication_error)

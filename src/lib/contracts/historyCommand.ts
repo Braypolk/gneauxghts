@@ -1,100 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export const HISTORY_MUTATION_SOURCES = [
-  'editor',
-  'taskAction',
-  'acceptedChatProposal',
-  'externalEdit',
-  'versionRestore',
-  'noteCreation',
-  'baselineInitialization',
-  'recoveryReconciliation'
-] as const;
-
-export const HISTORY_LIFECYCLE_KINDS = [
-  'created',
-  'renamed',
-  'moved',
-  'forgotten',
-  'recovered',
-  'missing',
-  'reattached',
-  'purged'
-] as const;
-
-export const HISTORY_TIME_KINDS = [
-  'knownSince',
-  'committed',
-  'observed'
-] as const;
-
-export const HISTORY_HEALTH_STATES = [
-  'healthy',
-  'initializing',
-  'degraded',
-  'warning',
-  'unavailable',
-  'corrupt'
-] as const;
-
-export const HISTORY_NOTE_HEALTH_STATES = [
-  'healthy',
-  'initializing',
-  'degraded',
-  'unavailable',
-  'corrupt'
-] as const;
-
-export const HISTORY_INTEGRITY_STATES = [
-  'verified',
-  'unavailable',
-  'corrupt'
-] as const;
-
-export const BASELINE_INITIALIZATION_PHASES = [
-  'notStarted',
-  'initializing',
-  'complete',
-  'degraded'
-] as const;
-
-export const HISTORY_COMMAND_ERROR_STATES = [
-  'unavailable',
-  'corrupt',
-  'stale',
-  'ineligible',
-  'missing',
-  'invalidRequest'
-] as const;
-
-export const HISTORY_COMMAND_RECOVERY_ACTIONS = [
-  'retry',
-  'refresh',
-  'recoverNote',
-  'backUpAndReset',
-  'correctRequest'
-] as const;
-
-export type HistoryMutationSource = (typeof HISTORY_MUTATION_SOURCES)[number];
-export type HistoryLifecycleEventKind = (typeof HISTORY_LIFECYCLE_KINDS)[number];
-export type HistoryTimeKind = (typeof HISTORY_TIME_KINDS)[number];
-export type HistoryCursor = string | null;
-export type HistoryHealthState = (typeof HISTORY_HEALTH_STATES)[number];
-export type NoteHistoryHealthState = (typeof HISTORY_NOTE_HEALTH_STATES)[number];
-export type HistoryIntegrityState = (typeof HISTORY_INTEGRITY_STATES)[number];
-export type BaselineInitializationPhase =
-  (typeof BASELINE_INITIALIZATION_PHASES)[number];
-export type HistoryCommandErrorState = (typeof HISTORY_COMMAND_ERROR_STATES)[number];
-export type HistoryCommandRecoveryAction =
-  (typeof HISTORY_COMMAND_RECOVERY_ACTIONS)[number];
-
-export interface HistoryCommandError {
-  state: HistoryCommandErrorState;
-  message: string;
-  recoveryAction: HistoryCommandRecoveryAction;
-}
-
-const COMMAND_FAILURES: Record<HistoryCommandErrorState, HistoryCommandError> = {
+const COMMAND_FAILURES = {
   unavailable: {
     state: 'unavailable',
     message: 'History is unavailable right now.',
@@ -125,11 +31,20 @@ const COMMAND_FAILURES: Record<HistoryCommandErrorState, HistoryCommandError> = 
     message: 'The history request is invalid.',
     recoveryAction: 'correctRequest'
   }
-};
+} as const;
 
-export const HISTORY_COMMAND_ERRORS = HISTORY_COMMAND_ERROR_STATES.map(
-  (state) => COMMAND_FAILURES[state]
-);
+export type HistoryCommandErrorState = keyof typeof COMMAND_FAILURES;
+export type HistoryCommandRecoveryAction =
+  (typeof COMMAND_FAILURES)[HistoryCommandErrorState]['recoveryAction'];
+
+export interface HistoryCommandError {
+  state: HistoryCommandErrorState;
+  message: string;
+  recoveryAction: HistoryCommandRecoveryAction;
+}
+
+export const HISTORY_COMMAND_ERRORS: readonly HistoryCommandError[] =
+  Object.values(COMMAND_FAILURES);
 
 export class HistoryCommandFailure extends Error {
   readonly state: HistoryCommandErrorState;
@@ -144,7 +59,7 @@ export class HistoryCommandFailure extends Error {
 }
 
 function isHistoryCommandErrorState(value: unknown): value is HistoryCommandErrorState {
-  return HISTORY_COMMAND_ERROR_STATES.includes(value as HistoryCommandErrorState);
+  return typeof value === 'string' && value in COMMAND_FAILURES;
 }
 
 export function toHistoryCommandFailure(error: unknown): HistoryCommandFailure {

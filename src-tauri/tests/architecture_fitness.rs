@@ -356,7 +356,7 @@ fn dirty_document_task_prepare_contract_is_registered_and_fixture_backed() {
     assert!(registration.contains("commands::save_task_note"));
     assert!(frontend.contains("'prepare_task_document_mutation'"));
     assert!(frontend.contains("attributeTaskActionSave"));
-    assert!(sessions.contains("invokeTimelineAwareCommand<NoteSession>(\n    \"save_task_note\""));
+    assert!(sessions.contains("invoke<NoteSession>(\"save_task_note\""));
     assert_contains_all(
         &persistence,
         &[
@@ -372,11 +372,7 @@ fn dirty_document_task_prepare_contract_is_registered_and_fixture_backed() {
 #[test]
 fn timeline_commands_expose_only_the_closed_command_error_contract() {
     let history_commands = repository_file("src-tauri/src/commands/history_commands.rs");
-    let forgotten_commands = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
     let root_commands = repository_file("src-tauri/src/commands.rs");
-    let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
-    let proposal_commands = repository_file("src-tauri/src/commands/proposal_commands.rs");
-    let task_mutation = repository_file("src-tauri/src/services/task_mutation.rs");
     let production_history_commands = history_commands
         .split("#[cfg(test)]\nmod tests")
         .next()
@@ -406,38 +402,6 @@ fn timeline_commands_expose_only_the_closed_command_error_contract() {
         assert!(
             function.contains("history_commands::HistoryCommandResult<"),
             "{command} must return the closed Note Timeline command error"
-        );
-    }
-
-    let settings_view = rust_function(&root_commands, "get_settings_view");
-    assert!(settings_view.contains("Result<SettingsViewPayload, SettingsViewError>"));
-
-    for command in ["save_note", "save_task_note"] {
-        let function = rust_function(&root_commands, command);
-        assert!(function.contains("Result<NoteSession, NoteSaveCommandError>"));
-    }
-    assert!(note_persistence.contains(".map_err(tag_history_cause)"));
-
-    let proposal_commit = rust_function(&proposal_commands, "commit_agent_proposal");
-    assert!(proposal_commit.contains("ProposalCommitCommandError"));
-    assert!(proposal_commands.contains(".map_err(tag_history_cause)"));
-
-    for command in ["toggle_task", "delete_task"] {
-        let function = rust_function(&root_commands, command);
-        assert!(function.contains("Result<TaskListGroupPatch, TaskCommandError>"));
-    }
-    assert!(task_mutation.contains(".map_err(tag_task_history_cause)"));
-
-    for command in [
-        "forget_note",
-        "list_forgotten_notes",
-        "restore_forgotten_notes",
-        "delete_forgotten_notes",
-    ] {
-        let function = rust_function(&forgotten_commands, command);
-        assert!(
-            function.contains("ForgottenItemCommandResult<"),
-            "{command} must preserve history and chat error ownership"
         );
     }
 }
@@ -859,9 +823,12 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &["apply_lexical_projection(", "apply_task_projection("],
     );
     assert_contains_all(&timeline, &["pub(crate) fn prepare_publication("]);
-    assert_contains_all(&forgotten, &[".prepare_publication("]);
-    assert_contains_all(&proposals, &[".prepare_revision_publication("]);
-    assert_contains_all(&tasks, &[".prepare_revision_publication("]);
+    assert_contains_all(
+        &forgotten,
+        &[".note_timeline()\n                .prepare_publication("],
+    );
+    assert_contains_all(&proposals, &["timeline.prepare_revision_publication("]);
+    assert_contains_all(&tasks, &["timeline.prepare_revision_publication("]);
     assert_contains_all(&note_persistence, &[".prepare_revision_publication("]);
     assert_contains_all(
         &state_persistence,

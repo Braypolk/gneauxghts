@@ -181,10 +181,8 @@ retained usage. A retry settles pending observations, deletions, publication
 intents, and failed baselines without replaying an authoritative Markdown
 write.
 
-Every history-read failure, and every history-owned failure from a mixed
-history-changing command, crosses the frontend boundary as a closed Note
-Timeline state with stable recovery guidance. Mixed commands retain a tagged
-owner boundary for unrelated note, proposal, settings, and chat failures.
+Every history read or history-changing command failure crosses the frontend
+boundary as a closed Note Timeline state with stable recovery guidance.
 Storage paths, query text, database errors, and reconstruction details remain
 backend diagnostics and never become user-visible command errors.
 
