@@ -405,13 +405,13 @@ describe('HistoryModeSession', () => {
     const phases: string[] = [];
     let session!: HistoryModeSession;
     const restoreWorkspace = vi.fn(() => {
-      phases.push(session.state.phase);
+      phases.push(`${session.state.phase}:workspace`);
     });
     const restoreEditorState = vi.fn(() => {
-      phases.push(session.state.phase);
+      phases.push(`${session.state.phase}:editor`);
     });
     const restoreFocus = vi.fn(() => {
-      phases.push(session.state.phase);
+      phases.push(`${session.state.phase}:focus`);
     });
     ({ session } = setup({ restoreWorkspace, restoreEditorState, restoreFocus }));
     await session.enter('notepad-pane-1');
@@ -421,7 +421,11 @@ describe('HistoryModeSession', () => {
     expect(restoreWorkspace).toHaveBeenCalledWith(workspace);
     expect(restoreEditorState).toHaveBeenCalledWith(workspace);
     expect(restoreFocus).toHaveBeenCalledWith(workspace);
-    expect(phases).toEqual(['exiting', 'restoring', 'restoring']);
+    expect(phases).toEqual([
+      'exiting:workspace',
+      'restoring:focus',
+      'restoring:editor'
+    ]);
     expect(session.state).toEqual({ phase: 'inactive', entryError: null });
   });
 

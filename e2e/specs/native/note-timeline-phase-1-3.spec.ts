@@ -1,50 +1,26 @@
 import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { browser, expect, $, $$ } from '@wdio/globals';
+import type { NoteSession } from '../../../src/lib/features/notepad/model/types';
+import type {
+  HistoricalRevision,
+  HistoryModePage,
+  HistoryRevisionRecord
+} from '../../../src/lib/features/history/historyModeMachine';
+import type { MissingNoteSummary } from '../../../src/lib/types/missingNotes';
+import type { ForgottenNoteSummary } from '../../../src/lib/types/forgottenNotes';
+import type { HistoryHealthReport } from '../../../src/lib/types/history';
 
-interface NoteSession {
-  noteId: string;
-  title: string;
-  markdown: string;
-  path: string;
-}
-
-interface HistoryRevisionRecord {
-  kind: 'revision';
-  revisionId: string;
-  source: string;
-}
-
-interface HistoryRevision {
-  body: string;
-}
-
-interface HistoryLifecycleRecord {
-  kind: 'lifecycleEvent';
-  eventKind: string;
-}
-
-interface HistoryPage {
-  records: Array<HistoryRevisionRecord | HistoryLifecycleRecord>;
-  nextCursor: string | null;
-}
-
-interface MissingNoteSummary {
-  noteId: string;
-  path: string;
-  title: string;
-  timeline: HistoryPage;
-}
-
-interface ForgottenNoteSummary {
-  forgottenPath: string;
-  title: string;
-}
-
-interface HistoryHealth {
-  state: string;
-  integrity: string;
-  lastReset?: { generation: number };
+interface NativeEditorState {
+  activePaneId: string;
+  paneIds: string[];
+  paneKind: string;
+  noteId: string | null;
+  editor: {
+    markdown: string;
+    selection: { anchor: number; head: number };
+    ownsWebviewFocus: boolean;
+  } | null;
 }
 
 async function invokeNative<T>(
@@ -127,10 +103,10 @@ async function saveVersions(title: string, versions: string[]): Promise<NoteSess
 }
 
 async function historyRecords(noteId: string) {
-  const records: HistoryPage['records'] = [];
+  const records: HistoryModePage['records'] = [];
   let cursor: string | null = null;
   do {
-    const page = await invokeNative<HistoryPage>('get_note_history_page', {
+    const page = await invokeNative<HistoryModePage>('get_note_history_page', {
       noteId,
       cursor,
       limit: 30
@@ -139,6 +115,31 @@ async function historyRecords(noteId: string) {
     cursor = page.nextCursor;
   } while (cursor);
   return records;
+}
+
+async function readNativeEditorState(): Promise<NativeEditorState> {
+  const state = await browser.execute(() => {
+    const nativeWindow = window as typeof window & {
+      __GNEAUXGHTS_NATIVE_E2E__?: {
+        readEditorState: () => NativeEditorState;
+        setEditorSelection: (anchor: number, head: number) => boolean;
+      };
+    };
+    return nativeWindow.__GNEAUXGHTS_NATIVE_E2E__?.readEditorState() ?? null;
+  });
+  if (!state) throw new Error('Native editor state bridge is unavailable');
+  return state;
+}
+
+async function readCapturedHistoryScrollTop() {
+  return browser.execute(() => {
+    const nativeWindow = window as typeof window & {
+      __GNEAUXGHTS_NATIVE_E2E__?: {
+        readCapturedHistoryScrollTop: () => number | null;
+      };
+    };
+    return nativeWindow.__GNEAUXGHTS_NATIVE_E2E__?.readCapturedHistoryScrollTop() ?? null;
+  });
 }
 
 async function editorText() {
@@ -230,30 +231,42 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await replaceEditorText(editedBody);
     const scroller = await $('[data-testid="note-editor"] .cm-scroller');
     const editor = await $('[data-testid="note-editor"] .cm-content');
-    await editor.click();
-    await browser.keys(['Meta', 'a', '\uE000']);
-    await browser.pause(60);
-    const selectionBefore = await browser.execute((element: HTMLElement) => {
-      const selection = window.getSelection();
-      if (
-        !selection?.anchorNode ||
-        !selection.focusNode ||
-        !element.contains(selection.anchorNode) ||
-        !element.contains(selection.focusNode)
-      ) return null;
-      return { anchor: selection.anchorOffset, head: selection.focusOffset };
-    }, editor);
-    if (!selectionBefore) throw new Error('Native editor did not expose its keyboard selection');
-    await browser.execute((element: HTMLElement) => {
+    await browser.execute((element: HTMLElement) => element.focus(), editor);
+    const initialEditorState = await readNativeEditorState();
+    const selectionAnchor = (initialEditorState.editor?.markdown.length ?? 12) - 2;
+    const entryState = await browser.execute((
+      element: HTMLElement,
+      requestedAnchor: number,
+      requestedHead: number
+    ) => {
+      const nativeWindow = window as typeof window & {
+        __GNEAUXGHTS_NATIVE_E2E__?: {
+          readEditorState: () => NativeEditorState;
+          setEditorSelection: (anchor: number, head: number) => boolean;
+        };
+      };
+      const bridge = nativeWindow.__GNEAUXGHTS_NATIVE_E2E__;
+      if (!bridge?.setEditorSelection(requestedAnchor, requestedHead)) {
+        throw new Error('Native editor selection bridge rejected the selection');
+      }
       element.scrollTop = Math.max(240, element.scrollHeight * 0.55);
       element.dispatchEvent(new Event('scroll'));
-    }, scroller);
-    const scrollBefore = await browser.execute(
-      (element: HTMLElement) => element.scrollTop,
-      scroller
-    );
+      const editorState = bridge.readEditorState();
+      const open = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Open note history"]'
+      );
+      if (!open || open.disabled) throw new Error('History action was unavailable');
+      open.click();
+      return { editorState, scrollTop: element.scrollTop };
+    }, scroller, selectionAnchor, selectionAnchor - 10);
+    const editorStateBefore = entryState.editorState;
+    const scrollBefore = entryState.scrollTop;
+    expect(scrollBefore).toBeGreaterThan(0);
+    expect(editorStateBefore.editor).not.toBeNull();
+    expect(editorStateBefore.editor?.ownsWebviewFocus).toBe(true);
 
     const history = await openHistory();
+    expect(await readCapturedHistoryScrollTop()).toBe(scrollBefore);
     const capturedAfterEdit = await invokeNative<NoteSession>('open_note', {
       noteId: note.noteId,
       path: null
@@ -262,7 +275,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     const diff = await $('[data-testid="historical-revision-diff"]');
     expect(await diff.getText()).toContain('Edited through the native Svelte editor');
     expect(await diff.$$('[data-diff-kind="added"]')).not.toHaveLength(0);
-    const latestPage = await invokeNative<HistoryPage>('get_note_history_page', {
+    const latestPage = await invokeNative<HistoryModePage>('get_note_history_page', {
       noteId: note.noteId,
       cursor: null,
       limit: 1
@@ -288,28 +301,66 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await $('button[aria-label="Back to workspace"]').click();
     await history.waitForExist({ reverse: true });
     const restoredScroller = await $('[data-testid="note-editor"] .cm-scroller');
-    const restoredEditor = await $('[data-testid="note-editor"] .cm-content');
-    const restoredScroll = await browser.execute(
+    try {
+      await browser.waitUntil(async () => {
+        const state = await readNativeEditorState();
+        const scrollTop = await browser.execute(
+          (element: HTMLElement) => element.scrollTop,
+          restoredScroller
+        );
+        return state.editor?.ownsWebviewFocus === true &&
+          state.editor.selection.anchor === editorStateBefore.editor?.selection.anchor &&
+          state.editor.selection.head === editorStateBefore.editor?.selection.head &&
+          Math.abs(scrollTop - scrollBefore) <= 2;
+      }, { timeoutMsg: 'Expected exact logical editor selection, focus, and scroll to be restored' });
+    } catch (error) {
+      const state = await readNativeEditorState();
+      const scrollTop = await browser.execute(
+        (element: HTMLElement) => element.scrollTop,
+        restoredScroller
+      );
+      const scrollMetrics = await browser.execute((element: HTMLElement) => ({
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop
+      }), restoredScroller);
+      throw new Error(
+        `Expected restored editor summary ${JSON.stringify({
+          activePaneId: editorStateBefore.activePaneId,
+          paneIds: editorStateBefore.paneIds,
+          paneKind: editorStateBefore.paneKind,
+          noteId: editorStateBefore.noteId,
+          selection: editorStateBefore.editor?.selection,
+          ownsWebviewFocus: editorStateBefore.editor?.ownsWebviewFocus,
+          markdownLength: editorStateBefore.editor?.markdown.length,
+          scrollTop: scrollBefore
+        })}; received ${JSON.stringify({
+          activePaneId: state.activePaneId,
+          paneIds: state.paneIds,
+          paneKind: state.paneKind,
+          noteId: state.noteId,
+          selection: state.editor?.selection,
+          ownsWebviewFocus: state.editor?.ownsWebviewFocus,
+          markdownLength: state.editor?.markdown.length,
+          scrollTop,
+          scrollMetrics
+        })}`,
+        { cause: error }
+      );
+    }
+    const editorStateAfter = await readNativeEditorState();
+    expect(editorStateAfter.activePaneId).toBe(editorStateBefore.activePaneId);
+    expect(editorStateAfter.paneIds).toEqual(editorStateBefore.paneIds);
+    expect(editorStateAfter.paneKind).toBe(editorStateBefore.paneKind);
+    expect(editorStateAfter.noteId).toBe(editorStateBefore.noteId);
+    expect(editorStateAfter.editor?.markdown).toBe(editorStateBefore.editor?.markdown);
+    expect(editorStateAfter.editor?.selection).toEqual(editorStateBefore.editor?.selection);
+    const scrollAfter = await browser.execute(
       (element: HTMLElement) => element.scrollTop,
       restoredScroller
     );
-    expect(Math.abs(restoredScroll - scrollBefore)).toBeLessThanOrEqual(2);
-    // WKWebView does not expose a DOM selection while its native test window is
-    // backgrounded. Refocus the already-restored CodeMirror surface so WebKit
-    // projects CodeMirror's retained selection back into window.getSelection().
-    await browser.execute((element: HTMLElement) => element.focus(), restoredEditor);
-    await browser.pause(100);
-    const selectionAfter = await browser.execute((element: HTMLElement) => {
-      const selection = window.getSelection();
-      if (
-        !selection?.anchorNode ||
-        !selection.focusNode ||
-        !element.contains(selection.anchorNode) ||
-        !element.contains(selection.focusNode)
-      ) return null;
-      return { anchor: selection.anchorOffset, head: selection.focusOffset };
-    }, restoredEditor);
-    expect(selectionAfter).toEqual(selectionBefore);
+    expect(Math.abs(scrollAfter - scrollBefore)).toBeLessThanOrEqual(2);
+    expect(editorStateAfter.editor?.ownsWebviewFocus).toBe(true);
     const liveAfterHistory = await invokeNative<NoteSession>('open_note', {
       noteId: note.noteId,
       path: null
@@ -340,8 +391,13 @@ describe('native Phase 1-3 Note Timeline integration', () => {
       noteId: note.noteId,
       path: null
     });
-    expect(restored.markdown).toContain('Seeded native revision 1');
-    expect(restored.markdown).not.toContain('Edited through the native Svelte editor');
+    expect(restored.markdown).toBe(versions[0]);
+    const recordsAfterRestore = await historyRecords(note.noteId);
+    expect(
+      recordsAfterRestore.find(
+        (record): record is HistoryRevisionRecord => record.kind === 'revision'
+      )?.source
+    ).toBe('versionRestore');
   });
 
   it('discovers an external deletion, pages retained history, recovers safely, and keeps editing', async () => {
@@ -412,7 +468,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     });
     expect(forgotten?.title).toBe(note.title);
 
-    const corrupt = await invokeNative<HistoryHealth>('e2e_corrupt_history_store');
+    const corrupt = await invokeNative<HistoryHealthReport>('e2e_corrupt_history_store');
     expect(corrupt.state).toBe('corrupt');
 
     await openSettings();
@@ -422,7 +478,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await $('button=Reset history').click();
     await $('button=Confirm reset history').click();
     await browser.pause(1_000);
-    const healthy = await invokeNative<HistoryHealth>('get_history_health');
+    const healthy = await invokeNative<HistoryHealthReport>('get_history_health');
     if (healthy.integrity !== 'verified') {
       throw new Error(`Reset did not complete: ${JSON.stringify(healthy)}\n${await $('body').getText()}`);
     }
@@ -470,7 +526,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     let firstEditRevision: HistoryRevisionRecord | undefined;
     const reconstructedEditorBodies: Array<{ revisionId: string; body: string }> = [];
     for (const record of editorRevisions) {
-      const revision = await invokeNative<HistoryRevision>('get_note_history_revision', {
+      const revision = await invokeNative<HistoricalRevision>('get_note_history_revision', {
         noteId: note.noteId,
         revisionId: record.revisionId
       });

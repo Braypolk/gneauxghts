@@ -520,18 +520,25 @@ export class HistoryModeSession {
       return;
     }
     this.#dispatch({ type: 'workspaceRestored' });
+    let focusRestoreError: unknown = null;
+    try {
+      await this.#deps.restoreFocus(workspace);
+    } catch (error) {
+      focusRestoreError = error;
+    }
     let editorRestoreError: unknown = null;
     try {
+      // Focus can ask the browser to reveal the selection. Apply the captured
+      // logical selection and viewport last so that focus cannot overwrite the
+      // exact editor state retained on History entry.
       await this.#deps.restoreEditorState(workspace);
     } catch (error) {
       editorRestoreError = error;
     }
-    try {
-      await this.#deps.restoreFocus(workspace);
-    } catch (error) {
+    if (focusRestoreError) {
       this.#dispatch({
         type: 'exitCompleted',
-        error: `The workspace was restored, but focus could not be restored: ${errorMessage(error)}`
+        error: `The workspace was restored, but focus could not be restored: ${errorMessage(focusRestoreError)}`
       });
       return;
     }
