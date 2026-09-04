@@ -3,7 +3,7 @@ use crate::{
     index::AppState,
     note,
     services::note_timeline::{
-        MutationSource, NoteMutation, NoteMutationResult, NoteMutationWarning, NoteTimeline,
+        MutationSource, NoteMutation, NoteMutationResult, NoteMutationWarning,
     },
     state::{persist_note_with_preparation, validate_current_path},
 };
@@ -114,7 +114,8 @@ fn persist_note_session_with_source(
         &markdown,
         current_path.as_deref(),
         |target_path, canonical| {
-            NoteTimeline::new(state)
+            state
+                .note_timeline()
                 .prepare_revision_publication(
                     source,
                     target_path,
@@ -146,7 +147,7 @@ fn persist_note_session_with_source(
                     ),
                 }
             };
-            NoteTimeline::new(state).mutate(mutation)
+            state.note_timeline().mutate(mutation)
         },
     )?;
     let (persisted_path, persisted_markdown, mutation_outcome) = publication

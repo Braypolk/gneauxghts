@@ -426,7 +426,7 @@ fn flush_dirty_batch(
     let Some(state) = app_handle.try_state::<AppState>() else {
         return Ok(());
     };
-    let timeline = NoteTimeline::new(&state);
+    let timeline = state.note_timeline();
     state.semantic.report_user_activity();
 
     let resolved = resolve_batch(notes_dir, paths)?;
@@ -688,7 +688,7 @@ fn observe_reconciliation_state(
     present_paths: &HashSet<PathBuf>,
 ) -> Result<(), String> {
     let observed_at_millis = current_time_millis()?;
-    let timeline = NoteTimeline::new(state);
+    let timeline = state.note_timeline();
     observe_timeline(
         &timeline,
         VaultObservation::reconciliation_scan(notes_dir.to_path_buf(), observed_at_millis),
@@ -759,7 +759,8 @@ fn spawn_background_reconcile_loop(app_handle: AppHandle, queue: std::sync::Arc<
         }) {
             Err(error) => eprintln!("vault reconcile error: {error}"),
             Ok(_) => {
-                if let Err(error) = NoteTimeline::new(&state)
+                if let Err(error) = state
+                    .note_timeline()
                     .compact_history_storage(BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES)
                 {
                     eprintln!("Note Timeline background compaction error: {error}");
@@ -832,7 +833,7 @@ mod tests {
     };
     use crate::services::note_timeline::{
         inject_history_recovery_failure_once, reconstructed_revision_bodies_for_test,
-        retained_observation_count_for_test, LifecycleEventKind, NoteTimeline, VaultObservation,
+        retained_observation_count_for_test, LifecycleEventKind, VaultObservation,
         VaultObservationKind, VaultObservationSource,
     };
     use crate::{app::EventBus, index::AppState, semantic::SemanticState};
@@ -1078,7 +1079,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         inject_history_recovery_failure_once();
         assert!(timeline
             .observe(
@@ -1099,7 +1100,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&after_restart);
+        let timeline = after_restart.note_timeline();
         timeline
             .observe(VaultObservation::reconciliation_scan(
                 notes.path().to_path_buf(),

@@ -6,9 +6,7 @@ use crate::{
         plan_agent_creation_commit, plan_agent_update_commit, CommitNoteReviewResult,
         ProposalPreview,
     },
-    services::note_timeline::{
-        HistoryIntentIdentity, MutationSource, NoteIdentity, NoteMutation, NoteTimeline,
-    },
+    services::note_timeline::{MutationSource, NoteIdentity, NoteMutation, PreparedHistoryIntent},
     state::{notes_root, with_note_file_mutation},
 };
 use std::path::PathBuf;
@@ -82,7 +80,7 @@ pub(crate) fn commit_agent_proposal(
         .then(|| proposal.note_id.as_deref().map(NoteIdentity::new))
         .flatten();
     let commit_result = with_note_file_mutation(|| {
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let prepared = timeline.prepare_revision_publication(
             MutationSource::AcceptedChatProposal,
             &intent.target_path,
@@ -160,7 +158,7 @@ struct ProposalSynchronization {
 fn synchronize_applied_change(
     state: &AppState,
     result: &CommitNoteReviewResult,
-    history_intent: HistoryIntentIdentity,
+    history_intent: PreparedHistoryIntent,
     fallback_markdown: String,
 ) -> ProposalSynchronization {
     let applied = result
@@ -171,12 +169,14 @@ fn synchronize_applied_change(
         .path
         .as_deref()
         .expect("committed proposal change requires a canonical path");
-    let outcome = NoteTimeline::new(state).mutate(NoteMutation::accepted_chat_proposal(
-        history_intent,
-        PathBuf::from(path),
-        applied.previous_path.as_deref().map(PathBuf::from),
-        fallback_markdown,
-    ));
+    let outcome = state
+        .note_timeline()
+        .mutate(NoteMutation::accepted_chat_proposal(
+            history_intent,
+            PathBuf::from(path),
+            applied.previous_path.as_deref().map(PathBuf::from),
+            fallback_markdown,
+        ));
     outcome.report_degraded("proposal commit");
     ProposalSynchronization {
         note_id: outcome.note_id().as_str().to_string(),
@@ -247,7 +247,8 @@ mod tests {
         )
         .unwrap();
         let path = notes.path().join("Proposal.md");
-        let prepared = NoteTimeline::new(&state)
+        let prepared = state
+            .note_timeline()
             .prepare_revision_publication(
                 MutationSource::AcceptedChatProposal,
                 &path,

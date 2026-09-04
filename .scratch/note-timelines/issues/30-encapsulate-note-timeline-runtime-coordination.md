@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Move operation serialization, recovery latching, integrity attestation, and replay coordination behind one private Note Timeline runtime interface.
-- [ ] Let application state hold the canonical Note Timeline owner without separately owning or manipulating its coordination primitives.
-- [ ] Preserve mutation ordering, fail-closed history behavior, prepared-intent replay, recovery convergence, and clean shutdown behavior.
-- [ ] Make invalid runtime transitions unrepresentable or return a closed Note Timeline error rather than relying on caller ordering.
-- [ ] Add architecture and concurrency tests proving all history coordination enters through the canonical owner and remains correct across interruption and restart.
+- [x] Move operation serialization, recovery latching, integrity attestation, and replay coordination behind one private Note Timeline runtime interface.
+- [x] Let application state hold the canonical Note Timeline owner without separately owning or manipulating its coordination primitives.
+- [x] Preserve mutation ordering, fail-closed history behavior, prepared-intent replay, recovery convergence, and clean shutdown behavior.
+- [x] Make invalid runtime transitions unrepresentable or return a closed Note Timeline error rather than relying on caller ordering.
+- [x] Add architecture and concurrency tests proving all history coordination enters through the canonical owner and remains correct across interruption and restart.

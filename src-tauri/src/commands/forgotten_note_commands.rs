@@ -7,7 +7,7 @@ use crate::{
     path_utils::unique_path_in_dir,
     services::note_timeline::{
         LifecyclePublicationFailure, MutationWarningStage, NoteIdentity, NoteLifecycleOperation,
-        NoteMutationWarning, NoteTimeline,
+        NoteMutationWarning,
     },
     state::{
         forgotten_notes_root, read_state, read_unpruned_state, validate_current_path, write_state,
@@ -57,7 +57,9 @@ pub(crate) fn forget_note(
             .saturating_add(u64::from(retention_days).saturating_mul(FORGOTTEN_DAY_MILLIS));
         let note_markdown = fs::read_to_string(note_path).map_err(|err| err.to_string())?;
         let note_markdown =
-            NoteTimeline::new(&state).prepare_publication(Some(note_path), None, &note_markdown)?;
+            state
+                .note_timeline()
+                .prepare_publication(Some(note_path), None, &note_markdown)?;
         let (forgotten_markdown, note_id) =
             prepare_forgotten_note_markdown(&note_markdown, forgotten_at_rfc3339)?;
         let previous_persisted_state = persisted_state.clone();
@@ -92,7 +94,7 @@ pub(crate) fn forget_note(
             });
         write_unpruned_state(&persisted_state)?;
 
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let publication = timeline.publish_lifecycle(
             NoteLifecycleOperation::forgotten(
                 NoteIdentity::new(note_id.clone()),
@@ -260,7 +262,7 @@ pub(crate) fn restore_forgotten_notes(
                 let markdown =
                     fs::read_to_string(&forgotten_path).map_err(|err| err.to_string())?;
                 let retained_identity = forgotten_note.note_id.as_deref().map(NoteIdentity::new);
-                let markdown = NoteTimeline::new(&state).prepare_publication(
+                let markdown = state.note_timeline().prepare_publication(
                     None,
                     retained_identity.as_ref(),
                     &markdown,
@@ -276,7 +278,7 @@ pub(crate) fn restore_forgotten_notes(
                 persisted_state.forgotten_notes[index].original_path =
                     restored_path.to_string_lossy().into_owned();
                 write_unpruned_state(&persisted_state)?;
-                let timeline = NoteTimeline::new(&state);
+                let timeline = state.note_timeline();
                 let publication = timeline.publish_lifecycle(
                     NoteLifecycleOperation::recovered(
                         NoteIdentity::new(retained_note_id),
@@ -533,9 +535,9 @@ pub(super) fn cleanup_expired_forgotten_notes(
     notes_dir: &Path,
     state: &AppState,
 ) -> Result<(), String> {
-    NoteTimeline::new(state).recover_lifecycle_publications()?;
+    state.note_timeline().recover_lifecycle_publications()?;
     let now = current_time_millis()?;
-    NoteTimeline::new(state).purge_expired_missing_notes(now)?;
+    state.note_timeline().purge_expired_missing_notes(now)?;
     let mut persisted_state = read_unpruned_state(notes_dir)?;
     let original_len = persisted_state.forgotten_notes.len();
     let mut kept_notes = Vec::with_capacity(original_len);
@@ -600,11 +602,13 @@ fn purge_forgotten_item(
         delete_conversation(conversation_id)?;
     }
     if let Some(note_id) = forgotten_note_id {
-        NoteTimeline::new(state).lifecycle(NoteLifecycleOperation::purged(
-            note_id,
-            forgotten_path,
-            occurred_at_millis,
-        ))?;
+        state
+            .note_timeline()
+            .lifecycle(NoteLifecycleOperation::purged(
+                note_id,
+                forgotten_path,
+                occurred_at_millis,
+            ))?;
         Ok(())
     } else if forgotten_path.exists() {
         remove_forgotten_item_path(&forgotten_path, &forgotten_note.kind)
@@ -703,7 +707,7 @@ mod tests {
                 Some(active_path.to_string_lossy().into_owned()),
             )
             .expect("append retained revision");
-            let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+            let access = state.note_timeline().open_history_mode(note_id.clone());
             let revisions = access.revisions().expect("read active revisions");
             assert_eq!(
                 revisions
@@ -774,7 +778,7 @@ mod tests {
         );
         for (note_id, _, forgotten_path, first_revision) in &retained {
             assert!(forgotten_path.is_file());
-            let access = NoteTimeline::new(&restarted).open_history_mode(note_id.clone());
+            let access = restarted.note_timeline().open_history_mode(note_id.clone());
             assert!(access.page(None, 50).unwrap_err().contains("Recover"));
             assert!(access
                 .revision(first_revision)
@@ -805,8 +809,9 @@ mod tests {
             .as_deref(),
             Some(recovered_id.as_str())
         );
-        let recovered_access =
-            NoteTimeline::new(&restarted).open_history_mode(recovered_id.clone());
+        let recovered_access = restarted
+            .note_timeline()
+            .open_history_mode(recovered_id.clone());
         assert_eq!(recovered_access.revisions().unwrap().len(), 2);
         assert_eq!(
             recovered_access.revision(&first_revision).unwrap().body(),
@@ -827,7 +832,7 @@ mod tests {
             .is_empty());
         for (note_id, _, forgotten_path, _) in retained {
             assert!(!forgotten_path.exists());
-            let access = NoteTimeline::new(&restarted).open_history_mode(note_id);
+            let access = restarted.note_timeline().open_history_mode(note_id);
             assert!(access
                 .page(None, 50)
                 .expect("read purged timeline")
@@ -888,7 +893,8 @@ mod tests {
             .expect("damage only the forgotten note's managed metadata");
         let damaged_forgotten_bytes = fs::read(&forgotten_path).expect("read damaged note");
         corrupt_note_revision_payload_for_test(&note_id);
-        let timeline = NoteTimeline::new(app.state::<AppState>().inner());
+        let app_state = app.state::<AppState>();
+        let timeline = app_state.note_timeline();
         assert_eq!(
             timeline
                 .history_health()
@@ -907,7 +913,9 @@ mod tests {
             fs::read(&forgotten_path).expect("read untouched forgotten note"),
             damaged_forgotten_bytes
         );
-        assert!(NoteTimeline::new(app.state::<AppState>().inner())
+        assert!(app
+            .state::<AppState>()
+            .note_timeline()
             .open_history_mode(note_id.clone())
             .page(None, 50)
             .expect_err("forgotten timeline remains gated")
@@ -952,8 +960,8 @@ mod tests {
         .expect("recover forgotten note");
         assert_eq!(restored.len(), 1);
         let restored_path = PathBuf::from(&restored[0].restored_path);
-        let access =
-            NoteTimeline::new(restarted_app.state::<AppState>().inner()).open_history_mode(note_id);
+        let restarted_state = restarted_app.state::<AppState>();
+        let access = restarted_state.note_timeline().open_history_mode(note_id);
         let revisions = access.revisions().expect("read rebuilt revisions");
         assert_eq!(revisions.len(), 1);
         assert_eq!(
@@ -1063,7 +1071,9 @@ mod tests {
             crate::services::note_timeline::retained_observation_count_for_test(),
             0
         );
-        let events = NoteTimeline::new(app.state::<AppState>().inner())
+        let events = app
+            .state::<AppState>()
+            .note_timeline()
             .open_history_mode(note_id)
             .lifecycle_events()
             .expect("read lifecycle events");
@@ -1121,7 +1131,8 @@ mod tests {
             crate::services::note_timeline::retained_observation_count_for_test(),
             1
         );
-        let timeline = NoteTimeline::new(app.state::<AppState>().inner());
+        let app_state = app.state::<AppState>();
+        let timeline = app_state.note_timeline();
         timeline
             .recover_lifecycle_publications()
             .expect("retry lifecycle publication");

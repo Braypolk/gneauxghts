@@ -5,7 +5,7 @@
 //! prepare the same transform without writing any canonical or derived state.
 
 use super::note_timeline::{
-    MutationSource, NoteMutation, NoteMutationWarning, NoteTimeline, PreparedRevisionPublication,
+    MutationSource, NoteMutation, NoteMutationWarning, PreparedRevisionPublication,
 };
 use crate::{
     index::{
@@ -120,7 +120,7 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
         path: &Path,
         markdown: &str,
     ) -> Result<PreparedRevisionPublication, String> {
-        let timeline = NoteTimeline::new(self.state);
+        let timeline = self.state.note_timeline();
         let prepared = timeline.prepare_revision_publication(
             MutationSource::TaskAction,
             path,
@@ -143,7 +143,7 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
         publication: PreparedRevisionPublication,
     ) -> TaskSynchronization {
         let (markdown, history_intent) = publication.into_parts();
-        let outcome = NoteTimeline::new(self.state).mutate(NoteMutation::task_action(
+        let outcome = self.state.note_timeline().mutate(NoteMutation::task_action(
             history_intent,
             path.clone(),
             Some(path),

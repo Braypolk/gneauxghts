@@ -25,7 +25,6 @@ use app::EventBus;
 use chat::ChatService;
 use index::AppState;
 use semantic::SemanticState;
-use services::note_timeline::NoteTimeline;
 use state::{
     initialize_app_data_dir, initialize_documents_dir, notes_root, set_notes_root_override,
 };
@@ -203,7 +202,7 @@ pub fn run() {
                                     eprintln!("notes-index prewarm failed: {error}");
                                 }
                                 if let Err(error) =
-                                    NoteTimeline::new(&state).initialize_existing_notes(&notes_dir)
+                                    state.note_timeline().initialize_existing_notes(&notes_dir)
                                 {
                                     eprintln!("Baseline Revision initialization failed: {error}");
                                 }
@@ -352,13 +351,13 @@ pub fn run() {
         let mut exit_permitted = true;
         if let RunEvent::ExitRequested { api, .. } = &event {
             if let Some(state) = app_handle.try_state::<AppState>() {
-                let clean_close = state.note_timeline_is_cleanly_closed().and_then(|closed| {
+                let clean_close = state.note_timeline().is_cleanly_closed().and_then(|closed| {
                     if closed {
                         Ok(())
                     } else {
                         state::vault_root()
                             .and_then(|vault_root| {
-                                services::note_timeline::NoteTimeline::new(&state)
+                                state.note_timeline()
                                     .clean_close(&vault_root)
                             })
                             .map(|_| ())

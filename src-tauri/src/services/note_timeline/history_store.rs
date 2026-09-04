@@ -6,11 +6,11 @@
 use super::{
     BaselineInitializationPhase, BaselineInitializationProgress, DeletionMarker,
     DeletionOperationIdentity, DeletionScope, HistoryClearBaseline, HistoryDeletionKind,
-    HistoryIntentIdentity, HistoryStorageUsage, LifecycleEventHeader, LifecycleEventIdentity,
-    LifecycleEventKind, MissingNoteRecord, MutationSource, NoteBaselineInitializationState,
-    NoteIdentity, NoteRevisionHeader, PayloadVersion, ReconstructedNoteRevision, RevisionIdentity,
-    RevisionTimeEvidence, TimelineRecordIdentity, VaultObservation, VaultObservationKind,
-    VaultObservationSource, BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
+    HistoryStorageUsage, LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind,
+    MissingNoteRecord, MutationSource, NoteBaselineInitializationState, NoteIdentity,
+    NoteRevisionHeader, PayloadVersion, PreparedHistoryIntent, ReconstructedNoteRevision,
+    RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity, VaultObservation,
+    VaultObservationKind, VaultObservationSource, BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
 };
 use rusqlite::OpenFlags;
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
@@ -982,7 +982,7 @@ pub(super) fn prepare_publication(
     markdown: &str,
     kind: PublicationIntentKind,
     baseline: Option<BaselineSeed<'_>>,
-) -> Result<HistoryIntentIdentity, String> {
+) -> Result<PreparedHistoryIntent, String> {
     if take_prepare_fault() {
         return Err("injected history preparation failure".to_string());
     }
@@ -1034,11 +1034,11 @@ pub(super) fn prepare_publication(
         )
         .map_err(|error| format!("Prepare Note Revision: {error}"))?;
     transaction.commit().map_err(|error| error.to_string())?;
-    Ok(HistoryIntentIdentity::from_persisted(intent_id))
+    Ok(PreparedHistoryIntent::from_persisted(intent_id))
 }
 
 pub(super) fn finalize_publication(
-    history_intent: &HistoryIntentIdentity,
+    history_intent: &PreparedHistoryIntent,
     source: MutationSource,
     target_path: &Path,
     canonical_markdown: &str,
@@ -1112,7 +1112,7 @@ pub(super) fn finalize_publication(
 }
 
 pub(super) fn publication_revision_identity(
-    history_intent: &HistoryIntentIdentity,
+    history_intent: &PreparedHistoryIntent,
 ) -> Result<RevisionIdentity, String> {
     open_store()?
         .query_row(
@@ -1124,7 +1124,7 @@ pub(super) fn publication_revision_identity(
         .map_err(|error| format!("Read prepared Note Revision identity: {error}"))
 }
 
-pub(super) fn abandon_publication(history_intent: &HistoryIntentIdentity) -> Result<(), String> {
+pub(super) fn abandon_publication(history_intent: &PreparedHistoryIntent) -> Result<(), String> {
     let connection = open_store()?;
     connection
         .execute(

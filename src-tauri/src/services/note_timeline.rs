@@ -5,10 +5,13 @@
 
 mod history_store;
 mod post_publication;
+mod runtime;
 
 use self::post_publication::{PublicationIssue, PublicationOutcome, PublicationStage};
+pub(crate) use self::runtime::NoteTimelineRuntime;
+use self::runtime::{OperationGuard, RecoveryIntegrity};
 use crate::{
-    index::{build_indexed_note, AppState, NoteTimelineIntegrityAttestation},
+    index::{build_indexed_note, AppState, NoteTimelineOwnerToken},
     path_utils::{collect_markdown_files_recursively, unique_path_in_dir},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL_SAFE, Engine as _};
@@ -46,32 +49,6 @@ pub(crate) fn ensure_vault_scaffold(
         history_store::HISTORY_FORMAT,
         history_store::INITIAL_HISTORY_GENERATION,
     )
-}
-
-pub(crate) fn ensure_history_integrity_attested(state: &AppState) -> Result<(), String> {
-    let mut attestation = state.lock_note_timeline_integrity()?;
-    match *attestation {
-        NoteTimelineIntegrityAttestation::Verified => return Ok(()),
-        NoteTimelineIntegrityAttestation::Corrupt => {
-            return Err(
-                "Note Timeline history is corrupt; canonical publication is blocked".to_string(),
-            );
-        }
-        NoteTimelineIntegrityAttestation::Unverified => {}
-    }
-    match history_store::integrity_snapshot() {
-        history_store::HistoryStoreIntegrity::Verified => {
-            *attestation = NoteTimelineIntegrityAttestation::Verified;
-            Ok(())
-        }
-        history_store::HistoryStoreIntegrity::Unavailable => {
-            Err("Note Timeline history store is unavailable".to_string())
-        }
-        history_store::HistoryStoreIntegrity::Corrupt => {
-            *attestation = NoteTimelineIntegrityAttestation::Corrupt;
-            Err("Note Timeline history is corrupt; canonical publication is blocked".to_string())
-        }
-    }
 }
 
 macro_rules! identity_type {
@@ -1035,16 +1012,43 @@ pub(crate) struct ReconstructedNoteRevision {
     body: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HistoryIntentIdentity(String);
+pub(crate) struct PreparedHistoryIntent {
+    value: String,
+    operation: Option<OperationGuard>,
+}
 
-impl HistoryIntentIdentity {
+impl std::fmt::Debug for PreparedHistoryIntent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("PreparedHistoryIntent")
+            .field(&self.value)
+            .finish()
+    }
+}
+
+impl PartialEq for PreparedHistoryIntent {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Eq for PreparedHistoryIntent {}
+
+impl PreparedHistoryIntent {
     fn from_persisted(value: String) -> Self {
-        Self(value)
+        Self {
+            value,
+            operation: None,
+        }
     }
 
     fn as_str(&self) -> &str {
-        &self.0
+        &self.value
+    }
+
+    fn with_operation(mut self, operation: OperationGuard) -> Self {
+        self.operation = Some(operation);
+        self
     }
 
     pub(crate) fn abandon(self) -> Result<(), String> {
@@ -1062,14 +1066,17 @@ impl HistoryIntentIdentity {
 
     #[cfg(test)]
     pub(crate) fn for_test(value: &str) -> Self {
-        Self(value.to_string())
+        Self {
+            value: value.to_string(),
+            operation: None,
+        }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct PreparedRevisionPublication {
     canonical_markdown: String,
-    history_intent: HistoryIntentIdentity,
+    history_intent: PreparedHistoryIntent,
 }
 
 impl PreparedRevisionPublication {
@@ -1077,15 +1084,20 @@ impl PreparedRevisionPublication {
         &self.canonical_markdown
     }
 
-    pub(crate) fn into_parts(self) -> (String, HistoryIntentIdentity) {
+    pub(crate) fn into_parts(self) -> (String, PreparedHistoryIntent) {
         (self.canonical_markdown, self.history_intent)
+    }
+
+    fn with_operation(mut self, operation: OperationGuard) -> Self {
+        self.history_intent = self.history_intent.with_operation(operation);
+        self
     }
 
     #[cfg(test)]
     pub(crate) fn for_test(markdown: &str, history_intent: &str) -> Self {
         Self {
             canonical_markdown: markdown.to_string(),
-            history_intent: HistoryIntentIdentity::for_test(history_intent),
+            history_intent: PreparedHistoryIntent::for_test(history_intent),
         }
     }
 }
@@ -1100,10 +1112,9 @@ impl ReconstructedNoteRevision {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NoteMutation {
     source: MutationSource,
-    history_intent: HistoryIntentIdentity,
+    history_intent: PreparedHistoryIntent,
     path: PathBuf,
     previous_path: Option<PathBuf>,
     fallback_markdown: String,
@@ -1111,7 +1122,7 @@ pub(crate) struct NoteMutation {
 
 impl NoteMutation {
     pub(crate) fn editor(
-        history_intent: HistoryIntentIdentity,
+        history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
@@ -1126,7 +1137,7 @@ impl NoteMutation {
     }
 
     pub(crate) fn task_action(
-        history_intent: HistoryIntentIdentity,
+        history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
@@ -1141,7 +1152,7 @@ impl NoteMutation {
     }
 
     pub(crate) fn accepted_chat_proposal(
-        history_intent: HistoryIntentIdentity,
+        history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
@@ -1156,7 +1167,7 @@ impl NoteMutation {
     }
 
     pub(crate) fn version_restore(
-        history_intent: HistoryIntentIdentity,
+        history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
@@ -1171,7 +1182,7 @@ impl NoteMutation {
     }
 
     pub(crate) fn note_creation(
-        history_intent: HistoryIntentIdentity,
+        history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
@@ -1186,7 +1197,7 @@ impl NoteMutation {
     }
 
     pub(crate) fn baseline_initialization(
-        history_intent: HistoryIntentIdentity,
+        history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
@@ -1201,7 +1212,7 @@ impl NoteMutation {
     }
 
     pub(crate) fn recovery_reconciliation(
-        history_intent: HistoryIntentIdentity,
+        history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
@@ -1217,7 +1228,7 @@ impl NoteMutation {
 
     fn with_source(
         source: MutationSource,
-        history_intent: HistoryIntentIdentity,
+        history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
@@ -2334,14 +2345,18 @@ fn canonical_markdown_for_recovered_note(
     )
 }
 
-fn prepare_recovered_note_access<'a>(
-    state: &'a AppState,
+fn prepare_recovered_note_access(
+    state: &AppState,
     note_id: &NoteIdentity,
-) -> Result<crate::index::NoteTimelineOperationGuard<'a>, String> {
-    let operation = state.begin_note_timeline_operation()?;
-    NoteTimeline::new(state).recover_retained_observations()?;
-    state.ensure_note_timeline_history_recovered()?;
-    require_recovered_note(note_id)?;
+) -> Result<OperationGuard, String> {
+    let timeline = state.note_timeline();
+    let operation = timeline.runtime.begin_operation()?;
+    timeline.runtime.with_observation_replay(|| {
+        timeline.recover_pending_deletions()?;
+        timeline.replay_retained_observations(None)?;
+        timeline.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
+        require_recovered_note(note_id)
+    })?;
     Ok(operation)
 }
 
@@ -2350,7 +2365,7 @@ impl HistoryModeAccess<'_> {
         &self.note_id
     }
 
-    fn prepare_access(&self) -> Result<crate::index::NoteTimelineOperationGuard<'_>, String> {
+    fn prepare_access(&self) -> Result<OperationGuard, String> {
         prepare_recovered_note_access(self.state, &self.note_id)
     }
 
@@ -2504,7 +2519,7 @@ impl HistoryModeAccess<'_> {
         }
         crate::state::with_note_file_mutation(|| {
             let _operation = self.prepare_access()?;
-            let timeline = NoteTimeline::new(self.state);
+            let timeline = self.state.note_timeline();
             let (path, current, current_hash) = self.current_restore_state()?;
             if current_hash != expected_current_authored_content_hash {
                 return Err(
@@ -2772,6 +2787,7 @@ impl ObservationReceipt {
 
 pub(crate) struct NoteTimeline<'a> {
     state: &'a AppState,
+    runtime: &'a NoteTimelineRuntime,
 }
 
 fn require_active_vault_root(requested_root: &Path) -> Result<PathBuf, String> {
@@ -2805,21 +2821,37 @@ fn stage_note_for_purge(path: &Path, staged_path: &Path) -> std::io::Result<()> 
 }
 
 impl<'a> NoteTimeline<'a> {
-    pub(crate) fn new(state: &'a AppState) -> Self {
-        Self { state }
+    pub(crate) fn bind(
+        state: &'a AppState,
+        runtime: &'a NoteTimelineRuntime,
+        _owner: NoteTimelineOwnerToken,
+    ) -> Self {
+        Self { state, runtime }
+    }
+
+    pub(crate) fn is_cleanly_closed(&self) -> Result<bool, String> {
+        self.runtime.is_cleanly_closed()
+    }
+
+    fn ensure_history_recovered(&self, integrity: RecoveryIntegrity) -> Result<(), String> {
+        self.runtime.ensure_history_recovered(integrity, || {
+            history_store::recover_pending()?;
+            self.recover_pending_deletions()
+        })
     }
 
     pub(crate) fn clean_close(&self, vault_root: &Path) -> Result<(), String> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
-            self.state.close_note_timeline_operations(|| {
-                let _replay = self.state.lock_note_timeline_observation_replay()?;
-                self.recover_pending_deletions()?;
-                self.replay_retained_observations(None)?;
-                self.state.ensure_note_timeline_history_recovered()?;
-                crate::state::read_vault_manifest_for(&vault_root)?
-                    .ok_or_else(|| "Clean close requires a vault manifest".to_string())?;
-                history_store::clean_close()
+            self.runtime.close_operations(|| {
+                self.runtime.with_observation_replay(|| {
+                    self.recover_pending_deletions()?;
+                    self.replay_retained_observations(None)?;
+                    self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
+                    crate::state::read_vault_manifest_for(&vault_root)?
+                        .ok_or_else(|| "Clean close requires a vault manifest".to_string())?;
+                    history_store::clean_close()
+                })
             })
         })
     }
@@ -2828,21 +2860,23 @@ impl<'a> NoteTimeline<'a> {
         &self,
         operation: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
-        let _replay = self.state.lock_note_timeline_observation_replay()?;
-        self.recover_pending_deletions()?;
-        self.replay_retained_observations(None)?;
-        self.state.ensure_note_timeline_history_recovered()?;
-        operation()
+        self.runtime.with_observation_replay(|| {
+            self.recover_pending_deletions()?;
+            self.replay_retained_observations(None)?;
+            self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
+            operation()
+        })
     }
 
     /// Settle durable purge work created after startup, then capture the
     /// generation that current-content query results must still match.
     pub(crate) fn begin_current_content_read(&self) -> Result<CurrentContentRead, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        let _replay = self.state.lock_note_timeline_observation_replay()?;
-        self.recover_pending_deletions()?;
-        Ok(CurrentContentRead {
-            generation: CURRENT_CONTENT_GENERATION.load(Ordering::Acquire),
+        let _operation = self.runtime.begin_operation()?;
+        self.runtime.with_observation_replay(|| {
+            self.recover_pending_deletions()?;
+            Ok(CurrentContentRead {
+                generation: CURRENT_CONTENT_GENERATION.load(Ordering::Acquire),
+            })
         })
     }
 
@@ -2959,11 +2993,11 @@ impl<'a> NoteTimeline<'a> {
         additional_candidates: Vec<ExistingBaselineCandidate>,
         history: BaselineInitializationHistory,
     ) -> Result<BaselineInitializationProgress, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         let vault_root = require_active_vault_root(vault_root)?;
         if history == BaselineInitializationHistory::SettleExistingStore {
             self.recover_retained_observations()?;
-            self.state.ensure_note_timeline_history_recovered()?;
+            self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
         }
         let mut progress = BaselineInitializationProgress {
             phase: BaselineInitializationPhase::Initializing,
@@ -3110,7 +3144,7 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn baseline_initialization_progress(
         &self,
     ) -> Result<BaselineInitializationProgress, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         history_store::baseline_initialization_progress()
     }
 
@@ -3118,7 +3152,7 @@ impl<'a> NoteTimeline<'a> {
         &self,
         note_id: &NoteIdentity,
     ) -> Result<NoteBaselineInitializationState, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         history_store::note_baseline_initialization_state(note_id)
     }
 
@@ -3133,70 +3167,61 @@ impl<'a> NoteTimeline<'a> {
     ) -> Result<HistoryResetReceipt, String> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
-            let _timeline = self.state.lock_note_timeline_observation_replay()?;
-            let preserve_old_store = source == ResetHistorySource::RequireReadableStore
-                || history_store::store_is_queryable_for_reset();
-            let recoverable_missing = if preserve_old_store {
-                self.recover_pending_deletions()?;
-                self.replay_retained_observations(None)?;
-                history_store::recover_pending()?;
-                self.recoverable_missing_baseline_candidates()?
-            } else {
-                Vec::new()
-            };
-            let (previous_generation, generation, operation_id, reset_at_millis) =
-                history_store::reset_history_store(&vault_root)?;
-            {
-                let mut recovered = self.state.lock_note_timeline_history_recovery()?;
-                let mut integrity = self.state.lock_note_timeline_integrity()?;
-                *recovered = false;
-                *integrity = NoteTimelineIntegrityAttestation::Unverified;
-            }
-            let initialization = match self.initialize_existing_notes_with_candidates(
-                &vault_root,
-                recoverable_missing,
-                BaselineInitializationHistory::RebuildReplacementStore,
-            ) {
-                Ok(initialization)
-                    if initialization.phase() == BaselineInitializationPhase::Complete =>
-                {
-                    initialization
-                }
-                Ok(initialization) => {
-                    *self.state.lock_note_timeline_integrity()? =
-                        NoteTimelineIntegrityAttestation::Corrupt;
-                    return Err(format!(
-                        "History reset replacement did not rebuild completely: {}",
+            let _operation = self.runtime.begin_operation()?;
+            self.runtime.with_observation_replay(|| {
+                let preserve_old_store = source == ResetHistorySource::RequireReadableStore
+                    || history_store::store_is_queryable_for_reset();
+                let recoverable_missing = if preserve_old_store {
+                    self.recover_pending_deletions()?;
+                    self.replay_retained_observations(None)?;
+                    history_store::recover_pending()?;
+                    self.recoverable_missing_baseline_candidates()?
+                } else {
+                    Vec::new()
+                };
+                let (previous_generation, generation, operation_id, reset_at_millis) =
+                    history_store::reset_history_store(&vault_root)?;
+                self.runtime.begin_history_replacement()?;
+                let initialization = match self.initialize_existing_notes_with_candidates(
+                    &vault_root,
+                    recoverable_missing,
+                    BaselineInitializationHistory::RebuildReplacementStore,
+                ) {
+                    Ok(initialization)
+                        if initialization.phase() == BaselineInitializationPhase::Complete =>
+                    {
                         initialization
-                            .last_error()
-                            .unwrap_or("one or more Baseline Revisions failed")
-                    ));
-                }
-                Err(error) => {
-                    *self.state.lock_note_timeline_integrity()? =
-                        NoteTimelineIntegrityAttestation::Corrupt;
+                    }
+                    Ok(initialization) => {
+                        self.runtime.fail_history_replacement()?;
+                        return Err(format!(
+                            "History reset replacement did not rebuild completely: {}",
+                            initialization
+                                .last_error()
+                                .unwrap_or("one or more Baseline Revisions failed")
+                        ));
+                    }
+                    Err(error) => {
+                        self.runtime.fail_history_replacement()?;
+                        return Err(format!(
+                            "History reset replacement did not rebuild completely: {error}"
+                        ));
+                    }
+                };
+                if let Err(error) = history_store::complete_history_reset_rebuild() {
+                    self.runtime.fail_history_replacement()?;
                     return Err(format!(
-                        "History reset replacement did not rebuild completely: {error}"
+                        "History reset replacement could not be made available: {error}"
                     ));
                 }
-            };
-            if let Err(error) = history_store::complete_history_reset_rebuild() {
-                *self.state.lock_note_timeline_integrity()? =
-                    NoteTimelineIntegrityAttestation::Corrupt;
-                return Err(format!(
-                    "History reset replacement could not be made available: {error}"
-                ));
-            }
-            *self.state.lock_note_timeline_history_recovery()? = true;
-            *self.state.lock_note_timeline_integrity()? =
-                NoteTimelineIntegrityAttestation::Verified;
-            Ok(HistoryResetReceipt {
-                operation_id,
-                previous_generation,
-                generation,
-                reset_at_millis,
-                initialization,
+                self.runtime.complete_history_replacement()?;
+                Ok(HistoryResetReceipt {
+                    operation_id,
+                    previous_generation,
+                    generation,
+                    reset_at_millis,
+                    initialization,
+                })
             })
         })
     }
@@ -3237,7 +3262,7 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn latest_history_reset(&self) -> Result<Option<HistoryResetReceipt>, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         let Some((operation_id, previous_generation, generation, reset_at_millis)) =
             history_store::latest_history_reset()?
         else {
@@ -3253,24 +3278,8 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn history_health(&self) -> Result<HistoryHealthReport, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        let mut attestation = self.state.lock_note_timeline_integrity()?;
-        let health = if *attestation == NoteTimelineIntegrityAttestation::Corrupt {
-            history_store::HistoryStoreHealth::Corrupt
-        } else {
-            let health = history_store::health_snapshot();
-            match &health {
-                history_store::HistoryStoreHealth::Available(_) => {
-                    *attestation = NoteTimelineIntegrityAttestation::Verified;
-                }
-                history_store::HistoryStoreHealth::Corrupt => {
-                    *attestation = NoteTimelineIntegrityAttestation::Corrupt;
-                }
-                history_store::HistoryStoreHealth::Unavailable => {}
-            }
-            health
-        };
-        drop(attestation);
+        let _operation = self.runtime.begin_operation()?;
+        let health = self.runtime.history_health_snapshot()?;
         let initialization = match &health {
             history_store::HistoryStoreHealth::Available(snapshot) => {
                 snapshot.initialization.clone()
@@ -3352,19 +3361,9 @@ impl<'a> NoteTimeline<'a> {
         &self,
         note_id: &NoteIdentity,
     ) -> Result<NoteHistoryHealth, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        let mut attestation = self.state.lock_note_timeline_integrity()?;
-        if *attestation == NoteTimelineIntegrityAttestation::Corrupt {
-            return Ok(NoteHistoryHealth {
-                note_id: note_id.as_str().to_string(),
-                state: NoteHistoryHealthState::Corrupt,
-                revision_count: 0,
-                lifecycle_event_count: 0,
-                revision_payload_bytes: 0,
-            });
-        }
+        let _operation = self.runtime.begin_operation()?;
         let (state, revision_count, lifecycle_event_count, revision_payload_bytes) =
-            match history_store::note_health_snapshot(note_id) {
+            match self.runtime.note_history_health_snapshot(note_id)? {
                 history_store::NoteHistoryStoreHealth::Available(snapshot) => {
                     let state = match snapshot.initialization {
                         NoteBaselineInitializationState::Uninitialized => {
@@ -3388,11 +3387,9 @@ impl<'a> NoteTimeline<'a> {
                     (NoteHistoryHealthState::Unavailable, 0, 0, 0)
                 }
                 history_store::NoteHistoryStoreHealth::Corrupt => {
-                    *attestation = NoteTimelineIntegrityAttestation::Corrupt;
                     (NoteHistoryHealthState::Corrupt, 0, 0, 0)
                 }
             };
-        drop(attestation);
         Ok(NoteHistoryHealth {
             note_id: note_id.as_str().to_string(),
             state,
@@ -3408,11 +3405,15 @@ impl<'a> NoteTimeline<'a> {
     ) -> Result<HistoryHealthReport, String> {
         let vault_root = require_active_vault_root(vault_root)?;
         {
-            let _operation = self.state.begin_note_timeline_operation()?;
-            let _replay = self.state.lock_note_timeline_observation_replay()?;
-            self.recover_pending_deletions()?;
-            self.replay_retained_observations(None)?;
-            recover_pending_history(self.state)?;
+            let _operation = self.runtime.begin_operation()?;
+            self.runtime.with_observation_replay(|| {
+                self.recover_pending_deletions()?;
+                self.replay_retained_observations(None)?;
+                self.runtime.retry_history_recovery(|| {
+                    history_store::recover_pending()?;
+                    self.recover_pending_deletions()
+                })
+            })?;
         }
         if matches!(
             self.history_health()?.state(),
@@ -3447,12 +3448,15 @@ impl<'a> NoteTimeline<'a> {
     pub(crate) fn trust_and_migrate_legacy_history(&self, vault_root: &Path) -> Result<(), String> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
-            let _timeline = self.state.lock_note_timeline_observation_replay()?;
-            let manifest = crate::state::read_vault_manifest_for(&vault_root)?
-                .ok_or_else(|| "Legacy history recovery requires a vault manifest".to_string())?;
-            history_store::trust_legacy_store_for_migration(&manifest)?;
-            history_store::baseline_initialization_progress().map(|_| ())
+            let _operation = self.runtime.begin_operation()?;
+            self.runtime.with_observation_replay(|| {
+                let manifest =
+                    crate::state::read_vault_manifest_for(&vault_root)?.ok_or_else(|| {
+                        "Legacy history recovery requires a vault manifest".to_string()
+                    })?;
+                history_store::trust_legacy_store_for_migration(&manifest)?;
+                history_store::baseline_initialization_progress().map(|_| ())
+            })
         })
     }
 
@@ -3461,7 +3465,7 @@ impl<'a> NoteTimeline<'a> {
         note_id: &NoteIdentity,
     ) -> Result<HistoryDeletionReceipt, String> {
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
+            let _operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
                 require_recovered_note(note_id)?;
                 let path = history_store::current_path(note_id)?
@@ -3497,7 +3501,7 @@ impl<'a> NoteTimeline<'a> {
     ) -> Result<HistoryDeletionReceipt, String> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
+            let _operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
                 let mut seeds = Vec::new();
                 let mut seen_note_ids = HashSet::new();
@@ -3564,16 +3568,16 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn deletion_markers(&self) -> Result<Vec<DeletionMarker>, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
         history_store::deletion_markers()
     }
 
     pub(crate) fn history_storage_usage(&self) -> Result<HistoryStorageUsage, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
         history_store::storage_usage()
     }
 
@@ -3582,7 +3586,7 @@ impl<'a> NoteTimeline<'a> {
         maximum_reclaim_bytes: u64,
     ) -> Result<HistoryCompactionReceipt, String> {
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
+            let _operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
                 let before = history_store::storage_usage()?;
                 history_store::compact(maximum_reclaim_bytes)?;
@@ -3602,7 +3606,7 @@ impl<'a> NoteTimeline<'a> {
         retained_identity: Option<&NoteIdentity>,
         markdown: &str,
     ) -> Result<String, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         let catalog_identity = continuity_path
             .map(|path| self.state.indexed_note_identity(path))
             .transpose()?
@@ -3653,9 +3657,9 @@ impl<'a> NoteTimeline<'a> {
         retained_identity: Option<&NoteIdentity>,
         markdown: &str,
     ) -> Result<PreparedRevisionPublication, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
         let identity_prepared =
             self.prepare_publication(continuity_path, retained_identity, markdown)?;
         let existing_markdown = target_path
@@ -3670,6 +3674,7 @@ impl<'a> NoteTimeline<'a> {
         )?
         .0;
         self.prepare_canonical_revision_publication(source, target_path, continuity_path, canonical)
+            .map(|prepared| prepared.with_operation(operation))
     }
 
     fn prepare_exact_revision_publication(
@@ -3680,11 +3685,12 @@ impl<'a> NoteTimeline<'a> {
         retained_identity: Option<&NoteIdentity>,
         markdown: &str,
     ) -> Result<PreparedRevisionPublication, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
-        self.state.ensure_note_timeline_history_recovered()?;
+        self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
         let canonical = self.prepare_publication(continuity_path, retained_identity, markdown)?;
         self.prepare_canonical_revision_publication(source, target_path, continuity_path, canonical)
+            .map(|prepared| prepared.with_operation(operation))
     }
 
     fn prepare_canonical_revision_publication(
@@ -3761,26 +3767,30 @@ impl<'a> NoteTimeline<'a> {
         &self,
         observation: VaultObservation,
     ) -> Result<ObservationReceipt, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
-        let _replay = self.state.lock_note_timeline_observation_replay()?;
-        self.recover_pending_deletions()?;
-        let observation = self.capture_observed_markdown(observation)?;
-        if observation.kind == VaultObservationKind::ReconciliationScan {
-            self.replay_retained_observations(None)?;
-            return self.apply_observation(observation);
-        }
+        let _operation = self.runtime.begin_operation()?;
+        self.runtime.with_observation_replay(|| {
+            self.recover_pending_deletions()?;
+            let observation = self.capture_observed_markdown(observation)?;
+            if observation.kind == VaultObservationKind::ReconciliationScan {
+                self.replay_retained_observations(None)?;
+                return self.apply_observation(observation);
+            }
 
-        let requested_sequence = history_store::retain_observation(&observation)?;
-        self.replay_retained_observations(Some(requested_sequence))?
-            .ok_or_else(|| {
-                format!("Retained Note Timeline observation {requested_sequence} was not replayed")
-            })
+            let requested_sequence = history_store::retain_observation(&observation)?;
+            self.replay_retained_observations(Some(requested_sequence))?
+                .ok_or_else(|| {
+                    format!(
+                        "Retained Note Timeline observation {requested_sequence} was not replayed"
+                    )
+                })
+        })
     }
 
     fn recover_retained_observations(&self) -> Result<(), String> {
-        let _replay = self.state.lock_note_timeline_observation_replay()?;
-        self.recover_pending_deletions()?;
-        self.replay_retained_observations(None).map(|_| ())
+        self.runtime.with_observation_replay(|| {
+            self.recover_pending_deletions()?;
+            self.replay_retained_observations(None).map(|_| ())
+        })
     }
 
     fn replay_retained_observations(
@@ -3851,10 +3861,10 @@ impl<'a> NoteTimeline<'a> {
         let mut lifecycle_projection_warning = None;
         match kind {
             VaultObservationKind::ReconciliationScan => {
-                self.state.ensure_note_timeline_history_recovered()?;
+                self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
             }
             VaultObservationKind::Lifecycle(LifecycleEventKind::Missing) => {
-                self.state.ensure_note_timeline_history_recovered()?;
+                self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
                 let note_id = self
                     .state
                     .detach_indexed_note_identity(&path)?
@@ -3882,7 +3892,7 @@ impl<'a> NoteTimeline<'a> {
                         format!("Read observed canonical note {}: {error}", path.display())
                     })
                 })?;
-                self.state.ensure_note_timeline_history_recovered()?;
+                self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
                 let embedded_note_id = crate::note::parse_note(&markdown)
                     .frontmatter
                     .managed
@@ -3966,7 +3976,7 @@ impl<'a> NoteTimeline<'a> {
                             format!("Read observed moved note {}: {error}", path.display())
                         })
                     })?;
-                    self.state.ensure_note_timeline_history_recovered()?;
+                    self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
                     let transferred = self
                         .state
                         .prepare_note_identity_transfer(previous_path, &path)?;
@@ -4050,7 +4060,7 @@ impl<'a> NoteTimeline<'a> {
                         authoritative_authored_edit = true;
                     }
                 }
-                self.state.ensure_note_timeline_history_recovered()?;
+                self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
                 let note_id = crate::note::parse_note(&published_markdown)
                     .frontmatter
                     .managed
@@ -4145,7 +4155,7 @@ impl<'a> NoteTimeline<'a> {
             );
         }
         crate::state::with_note_file_mutation(|| {
-            let _timeline_operation = self.state.begin_note_timeline_operation()?;
+            let _timeline_operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
                 self.purge_note_under_mutation_boundary(&note_id, &path, occurred_at_millis)
             })
@@ -4168,12 +4178,17 @@ impl<'a> NoteTimeline<'a> {
         publish: impl FnOnce() -> Result<(), LifecyclePublicationFailure>,
     ) -> Result<LifecyclePublicationResult, String> {
         crate::state::with_note_file_mutation(|| {
-            let _timeline_operation = self.state.begin_note_timeline_operation()?;
-            let _replay = self.state.lock_note_timeline_observation_replay()?;
-            self.recover_pending_deletions()?;
-            self.replay_retained_observations(None)?;
-            self.state.ensure_note_timeline_history_recovered()?;
-            self.publish_lifecycle_under_mutation_boundary(operation, canonical_markdown, publish)
+            let _timeline_operation = self.runtime.begin_operation()?;
+            self.runtime.with_observation_replay(|| {
+                self.recover_pending_deletions()?;
+                self.replay_retained_observations(None)?;
+                self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
+                self.publish_lifecycle_under_mutation_boundary(
+                    operation,
+                    canonical_markdown,
+                    publish,
+                )
+            })
         })
     }
 
@@ -4273,10 +4288,11 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn recover_lifecycle_publications(&self) -> Result<(), String> {
-        let _timeline_operation = self.state.begin_note_timeline_operation()?;
-        let _replay = self.state.lock_note_timeline_observation_replay()?;
-        self.recover_pending_deletions()?;
-        self.replay_retained_observations(None).map(|_| ())
+        let _timeline_operation = self.runtime.begin_operation()?;
+        self.runtime.with_observation_replay(|| {
+            self.recover_pending_deletions()?;
+            self.replay_retained_observations(None).map(|_| ())
+        })
     }
 
     fn synchronize_forgotten_projection(&self, path: &Path) -> Option<NoteMutationWarning> {
@@ -4326,10 +4342,9 @@ impl<'a> NoteTimeline<'a> {
     }
 
     pub(crate) fn missing_notes(&self) -> Result<Vec<MissingNoteRecord>, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
-        self.state
-            .ensure_note_timeline_history_recovered_for_bounded_read()?;
+        self.ensure_history_recovered(RecoveryIntegrity::Bounded)?;
         history_store::missing_notes()
     }
 
@@ -4339,10 +4354,9 @@ impl<'a> NoteTimeline<'a> {
         cursor: Option<&str>,
         limit: usize,
     ) -> Result<HistoryModePage, String> {
-        let _operation = self.state.begin_note_timeline_operation()?;
+        let _operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
-        self.state
-            .ensure_note_timeline_history_recovered_for_bounded_read()?;
+        self.ensure_history_recovered(RecoveryIntegrity::Bounded)?;
         let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
             .ok_or_else(|| "Missing Note history requires a vault manifest".to_string())?;
         let continuation = cursor.map(MissingHistoryCursor::decode).transpose()?;
@@ -4430,7 +4444,7 @@ impl<'a> NoteTimeline<'a> {
         note_id: NoteIdentity,
     ) -> Result<LifecyclePublicationResult, String> {
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
+            let _operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
                 let recovered_at_millis = crate::time::current_time_millis()?;
                 let missing = history_store::missing_note(&note_id)?.ok_or_else(|| {
@@ -4492,7 +4506,7 @@ impl<'a> NoteTimeline<'a> {
 
     pub(crate) fn purge_expired_missing_notes(&self, now_millis: u64) -> Result<(), String> {
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
+            let _operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
                 for missing in history_store::missing_notes()?
                     .into_iter()
@@ -4519,7 +4533,7 @@ impl<'a> NoteTimeline<'a> {
             .map(|note_id| note_id.as_str())
             .collect::<HashSet<_>>();
         crate::state::with_note_file_mutation(|| {
-            let _operation = self.state.begin_note_timeline_operation()?;
+            let _operation = self.runtime.begin_operation()?;
             self.with_settled_history_mutation(|| {
                 let missing = history_store::missing_notes()?;
                 for note_id in note_ids {
@@ -4612,11 +4626,6 @@ impl<'a> NoteTimeline<'a> {
     }
 }
 
-pub(crate) fn recover_pending_history(state: &AppState) -> Result<(), String> {
-    history_store::recover_pending()?;
-    NoteTimeline::new(state).recover_pending_deletions()
-}
-
 #[cfg(test)]
 pub(crate) fn reset_history_integrity_snapshot_count_for_test() {
     history_store::reset_integrity_snapshot_count();
@@ -4647,7 +4656,7 @@ pub(crate) fn reconstructed_revision_bodies_for_test(
     state: &AppState,
     note_id: &str,
 ) -> Result<Vec<String>, String> {
-    let timeline = NoteTimeline::new(state);
+    let timeline = state.note_timeline();
     let history = timeline.history_mode(HistoryModeGrant::authorized(NoteIdentity::new(note_id)));
     history
         .revisions()?
@@ -4716,8 +4725,9 @@ mod tests {
     use std::{
         fs,
         path::PathBuf,
-        sync::{Arc, Barrier},
+        sync::{mpsc, Arc, Barrier},
         thread,
+        time::Duration,
     };
 
     fn copy_file(source: &Path, destination: &Path) {
@@ -4731,7 +4741,7 @@ mod tests {
         source: MutationSource,
         path: &Path,
         markdown: &str,
-    ) -> HistoryIntentIdentity {
+    ) -> PreparedHistoryIntent {
         crate::state::ensure_vault_scaffold(&crate::state::vault_root().expect("test vault root"))
             .expect("test vault scaffold");
         history_store::prepare_publication(
@@ -4809,7 +4819,7 @@ mod tests {
         )
         .unwrap();
 
-        let history = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let history = state.note_timeline().open_history_mode(note_id.clone());
         let revisions = history.revisions().unwrap();
         let first_id = revisions[0].identity().0.clone();
         let second_id = revisions[1].identity().0.clone();
@@ -4829,7 +4839,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let restarted_history = NoteTimeline::new(&restarted).open_history_mode(note_id);
+        let restarted_history = restarted.note_timeline().open_history_mode(note_id);
         let page = restarted_history.page(None, 100).unwrap();
         assert_eq!(
             page.records()
@@ -4999,7 +5009,9 @@ mod tests {
         )
         .unwrap();
 
-        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id));
         let revisions = history.revisions().unwrap();
         assert_eq!(revisions.len(), 3);
         let selected_id = revisions[1].identity();
@@ -5138,7 +5150,7 @@ mod tests {
     #[test]
     fn editor_mutation_assigns_its_closed_source() {
         let mutation = NoteMutation::editor(
-            HistoryIntentIdentity::for_test("editor-intent"),
+            PreparedHistoryIntent::for_test("editor-intent"),
             PathBuf::from("/vault/Note.md"),
             None,
             "# Note\n\nBody".to_string(),
@@ -5154,37 +5166,37 @@ mod tests {
         let markdown = "# Note\n\nBody".to_string();
         let mutations = [
             NoteMutation::task_action(
-                HistoryIntentIdentity::for_test("task-intent"),
+                PreparedHistoryIntent::for_test("task-intent"),
                 path.clone(),
                 None,
                 markdown.clone(),
             ),
             NoteMutation::accepted_chat_proposal(
-                HistoryIntentIdentity::for_test("proposal-intent"),
+                PreparedHistoryIntent::for_test("proposal-intent"),
                 path.clone(),
                 None,
                 markdown.clone(),
             ),
             NoteMutation::version_restore(
-                HistoryIntentIdentity::for_test("restore-intent"),
+                PreparedHistoryIntent::for_test("restore-intent"),
                 path.clone(),
                 None,
                 markdown.clone(),
             ),
             NoteMutation::note_creation(
-                HistoryIntentIdentity::for_test("creation-intent"),
+                PreparedHistoryIntent::for_test("creation-intent"),
                 path.clone(),
                 None,
                 markdown.clone(),
             ),
             NoteMutation::baseline_initialization(
-                HistoryIntentIdentity::for_test("baseline-intent"),
+                PreparedHistoryIntent::for_test("baseline-intent"),
                 path.clone(),
                 None,
                 markdown.clone(),
             ),
             NoteMutation::recovery_reconciliation(
-                HistoryIntentIdentity::for_test("recovery-intent"),
+                PreparedHistoryIntent::for_test("recovery-intent"),
                 path.clone(),
                 None,
                 markdown.clone(),
@@ -5241,7 +5253,8 @@ mod tests {
             crate::index::build_indexed_note(&path, canonical, 41),
         );
 
-        let error = NoteTimeline::new(&state)
+        let error = state
+            .note_timeline()
             .prepare_publication(
                 Some(&path),
                 Some(&NoteIdentity::new("stale-proposal-owner")),
@@ -5273,7 +5286,7 @@ mod tests {
         .expect("construct app state");
         let history_intent = prepare_test_history(MutationSource::Editor, &note_path, markdown);
 
-        let outcome = NoteTimeline::new(&state).mutate(NoteMutation::editor(
+        let outcome = state.note_timeline().mutate(NoteMutation::editor(
             history_intent,
             note_path.clone(),
             None,
@@ -5340,7 +5353,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let history = NoteTimeline::new(&restarted)
+        let history = restarted
+            .note_timeline()
             .history_mode(HistoryModeGrant::authorized(note_id.clone()));
         let revisions = history.revisions().unwrap();
         assert_eq!(revisions.len(), 2);
@@ -5418,14 +5432,13 @@ mod tests {
         )
         .unwrap();
         let before_bytes = fs::read(&path).unwrap();
-        let history =
-            NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id.clone()));
         let removed_revision = history.revisions().unwrap()[0].identity().clone();
         let before_clear = crate::time::current_time_millis().unwrap();
 
-        let receipt = NoteTimeline::new(&state)
-            .clear_note_history(&note_id)
-            .unwrap();
+        let receipt = state.note_timeline().clear_note_history(&note_id).unwrap();
         let after_clear = crate::time::current_time_millis().unwrap();
 
         assert_eq!(fs::read(&path).unwrap(), before_bytes);
@@ -5437,7 +5450,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
         let revisions = history.revisions().unwrap();
         assert_eq!(revisions.len(), 1);
@@ -5517,7 +5530,8 @@ mod tests {
             .collect::<Vec<_>>();
         fs::remove_file(&created[2].1).unwrap();
 
-        let receipt = NoteTimeline::new(&state)
+        let receipt = state
+            .note_timeline()
             .clear_vault_history(notes.path())
             .unwrap();
 
@@ -5534,7 +5548,8 @@ mod tests {
         assert_eq!(receipt.baseline_note_ids().len(), 2);
         for (index, (note_id, path)) in created[..2].iter().enumerate() {
             assert_eq!(fs::read(path).unwrap(), active_bytes[index]);
-            let revisions = NoteTimeline::new(&state)
+            let revisions = state
+                .note_timeline()
                 .history_mode(HistoryModeGrant::authorized(note_id.clone()))
                 .revisions()
                 .unwrap();
@@ -5545,7 +5560,8 @@ mod tests {
             );
             if index == 1 {
                 assert_eq!(
-                    NoteTimeline::new(&state)
+                    state
+                        .note_timeline()
                         .history_mode(HistoryModeGrant::authorized(note_id.clone()))
                         .reconstruct(revisions[0].identity())
                         .unwrap()
@@ -5554,7 +5570,8 @@ mod tests {
                 );
             }
         }
-        let missing_revisions = NoteTimeline::new(&state)
+        let missing_revisions = state
+            .note_timeline()
             .history_mode(HistoryModeGrant::authorized(created[2].0.clone()))
             .revisions()
             .unwrap();
@@ -5594,8 +5611,9 @@ mod tests {
             Some(path.to_string_lossy().into_owned()),
         )
         .unwrap();
-        let history =
-            NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id.clone()));
         let removed_revision = history.revisions().unwrap()[0].identity().clone();
         history_store::seed_revision_dependents_for_test(&removed_revision);
         assert_eq!(
@@ -5608,7 +5626,8 @@ mod tests {
             Some(note_id.as_str())
         );
 
-        NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .lifecycle(NoteLifecycleOperation::purged(
                 note_id.clone(),
                 path.clone(),
@@ -5621,7 +5640,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
         assert!(history.revisions().unwrap().is_empty());
         assert!(history.lifecycle_events().unwrap().is_empty());
@@ -5650,7 +5669,8 @@ mod tests {
         .contains("Purged Note Identity"));
         assert!(history.revisions().unwrap().is_empty());
 
-        NoteTimeline::new(&restarted)
+        restarted
+            .note_timeline()
             .lifecycle(NoteLifecycleOperation::purged(note_id, path, 702))
             .unwrap();
         assert_eq!(timeline.deletion_markers().unwrap().len(), 2);
@@ -5683,7 +5703,8 @@ mod tests {
         let path = PathBuf::from(created.path.unwrap());
         inject_purge_staging_failure_once();
 
-        let error = NoteTimeline::new(&state)
+        let error = state
+            .note_timeline()
             .lifecycle(NoteLifecycleOperation::purged(
                 note_id.clone(),
                 path.clone(),
@@ -5697,7 +5718,7 @@ mod tests {
             state.indexed_note_identity(&path).unwrap().as_deref(),
             Some(note_id.as_str())
         );
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         assert!(!timeline
             .history_mode(HistoryModeGrant::authorized(note_id))
             .revisions()
@@ -5731,12 +5752,11 @@ mod tests {
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = PathBuf::from(created.path.unwrap());
-        let in_flight_read = NoteTimeline::new(&state)
-            .begin_current_content_read()
-            .unwrap();
+        let in_flight_read = state.note_timeline().begin_current_content_read().unwrap();
         inject_purge_projection_cleanup_failure_once();
 
-        let error = NoteTimeline::new(&state)
+        let error = state
+            .note_timeline()
             .lifecycle(NoteLifecycleOperation::purged(
                 note_id.clone(),
                 path.clone(),
@@ -5761,7 +5781,7 @@ mod tests {
         )
         .unwrap();
         assert!(retrieved.is_empty());
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let markers = timeline.deletion_markers().unwrap();
         assert_eq!(markers.len(), 1);
         assert_eq!(markers[0].scope(), &DeletionScope::Note(note_id.clone()));
@@ -5800,7 +5820,8 @@ mod tests {
         let path = PathBuf::from(created.path.unwrap());
         inject_history_deletion_failure_once();
 
-        let error = NoteTimeline::new(&state)
+        let error = state
+            .note_timeline()
             .lifecycle(NoteLifecycleOperation::purged(
                 note_id.clone(),
                 path.clone(),
@@ -5819,7 +5840,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         assert_eq!(fs::read_to_string(&path).unwrap(), replacement);
         let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
         assert!(history.revisions().unwrap().is_empty());
@@ -5864,29 +5885,30 @@ mod tests {
         .unwrap();
         inject_history_deletion_failure_once();
 
-        let error = NoteTimeline::new(&state)
+        let error = state
+            .note_timeline()
             .clear_note_history(&note_id)
             .unwrap_err();
 
         assert!(error.contains("injected history deletion interruption"));
-        let history =
-            NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id.clone()));
         assert_eq!(history.revisions().unwrap().len(), 2);
-        assert!(NoteTimeline::new(&state)
-            .deletion_markers()
-            .unwrap()
-            .is_empty());
+        assert!(state.note_timeline().deletion_markers().unwrap().is_empty());
         drop(state);
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
             EventBus::disabled(),
         )
         .unwrap();
-        NoteTimeline::new(&restarted)
+        restarted
+            .note_timeline()
             .clear_note_history(&note_id)
             .unwrap();
-        let history =
-            NoteTimeline::new(&restarted).history_mode(HistoryModeGrant::authorized(note_id));
+        let history = restarted
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id));
         assert_eq!(history.revisions().unwrap().len(), 1);
         assert_eq!(
             history.revisions().unwrap()[0].source(),
@@ -5932,7 +5954,7 @@ mod tests {
             )
             .unwrap();
         }
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         assert_eq!(history_store::auto_vacuum_mode_for_test(), 2);
         let retained = timeline.history_storage_usage().unwrap();
 
@@ -5981,7 +6003,8 @@ mod tests {
         )
         .unwrap();
 
-        let progress = NoteTimeline::new(&state)
+        let progress = state
+            .note_timeline()
             .initialize_existing_notes(notes.path())
             .unwrap();
         let after_known = crate::time::current_time_millis().unwrap();
@@ -5990,9 +6013,11 @@ mod tests {
         assert_eq!(progress.discovered_notes(), 1);
         assert_eq!(progress.baseline_revisions(), 1);
         assert_eq!(fs::read(&path).unwrap(), before_bytes);
-        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(
-            NoteIdentity::new("existing-note"),
-        ));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                "existing-note",
+            )));
         let revisions = history.revisions().unwrap();
         assert_eq!(revisions.len(), 1);
         assert_eq!(
@@ -6037,9 +6062,11 @@ mod tests {
         )
         .unwrap();
 
-        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(
-            NoteIdentity::new("raced-note"),
-        ));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                "raced-note",
+            )));
         let revisions = history.revisions().unwrap();
         assert_eq!(revisions.len(), 2);
         assert_eq!(
@@ -6075,7 +6102,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
 
         let start = Arc::new(Barrier::new(2));
         thread::scope(|scope| {
@@ -6084,7 +6111,8 @@ mod tests {
             let notes_path = notes.path();
             let initializer = scope.spawn(move || {
                 initialization_start.wait();
-                NoteTimeline::new(state_ref)
+                state_ref
+                    .note_timeline()
                     .initialize_existing_notes(notes_path)
                     .unwrap()
             });
@@ -6094,7 +6122,8 @@ mod tests {
             let state_ref = &state;
             let observer = scope.spawn(move || {
                 observation_start.wait();
-                NoteTimeline::new(state_ref)
+                state_ref
+                    .note_timeline()
                     .observe(
                         VaultObservation::external_edit(observed_path, 500, Some(450))
                             .with_canonical_markdown(observed_markdown),
@@ -6131,7 +6160,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
 
         let path = notes.path().join("Added later.md");
@@ -6177,7 +6206,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         let first_revision = timeline
             .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
@@ -6195,7 +6224,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         let progress = timeline.baseline_initialization_progress().unwrap();
         assert_eq!(progress.phase(), BaselineInitializationPhase::Complete);
         assert_eq!(progress.discovered_notes(), 1);
@@ -6255,7 +6284,8 @@ mod tests {
         )
         .unwrap();
 
-        let progress = NoteTimeline::new(&state)
+        let progress = state
+            .note_timeline()
             .initialize_existing_notes(notes.path())
             .unwrap();
 
@@ -6283,7 +6313,8 @@ mod tests {
         .session
         .unwrap();
         let repaired_note_id = saved.note_id.unwrap();
-        let revisions = NoteTimeline::new(&restarted)
+        let revisions = restarted
+            .note_timeline()
             .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
                 repaired_note_id,
             )))
@@ -6319,7 +6350,8 @@ mod tests {
         .unwrap();
         inject_history_baseline_failure_once();
 
-        let progress = NoteTimeline::new(&state)
+        let progress = state
+            .note_timeline()
             .initialize_existing_notes(notes.path())
             .unwrap();
 
@@ -6329,7 +6361,7 @@ mod tests {
         let resolved_note_id = &failed_note_ids[0];
         assert!(!resolved_note_id.trim().is_empty());
         assert!(matches!(
-            NoteTimeline::new(&state)
+            state.note_timeline()
                 .note_baseline_initialization_state(&NoteIdentity::new(resolved_note_id.clone()))
                 .unwrap(),
             NoteBaselineInitializationState::Failed { error }
@@ -6361,7 +6393,8 @@ mod tests {
         )
         .unwrap();
         inject_history_baseline_failure_once();
-        let degraded = NoteTimeline::new(&first_state)
+        let degraded = first_state
+            .note_timeline()
             .initialize_existing_notes(notes.path())
             .unwrap();
         assert_eq!(degraded.phase(), BaselineInitializationPhase::Degraded);
@@ -6370,14 +6403,15 @@ mod tests {
             .last_error()
             .is_some_and(|error| error.contains("injected Baseline Revision failure")));
         assert_eq!(
-            NoteTimeline::new(&first_state)
+            first_state
+                .note_timeline()
                 .baseline_initialization_progress()
                 .unwrap()
                 .phase(),
             BaselineInitializationPhase::Degraded
         );
         assert!(matches!(
-            NoteTimeline::new(&first_state)
+            first_state.note_timeline()
                 .note_baseline_initialization_state(&NoteIdentity::new("baseline-00"))
                 .unwrap(),
             NoteBaselineInitializationState::Failed { error }
@@ -6390,7 +6424,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let progress = NoteTimeline::new(&restarted)
+        let progress = restarted
+            .note_timeline()
             .initialize_existing_notes(notes.path())
             .unwrap();
         assert_eq!(progress.phase(), BaselineInitializationPhase::Complete);
@@ -6399,7 +6434,8 @@ mod tests {
         assert_eq!(progress.ready_notes(), 64);
         assert_eq!(progress.failed_notes(), 0);
         for index in 0..64 {
-            let revisions = NoteTimeline::new(&restarted)
+            let revisions = restarted
+                .note_timeline()
                 .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(format!(
                     "baseline-{index:02}"
                 ))))
@@ -6433,7 +6469,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .initialize_existing_notes(notes.path())
             .unwrap();
         drop(state);
@@ -6453,7 +6490,8 @@ mod tests {
         )
         .unwrap();
 
-        let error = NoteTimeline::new(&reopened)
+        let error = reopened
+            .note_timeline()
             .baseline_initialization_progress()
             .expect_err("mismatched selected generation must not open silently");
         assert!(error.contains("generation mismatch"));
@@ -6479,9 +6517,9 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
-        timeline
+        let prepared = timeline
             .prepare_revision_publication(
                 MutationSource::Editor,
                 &path,
@@ -6492,7 +6530,21 @@ mod tests {
             .unwrap();
         assert_eq!(prepared_history_intent_count_for_test("prepared"), 1);
 
-        timeline.clean_close(notes.path()).unwrap();
+        thread::scope(|scope| {
+            let (closed_tx, closed_rx) = mpsc::channel();
+            let close_state = &state;
+            let vault_root = notes.path();
+            let close = scope.spawn(move || {
+                let result = close_state.note_timeline().clean_close(vault_root);
+                closed_tx.send(()).unwrap();
+                result
+            });
+            assert!(closed_rx.recv_timeout(Duration::from_millis(50)).is_err());
+            let (_, history_intent) = prepared.into_parts();
+            history_intent.abandon().unwrap();
+            closed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            close.join().unwrap().unwrap();
+        });
         assert_eq!(
             history_store::prepared_intent_count_without_opening_store("prepared"),
             0
@@ -6529,7 +6581,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         inject_history_clean_close_failure_once();
 
@@ -6570,7 +6622,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        NoteTimeline::new(&source_state)
+        source_state
+            .note_timeline()
             .initialize_existing_notes(source.path())
             .unwrap();
 
@@ -6596,7 +6649,8 @@ mod tests {
         )
         .unwrap();
 
-        let error = NoteTimeline::new(&copied_state)
+        let error = copied_state
+            .note_timeline()
             .baseline_initialization_progress()
             .expect_err("a live main-file-only copy must not be accepted as portable");
         assert!(error.contains("unsupported live copy"));
@@ -6623,7 +6677,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let source_timeline = NoteTimeline::new(&source_state);
+        let source_timeline = source_state.note_timeline();
         source_timeline
             .initialize_existing_notes(source.path())
             .unwrap();
@@ -6657,9 +6711,12 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let copied_access = NoteTimeline::new(&copied_state).history_mode(
-            HistoryModeGrant::authorized(NoteIdentity::new("portable-copy-note")),
-        );
+        let copied_access =
+            copied_state
+                .note_timeline()
+                .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                    "portable-copy-note",
+                )));
 
         let copied_header = copied_access.revisions().unwrap()[0].clone();
         let copied_revision = copied_access.reconstruct(copied_header.identity()).unwrap();
@@ -6687,7 +6744,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let first_timeline = NoteTimeline::new(&first_state);
+        let first_timeline = first_state.note_timeline();
         first_timeline
             .initialize_existing_notes(notes.path())
             .unwrap();
@@ -6703,7 +6760,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let second_timeline = NoteTimeline::new(&second_state);
+        let second_timeline = second_state.note_timeline();
         second_timeline.baseline_initialization_progress().unwrap();
         second_timeline.clean_close(notes.path()).unwrap();
         drop(second_timeline);
@@ -6715,7 +6772,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let error = NoteTimeline::new(&rolled_back_state)
+        let error = rolled_back_state
+            .note_timeline()
             .baseline_initialization_progress()
             .expect_err("an older clean store from the same generation must require recovery");
         assert!(error.contains("clean-close watermark rollback"));
@@ -6741,7 +6799,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        NoteTimeline::new(&source_state)
+        source_state
+            .note_timeline()
             .initialize_existing_notes(source.path())
             .unwrap();
         let keepalive = history_store::hold_history_store_open_for_test();
@@ -6752,9 +6811,12 @@ mod tests {
             Some(source_note.to_string_lossy().into_owned()),
         )
         .unwrap();
-        let source_access = NoteTimeline::new(&source_state).history_mode(
-            HistoryModeGrant::authorized(NoteIdentity::new("wal-recovery-note")),
-        );
+        let source_access =
+            source_state
+                .note_timeline()
+                .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                    "wal-recovery-note",
+                )));
         let expected_header = source_access.revisions().unwrap().last().unwrap().clone();
         let expected_revision = source_access
             .reconstruct(expected_header.identity())
@@ -6788,9 +6850,12 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let restarted_access = NoteTimeline::new(&restarted_state).history_mode(
-            HistoryModeGrant::authorized(NoteIdentity::new("wal-recovery-note")),
-        );
+        let restarted_access =
+            restarted_state
+                .note_timeline()
+                .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                    "wal-recovery-note",
+                )));
         let recovered_header = restarted_access
             .revisions()
             .unwrap()
@@ -6827,7 +6892,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         history_store::remove_history_store();
 
@@ -6864,7 +6929,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(active.path()).unwrap();
 
         assert!(timeline
@@ -6906,7 +6971,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         timeline.reset_history(notes.path()).unwrap();
 
@@ -6946,7 +7011,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         let original_revision = timeline
             .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
@@ -6992,7 +7057,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let durable_reset = NoteTimeline::new(&restarted)
+        let durable_reset = restarted
+            .note_timeline()
             .latest_history_reset()
             .unwrap()
             .expect("reset diagnostic survives replacement and restart");
@@ -7020,7 +7086,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         inject_history_baseline_failure_once();
 
@@ -7037,7 +7103,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         assert_eq!(
             timeline.history_health().unwrap().state(),
             HistoryHealthState::Corrupt
@@ -7091,7 +7157,7 @@ mod tests {
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = PathBuf::from(created.path.unwrap());
         fs::remove_file(&path).unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(VaultObservation::missing(
                 path,
@@ -7142,7 +7208,7 @@ mod tests {
         let path = PathBuf::from(created.path.unwrap());
         fs::remove_file(&path).unwrap();
         let missing_at = crate::time::current_time_millis().unwrap() + 1;
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(VaultObservation::missing(path.clone(), missing_at))
             .unwrap();
@@ -7158,7 +7224,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         let after = timeline.missing_notes().unwrap().remove(0);
         assert_eq!(after.note_id(), &note_id);
         assert_eq!(after.path(), path);
@@ -7206,7 +7272,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
 
         let initializing = timeline.history_health().unwrap();
         assert_eq!(initializing.state(), HistoryHealthState::Initializing);
@@ -7258,7 +7324,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         history_store::remove_history_store();
 
@@ -7319,7 +7385,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         history_store::inject_fault_once(history_store::FaultPoint::Baseline);
         let progress = timeline.initialize_existing_notes(notes.path()).unwrap();
         assert_eq!(progress.phase(), BaselineInitializationPhase::Degraded);
@@ -7392,7 +7458,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         let original_revision = timeline
             .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
@@ -7474,7 +7540,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let after_restart = NoteTimeline::new(&restarted).history_health().unwrap();
+        let after_restart = restarted.note_timeline().history_health().unwrap();
         assert_eq!(
             after_restart.last_reset().unwrap().operation_id(),
             operation_id
@@ -7499,7 +7565,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline.initialize_existing_notes(notes.path()).unwrap();
         history_store::replace_history_store_with_malformed_file_for_test();
         assert_eq!(
@@ -7566,7 +7632,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         history_store::reset_integrity_snapshot_count();
 
         timeline
@@ -7605,7 +7671,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let first_path = notes.path().join("First.md");
         let second_path = notes.path().join("Second.md");
         let first = timeline
@@ -7680,7 +7746,7 @@ mod tests {
         .session
         .unwrap();
         let path = PathBuf::from(created.path.unwrap());
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let first = timeline
             .prepare_revision_publication(
                 MutationSource::Editor,
@@ -7738,7 +7804,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let path = notes.path().join("Identity Mismatch.md");
         let prepared = timeline
             .prepare_revision_publication(
@@ -7788,7 +7854,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let path = notes.path().join("Identity Missing.md");
         let prepared = timeline
             .prepare_revision_publication(
@@ -7829,7 +7895,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let path = notes.path().join("Vanished.md");
         let prepared = timeline
             .prepare_revision_publication(
@@ -7880,9 +7946,11 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(
-            NoteIdentity::new("missing-note"),
-        ));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(NoteIdentity::new(
+                "missing-note",
+            )));
         inject_history_recovery_failure_once();
 
         assert!(history
@@ -7907,7 +7975,8 @@ mod tests {
         )
         .unwrap();
         let path = notes.path().join("Unreadable.md");
-        let prepared = NoteTimeline::new(&state)
+        let prepared = state
+            .note_timeline()
             .prepare_revision_publication(
                 MutationSource::NoteCreation,
                 &path,
@@ -7931,8 +8000,9 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let history =
-            NoteTimeline::new(&restarted).history_mode(HistoryModeGrant::authorized(note_id));
+        let history = restarted
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id));
         assert!(history
             .revisions()
             .unwrap_err()
@@ -7977,7 +8047,9 @@ mod tests {
         )
         .unwrap();
 
-        let history = NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id));
         assert_eq!(history.revisions().unwrap().len(), 2);
         let events = history.lifecycle_events().unwrap();
         assert_eq!(events.len(), 2);
@@ -8039,8 +8111,9 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let history =
-            NoteTimeline::new(&restarted).history_mode(HistoryModeGrant::authorized(note_id));
+        let history = restarted
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id));
         let revisions = history.revisions().unwrap();
         assert_eq!(revisions.len(), 1);
         assert!(revisions[0].committed_at_millis().unwrap() >= before_publication);
@@ -8061,7 +8134,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let path = notes.path().join("Sources.md");
         let sources = [
             MutationSource::NoteCreation,
@@ -8134,8 +8207,9 @@ mod tests {
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         history_store::replace_revision_source(&note_id, "futureSource");
-        let history =
-            NoteTimeline::new(&state).history_mode(HistoryModeGrant::authorized(note_id.clone()));
+        let history = state
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id.clone()));
         assert!(history
             .revisions()
             .unwrap_err()
@@ -8193,7 +8267,8 @@ mod tests {
         )
         .unwrap();
         let path = notes.path().join("Never Published.md");
-        let prepared = NoteTimeline::new(&state)
+        let prepared = state
+            .note_timeline()
             .prepare_revision_publication(
                 MutationSource::NoteCreation,
                 &path,
@@ -8215,11 +8290,89 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let history =
-            NoteTimeline::new(&restarted).history_mode(HistoryModeGrant::authorized(note_id));
+        let history = restarted
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id));
         assert!(history.revisions().unwrap().is_empty());
         assert!(history.lifecycle_events().unwrap().is_empty());
         assert!(!path.exists());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn concurrent_history_reads_after_restart_converge_one_prepared_publication() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("timeline-runtime-race-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("timeline-runtime-race-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let path = notes.path().join("Interrupted Publication.md");
+        let prepared = state
+            .note_timeline()
+            .prepare_revision_publication(
+                MutationSource::NoteCreation,
+                &path,
+                None,
+                None,
+                "Published before interruption",
+            )
+            .unwrap();
+        let note_id = NoteIdentity::new(
+            crate::note::parse_note(prepared.canonical_markdown())
+                .frontmatter
+                .managed
+                .unwrap()
+                .id,
+        );
+        fs::write(&path, prepared.canonical_markdown()).unwrap();
+        drop(prepared);
+        drop(state);
+        assert_eq!(prepared_history_intent_count_for_test("prepared"), 1);
+
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let start = Arc::new(Barrier::new(3));
+        let revision_counts = thread::scope(|scope| {
+            let first_start = Arc::clone(&start);
+            let first_note_id = note_id.clone();
+            let first_state = &restarted;
+            let first = scope.spawn(move || {
+                first_start.wait();
+                first_state
+                    .note_timeline()
+                    .open_history_mode(first_note_id)
+                    .revisions()
+                    .map(|revisions| revisions.len())
+            });
+            let second_start = Arc::clone(&start);
+            let second_note_id = note_id.clone();
+            let second_state = &restarted;
+            let second = scope.spawn(move || {
+                second_start.wait();
+                second_state
+                    .note_timeline()
+                    .open_history_mode(second_note_id)
+                    .revisions()
+                    .map(|revisions| revisions.len())
+            });
+            start.wait();
+            vec![
+                first.join().unwrap().unwrap(),
+                second.join().unwrap().unwrap(),
+            ]
+        });
+
+        assert_eq!(revision_counts, vec![1, 1]);
+        assert_eq!(prepared_history_intent_count_for_test("prepared"), 0);
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -8255,7 +8408,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let prepared = NoteTimeline::new(&restarted)
+        let prepared = restarted
+            .note_timeline()
             .prepare_revision_publication(MutationSource::NoteCreation, &path, None, None, "retry")
             .unwrap();
         let note_id = NoteIdentity::new(
@@ -8265,8 +8419,9 @@ mod tests {
                 .unwrap()
                 .id,
         );
-        let history =
-            NoteTimeline::new(&restarted).history_mode(HistoryModeGrant::authorized(note_id));
+        let history = restarted
+            .note_timeline()
+            .history_mode(HistoryModeGrant::authorized(note_id));
         assert!(history.revisions().unwrap().is_empty());
         assert!(history.lifecycle_events().unwrap().is_empty());
         crate::state::set_notes_root_override(None).unwrap();
@@ -8285,7 +8440,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let path = notes.path().join("Long Chain.md");
         let mut note_id = None;
         for revision in 0..140 {
@@ -8324,7 +8479,8 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let history = NoteTimeline::new(&restarted)
+        let history = restarted
+            .note_timeline()
             .history_mode(HistoryModeGrant::authorized(note_id.unwrap()));
         let revisions = history.revisions().unwrap();
         assert_eq!(revisions.len(), 140);
@@ -8355,7 +8511,7 @@ mod tests {
             EventBus::disabled(),
         )
         .expect("construct app state");
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let history_intent = prepare_test_history(MutationSource::Editor, &note_path, original);
         timeline.mutate(NoteMutation::editor(
             history_intent,
@@ -8402,7 +8558,7 @@ mod tests {
             EventBus::disabled(),
         )
         .expect("construct app state");
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let history_intent = prepare_test_history(MutationSource::Editor, &note_path, original);
         timeline.mutate(NoteMutation::editor(
             history_intent,
@@ -8465,7 +8621,7 @@ mod tests {
             EventBus::disabled(),
         )
         .expect("construct app state");
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let history_intent = prepare_test_history(MutationSource::Editor, &original_path, markdown);
         timeline.mutate(NoteMutation::editor(
             history_intent,
@@ -8587,7 +8743,7 @@ mod tests {
             EventBus::disabled(),
         )
         .expect("construct app state");
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let history_intent = prepare_test_history(MutationSource::Editor, &original_path, markdown);
         timeline.mutate(NoteMutation::editor(
             history_intent,
@@ -8779,7 +8935,7 @@ mod tests {
             )
             .unwrap();
 
-        let _observation = NoteTimeline::new(&state).observe(VaultObservation::moved(
+        let _observation = state.note_timeline().observe(VaultObservation::moved(
             original_path.clone(),
             target_path.clone(),
             42,
@@ -8821,7 +8977,7 @@ mod tests {
             EventBus::disabled(),
         )
         .expect("construct app state");
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let note_id = NoteIdentity::new("note-1");
         let revision_id = RevisionIdentity::from_persisted("revision-1");
 
@@ -8870,7 +9026,7 @@ mod tests {
         let externally_edited = canonical.replacen("Before", "After external", 1);
         fs::write(&path, &externally_edited).unwrap();
 
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(VaultObservation::external_edit(
                 path.clone(),
@@ -8925,7 +9081,7 @@ mod tests {
         let path = notes.path().join("After.md");
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         fs::rename(&previous_path, &path).unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let observed_at = crate::time::current_time_millis().unwrap() + 1;
 
         timeline
@@ -9004,7 +9160,7 @@ mod tests {
         .unwrap();
         let path = PathBuf::from(renamed.path.unwrap());
 
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let history = timeline.history_mode(HistoryModeGrant::authorized(note_id));
         let revisions = history.revisions().unwrap();
         assert_eq!(revisions.len(), 1);
@@ -9062,7 +9218,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         let observed_at = crate::time::current_time_millis().unwrap() + 1;
 
         timeline
@@ -9109,7 +9265,7 @@ mod tests {
             .unwrap()
             .replacen("Original", "External", 1);
         fs::write(&path, &external).unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(
                 VaultObservation::external_edit(path.clone(), 400, None)
@@ -9183,7 +9339,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let timeline = NoteTimeline::new(&restarted);
+        let timeline = restarted.note_timeline();
         for observed_at in [500, 501] {
             timeline
                 .observe(
@@ -9219,7 +9375,8 @@ mod tests {
         let path = notes.path().join("Observed.md");
         fs::write(&path, "Observed").unwrap();
 
-        let receipt = NoteTimeline::new(&state)
+        let receipt = state
+            .note_timeline()
             .observe(VaultObservation::external_edit(path.clone(), 42, Some(41)))
             .unwrap();
 
@@ -9231,7 +9388,8 @@ mod tests {
 
         let renamed_path = notes.path().join("Renamed.md");
         fs::rename(&path, &renamed_path).unwrap();
-        let renamed = NoteTimeline::new(&state)
+        let renamed = state
+            .note_timeline()
             .observe(VaultObservation::renamed(&path, &renamed_path, 43))
             .unwrap();
         assert_eq!(
@@ -9260,7 +9418,7 @@ mod tests {
             EventBus::disabled(),
         )
         .expect("construct app state");
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         let history_intent =
             prepare_test_history(MutationSource::Editor, &original_path, original_markdown);
         timeline.mutate(NoteMutation::editor(
@@ -9336,11 +9494,12 @@ mod tests {
             let missing_at = crate::time::current_time_millis().unwrap() + index as u64 + 1;
             fs::remove_file(&path).unwrap();
 
-            NoteTimeline::new(&state)
+            state
+                .note_timeline()
                 .observe(VaultObservation::missing(path.clone(), missing_at))
                 .unwrap();
 
-            let missing = NoteTimeline::new(&state).missing_notes().unwrap();
+            let missing = state.note_timeline().missing_notes().unwrap();
             let record = missing
                 .iter()
                 .find(|record| record.note_id() == &note_id)
@@ -9353,16 +9512,18 @@ mod tests {
                 record.purge_at_millis(),
                 missing_at + u64::from(retention_days) * 24 * 60 * 60 * 1_000
             );
-            let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+            let access = state.note_timeline().open_history_mode(note_id.clone());
             assert_eq!(
                 access.revisions().unwrap_err(),
                 "Recover the missing note before accessing its Note Timeline"
             );
-            assert!(!NoteTimeline::new(&state)
+            assert!(!state
+                .note_timeline()
                 .current_content(AllowedScope::only(note_id.clone()))
                 .allows(&note_id));
             assert_eq!(
-                NoteTimeline::new(&state)
+                state
+                    .note_timeline()
                     .agent_restore(ExplicitRestoreGrant::new(
                         TurnIdentity::new("missing-restore-turn"),
                         note_id.clone(),
@@ -9380,7 +9541,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let missing = NoteTimeline::new(&restarted).missing_notes().unwrap();
+        let missing = restarted.note_timeline().missing_notes().unwrap();
         assert_eq!(
             missing
                 .iter()
@@ -9396,7 +9557,9 @@ mod tests {
             ]
         );
         for record in missing {
-            let access = NoteTimeline::new(&restarted).open_history_mode(record.note_id().clone());
+            let access = restarted
+                .note_timeline()
+                .open_history_mode(record.note_id().clone());
             assert_eq!(
                 access.revisions().unwrap_err(),
                 "Recover the missing note before accessing its Note Timeline"
@@ -9447,7 +9610,8 @@ mod tests {
         history_store::mark_store_as_schema_seven_for_test();
         crate::state::set_forgotten_note_retention_days(30).unwrap();
 
-        NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .recover_retained_observations()
             .unwrap();
 
@@ -9483,12 +9647,14 @@ mod tests {
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = PathBuf::from(created.path.unwrap());
         fs::remove_file(&path).unwrap();
-        let pending_missing = NoteTimeline::new(&state)
+        let pending_missing = state
+            .note_timeline()
             .capture_observed_markdown(VaultObservation::missing(path, 42))
             .unwrap();
         history_store::retain_observation(&pending_missing).unwrap();
 
-        let error = NoteTimeline::new(&state)
+        let error = state
+            .note_timeline()
             .agent_restore(ExplicitRestoreGrant::new(
                 TurnIdentity::new("pending-missing-turn"),
                 note_id.clone(),
@@ -9532,7 +9698,7 @@ mod tests {
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let original_path = PathBuf::from(created.path.unwrap());
         fs::remove_file(&original_path).unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(VaultObservation::missing(
                 original_path.clone(),
@@ -9602,7 +9768,7 @@ mod tests {
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = PathBuf::from(created.path.unwrap());
         fs::remove_file(&path).unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(VaultObservation::missing(
                 path.clone(),
@@ -9646,7 +9812,7 @@ mod tests {
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = PathBuf::from(created.path.unwrap());
         fs::remove_file(&path).unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(VaultObservation::missing(
                 path.clone(),
@@ -9700,7 +9866,8 @@ mod tests {
         let path = PathBuf::from(created.path.unwrap());
         let original_markdown = fs::read_to_string(&path).unwrap();
         fs::remove_file(&path).unwrap();
-        NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .observe(VaultObservation::missing(
                 path.clone(),
                 crate::time::current_time_millis().unwrap() + 1,
@@ -9710,7 +9877,8 @@ mod tests {
         let unrelated =
             "---\ngneauxghts:\n  id: unrelated-path-reuse\n  kind: note\n---\n\nUnrelated";
         fs::write(&path, unrelated).unwrap();
-        let unrelated_receipt = NoteTimeline::new(&state)
+        let unrelated_receipt = state
+            .note_timeline()
             .observe(
                 VaultObservation::external_edit(path.clone(), 200, None)
                     .with_canonical_markdown(unrelated.to_string()),
@@ -9720,7 +9888,7 @@ mod tests {
             unrelated_receipt.kind(),
             VaultObservationKind::CanonicalState
         );
-        assert_eq!(NoteTimeline::new(&state).missing_notes().unwrap().len(), 1);
+        assert_eq!(state.note_timeline().missing_notes().unwrap().len(), 1);
         assert_eq!(
             history_store::revisions(&NoteIdentity::new("unrelated-path-reuse"))
                 .unwrap()
@@ -9735,7 +9903,8 @@ mod tests {
         )
         .unwrap();
         fs::write(&path, original_markdown).unwrap();
-        let reattached = NoteTimeline::new(&restarted)
+        let reattached = restarted
+            .note_timeline()
             .observe(VaultObservation::reconciled_state(
                 path.clone(),
                 crate::time::current_time_millis().unwrap() + 2,
@@ -9747,11 +9916,12 @@ mod tests {
             reattached.kind(),
             VaultObservationKind::Lifecycle(LifecycleEventKind::Reattached)
         );
-        assert!(NoteTimeline::new(&restarted)
+        assert!(restarted
+            .note_timeline()
             .missing_notes()
             .unwrap()
             .is_empty());
-        let access = NoteTimeline::new(&restarted).open_history_mode(note_id);
+        let access = restarted.note_timeline().open_history_mode(note_id);
         assert_eq!(access.revisions().unwrap().len(), 1);
         assert_eq!(
             access.lifecycle_events().unwrap().last().unwrap().kind(),
@@ -9787,7 +9957,7 @@ mod tests {
         let path = PathBuf::from(created.path.unwrap());
         fs::remove_file(&path).unwrap();
         let missing_at = crate::time::current_time_millis().unwrap() + 1;
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(VaultObservation::missing(path.clone(), missing_at))
             .unwrap();
@@ -9836,7 +10006,7 @@ mod tests {
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = PathBuf::from(created.path.unwrap());
         fs::remove_file(&path).unwrap();
-        let timeline = NoteTimeline::new(&state);
+        let timeline = state.note_timeline();
         timeline
             .observe(VaultObservation::missing(path.clone(), 1))
             .unwrap();
@@ -9889,7 +10059,8 @@ mod tests {
         .unwrap()
         .0;
 
-        let publication = NoteTimeline::new(&state)
+        let publication = state
+            .note_timeline()
             .publish_lifecycle(
                 NoteLifecycleOperation::forgotten(
                     note_id.clone(),
@@ -10040,7 +10211,7 @@ mod tests {
             .unwrap();
         }
 
-        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let access = state.note_timeline().open_history_mode(note_id.clone());
         let first_page = access.page(None, 2).unwrap();
         assert_eq!(first_page.records().len(), 2);
         let serialized = serde_json::to_value(&first_page).unwrap();
@@ -10110,7 +10281,7 @@ mod tests {
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let mut path = PathBuf::from(created.path.unwrap());
-        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let access = state.note_timeline().open_history_mode(note_id.clone());
         let earlier_revision_id = access.revisions().unwrap()[0].identity().clone();
 
         let renamed = crate::commands::note_persistence::persist_note_session_with_outcome(
@@ -10193,7 +10364,7 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let restarted_access = NoteTimeline::new(&restarted).open_history_mode(note_id.clone());
+        let restarted_access = restarted.note_timeline().open_history_mode(note_id.clone());
         let revisions = restarted_access.revisions().unwrap();
         assert_eq!(
             restarted_access.lifecycle_events().unwrap(),
@@ -10261,7 +10432,7 @@ mod tests {
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = PathBuf::from(created.path.unwrap());
-        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let access = state.note_timeline().open_history_mode(note_id.clone());
         let empty_revision = access.revisions().unwrap()[0].identity().clone();
         crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
@@ -10320,10 +10491,11 @@ mod tests {
         )
         .unwrap();
         fs::write(&path, &exact).unwrap();
-        NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .observe(VaultObservation::external_edit(path.clone(), 10, Some(9)))
             .unwrap();
-        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let access = state.note_timeline().open_history_mode(note_id.clone());
         let exact_revision = access
             .revisions()
             .unwrap()
@@ -10401,7 +10573,8 @@ mod tests {
         .0;
         inject_lifecycle_finalization_failure_once();
 
-        let publication = NoteTimeline::new(&state)
+        let publication = state
+            .note_timeline()
             .publish_lifecycle(
                 NoteLifecycleOperation::forgotten(
                     note_id.clone(),
@@ -10432,7 +10605,8 @@ mod tests {
         fs::write(&forgotten_path, &externally_edited).unwrap();
         let before_recovery = crate::time::current_time_millis().unwrap();
 
-        NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .recover_lifecycle_publications()
             .unwrap();
 
@@ -10477,7 +10651,7 @@ mod tests {
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let active_path = PathBuf::from(created.path.unwrap());
-        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let access = state.note_timeline().open_history_mode(note_id.clone());
         let earlier_revision = access.revisions().unwrap()[0].identity().clone();
         crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
@@ -10500,10 +10674,9 @@ mod tests {
         fs::create_dir_all(&forgotten_root).unwrap();
         let forgotten_path = forgotten_root.join("Forgotten history.md");
         let forgotten_at_millis = crate::time::current_time_millis().unwrap() + 100;
-        let active_content_read = NoteTimeline::new(&state)
-            .begin_current_content_read()
-            .unwrap();
-        let forgotten_publication = NoteTimeline::new(&state)
+        let active_content_read = state.note_timeline().begin_current_content_read().unwrap();
+        let forgotten_publication = state
+            .note_timeline()
             .publish_lifecycle(
                 NoteLifecycleOperation::forgotten(
                     note_id.clone(),
@@ -10544,13 +10717,15 @@ mod tests {
             EventBus::disabled(),
         )
         .unwrap();
-        let access = NoteTimeline::new(&state).open_history_mode(note_id.clone());
+        let access = state.note_timeline().open_history_mode(note_id.clone());
         assert!(access.page(None, 50).unwrap_err().contains("Recover"));
         assert_eq!(retained_observation_count_for_test(), 0);
         assert!(!active_content_read.is_current());
-        let current_content =
-            NoteTimeline::new(&state).current_content(AllowedScope::only(note_id.clone()));
-        assert!(NoteTimeline::new(&state)
+        let current_content = state
+            .note_timeline()
+            .current_content(AllowedScope::only(note_id.clone()));
+        assert!(state
+            .note_timeline()
             .clear_note_history(&note_id)
             .unwrap_err()
             .contains("Recover the forgotten note"));
@@ -10572,7 +10747,8 @@ mod tests {
         )
         .unwrap()
         .0;
-        let recovered_publication = NoteTimeline::new(&state)
+        let recovered_publication = state
+            .note_timeline()
             .publish_lifecycle(
                 NoteLifecycleOperation::recovered(
                     note_id,
@@ -10597,8 +10773,9 @@ mod tests {
         );
         assert!(recovered_publication.commit_warning().is_none());
 
-        let current_content =
-            NoteTimeline::new(&state).current_content(AllowedScope::only(access.note_id().clone()));
+        let current_content = state
+            .note_timeline()
+            .current_content(AllowedScope::only(access.note_id().clone()));
         assert_eq!(access.revisions().unwrap().len(), 2);
         assert!(current_content.allows(access.note_id()));
         assert_eq!(

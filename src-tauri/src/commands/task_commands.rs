@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     index::AppState,
-    services::note_timeline::{MutationWarningStage, NoteMutationWarning, NoteTimeline},
+    services::note_timeline::{MutationWarningStage, NoteMutationWarning},
     services::task_mutation::{
         PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
     },
@@ -24,7 +24,7 @@ pub(super) fn list_recent_tasks(
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<Vec<RecentTaskItem>, String> {
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
 
     let persisted_state = read_state(&notes_dir)?;
@@ -62,7 +62,7 @@ pub(super) fn list_tasks(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<Vec<TaskListGroup>, String> {
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
     let persisted_state = read_state(&notes_dir)?;
 
@@ -96,7 +96,7 @@ pub(super) fn get_task_group(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
     state.ensure_interactive_index(
         &notes_dir,

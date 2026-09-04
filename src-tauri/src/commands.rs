@@ -326,7 +326,8 @@ pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let root = vault_root()?;
-    crate::services::note_timeline::NoteTimeline::new(&state)
+    state
+        .note_timeline()
         .trust_and_migrate_legacy_history(&root)
 }
 
@@ -334,7 +335,7 @@ pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
 pub(crate) fn get_history_health(
     state: State<'_, AppState>,
 ) -> Result<crate::services::note_timeline::HistoryHealthReport, String> {
-    crate::services::note_timeline::NoteTimeline::new(&state).history_health()
+    state.note_timeline().history_health()
 }
 
 #[tauri::command]
@@ -342,7 +343,8 @@ pub(crate) fn get_note_history_health(
     state: State<'_, AppState>,
     note_id: String,
 ) -> Result<crate::services::note_timeline::NoteHistoryHealth, String> {
-    crate::services::note_timeline::NoteTimeline::new(&state)
+    state
+        .note_timeline()
         .note_history_health(&crate::services::note_timeline::NoteIdentity::new(note_id))
 }
 
@@ -351,7 +353,7 @@ pub(crate) fn retry_history_recovery(
     state: State<'_, AppState>,
 ) -> Result<crate::services::note_timeline::HistoryHealthReport, String> {
     let root = vault_root()?;
-    crate::services::note_timeline::NoteTimeline::new(&state).retry_history_recovery(&root)
+    state.note_timeline().retry_history_recovery(&root)
 }
 
 #[tauri::command]
@@ -360,7 +362,8 @@ pub(crate) fn reset_corrupt_history(
     confirmed: bool,
 ) -> Result<crate::services::note_timeline::HistoryResetReceipt, String> {
     let root = vault_root()?;
-    crate::services::note_timeline::NoteTimeline::new(&state)
+    state
+        .note_timeline()
         .reset_corrupt_history(&root, confirmed)
 }
 
@@ -383,7 +386,7 @@ fn set_vault_directory_for_state(
     let selected_identity =
         fs::canonicalize(&selected_root).unwrap_or_else(|_| selected_root.clone());
     if selected_identity != active_identity {
-        crate::services::note_timeline::NoteTimeline::new(state).clean_close(&active_root)?;
+        state.note_timeline().clean_close(&active_root)?;
     }
     let info = set_notes_root(requested_path.as_deref())?;
     // Scaffold the newly-selected vault's `.gneauxghts` data/cache dirs
@@ -679,8 +682,7 @@ pub(crate) struct SettingsViewPayload {
 #[tauri::command]
 pub(crate) fn get_settings_view(state: State<'_, AppState>) -> Result<SettingsViewPayload, String> {
     let vault = current_vault_info()?;
-    let history_health =
-        crate::services::note_timeline::NoteTimeline::new(&state).history_health()?;
+    let history_health = state.note_timeline().history_health()?;
     let semantic_status = state.semantic.get_status()?;
     let semantic_settings = state.semantic.get_settings()?;
     let semantic_debug = state.semantic.debug_snapshot()?;
@@ -740,7 +742,8 @@ mod tests {
             crate::app::EventBus::disabled(),
         )
         .unwrap();
-        crate::services::note_timeline::NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .initialize_existing_notes(active.path())
             .unwrap();
 
@@ -754,7 +757,8 @@ mod tests {
                 .as_deref(),
             Some(selected.path().to_string_lossy().as_ref())
         );
-        let error = crate::services::note_timeline::NoteTimeline::new(&state)
+        let error = state
+            .note_timeline()
             .prepare_revision_publication(
                 crate::services::note_timeline::MutationSource::Editor,
                 &note_path,
@@ -766,7 +770,7 @@ mod tests {
             )
             .expect_err("vault switching must stop active-vault mutations");
         assert!(error.contains("cleanly closed"));
-        assert!(state.note_timeline_is_cleanly_closed().unwrap());
+        assert!(state.note_timeline().is_cleanly_closed().unwrap());
         crate::state::set_notes_root_override(None).unwrap();
     }
 

@@ -10,7 +10,7 @@ use crate::{
         atlas::{frequency_score, recency_score},
         RelatedNotesResponse, SemanticChunkMatch,
     },
-    services::{note_timeline::NoteTimeline, resolve_current_document, CurrentDocumentRequest},
+    services::{resolve_current_document, CurrentDocumentRequest},
     state::{
         db_load_note_activity, db_set_last_chat_location, db_set_note_pinned, effective_open_count,
         prune_recent_note_ids, read_state, resolve_note_id_from_path, validate_current_path,
@@ -262,7 +262,7 @@ pub(crate) fn list_recent_notes(
     limit: usize,
     current_path: Option<String>,
 ) -> Result<Vec<NoteSearchResult>, String> {
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
@@ -361,7 +361,7 @@ pub(crate) fn list_recent_focus(
     limit: usize,
     current_path: Option<String>,
 ) -> Result<RecentFocusBundle, String> {
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let notes_dir = prepare_notes_dir(false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
@@ -493,7 +493,7 @@ pub(crate) async fn search_notes_hybrid(
     lexical_weight: Option<f32>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let _foreground_guard = state.foreground_guard();
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let cache_generation = result_cache_generation();
     let started_at = Instant::now();
     let notes_dir = prepare_notes_dir(false)?;
@@ -699,7 +699,7 @@ pub(crate) async fn get_related_notes(
     limit: usize,
 ) -> Result<RelatedNotesResponse, String> {
     let _foreground_guard = state.foreground_guard();
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let cache_generation = result_cache_generation();
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
@@ -772,7 +772,7 @@ pub(crate) async fn retrieve_note_context(
     limit: usize,
 ) -> Result<RetrievalContextResponse, String> {
     let _foreground_guard = state.foreground_guard();
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let cache_generation = result_cache_generation();
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;

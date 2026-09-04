@@ -4,7 +4,6 @@ use crate::{
     semantic::atlas::{
         AtlasChatVisibilityKey, AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse,
     },
-    services::note_timeline::NoteTimeline,
     state::db_load_note_activity,
 };
 use tauri::State;
@@ -16,7 +15,7 @@ pub(crate) async fn get_vault_atlas(
     state: State<'_, AppState>,
     chat_visibility: Option<AtlasChatVisibility>,
 ) -> Result<VaultAtlasResponse, String> {
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let chat_visibility = chat_visibility.unwrap_or_default();
     let generation_key = AtlasGenerationKey { chat_visibility };
     let notes_dir = prepare_notes_dir(false)?;
@@ -52,7 +51,7 @@ pub(crate) async fn search_vault_atlas(
     query: String,
     chat_visibility: Option<AtlasChatVisibility>,
 ) -> Result<AtlasSearchResponse, String> {
-    let content_read = NoteTimeline::new(&state).begin_current_content_read()?;
+    let content_read = state.note_timeline().begin_current_content_read()?;
     let chat_visibility = chat_visibility.unwrap_or_default();
     let generation_key = AtlasGenerationKey { chat_visibility };
     let notes_dir = prepare_notes_dir(false)?;

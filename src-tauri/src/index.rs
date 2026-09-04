@@ -4,6 +4,7 @@ use crate::{
     note,
     path_utils::collect_markdown_files_recursively,
     semantic::SemanticState,
+    services::note_timeline::{NoteTimeline, NoteTimelineRuntime},
     state::{derive_file_stem, derive_file_stem_from_title_and_markdown},
 };
 use std::{
@@ -12,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Condvar, Mutex,
+        Arc, Mutex,
     },
     time::UNIX_EPOCH,
     time::{Duration, Instant},
@@ -62,57 +63,13 @@ pub(crate) struct AppState {
     /// yield while the foreground is active, so the SQLite state mutex
     /// and the lexical writer do not stall a user-driven note switch.
     foreground_activity: Arc<ForegroundActivity>,
-    /// Recovery is a startup concern for each application state, not a side
-    /// effect of every history read or preparation. Running it once prevents
-    /// another in-process mutation from mistaking a live prepared intent for
-    /// crash residue.
-    note_timeline_history_recovered: Mutex<bool>,
-    /// One exhaustive store verification is cached per application/vault
-    /// state. Corruption is latched until an explicit reset replaces the
-    /// store, keeping ordinary publication preparation O(changed content).
-    note_timeline_integrity: Mutex<NoteTimelineIntegrityAttestation>,
-    /// Serializes replay of the vault-scoped durable observation ledger.
-    /// The ledger and its policy remain private to `NoteTimeline`; the lock
-    /// lives on the application state so two vault owners never share replay
-    /// coordination.
-    note_timeline_observation_replay: Mutex<()>,
-    note_timeline_operations: NoteTimelineOperationBarrier,
+    /// Canonical owner for all vault-local history coordination.
+    note_timeline: NoteTimelineRuntime,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NoteTimelineIntegrityAttestation {
-    Unverified,
-    Verified,
-    Corrupt,
-}
-
-#[derive(Default)]
-struct NoteTimelineOperationState {
-    active: usize,
-    closing: bool,
-    closed: bool,
-}
-
-#[derive(Default)]
-struct NoteTimelineOperationBarrier {
-    state: Mutex<NoteTimelineOperationState>,
-    settled: Condvar,
-}
-
-pub(crate) struct NoteTimelineOperationGuard<'a> {
-    barrier: &'a NoteTimelineOperationBarrier,
-}
-
-impl Drop for NoteTimelineOperationGuard<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut state) = self.barrier.state.lock() {
-            state.active = state.active.saturating_sub(1);
-            if state.active == 0 {
-                self.barrier.settled.notify_all();
-            }
-        }
-    }
-}
+/// Capability proving construction is occurring inside the canonical
+/// application-state owner. Its field is private to this module.
+pub(crate) struct NoteTimelineOwnerToken(());
 
 /// Atomic counter of foreground IPC calls currently in flight on the hot
 /// path. Acquired via [`AppState::foreground_guard`] which decrements on
@@ -223,131 +180,12 @@ impl AppState {
             background_index_queue,
             catalog_projection_retries,
             foreground_activity,
-            note_timeline_history_recovered: Mutex::new(false),
-            note_timeline_integrity: Mutex::new(NoteTimelineIntegrityAttestation::Unverified),
-            note_timeline_observation_replay: Mutex::new(()),
-            note_timeline_operations: NoteTimelineOperationBarrier::default(),
+            note_timeline: NoteTimelineRuntime::new(NoteTimelineOwnerToken(())),
         })
     }
 
-    pub(crate) fn begin_note_timeline_operation(
-        &self,
-    ) -> Result<NoteTimelineOperationGuard<'_>, String> {
-        let mut state = self
-            .note_timeline_operations
-            .state
-            .lock()
-            .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
-        if state.closed {
-            return Err("Note Timeline is cleanly closed for vault portability".to_string());
-        }
-        if state.closing {
-            return Err("Note Timeline is closing for vault portability".to_string());
-        }
-        state.active += 1;
-        Ok(NoteTimelineOperationGuard {
-            barrier: &self.note_timeline_operations,
-        })
-    }
-
-    pub(crate) fn close_note_timeline_operations<T>(
-        &self,
-        operation: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
-        let mut state = self
-            .note_timeline_operations
-            .state
-            .lock()
-            .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
-        if state.closed {
-            return Err(
-                "Note Timeline is already cleanly closed for vault portability".to_string(),
-            );
-        }
-        if state.closing {
-            return Err("Note Timeline clean close is already in progress".to_string());
-        }
-        state.closing = true;
-        while state.active != 0 {
-            state = self
-                .note_timeline_operations
-                .settled
-                .wait(state)
-                .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
-        }
-        drop(state);
-
-        let result = operation();
-        let mut state = self
-            .note_timeline_operations
-            .state
-            .lock()
-            .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
-        state.closing = false;
-        state.closed = result.is_ok();
-        self.note_timeline_operations.settled.notify_all();
-        result
-    }
-
-    pub(crate) fn note_timeline_is_cleanly_closed(&self) -> Result<bool, String> {
-        self.note_timeline_operations
-            .state
-            .lock()
-            .map(|state| state.closed)
-            .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())
-    }
-
-    pub(crate) fn lock_note_timeline_observation_replay(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, ()>, String> {
-        self.note_timeline_observation_replay
-            .lock()
-            .map_err(|_| "Note Timeline observation replay lock poisoned".to_string())
-    }
-
-    pub(crate) fn ensure_note_timeline_history_recovered(&self) -> Result<(), String> {
-        self.ensure_note_timeline_history_recovered_with_integrity(true)
-    }
-
-    /// Complete crash recovery without the vault-wide payload sweep. Bounded
-    /// readers verify every revision they return; health and write paths still
-    /// require and cache the exhaustive integrity attestation.
-    pub(crate) fn ensure_note_timeline_history_recovered_for_bounded_read(
-        &self,
-    ) -> Result<(), String> {
-        self.ensure_note_timeline_history_recovered_with_integrity(false)
-    }
-
-    fn ensure_note_timeline_history_recovered_with_integrity(
-        &self,
-        require_exhaustive_integrity: bool,
-    ) -> Result<(), String> {
-        let mut recovered = self.lock_note_timeline_history_recovery()?;
-        if require_exhaustive_integrity {
-            crate::services::note_timeline::ensure_history_integrity_attested(self)?;
-        }
-        if *recovered {
-            return Ok(());
-        }
-        crate::services::note_timeline::recover_pending_history(self)?;
-        *recovered = true;
-        Ok(())
-    }
-
-    pub(crate) fn lock_note_timeline_history_recovery(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, bool>, String> {
-        self.note_timeline_history_recovered
-            .lock()
-            .map_err(|_| "Note Timeline recovery lock poisoned".to_string())
-    }
-
-    pub(crate) fn lock_note_timeline_integrity(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, NoteTimelineIntegrityAttestation>, String> {
-        self.note_timeline_integrity
-            .lock()
-            .map_err(|_| "Note Timeline integrity attestation lock poisoned".to_string())
+    pub(crate) fn note_timeline(&self) -> NoteTimeline<'_> {
+        NoteTimeline::bind(self, &self.note_timeline, NoteTimelineOwnerToken(()))
     }
 
     /// Acquire a guard that marks a foreground IPC call as in-flight.

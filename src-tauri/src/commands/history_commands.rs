@@ -3,7 +3,7 @@ use crate::{
     index::AppState,
     services::note_timeline::{
         HistoryDiffComparison, HistoryModeDiff, HistoryModePage, HistoryModeRevision,
-        HistoryRestorePreview, NoteIdentity, NoteTimeline, RevisionIdentity,
+        HistoryRestorePreview, NoteIdentity, RevisionIdentity,
     },
 };
 use serde::Serialize;
@@ -46,7 +46,7 @@ pub(crate) fn list_missing_notes(
     state: State<'_, AppState>,
 ) -> Result<Vec<MissingNoteSummary>, String> {
     super::prepare_notes_dir_with_state(true, Some(&state))?;
-    let timeline = NoteTimeline::new(&state);
+    let timeline = state.note_timeline();
     timeline
         .missing_notes()?
         .into_iter()
@@ -89,7 +89,9 @@ pub(crate) fn get_missing_note_history_page(
     if cursor.trim().is_empty() {
         return Err("Missing Note history requires a continuation".to_string());
     }
-    NoteTimeline::new(&state).missing_note_history_page(note_id, Some(cursor.trim()), limit)
+    state
+        .note_timeline()
+        .missing_note_history_page(note_id, Some(cursor.trim()), limit)
 }
 
 #[tauri::command]
@@ -101,7 +103,9 @@ pub(crate) fn recover_missing_note(
     if note_id.as_str().is_empty() {
         return Err("Missing Note recovery requires a Note Identity".to_string());
     }
-    let result = NoteTimeline::new(&state).recover_missing_note(note_id.clone())?;
+    let result = state
+        .note_timeline()
+        .recover_missing_note(note_id.clone())?;
     Ok(RecoveredMissingNote {
         note_id: note_id.as_str().to_string(),
         restored_path: result.receipt().path().to_string_lossy().into_owned(),
@@ -128,7 +132,9 @@ pub(crate) fn delete_missing_notes(
     if note_ids.iter().any(|note_id| note_id.as_str().is_empty()) {
         return Err("Missing Note deletion requires Note Identities".to_string());
     }
-    NoteTimeline::new(&state).purge_missing_notes(&note_ids, crate::time::current_time_millis()?)
+    state
+        .note_timeline()
+        .purge_missing_notes(&note_ids, crate::time::current_time_millis()?)
 }
 
 fn history_access<'a>(
@@ -139,7 +145,9 @@ fn history_access<'a>(
     if note_id.is_empty() {
         return Err("History Mode requires a Note Identity".to_string());
     }
-    Ok(NoteTimeline::new(state).open_history_mode(NoteIdentity::new(note_id)))
+    Ok(state
+        .note_timeline()
+        .open_history_mode(NoteIdentity::new(note_id)))
 }
 
 #[tauri::command]
@@ -259,7 +267,8 @@ pub(crate) fn clear_note_history(
     if note_id.is_empty() {
         return Err("Clearing note history requires a Note Identity".to_string());
     }
-    NoteTimeline::new(&state)
+    state
+        .note_timeline()
         .clear_note_history(&NoteIdentity::new(note_id))
         .map(|_| ())
 }
@@ -273,7 +282,8 @@ pub(crate) fn clear_vault_history(
         return Err("Clearing vault history requires explicit confirmation".to_string());
     }
     let vault_root = crate::state::vault_root()?;
-    NoteTimeline::new(&state)
+    state
+        .note_timeline()
         .clear_vault_history(&vault_root)
         .map(|_| ())
 }
@@ -333,7 +343,8 @@ mod tests {
             )
             .expect("append revision");
         }
-        let oldest_revision = NoteTimeline::new(&state)
+        let oldest_revision = state
+            .note_timeline()
             .open_history_mode(note_id.clone())
             .revisions()
             .expect("read revisions")
@@ -341,7 +352,8 @@ mod tests {
             .expect("oldest revision")
             .identity()
             .clone();
-        NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .open_history_mode(note_id.clone())
             .name_revision(&oldest_revision, "Before external deletion")
             .expect("name oldest revision");
@@ -352,7 +364,8 @@ mod tests {
         );
         fs::remove_file(&path).expect("remove note outside the app");
         let missing_at_millis = crate::time::current_time_millis().expect("current time") + 1;
-        NoteTimeline::new(&state)
+        state
+            .note_timeline()
             .observe(VaultObservation::missing(path.clone(), missing_at_millis))
             .expect("retain missing note");
 
@@ -433,7 +446,9 @@ mod tests {
             crate::services::note_timeline::MISSING_HISTORY_CURSOR_ERROR
         );
 
-        NoteTimeline::new(&restarted_app.state::<AppState>())
+        restarted_app
+            .state::<AppState>()
+            .note_timeline()
             .reset_history(notes.path())
             .expect("reset development history");
         let stale = get_missing_note_history_page(

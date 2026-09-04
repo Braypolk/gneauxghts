@@ -106,7 +106,7 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
     assert_contains_all(
         &note_persistence,
         &[
-            "NoteTimeline::new(state).mutate(",
+            "state.note_timeline().mutate(",
             "NoteMutation::editor(",
             "NoteMutation::note_creation(",
             "pub(crate) fn persist_task_note_session_with_outcome(",
@@ -136,14 +136,14 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
         &proposals,
         &[
             "fn synchronize_applied_change(",
-            "NoteTimeline::new(state).mutate(NoteMutation::accepted_chat_proposal(",
+            ".note_timeline()\n        .mutate(NoteMutation::accepted_chat_proposal(",
             "synchronize_applied_change(&state, &result",
         ],
     );
     assert_contains_all(
         &tasks,
         &[
-            "NoteTimeline::new(self.state).mutate(NoteMutation::task_action(",
+            "self.state.note_timeline().mutate(NoteMutation::task_action(",
             "outcome.report_degraded(\"task mutation\")",
         ],
     );
@@ -274,7 +274,7 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
         &app,
         &[
             "name(\"vault-watcher-startup\".to_string())",
-            "NoteTimeline::new(&state).initialize_existing_notes(&notes_dir)",
+            "state.note_timeline().initialize_existing_notes(&notes_dir)",
         ],
     );
     assert_contains_all(
@@ -284,7 +284,7 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
             "NoteLifecycleOperation::forgotten(",
             "NoteLifecycleOperation::recovered(",
             "publication.commit_warning().cloned()",
-            "NoteTimeline::new(state).lifecycle(NoteLifecycleOperation::purged(",
+            ".note_timeline()\n            .lifecycle(NoteLifecycleOperation::purged(",
             "retained_identity.as_ref()",
             "note_id: Some(note_id.clone())",
             "forgotten_note\n        .note_id",
@@ -514,6 +514,68 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
 }
 
 #[test]
+fn app_state_holds_one_encapsulated_note_timeline_runtime() {
+    let index = repository_file("src-tauri/src/index.rs");
+    let runtime = repository_file("src-tauri/src/services/note_timeline/runtime.rs");
+    let callers = repository_rust_sources("src")
+        .into_iter()
+        .filter(|(path, _)| {
+            !path.ends_with("services/note_timeline.rs")
+                && !path.ends_with("services/note_timeline/runtime.rs")
+                && !path.ends_with("index.rs")
+        })
+        .map(|(_, source)| source)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_contains_all(
+        &index,
+        &[
+            "note_timeline: NoteTimelineRuntime",
+            "pub(crate) struct NoteTimelineOwnerToken(());",
+            "NoteTimelineRuntime::new(NoteTimelineOwnerToken(()))",
+            "pub(crate) fn note_timeline(&self) -> NoteTimeline<'_>",
+        ],
+    );
+    assert_contains_none(
+        &index,
+        &[
+            "note_timeline_history_recovered",
+            "note_timeline_integrity",
+            "note_timeline_observation_replay",
+            "note_timeline_operations",
+            "NoteTimelineOperationBarrier",
+            "NoteTimelineIntegrityAttestation",
+        ],
+    );
+    assert_contains_all(
+        &runtime,
+        &[
+            "pub(crate) struct NoteTimelineRuntime",
+            "struct NoteTimelineOperationBarrier",
+            "fn begin_operation(",
+            "fn close_operations<T>(",
+            "fn with_observation_replay<T>(",
+            "fn ensure_history_recovered(",
+        ],
+    );
+    assert_contains_none(
+        &callers,
+        &[
+            "NoteTimeline::new(",
+            "NoteTimeline::bind(",
+            "NoteTimelineRuntime::new(",
+            "NoteTimelineOwnerToken",
+            "begin_note_timeline_operation",
+            "close_note_timeline_operations",
+            "lock_note_timeline_observation_replay",
+            "lock_note_timeline_history_recovery",
+            "lock_note_timeline_integrity",
+        ],
+    );
+}
+
+#[test]
 fn history_mode_commands_use_only_the_role_limited_note_timeline_access() {
     let commands = repository_file("src-tauri/src/commands/history_commands.rs");
     let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
@@ -639,7 +701,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     assert_contains_all(&timeline, &["pub(crate) fn prepare_publication("]);
     assert_contains_all(
         &forgotten,
-        &["NoteTimeline::new(&state).prepare_publication("],
+        &[".note_timeline()\n                .prepare_publication("],
     );
     assert_contains_all(&proposals, &["timeline.prepare_revision_publication("]);
     assert_contains_all(&tasks, &["timeline.prepare_revision_publication("]);
@@ -658,8 +720,8 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     assert_contains_all(
         &timeline,
         &[
-            "pub(crate) struct HistoryIntentIdentity",
-            "history_intent: HistoryIntentIdentity",
+            "pub(crate) struct PreparedHistoryIntent",
+            "history_intent: PreparedHistoryIntent",
             "pub(crate) fn abandon_after_publication_failure(",
             "history_store::finalize_publication(&history_intent, source, &path, canonical)",
         ],
