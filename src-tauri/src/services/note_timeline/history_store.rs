@@ -5,12 +5,13 @@
 
 use super::{
     BaselineInitializationPhase, BaselineInitializationProgress, DeletionMarker,
-    DeletionOperationIdentity, DeletionScope, HistoryClearBaseline, HistoryDeletionKind,
-    HistoryStorageUsage, LifecycleEventHeader, LifecycleEventIdentity, LifecycleEventKind,
-    MissingNoteRecord, MutationSource, NoteBaselineInitializationState, NoteIdentity,
-    NoteRevisionHeader, PayloadVersion, PreparedHistoryIntent, ReconstructedNoteRevision,
-    RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity, VaultObservation,
-    VaultObservationKind, VaultObservationSource, BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
+    DeletionOperationIdentity, DeletionScope, EditingSessionSeed, HistoryClearBaseline,
+    HistoryDeletionKind, HistoryStorageUsage, LifecycleEventHeader, LifecycleEventIdentity,
+    LifecycleEventKind, MissingNoteRecord, MutationSource, NoteBaselineInitializationState,
+    NoteIdentity, NoteRevisionHeader, PayloadVersion, PreparedHistoryIntent,
+    ReconstructedNoteRevision, RevisionIdentity, RevisionTimeEvidence, TimelineRecordIdentity,
+    VaultObservation, VaultObservationKind, VaultObservationSource,
+    BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES, EDITING_SESSION_IDLE_MILLIS,
 };
 use rusqlite::OpenFlags;
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
@@ -1907,6 +1908,13 @@ pub(super) enum BoundedTimelineRecord {
     LifecycleEvent(LifecycleEventHeader),
 }
 
+struct EditingSessionRecord {
+    source: MutationSource,
+    occurred_at_millis: u64,
+    id: String,
+    predecessor: Option<TimelineRecordIdentity>,
+}
+
 impl BoundedTimelineRecord {
     fn identity(&self) -> TimelineRecordIdentity {
         match self {
@@ -1918,11 +1926,23 @@ impl BoundedTimelineRecord {
             }
         }
     }
+
+    fn editing_session_data(&self) -> Option<EditingSessionRecord> {
+        let Self::Revision { header, .. } = self else {
+            return None;
+        };
+        (header.source != MutationSource::VersionRestore).then(|| EditingSessionRecord {
+            source: header.source,
+            occurred_at_millis: header.time_evidence.occurred_at_millis(),
+            id: header.identity.0.clone(),
+            predecessor: header.predecessor.clone(),
+        })
+    }
 }
 
 pub(super) struct BoundedTimelinePage {
     pub(super) records: Vec<BoundedTimelineRecord>,
-    pub(super) session_predecessor: Option<BoundedTimelineRecord>,
+    pub(super) editing_session_seed: Option<EditingSessionSeed>,
     pub(super) next_record: Option<TimelineRecordIdentity>,
     pub(super) total_records: usize,
 }
@@ -1979,6 +1999,100 @@ fn bounded_lifecycle_record(
     )))
 }
 
+fn bounded_timeline_record(
+    connection: &Connection,
+    note_id: &NoteIdentity,
+    identity: &TimelineRecordIdentity,
+) -> Result<Option<BoundedTimelineRecord>, String> {
+    match identity {
+        TimelineRecordIdentity::Revision(revision_id) => {
+            bounded_revision_record(connection, note_id, revision_id)
+        }
+        TimelineRecordIdentity::LifecycleEvent(event_id) => {
+            bounded_lifecycle_record(connection, note_id, event_id)
+        }
+    }
+}
+
+fn stored_editing_session_data(
+    connection: &Connection,
+    note_id: &NoteIdentity,
+    revision_id: &RevisionIdentity,
+) -> Result<Option<EditingSessionRecord>, String> {
+    let stored = connection
+        .query_row(
+            "SELECT source, known_since_millis, committed_at_millis, observed_at_millis,
+                    predecessor_kind, predecessor_id
+             FROM revisions WHERE note_id = ?1 AND revision_id = ?2",
+            params![note_id.as_str(), revision_id.0],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<u64>>(1)?,
+                    row.get::<_, Option<u64>>(2)?,
+                    row.get::<_, Option<u64>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Read Editing Session predecessor: {error}"))?;
+    let Some((source, known, committed, observed, predecessor_kind, predecessor_id)) = stored
+    else {
+        return Ok(None);
+    };
+    let Some(source) = MutationSource::from_storage_value(&source) else {
+        return Ok(None);
+    };
+    let Some(occurred_at_millis) = known.or(committed).or(observed) else {
+        return Ok(None);
+    };
+    let predecessor = parse_record_identity(predecessor_kind, predecessor_id)
+        .ok()
+        .flatten();
+    Ok(Some(EditingSessionRecord {
+        source,
+        occurred_at_millis,
+        id: revision_id.0.clone(),
+        predecessor,
+    }))
+}
+
+fn editing_session_seed(
+    connection: &Connection,
+    note_id: &NoteIdentity,
+    immediate_predecessor: &BoundedTimelineRecord,
+) -> Result<Option<EditingSessionSeed>, String> {
+    let Some(immediate) = immediate_predecessor.editing_session_data() else {
+        return Ok(None);
+    };
+    let source = immediate.source;
+    let immediate_at_millis = immediate.occurred_at_millis;
+    let mut newer_at_millis = immediate_at_millis;
+    let mut root_id = immediate.id;
+    let mut predecessor = immediate.predecessor;
+    while let Some(TimelineRecordIdentity::Revision(revision_id)) = predecessor {
+        let Some(older) = stored_editing_session_data(connection, note_id, &revision_id)? else {
+            break;
+        };
+        if older.source != source
+            || newer_at_millis.saturating_sub(older.occurred_at_millis)
+                >= EDITING_SESSION_IDLE_MILLIS
+        {
+            break;
+        }
+        root_id = older.id;
+        newer_at_millis = older.occurred_at_millis;
+        predecessor = older.predecessor;
+    }
+    Ok(Some(EditingSessionSeed {
+        source,
+        latest_at_millis: immediate_at_millis,
+        id: root_id,
+    }))
+}
+
 pub(super) fn bounded_timeline_page(
     note_id: &NoteIdentity,
     start: Option<TimelineRecordIdentity>,
@@ -2015,14 +2129,7 @@ pub(super) fn bounded_timeline_page(
         let Some(identity) = next_record.take() else {
             break;
         };
-        let record = match &identity {
-            TimelineRecordIdentity::Revision(revision_id) => {
-                bounded_revision_record(&connection, note_id, revision_id)?
-            }
-            TimelineRecordIdentity::LifecycleEvent(event_id) => {
-                bounded_lifecycle_record(&connection, note_id, event_id)?
-            }
-        };
+        let record = bounded_timeline_record(&connection, note_id, &identity)?;
         let Some(record) = record else {
             return if is_continuation && records.is_empty() {
                 Ok(None)
@@ -2038,12 +2145,15 @@ pub(super) fn bounded_timeline_page(
     }
     let session_predecessor = (records.len() > page_size)
         .then(|| records.pop().expect("bounded page includes its lookbehind"));
-    if let Some(predecessor) = &session_predecessor {
+    let editing_session_seed = if let Some(predecessor) = &session_predecessor {
         next_record = Some(predecessor.identity());
-    }
+        editing_session_seed(&connection, note_id, predecessor)?
+    } else {
+        None
+    };
     Ok(Some(BoundedTimelinePage {
         records,
-        session_predecessor,
+        editing_session_seed,
         next_record,
         total_records,
     }))

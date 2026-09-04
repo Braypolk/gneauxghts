@@ -5,8 +5,8 @@ use super::{
 use crate::{
     index::AppState,
     services::note_timeline::{
-        AllowedScope, CurrentContentItem, CurrentContentProjection, MutationWarningStage,
-        NoteMutationWarning,
+        AllowedScope, CurrentContentIdentity, CurrentContentItem, CurrentContentProjection,
+        MutationWarningStage, NoteMutationWarning,
     },
     services::task_mutation::{
         PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
@@ -24,20 +24,29 @@ use std::collections::HashSet;
 use tauri::State;
 
 impl CurrentContentItem for RecentTaskItem {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
-        Some((Some(&self.note_id), Some(&self.note_path)))
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
+        CurrentContentIdentity::Note {
+            note_id: Some(&self.note_id),
+            note_path: Some(&self.note_path),
+        }
     }
 }
 
 impl CurrentContentItem for TaskListGroup {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
-        Some((Some(&self.note_id), Some(&self.note_path)))
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
+        CurrentContentIdentity::Note {
+            note_id: Some(&self.note_id),
+            note_path: Some(&self.note_path),
+        }
     }
 }
 
 impl CurrentContentItem for TaskListGroupPatch {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
-        Some((Some(&self.note_id), self.note_path.as_deref()))
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
+        CurrentContentIdentity::Note {
+            note_id: Some(&self.note_id),
+            note_path: self.note_path.as_deref(),
+        }
     }
 }
 

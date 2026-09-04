@@ -11,7 +11,9 @@ use crate::{
         RelatedNoteMatch, RelatedNotesResponse, SemanticChunkMatch,
     },
     services::{
-        note_timeline::{AllowedScope, CurrentContentItem, CurrentContentProjection},
+        note_timeline::{
+            AllowedScope, CurrentContentIdentity, CurrentContentItem, CurrentContentProjection,
+        },
         resolve_current_document, CurrentDocumentRequest,
     },
     state::{
@@ -355,21 +357,27 @@ pub(crate) struct RetrievalContextResponse {
 }
 
 impl CurrentContentItem for RetrievalContextItem {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
         if self.document_kind == crate::note::DocumentKind::Note {
-            Some((self.note_id.as_deref(), self.note_path.as_deref()))
+            CurrentContentIdentity::Note {
+                note_id: self.note_id.as_deref(),
+                note_path: self.note_path.as_deref(),
+            }
         } else {
-            None
+            CurrentContentIdentity::NonNote
         }
     }
 }
 
 impl CurrentContentItem for RelatedNoteMatch {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
         if self.document_kind == crate::note::DocumentKind::Note {
-            Some((None, Some(&self.note_path)))
+            CurrentContentIdentity::Note {
+                note_id: None,
+                note_path: Some(&self.note_path),
+            }
         } else {
-            None
+            CurrentContentIdentity::NonNote
         }
     }
 }

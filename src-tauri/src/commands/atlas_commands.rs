@@ -5,7 +5,9 @@ use crate::{
     semantic::atlas::{
         AtlasChatVisibilityKey, AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse,
     },
-    services::note_timeline::{AllowedScope, CurrentContentItem, CurrentContentProjection},
+    services::note_timeline::{
+        AllowedScope, CurrentContentIdentity, CurrentContentItem, CurrentContentProjection,
+    },
     state::db_load_note_activity,
 };
 use std::collections::HashSet;
@@ -14,21 +16,27 @@ use tauri::State;
 type AtlasChatVisibility = AtlasChatVisibilityKey;
 
 impl CurrentContentItem for crate::semantic::atlas::AtlasNode {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
         if self.document_kind == DocumentKind::Note {
-            Some((self.note_id.as_deref(), Some(&self.note_path)))
+            CurrentContentIdentity::Note {
+                note_id: self.note_id.as_deref(),
+                note_path: Some(&self.note_path),
+            }
         } else {
-            None
+            CurrentContentIdentity::NonNote
         }
     }
 }
 
 impl CurrentContentItem for crate::semantic::atlas::AtlasSearchMatch {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
         if self.document_kind == DocumentKind::Note {
-            Some((self.note_id.as_deref(), Some(&self.note_path)))
+            CurrentContentIdentity::Note {
+                note_id: self.note_id.as_deref(),
+                note_path: Some(&self.note_path),
+            }
         } else {
-            None
+            CurrentContentIdentity::NonNote
         }
     }
 }

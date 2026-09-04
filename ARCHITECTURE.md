@@ -52,8 +52,8 @@ shared resource configuration; it must not mirror either owner's state.
 
 `NoteTimeline` is the canonical owner for ordinary-note mutation coordination,
 external observations, History Mode reads, current-content provenance, and
-explicitly granted agent restores. Editor, task, proposal, lifecycle, watcher,
-and reconciliation callers enter its closed typed contract. Post-publication
+the future explicitly granted agent-restore path. Editor, task, proposal,
+lifecycle, watcher, and reconciliation callers enter its closed typed contract. Post-publication
 catalog, task, lexical, semantic, warning, and recovery coordination is a
 private timeline implementation detail; no parallel mutation service is
 available to callers. The same boundary can deepen durability ordering without
@@ -76,11 +76,12 @@ also verifies the managed Note Identity in the published file, and records the
 app-owned publication time issued into the durable intent immediately before
 the write rather than filesystem metadata or later reconciliation time.
 
-History Mode and agent restore capabilities require grants whose constructors
-remain private to the timeline module. Ordinary chat can receive only the
-current-content capability unless an app-owned current-turn restore path is
-implemented. Revision and Lifecycle Event identities likewise cannot be
-minted by callers; their durable issuer belongs inside `NoteTimeline`.
+History Mode requires a grant whose constructor remains private to the timeline
+module. The agent-restore capability is intentionally absent until its
+app-owned current-turn proposal path is implemented; ordinary chat can receive
+only the current-content capability. Revision and Lifecycle Event identities
+likewise cannot be minted by callers; their durable issuer belongs inside
+`NoteTimeline`.
 
 Note Identity follows the logical note rather than its current file path or
 authored-content length. The catalog preserves a known identity through empty

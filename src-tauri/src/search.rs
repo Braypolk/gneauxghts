@@ -1,7 +1,7 @@
 use crate::{
     index::{IndexedNote, IndexedParagraph},
     note::DocumentKind,
-    services::note_timeline::CurrentContentItem,
+    services::note_timeline::{CurrentContentIdentity, CurrentContentItem},
 };
 use serde::Serialize;
 use std::path::Path;
@@ -43,11 +43,14 @@ pub(crate) struct NoteSearchResult {
 }
 
 impl CurrentContentItem for NoteSearchResult {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
         if self.document_kind == DocumentKind::Note {
-            Some((self.note_id.as_deref(), self.note_path.as_deref()))
+            CurrentContentIdentity::Note {
+                note_id: self.note_id.as_deref(),
+                note_path: self.note_path.as_deref(),
+            }
         } else {
-            None
+            CurrentContentIdentity::NonNote
         }
     }
 }

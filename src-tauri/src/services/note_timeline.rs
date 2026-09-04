@@ -5,6 +5,10 @@ mod history_store;
 mod post_publication;
 mod runtime;
 
+// Storage, post-publication repair, and runtime coordination are independent
+// private modules. The sections below stay colocated because they are the
+// closed domain contract and policies owned by the single NoteTimeline seam.
+
 use self::post_publication::{PublicationIssue, PublicationOutcome, PublicationStage};
 pub(crate) use self::runtime::NoteTimelineRuntime;
 use self::runtime::{
@@ -406,6 +410,20 @@ pub(crate) enum RevisionTimeEvidence {
         observed_at_millis: u64,
         modified_at_millis: Option<u64>,
     },
+}
+
+impl RevisionTimeEvidence {
+    fn occurred_at_millis(self) -> u64 {
+        match self {
+            Self::Baseline { known_since_millis } => known_since_millis,
+            Self::Committed {
+                committed_at_millis,
+            } => committed_at_millis,
+            Self::Observed {
+                observed_at_millis, ..
+            } => observed_at_millis,
+        }
+    }
 }
 
 impl NoteRevisionHeader {
@@ -1045,6 +1063,8 @@ impl LifecycleEventKind {
     }
 }
 
+// Prepared mutations and lifecycle observations.
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReconstructedNoteRevision {
     unmanaged_frontmatter: Option<String>,
@@ -1674,6 +1694,8 @@ pub(crate) struct AllowedScope {
     excluded_note_ids: HashSet<NoteIdentity>,
 }
 
+// Role-limited history projection and reconstruction.
+
 impl AllowedScope {
     pub(crate) fn vault() -> Self {
         Self {
@@ -1874,8 +1896,14 @@ impl HistoryModeRecord {
 
 const EDITING_SESSION_IDLE_MILLIS: u64 = 5 * 60 * 1_000;
 
-fn assign_editing_sessions(records: &mut [HistoryModeRecord]) {
-    let mut current_session: Option<(MutationSource, u64, String)> = None;
+pub(super) struct EditingSessionSeed {
+    source: MutationSource,
+    latest_at_millis: u64,
+    id: String,
+}
+
+fn assign_editing_sessions(records: &mut [HistoryModeRecord], seed: Option<EditingSessionSeed>) {
+    let mut current_session = seed;
 
     for record in records.iter_mut().rev() {
         match record {
@@ -1895,15 +1923,19 @@ fn assign_editing_sessions(records: &mut [HistoryModeRecord]) {
 
                 let session_id = current_session
                     .as_ref()
-                    .filter(|(session_source, previous_millis, _)| {
-                        session_source == source
-                            && occurred_at_millis.saturating_sub(*previous_millis)
+                    .filter(|session| {
+                        session.source == *source
+                            && occurred_at_millis.saturating_sub(session.latest_at_millis)
                                 < EDITING_SESSION_IDLE_MILLIS
                     })
-                    .map(|(_, _, session_id)| session_id.clone())
+                    .map(|session| session.id.clone())
                     .unwrap_or_else(|| revision_id.clone());
                 *editing_session_id = Some(session_id.clone());
-                current_session = Some((*source, *occurred_at_millis, session_id));
+                current_session = Some(EditingSessionSeed {
+                    source: *source,
+                    latest_at_millis: *occurred_at_millis,
+                    id: session_id,
+                });
             }
         }
     }
@@ -1927,27 +1959,13 @@ fn project_revision_header(
     counts: (usize, usize),
 ) -> HistoryModeRecord {
     let revision_id = revision.identity.0;
-    let (occurred_at_millis, time_kind, modified_at_millis) = match revision.time_evidence {
-        RevisionTimeEvidence::Baseline { known_since_millis } => (
-            known_since_millis,
-            HistoryModeRevisionTimeKind::KnownSince,
-            None,
-        ),
-        RevisionTimeEvidence::Committed {
-            committed_at_millis,
-        } => (
-            committed_at_millis,
-            HistoryModeRevisionTimeKind::Committed,
-            None,
-        ),
+    let occurred_at_millis = revision.time_evidence.occurred_at_millis();
+    let (time_kind, modified_at_millis) = match revision.time_evidence {
+        RevisionTimeEvidence::Baseline { .. } => (HistoryModeRevisionTimeKind::KnownSince, None),
+        RevisionTimeEvidence::Committed { .. } => (HistoryModeRevisionTimeKind::Committed, None),
         RevisionTimeEvidence::Observed {
-            observed_at_millis,
-            modified_at_millis,
-        } => (
-            observed_at_millis,
-            HistoryModeRevisionTimeKind::Observed,
-            modified_at_millis,
-        ),
+            modified_at_millis, ..
+        } => (HistoryModeRevisionTimeKind::Observed, modified_at_millis),
     };
     HistoryModeRecord::Revision {
         record_id: revision_id.clone(),
@@ -2134,8 +2152,7 @@ fn retained_history_page(
         None => page.total_records.saturating_sub(1),
     };
     let record_count = page.records.len();
-    let mut records =
-        Vec::with_capacity(record_count + usize::from(page.session_predecessor.is_some()));
+    let mut records = Vec::with_capacity(record_count);
     for (index, record) in page.records.into_iter().enumerate() {
         let timeline_ordinal = first_ordinal.saturating_sub(index);
         records.push(
@@ -2143,18 +2160,7 @@ fn retained_history_page(
                 .map_err(history_failure)?,
         );
     }
-    if let Some(predecessor) = page.session_predecessor {
-        records.push(project_bounded_history_record(
-            note_id,
-            predecessor,
-            first_ordinal.saturating_sub(record_count),
-            false,
-        )?);
-        assign_editing_sessions(&mut records);
-        records.pop();
-    } else {
-        assign_editing_sessions(&mut records);
-    }
+    assign_editing_sessions(&mut records, page.editing_session_seed);
     let next_cursor = match page.next_record {
         Some(next_record) => {
             let next_ordinal = first_ordinal.checked_sub(record_count).ok_or_else(|| {
@@ -2862,14 +2868,24 @@ pub(crate) struct CurrentContentAccess<'a> {
     scope: AllowedScope,
 }
 
+// Current-content delivery policy shared by search, retrieval, tasks, and Atlas.
+
 pub(crate) trait CurrentContentProjection {
     type Item: CurrentContentItem;
 
     fn retain_current(&mut self, retains: &mut dyn FnMut(&Self::Item) -> bool);
 }
 
+pub(crate) enum CurrentContentIdentity<'a> {
+    NonNote,
+    Note {
+        note_id: Option<&'a str>,
+        note_path: Option<&'a str>,
+    },
+}
+
 pub(crate) trait CurrentContentItem {
-    fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)>;
+    fn current_note_identity(&self) -> CurrentContentIdentity<'_>;
 }
 
 impl<T: CurrentContentItem> CurrentContentProjection for Vec<T> {
@@ -2907,8 +2923,12 @@ impl CurrentContentEligibility<'_> {
     }
 
     fn retains<T: CurrentContentItem>(&self, item: &T) -> bool {
-        item.current_note_identity()
-            .is_none_or(|(note_id, note_path)| self.allows_note(note_id, note_path))
+        match item.current_note_identity() {
+            CurrentContentIdentity::NonNote => true,
+            CurrentContentIdentity::Note { note_id, note_path } => {
+                self.allows_note(note_id, note_path)
+            }
+        }
     }
 }
 
@@ -3035,6 +3055,8 @@ pub(crate) struct NoteTimeline<'a> {
     state: &'a AppState,
     runtime: &'a NoteTimelineRuntime,
 }
+
+// Canonical coordinator for mutation, observation, recovery, and history access.
 
 fn require_active_vault_root(requested_root: &Path) -> Result<PathBuf, String> {
     let active_root = crate::state::vault_root()?;
@@ -4943,8 +4965,11 @@ mod tests {
     }
 
     impl CurrentContentItem for TestCurrentContentItem {
-        fn current_note_identity(&self) -> Option<(Option<&str>, Option<&str>)> {
-            Some((Some(&self.note_id), Some(&self.note_path)))
+        fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
+            CurrentContentIdentity::Note {
+                note_id: Some(&self.note_id),
+                note_path: Some(&self.note_path),
+            }
         }
     }
 
@@ -5111,7 +5136,7 @@ mod tests {
             projected_revision("revision-1", MutationSource::Editor, 0),
         ];
 
-        assign_editing_sessions(&mut records);
+        assign_editing_sessions(&mut records, None);
 
         assert_eq!(editing_session_id(&records[3]), Some("revision-1"));
         assert_eq!(editing_session_id(&records[2]), Some("revision-1"));
@@ -5144,7 +5169,7 @@ mod tests {
             .map(str::to_string)
             .collect::<Vec<_>>();
 
-        assign_editing_sessions(&mut records);
+        assign_editing_sessions(&mut records, None);
 
         assert_eq!(editing_session_id(&records[6]), Some("revision-1"));
         assert_eq!(editing_session_id(&records[5]), Some("revision-2"));
@@ -10318,7 +10343,7 @@ mod tests {
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = created.path.unwrap();
-        for body in ["second", "third", "fourth"] {
+        for body in ["second", "third", "fourth", "fifth"] {
             crate::commands::note_persistence::persist_note_session_with_outcome(
                 &state,
                 "Paged".to_string(),
@@ -10329,7 +10354,9 @@ mod tests {
         }
 
         let access = state.note_timeline().open_history_mode(note_id.clone());
-        let oldest_revision = access.revisions().unwrap()[0].identity().clone();
+        let revisions = access.revisions().unwrap();
+        let oldest_revision = revisions[0].identity().clone();
+        let editor_session_root = revisions[1].identity().as_str().to_string();
         replace_one_revision_source_for_test(&note_id, &oldest_revision, "invalid-old-source");
         let first_page = access.page(None, 2).unwrap();
         replace_one_revision_source_for_test(&note_id, &oldest_revision, "noteCreation");
@@ -10340,8 +10367,12 @@ mod tests {
         assert!(serialized["records"][0]["revisionId"].is_string());
         assert_eq!(serialized["records"][0]["timeKind"], "committed");
         assert!(serialized["records"][0]["editingSessionId"].is_string());
+        assert!(first_page
+            .records()
+            .iter()
+            .all(|record| editing_session_id(record) == Some(editor_session_root.as_str())));
         assert_eq!(serialized["records"][0]["lineCount"], 1);
-        assert_eq!(serialized["records"][0]["characterCount"], 6);
+        assert_eq!(serialized["records"][0]["characterCount"], 5);
         assert!(serialized.get("nextCursor").is_some());
         let cursor = first_page
             .next_cursor()
@@ -10351,11 +10382,11 @@ mod tests {
             .revision_id()
             .expect("newest record is a revision")
             .to_string();
-        assert_eq!(access.revision(&selected_id).unwrap().body(), "fourth");
+        assert_eq!(access.revision(&selected_id).unwrap().body(), "fifth");
         crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
             "Paged".to_string(),
-            "fifth".to_string(),
+            "sixth".to_string(),
             Some(path),
         )
         .unwrap();
