@@ -785,14 +785,6 @@ impl ExistingBaselineCandidate {
 
 #[cfg(test)]
 impl HistoryDeletionReceipt {
-    pub(crate) fn scope(&self) -> &DeletionScope {
-        self.marker.scope()
-    }
-
-    pub(crate) fn kind(&self) -> HistoryDeletionKind {
-        self.marker.kind()
-    }
-
     pub(crate) fn baseline_note_ids(&self) -> &[NoteIdentity] {
         &self.baseline_note_ids
     }
@@ -5648,8 +5640,8 @@ mod tests {
         let after_clear = crate::time::current_time_millis().unwrap();
 
         assert_eq!(fs::read(&path).unwrap(), before_bytes);
-        assert_eq!(receipt.scope(), &DeletionScope::Note(note_id.clone()));
-        assert_eq!(receipt.kind(), HistoryDeletionKind::Clear);
+        assert_eq!(&receipt.marker.scope, &DeletionScope::Note(note_id.clone()));
+        assert_eq!(receipt.marker.kind, HistoryDeletionKind::Clear);
         assert_eq!(receipt.baseline_note_ids(), std::slice::from_ref(&note_id));
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
@@ -5742,7 +5734,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            receipt.scope(),
+            &receipt.marker.scope,
             &DeletionScope::Vault(
                 crate::state::read_vault_manifest_for(notes.path())
                     .unwrap()
@@ -5750,7 +5742,7 @@ mod tests {
                     .vault_id
             )
         );
-        assert_eq!(receipt.kind(), HistoryDeletionKind::Clear);
+        assert_eq!(receipt.marker.kind, HistoryDeletionKind::Clear);
         assert_eq!(receipt.baseline_note_ids().len(), 2);
         for (index, (note_id, path)) in created[..2].iter().enumerate() {
             assert_eq!(fs::read(path).unwrap(), active_bytes[index]);
