@@ -69,11 +69,11 @@ fn startup_path_overrides() -> Result<StartupPathOverrides, String> {
     #[cfg(feature = "e2e-wdio")]
     {
         let args = std::env::args_os().collect::<Vec<_>>();
-        return Ok(StartupPathOverrides {
+        Ok(StartupPathOverrides {
             app_data_dir: e2e_path_argument(&args, "--e2e-app-data-root")?,
             documents_dir: e2e_path_argument(&args, "--e2e-documents-root")?,
             notes_root: e2e_path_argument(&args, "--e2e-vault-root")?,
-        });
+        })
     }
 
     #[cfg(not(feature = "e2e-wdio"))]

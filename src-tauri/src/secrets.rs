@@ -15,7 +15,7 @@ const E2E_KEYRING_SERVICE: &str = "com.braypolkinghorne.gneauxghts-e2e.credentia
 pub(crate) fn keyring_service() -> &'static str {
     #[cfg(feature = "e2e-wdio")]
     {
-        return E2E_KEYRING_SERVICE;
+        E2E_KEYRING_SERVICE
     }
 
     #[cfg(not(feature = "e2e-wdio"))]

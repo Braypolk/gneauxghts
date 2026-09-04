@@ -1088,7 +1088,6 @@ mod tests {
             )
             .is_err());
         assert_eq!(retained_observation_count_for_test(), 1);
-        drop(timeline);
         drop(restarted);
 
         let state_c = std::fs::read_to_string(&path)

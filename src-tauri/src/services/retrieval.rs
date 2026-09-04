@@ -49,18 +49,18 @@ impl VaultDateFilters {
 }
 
 fn matches_date_filters(note: &crate::index::IndexedNote, filters: VaultDateFilters) -> bool {
-    !filters
+    filters
         .created_after
-        .is_some_and(|value| note.created_at_millis < value)
-        && !filters
+        .is_none_or(|value| note.created_at_millis >= value)
+        && filters
             .created_before
-            .is_some_and(|value| note.created_at_millis > value)
-        && !filters
+            .is_none_or(|value| note.created_at_millis <= value)
+        && filters
             .updated_after
-            .is_some_and(|value| note.updated_at_millis < value)
-        && !filters
+            .is_none_or(|value| note.updated_at_millis >= value)
+        && filters
             .updated_before
-            .is_some_and(|value| note.updated_at_millis > value)
+            .is_none_or(|value| note.updated_at_millis <= value)
 }
 
 /// Shared policy-aware hybrid retrieval used by both interactive Tauri search

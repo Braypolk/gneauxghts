@@ -1,8 +1,6 @@
 // Canonical ordinary-note mutation, observation, lifecycle, and role-limited
 // history boundary. Storage and post-publication coordination remain private
 // implementation details so callers depend only on the closed domain contract.
-#![allow(dead_code)]
-
 mod history_store;
 mod post_publication;
 mod runtime;
@@ -48,7 +46,6 @@ macro_rules! identity_type {
 identity_type!(NoteIdentity);
 identity_type!(RevisionIdentity);
 identity_type!(LifecycleEventIdentity);
-identity_type!(TurnIdentity);
 identity_type!(DeletionOperationIdentity);
 
 impl NoteIdentity {
@@ -58,12 +55,6 @@ impl NoteIdentity {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-impl TurnIdentity {
-    pub(crate) fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
     }
 }
 
@@ -219,13 +210,10 @@ where
     serializer.serialize_str("A post-commit update is awaiting automatic recovery.")
 }
 
+#[cfg(test)]
 impl NoteTimelineIssue {
     pub(crate) fn stage(&self) -> MutationWarningStage {
         self.stage
-    }
-
-    pub(crate) fn message(&self) -> &str {
-        &self.message
     }
 }
 
@@ -258,14 +246,17 @@ where
 }
 
 impl NoteMutationWarning {
+    #[cfg(test)]
     pub(crate) fn payload_version(&self) -> PayloadVersion {
         self.payload_version
     }
 
+    #[cfg(test)]
     pub(crate) fn message(&self) -> &str {
         &self.message
     }
 
+    #[cfg(test)]
     pub(crate) fn issues(&self) -> &[NoteTimelineIssue] {
         &self.issues
     }
@@ -349,10 +340,12 @@ impl NoteMutationResult {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn payload_version(&self) -> PayloadVersion {
         self.payload_version
     }
 
+    #[cfg(test)]
     pub(crate) fn source(&self) -> MutationSource {
         self.source
     }
@@ -373,6 +366,7 @@ impl NoteMutationResult {
         self.warning.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn diagnostics(&self) -> &[NoteTimelineIssue] {
         &self.diagnostics
     }
@@ -415,6 +409,7 @@ pub(crate) enum RevisionTimeEvidence {
 }
 
 impl NoteRevisionHeader {
+    #[cfg(test)]
     fn issue(
         note_identity: NoteIdentity,
         predecessor: Option<TimelineRecordIdentity>,
@@ -434,6 +429,7 @@ impl NoteRevisionHeader {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn predecessor(&self) -> Option<&TimelineRecordIdentity> {
         self.predecessor.as_ref()
     }
@@ -442,18 +438,22 @@ impl NoteRevisionHeader {
         &self.identity
     }
 
+    #[cfg(test)]
     pub(crate) fn source(&self) -> MutationSource {
         self.source
     }
 
+    #[cfg(test)]
     pub(crate) fn content_hash(&self) -> &str {
         &self.content_hash
     }
 
+    #[cfg(test)]
     pub(crate) fn time_evidence(&self) -> RevisionTimeEvidence {
         self.time_evidence
     }
 
+    #[cfg(test)]
     pub(crate) fn committed_at_millis(&self) -> Option<u64> {
         match self.time_evidence {
             RevisionTimeEvidence::Committed {
@@ -463,6 +463,7 @@ impl NoteRevisionHeader {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn observed_at_millis(&self) -> Option<u64> {
         match self.time_evidence {
             RevisionTimeEvidence::Observed {
@@ -472,15 +473,7 @@ impl NoteRevisionHeader {
         }
     }
 
-    pub(crate) fn modified_at_millis(&self) -> Option<u64> {
-        match self.time_evidence {
-            RevisionTimeEvidence::Observed {
-                modified_at_millis, ..
-            } => modified_at_millis,
-            RevisionTimeEvidence::Baseline { .. } | RevisionTimeEvidence::Committed { .. } => None,
-        }
-    }
-
+    #[cfg(test)]
     pub(crate) fn known_since_millis(&self) -> Option<u64> {
         match self.time_evidence {
             RevisionTimeEvidence::Baseline { known_since_millis } => Some(known_since_millis),
@@ -531,18 +524,22 @@ impl BaselineInitializationProgress {
         self.phase
     }
 
+    #[cfg(test)]
     pub(crate) fn discovered_notes(&self) -> u64 {
         self.discovered_notes
     }
 
+    #[cfg(test)]
     pub(crate) fn baseline_revisions(&self) -> u64 {
         self.baseline_revisions
     }
 
+    #[cfg(test)]
     pub(crate) fn ready_notes(&self) -> u64 {
         self.ready_notes
     }
 
+    #[cfg(test)]
     pub(crate) fn failed_notes(&self) -> u64 {
         self.failed_notes
     }
@@ -645,6 +642,7 @@ impl DeletionMarker {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn payload_version(&self) -> PayloadVersion {
         self.payload_version
     }
@@ -653,18 +651,22 @@ impl DeletionMarker {
         &self.operation_id
     }
 
+    #[cfg(test)]
     pub(crate) fn scope(&self) -> &DeletionScope {
         &self.scope
     }
 
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> HistoryDeletionKind {
         self.kind
     }
 
+    #[cfg(test)]
     pub(crate) fn occurred_at_millis(&self) -> u64 {
         self.occurred_at_millis
     }
 
+    #[cfg(test)]
     pub(crate) fn history_generation(&self) -> u64 {
         self.history_generation
     }
@@ -763,6 +765,7 @@ impl ExistingBaselineCandidate {
     }
 }
 
+#[cfg(test)]
 impl HistoryDeletionReceipt {
     pub(crate) fn scope(&self) -> &DeletionScope {
         self.marker.scope()
@@ -770,10 +773,6 @@ impl HistoryDeletionReceipt {
 
     pub(crate) fn kind(&self) -> HistoryDeletionKind {
         self.marker.kind()
-    }
-
-    pub(crate) fn marker(&self) -> &DeletionMarker {
-        &self.marker
     }
 
     pub(crate) fn baseline_note_ids(&self) -> &[NoteIdentity] {
@@ -788,6 +787,7 @@ pub(crate) struct HistoryStorageUsage {
     reclaimable_bytes: u64,
 }
 
+#[cfg(test)]
 impl HistoryStorageUsage {
     pub(crate) fn allocated_bytes(&self) -> u64 {
         self.allocated_bytes
@@ -837,6 +837,7 @@ pub(crate) struct NoteHistoryHealth {
     revision_payload_bytes: u64,
 }
 
+#[cfg(test)]
 impl NoteHistoryHealth {
     pub(crate) fn state(&self) -> NoteHistoryHealthState {
         self.state
@@ -875,26 +876,32 @@ impl HistoryHealthReport {
         self.state
     }
 
+    #[cfg(test)]
     pub(crate) fn integrity(&self) -> HistoryIntegrityState {
         self.integrity
     }
 
+    #[cfg(test)]
     pub(crate) fn initialization(&self) -> &BaselineInitializationProgress {
         &self.initialization
     }
 
+    #[cfg(test)]
     pub(crate) fn storage(&self) -> Option<&HistoryStorageUsage> {
         self.storage.as_ref()
     }
 
+    #[cfg(test)]
     pub(crate) fn can_retry(&self) -> bool {
         self.can_retry
     }
 
+    #[cfg(test)]
     pub(crate) fn can_reset(&self) -> bool {
         self.can_reset
     }
 
+    #[cfg(test)]
     pub(crate) fn last_reset(&self) -> Option<&HistoryResetReceipt> {
         self.last_reset.as_ref()
     }
@@ -906,6 +913,7 @@ pub(crate) struct HistoryCompactionReceipt {
     after: HistoryStorageUsage,
 }
 
+#[cfg(test)]
 impl HistoryCompactionReceipt {
     pub(crate) fn before(&self) -> &HistoryStorageUsage {
         &self.before
@@ -922,6 +930,7 @@ impl HistoryCompactionReceipt {
     }
 }
 
+#[cfg(test)]
 impl HistoryResetReceipt {
     pub(crate) fn operation_id(&self) -> &str {
         &self.operation_id
@@ -957,6 +966,7 @@ pub(crate) struct LifecycleEventHeader {
 }
 
 impl LifecycleEventHeader {
+    #[cfg(test)]
     fn issue(
         note_identity: NoteIdentity,
         predecessor: Option<TimelineRecordIdentity>,
@@ -975,26 +985,32 @@ impl LifecycleEventHeader {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn payload_version(&self) -> PayloadVersion {
         self.payload_version
     }
 
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> LifecycleEventKind {
         self.kind
     }
 
+    #[cfg(test)]
     pub(crate) fn identity(&self) -> &LifecycleEventIdentity {
         &self.identity
     }
 
+    #[cfg(test)]
     pub(crate) fn occurred_at_millis(&self) -> u64 {
         self.occurred_at_millis
     }
 
+    #[cfg(test)]
     pub(crate) fn previous_path(&self) -> Option<&Path> {
         self.previous_path.as_deref()
     }
 
+    #[cfg(test)]
     pub(crate) fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
@@ -1233,6 +1249,7 @@ impl NoteMutation {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn baseline_initialization(
         history_intent: PreparedHistoryIntent,
         path: PathBuf,
@@ -1248,6 +1265,7 @@ impl NoteMutation {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn recovery_reconciliation(
         history_intent: PreparedHistoryIntent,
         path: PathBuf,
@@ -1279,10 +1297,12 @@ impl NoteMutation {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn source(&self) -> MutationSource {
         self.source
     }
 
+    #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
@@ -1443,6 +1463,7 @@ impl VaultObservation {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn source(&self) -> VaultObservationSource {
         self.source
     }
@@ -1622,10 +1643,12 @@ impl LifecyclePublicationResult {
 }
 
 impl LifecycleReceipt {
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> LifecycleEventKind {
         self.kind
     }
 
+    #[cfg(test)]
     pub(crate) fn note_id(&self) -> &NoteIdentity {
         &self.note_id
     }
@@ -1634,10 +1657,12 @@ impl LifecycleReceipt {
         &self.path
     }
 
+    #[cfg(test)]
     pub(crate) fn previous_path(&self) -> Option<&Path> {
         self.previous_path.as_deref()
     }
 
+    #[cfg(test)]
     pub(crate) fn occurred_at_millis(&self) -> u64 {
         self.occurred_at_millis
     }
@@ -1672,36 +1697,12 @@ impl AllowedScope {
         }
     }
 
-    pub(crate) fn only(note_id: NoteIdentity) -> Self {
-        Self {
-            note_ids: Some(HashSet::from([note_id])),
-            excluded_note_ids: HashSet::new(),
-        }
-    }
-
     fn allows(&self, note_id: &NoteIdentity) -> bool {
         !self.excluded_note_ids.contains(note_id)
             && self
                 .note_ids
                 .as_ref()
                 .is_none_or(|note_ids| note_ids.contains(note_id))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ExplicitRestoreGrant {
-    turn_id: TurnIdentity,
-    note_id: NoteIdentity,
-    revision_id: RevisionIdentity,
-}
-
-impl ExplicitRestoreGrant {
-    fn new(turn_id: TurnIdentity, note_id: NoteIdentity, revision_id: RevisionIdentity) -> Self {
-        Self {
-            turn_id,
-            note_id,
-            revision_id,
-        }
     }
 }
 
@@ -1728,18 +1729,6 @@ pub(crate) enum HistoryError {
     Stale(String),
     Ineligible(String),
     Missing(String),
-}
-
-impl HistoryError {
-    fn into_diagnostic(self) -> String {
-        match self {
-            Self::Unavailable(cause)
-            | Self::Corrupt(cause)
-            | Self::Stale(cause)
-            | Self::Ineligible(cause)
-            | Self::Missing(cause) => cause,
-        }
-    }
 }
 
 impl std::fmt::Display for HistoryError {
@@ -1800,6 +1789,7 @@ impl HistoryRestoreResult {
     }
 }
 
+#[cfg(test)]
 impl HistoryRestorePreview {
     pub(crate) fn revision_id(&self) -> &str {
         &self.revision_id
@@ -1858,12 +1848,14 @@ pub(crate) enum HistoryModeRecord {
 }
 
 impl HistoryModeRecord {
+    #[cfg(test)]
     pub(crate) fn record_id(&self) -> &str {
         match self {
             Self::Revision { record_id, .. } | Self::LifecycleEvent { record_id, .. } => record_id,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn revision_id(&self) -> Option<&str> {
         match self {
             Self::Revision { revision_id, .. } => Some(revision_id),
@@ -1871,34 +1863,11 @@ impl HistoryModeRecord {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn revision_label(&self) -> Option<&str> {
         match self {
             Self::Revision { revision_label, .. } => revision_label.as_deref(),
             Self::LifecycleEvent { .. } => None,
-        }
-    }
-
-    fn occurred_at_millis(&self) -> u64 {
-        match self {
-            Self::Revision {
-                occurred_at_millis, ..
-            }
-            | Self::LifecycleEvent {
-                occurred_at_millis, ..
-            } => *occurred_at_millis,
-        }
-    }
-
-    fn set_timeline_ordinal(&mut self, timeline_ordinal: usize) {
-        match self {
-            Self::Revision {
-                timeline_ordinal: ordinal,
-                ..
-            }
-            | Self::LifecycleEvent {
-                timeline_ordinal: ordinal,
-                ..
-            } => *ordinal = timeline_ordinal,
         }
     }
 }
@@ -1938,40 +1907,6 @@ fn assign_editing_sessions(records: &mut [HistoryModeRecord]) {
             }
         }
     }
-}
-
-fn record_identity_value(identity: &TimelineRecordIdentity) -> String {
-    match identity {
-        TimelineRecordIdentity::Revision(identity) => identity.0.clone(),
-        TimelineRecordIdentity::LifecycleEvent(identity) => identity.0.clone(),
-    }
-}
-
-fn order_history_mode_records(
-    records: Vec<(HistoryModeRecord, Option<String>)>,
-) -> Result<Vec<HistoryModeRecord>, String> {
-    let record_count = records.len();
-    let mut by_predecessor = HashMap::with_capacity(record_count);
-    for (record, predecessor_id) in records {
-        if by_predecessor.insert(predecessor_id, record).is_some() {
-            return Err("Note Timeline record lineage is branched".to_string());
-        }
-    }
-
-    let mut ordered = Vec::with_capacity(record_count);
-    let mut predecessor_id = None;
-    while let Some(mut record) = by_predecessor.remove(&predecessor_id) {
-        record.set_timeline_ordinal(ordered.len());
-        predecessor_id = Some(record.record_id().to_string());
-        ordered.push(record);
-    }
-    if !by_predecessor.is_empty() {
-        return Err("Note Timeline record lineage is missing or disconnected".to_string());
-    }
-
-    ordered.reverse();
-    assign_editing_sessions(&mut ordered);
-    Ok(ordered)
 }
 
 fn authored_content_counts(revision: &ReconstructedNoteRevision) -> (usize, usize) {
@@ -2132,6 +2067,7 @@ impl HistoryCursor {
     }
 }
 
+#[cfg(test)]
 impl HistoryModePage {
     pub(crate) fn records(&self) -> &[HistoryModeRecord] {
         &self.records
@@ -2187,14 +2123,9 @@ fn retained_history_page(
         return Err(HistoryError::Stale(invalid_cursor.to_string()));
     }
     let start = continuation.as_ref().map(HistoryCursor::record_identity);
-    let page = match history_store::bounded_timeline_page(note_id, start, limit)
+    let page = history_store::bounded_timeline_page(note_id, start, limit)
         .map_err(history_failure)?
-    {
-        history_store::BoundedTimelinePageRead::Page(page) => page,
-        history_store::BoundedTimelinePageRead::CursorUnavailable => {
-            return Err(HistoryError::Stale(invalid_cursor.to_string()))
-        }
-    };
+        .ok_or_else(|| HistoryError::Stale(invalid_cursor.to_string()))?;
     let first_ordinal = match &continuation {
         Some(continuation) if continuation.next_timeline_ordinal < page.total_records => {
             continuation.next_timeline_ordinal
@@ -2281,6 +2212,7 @@ pub(crate) struct HistoryDiffLine {
     new_line_number: Option<usize>,
 }
 
+#[cfg(test)]
 impl HistoryDiffLine {
     fn kind(&self) -> HistoryDiffLineKind {
         self.kind
@@ -2303,12 +2235,13 @@ pub(crate) struct HistoryModeDiff {
     missing_assets: Vec<String>,
 }
 
+#[cfg(test)]
 impl HistoryModeDiff {
     fn comparison(&self) -> HistoryDiffComparison {
         self.comparison
     }
 
-    fn from_revision_id(&self) -> Option<&str> {
+    fn compared_from_revision_id(&self) -> Option<&str> {
         self.from_revision_id.as_deref()
     }
 
@@ -2532,6 +2465,7 @@ fn missing_binary_assets(markdown: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
+#[cfg(test)]
 impl HistoryModeRevision {
     pub(crate) fn unmanaged_frontmatter(&self) -> Option<&str> {
         self.unmanaged_frontmatter.as_deref()
@@ -2605,19 +2539,17 @@ fn prepare_recovered_note_access(
 }
 
 impl HistoryModeAccess<'_> {
-    pub(crate) fn note_id(&self) -> &NoteIdentity {
-        &self.note_id
-    }
-
     fn prepare_access(&self) -> Result<OperationGuard, HistoryError> {
         prepare_recovered_note_access(self.state, &self.note_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn revisions(&self) -> Result<Vec<NoteRevisionHeader>, HistoryError> {
         let _operation = self.prepare_access()?;
         history_store::revisions(&self.note_id).map_err(history_failure)
     }
 
+    #[cfg(test)]
     pub(crate) fn lifecycle_events(&self) -> Result<Vec<LifecycleEventHeader>, HistoryError> {
         let _operation = self.prepare_access()?;
         history_store::lifecycle_events(&self.note_id).map_err(history_failure)
@@ -3050,31 +2982,6 @@ impl CurrentContentAccess<'_> {
         let projection = query.await?;
         self.finish_read(version, projection)
     }
-
-    pub(crate) fn allows(&self, note_id: &NoteIdentity) -> bool {
-        self.eligibility()
-            .map(|eligibility| eligibility.allows_note(Some(note_id.as_str()), None))
-            .unwrap_or(false)
-    }
-}
-
-pub(crate) struct AgentRestoreAccess<'a> {
-    _state: &'a AppState,
-    grant: ExplicitRestoreGrant,
-}
-
-impl AgentRestoreAccess<'_> {
-    pub(crate) fn turn_id(&self) -> &TurnIdentity {
-        &self.grant.turn_id
-    }
-
-    pub(crate) fn note_id(&self) -> &NoteIdentity {
-        &self.grant.note_id
-    }
-
-    pub(crate) fn revision_id(&self) -> &RevisionIdentity {
-        &self.grant.revision_id
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3089,26 +2996,32 @@ pub(crate) struct ObservationReceipt {
 }
 
 impl ObservationReceipt {
+    #[cfg(test)]
     pub(crate) fn source(&self) -> VaultObservationSource {
         self.source
     }
 
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> VaultObservationKind {
         self.kind
     }
 
+    #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
+    #[cfg(test)]
     pub(crate) fn previous_path(&self) -> Option<&Path> {
         self.previous_path.as_deref()
     }
 
+    #[cfg(test)]
     pub(crate) fn observed_at_millis(&self) -> u64 {
         self.observed_at_millis
     }
 
+    #[cfg(test)]
     pub(crate) fn modified_at_millis(&self) -> Option<u64> {
         self.modified_at_millis
     }
@@ -3420,10 +3333,10 @@ impl<'a> NoteTimeline<'a> {
                     &markdown,
                     known_since_millis,
                 )?;
-                if candidate.is_inactive() {
-                    if baseline_inserted || history_store::lifecycle_events(&note_id)?.is_empty() {
-                        candidate.record_inactive_lifecycle(&note_id)?;
-                    }
+                if candidate.is_inactive()
+                    && (baseline_inserted || history_store::lifecycle_events(&note_id)?.is_empty())
+                {
+                    candidate.record_inactive_lifecycle(&note_id)?;
                 }
                 history_store::clear_baseline_initialization_failure(&note_id)?;
                 let ready = matches!(
@@ -3466,6 +3379,7 @@ impl<'a> NoteTimeline<'a> {
         Ok(progress)
     }
 
+    #[cfg(test)]
     pub(crate) fn baseline_initialization_progress(
         &self,
     ) -> Result<BaselineInitializationProgress, String> {
@@ -3473,6 +3387,7 @@ impl<'a> NoteTimeline<'a> {
         history_store::baseline_initialization_progress()
     }
 
+    #[cfg(test)]
     pub(crate) fn note_baseline_initialization_state(
         &self,
         note_id: &NoteIdentity,
@@ -3481,6 +3396,7 @@ impl<'a> NoteTimeline<'a> {
         history_store::note_baseline_initialization_state(note_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn reset_history(&self, vault_root: &Path) -> Result<HistoryResetReceipt, String> {
         self.reset_history_from(vault_root, ResetHistorySource::RequireReadableStore)
     }
@@ -3586,6 +3502,7 @@ impl<'a> NoteTimeline<'a> {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn latest_history_reset(&self) -> Result<Option<HistoryResetReceipt>, String> {
         let _operation = self.runtime.begin_operation()?;
         let Some((operation_id, previous_generation, generation, reset_at_millis)) =
@@ -3917,6 +3834,7 @@ impl<'a> NoteTimeline<'a> {
         .map_err(history_failure)
     }
 
+    #[cfg(test)]
     pub(crate) fn deletion_markers(&self) -> Result<Vec<DeletionMarker>, String> {
         let _operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
@@ -3924,6 +3842,7 @@ impl<'a> NoteTimeline<'a> {
         history_store::deletion_markers()
     }
 
+    #[cfg(test)]
     pub(crate) fn history_storage_usage(&self) -> Result<HistoryStorageUsage, String> {
         let _operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
@@ -4910,18 +4829,6 @@ impl<'a> NoteTimeline<'a> {
             scope,
         }
     }
-
-    pub(crate) fn agent_restore(
-        &self,
-        grant: ExplicitRestoreGrant,
-    ) -> Result<AgentRestoreAccess<'a>, String> {
-        let _operation = prepare_recovered_note_access(self.state, &grant.note_id)
-            .map_err(HistoryError::into_diagnostic)?;
-        Ok(AgentRestoreAccess {
-            _state: self.state,
-            grant,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -4958,13 +4865,13 @@ pub(crate) fn reconstructed_revision_bodies_for_test(
     let history = timeline.history_mode(HistoryModeGrant::authorized(NoteIdentity::new(note_id)));
     history
         .revisions()
-        .map_err(HistoryError::into_diagnostic)?
+        .map_err(|error| error.to_string())?
         .into_iter()
         .map(|revision| {
             history
                 .reconstruct(revision.identity())
                 .map(|revision| revision.body().to_string())
-                .map_err(HistoryError::into_diagnostic)
+                .map_err(|error| error.to_string())
         })
         .collect()
 }
@@ -5332,7 +5239,7 @@ mod tests {
             .unwrap();
         assert_eq!(parent.comparison(), HistoryDiffComparison::Parent);
         assert_eq!(
-            parent.from_revision_id(),
+            parent.compared_from_revision_id(),
             Some(revisions[0].identity().0.as_str())
         );
         assert_eq!(parent.to_revision_id(), revisions[1].identity().0.as_str());
@@ -5372,7 +5279,7 @@ mod tests {
             .diff(&selected_id.0, HistoryDiffComparison::Current)
             .unwrap();
         assert_eq!(
-            current_diff.from_revision_id(),
+            current_diff.compared_from_revision_id(),
             Some(revisions[1].identity().0.as_str())
         );
         assert_eq!(
@@ -5419,43 +5326,6 @@ mod tests {
                 new_line_number: None,
             }]
         );
-    }
-
-    #[test]
-    fn timeline_order_and_session_boundaries_follow_predecessors_at_timestamp_ties() {
-        let ordered = order_history_mode_records(vec![
-            (
-                projected_revision("z-first", MutationSource::Editor, 100),
-                None,
-            ),
-            (
-                HistoryModeRecord::LifecycleEvent {
-                    record_id: "a-event".to_string(),
-                    event_id: "a-event".to_string(),
-                    event_kind: LifecycleEventKind::Renamed,
-                    occurred_at_millis: 100,
-                    timeline_ordinal: 0,
-                    previous_path: Some("/vault/Before.md".to_string()),
-                    path: Some("/vault/After.md".to_string()),
-                },
-                Some("z-first".to_string()),
-            ),
-            (
-                projected_revision("m-last", MutationSource::Editor, 100),
-                Some("a-event".to_string()),
-            ),
-        ])
-        .unwrap();
-
-        assert_eq!(
-            ordered
-                .iter()
-                .map(HistoryModeRecord::record_id)
-                .collect::<Vec<_>>(),
-            vec!["m-last", "a-event", "z-first"]
-        );
-        assert_eq!(editing_session_id(&ordered[2]), Some("z-first"));
-        assert_eq!(editing_session_id(&ordered[0]), Some("m-last"));
     }
 
     #[test]
@@ -5755,7 +5625,7 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), before_bytes);
         assert_eq!(receipt.scope(), &DeletionScope::Note(note_id.clone()));
         assert_eq!(receipt.kind(), HistoryDeletionKind::Clear);
-        assert_eq!(receipt.baseline_note_ids(), &[note_id.clone()]);
+        assert_eq!(receipt.baseline_note_ids(), std::slice::from_ref(&note_id));
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
             EventBus::disabled(),
@@ -6543,7 +6413,6 @@ mod tests {
             .unwrap()[0]
             .identity()
             .clone();
-        drop(timeline);
         drop(state);
 
         let restarted = AppState::new(
@@ -7026,7 +6895,6 @@ mod tests {
             &history_store::history_database_path_for_test(copied.path()),
         );
         drop(source_access);
-        drop(source_timeline);
         drop(source_state);
 
         let destination_app_data =
@@ -7079,7 +6947,6 @@ mod tests {
         let database = history_store::history_database_path_for_test(notes.path());
         let older_clean_copy = notes.path().join(".gneauxghts/history-older.sqlite3");
         fs::copy(&database, &older_clean_copy).unwrap();
-        drop(first_timeline);
         drop(first_state);
 
         let second_state = AppState::new(
@@ -7090,7 +6957,6 @@ mod tests {
         let second_timeline = second_state.note_timeline();
         second_timeline.baseline_initialization_progress().unwrap();
         second_timeline.clean_close(notes.path()).unwrap();
-        drop(second_timeline);
         drop(second_state);
         fs::copy(&older_clean_copy, &database).unwrap();
 
@@ -7377,7 +7243,6 @@ mod tests {
         assert_eq!(manifest.history_generation, 2);
         let operation_id = reset.operation_id().to_string();
         drop(history);
-        drop(timeline);
         drop(state);
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
@@ -7423,7 +7288,6 @@ mod tests {
 
         assert!(error.contains("did not rebuild completely"));
         history_store::clear_reset_rebuild_marker_for_test();
-        drop(timeline);
         drop(state);
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
@@ -7545,7 +7409,6 @@ mod tests {
         let reset = timeline.reset_history(notes.path()).unwrap();
 
         assert_eq!(reset.initialization().discovered_notes(), 1);
-        drop(timeline);
         drop(state);
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
@@ -7862,7 +7725,6 @@ mod tests {
         );
 
         let operation_id = reset.operation_id().to_string();
-        drop(timeline);
         drop(state);
         let restarted = AppState::new(
             SemanticState::new_disabled("disabled"),
@@ -9301,50 +9163,6 @@ mod tests {
     }
 
     #[test]
-    fn history_roles_receive_distinct_scoped_capabilities() {
-        let _guard = crate::test_support::lock_test_env();
-        let app_data = crate::test_support::TestDir::new("timeline-capabilities-app-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-        let notes = crate::test_support::TestDir::new("timeline-capabilities-notes");
-        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-        let state = AppState::new(
-            SemanticState::new_disabled("disabled"),
-            EventBus::disabled(),
-        )
-        .expect("construct app state");
-        let timeline = state.note_timeline();
-        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
-            &state,
-            "Scoped note".to_string(),
-            "Current body".to_string(),
-            None,
-        )
-        .unwrap()
-        .session
-        .unwrap();
-        let note_id = NoteIdentity::new(created.note_id.unwrap());
-        let revision_id = RevisionIdentity::from_persisted("revision-1");
-
-        let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
-        let current = timeline.current_content(AllowedScope::only(note_id.clone()));
-        let restore = timeline
-            .agent_restore(ExplicitRestoreGrant::new(
-                TurnIdentity::new("turn-1"),
-                note_id.clone(),
-                revision_id.clone(),
-            ))
-            .unwrap();
-
-        assert_eq!(history.note_id(), &note_id);
-        assert!(current.allows(&note_id));
-        assert_eq!(restore.note_id(), &note_id);
-        assert_eq!(restore.revision_id(), &revision_id);
-        assert_eq!(restore.turn_id(), &TurnIdentity::new("turn-1"));
-        crate::state::set_notes_root_override(None).unwrap();
-    }
-
-    #[test]
     fn external_observation_records_each_distinct_canonical_state_once() {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("timeline-external-app-data");
@@ -9862,22 +9680,6 @@ mod tests {
                 access.revisions().unwrap_err().to_string(),
                 "Recover the missing note before accessing its Note Timeline"
             );
-            assert!(!state
-                .note_timeline()
-                .current_content(AllowedScope::only(note_id.clone()))
-                .allows(&note_id));
-            assert_eq!(
-                state
-                    .note_timeline()
-                    .agent_restore(ExplicitRestoreGrant::new(
-                        TurnIdentity::new("missing-restore-turn"),
-                        note_id.clone(),
-                        RevisionIdentity::from_persisted("missing-revision"),
-                    ))
-                    .err()
-                    .unwrap(),
-                "Recover the missing note before accessing its Note Timeline"
-            );
         }
 
         crate::state::set_forgotten_note_retention_days(30).unwrap();
@@ -9964,56 +9766,6 @@ mod tests {
         assert_eq!(missing.retention_days(), 30);
         assert_eq!(missing.purge_at_millis(), 42 + 30 * RECOVERY_DAY_MILLIS);
         assert_eq!(history_store::retained_observation_count(), 0);
-        crate::state::set_notes_root_override(None).unwrap();
-    }
-
-    #[test]
-    fn agent_restore_replays_retained_missing_observations_before_authorizing_access() {
-        let _guard = crate::test_support::lock_test_env();
-        let app_data = crate::test_support::TestDir::new("timeline-agent-restore-missing-app-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-        let notes = crate::test_support::TestDir::new("timeline-agent-restore-missing-notes");
-        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-        let state = AppState::new(
-            SemanticState::new_disabled("disabled"),
-            EventBus::disabled(),
-        )
-        .unwrap();
-        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
-            &state,
-            "Pending missing restore".to_string(),
-            "Retained before authorization".to_string(),
-            None,
-        )
-        .unwrap()
-        .session
-        .unwrap();
-        let note_id = NoteIdentity::new(created.note_id.unwrap());
-        let path = PathBuf::from(created.path.unwrap());
-        fs::remove_file(&path).unwrap();
-        let pending_missing = state
-            .note_timeline()
-            .capture_observed_markdown(VaultObservation::missing(path, 42))
-            .unwrap();
-        history_store::retain_observation(&pending_missing).unwrap();
-
-        let error = state
-            .note_timeline()
-            .agent_restore(ExplicitRestoreGrant::new(
-                TurnIdentity::new("pending-missing-turn"),
-                note_id.clone(),
-                RevisionIdentity::from_persisted("pending-missing-revision"),
-            ))
-            .err()
-            .unwrap();
-
-        assert_eq!(
-            error,
-            "Recover the missing note before accessing its Note Timeline"
-        );
-        assert_eq!(history_store::retained_observation_count(), 0);
-        assert!(history_store::missing_note(&note_id).unwrap().is_some());
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -11108,9 +10860,6 @@ mod tests {
             .to_string()
             .contains("Recover"));
         assert_eq!(retained_observation_count_for_test(), 0);
-        let current_content = state
-            .note_timeline()
-            .current_content(AllowedScope::only(note_id.clone()));
         assert!(state
             .note_timeline()
             .clear_note_history(&note_id)
@@ -11125,9 +10874,6 @@ mod tests {
         ] {
             assert!(error.to_string().contains("Recover the forgotten note"));
         }
-        assert!(!current_content.allows(&note_id));
-        drop(current_content);
-
         let recovered_markdown = crate::note::prepare_note_markdown(
             &fs::read_to_string(&forgotten_path).unwrap(),
             Some(&fs::read_to_string(&forgotten_path).unwrap()),
@@ -11161,11 +10907,7 @@ mod tests {
         );
         assert!(recovered_publication.commit_warning().is_none());
 
-        let current_content = state
-            .note_timeline()
-            .current_content(AllowedScope::only(access.note_id().clone()));
         assert_eq!(access.revisions().unwrap().len(), 2);
-        assert!(current_content.allows(access.note_id()));
         assert_eq!(
             access
                 .lifecycle_events()

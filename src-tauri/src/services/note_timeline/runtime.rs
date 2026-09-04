@@ -53,7 +53,7 @@ pub(super) struct CurrentContentMutationGuard {
 
 #[derive(Clone)]
 pub(super) struct OperationGuard {
-    lease: Arc<OperationLease>,
+    _lease: Arc<OperationLease>,
 }
 
 struct OperationLease {
@@ -159,7 +159,7 @@ impl NoteTimelineRuntime {
         }
         state.active += 1;
         Ok(OperationGuard {
-            lease: Arc::new(OperationLease {
+            _lease: Arc::new(OperationLease {
                 barrier: Arc::clone(&self.operations),
             }),
         })

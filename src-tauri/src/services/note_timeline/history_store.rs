@@ -1168,7 +1168,7 @@ fn append_baseline_if_absent(
     canonical_markdown: &str,
     known_since_millis: u64,
 ) -> Result<bool, String> {
-    let head = load_head(&transaction, note_id.as_str())?;
+    let head = load_head(transaction, note_id.as_str())?;
     if head
         .as_ref()
         .and_then(|head| head.revision_id.as_ref())
@@ -1179,7 +1179,7 @@ fn append_baseline_if_absent(
     let authored_payload = AuthoredState::from_canonical(canonical_markdown).encode();
     let result_hash = hash(&authored_payload);
     append_revision(
-        &transaction,
+        transaction,
         RevisionAppend {
             revision_id: &RevisionIdentity::issue().0,
             note_id: note_id.as_str(),
@@ -1927,11 +1927,6 @@ pub(super) struct BoundedTimelinePage {
     pub(super) total_records: usize,
 }
 
-pub(super) enum BoundedTimelinePageRead {
-    Page(BoundedTimelinePage),
-    CursorUnavailable,
-}
-
 fn bounded_revision_record(
     connection: &Connection,
     note_id: &NoteIdentity,
@@ -1988,7 +1983,7 @@ pub(super) fn bounded_timeline_page(
     note_id: &NoteIdentity,
     start: Option<TimelineRecordIdentity>,
     limit: usize,
-) -> Result<BoundedTimelinePageRead, String> {
+) -> Result<Option<BoundedTimelinePage>, String> {
     let connection = open_store()?;
     let page_size = limit.clamp(1, 100);
     let head = connection
@@ -2030,7 +2025,7 @@ pub(super) fn bounded_timeline_page(
         };
         let Some(record) = record else {
             return if is_continuation && records.is_empty() {
-                Ok(BoundedTimelinePageRead::CursorUnavailable)
+                Ok(None)
             } else {
                 Err("Note Timeline record lineage is missing or disconnected".to_string())
             };
@@ -2046,7 +2041,7 @@ pub(super) fn bounded_timeline_page(
     if let Some(predecessor) = &session_predecessor {
         next_record = Some(predecessor.identity());
     }
-    Ok(BoundedTimelinePageRead::Page(BoundedTimelinePage {
+    Ok(Some(BoundedTimelinePage {
         records,
         session_predecessor,
         next_record,
@@ -2312,26 +2307,6 @@ pub(super) fn clear_note_history(
     transaction
         .commit()
         .map_err(|error| format!("Commit Note Timeline clear: {error}"))
-}
-
-pub(super) fn revision_labels(note_id: &NoteIdentity) -> Result<BTreeMap<String, String>, String> {
-    let connection = open_store()?;
-    let mut statement = connection
-        .prepare(
-            "SELECT labels.revision_id, labels.label
-             FROM named_revision_labels labels
-             JOIN revisions revisions ON revisions.revision_id = labels.revision_id
-             WHERE revisions.note_id = ?1
-             ORDER BY labels.label_id",
-        )
-        .map_err(|error| format!("Prepare Named Revision labels: {error}"))?;
-    let rows = statement
-        .query_map(params![note_id.as_str()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|error| format!("Query Named Revision labels: {error}"))?;
-    rows.collect::<Result<BTreeMap<_, _>, _>>()
-        .map_err(|error| format!("Read Named Revision labels: {error}"))
 }
 
 fn require_revision_owned_by_note(
@@ -2655,6 +2630,7 @@ fn purge_staging_path(operation_id: &DeletionOperationIdentity) -> Result<PathBu
     Ok(directory.join(format!("{}.md", operation_id.as_str())))
 }
 
+#[cfg(test)]
 pub(super) fn deletion_markers() -> Result<Vec<DeletionMarker>, String> {
     let connection = open_store()?;
     let mut statement = connection
@@ -2989,7 +2965,8 @@ pub(super) fn clean_close() -> Result<(), String> {
     if let Err(error) = close_result {
         return restore_open_after_failed_close(&connection, error, "failed clean-close recovery");
     }
-    if let Err((connection, error)) = close_history_connection(connection) {
+    if let Err(close_error) = close_history_connection(connection) {
+        let (connection, error) = *close_error;
         return restore_open_after_failed_close(
             &connection,
             error,
@@ -3023,19 +3000,19 @@ fn restore_open_after_failed_close(
     }
 }
 
-fn close_history_connection(connection: Connection) -> Result<(), (Connection, String)> {
+fn close_history_connection(connection: Connection) -> Result<(), Box<(Connection, String)>> {
     #[cfg(test)]
     if take_fault(FaultPoint::Close) {
-        return Err((
+        return Err(Box::new((
             connection,
             "injected history connection close failure".to_string(),
-        ));
+        )));
     }
     connection.close().map_err(|(connection, error)| {
-        (
+        Box::new((
             connection,
             format!("Close Note Timeline history connection: {error}"),
-        )
+        ))
     })
 }
 
@@ -3647,10 +3624,10 @@ fn open_store() -> Result<Connection, String> {
     if matches!(schema, Some(5 | 6)) {
         migrate_schema_six_portability(&connection, &manifest)?;
     }
-    if matches!(schema, Some(5 | 6 | 7)) {
+    if matches!(schema, Some(5..=7)) {
         migrate_schema_eight_missing_notes(&connection)?;
     }
-    if matches!(schema, Some(5 | 6 | 7 | 8)) {
+    if matches!(schema, Some(5..=8)) {
         migrate_schema_nine_timeline_counts(&connection)?;
     }
     configure_wal_bounds(&connection)?;
