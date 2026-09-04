@@ -204,11 +204,27 @@ impl From<PublicationStage> for MutationWarningStage {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NoteTimelineIssue {
     stage: MutationWarningStage,
     message: String,
+}
+
+impl Serialize for NoteTimelineIssue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut state = serializer.serialize_struct("NoteTimelineIssue", 2)?;
+        state.serialize_field("stage", &self.stage)?;
+        state.serialize_field(
+            "message",
+            "A post-commit update is awaiting automatic recovery.",
+        )?;
+        state.end()
+    }
 }
 
 impl NoteTimelineIssue {
@@ -230,13 +246,28 @@ impl From<PublicationIssue> for NoteTimelineIssue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NoteMutationWarning {
-    #[serde(skip)]
     payload_version: PayloadVersion,
     message: String,
     issues: Vec<NoteTimelineIssue>,
+}
+
+impl Serialize for NoteMutationWarning {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut state = serializer.serialize_struct("NoteMutationWarning", 2)?;
+        state.serialize_field(
+            "message",
+            "The change was saved, but a follow-up update is awaiting automatic recovery.",
+        )?;
+        state.serialize_field("issues", &self.issues)?;
+        state.end()
+    }
 }
 
 impl NoteMutationWarning {
@@ -257,6 +288,7 @@ impl NoteMutationWarning {
         message: String,
         issue_message: String,
     ) -> Self {
+        eprintln!("Note mutation warning at {stage:?}: {issue_message}");
         Self {
             payload_version: PayloadVersion::V1,
             message,
@@ -849,6 +881,10 @@ impl HistoryHealthReport {
 
     pub(crate) fn storage(&self) -> Option<&HistoryStorageUsage> {
         self.storage.as_ref()
+    }
+
+    pub(crate) fn pending_repairs(&self) -> u64 {
+        self.pending_repairs
     }
 
     pub(crate) fn can_retry(&self) -> bool {
@@ -1564,6 +1600,14 @@ pub(crate) enum LifecyclePublicationFailure {
     NotPublished(String),
     Indeterminate(String),
 }
+
+#[derive(Debug)]
+pub(crate) enum LifecycleCommandError {
+    History(String),
+    Publication(String),
+}
+
+const LIFECYCLE_PUBLICATION_CAUSE_PREFIX: &str = "__gneauxghts_lifecycle_publication_cause__:";
 
 impl LifecyclePublicationFailure {
     pub(crate) fn not_published(message: String) -> Self {
@@ -4335,6 +4379,22 @@ impl<'a> NoteTimeline<'a> {
         operation: NoteLifecycleOperation,
         canonical_markdown: &str,
         publish: impl FnOnce() -> Result<(), LifecyclePublicationFailure>,
+    ) -> Result<LifecyclePublicationResult, LifecycleCommandError> {
+        self.publish_lifecycle_inner(operation, canonical_markdown, publish)
+            .map_err(|cause| {
+                if let Some(cause) = cause.strip_prefix(LIFECYCLE_PUBLICATION_CAUSE_PREFIX) {
+                    LifecycleCommandError::Publication(cause.to_string())
+                } else {
+                    LifecycleCommandError::History(cause)
+                }
+            })
+    }
+
+    fn publish_lifecycle_inner(
+        &self,
+        operation: NoteLifecycleOperation,
+        canonical_markdown: &str,
+        publish: impl FnOnce() -> Result<(), LifecyclePublicationFailure>,
     ) -> Result<LifecyclePublicationResult, String> {
         crate::state::with_note_file_mutation(|| {
             let _timeline_operation = self.runtime.begin_operation()?;
@@ -4409,12 +4469,13 @@ impl<'a> NoteTimeline<'a> {
                 (warning, false)
             }
             Err(LifecyclePublicationFailure::NotPublished(error)) => {
-                return Err(match history_store::acknowledge_observation(sequence) {
+                let cause = match history_store::acknowledge_observation(sequence) {
                     Ok(()) => error,
                     Err(abandon_error) => format!(
                         "{error}; additionally failed to abandon its lifecycle intent: {abandon_error}"
                     ),
-                });
+                };
+                return Err(format!("{LIFECYCLE_PUBLICATION_CAUSE_PREFIX}{cause}"));
             }
             Err(LifecyclePublicationFailure::Indeterminate(error)) => (
                 Some(NoteMutationWarning::single(
@@ -10283,23 +10344,27 @@ mod tests {
     }
 
     #[test]
-    fn warning_serialization_retains_the_existing_ipc_shape() {
+    fn warning_serialization_retains_shape_but_redacts_diagnostic_cause() {
         let warning = NoteMutationWarning::single(
             MutationWarningStage::CatalogUpsert,
-            "Saved with degraded synchronization".to_string(),
-            "catalog unavailable".to_string(),
+            "Saved at /private/vault/Note.md after SELECT failed".to_string(),
+            "SELECT catalog FROM /private/vault/catalog.sqlite3 failed".to_string(),
         );
 
+        let serialized = serde_json::to_value(warning).unwrap();
         assert_eq!(
-            serde_json::to_value(warning).unwrap(),
+            serialized,
             serde_json::json!({
-                "message": "Saved with degraded synchronization",
+                "message": "The change was saved, but a follow-up update is awaiting automatic recovery.",
                 "issues": [{
                     "stage": "catalogUpsert",
-                    "message": "catalog unavailable"
+                    "message": "A post-commit update is awaiting automatic recovery."
                 }]
             })
         );
+        let serialized = serialized.to_string();
+        assert!(!serialized.contains("SELECT"));
+        assert!(!serialized.contains("/private"));
     }
 
     #[test]

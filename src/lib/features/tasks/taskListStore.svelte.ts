@@ -6,6 +6,7 @@ import {
   routeTaskDocumentMutation
 } from './taskMutationGateway';
 import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
+import { invokeTimelineAwareCommand } from '$lib/contracts/timelineAwareCommand';
 
 export interface TaskItem {
   noteId: string;
@@ -239,10 +240,11 @@ export class TaskListStore {
         await this.refreshGroup(task.noteId);
         return;
       }
-      const groupPatch = await invoke<TaskListGroupPatch>('toggle_task', {
-        taskId: task.taskId,
-        ...this.#currentViewParams()
-      });
+      const groupPatch = await invokeTimelineAwareCommand<TaskListGroupPatch>(
+        'toggle_task',
+        { taskId: task.taskId, ...this.#currentViewParams() },
+        'The task could not be changed right now.'
+      );
       if (groupPatch.commitWarning) {
         console.warn('Task was toggled with incomplete projections:', groupPatch.commitWarning);
         void this.load({ background: true });
@@ -349,10 +351,11 @@ export class TaskListStore {
         await this.refreshGroup(task.noteId);
         return;
       }
-      const groupPatch = await invoke<TaskListGroupPatch>('delete_task', {
-        taskId: task.taskId,
-        ...this.#currentViewParams()
-      });
+      const groupPatch = await invokeTimelineAwareCommand<TaskListGroupPatch>(
+        'delete_task',
+        { taskId: task.taskId, ...this.#currentViewParams() },
+        'The task could not be changed right now.'
+      );
       if (groupPatch.commitWarning) {
         console.warn('Task was deleted with incomplete projections:', groupPatch.commitWarning);
         void this.load({ background: true });

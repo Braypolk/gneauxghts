@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CommittedMutationWarning } from "$lib/contracts/committedMutation";
+import { invokeForgottenItemCommand } from "$lib/contracts/forgottenItemCommand";
+import { invokeTimelineAwareCommand } from "$lib/contracts/timelineAwareCommand";
 import type {
   NoteSession,
   StoredImageAsset,
@@ -145,11 +147,11 @@ export async function saveNoteSession(
   markdown: string,
   currentPath: string | null,
 ) {
-  const saved = await invoke<NoteSession>("save_note", {
-    title,
-    markdown,
-    currentPath,
-  });
+  const saved = await invokeTimelineAwareCommand<NoteSession>(
+    "save_note",
+    { title, markdown, currentPath },
+    "The note could not be saved right now.",
+  );
   return createSessionSnapshot(saved);
 }
 
@@ -158,11 +160,11 @@ export async function saveTaskNoteSession(
   markdown: string,
   currentPath: string | null,
 ) {
-  const saved = await invoke<NoteSession>("save_task_note", {
-    title,
-    markdown,
-    currentPath,
-  });
+  const saved = await invokeTimelineAwareCommand<NoteSession>(
+    "save_task_note",
+    { title, markdown, currentPath },
+    "The note could not be saved right now.",
+  );
   return createSessionSnapshot(saved);
 }
 
@@ -232,14 +234,14 @@ export async function forgetNoteSession(
   currentPath: string,
   retentionDays: 1 | 7 | 30,
 ) {
-  return invoke<ForgottenNoteSummary | null>("forget_note", {
+  return invokeForgottenItemCommand<ForgottenNoteSummary | null>("forget_note", {
     currentPath,
     retentionDays,
   });
 }
 
 export async function restoreForgottenNotes(forgottenPaths: string[]) {
-  return invoke<RestoredForgottenNote[]>("restore_forgotten_notes", {
+  return invokeForgottenItemCommand<RestoredForgottenNote[]>("restore_forgotten_notes", {
     forgottenPaths,
   });
 }

@@ -1,5 +1,6 @@
 use crate::{
     chat::{ChatAgentProposal, ChatService, VaultAccess},
+    commands::history_commands::{tag_history_cause, take_history_cause, HistoryCommandError},
     index::AppState,
     proposals::{
         commit_prepared_note_creation_at_path, commit_prepared_note_review,
@@ -12,8 +13,47 @@ use crate::{
 use std::path::PathBuf;
 use tauri::State;
 
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProposalCommitError {
+    message: &'static str,
+    recovery_action: &'static str,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "domain", content = "failure", rename_all = "camelCase")]
+pub(crate) enum ProposalCommitCommandError {
+    History(HistoryCommandError),
+    Proposal(ProposalCommitError),
+}
+
+fn proposal_commit_error(cause: String) -> ProposalCommitCommandError {
+    if let Some(history_cause) = take_history_cause(&cause) {
+        ProposalCommitCommandError::History(HistoryCommandError::from_cause(
+            "commit_agent_proposal",
+            history_cause,
+        ))
+    } else {
+        eprintln!("Proposal commit command failed: {cause}");
+        ProposalCommitCommandError::Proposal(ProposalCommitError {
+            message: "The proposal could not be committed right now.",
+            recovery_action: "retry",
+        })
+    }
+}
+
 #[tauri::command]
 pub(crate) fn commit_agent_proposal(
+    state: State<'_, AppState>,
+    service: State<'_, ChatService>,
+    proposal_id: String,
+    markdown: Option<String>,
+) -> Result<CommitNoteReviewResult, ProposalCommitCommandError> {
+    commit_agent_proposal_inner(state, service, proposal_id, markdown)
+        .map_err(proposal_commit_error)
+}
+
+fn commit_agent_proposal_inner(
     state: State<'_, AppState>,
     service: State<'_, ChatService>,
     proposal_id: String,
@@ -81,13 +121,15 @@ pub(crate) fn commit_agent_proposal(
         .flatten();
     let commit_result = with_note_file_mutation(|| {
         let timeline = state.note_timeline();
-        let prepared = timeline.prepare_revision_publication(
-            MutationSource::AcceptedChatProposal,
-            &intent.target_path,
-            (proposal.kind == "update").then_some(intent.target_path.as_path()),
-            retained_identity.as_ref(),
-            &committed_markdown,
-        )?;
+        let prepared = timeline
+            .prepare_revision_publication(
+                MutationSource::AcceptedChatProposal,
+                &intent.target_path,
+                (proposal.kind == "update").then_some(intent.target_path.as_path()),
+                retained_identity.as_ref(),
+                &committed_markdown,
+            )
+            .map_err(tag_history_cause)?;
         let publication_result = if proposal.kind == "update" {
             commit_prepared_note_review(
                 &notes_dir,
@@ -116,7 +158,7 @@ pub(crate) fn commit_agent_proposal(
         };
         if result.applied.is_none() {
             let (_, history_intent) = prepared.into_parts();
-            history_intent.abandon()?;
+            history_intent.abandon().map_err(tag_history_cause)?;
             return Ok(result);
         }
         let (committed_markdown, history_intent) = prepared.into_parts();
@@ -232,6 +274,31 @@ mod tests {
         services::note_timeline::{inject_history_finalization_failure_once, MutationWarningStage},
     };
     use std::fs;
+
+    #[test]
+    fn proposal_commit_errors_keep_chat_and_history_owners_separate() {
+        let history = proposal_commit_error(tag_history_cause(
+            "History page cursor changed while committing".to_string(),
+        ));
+        assert_eq!(
+            serde_json::to_value(history).expect("serialize history failure"),
+            serde_json::json!({
+                "domain": "history",
+                "failure": {
+                    "state": "stale",
+                    "message": "History changed before this action finished.",
+                    "recoveryAction": "refresh"
+                }
+            })
+        );
+
+        let proposal =
+            proposal_commit_error("SELECT proposal FROM /private/chat.sqlite3 failed".to_string());
+        let serialized = serde_json::to_string(&proposal).expect("serialize proposal failure");
+        assert!(serialized.contains("The proposal could not be committed right now."));
+        assert!(!serialized.contains("SELECT"));
+        assert!(!serialized.contains("/private"));
+    }
 
     #[test]
     fn proposal_synchronization_returns_history_finalization_warning() {

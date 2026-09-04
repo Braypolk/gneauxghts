@@ -24,6 +24,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const TASK_HISTORY_CAUSE_PREFIX: &str = "__gneauxghts_task_history_cause__:";
+
+fn tag_task_history_cause(cause: String) -> String {
+    format!("{TASK_HISTORY_CAUSE_PREFIX}{cause}")
+}
+
+pub(crate) fn take_task_history_cause(cause: &str) -> Option<&str> {
+    cause.strip_prefix(TASK_HISTORY_CAUSE_PREFIX)
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum TaskMutationKind {
@@ -121,13 +131,15 @@ impl TaskMutationSink for AppStateTaskMutationSink<'_> {
         markdown: &str,
     ) -> Result<PreparedRevisionPublication, String> {
         let timeline = self.state.note_timeline();
-        let prepared = timeline.prepare_revision_publication(
-            MutationSource::TaskAction,
-            path,
-            Some(path),
-            None,
-            markdown,
-        )?;
+        let prepared = timeline
+            .prepare_revision_publication(
+                MutationSource::TaskAction,
+                path,
+                Some(path),
+                None,
+                markdown,
+            )
+            .map_err(tag_task_history_cause)?;
         if let Err(publication_error) =
             write_task_document_atomically(path, prepared.canonical_markdown())
         {

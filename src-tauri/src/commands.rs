@@ -345,10 +345,12 @@ pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
 #[tauri::command]
 pub(crate) fn get_history_health(
     state: State<'_, AppState>,
-) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
-    state.note_timeline().history_health().map_err(|error| {
-        history_commands::HistoryCommandError::from_cause("get_history_health", error)
-    })
+) -> history_commands::HistoryCommandResult<history_commands::HistoryHealthView> {
+    let report = state
+        .note_timeline()
+        .history_health()
+        .map_err(history_commands::command_error("get_history_health"))?;
+    Ok((&report).into())
 }
 
 #[tauri::command]
@@ -375,23 +377,24 @@ pub(crate) fn get_note_history_health(
 #[tauri::command]
 pub(crate) fn retry_history_recovery(
     state: State<'_, AppState>,
-) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
+) -> history_commands::HistoryCommandResult<history_commands::HistoryHealthView> {
     let root = vault_root().map_err(|error| {
         history_commands::HistoryCommandError::from_cause("retry_history_recovery", error)
     })?;
-    state
+    let report = state
         .note_timeline()
         .retry_history_recovery(&root)
         .map_err(|error| {
             history_commands::HistoryCommandError::from_cause("retry_history_recovery", error)
-        })
+        })?;
+    Ok((&report).into())
 }
 
 #[tauri::command]
 pub(crate) fn reset_corrupt_history(
     state: State<'_, AppState>,
     confirmed: bool,
-) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryResetReceipt> {
+) -> history_commands::HistoryCommandResult<history_commands::HistoryResetView> {
     if !confirmed {
         return Err(history_commands::HistoryCommandError::invalid_request(
             "reset_corrupt_history",
@@ -401,12 +404,13 @@ pub(crate) fn reset_corrupt_history(
     let root = vault_root().map_err(|error| {
         history_commands::HistoryCommandError::from_cause("reset_corrupt_history", error)
     })?;
-    state
+    let receipt = state
         .note_timeline()
         .reset_corrupt_history(&root, confirmed)
         .map_err(|error| {
             history_commands::HistoryCommandError::from_cause("reset_corrupt_history", error)
-        })
+        })?;
+    Ok((&receipt).into())
 }
 
 fn set_vault_directory_for_state(
@@ -445,18 +449,83 @@ fn set_vault_directory_for_state(
     Ok(info)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NoteSaveError {
+    message: &'static str,
+    recovery_action: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "domain", content = "failure", rename_all = "camelCase")]
+pub(crate) enum NoteSaveCommandError {
+    History(history_commands::HistoryCommandError),
+    Note(NoteSaveError),
+}
+
+fn note_save_error(operation: &'static str) -> impl FnOnce(String) -> NoteSaveCommandError {
+    move |cause| {
+        if let Some(history_cause) = history_commands::take_history_cause(&cause) {
+            NoteSaveCommandError::History(history_commands::HistoryCommandError::from_cause(
+                operation,
+                history_cause,
+            ))
+        } else {
+            eprintln!("Note save command `{operation}` failed: {cause}");
+            NoteSaveCommandError::Note(NoteSaveError {
+                message: "The note could not be saved right now.",
+                recovery_action: "retry",
+            })
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskCommandOwnerError {
+    message: &'static str,
+    recovery_action: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "domain", content = "failure", rename_all = "camelCase")]
+pub(crate) enum TaskCommandError {
+    History(history_commands::HistoryCommandError),
+    Task(TaskCommandOwnerError),
+}
+
+fn task_command_error(operation: &'static str) -> impl FnOnce(String) -> TaskCommandError {
+    move |cause| {
+        if let Some(history_cause) = crate::services::task_mutation::take_task_history_cause(&cause)
+        {
+            TaskCommandError::History(history_commands::HistoryCommandError::from_cause(
+                operation,
+                history_cause,
+            ))
+        } else {
+            eprintln!("Task command `{operation}` failed: {cause}");
+            TaskCommandError::Task(TaskCommandOwnerError {
+                message: "The task could not be changed right now.",
+                recovery_action: "retry",
+            })
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) fn save_note(
     state: State<'_, AppState>,
     title: String,
     markdown: String,
     current_path: Option<String>,
-) -> Result<NoteSession, String> {
-    let outcome = persist_note_session_with_outcome(&state, title.clone(), markdown, current_path)?;
+) -> Result<NoteSession, NoteSaveCommandError> {
+    let outcome = persist_note_session_with_outcome(&state, title.clone(), markdown, current_path)
+        .map_err(note_save_error("save_note"))?;
     let session = outcome
         .session
         .clone()
-        .ok_or_else(|| "Saved note session is missing".to_string())?;
+        .ok_or_else(|| "Saved note session is missing".to_string())
+        .map_err(note_save_error("save_note"))?;
     Ok(session)
 }
 
@@ -466,13 +535,15 @@ pub(crate) fn save_task_note(
     title: String,
     markdown: String,
     current_path: Option<String>,
-) -> Result<NoteSession, String> {
+) -> Result<NoteSession, NoteSaveCommandError> {
     let outcome =
-        persist_task_note_session_with_outcome(&state, title.clone(), markdown, current_path)?;
+        persist_task_note_session_with_outcome(&state, title.clone(), markdown, current_path)
+            .map_err(note_save_error("save_task_note"))?;
     let session = outcome
         .session
         .clone()
-        .ok_or_else(|| "Saved note session is missing".to_string())?;
+        .ok_or_else(|| "Saved note session is missing".to_string())
+        .map_err(note_save_error("save_task_note"))?;
     Ok(session)
 }
 
@@ -557,8 +628,9 @@ pub(crate) fn toggle_task(
     task_id: String,
     filter: TaskFilter,
     show_hidden: bool,
-) -> Result<TaskListGroupPatch, String> {
-    let patch = toggle_task_impl(state.clone(), task_id, filter, show_hidden)?;
+) -> Result<TaskListGroupPatch, TaskCommandError> {
+    let patch = toggle_task_impl(state.clone(), task_id, filter, show_hidden)
+        .map_err(task_command_error("toggle_task"))?;
     emit_task_note_changed(&state, &patch);
     Ok(patch)
 }
@@ -569,8 +641,9 @@ pub(crate) fn delete_task(
     task_id: String,
     filter: TaskFilter,
     show_hidden: bool,
-) -> Result<TaskListGroupPatch, String> {
-    let patch = delete_task_impl(state.clone(), task_id, filter, show_hidden)?;
+) -> Result<TaskListGroupPatch, TaskCommandError> {
+    let patch = delete_task_impl(state.clone(), task_id, filter, show_hidden)
+        .map_err(task_command_error("delete_task"))?;
     emit_task_note_changed(&state, &patch);
     Ok(patch)
 }
@@ -715,22 +788,54 @@ pub(crate) fn bootstrap_app(state: State<'_, AppState>) -> Result<BootstrapAppPa
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsViewPayload {
     vault: VaultInfo,
-    history_health: crate::services::note_timeline::HistoryHealthReport,
+    history_health: history_commands::HistoryHealthView,
     semantic_status: SemanticStatus,
     semantic_settings: SemanticSettings,
     semantic_debug: SemanticDebugSnapshot,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SettingsOwnerError {
+    message: &'static str,
+    recovery_action: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "domain", content = "failure", rename_all = "camelCase")]
+pub(crate) enum SettingsViewError {
+    History(history_commands::HistoryCommandError),
+    Settings(SettingsOwnerError),
+}
+
+fn settings_view_error(cause: String) -> SettingsViewError {
+    eprintln!("Settings view command failed: {cause}");
+    SettingsViewError::Settings(SettingsOwnerError {
+        message: "Settings are unavailable right now.",
+        recovery_action: "retry",
+    })
+}
+
 #[tauri::command]
-pub(crate) fn get_settings_view(state: State<'_, AppState>) -> Result<SettingsViewPayload, String> {
-    let vault = current_vault_info()?;
-    let history_health = state.note_timeline().history_health()?;
-    let semantic_status = state.semantic.get_status()?;
-    let semantic_settings = state.semantic.get_settings()?;
-    let semantic_debug = state.semantic.debug_snapshot()?;
+pub(crate) fn get_settings_view(
+    state: State<'_, AppState>,
+) -> Result<SettingsViewPayload, SettingsViewError> {
+    let vault = current_vault_info().map_err(settings_view_error)?;
+    let history_report = state.note_timeline().history_health().map_err(|cause| {
+        SettingsViewError::History(history_commands::HistoryCommandError::from_cause(
+            "get_settings_view",
+            cause,
+        ))
+    })?;
+    let semantic_status = state.semantic.get_status().map_err(settings_view_error)?;
+    let semantic_settings = state.semantic.get_settings().map_err(settings_view_error)?;
+    let semantic_debug = state
+        .semantic
+        .debug_snapshot()
+        .map_err(settings_view_error)?;
     Ok(SettingsViewPayload {
         vault,
-        history_health,
+        history_health: (&history_report).into(),
         semantic_status,
         semantic_settings,
         semantic_debug,
@@ -750,8 +855,9 @@ mod tests {
         ParsedWikilinkTarget,
     };
     use super::{
-        load_note_session_from_notes_dir, open_note_from_notes_dir, read_note_session_from_path,
-        set_vault_directory_for_state, NoteSession, RecentTaskItem, ResolvedNoteLink, TaskListItem,
+        history_commands, load_note_session_from_notes_dir, note_save_error,
+        open_note_from_notes_dir, read_note_session_from_path, set_vault_directory_for_state,
+        settings_view_error, NoteSession, RecentTaskItem, ResolvedNoteLink, TaskListItem,
     };
     use crate::{
         index::{build_indexed_note, NotesIndex},
@@ -814,6 +920,51 @@ mod tests {
         assert!(error.contains("cleanly closed"));
         assert!(state.note_timeline().is_cleanly_closed().unwrap());
         crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn bundled_settings_errors_do_not_claim_history_ownership_or_expose_diagnostics() {
+        let error = settings_view_error(
+            "SELECT semantic model FROM /vault/.gneauxghts/semantic.sqlite3".to_string(),
+        );
+        let serialized = serde_json::to_string(&error).expect("serialize settings error");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&serialized).expect("parse settings error"),
+            serde_json::json!({
+                "domain": "settings",
+                "failure": {
+                    "message": "Settings are unavailable right now.",
+                    "recoveryAction": "retry"
+                }
+            })
+        );
+        assert!(!serialized.contains("SELECT"));
+        assert!(!serialized.contains("/vault"));
+        assert!(!serialized.contains("history"));
+    }
+
+    #[test]
+    fn note_save_errors_preserve_timeline_ownership_without_leaking_other_failures() {
+        let history = note_save_error("save_note")(history_commands::tag_history_cause(
+            "History cursor changed while saving".to_string(),
+        ));
+        assert_eq!(
+            serde_json::to_value(history).expect("serialize history-owned save failure"),
+            serde_json::json!({
+                "domain": "history",
+                "failure": {
+                    "state": "stale",
+                    "message": "History changed before this action finished.",
+                    "recoveryAction": "refresh"
+                }
+            })
+        );
+
+        let note = note_save_error("save_note")("write /private/vault/Note.md failed".to_string());
+        let serialized = serde_json::to_string(&note).expect("serialize note-owned save failure");
+        assert!(serialized.contains("The note could not be saved right now."));
+        assert!(!serialized.contains("/private"));
     }
 
     #[test]

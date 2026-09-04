@@ -155,7 +155,9 @@ History-facing Tauri commands translate private storage, reconstruction, and
 coordination failures into a closed product contract: unavailable, corrupt,
 stale, ineligible, missing, or invalid request, each paired with a stable
 message and recovery action. Diagnostic causes remain in backend logs and do
-not cross the command seam.
+not cross the command seam. Commands that also coordinate note, proposal,
+settings, or chat owners use a tagged error envelope so only the history-owned
+branch enters this contract and unrelated recovery actions remain independent.
 
 The vault manifest selects the active history format and monotonic store
 generation. The SQLite metadata repeats the vault identity, format, and

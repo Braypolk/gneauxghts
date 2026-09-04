@@ -1,3 +1,4 @@
+use super::history_commands::{tag_history_cause, take_history_cause, HistoryCommandError};
 use super::index_bridge::read_indexed_note_from_path;
 use super::{current_time_millis, ForgottenNoteSummary, RestoredForgottenNote};
 use crate::{
@@ -6,8 +7,8 @@ use crate::{
     note,
     path_utils::unique_path_in_dir,
     services::note_timeline::{
-        LifecyclePublicationFailure, MutationWarningStage, NoteIdentity, NoteLifecycleOperation,
-        NoteMutationWarning,
+        LifecycleCommandError, LifecyclePublicationFailure, MutationWarningStage, NoteIdentity,
+        NoteLifecycleOperation, NoteMutationWarning,
     },
     state::{
         forgotten_notes_root, read_state, read_unpruned_state, validate_current_path, write_state,
@@ -23,6 +24,73 @@ use std::{
 use tauri::State;
 
 const FORGOTTEN_DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
+const CHAT_COMMAND_FAILURE: &str = "__gneauxghts_forgotten_chat_command_failure__";
+const INVALID_REQUEST_PREFIX: &str = "__gneauxghts_invalid_forgotten_request__:";
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ForgottenChatCommandError {
+    state: &'static str,
+    message: &'static str,
+    recovery_action: &'static str,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ForgottenOwnerCommandError {
+    state: &'static str,
+    message: &'static str,
+    recovery_action: &'static str,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "domain", content = "failure", rename_all = "camelCase")]
+pub(crate) enum ForgottenItemCommandError {
+    History(HistoryCommandError),
+    Chat(ForgottenChatCommandError),
+    Forgotten(ForgottenOwnerCommandError),
+}
+
+type ForgottenItemCommandResult<T> = Result<T, ForgottenItemCommandError>;
+
+fn forgotten_item_error(
+    operation: &'static str,
+) -> impl FnOnce(String) -> ForgottenItemCommandError {
+    move |cause| {
+        if cause == CHAT_COMMAND_FAILURE {
+            ForgottenItemCommandError::Chat(ForgottenChatCommandError {
+                state: "unavailable",
+                message: "Chat recovery is unavailable right now.",
+                recovery_action: "retry",
+            })
+        } else if let Some(cause) = cause.strip_prefix(INVALID_REQUEST_PREFIX) {
+            ForgottenItemCommandError::History(HistoryCommandError::invalid_request(
+                operation, cause,
+            ))
+        } else if let Some(cause) = take_history_cause(&cause) {
+            ForgottenItemCommandError::History(HistoryCommandError::from_cause(operation, cause))
+        } else {
+            eprintln!("Forgotten item command `{operation}` failed: {cause}");
+            ForgottenItemCommandError::Forgotten(ForgottenOwnerCommandError {
+                state: "unavailable",
+                message: "Forgotten items are unavailable right now.",
+                recovery_action: "retry",
+            })
+        }
+    }
+}
+
+fn chat_command_failure(operation: &str, cause: String) -> String {
+    eprintln!("Forgotten chat command `{operation}` failed: {cause}");
+    CHAT_COMMAND_FAILURE.to_string()
+}
+
+fn lifecycle_command_failure(error: LifecycleCommandError) -> String {
+    match error {
+        LifecycleCommandError::History(cause) => tag_history_cause(cause),
+        LifecycleCommandError::Publication(cause) => cause,
+    }
+}
 
 #[tauri::command]
 pub(crate) fn get_forgotten_note_retention_days() -> Result<u32, String> {
@@ -39,10 +107,28 @@ pub(crate) fn forget_note(
     state: State<'_, AppState>,
     current_path: Option<String>,
     retention_days: u32,
+) -> ForgottenItemCommandResult<Option<ForgottenNoteSummary>> {
+    if current_path.is_some() {
+        validate_retention_days(retention_days).map_err(|cause| {
+            ForgottenItemCommandError::History(HistoryCommandError::invalid_request(
+                "forget_note",
+                cause,
+            ))
+        })?;
+    }
+    forget_note_inner(state, current_path, retention_days)
+        .map_err(forgotten_item_error("forget_note"))
+}
+
+fn forget_note_inner(
+    state: State<'_, AppState>,
+    current_path: Option<String>,
+    retention_days: u32,
 ) -> Result<Option<ForgottenNoteSummary>, String> {
     let notes_dir = super::prepare_notes_dir_with_state(true, Some(&state))?;
 
-    let current_path = validate_current_path(current_path, &notes_dir)?;
+    let current_path = validate_current_path(current_path, &notes_dir)
+        .map_err(|cause| format!("{INVALID_REQUEST_PREFIX}{cause}"))?;
     let mut persisted_state = read_state(&notes_dir)?;
 
     if let Some(note_path) = current_path.as_ref() {
@@ -56,10 +142,10 @@ pub(crate) fn forget_note(
         let purge_at_millis = forgotten_at_millis
             .saturating_add(u64::from(retention_days).saturating_mul(FORGOTTEN_DAY_MILLIS));
         let note_markdown = fs::read_to_string(note_path).map_err(|err| err.to_string())?;
-        let note_markdown =
-            state
-                .note_timeline()
-                .prepare_publication(Some(note_path), None, &note_markdown)?;
+        let note_markdown = state
+            .note_timeline()
+            .prepare_publication(Some(note_path), None, &note_markdown)
+            .map_err(tag_history_cause)?;
         let (forgotten_markdown, note_id) =
             prepare_forgotten_note_markdown(&note_markdown, forgotten_at_rfc3339)?;
         let previous_persisted_state = persisted_state.clone();
@@ -95,30 +181,32 @@ pub(crate) fn forget_note(
         write_unpruned_state(&persisted_state)?;
 
         let timeline = state.note_timeline();
-        let publication = timeline.publish_lifecycle(
-            NoteLifecycleOperation::forgotten(
-                NoteIdentity::new(note_id.clone()),
-                note_path.clone(),
-                forgotten_path.clone(),
-                forgotten_at_millis,
-            ),
-            &forgotten_markdown,
-            || {
-                let expected_move = crate::vault_watcher::record_expected_move(
-                    note_path,
-                    &forgotten_path,
-                    &forgotten_markdown,
-                );
-                publish_note_move(
-                    note_path,
-                    &forgotten_path,
-                    &forgotten_markdown,
-                    &note_markdown,
-                )?;
-                expected_move.commit();
-                Ok(())
-            },
-        );
+        let publication = timeline
+            .publish_lifecycle(
+                NoteLifecycleOperation::forgotten(
+                    NoteIdentity::new(note_id.clone()),
+                    note_path.clone(),
+                    forgotten_path.clone(),
+                    forgotten_at_millis,
+                ),
+                &forgotten_markdown,
+                || {
+                    let expected_move = crate::vault_watcher::record_expected_move(
+                        note_path,
+                        &forgotten_path,
+                        &forgotten_markdown,
+                    );
+                    publish_note_move(
+                        note_path,
+                        &forgotten_path,
+                        &forgotten_markdown,
+                        &note_markdown,
+                    )?;
+                    expected_move.commit();
+                    Ok(())
+                },
+            )
+            .map_err(lifecycle_command_failure);
         let publication = match publication {
             Ok(publication) => publication,
             Err(error) => {
@@ -201,6 +289,12 @@ pub(super) fn register_forgotten_chat_folder(
 #[tauri::command]
 pub(crate) fn list_forgotten_notes(
     state: State<'_, AppState>,
+) -> ForgottenItemCommandResult<Vec<ForgottenNoteSummary>> {
+    list_forgotten_notes_inner(state).map_err(forgotten_item_error("list_forgotten_notes"))
+}
+
+fn list_forgotten_notes_inner(
+    state: State<'_, AppState>,
 ) -> Result<Vec<ForgottenNoteSummary>, String> {
     let notes_dir = super::prepare_notes_dir_with_state(true, Some(&state))?;
 
@@ -223,10 +317,20 @@ pub(crate) fn restore_forgotten_notes(
     state: State<'_, AppState>,
     chat_service: State<'_, ChatService>,
     forgotten_paths: Vec<String>,
+) -> ForgottenItemCommandResult<Vec<RestoredForgottenNote>> {
+    restore_forgotten_notes_inner(state, chat_service, forgotten_paths)
+        .map_err(forgotten_item_error("restore_forgotten_notes"))
+}
+
+fn restore_forgotten_notes_inner(
+    state: State<'_, AppState>,
+    chat_service: State<'_, ChatService>,
+    forgotten_paths: Vec<String>,
 ) -> Result<Vec<RestoredForgottenNote>, String> {
     let notes_dir = super::prepare_notes_dir_with_state(true, Some(&state))?;
 
-    let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)?;
+    let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)
+        .map_err(|cause| format!("{INVALID_REQUEST_PREFIX}{cause}"))?;
     if selected_paths.is_empty() {
         return Ok(Vec::new());
     }
@@ -262,11 +366,10 @@ pub(crate) fn restore_forgotten_notes(
                 let markdown =
                     fs::read_to_string(&forgotten_path).map_err(|err| err.to_string())?;
                 let retained_identity = forgotten_note.note_id.as_deref().map(NoteIdentity::new);
-                let markdown = state.note_timeline().prepare_publication(
-                    None,
-                    retained_identity.as_ref(),
-                    &markdown,
-                )?;
+                let markdown = state
+                    .note_timeline()
+                    .prepare_publication(None, retained_identity.as_ref(), &markdown)
+                    .map_err(tag_history_cause)?;
                 let restored_markdown =
                     note::prepare_note_markdown(&markdown, Some(&markdown), Some(None))?.0;
                 let timestamp_millis = current_time_millis()?;
@@ -279,30 +382,32 @@ pub(crate) fn restore_forgotten_notes(
                     restored_path.to_string_lossy().into_owned();
                 write_unpruned_state(&persisted_state)?;
                 let timeline = state.note_timeline();
-                let publication = timeline.publish_lifecycle(
-                    NoteLifecycleOperation::recovered(
-                        NoteIdentity::new(retained_note_id),
-                        forgotten_path.clone(),
-                        restored_path.clone(),
-                        timestamp_millis,
-                    ),
-                    &restored_markdown,
-                    || {
-                        let expected_move = crate::vault_watcher::record_expected_move(
-                            &forgotten_path,
-                            &restored_path,
-                            &restored_markdown,
-                        );
-                        publish_note_move(
-                            &forgotten_path,
-                            &restored_path,
-                            &restored_markdown,
-                            &markdown,
-                        )?;
-                        expected_move.commit();
-                        Ok(())
-                    },
-                );
+                let publication = timeline
+                    .publish_lifecycle(
+                        NoteLifecycleOperation::recovered(
+                            NoteIdentity::new(retained_note_id),
+                            forgotten_path.clone(),
+                            restored_path.clone(),
+                            timestamp_millis,
+                        ),
+                        &restored_markdown,
+                        || {
+                            let expected_move = crate::vault_watcher::record_expected_move(
+                                &forgotten_path,
+                                &restored_path,
+                                &restored_markdown,
+                            );
+                            publish_note_move(
+                                &forgotten_path,
+                                &restored_path,
+                                &restored_markdown,
+                                &markdown,
+                            )?;
+                            expected_move.commit();
+                            Ok(())
+                        },
+                    )
+                    .map_err(lifecycle_command_failure);
                 let publication = match publication {
                     Ok(publication) => publication,
                     Err(error) => {
@@ -325,11 +430,9 @@ pub(crate) fn restore_forgotten_notes(
                     .as_deref()
                     .ok_or_else(|| "Forgotten chat is missing its conversation id".to_string())?;
                 let original_path = PathBuf::from(&forgotten_note.original_path);
-                let relocation = chat_service.restore_conversation_folder(
-                    conversation_id,
-                    &forgotten_path,
-                    &original_path,
-                )?;
+                let relocation = chat_service
+                    .restore_conversation_folder(conversation_id, &forgotten_path, &original_path)
+                    .map_err(|cause| chat_command_failure("restore_forgotten_notes", cause))?;
                 for path in &relocation.current_paths {
                     let markdown = fs::read_to_string(path).map_err(|error| error.to_string())?;
                     let note = build_indexed_note(path, &markdown, current_time_millis()?);
@@ -380,10 +483,20 @@ pub(crate) fn delete_forgotten_notes(
     state: State<'_, AppState>,
     chat_service: State<'_, ChatService>,
     forgotten_paths: Vec<String>,
+) -> ForgottenItemCommandResult<()> {
+    delete_forgotten_notes_inner(state, chat_service, forgotten_paths)
+        .map_err(forgotten_item_error("delete_forgotten_notes"))
+}
+
+fn delete_forgotten_notes_inner(
+    state: State<'_, AppState>,
+    chat_service: State<'_, ChatService>,
+    forgotten_paths: Vec<String>,
 ) -> Result<(), String> {
     let notes_dir = super::prepare_notes_dir_with_state(true, Some(&state))?;
 
-    let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)?;
+    let selected_paths = validate_forgotten_path_inputs(forgotten_paths, &notes_dir)
+        .map_err(|cause| format!("{INVALID_REQUEST_PREFIX}{cause}"))?;
     if selected_paths.is_empty() {
         return Ok(());
     }
@@ -402,7 +515,11 @@ pub(crate) fn delete_forgotten_notes(
             &state,
             &forgotten_note,
             current_time_millis()?,
-            |conversation_id| chat_service.delete_archived_conversation(conversation_id),
+            |conversation_id| {
+                chat_service
+                    .delete_archived_conversation(conversation_id)
+                    .map_err(|cause| chat_command_failure("delete_forgotten_notes", cause))
+            },
         )?;
         write_unpruned_state(&persisted_state)?;
     }
@@ -664,6 +781,46 @@ mod tests {
 
     fn test_context() -> tauri::Context<tauri::test::MockRuntime> {
         tauri::test::mock_context(tauri::test::noop_assets())
+    }
+
+    #[test]
+    fn forgotten_item_errors_preserve_owner_and_invalid_request_recovery() {
+        let invalid = forgotten_item_error("restore_forgotten_notes")(format!(
+            "{INVALID_REQUEST_PREFIX}Forgotten note path is outside the forgotten notes directory"
+        ));
+        assert_eq!(
+            serde_json::to_value(invalid).expect("serialize invalid request"),
+            serde_json::json!({
+                "domain": "history",
+                "failure": {
+                    "state": "invalidRequest",
+                    "message": "The history request is invalid.",
+                    "recoveryAction": "correctRequest"
+                }
+            })
+        );
+
+        let chat =
+            forgotten_item_error("restore_forgotten_notes")(CHAT_COMMAND_FAILURE.to_string());
+        assert_eq!(
+            serde_json::to_value(chat).expect("serialize chat failure"),
+            serde_json::json!({
+                "domain": "chat",
+                "failure": {
+                    "state": "unavailable",
+                    "message": "Chat recovery is unavailable right now.",
+                    "recoveryAction": "retry"
+                }
+            })
+        );
+
+        let forgotten = forgotten_item_error("list_forgotten_notes")(
+            "read /private/vault/state.sqlite3 failed".to_string(),
+        );
+        let serialized =
+            serde_json::to_string(&forgotten).expect("serialize forgotten-item failure");
+        assert!(serialized.contains("Forgotten items are unavailable right now."));
+        assert!(!serialized.contains("/private"));
     }
 
     #[test]
@@ -1058,7 +1215,12 @@ mod tests {
         )
         .expect_err("forget publication should fail");
 
-        assert!(error.contains("injected note publication failure"));
+        match error {
+            ForgottenItemCommandError::Forgotten(_) => {}
+            ForgottenItemCommandError::History(_) | ForgottenItemCommandError::Chat(_) => {
+                panic!("publication failure must retain forgotten-item ownership")
+            }
+        }
         assert_eq!(
             fs::read_to_string(&active_path).expect("read rolled-back note"),
             original_markdown

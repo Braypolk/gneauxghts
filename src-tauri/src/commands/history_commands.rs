@@ -2,14 +2,25 @@ use crate::{
     commands::{note_persistence::build_note_session_from_mutation, NoteSession},
     index::AppState,
     services::note_timeline::{
-        HistoryDiffComparison, HistoryModeDiff, HistoryModePage, HistoryModeRevision,
-        HistoryRestorePreview, NoteIdentity, RevisionIdentity,
+        BaselineInitializationPhase, BaselineInitializationProgress, HistoryDiffComparison,
+        HistoryHealthReport, HistoryHealthState, HistoryIntegrityState, HistoryModeDiff,
+        HistoryModePage, HistoryModeRevision, HistoryResetReceipt, HistoryRestorePreview,
+        HistoryStorageUsage, NoteIdentity, RevisionIdentity,
     },
 };
 use serde::Serialize;
 use tauri::State;
 
 const MISSING_NOTE_HISTORY_PAGE_SIZE: usize = 30;
+const HISTORY_CAUSE_PREFIX: &str = "__gneauxghts_history_cause__:";
+
+pub(crate) fn tag_history_cause(cause: String) -> String {
+    format!("{HISTORY_CAUSE_PREFIX}{cause}")
+}
+
+pub(crate) fn take_history_cause(cause: &str) -> Option<&str> {
+    cause.strip_prefix(HISTORY_CAUSE_PREFIX)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,6 +117,14 @@ impl HistoryCommandError {
         let cause = cause.as_ref();
         let normalized = cause.to_ascii_lowercase();
         let state = if [
+            "already matches current authored content",
+            "available only when history is corrupt or unavailable",
+        ]
+        .iter()
+        .any(|marker| normalized.contains(marker))
+        {
+            HistoryCommandErrorState::InvalidRequest
+        } else if [
             "corrupt",
             "integrity",
             "lineage",
@@ -130,14 +149,9 @@ impl HistoryCommandError {
         .any(|marker| normalized.contains(marker))
         {
             HistoryCommandErrorState::Stale
-        } else if [
-            "recover the missing note",
-            "recover the forgotten note",
-            "already matches current authored content",
-            "available only when history is corrupt or unavailable",
-        ]
-        .iter()
-        .any(|marker| normalized.contains(marker))
+        } else if ["recover the missing note", "recover the forgotten note"]
+            .iter()
+            .any(|marker| normalized.contains(marker))
         {
             HistoryCommandErrorState::Ineligible
         } else if [
@@ -174,8 +188,108 @@ impl HistoryCommandError {
 
 pub(crate) type HistoryCommandResult<T> = Result<T, HistoryCommandError>;
 
-fn command_error(operation: &'static str) -> impl FnOnce(String) -> HistoryCommandError {
+pub(crate) fn command_error(operation: &'static str) -> impl FnOnce(String) -> HistoryCommandError {
     move |cause| HistoryCommandError::from_cause(operation, cause)
+}
+
+const INITIALIZATION_FAILURE_MESSAGE: &str =
+    "Some notes could not be initialized. Retry history recovery.";
+
+fn stable_initialization_error(last_error: Option<&str>) -> Option<&'static str> {
+    last_error.map(|_| INITIALIZATION_FAILURE_MESSAGE)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryInitializationView {
+    phase: BaselineInitializationPhase,
+    discovered_notes: u64,
+    baseline_revisions: u64,
+    ready_notes: u64,
+    failed_notes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error: Option<&'static str>,
+}
+
+impl From<&BaselineInitializationProgress> for HistoryInitializationView {
+    fn from(progress: &BaselineInitializationProgress) -> Self {
+        Self {
+            phase: progress.phase(),
+            discovered_notes: progress.discovered_notes(),
+            baseline_revisions: progress.baseline_revisions(),
+            ready_notes: progress.ready_notes(),
+            failed_notes: progress.failed_notes(),
+            last_error: stable_initialization_error(progress.last_error()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryStorageView {
+    allocated_bytes: u64,
+    reclaimable_bytes: u64,
+}
+
+impl From<&HistoryStorageUsage> for HistoryStorageView {
+    fn from(storage: &HistoryStorageUsage) -> Self {
+        Self {
+            allocated_bytes: storage.allocated_bytes(),
+            reclaimable_bytes: storage.reclaimable_bytes(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryResetView {
+    operation_id: String,
+    previous_generation: u64,
+    generation: u64,
+    reset_at_millis: u64,
+    initialization: HistoryInitializationView,
+}
+
+impl From<&HistoryResetReceipt> for HistoryResetView {
+    fn from(receipt: &HistoryResetReceipt) -> Self {
+        Self {
+            operation_id: receipt.operation_id().to_string(),
+            previous_generation: receipt.previous_generation(),
+            generation: receipt.generation(),
+            reset_at_millis: receipt.reset_at_millis(),
+            initialization: receipt.initialization().into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryHealthView {
+    state: HistoryHealthState,
+    integrity: HistoryIntegrityState,
+    initialization: HistoryInitializationView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    storage: Option<HistoryStorageView>,
+    pending_repairs: u64,
+    can_retry: bool,
+    can_reset: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_reset: Option<HistoryResetView>,
+}
+
+impl From<&HistoryHealthReport> for HistoryHealthView {
+    fn from(report: &HistoryHealthReport) -> Self {
+        Self {
+            state: report.state(),
+            integrity: report.integrity(),
+            initialization: report.initialization().into(),
+            storage: report.storage().map(Into::into),
+            pending_repairs: report.pending_repairs(),
+            can_retry: report.can_retry(),
+            can_reset: report.can_reset(),
+            last_reset: report.last_reset().map(Into::into),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -759,6 +873,26 @@ mod tests {
     }
 
     #[test]
+    fn history_health_payload_redacts_initialization_diagnostics() {
+        let raw_cause = "SELECT baseline FROM /vault/.gneauxghts/history.sqlite3 failed";
+        let view = HistoryInitializationView {
+            phase: BaselineInitializationPhase::Degraded,
+            discovered_notes: 3,
+            baseline_revisions: 1,
+            ready_notes: 1,
+            failed_notes: 2,
+            last_error: stable_initialization_error(Some(raw_cause)),
+        };
+        let serialized = serde_json::to_string(&view).expect("serialize initialization view");
+
+        assert!(!serialized.contains("SELECT"));
+        assert!(!serialized.contains("/vault"));
+        assert!(!serialized.contains("sqlite"));
+        assert!(serialized.contains(INITIALIZATION_FAILURE_MESSAGE));
+        assert_eq!(stable_initialization_error(None), None);
+    }
+
+    #[test]
     fn timeline_command_causes_map_to_closed_product_states() {
         for (cause, expected) in [
             (
@@ -778,6 +912,14 @@ mod tests {
                 HistoryCommandErrorState::Ineligible,
             ),
             ("Unknown Note Revision", HistoryCommandErrorState::Missing),
+            (
+                "Selected revision already matches current authored content",
+                HistoryCommandErrorState::InvalidRequest,
+            ),
+            (
+                "History reset is available only when history is corrupt or unavailable",
+                HistoryCommandErrorState::InvalidRequest,
+            ),
         ] {
             assert_eq!(
                 HistoryCommandError::from_cause("test_operation", cause).state,
