@@ -1907,8 +1907,22 @@ pub(super) enum BoundedTimelineRecord {
     LifecycleEvent(LifecycleEventHeader),
 }
 
+impl BoundedTimelineRecord {
+    fn identity(&self) -> TimelineRecordIdentity {
+        match self {
+            Self::Revision { header, .. } => {
+                TimelineRecordIdentity::Revision(header.identity.clone())
+            }
+            Self::LifecycleEvent(event) => {
+                TimelineRecordIdentity::LifecycleEvent(event.identity.clone())
+            }
+        }
+    }
+}
+
 pub(super) struct BoundedTimelinePage {
     pub(super) records: Vec<BoundedTimelineRecord>,
+    pub(super) session_predecessor: Option<BoundedTimelineRecord>,
     pub(super) next_record: Option<TimelineRecordIdentity>,
     pub(super) total_records: usize,
 }
@@ -2001,8 +2015,8 @@ pub(super) fn bounded_timeline_page(
             .transpose()?
             .flatten(),
     };
-    let mut records = Vec::with_capacity(page_size);
-    for _ in 0..page_size {
+    let mut records = Vec::with_capacity(page_size + 1);
+    for _ in 0..=page_size {
         let Some(identity) = next_record.take() else {
             break;
         };
@@ -2027,8 +2041,14 @@ pub(super) fn bounded_timeline_page(
         };
         records.push(record);
     }
+    let session_predecessor = (records.len() > page_size)
+        .then(|| records.pop().expect("bounded page includes its lookbehind"));
+    if let Some(predecessor) = &session_predecessor {
+        next_record = Some(predecessor.identity());
+    }
     Ok(BoundedTimelinePageRead::Page(BoundedTimelinePage {
         records,
+        session_predecessor,
         next_record,
         total_records,
     }))

@@ -2000,7 +2000,8 @@ pub(crate) struct HistoryModePage {
     next_cursor: Option<String>,
 }
 
-const MISSING_HISTORY_CURSOR_VERSION: u8 = 1;
+const HISTORY_CURSOR_VERSION: u8 = 1;
+const HISTORY_CURSOR_ERROR: &str = "History page cursor is no longer available";
 pub(crate) const MISSING_HISTORY_CURSOR_ERROR: &str =
     "Missing Note history continuation is stale or belongs to another Note Timeline";
 
@@ -2008,29 +2009,29 @@ pub(crate) const MISSING_HISTORY_CURSOR_ERROR: &str =
 /// names the next predecessor directly, so it remains valid across restart.
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct MissingHistoryCursor {
+struct HistoryCursor {
     version: u8,
     vault_id: String,
     history_generation: u64,
     note_id: String,
-    next_record_kind: MissingHistoryCursorRecordKind,
+    next_record_kind: HistoryCursorRecordKind,
     next_record_id: String,
     next_timeline_ordinal: usize,
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-enum MissingHistoryCursorRecordKind {
+enum HistoryCursorRecordKind {
     Revision,
     LifecycleEvent,
 }
 
-impl MissingHistoryCursor {
-    fn decode(encoded: &str) -> Result<Self, String> {
+impl HistoryCursor {
+    fn decode(encoded: &str, invalid_cursor: &str) -> Result<Self, String> {
         let bytes = BASE64_URL_SAFE
             .decode(encoded)
-            .map_err(|_| MISSING_HISTORY_CURSOR_ERROR.to_string())?;
-        serde_json::from_slice(&bytes).map_err(|_| MISSING_HISTORY_CURSOR_ERROR.to_string())
+            .map_err(|_| invalid_cursor.to_string())?;
+        serde_json::from_slice(&bytes).map_err(|_| invalid_cursor.to_string())
     }
 
     fn encode(&self) -> Result<String, String> {
@@ -2041,14 +2042,12 @@ impl MissingHistoryCursor {
 
     fn record_identity(&self) -> TimelineRecordIdentity {
         match self.next_record_kind {
-            MissingHistoryCursorRecordKind::Revision => TimelineRecordIdentity::Revision(
+            HistoryCursorRecordKind::Revision => TimelineRecordIdentity::Revision(
                 RevisionIdentity::from_persisted(self.next_record_id.clone()),
             ),
-            MissingHistoryCursorRecordKind::LifecycleEvent => {
-                TimelineRecordIdentity::LifecycleEvent(LifecycleEventIdentity::from_persisted(
-                    self.next_record_id.clone(),
-                ))
-            }
+            HistoryCursorRecordKind::LifecycleEvent => TimelineRecordIdentity::LifecycleEvent(
+                LifecycleEventIdentity::from_persisted(self.next_record_id.clone()),
+            ),
         }
     }
 
@@ -2061,15 +2060,14 @@ impl MissingHistoryCursor {
     ) -> Self {
         let (next_record_kind, next_record_id) = match record {
             TimelineRecordIdentity::Revision(identity) => {
-                (MissingHistoryCursorRecordKind::Revision, identity.0.clone())
+                (HistoryCursorRecordKind::Revision, identity.0.clone())
             }
-            TimelineRecordIdentity::LifecycleEvent(identity) => (
-                MissingHistoryCursorRecordKind::LifecycleEvent,
-                identity.0.clone(),
-            ),
+            TimelineRecordIdentity::LifecycleEvent(identity) => {
+                (HistoryCursorRecordKind::LifecycleEvent, identity.0.clone())
+            }
         };
         Self {
-            version: MISSING_HISTORY_CURSOR_VERSION,
+            version: HISTORY_CURSOR_VERSION,
             vault_id: vault_id.to_string(),
             history_generation,
             note_id: note_id.as_str().to_string(),
@@ -2088,6 +2086,109 @@ impl HistoryModePage {
     pub(crate) fn next_cursor(&self) -> Option<&str> {
         self.next_cursor.as_deref()
     }
+}
+
+fn project_bounded_history_record(
+    note_id: &NoteIdentity,
+    record: history_store::BoundedTimelineRecord,
+    timeline_ordinal: usize,
+    include_counts: bool,
+) -> Result<HistoryModeRecord, String> {
+    Ok(match record {
+        history_store::BoundedTimelineRecord::Revision { header, label } => {
+            let counts = if include_counts {
+                let reconstructed = history_store::reconstruct(note_id, &header.identity)?;
+                authored_content_counts(&reconstructed)
+            } else {
+                (0, 0)
+            };
+            project_revision_header(header, label, timeline_ordinal, counts)
+        }
+        history_store::BoundedTimelineRecord::LifecycleEvent(event) => {
+            project_lifecycle_header(event, timeline_ordinal)
+        }
+    })
+}
+
+fn retained_history_page(
+    note_id: &NoteIdentity,
+    cursor: Option<&str>,
+    limit: usize,
+    invalid_cursor: &str,
+) -> Result<HistoryModePage, String> {
+    let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
+        .ok_or_else(|| "History paging requires a vault manifest".to_string())?;
+    let continuation = cursor
+        .map(|cursor| HistoryCursor::decode(cursor, invalid_cursor))
+        .transpose()?;
+    if continuation.as_ref().is_some_and(|continuation| {
+        continuation.version != HISTORY_CURSOR_VERSION
+            || continuation.vault_id != manifest.vault_id
+            || continuation.note_id != note_id.as_str()
+            || continuation.history_generation != manifest.history_generation
+    }) {
+        return Err(invalid_cursor.to_string());
+    }
+    let start = continuation.as_ref().map(HistoryCursor::record_identity);
+    let page = match history_store::bounded_timeline_page(note_id, start, limit)? {
+        history_store::BoundedTimelinePageRead::Page(page) => page,
+        history_store::BoundedTimelinePageRead::CursorUnavailable => {
+            return Err(invalid_cursor.to_string())
+        }
+    };
+    let first_ordinal = match &continuation {
+        Some(continuation) if continuation.next_timeline_ordinal < page.total_records => {
+            continuation.next_timeline_ordinal
+        }
+        Some(_) => return Err(invalid_cursor.to_string()),
+        None => page.total_records.saturating_sub(1),
+    };
+    let record_count = page.records.len();
+    let mut records =
+        Vec::with_capacity(record_count + usize::from(page.session_predecessor.is_some()));
+    for (index, record) in page.records.into_iter().enumerate() {
+        let timeline_ordinal = first_ordinal.saturating_sub(index);
+        records.push(project_bounded_history_record(
+            note_id,
+            record,
+            timeline_ordinal,
+            true,
+        )?);
+    }
+    if let Some(predecessor) = page.session_predecessor {
+        records.push(project_bounded_history_record(
+            note_id,
+            predecessor,
+            first_ordinal.saturating_sub(record_count),
+            false,
+        )?);
+        assign_editing_sessions(&mut records);
+        records.pop();
+    } else {
+        assign_editing_sessions(&mut records);
+    }
+    let next_cursor = match page.next_record {
+        Some(next_record) => {
+            let next_ordinal = first_ordinal.checked_sub(record_count).ok_or_else(|| {
+                "Note Timeline record count does not match its lineage".to_string()
+            })?;
+            Some(
+                HistoryCursor::for_record(
+                    note_id,
+                    &manifest.vault_id,
+                    manifest.history_generation,
+                    &next_record,
+                    next_ordinal,
+                )
+                .encode()?,
+            )
+        }
+        None => None,
+    };
+    Ok(HistoryModePage {
+        records,
+        next_cursor,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -2458,69 +2559,7 @@ impl HistoryModeAccess<'_> {
         limit: usize,
     ) -> Result<HistoryModePage, String> {
         let _operation = self.prepare_access()?;
-        self.page_retained(cursor, limit)
-    }
-
-    fn page_retained(&self, cursor: Option<&str>, limit: usize) -> Result<HistoryModePage, String> {
-        let revisions = history_store::revisions(&self.note_id)?;
-        let revision_labels = history_store::revision_labels(&self.note_id)?;
-        let lifecycle_events = history_store::lifecycle_events(&self.note_id)?;
-        let mut projected_records = Vec::with_capacity(revisions.len() + lifecycle_events.len());
-        for revision in revisions {
-            let revision_id = revision.identity.0.clone();
-            let predecessor_id = revision.predecessor.as_ref().map(record_identity_value);
-            projected_records.push((
-                project_revision_header(
-                    revision,
-                    revision_labels.get(&revision_id).cloned(),
-                    0,
-                    (0, 0),
-                ),
-                predecessor_id,
-            ));
-        }
-        projected_records.extend(lifecycle_events.into_iter().map(|event| {
-            let predecessor_id = event.predecessor.as_ref().map(record_identity_value);
-            (project_lifecycle_header(event, 0), predecessor_id)
-        }));
-        let records = order_history_mode_records(projected_records)?;
-
-        let start = match cursor {
-            Some(cursor) => records
-                .iter()
-                .position(|record| record.record_id() == cursor)
-                .map(|index| index + 1)
-                .ok_or_else(|| "History page cursor is no longer available".to_string())?,
-            None => 0,
-        };
-        let end = start.saturating_add(limit.clamp(1, 100)).min(records.len());
-        let mut page_records = records[start..end].to_vec();
-        for record in &mut page_records {
-            if let HistoryModeRecord::Revision {
-                revision_id,
-                line_count,
-                character_count,
-                ..
-            } = record
-            {
-                let reconstructed = history_store::reconstruct(
-                    &self.note_id,
-                    &RevisionIdentity::from_persisted(revision_id.as_str()),
-                )?;
-                (*line_count, *character_count) = authored_content_counts(&reconstructed);
-            }
-        }
-        let next_cursor = (end < records.len())
-            .then(|| {
-                page_records
-                    .last()
-                    .map(|record| record.record_id().to_string())
-            })
-            .flatten();
-        Ok(HistoryModePage {
-            records: page_records,
-            next_cursor,
-        })
+        retained_history_page(&self.note_id, cursor, limit, HISTORY_CURSOR_ERROR)
     }
 
     pub(crate) fn revision(&self, revision_id: &str) -> Result<HistoryModeRevision, String> {
@@ -4553,86 +4592,14 @@ impl<'a> NoteTimeline<'a> {
         let _operation = self.runtime.begin_operation()?;
         self.recover_retained_observations()?;
         self.ensure_history_recovered(RecoveryIntegrity::Bounded)?;
-        let manifest = crate::state::read_vault_manifest_for(&crate::state::vault_root()?)?
-            .ok_or_else(|| "Missing Note history requires a vault manifest".to_string())?;
-        let continuation = cursor.map(MissingHistoryCursor::decode).transpose()?;
-        if continuation.as_ref().is_some_and(|continuation| {
-            continuation.version != MISSING_HISTORY_CURSOR_VERSION
-                || continuation.vault_id != manifest.vault_id
-                || continuation.note_id != note_id.as_str()
-                || continuation.history_generation != manifest.history_generation
-        }) {
-            return Err(MISSING_HISTORY_CURSOR_ERROR.to_string());
-        }
         if history_store::missing_note(&note_id)?.is_none() {
-            return Err(if continuation.is_some() {
+            return Err(if cursor.is_some() {
                 MISSING_HISTORY_CURSOR_ERROR.to_string()
             } else {
                 "Missing Note is no longer available for recovery".to_string()
             });
         }
-        let start = continuation
-            .as_ref()
-            .map(MissingHistoryCursor::record_identity);
-        let page = match history_store::bounded_timeline_page(&note_id, start, limit)? {
-            history_store::BoundedTimelinePageRead::Page(page) => page,
-            history_store::BoundedTimelinePageRead::CursorUnavailable => {
-                return Err(MISSING_HISTORY_CURSOR_ERROR.to_string())
-            }
-        };
-        // Ordinary History Mode ordinals are oldest-first before its records
-        // are reversed. Carrying the next absolute ordinal keeps each bounded
-        // slice in that same deterministic order without loading older rows.
-        let first_ordinal = match &continuation {
-            Some(continuation) if continuation.next_timeline_ordinal < page.total_records => {
-                continuation.next_timeline_ordinal
-            }
-            Some(_) => return Err(MISSING_HISTORY_CURSOR_ERROR.to_string()),
-            None => page.total_records.saturating_sub(1),
-        };
-        let record_count = page.records.len();
-        let mut records = Vec::with_capacity(record_count);
-        for (index, record) in page.records.into_iter().enumerate() {
-            let timeline_ordinal = first_ordinal.saturating_sub(index);
-            let projected = match record {
-                history_store::BoundedTimelineRecord::Revision { header, label } => {
-                    let revision_id = header.identity.clone();
-                    let reconstructed = history_store::reconstruct(&note_id, &revision_id)?;
-                    project_revision_header(
-                        header,
-                        label,
-                        timeline_ordinal,
-                        authored_content_counts(&reconstructed),
-                    )
-                }
-                history_store::BoundedTimelineRecord::LifecycleEvent(event) => {
-                    project_lifecycle_header(event, timeline_ordinal)
-                }
-            };
-            records.push(projected);
-        }
-        let next_cursor = match page.next_record {
-            Some(next_record) => {
-                let next_ordinal = first_ordinal.checked_sub(record_count).ok_or_else(|| {
-                    "Note Timeline record count does not match its lineage".to_string()
-                })?;
-                Some(
-                    MissingHistoryCursor::for_record(
-                        &note_id,
-                        &manifest.vault_id,
-                        manifest.history_generation,
-                        &next_record,
-                        next_ordinal,
-                    )
-                    .encode()?,
-                )
-            }
-            None => None,
-        };
-        Ok(HistoryModePage {
-            records,
-            next_cursor,
-        })
+        retained_history_page(&note_id, cursor, limit, MISSING_HISTORY_CURSOR_ERROR)
     }
 
     pub(crate) fn recover_missing_note(
@@ -10450,7 +10417,7 @@ mod tests {
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = created.path.unwrap();
-        for body in ["second", "third"] {
+        for body in ["second", "third", "fourth"] {
             crate::commands::note_persistence::persist_note_session_with_outcome(
                 &state,
                 "Paged".to_string(),
@@ -10461,7 +10428,10 @@ mod tests {
         }
 
         let access = state.note_timeline().open_history_mode(note_id.clone());
+        let oldest_revision = access.revisions().unwrap()[0].identity().clone();
+        replace_one_revision_source_for_test(&note_id, &oldest_revision, "invalid-old-source");
         let first_page = access.page(None, 2).unwrap();
+        replace_one_revision_source_for_test(&note_id, &oldest_revision, "noteCreation");
         assert_eq!(first_page.records().len(), 2);
         let serialized = serde_json::to_value(&first_page).unwrap();
         assert_eq!(serialized["records"][0]["kind"], "revision");
@@ -10470,7 +10440,7 @@ mod tests {
         assert_eq!(serialized["records"][0]["timeKind"], "committed");
         assert!(serialized["records"][0]["editingSessionId"].is_string());
         assert_eq!(serialized["records"][0]["lineCount"], 1);
-        assert_eq!(serialized["records"][0]["characterCount"], 5);
+        assert_eq!(serialized["records"][0]["characterCount"], 6);
         assert!(serialized.get("nextCursor").is_some());
         let cursor = first_page
             .next_cursor()
@@ -10480,12 +10450,11 @@ mod tests {
             .revision_id()
             .expect("newest record is a revision")
             .to_string();
-        assert_eq!(access.revision(&selected_id).unwrap().body(), "third");
-
+        assert_eq!(access.revision(&selected_id).unwrap().body(), "fourth");
         crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
             "Paged".to_string(),
-            "fourth".to_string(),
+            "fifth".to_string(),
             Some(path),
         )
         .unwrap();
