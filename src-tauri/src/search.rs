@@ -1,6 +1,7 @@
 use crate::{
     index::{IndexedNote, IndexedParagraph},
     note::DocumentKind,
+    services::note_timeline::{CurrentContentItem, CurrentContentReference},
 };
 use serde::Serialize;
 use std::path::Path;
@@ -39,6 +40,19 @@ pub(crate) struct NoteSearchResult {
     pub(crate) end_line: Option<usize>,
     #[serde(default)]
     pub(crate) block_anchor: Option<String>,
+}
+
+impl CurrentContentItem for NoteSearchResult {
+    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+        if self.document_kind == DocumentKind::Note {
+            CurrentContentReference::ordinary_note(
+                self.note_id.as_deref(),
+                self.note_path.as_deref(),
+            )
+        } else {
+            CurrentContentReference::non_note()
+        }
+    }
 }
 
 pub(crate) struct ScoredSearchResult {

@@ -4,7 +4,10 @@ use super::{
 };
 use crate::{
     index::AppState,
-    services::note_timeline::{MutationWarningStage, NoteMutationWarning},
+    services::note_timeline::{
+        AllowedScope, CurrentContentEligibility, CurrentContentItem, CurrentContentProjection,
+        CurrentContentReference, MutationWarningStage, NoteMutationWarning,
+    },
     services::task_mutation::{
         PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
     },
@@ -20,41 +23,71 @@ use crate::{
 use std::collections::HashSet;
 use tauri::State;
 
+impl CurrentContentItem for RecentTaskItem {
+    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+        CurrentContentReference::ordinary_note(Some(&self.note_id), Some(&self.note_path))
+    }
+}
+
+impl CurrentContentItem for TaskListGroup {
+    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+        CurrentContentReference::ordinary_note(Some(&self.note_id), Some(&self.note_path))
+    }
+}
+
+impl CurrentContentItem for TaskListGroupPatch {
+    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+        CurrentContentReference::ordinary_note(Some(&self.note_id), self.note_path.as_deref())
+    }
+}
+
+impl CurrentContentProjection for TaskListGroupPatch {
+    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
+        if !eligibility.retains(self) {
+            self.note_path = None;
+            self.group = None;
+        }
+    }
+
+    fn invalidate(&mut self) {
+        self.note_path = None;
+        self.group = None;
+    }
+}
+
 pub(super) fn list_recent_tasks(
     state: State<'_, AppState>,
     limit: usize,
 ) -> Result<Vec<RecentTaskItem>, String> {
-    let content_read = state.note_timeline().begin_current_content_read()?;
-    let notes_dir = prepare_notes_dir(false)?;
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read(|| {
+            let notes_dir = prepare_notes_dir(false)?;
 
-    let persisted_state = read_state(&notes_dir)?;
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "list_recent_tasks",
-    )?;
+            let persisted_state = read_state(&notes_dir)?;
+            state.ensure_interactive_index(
+                &notes_dir,
+                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+                "list_recent_tasks",
+            )?;
 
-    let hidden_note_ids: HashSet<String> =
-        persisted_state.hidden_note_ids.iter().cloned().collect();
+            let hidden_note_ids: HashSet<String> =
+                persisted_state.hidden_note_ids.iter().cloned().collect();
 
-    let records = list_recent_open_tasks(limit, &hidden_note_ids)?;
-    let items = records
-        .into_iter()
-        .map(|record| RecentTaskItem {
-            note_id: record.note_id,
-            task_key: record.task_key,
-            note_path: record.note_path,
-            note_title: record.note_title,
-            text: record.text,
-            line_number: record.line_number,
-            updated_at_millis: record.updated_at_millis,
+            Ok(list_recent_open_tasks(limit, &hidden_note_ids)?
+                .into_iter()
+                .map(|record| RecentTaskItem {
+                    note_id: record.note_id,
+                    task_key: record.task_key,
+                    note_path: record.note_path,
+                    note_title: record.note_title,
+                    text: record.text,
+                    line_number: record.line_number,
+                    updated_at_millis: record.updated_at_millis,
+                })
+                .collect())
         })
-        .collect();
-    Ok(if content_read.is_current() {
-        items
-    } else {
-        Vec::new()
-    })
 }
 
 pub(super) fn list_tasks(
@@ -62,32 +95,40 @@ pub(super) fn list_tasks(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<Vec<TaskListGroup>, String> {
-    let content_read = state.note_timeline().begin_current_content_read()?;
-    let notes_dir = prepare_notes_dir(false)?;
-    let persisted_state = read_state(&notes_dir)?;
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read(|| {
+            let notes_dir = prepare_notes_dir(false)?;
+            let persisted_state = read_state(&notes_dir)?;
 
-    state.ensure_interactive_index(&notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE, "list_tasks")?;
+            state.ensure_interactive_index(
+                &notes_dir,
+                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+                "list_tasks",
+            )?;
 
-    let hidden_note_ids: HashSet<String> =
-        persisted_state.hidden_note_ids.iter().cloned().collect();
-    let collapsed_note_ids: HashSet<String> =
-        persisted_state.collapsed_note_ids.iter().cloned().collect();
+            let hidden_note_ids: HashSet<String> =
+                persisted_state.hidden_note_ids.iter().cloned().collect();
+            let collapsed_note_ids: HashSet<String> =
+                persisted_state.collapsed_note_ids.iter().cloned().collect();
 
-    let projection_filter = projection_filter_from_task_filter(&filter);
+            let projection_filter = projection_filter_from_task_filter(&filter);
 
-    let records = list_tasks_with_filter(
-        projection_filter,
-        &persisted_state.note_order_note_ids,
-        &hidden_note_ids,
-        &collapsed_note_ids,
-    )?;
+            let records = list_tasks_with_filter(
+                projection_filter,
+                &persisted_state.note_order_note_ids,
+                &hidden_note_ids,
+                &collapsed_note_ids,
+            )?;
 
-    let groups = group_task_records(records, show_hidden, &hidden_note_ids, &collapsed_note_ids);
-    Ok(if content_read.is_current() {
-        groups
-    } else {
-        Vec::new()
-    })
+            Ok(group_task_records(
+                records,
+                show_hidden,
+                &hidden_note_ids,
+                &collapsed_note_ids,
+            ))
+        })
 }
 
 pub(super) fn get_task_group(
@@ -96,19 +137,18 @@ pub(super) fn get_task_group(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let content_read = state.note_timeline().begin_current_content_read()?;
-    let notes_dir = prepare_notes_dir(false)?;
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "get_task_group",
-    )?;
-    let mut patch = build_task_group_patch(&note_id, filter, show_hidden)?;
-    if !content_read.is_current() {
-        patch.note_path = None;
-        patch.group = None;
-    }
-    Ok(patch)
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read(|| {
+            let notes_dir = prepare_notes_dir(false)?;
+            state.ensure_interactive_index(
+                &notes_dir,
+                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+                "get_task_group",
+            )?;
+            build_task_group_patch(&note_id, filter, show_hidden)
+        })
 }
 
 fn projection_filter_from_task_filter(filter: &TaskFilter) -> ProjectionFilter {
@@ -503,5 +543,63 @@ mod tests {
             &no_hidden_notes,
         );
         assert!(group.is_none());
+    }
+
+    #[test]
+    fn task_results_are_withheld_when_history_clear_invalidates_delivery() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("tasks-current-content-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("tasks-current-content-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Task delivery".to_string(),
+            "- [ ] Current task".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = crate::services::note_timeline::NoteIdentity::new(created.note_id.unwrap());
+        let note_path = created.path.unwrap();
+
+        let delivered = std::thread::scope(|scope| {
+            let (query_started, query_is_started) = std::sync::mpsc::sync_channel(0);
+            let (release_query, query_released) = std::sync::mpsc::sync_channel(0);
+            let stale_note_id = note_id.as_str().to_string();
+            let read_state = &state;
+            let read = scope.spawn(move || {
+                read_state
+                    .note_timeline()
+                    .current_content(AllowedScope::vault())
+                    .read(|| {
+                        query_started.send(()).unwrap();
+                        query_released.recv().unwrap();
+                        Ok(vec![RecentTaskItem {
+                            note_id: stale_note_id,
+                            task_key: "current-task".to_string(),
+                            note_path,
+                            note_title: "Task delivery".to_string(),
+                            text: "Current task".to_string(),
+                            line_number: 1,
+                            updated_at_millis: 1,
+                        }])
+                    })
+            });
+            query_is_started.recv().unwrap();
+            state.note_timeline().clear_note_history(&note_id).unwrap();
+            release_query.send(()).unwrap();
+            read.join().unwrap().unwrap()
+        });
+
+        assert!(delivered.is_empty());
+        crate::state::set_notes_root_override(None).unwrap();
     }
 }

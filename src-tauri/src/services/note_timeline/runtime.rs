@@ -31,6 +31,26 @@ struct NoteTimelineOperationBarrier {
     settled: Condvar,
 }
 
+#[derive(Default)]
+struct CurrentContentState {
+    generation: u64,
+    active_mutations: usize,
+}
+
+#[derive(Default)]
+struct CurrentContentCoordinator {
+    state: Mutex<CurrentContentState>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct CurrentContentVersion {
+    generation: u64,
+}
+
+pub(super) struct CurrentContentMutationGuard {
+    coordinator: Arc<CurrentContentCoordinator>,
+}
+
 #[derive(Clone)]
 pub(super) struct OperationGuard {
     lease: Arc<OperationLease>,
@@ -57,10 +77,20 @@ impl Drop for OperationLease {
     }
 }
 
+impl Drop for CurrentContentMutationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.coordinator.state.lock() {
+            state.active_mutations = state.active_mutations.saturating_sub(1);
+            state.generation = state.generation.wrapping_add(1);
+        }
+    }
+}
+
 /// Owns every process-local coordination primitive for one vault's Note
 /// Timeline. Callers can hold a `NoteTimeline` handle, but cannot assemble or
 /// transition the runtime piecemeal.
 pub(crate) struct NoteTimelineRuntime {
+    current_content: Arc<CurrentContentCoordinator>,
     history_recovered: Mutex<bool>,
     integrity: Mutex<IntegrityAttestation>,
     observation_replay: Mutex<()>,
@@ -70,11 +100,49 @@ pub(crate) struct NoteTimelineRuntime {
 impl NoteTimelineRuntime {
     pub(crate) fn new(_owner: NoteTimelineOwnerToken) -> Self {
         Self {
+            current_content: Arc::new(CurrentContentCoordinator::default()),
             history_recovered: Mutex::new(false),
             integrity: Mutex::new(IntegrityAttestation::Unverified),
             observation_replay: Mutex::new(()),
             operations: Arc::new(NoteTimelineOperationBarrier::default()),
         }
+    }
+
+    pub(super) fn begin_current_content_mutation(
+        &self,
+    ) -> Result<CurrentContentMutationGuard, String> {
+        let mut state = self
+            .current_content
+            .state
+            .lock()
+            .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
+        state.active_mutations = state.active_mutations.saturating_add(1);
+        state.generation = state.generation.wrapping_add(1);
+        drop(state);
+        Ok(CurrentContentMutationGuard {
+            coordinator: Arc::clone(&self.current_content),
+        })
+    }
+
+    pub(super) fn current_content_version(&self) -> Result<CurrentContentVersion, String> {
+        self.current_content
+            .state
+            .lock()
+            .map(|state| CurrentContentVersion {
+                generation: state.generation,
+            })
+            .map_err(|_| "Note Timeline current-content lock poisoned".to_string())
+    }
+
+    pub(super) fn current_content_is_current(
+        &self,
+        version: CurrentContentVersion,
+    ) -> Result<bool, String> {
+        self.current_content
+            .state
+            .lock()
+            .map(|state| state.active_mutations == 0 && state.generation == version.generation)
+            .map_err(|_| "Note Timeline current-content lock poisoned".to_string())
     }
 
     pub(super) fn begin_operation(&self) -> Result<OperationGuard, String> {

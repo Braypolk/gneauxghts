@@ -32,6 +32,31 @@ fn assert_contains_none(source: &str, forbidden: &[&str]) {
     }
 }
 
+fn rust_function<'a>(source: &'a str, name: &str) -> &'a str {
+    let marker = format!("fn {name}(");
+    let start = source
+        .find(&marker)
+        .unwrap_or_else(|| panic!("expected Rust function `{name}`"));
+    let body_start = source[start..]
+        .find('{')
+        .map(|offset| start + offset)
+        .unwrap_or_else(|| panic!("expected body for Rust function `{name}`"));
+    let mut depth = 0usize;
+    for (offset, byte) in source.as_bytes()[body_start..].iter().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &source[start..=body_start + offset];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unterminated Rust function `{name}`")
+}
+
 #[test]
 fn sqlite_history_format_selection_stays_inside_note_timeline_storage() {
     let vault_config = repository_file("src-tauri/src/state/config.rs");
@@ -511,6 +536,68 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
             "const LINE_DELTA_MAGIC: &[u8; 4] = b\"NTL1\";",
         ],
     );
+}
+
+#[test]
+fn current_content_consumers_cross_one_timeline_owned_read_interface() {
+    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let retrieval = repository_file("src-tauri/src/services/retrieval.rs");
+    let search = repository_file("src-tauri/src/commands/search_commands.rs");
+    let tasks = repository_file("src-tauri/src/commands/task_commands.rs");
+    let atlas = repository_file("src-tauri/src/commands/atlas_commands.rs");
+
+    assert_contains_all(
+        &timeline,
+        &[
+            "pub(crate) trait CurrentContentProjection",
+            "pub(crate) enum CurrentContentReference",
+            "CurrentContentReference::OrdinaryNote",
+            "pub(crate) fn retain_items<",
+            "pub(crate) fn read<",
+            "pub(crate) async fn read_async<",
+            "pub(crate) fn current_content(",
+            "scope: AllowedScope",
+        ],
+    );
+    assert_contains_none(
+        &timeline,
+        &[
+            "pub(crate) struct CurrentContentRead",
+            "begin_current_content_read",
+        ],
+    );
+
+    for consumer in [&retrieval, &search, &tasks, &atlas] {
+        assert_contains_all(consumer, &[".current_content(", ".read"]);
+        assert_contains_none(
+            consumer,
+            &[
+                "begin_current_content_read",
+                "content_read.is_current()",
+                ".allows_note(",
+            ],
+        );
+    }
+
+    for function in [
+        rust_function(&retrieval, "retrieve_vault_notes"),
+        rust_function(&search, "list_recent_notes"),
+        rust_function(&search, "list_recent_focus"),
+        rust_function(&search, "search_notes_hybrid"),
+        rust_function(&search, "get_related_notes"),
+        rust_function(&search, "retrieve_note_context"),
+        rust_function(&tasks, "list_recent_tasks"),
+        rust_function(&tasks, "list_tasks"),
+        rust_function(&tasks, "get_task_group"),
+        rust_function(&atlas, "get_vault_atlas"),
+        rust_function(&atlas, "search_vault_atlas"),
+    ] {
+        assert_contains_all(function, &[".current_content(", ".read"]);
+    }
+    assert_contains_all(&retrieval, &["AllowedScope::policy("]);
+    for vault_consumer in [&search, &tasks, &atlas] {
+        assert_contains_all(vault_consumer, &["AllowedScope::vault()"]);
+    }
 }
 
 #[test]

@@ -8,9 +8,15 @@ use crate::{
     },
     semantic::{
         atlas::{frequency_score, recency_score},
-        RelatedNotesResponse, SemanticChunkMatch,
+        RelatedNoteMatch, RelatedNotesResponse, SemanticChunkMatch,
     },
-    services::{resolve_current_document, CurrentDocumentRequest},
+    services::{
+        note_timeline::{
+            AllowedScope, CurrentContentEligibility, CurrentContentItem, CurrentContentProjection,
+            CurrentContentReference,
+        },
+        resolve_current_document, CurrentDocumentRequest,
+    },
     state::{
         db_load_note_activity, db_set_last_chat_location, db_set_note_pinned, effective_open_count,
         prune_recent_note_ids, read_state, resolve_note_id_from_path, validate_current_path,
@@ -53,10 +59,6 @@ static RESULT_CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn result_cache_generation() -> u64 {
     RESULT_CACHE_GENERATION.load(Ordering::Acquire)
-}
-
-fn result_cache_generation_is_current(generation: u64) -> bool {
-    result_cache_generation() == generation
 }
 
 fn search_cache_get(fingerprint: &str, generation: u64) -> Option<Vec<NoteSearchResult>> {
@@ -105,21 +107,17 @@ struct CachedRelatedResponse {
 
 static RELATED_RESULT_CACHE: Mutex<Vec<CachedRelatedResponse>> = Mutex::new(Vec::new());
 
-pub(crate) fn invalidate_result_caches() -> Result<(), String> {
+pub(crate) fn invalidate_result_caches() {
     RESULT_CACHE_GENERATION.fetch_add(1, Ordering::AcqRel);
-    SEARCH_RESULT_CACHE
-        .lock()
-        .map_err(|_| "Search result cache lock poisoned".to_string())?
-        .clear();
-    RELATED_RESULT_CACHE
-        .lock()
-        .map_err(|_| "Related result cache lock poisoned".to_string())?
-        .clear();
-    CURRENT_OVERRIDE_CACHE
-        .lock()
-        .map_err(|_| "Current note override cache lock poisoned".to_string())?
-        .clear();
-    Ok(())
+    if let Ok(mut cache) = SEARCH_RESULT_CACHE.lock() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = RELATED_RESULT_CACHE.lock() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = CURRENT_OVERRIDE_CACHE.lock() {
+        cache.clear();
+    }
 }
 
 fn related_cache_get(fingerprint: &str, generation: u64) -> Option<RelatedNotesResponse> {
@@ -262,40 +260,39 @@ pub(crate) fn list_recent_notes(
     limit: usize,
     current_path: Option<String>,
 ) -> Result<Vec<NoteSearchResult>, String> {
-    let content_read = state.note_timeline().begin_current_content_read()?;
-    let notes_dir = prepare_notes_dir(false)?;
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read(|| {
+            let notes_dir = prepare_notes_dir(false)?;
 
-    let current_path = validate_current_path(current_path, &notes_dir)?;
-    let mut persisted_state = read_state(&notes_dir)?;
-    if prune_recent_note_ids(&mut persisted_state, &notes_dir) {
-        write_state(&notes_dir, &persisted_state)?;
-    }
+            let current_path = validate_current_path(current_path, &notes_dir)?;
+            let mut persisted_state = read_state(&notes_dir)?;
+            if prune_recent_note_ids(&mut persisted_state, &notes_dir) {
+                write_state(&notes_dir, &persisted_state)?;
+            }
 
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "list_recent_notes",
-    )?;
-    let index = state
-        .notes_index
-        .lock()
-        .map_err(|_| "Search index lock poisoned".to_string())?;
+            state.ensure_interactive_index(
+                &notes_dir,
+                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+                "list_recent_notes",
+            )?;
+            let index = state
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
 
-    let results = collect_recent_note_results(
-        &persisted_state.recent_note_ids,
-        current_path
-            .as_deref()
-            .map(resolve_note_id_from_path)
-            .transpose()?
-            .as_deref(),
-        &index,
-        limit,
-    );
-    Ok(if content_read.is_current() {
-        results
-    } else {
-        Vec::new()
-    })
+            Ok(collect_recent_note_results(
+                &persisted_state.recent_note_ids,
+                current_path
+                    .as_deref()
+                    .map(resolve_note_id_from_path)
+                    .transpose()?
+                    .as_deref(),
+                &index,
+                limit,
+            ))
+        })
 }
 
 #[derive(Clone, Serialize)]
@@ -312,6 +309,18 @@ pub(crate) struct RecentFocusBundle {
     pinned_notes: Vec<NoteSearchResult>,
     recent_notes: Vec<NoteSearchResult>,
     last_chat: Option<LastChatLocation>,
+}
+
+impl CurrentContentProjection for RecentFocusBundle {
+    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
+        eligibility.retain_items(&mut self.pinned_notes);
+        eligibility.retain_items(&mut self.recent_notes);
+    }
+
+    fn invalidate(&mut self) {
+        self.pinned_notes.clear();
+        self.recent_notes.clear();
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -351,6 +360,49 @@ pub(crate) struct RetrievalContextResponse {
     items: Vec<RetrievalContextItem>,
 }
 
+impl CurrentContentItem for RetrievalContextItem {
+    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+        if self.document_kind == crate::note::DocumentKind::Note {
+            CurrentContentReference::ordinary_note(
+                self.note_id.as_deref(),
+                self.note_path.as_deref(),
+            )
+        } else {
+            CurrentContentReference::non_note()
+        }
+    }
+}
+
+impl CurrentContentItem for RelatedNoteMatch {
+    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+        if self.document_kind == crate::note::DocumentKind::Note {
+            CurrentContentReference::ordinary_note(None, Some(&self.note_path))
+        } else {
+            CurrentContentReference::non_note()
+        }
+    }
+}
+
+impl CurrentContentProjection for RetrievalContextResponse {
+    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
+        eligibility.retain_items(&mut self.items);
+    }
+
+    fn invalidate(&mut self) {
+        self.items.clear();
+    }
+}
+
+impl CurrentContentProjection for RelatedNotesResponse {
+    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
+        eligibility.retain_items(&mut self.items);
+    }
+
+    fn invalidate(&mut self) {
+        self.items.clear();
+    }
+}
+
 /// Combined focus loader: returns both recent notes and recent tasks in a
 /// single backend round-trip. This collapses two separate frontend calls
 /// (each performing its own `read_state` + `ensure_interactive_index` +
@@ -361,60 +413,60 @@ pub(crate) fn list_recent_focus(
     limit: usize,
     current_path: Option<String>,
 ) -> Result<RecentFocusBundle, String> {
-    let content_read = state.note_timeline().begin_current_content_read()?;
-    let notes_dir = prepare_notes_dir(false)?;
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read(|| {
+            let notes_dir = prepare_notes_dir(false)?;
 
-    let current_path = validate_current_path(current_path, &notes_dir)?;
-    let mut persisted_state = read_state(&notes_dir)?;
-    let prune_changed = prune_recent_note_ids(&mut persisted_state, &notes_dir);
+            let current_path = validate_current_path(current_path, &notes_dir)?;
+            let mut persisted_state = read_state(&notes_dir)?;
+            let prune_changed = prune_recent_note_ids(&mut persisted_state, &notes_dir);
 
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "list_recent_focus",
-    )?;
-    let index = state
-        .notes_index
-        .lock()
-        .map_err(|_| "Search index lock poisoned".to_string())?;
+            state.ensure_interactive_index(
+                &notes_dir,
+                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+                "list_recent_focus",
+            )?;
+            let index = state
+                .notes_index
+                .lock()
+                .map_err(|_| "Search index lock poisoned".to_string())?;
 
-    let current_note_id = current_path
-        .as_deref()
-        .map(resolve_note_id_from_path)
-        .transpose()?;
-    let recent_notes = collect_recent_note_results(
-        &persisted_state.recent_note_ids,
-        current_note_id.as_deref(),
-        &index,
-        limit,
-    );
-    let pinned_notes =
-        collect_recent_note_results(&persisted_state.pinned_note_ids, None, &index, limit);
+            let current_note_id = current_path
+                .as_deref()
+                .map(resolve_note_id_from_path)
+                .transpose()?;
+            let recent_notes = collect_recent_note_results(
+                &persisted_state.recent_note_ids,
+                current_note_id.as_deref(),
+                &index,
+                limit,
+            );
+            let pinned_notes =
+                collect_recent_note_results(&persisted_state.pinned_note_ids, None, &index, limit);
 
-    drop(index);
-    if prune_changed {
-        write_state(&notes_dir, &persisted_state)?;
-    }
+            drop(index);
+            if prune_changed {
+                write_state(&notes_dir, &persisted_state)?;
+            }
 
-    let last_chat = persisted_state
-        .last_chat_conversation_id
-        .as_ref()
-        .map(|conversation_id| LastChatLocation {
-            conversation_id: conversation_id.clone(),
-            context_note_id: persisted_state.last_chat_context_note_id.clone(),
-            context_note_path: persisted_state.last_chat_context_note_path.clone(),
-        });
+            let last_chat =
+                persisted_state
+                    .last_chat_conversation_id
+                    .as_ref()
+                    .map(|conversation_id| LastChatLocation {
+                        conversation_id: conversation_id.clone(),
+                        context_note_id: persisted_state.last_chat_context_note_id.clone(),
+                        context_note_path: persisted_state.last_chat_context_note_path.clone(),
+                    });
 
-    let mut bundle = RecentFocusBundle {
-        pinned_notes,
-        recent_notes,
-        last_chat,
-    };
-    if !content_read.is_current() {
-        bundle.pinned_notes.clear();
-        bundle.recent_notes.clear();
-    }
-    Ok(bundle)
+            Ok(RecentFocusBundle {
+                pinned_notes,
+                recent_notes,
+                last_chat,
+            })
+        })
 }
 
 #[tauri::command]
@@ -492,8 +544,36 @@ pub(crate) async fn search_notes_hybrid(
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
 ) -> Result<Vec<NoteSearchResult>, String> {
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read_async(search_notes_hybrid_unchecked(
+            state.inner(),
+            query,
+            current_path,
+            current_title,
+            current_markdown,
+            current_body_hash,
+            limit,
+            semantic_weight,
+            lexical_weight,
+        ))
+        .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn search_notes_hybrid_unchecked(
+    state: &AppState,
+    query: String,
+    current_path: Option<String>,
+    current_title: String,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
+    limit: usize,
+    semantic_weight: Option<f32>,
+    lexical_weight: Option<f32>,
+) -> Result<Vec<NoteSearchResult>, String> {
     let _foreground_guard = state.foreground_guard();
-    let content_read = state.note_timeline().begin_current_content_read()?;
     let cache_generation = result_cache_generation();
     let started_at = Instant::now();
     let notes_dir = prepare_notes_dir(false)?;
@@ -514,7 +594,7 @@ pub(crate) async fn search_notes_hybrid(
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
-        &state,
+        state,
         CurrentDocumentRequest::from_path(
             current_path.as_deref(),
             current_title.clone(),
@@ -532,17 +612,11 @@ pub(crate) async fn search_notes_hybrid(
         semantic_weight,
     );
     if let Some(cached) = search_cache_get(&cache_fingerprint, cache_generation) {
-        return Ok(
-            if content_read.is_current() && result_cache_generation_is_current(cache_generation) {
-                cached
-            } else {
-                Vec::new()
-            },
-        );
+        return Ok(cached);
     }
     let resolved_body = resolved_current.body.unwrap_or_default();
     let lexical_candidates = collect_lexical_candidates(
-        &state,
+        state,
         &query,
         &notes_dir,
         current_path.as_deref(),
@@ -578,7 +652,7 @@ pub(crate) async fn search_notes_hybrid(
             },
         );
         let activity_by_note_id = db_load_note_activity().unwrap_or_default();
-        let note_lookup = note_access_lookup_for_candidates(&state, &lexical_candidates, &[]);
+        let note_lookup = note_access_lookup_for_candidates(state, &lexical_candidates, &[]);
         let now = current_time_millis().unwrap_or(0);
         let results = filter_note_results(
             merge_hybrid_candidates(
@@ -596,13 +670,7 @@ pub(crate) async fn search_notes_hybrid(
             effective_limit,
         );
         search_cache_put(cache_fingerprint, cache_generation, results.clone());
-        return Ok(
-            if content_read.is_current() && result_cache_generation_is_current(cache_generation) {
-                results
-            } else {
-                Vec::new()
-            },
-        );
+        return Ok(results);
     }
 
     let semantic = state.semantic.clone();
@@ -620,12 +688,12 @@ pub(crate) async fn search_notes_hybrid(
     let (semantic_matches, semantic_error) = semantic_query_or_empty(semantic_result);
     if let Some(error) = semantic_error.as_deref() {
         state.semantic.record_query_failure(error);
-        super::emit_semantic_status_changed(&state);
+        super::emit_semantic_status_changed(state);
     }
 
     let activity_by_note_id = db_load_note_activity().unwrap_or_default();
     let note_lookup =
-        note_access_lookup_for_candidates(&state, &lexical_candidates, &semantic_matches);
+        note_access_lookup_for_candidates(state, &lexical_candidates, &semantic_matches);
     let now = current_time_millis().unwrap_or(0);
     let ranked = filter_note_results(
         merge_hybrid_candidates(
@@ -669,13 +737,7 @@ pub(crate) async fn search_notes_hybrid(
         },
     );
     search_cache_put(cache_fingerprint, cache_generation, ranked.clone());
-    Ok(
-        if content_read.is_current() && result_cache_generation_is_current(cache_generation) {
-            ranked
-        } else {
-            Vec::new()
-        },
-    )
+    Ok(ranked)
 }
 
 fn semantic_query_or_empty(
@@ -698,13 +760,37 @@ pub(crate) async fn get_related_notes(
     selected_text: Option<String>,
     limit: usize,
 ) -> Result<RelatedNotesResponse, String> {
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read_async(get_related_notes_unchecked(
+            state.inner(),
+            current_path,
+            current_title,
+            current_markdown,
+            current_body_hash,
+            selected_text,
+            limit,
+        ))
+        .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn get_related_notes_unchecked(
+    state: &AppState,
+    current_path: Option<String>,
+    current_title: String,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
+    selected_text: Option<String>,
+    limit: usize,
+) -> Result<RelatedNotesResponse, String> {
     let _foreground_guard = state.foreground_guard();
-    let content_read = state.note_timeline().begin_current_content_read()?;
     let cache_generation = result_cache_generation();
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
-        &state,
+        state,
         CurrentDocumentRequest::from_path(
             current_path.as_deref(),
             current_title.clone(),
@@ -720,18 +806,7 @@ pub(crate) async fn get_related_notes(
         limit,
     );
     if let Some(cached) = related_cache_get(&fingerprint, cache_generation) {
-        return Ok(
-            if content_read.is_current() && result_cache_generation_is_current(cache_generation) {
-                cached
-            } else {
-                RelatedNotesResponse {
-                    status: cached.status,
-                    scope: cached.scope,
-                    reason: cached.reason,
-                    items: Vec::new(),
-                }
-            },
-        );
+        return Ok(cached);
     }
     let resolved_body = resolved_current.body.unwrap_or_default();
     let current_path_raw = current_path
@@ -739,7 +814,7 @@ pub(crate) async fn get_related_notes(
         .map(|path| path.to_string_lossy().into_owned());
     let semantic = state.semantic.clone();
 
-    let mut response = tauri::async_runtime::spawn_blocking(move || {
+    let response = tauri::async_runtime::spawn_blocking(move || {
         semantic.related_notes(
             current_path_raw.as_deref(),
             &current_title,
@@ -751,9 +826,6 @@ pub(crate) async fn get_related_notes(
     .await
     .map_err(|err| err.to_string())??;
     related_cache_put(fingerprint, cache_generation, response.clone());
-    if !content_read.is_current() || !result_cache_generation_is_current(cache_generation) {
-        response.items.clear();
-    }
     Ok(response)
 }
 
@@ -771,13 +843,42 @@ pub(crate) async fn retrieve_note_context(
     selected_text: Option<String>,
     limit: usize,
 ) -> Result<RetrievalContextResponse, String> {
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read_async(retrieve_note_context_unchecked(
+            app,
+            state.inner(),
+            scope,
+            query,
+            current_path,
+            current_title,
+            current_markdown,
+            current_body_hash,
+            selected_text,
+            limit,
+        ))
+        .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn retrieve_note_context_unchecked(
+    app: AppHandle,
+    state: &AppState,
+    scope: RetrievalContextScope,
+    query: Option<String>,
+    current_path: Option<String>,
+    current_title: String,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
+    selected_text: Option<String>,
+    limit: usize,
+) -> Result<RetrievalContextResponse, String> {
     let _foreground_guard = state.foreground_guard();
-    let content_read = state.note_timeline().begin_current_content_read()?;
-    let cache_generation = result_cache_generation();
     let notes_dir = prepare_notes_dir(false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
-        &state,
+        state,
         CurrentDocumentRequest::from_path(
             current_path.as_deref(),
             current_title.clone(),
@@ -791,7 +892,7 @@ pub(crate) async fn retrieve_note_context(
         .map(|path| path.to_string_lossy().into_owned());
     let effective_limit = limit.max(1);
 
-    let mut response = match scope {
+    match scope {
         RetrievalContextScope::Query => {
             let Some(query) = query.filter(|value| !value.trim().is_empty()) else {
                 return Ok(RetrievalContextResponse {
@@ -892,11 +993,7 @@ pub(crate) async fn retrieve_note_context(
                     .collect(),
             })
         }
-    }?;
-    if !content_read.is_current() || !result_cache_generation_is_current(cache_generation) {
-        response.items.clear();
     }
-    Ok(response)
 }
 
 pub(super) fn build_draft_ref(
@@ -963,7 +1060,7 @@ fn build_related_fingerprint(
 
 #[allow(clippy::too_many_arguments)]
 fn collect_lexical_candidates(
-    state: &State<'_, AppState>,
+    state: &AppState,
     query: &str,
     notes_dir: &Path,
     current_path: Option<&Path>,
@@ -1027,7 +1124,7 @@ impl NoteAccessLookup {
 }
 
 fn note_access_lookup_for_candidates(
-    state: &State<'_, AppState>,
+    state: &AppState,
     lexical_candidates: &[ScoredSearchResult],
     semantic_matches: &[SemanticChunkMatch],
 ) -> NoteAccessLookup {
@@ -1340,7 +1437,7 @@ mod result_cache_generation_tests {
     #[test]
     fn invalidation_rejects_late_search_and_related_cache_writes() {
         let old_generation = result_cache_generation();
-        invalidate_result_caches().unwrap();
+        invalidate_result_caches();
         let current_generation = result_cache_generation();
         assert_ne!(old_generation, current_generation);
 
@@ -1358,6 +1455,84 @@ mod result_cache_generation_tests {
 
         assert!(search_cache_get("late-search", current_generation).is_none());
         assert!(related_cache_get("late-related", current_generation).is_none());
+    }
+}
+
+#[cfg(test)]
+mod current_content_delivery_tests {
+    use super::*;
+    use crate::{app::EventBus, semantic::SemanticState};
+
+    #[test]
+    fn search_does_not_deliver_results_from_before_a_concurrent_note_mutation() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("search-current-content-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("search-current-content-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Changing search note".to_string(),
+            "Old searchable prose".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = created.note_id.unwrap();
+        let note_path = created.path.unwrap();
+
+        let delivered = std::thread::scope(|scope| {
+            let (query_started, query_is_started) = std::sync::mpsc::sync_channel(0);
+            let (release_query, query_released) = std::sync::mpsc::sync_channel(0);
+            let stale_note_id = note_id.clone();
+            let stale_note_path = note_path.clone();
+            let read_state = &state;
+            let read = scope.spawn(move || {
+                read_state
+                    .note_timeline()
+                    .current_content(AllowedScope::vault())
+                    .read(|| {
+                        query_started.send(()).unwrap();
+                        query_released.recv().unwrap();
+                        Ok(vec![NoteSearchResult {
+                            note_id: Some(stale_note_id),
+                            note_path: Some(stale_note_path),
+                            document_kind: crate::note::DocumentKind::Note,
+                            file_name: "Changing search note.md".to_string(),
+                            section_label: String::new(),
+                            excerpt: "Old searchable prose".to_string(),
+                            highlight_ranges: Vec::new(),
+                            match_text: "Old searchable prose".to_string(),
+                            reason_labels: Vec::new(),
+                            lexical_score: Some(1.0),
+                            semantic_score: None,
+                            start_line: Some(1),
+                            end_line: Some(1),
+                            block_anchor: None,
+                        }])
+                    })
+            });
+            query_is_started.recv().unwrap();
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                "Changing search note".to_string(),
+                "New searchable prose".to_string(),
+                Some(note_path),
+            )
+            .unwrap();
+            release_query.send(()).unwrap();
+            read.join().unwrap().unwrap()
+        });
+
+        assert!(delivered.is_empty());
+        crate::state::set_notes_root_override(None).unwrap();
     }
 }
 

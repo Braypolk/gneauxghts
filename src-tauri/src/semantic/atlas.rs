@@ -209,6 +209,7 @@ pub(crate) struct AtlasSearchResponse {
 pub(crate) struct AtlasSearchMatch {
     pub(crate) note_id: Option<String>,
     pub(crate) note_path: String,
+    pub(crate) document_kind: DocumentKind,
     pub(crate) score: f32,
     pub(crate) semantic_score: f32,
     pub(crate) lexical_score: f32,
@@ -1502,6 +1503,9 @@ impl ActiveSemanticState {
                     tags,
                 );
                 let note_id = meta.and_then(|item| item.note_id.clone());
+                let document_kind = meta
+                    .map(|item| item.document_kind)
+                    .unwrap_or(DocumentKind::Note);
                 let activity = note_id.as_ref().and_then(|id| activity_by_note_id.get(id));
                 let last_viewed = activity.map(|item| item.last_viewed_at_millis);
                 let open_count = activity.map(|item| item.open_count).unwrap_or(0);
@@ -1524,6 +1528,7 @@ impl ActiveSemanticState {
                 AtlasSearchMatch {
                     note_id,
                     note_path: note.note_path,
+                    document_kind,
                     score: score.clamp(0.0, 1.0),
                     semantic_score,
                     lexical_score,

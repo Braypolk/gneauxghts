@@ -1,4 +1,8 @@
-use crate::{index::AppState, note::DocumentKind};
+use crate::{
+    index::AppState,
+    note::DocumentKind,
+    services::note_timeline::{AllowedScope, CurrentContentItem, CurrentContentReference},
+};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -19,6 +23,12 @@ pub(crate) struct VaultRetrievalItem {
     pub(crate) block_anchor: Option<String>,
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
+}
+
+impl CurrentContentItem for VaultRetrievalItem {
+    fn current_content_reference(&self) -> CurrentContentReference<'_> {
+        CurrentContentReference::ordinary_note(Some(&self.note_id), self.note_path.to_str())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -64,7 +74,29 @@ pub(crate) fn retrieve_vault_notes(
     excluded_note_ids: &HashSet<String>,
     date_filters: VaultDateFilters,
 ) -> Result<Vec<VaultRetrievalItem>, String> {
-    let content_read = state.note_timeline().begin_current_content_read()?;
+    state
+        .note_timeline()
+        .current_content(AllowedScope::policy(allowed_note_ids, excluded_note_ids))
+        .read(|| {
+            retrieve_vault_notes_unchecked(
+                state,
+                query,
+                limit,
+                allowed_note_ids,
+                excluded_note_ids,
+                date_filters,
+            )
+        })
+}
+
+fn retrieve_vault_notes_unchecked(
+    state: &AppState,
+    query: &str,
+    limit: usize,
+    allowed_note_ids: Option<&HashSet<String>>,
+    excluded_note_ids: &HashSet<String>,
+    date_filters: VaultDateFilters,
+) -> Result<Vec<VaultRetrievalItem>, String> {
     let limit = limit.clamp(1, 20);
     let terms = query
         .split(|ch: char| !ch.is_alphanumeric())
@@ -228,17 +260,19 @@ pub(crate) fn retrieve_vault_notes(
         });
     }
     results.truncate(limit);
-    if !content_read.is_current() {
-        results.clear();
-    }
     Ok(results)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{matches_date_filters, VaultDateFilters};
-    use crate::index::build_indexed_note;
-    use std::path::Path;
+    use super::{matches_date_filters, VaultDateFilters, VaultRetrievalItem};
+    use crate::{
+        app::EventBus,
+        index::{build_indexed_note, AppState},
+        semantic::SemanticState,
+        services::note_timeline::{AllowedScope, NoteIdentity},
+    };
+    use std::{collections::HashSet, path::Path};
 
     #[test]
     fn date_filters_use_created_and_updated_frontmatter_independently() {
@@ -261,5 +295,82 @@ mod tests {
                 ..VaultDateFilters::default()
             }
         ));
+    }
+
+    #[test]
+    fn retrieval_scope_and_clear_invalidation_are_applied_at_delivery() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("retrieval-current-content-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("retrieval-current-content-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Scoped retrieval".to_string(),
+            "Current private prose".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        let note_path = created.path.unwrap();
+        let item = || VaultRetrievalItem {
+            note_id: note_id.as_str().to_string(),
+            note_path: note_path.clone().into(),
+            title: "Scoped retrieval".to_string(),
+            excerpt: "Current private prose".to_string(),
+            section_label: String::new(),
+            score: 1.0,
+            lexical_score: Some(1.0),
+            semantic_score: None,
+            start_line: Some(1),
+            end_line: Some(1),
+            block_anchor: None,
+            created_at_millis: 1,
+            updated_at_millis: 1,
+        };
+
+        let delivered = std::thread::scope(|scope| {
+            let (query_started, query_is_started) = std::sync::mpsc::sync_channel(0);
+            let (release_query, query_released) = std::sync::mpsc::sync_channel(0);
+            let read_state = &state;
+            let allowed_note_id = note_id.as_str().to_string();
+            let read = scope.spawn(move || {
+                read_state
+                    .note_timeline()
+                    .current_content(AllowedScope::policy(
+                        Some(&HashSet::from([allowed_note_id])),
+                        &HashSet::new(),
+                    ))
+                    .read(|| {
+                        query_started.send(()).unwrap();
+                        query_released.recv().unwrap();
+                        Ok(vec![item()])
+                    })
+            });
+            query_is_started.recv().unwrap();
+            state.note_timeline().clear_note_history(&note_id).unwrap();
+            release_query.send(()).unwrap();
+            read.join().unwrap().unwrap()
+        });
+        assert!(delivered.is_empty());
+
+        let excluded = state
+            .note_timeline()
+            .current_content(AllowedScope::policy(
+                None,
+                &HashSet::from([note_id.as_str().to_string()]),
+            ))
+            .read(|| Ok(vec![item()]))
+            .unwrap();
+        assert!(excluded.is_empty());
+        crate::state::set_notes_root_override(None).unwrap();
     }
 }

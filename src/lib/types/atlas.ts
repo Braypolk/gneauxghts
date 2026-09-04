@@ -81,6 +81,7 @@ export interface AtlasSearchResponse {
 export interface AtlasSearchMatch {
   noteId: string | null;
   notePath: string;
+  documentKind: AtlasNode['documentKind'];
   score: number;
   semanticScore: number;
   lexicalScore: number;

@@ -91,6 +91,7 @@ describe('atlas view helpers', () => {
     return {
       noteId: 'note',
       notePath: '/vault/note.md',
+      documentKind: 'note',
       score: 0,
       semanticScore: 0,
       lexicalScore: 0,

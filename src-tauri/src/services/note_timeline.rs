@@ -9,7 +9,9 @@ mod runtime;
 
 use self::post_publication::{PublicationIssue, PublicationOutcome, PublicationStage};
 pub(crate) use self::runtime::NoteTimelineRuntime;
-use self::runtime::{OperationGuard, RecoveryIntegrity};
+use self::runtime::{
+    CurrentContentMutationGuard, CurrentContentVersion, OperationGuard, RecoveryIntegrity,
+};
 use crate::{
     index::{build_indexed_note, AppState, NoteTimelineOwnerToken},
     path_utils::{collect_markdown_files_recursively, unique_path_in_dir},
@@ -21,25 +23,10 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 pub(crate) const BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES: u64 = 256 * 1024;
 const RECOVERY_DAY_MILLIS: u64 = 24 * 60 * 60 * 1_000;
-static CURRENT_CONTENT_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-/// Snapshot token for a current-content read. A purge advances the shared
-/// generation before removing rebuildable projections, so callers can avoid
-/// publishing prose assembled concurrently with that removal.
-pub(crate) struct CurrentContentRead {
-    generation: u64,
-}
-
-impl CurrentContentRead {
-    pub(crate) fn is_current(&self) -> bool {
-        CURRENT_CONTENT_GENERATION.load(Ordering::Acquire) == self.generation
-    }
-}
 
 pub(crate) fn ensure_vault_scaffold(
     vault_root: &Path,
@@ -1015,6 +1002,7 @@ pub(crate) struct ReconstructedNoteRevision {
 pub(crate) struct PreparedHistoryIntent {
     value: String,
     operation: Option<OperationGuard>,
+    current_content_mutation: Option<CurrentContentMutationGuard>,
 }
 
 impl std::fmt::Debug for PreparedHistoryIntent {
@@ -1039,6 +1027,7 @@ impl PreparedHistoryIntent {
         Self {
             value,
             operation: None,
+            current_content_mutation: None,
         }
     }
 
@@ -1046,8 +1035,13 @@ impl PreparedHistoryIntent {
         &self.value
     }
 
-    fn with_operation(mut self, operation: OperationGuard) -> Self {
+    fn with_runtime_leases(
+        mut self,
+        operation: OperationGuard,
+        current_content_mutation: CurrentContentMutationGuard,
+    ) -> Self {
         self.operation = Some(operation);
+        self.current_content_mutation = Some(current_content_mutation);
         self
     }
 
@@ -1069,6 +1063,7 @@ impl PreparedHistoryIntent {
         Self {
             value: value.to_string(),
             operation: None,
+            current_content_mutation: None,
         }
     }
 }
@@ -1088,8 +1083,14 @@ impl PreparedRevisionPublication {
         (self.canonical_markdown, self.history_intent)
     }
 
-    fn with_operation(mut self, operation: OperationGuard) -> Self {
-        self.history_intent = self.history_intent.with_operation(operation);
+    fn with_runtime_leases(
+        mut self,
+        operation: OperationGuard,
+        current_content_mutation: CurrentContentMutationGuard,
+    ) -> Self {
+        self.history_intent = self
+            .history_intent
+            .with_runtime_leases(operation, current_content_mutation);
         self
     }
 
@@ -1608,18 +1609,46 @@ impl LifecycleReceipt {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AllowedScope {
-    note_ids: HashSet<NoteIdentity>,
+    note_ids: Option<HashSet<NoteIdentity>>,
+    excluded_note_ids: HashSet<NoteIdentity>,
 }
 
 impl AllowedScope {
+    pub(crate) fn vault() -> Self {
+        Self {
+            note_ids: None,
+            excluded_note_ids: HashSet::new(),
+        }
+    }
+
+    pub(crate) fn policy(
+        allowed_note_ids: Option<&HashSet<String>>,
+        excluded_note_ids: &HashSet<String>,
+    ) -> Self {
+        Self {
+            note_ids: allowed_note_ids
+                .map(|note_ids| note_ids.iter().cloned().map(NoteIdentity::new).collect()),
+            excluded_note_ids: excluded_note_ids
+                .iter()
+                .cloned()
+                .map(NoteIdentity::new)
+                .collect(),
+        }
+    }
+
     pub(crate) fn only(note_id: NoteIdentity) -> Self {
         Self {
-            note_ids: HashSet::from([note_id]),
+            note_ids: Some(HashSet::from([note_id])),
+            excluded_note_ids: HashSet::new(),
         }
     }
 
     fn allows(&self, note_id: &NoteIdentity) -> bool {
-        self.note_ids.contains(note_id)
+        !self.excluded_note_ids.contains(note_id)
+            && self
+                .note_ids
+                .as_ref()
+                .is_none_or(|note_ids| note_ids.contains(note_id))
     }
 }
 
@@ -2700,28 +2729,164 @@ impl HistoryModeAccess<'_> {
 }
 
 pub(crate) struct CurrentContentAccess<'a> {
-    _state: &'a AppState,
+    state: &'a AppState,
+    runtime: &'a NoteTimelineRuntime,
     scope: AllowedScope,
 }
 
+pub(crate) trait CurrentContentProjection {
+    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>);
+    fn invalidate(&mut self);
+}
+
+pub(crate) trait CurrentContentItem {
+    fn current_content_reference(&self) -> CurrentContentReference<'_>;
+}
+
+pub(crate) enum CurrentContentReference<'a> {
+    OrdinaryNote {
+        note_id: Option<&'a str>,
+        note_path: Option<&'a str>,
+    },
+    NonNote,
+}
+
+impl<'a> CurrentContentReference<'a> {
+    pub(crate) fn ordinary_note(note_id: Option<&'a str>, note_path: Option<&'a str>) -> Self {
+        Self::OrdinaryNote { note_id, note_path }
+    }
+
+    pub(crate) fn non_note() -> Self {
+        Self::NonNote
+    }
+}
+
+impl<T: CurrentContentItem> CurrentContentProjection for Vec<T> {
+    fn retain_current(&mut self, eligibility: &CurrentContentEligibility<'_>) {
+        eligibility.retain_items(self);
+    }
+
+    fn invalidate(&mut self) {
+        self.clear();
+    }
+}
+
+pub(crate) struct CurrentContentEligibility<'a> {
+    scope: &'a AllowedScope,
+    active_notes: HashMap<String, PathBuf>,
+    active_paths: HashMap<PathBuf, String>,
+}
+
+impl CurrentContentEligibility<'_> {
+    fn allows_note(&self, note_id: Option<&str>, note_path: Option<&str>) -> bool {
+        let path = note_path.map(PathBuf::from);
+        let resolved_note_id = note_id.map(str::to_string).or_else(|| {
+            path.as_ref()
+                .and_then(|path| self.active_paths.get(path).cloned())
+        });
+        let Some(resolved_note_id) = resolved_note_id else {
+            return false;
+        };
+        let identity = NoteIdentity::new(resolved_note_id.clone());
+        if !self.scope.allows(&identity) {
+            return false;
+        }
+        let Some(active_path) = self.active_notes.get(&resolved_note_id) else {
+            return false;
+        };
+        path.as_ref().is_none_or(|path| path == active_path)
+    }
+
+    pub(crate) fn retains<T: CurrentContentItem>(&self, item: &T) -> bool {
+        match item.current_content_reference() {
+            CurrentContentReference::OrdinaryNote { note_id, note_path } => {
+                self.allows_note(note_id, note_path)
+            }
+            CurrentContentReference::NonNote => true,
+        }
+    }
+
+    pub(crate) fn retain_items<T: CurrentContentItem>(&self, items: &mut Vec<T>) {
+        items.retain(|item| self.retains(item));
+    }
+}
+
 impl CurrentContentAccess<'_> {
+    fn prepare_read(&self) -> Result<(OperationGuard, CurrentContentVersion), String> {
+        let operation = self.runtime.begin_operation()?;
+        let timeline = NoteTimeline {
+            state: self.state,
+            runtime: self.runtime,
+        };
+        let version = self.runtime.with_observation_replay(|| {
+            timeline.recover_pending_deletions()?;
+            self.runtime.current_content_version()
+        })?;
+        Ok((operation, version))
+    }
+
+    fn eligibility(&self) -> Result<CurrentContentEligibility<'_>, String> {
+        let notes_root = crate::state::notes_root()?;
+        let index = self
+            .state
+            .notes_index
+            .lock()
+            .map_err(|_| "Notes index lock poisoned".to_string())?;
+        let mut active_notes = HashMap::new();
+        let mut active_paths = HashMap::new();
+        for (path, note) in &index.entries {
+            if note.document_kind != crate::note::DocumentKind::Note
+                || !path.starts_with(&notes_root)
+                || crate::state::is_forgotten_note_path(path, &notes_root)
+                || !path.is_file()
+            {
+                continue;
+            }
+            active_notes.insert(note.note_id.clone(), path.clone());
+            active_paths.insert(path.clone(), note.note_id.clone());
+        }
+        Ok(CurrentContentEligibility {
+            scope: &self.scope,
+            active_notes,
+            active_paths,
+        })
+    }
+
+    fn finish_read<T: CurrentContentProjection>(
+        &self,
+        version: CurrentContentVersion,
+        mut projection: T,
+    ) -> Result<T, String> {
+        projection.retain_current(&self.eligibility()?);
+        if !self.runtime.current_content_is_current(version)? {
+            projection.invalidate();
+        }
+        Ok(projection)
+    }
+
+    pub(crate) fn read<T: CurrentContentProjection>(
+        &self,
+        query: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let (_operation, version) = self.prepare_read()?;
+        let projection = query()?;
+        self.finish_read(version, projection)
+    }
+
+    pub(crate) async fn read_async<T, F>(&self, query: F) -> Result<T, String>
+    where
+        T: CurrentContentProjection,
+        F: std::future::Future<Output = Result<T, String>>,
+    {
+        let (_operation, version) = self.prepare_read()?;
+        let projection = query.await?;
+        self.finish_read(version, projection)
+    }
+
     pub(crate) fn allows(&self, note_id: &NoteIdentity) -> bool {
-        if !self.scope.allows(note_id) {
-            return false;
-        }
-        match history_store::missing_note(note_id) {
-            Ok(Some(_)) | Err(_) => return false,
-            Ok(None) => {}
-        }
-        let path = match history_store::current_path(note_id) {
-            Ok(Some(path)) => path,
-            Ok(None) => return true,
-            Err(_) => return false,
-        };
-        let Ok(notes_root) = crate::state::notes_root() else {
-            return false;
-        };
-        !crate::state::is_forgotten_note_path(&path, &notes_root)
+        self.eligibility()
+            .map(|eligibility| eligibility.allows_note(Some(note_id.as_str()), None))
+            .unwrap_or(false)
     }
 }
 
@@ -2868,16 +3033,10 @@ impl<'a> NoteTimeline<'a> {
         })
     }
 
-    /// Settle durable purge work created after startup, then capture the
-    /// generation that current-content query results must still match.
-    pub(crate) fn begin_current_content_read(&self) -> Result<CurrentContentRead, String> {
-        let _operation = self.runtime.begin_operation()?;
-        self.runtime.with_observation_replay(|| {
-            self.recover_pending_deletions()?;
-            Ok(CurrentContentRead {
-                generation: CURRENT_CONTENT_GENERATION.load(Ordering::Acquire),
-            })
-        })
+    fn begin_current_content_mutation(&self) -> Result<CurrentContentMutationGuard, String> {
+        let mutation = self.runtime.begin_current_content_mutation()?;
+        crate::commands::search_commands::invalidate_result_caches();
+        Ok(mutation)
     }
 
     fn recover_pending_deletions(&self) -> Result<(), String> {
@@ -2957,8 +3116,6 @@ impl<'a> NoteTimeline<'a> {
         note_id: &NoteIdentity,
         path: &Path,
     ) -> Result<(), String> {
-        CURRENT_CONTENT_GENERATION.fetch_add(1, Ordering::AcqRel);
-        crate::commands::search_commands::invalidate_result_caches()?;
         #[cfg(test)]
         if FAIL_NEXT_PURGE_PROJECTION_CLEANUP.swap(false, std::sync::atomic::Ordering::SeqCst) {
             return Err("injected purge projection cleanup interruption".to_string());
@@ -3466,6 +3623,7 @@ impl<'a> NoteTimeline<'a> {
     ) -> Result<HistoryDeletionReceipt, String> {
         crate::state::with_note_file_mutation(|| {
             let _operation = self.runtime.begin_operation()?;
+            let _current_content_mutation = self.begin_current_content_mutation()?;
             self.with_settled_history_mutation(|| {
                 require_recovered_note(note_id)?;
                 let path = history_store::current_path(note_id)?
@@ -3502,6 +3660,7 @@ impl<'a> NoteTimeline<'a> {
         let vault_root = require_active_vault_root(vault_root)?;
         crate::state::with_note_file_mutation(|| {
             let _operation = self.runtime.begin_operation()?;
+            let _current_content_mutation = self.begin_current_content_mutation()?;
             self.with_settled_history_mutation(|| {
                 let mut seeds = Vec::new();
                 let mut seen_note_ids = HashSet::new();
@@ -3658,6 +3817,7 @@ impl<'a> NoteTimeline<'a> {
         markdown: &str,
     ) -> Result<PreparedRevisionPublication, String> {
         let operation = self.runtime.begin_operation()?;
+        let current_content_mutation = self.begin_current_content_mutation()?;
         self.recover_retained_observations()?;
         self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
         let identity_prepared =
@@ -3674,7 +3834,7 @@ impl<'a> NoteTimeline<'a> {
         )?
         .0;
         self.prepare_canonical_revision_publication(source, target_path, continuity_path, canonical)
-            .map(|prepared| prepared.with_operation(operation))
+            .map(|prepared| prepared.with_runtime_leases(operation, current_content_mutation))
     }
 
     fn prepare_exact_revision_publication(
@@ -3686,11 +3846,12 @@ impl<'a> NoteTimeline<'a> {
         markdown: &str,
     ) -> Result<PreparedRevisionPublication, String> {
         let operation = self.runtime.begin_operation()?;
+        let current_content_mutation = self.begin_current_content_mutation()?;
         self.recover_retained_observations()?;
         self.ensure_history_recovered(RecoveryIntegrity::Exhaustive)?;
         let canonical = self.prepare_publication(continuity_path, retained_identity, markdown)?;
         self.prepare_canonical_revision_publication(source, target_path, continuity_path, canonical)
-            .map(|prepared| prepared.with_operation(operation))
+            .map(|prepared| prepared.with_runtime_leases(operation, current_content_mutation))
     }
 
     fn prepare_canonical_revision_publication(
@@ -3768,6 +3929,7 @@ impl<'a> NoteTimeline<'a> {
         observation: VaultObservation,
     ) -> Result<ObservationReceipt, String> {
         let _operation = self.runtime.begin_operation()?;
+        let _current_content_mutation = self.begin_current_content_mutation()?;
         self.runtime.with_observation_replay(|| {
             self.recover_pending_deletions()?;
             let observation = self.capture_observed_markdown(observation)?;
@@ -3882,8 +4044,6 @@ impl<'a> NoteTimeline<'a> {
                     );
                     history_store::record_observed_missing_lifecycle_event(&missing_record)?;
                     lifecycle_projection_warning = self.synchronize_missing_projection(&path);
-                    CURRENT_CONTENT_GENERATION.fetch_add(1, Ordering::AcqRel);
-                    crate::commands::search_commands::invalidate_result_caches()?;
                 }
             }
             VaultObservationKind::CanonicalState => {
@@ -4122,8 +4282,6 @@ impl<'a> NoteTimeline<'a> {
                     ),
                     _ => None,
                 };
-                CURRENT_CONTENT_GENERATION.fetch_add(1, Ordering::AcqRel);
-                crate::commands::search_commands::invalidate_result_caches()?;
             }
             _ => {}
         }
@@ -4156,6 +4314,7 @@ impl<'a> NoteTimeline<'a> {
         }
         crate::state::with_note_file_mutation(|| {
             let _timeline_operation = self.runtime.begin_operation()?;
+            let _current_content_mutation = self.begin_current_content_mutation()?;
             self.with_settled_history_mutation(|| {
                 self.purge_note_under_mutation_boundary(&note_id, &path, occurred_at_millis)
             })
@@ -4179,6 +4338,7 @@ impl<'a> NoteTimeline<'a> {
     ) -> Result<LifecyclePublicationResult, String> {
         crate::state::with_note_file_mutation(|| {
             let _timeline_operation = self.runtime.begin_operation()?;
+            let _current_content_mutation = self.begin_current_content_mutation()?;
             self.runtime.with_observation_replay(|| {
                 self.recover_pending_deletions()?;
                 self.replay_retained_observations(None)?;
@@ -4609,7 +4769,8 @@ impl<'a> NoteTimeline<'a> {
 
     pub(crate) fn current_content(&self, scope: AllowedScope) -> CurrentContentAccess<'a> {
         CurrentContentAccess {
-            _state: self.state,
+            state: self.state,
+            runtime: self.runtime,
             scope,
         }
     }
@@ -4729,6 +4890,17 @@ mod tests {
         thread,
         time::Duration,
     };
+
+    struct TestCurrentContentItem {
+        note_id: String,
+        note_path: String,
+    }
+
+    impl CurrentContentItem for TestCurrentContentItem {
+        fn current_content_reference(&self) -> CurrentContentReference<'_> {
+            CurrentContentReference::ordinary_note(Some(&self.note_id), Some(&self.note_path))
+        }
+    }
 
     fn copy_file(source: &Path, destination: &Path) {
         if let Some(parent) = destination.parent() {
@@ -5752,20 +5924,32 @@ mod tests {
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let path = PathBuf::from(created.path.unwrap());
-        let in_flight_read = state.note_timeline().begin_current_content_read().unwrap();
-        inject_purge_projection_cleanup_failure_once();
-
-        let error = state
+        let mut purge_error = None;
+        let delivered = state
             .note_timeline()
-            .lifecycle(NoteLifecycleOperation::purged(
-                note_id.clone(),
-                path.clone(),
-                700,
-            ))
-            .unwrap_err();
+            .current_content(AllowedScope::vault())
+            .read(|| {
+                inject_purge_projection_cleanup_failure_once();
+                purge_error = Some(
+                    state
+                        .note_timeline()
+                        .lifecycle(NoteLifecycleOperation::purged(
+                            note_id.clone(),
+                            path.clone(),
+                            700,
+                        ))
+                        .unwrap_err(),
+                );
+                Ok(vec![TestCurrentContentItem {
+                    note_id: note_id.as_str().to_string(),
+                    note_path: path.to_string_lossy().into_owned(),
+                }])
+            })
+            .unwrap();
+        let error = purge_error.expect("purge failure is captured during the read");
 
         assert!(error.contains("injected purge projection cleanup interruption"));
-        assert!(!in_flight_read.is_current());
+        assert!(delivered.is_empty());
         assert!(!path.exists());
         assert_eq!(
             state.indexed_note_identity(&path).unwrap().as_deref(),
@@ -8978,7 +9162,16 @@ mod tests {
         )
         .expect("construct app state");
         let timeline = state.note_timeline();
-        let note_id = NoteIdentity::new("note-1");
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Scoped note".to_string(),
+            "Current body".to_string(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
         let revision_id = RevisionIdentity::from_persisted("revision-1");
 
         let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
@@ -10674,33 +10867,48 @@ mod tests {
         fs::create_dir_all(&forgotten_root).unwrap();
         let forgotten_path = forgotten_root.join("Forgotten history.md");
         let forgotten_at_millis = crate::time::current_time_millis().unwrap() + 100;
-        let active_content_read = state.note_timeline().begin_current_content_read().unwrap();
-        let forgotten_publication = state
+        let mut forgotten_publication = None;
+        let delivered = state
             .note_timeline()
-            .publish_lifecycle(
-                NoteLifecycleOperation::forgotten(
-                    note_id.clone(),
-                    active_path.clone(),
-                    forgotten_path.clone(),
-                    forgotten_at_millis,
-                ),
-                &forgotten_markdown,
-                || {
-                    fs::rename(&active_path, &forgotten_path).map_err(|error| {
-                        LifecyclePublicationFailure::not_published(error.to_string())
-                    })?;
-                    fs::write(&forgotten_path, &forgotten_markdown).map_err(|error| {
-                        LifecyclePublicationFailure::not_published(error.to_string())
-                    })
-                },
-            )
+            .current_content(AllowedScope::vault())
+            .read(|| {
+                forgotten_publication = Some(
+                    state
+                        .note_timeline()
+                        .publish_lifecycle(
+                            NoteLifecycleOperation::forgotten(
+                                note_id.clone(),
+                                active_path.clone(),
+                                forgotten_path.clone(),
+                                forgotten_at_millis,
+                            ),
+                            &forgotten_markdown,
+                            || {
+                                fs::rename(&active_path, &forgotten_path).map_err(|error| {
+                                    LifecyclePublicationFailure::not_published(error.to_string())
+                                })?;
+                                fs::write(&forgotten_path, &forgotten_markdown).map_err(|error| {
+                                    LifecyclePublicationFailure::not_published(error.to_string())
+                                })
+                            },
+                        )
+                        .unwrap(),
+                );
+                Ok(vec![TestCurrentContentItem {
+                    note_id: note_id.as_str().to_string(),
+                    note_path: active_path.to_string_lossy().into_owned(),
+                }])
+            })
             .unwrap();
+        let forgotten_publication = forgotten_publication
+            .expect("forgotten publication is captured during the current-content read");
         assert_eq!(
             forgotten_publication.receipt().kind(),
             LifecycleEventKind::Forgotten
         );
         assert!(forgotten_publication.commit_warning().is_none());
         assert_eq!(retained_observation_count_for_test(), 0);
+        assert!(delivered.is_empty());
         assert!(!active_path.exists());
         assert!(forgotten_path.exists());
         let still_forgotten =
@@ -10720,7 +10928,6 @@ mod tests {
         let access = state.note_timeline().open_history_mode(note_id.clone());
         assert!(access.page(None, 50).unwrap_err().contains("Recover"));
         assert_eq!(retained_observation_count_for_test(), 0);
-        assert!(!active_content_read.is_current());
         let current_content = state
             .note_timeline()
             .current_content(AllowedScope::only(note_id.clone()));

@@ -6,9 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Provide one Note Timeline-owned current-content interface that applies identity, vault access, lifecycle eligibility, and deletion-consistency rules internally.
-- [ ] Migrate search, retrieval, task, and Atlas consumers without changing their valid user-visible results.
-- [ ] Ensure a read invalidated by clear, purge, forget, Missing transition, or concurrent mutation cannot return stale current content.
-- [ ] Keep role-limited access explicit so callers cannot acquire historical prose or broaden their permitted note set.
-- [ ] Remove the caller-managed begin-and-recheck protocol after every production consumer has migrated.
-- [ ] Add concurrency and architecture coverage for each consumer family, including invalidation between query execution and result delivery.
+- [x] Provide one Note Timeline-owned current-content interface that applies identity, vault access, lifecycle eligibility, and deletion-consistency rules internally.
+- [x] Migrate search, retrieval, task, and Atlas consumers without changing their valid user-visible results.
+- [x] Ensure a read invalidated by clear, purge, forget, Missing transition, or concurrent mutation cannot return stale current content.
+- [x] Keep role-limited access explicit so callers cannot acquire historical prose or broaden their permitted note set.
+- [x] Remove the caller-managed begin-and-recheck protocol after every production consumer has migrated.
+- [x] Add concurrency and architecture coverage for each consumer family, including invalidation between query execution and result delivery.
