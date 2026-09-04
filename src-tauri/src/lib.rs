@@ -227,6 +227,10 @@ pub fn run() {
             commands::create_vault_folder,
             commands::trust_and_migrate_legacy_note_timeline_history,
             commands::get_history_health,
+            #[cfg(feature = "e2e-wdio")]
+            commands::e2e_corrupt_history_store,
+            #[cfg(feature = "e2e-wdio")]
+            commands::e2e_flush_vault_watcher_path,
             commands::get_note_history_health,
             commands::history_commands::get_note_history_page,
             commands::history_commands::get_missing_note_history_page,

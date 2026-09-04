@@ -38,7 +38,15 @@ import {
 function nextAnimationFrame() {
   return new Promise<void>((resolve) => {
     if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => resolve());
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(fallback);
+        resolve();
+      };
+      const fallback = setTimeout(finish, 50);
+      requestAnimationFrame(finish);
       return;
     }
     resolve();

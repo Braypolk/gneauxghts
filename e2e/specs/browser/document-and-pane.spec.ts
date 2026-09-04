@@ -36,35 +36,26 @@ async function editorText() {
 
 async function setEditorSelection(anchor: number, head: number) {
   const content = await $('[data-testid="note-editor"] .cm-content');
-  const selection = await browser.execute(
-    (element: HTMLElement, requestedAnchor: number, requestedHead: number) => {
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-      let textNode = walker.nextNode();
-      while (textNode && (textNode.textContent?.length ?? 0) < 16) {
-        textNode = walker.nextNode();
-      }
-      if (!textNode) throw new Error('Editor has no selectable text node');
-      const length = textNode.textContent?.length ?? 0;
-      const boundedAnchor = Math.max(0, Math.min(requestedAnchor, length));
-      const boundedHead = Math.max(0, Math.min(requestedHead, length));
-      const domSelection = window.getSelection();
-      if (!domSelection) throw new Error('Browser selection is unavailable');
-      element.focus();
-      domSelection.setBaseAndExtent(
-        textNode,
-        boundedAnchor,
-        textNode,
-        boundedHead
-      );
-      document.dispatchEvent(new Event('selectionchange'));
-      return { anchor: boundedAnchor, head: boundedHead };
-    },
-    content,
-    anchor,
-    head
-  );
+  await content.click();
+  await browser.keys(['Meta', 'a', '\uE000']);
+  await browser.keys('ArrowLeft');
+  if (anchor > 0) await browser.keys(Array.from({ length: anchor }, () => 'ArrowRight'));
+  const distance = head - anchor;
+  if (distance > 0) {
+    await browser.keys([
+      'Shift',
+      ...Array.from({ length: distance }, () => 'ArrowRight'),
+      '\uE000'
+    ]);
+  } else if (distance < 0) {
+    await browser.keys([
+      'Shift',
+      ...Array.from({ length: -distance }, () => 'ArrowLeft'),
+      '\uE000'
+    ]);
+  }
   await browser.pause(60);
-  return selection;
+  return { anchor, head };
 }
 
 async function readEditorSelection() {
@@ -291,7 +282,11 @@ describe('document and pane state-machine boundaries', () => {
   });
 
   it('restores collapsed, ranged, and reversed editor selections after refreshed history', async () => {
-    const expectedMarkdown = await editorText();
+    const expectedMarkdown = await browser.execute(() =>
+      window.__GNEAUXGHTS_E2E__?.snapshot().notes.find(
+        (note) => note.noteId === 'note-alpha'
+      )?.markdown
+    );
 
     const roundTrip = async (
       anchor: number,
@@ -347,22 +342,34 @@ describe('document and pane state-machine boundaries', () => {
 
       await $('button[aria-label="Back to workspace"]').click();
       await history.waitForExist({ reverse: true });
-      await browser.waitUntil(
-        async () => {
-          const restored = await readEditorSelection();
-          return (
-            restored?.anchor === expectedSelection.anchor &&
-            restored.head === expectedSelection.head
-          );
-        },
-        { timeoutMsg: 'Expected exact editor selection direction to be restored' }
-      );
+      try {
+        await browser.waitUntil(
+          async () => {
+            const restored = await readEditorSelection();
+            return (
+              restored?.anchor === expectedSelection.anchor &&
+              restored.head === expectedSelection.head
+            );
+          },
+          { timeoutMsg: 'Expected exact editor selection direction to be restored' }
+        );
+      } catch (error) {
+        throw new Error(
+          `Expected exact editor selection ${JSON.stringify(expectedSelection)}; received ${JSON.stringify(await readEditorSelection())}`,
+          { cause: error }
+        );
+      }
       const restoredScroll = await browser.execute(
         (element: HTMLElement) => element.scrollTop,
         scroller
       );
       expect(Math.abs(restoredScroll - expectedScroll)).toBeLessThanOrEqual(2);
-      expect(await editorText()).toBe(expectedMarkdown);
+      const restoredMarkdown = await browser.execute(() =>
+        window.__GNEAUXGHTS_E2E__?.snapshot().notes.find(
+          (note) => note.noteId === 'note-alpha'
+        )?.markdown
+      );
+      expect(restoredMarkdown).toBe(expectedMarkdown);
     };
 
     await roundTrip(6, 6);

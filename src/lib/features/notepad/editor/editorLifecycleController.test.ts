@@ -219,6 +219,7 @@ describe('editorLifecycleController reading-position persistence', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -267,6 +268,28 @@ describe('editorLifecycleController reading-position persistence', () => {
     expect(restoreCursorPosition).toHaveBeenCalledWith(h.editor, viewState, {
       scrollIntoView: false
     });
+    expect(h.scrollDOM.scrollTop).toBe(1850);
+  });
+
+  it('does not deadlock restoration when the native frame callback is suspended', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.mocked(restoreCursorPosition).mockReturnValue(true);
+    const h = harness(0);
+    let settled = false;
+
+    void h.controller
+      .restoreEditorViewStateForDocument(h.document, {
+        anchor: 18,
+        head: 7,
+        scrollTop: 1850
+      })
+      .then(() => {
+        settled = true;
+      });
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(settled).toBe(true);
     expect(h.scrollDOM.scrollTop).toBe(1850);
   });
 

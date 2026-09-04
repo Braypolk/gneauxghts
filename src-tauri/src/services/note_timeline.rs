@@ -4905,6 +4905,11 @@ pub(crate) fn corrupt_note_revision_payload_for_test(note_id: &NoteIdentity) {
     history_store::replace_revision_payload_version(note_id, 99);
 }
 
+#[cfg(feature = "e2e-wdio")]
+pub(crate) fn corrupt_history_store_for_test() {
+    history_store::replace_history_store_with_malformed_file_for_test();
+}
+
 #[cfg(test)]
 pub(crate) fn replace_one_revision_source_for_test(
     note_id: &NoteIdentity,

@@ -351,6 +351,24 @@ pub(crate) fn get_history_health(
     })
 }
 
+#[cfg(feature = "e2e-wdio")]
+#[tauri::command]
+pub(crate) fn e2e_corrupt_history_store(
+    state: State<'_, AppState>,
+) -> Result<crate::services::note_timeline::HistoryHealthReport, String> {
+    crate::services::note_timeline::corrupt_history_store_for_test();
+    state.note_timeline().history_health()
+}
+
+#[cfg(feature = "e2e-wdio")]
+#[tauri::command]
+pub(crate) fn e2e_flush_vault_watcher_path(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<(), String> {
+    crate::vault_watcher::flush_path_for_test(&app, PathBuf::from(path))
+}
+
 #[tauri::command]
 pub(crate) fn get_note_history_health(
     state: State<'_, AppState>,

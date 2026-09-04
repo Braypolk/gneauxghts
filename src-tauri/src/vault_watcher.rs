@@ -606,6 +606,15 @@ fn flush_dirty_batch(
     Ok(())
 }
 
+#[cfg(feature = "e2e-wdio")]
+pub(crate) fn flush_path_for_test(app_handle: &AppHandle, path: PathBuf) -> Result<(), String> {
+    let notes_dir = notes_root()?;
+    if !path.starts_with(&notes_dir) {
+        return Err("E2E watcher path must stay inside the active vault".to_string());
+    }
+    flush_dirty_batch(app_handle, &notes_dir, vec![path])
+}
+
 fn resolve_batch(notes_dir: &Path, paths: Vec<PathBuf>) -> Result<ResolvedBatch, String> {
     let mut present = Vec::new();
     let mut removed = Vec::new();

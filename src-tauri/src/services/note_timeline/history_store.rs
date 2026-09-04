@@ -281,7 +281,7 @@ pub(super) fn remove_history_store() {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "e2e-wdio"))]
 pub(super) fn replace_history_store_with_malformed_file_for_test() {
     let database = history_database_path().expect("history database path");
     ACTIVE_HISTORY_STORE_SESSIONS
