@@ -3,6 +3,9 @@
 // implementation details so callers depend only on the closed domain contract.
 mod history_store;
 mod post_publication;
+// The on-demand chat consumer ships in the following ticket.
+#[allow(dead_code)]
+mod provenance;
 mod runtime;
 
 // Storage, post-publication repair, and runtime coordination are independent
@@ -396,6 +399,7 @@ pub(crate) struct NoteRevisionHeader {
     source: MutationSource,
     time_evidence: RevisionTimeEvidence,
     content_hash: String,
+    restored_from: Option<RevisionIdentity>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -444,6 +448,7 @@ impl NoteRevisionHeader {
                 committed_at_millis: 0,
             },
             content_hash: String::new(),
+            restored_from: None,
         }
     }
 
@@ -2699,6 +2704,13 @@ impl HistoryModeAccess<'_> {
                 Some(&self.note_id),
                 &replacement,
             )?;
+            if let Err(error) =
+                history_store::prepare_restore_origin(&prepared.history_intent, &selected_id)
+            {
+                return Err(history_failure(
+                    prepared.into_parts().1.abandon_after_publication_failure(error),
+                ));
+            }
             if history_store::authored_content_hash(prepared.canonical_markdown())
                 != selected_authored_hash
             {
@@ -2927,6 +2939,14 @@ impl CurrentContentEligibility<'_> {
 }
 
 impl CurrentContentAccess<'_> {
+    #[allow(dead_code)] // Capability implemented before the on-demand chat tool.
+    pub(crate) fn provenance(
+        &self,
+        note_id: &NoteIdentity,
+    ) -> Result<Option<provenance::CurrentContentProvenance>, HistoryError> {
+        provenance::read(self, note_id)
+    }
+
     fn prepare_read(&self) -> Result<(OperationGuard, CurrentContentVersion), String> {
         let operation = self.runtime.begin_operation()?;
         let timeline = NoteTimeline {

@@ -96,6 +96,15 @@ owned by another path, the original mapping wins and the copy receives a new
 globally unique identity before any catalog, lexical, or task projection sees
 it.
 
+Current-Content Provenance rebuilds on demand in the private `provenance`
+module from retained revisions and Lifecycle Events. Only
+`current_content(AllowedScope).provenance` exposes its line groupings and UTF-8
+ranges. Reads check current eligibility, canonical authored bytes, and the
+runtime mutation generation before delivery. Restore selection is durable
+domain evidence attached to the prepared publication before Markdown is
+written; its reference survives finalization recovery and is removed with the
+retained timeline. The projection itself has no durable cache.
+
 A save crosses the `note_persistence` command seam, publishes the vault file,
 and immediately enters `NoteTimeline.mutate`, which updates the required
 in-memory note catalog through its private post-publication helper. Task,

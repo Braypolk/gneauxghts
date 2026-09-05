@@ -244,6 +244,28 @@ explicit retry.
 
 ## Chat
 
+### Provenance explains only current authored content
+
+Current-Content Provenance is available only through the allowed current-note
+capability. Exclusions win over an explicit allow list; missing, forgotten,
+and uncaptured canonical states cannot deliver retained prose. Output contains
+only current body, unmanaged properties, and title, with evidence identities
+and authoritative commit/observation times. Filesystem modification time never
+becomes introduction or last-change evidence.
+
+Unique correspondence between adjacent retained states preserves moved
+content. Ambiguous correspondence and text retyped after deletion receive new
+introduction evidence. Authored word edits, including Markdown delimiters,
+update affected ranges while unchanged words retain their evidence. Markdown
+parser context extends formatting changes across inline spans and multiline
+blocks, including headings and fenced code. Baselines
+and history clears establish `knownSince` with unknown prior introduction and
+change. Complete Version Restore retains selected lineage for returned ranges
+and records their new `restoredAt`; ranges still present retain their current
+lineage. Older restores without a selected-revision reference report unknown
+earlier lineage for returning ranges. Title provenance follows lifecycle
+predecessor order and ignores moves that preserve the filename title.
+
 ### Interrupted runs preserve partial output
 
 A crash or interruption keeps the partial assistant message, marks it

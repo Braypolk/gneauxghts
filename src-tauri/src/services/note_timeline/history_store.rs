@@ -29,7 +29,7 @@ const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_OBSERVATIONS_FILE_NAME: &str = "note-timeline-history-observations.json";
 pub(super) const HISTORY_FORMAT: &str = "sqlite-v1";
 pub(super) const INITIAL_HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 10;
+const HISTORY_SCHEMA_VERSION: u64 = 11;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -1125,6 +1125,46 @@ pub(super) fn publication_revision_identity(
         .map_err(|error| format!("Read prepared Note Revision identity: {error}"))
 }
 
+/// Durable domain evidence, attached before publication so crash finalization
+/// retains the exact selected revision even when several revisions share bytes.
+pub(super) fn prepare_restore_origin(
+    intent: &PreparedHistoryIntent,
+    selected: &RevisionIdentity,
+) -> Result<(), String> {
+    let inserted = open_store()?
+        .execute(
+            "INSERT INTO restore_origins (intent_id, selected_revision_id)
+         SELECT intent.intent_id, selected.revision_id
+         FROM prepared_intents intent JOIN revisions selected
+           ON selected.note_id = intent.note_id AND selected.result_hash = intent.result_hash
+         WHERE intent.intent_id = ?1 AND selected.revision_id = ?2
+           AND intent.status = 'prepared' AND intent.source = 'versionRestore'",
+            params![intent.as_str(), selected.0],
+        )
+        .map_err(|error| format!("Prepare Version Restore lineage: {error}"))?;
+    if inserted != 1 {
+        return Err("Version Restore lineage does not match the prepared authored state".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn restore_origin(
+    revision: &RevisionIdentity,
+) -> Result<Option<RevisionIdentity>, String> {
+    open_store()?
+        .query_row(
+            "SELECT origin.selected_revision_id FROM restore_origins origin
+         JOIN revisions revision ON revision.intent_id = origin.intent_id
+         WHERE revision.revision_id = ?1",
+            params![revision.0],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map(|value| value.map(RevisionIdentity::from_persisted))
+        .map_err(|error| format!("Read Version Restore lineage: {error}"))
+}
+
 pub(super) fn abandon_publication(history_intent: &PreparedHistoryIntent) -> Result<(), String> {
     let connection = open_store()?;
     connection
@@ -1779,6 +1819,7 @@ struct StoredRevisionHeader {
     modified_at_millis: Option<u64>,
     payload_version: i64,
     content_hash: String,
+    restored_from: Option<String>,
 }
 
 impl StoredRevisionHeader {
@@ -1795,6 +1836,7 @@ impl StoredRevisionHeader {
             modified_at_millis: row.get(8)?,
             payload_version: row.get(9)?,
             content_hash: row.get(10)?,
+            restored_from: row.get(11)?,
         })
     }
 
@@ -1831,6 +1873,7 @@ impl StoredRevisionHeader {
                 source,
                 time_evidence,
                 content_hash: self.content_hash,
+                restored_from: self.restored_from.map(RevisionIdentity::from_persisted),
             },
         ))
     }
@@ -1883,7 +1926,9 @@ pub(super) fn revisions(note_id: &NoteIdentity) -> Result<Vec<NoteRevisionHeader
         .prepare(
             "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id,
                     known_since_millis, committed_at_millis, observed_at_millis,
-                    modified_at_millis, payload_version, result_hash
+                    modified_at_millis, payload_version, result_hash,
+                    (SELECT selected_revision_id FROM restore_origins
+                     WHERE restore_origins.intent_id = revisions.intent_id)
              FROM revisions WHERE note_id = ?1",
         )
         .map_err(|error| error.to_string())?;
@@ -1959,13 +2004,15 @@ fn bounded_revision_record(
                     revisions.known_since_millis, revisions.committed_at_millis,
                     revisions.observed_at_millis, revisions.modified_at_millis,
                     revisions.payload_version, revisions.result_hash,
+                    (SELECT selected_revision_id FROM restore_origins
+                     WHERE restore_origins.intent_id = revisions.intent_id),
                     (SELECT label FROM named_revision_labels labels
                      WHERE labels.revision_id = revisions.revision_id
                      ORDER BY labels.label_id LIMIT 1)
              FROM revisions
              WHERE revisions.note_id = ?1 AND revisions.revision_id = ?2",
             params![note_id.as_str(), revision_id.0],
-            |row| Ok((StoredRevisionHeader::from_row(row)?, row.get(11)?)),
+            |row| Ok((StoredRevisionHeader::from_row(row)?, row.get(12)?)),
         )
         .optional()
         .map_err(|error| format!("Read bounded Note Revision header: {error}"))?;
@@ -3536,7 +3583,7 @@ fn open_store() -> Result<Connection, String> {
                         migrate_schema_five_storage(&connection)?;
                     }
                     6 => authorize_legacy_portability_migration(&manifest)?,
-                    7..=9 => {}
+                    7..=10 => {}
                     HISTORY_SCHEMA_VERSION => {}
                     _ => return Err("Note Timeline history store schema mismatch".to_string()),
                 }
@@ -3611,6 +3658,10 @@ fn open_store() -> Result<Connection, String> {
              );
              CREATE INDEX IF NOT EXISTS revisions_by_note_time
                ON revisions(note_id, COALESCE(known_since_millis, committed_at_millis, observed_at_millis), revision_id);
+             CREATE TABLE IF NOT EXISTS restore_origins (
+               intent_id TEXT PRIMARY KEY REFERENCES prepared_intents(intent_id) ON DELETE CASCADE,
+               selected_revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE CASCADE
+             );
              CREATE TABLE IF NOT EXISTS named_revision_labels (
                label_id TEXT PRIMARY KEY,
                revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE CASCADE,
@@ -3749,6 +3800,11 @@ fn open_store() -> Result<Connection, String> {
              UPDATE history_metadata SET schema_version = 10 WHERE singleton = 1;
              COMMIT;"
         ).map_err(|error| format!("Retire settled Note Timeline intent payloads: {error}"))?;
+    }
+    if matches!(schema, Some(5..=10)) {
+        connection.execute(
+            "UPDATE history_metadata SET schema_version = 11 WHERE singleton = 1", [],
+        ).map_err(|error| format!("Migrate Version Restore lineage: {error}"))?;
     }
     configure_wal_bounds(&connection)?;
     let metadata = connection
