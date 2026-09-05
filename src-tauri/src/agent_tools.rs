@@ -1,3 +1,7 @@
+mod current_history;
+pub(crate) use current_history::filter_revision_sources;
+use current_history::CurrentNoteHistoryTool;
+
 use crate::{
     agent_runtime::{AgentEvent, AgentPlanEntry},
     chat::{ChatAgentProposal, ChatService, ChatSource, VaultAccess},
@@ -165,6 +169,7 @@ impl AgentToolContext {
             .tool(GetActiveNoteTool(self.clone()))
             .tool(SearchNotesTool(self.clone()))
             .tool(ReadNoteTool(self.clone()))
+            .tool(CurrentNoteHistoryTool(self.clone()))
             .tool(ProposeNoteEditsTool(self.clone()))
             .tool(ProposeNoteRewriteTool(self.clone()))
             .tool(ProposeCreateNoteTool(self.clone()))
@@ -187,10 +192,27 @@ impl AgentToolContext {
     }
 
     pub(crate) fn sources(&self) -> Vec<ChatSource> {
-        self.sources
+        let mut sources = self
+            .sources
             .lock()
             .map(|items| items.clone())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if sources.iter().any(|source| source.revision.is_some()) {
+            let valid = self.app.try_state::<AppState>().is_some_and(|state| {
+                filter_revision_sources(
+                    &state,
+                    &self.service,
+                    &self.access,
+                    &self.run_grants,
+                    &mut sources,
+                )
+                .is_ok()
+            });
+            if !valid {
+                sources.retain(|source| source.revision.is_none());
+            }
+        }
+        sources
     }
 
     /// Resolve opaque tool arguments into user-facing activity labels without
@@ -457,6 +479,7 @@ impl AgentToolContext {
                 excerpt: excerpt.chars().take(4_000).collect(),
                 url: None,
                 anchor,
+                revision: None,
             });
         }
     }

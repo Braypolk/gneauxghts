@@ -801,3 +801,46 @@ describe('Version Restore navigation barrier', () => {
     }
   );
 });
+
+
+describe('Revision Citation entry', () => {
+  it('opens a cited revision beyond the first page without changing the invoking document', async () => {
+    const citedTarget = { noteId: 'note-other', noteTitle: 'Other', notePath: '/vault/Other.md' };
+    const { session, deps } = setup({
+      loadPage: vi.fn()
+        .mockResolvedValueOnce({ ...firstPage, nextCursor: 'older' })
+        .mockResolvedValueOnce({ records: [{ ...firstPage.records[0], recordId: 'old', revisionId: 'old' }], nextCursor: null }),
+      loadDiff: vi.fn().mockResolvedValue({ ...revisionDiff, revisionId: 'old' })
+    });
+    await session.enterCitation('chat-pane', citedTarget, 'old');
+    expect(deps.flushWorkspace).toHaveBeenCalledOnce();
+    expect(deps.readTarget).not.toHaveBeenCalled();
+    expect(deps.loadPage).toHaveBeenNthCalledWith(2, 'note-other', 'older');
+    expect(session.state).toMatchObject({ phase: 'open', target: citedTarget, selectedRevisionId: 'old' });
+    await session.exit();
+    expect(deps.restoreWorkspace).toHaveBeenCalledWith(workspace);
+  });
+});
+
+
+it('keeps a citation target independent during lifecycle refresh and unavailable-history retry', async () => {
+  const { session, deps } = setup();
+  await session.enterCitation('chat', { ...target, noteId: 'other' }, 'revision-1');
+  await session.synchronizeAfterLifecycleChange();
+  expect(session.state).toMatchObject({ phase: 'open', target: { noteId: 'other' } });
+  expect(deps.readTarget).not.toHaveBeenCalled();
+  vi.mocked(deps.loadPage).mockRejectedValueOnce(new Error('temporary failure'));
+  await session.refresh();
+  expect(session.state.phase).toBe('historyUnavailable');
+  await session.retry();
+  expect(session.state).toMatchObject({ phase: 'open', target: { noteId: 'other' }, selectedRevisionId: 'revision-1' });
+  expect(deps.readTarget).not.toHaveBeenCalled();
+});
+
+it('reports a cleared citation without substituting a newer revision or changing the workspace', async () => {
+  const { session, deps } = setup();
+  await session.enterCitation('chat', target, 'cleared-revision');
+  expect(session.state).toMatchObject({ phase: 'inactive', entryError: expect.stringContaining('no longer retained') });
+  expect(deps.loadDiff).not.toHaveBeenCalled();
+  expect(deps.restoreWorkspace).toHaveBeenCalledWith(workspace);
+});

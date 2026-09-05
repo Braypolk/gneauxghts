@@ -34,9 +34,11 @@
     type="button"
     data-slot="inline-citation"
     class={cn('inline-flex h-5 items-center rounded-full border border-border/70 bg-muted/40 px-1.5 text-[10px] font-medium hover:bg-muted', className)}
-    title={citation.excerpt ?? citation.notePath}
+    title={citation.revision
+      ? `Revision · ${new Date(citation.revision.atMillis).toLocaleString()} · ${citation.revision.source}\n${citation.revision.currentExcerpt}`
+      : citation.excerpt ?? citation.notePath}
     onclick={() => void onOpen?.()}
   >
-    [{index}] {citation.label}
+    [{index}] {citation.label}{citation.revision ? " · Revision" : ""}
   </button>
 {/if}

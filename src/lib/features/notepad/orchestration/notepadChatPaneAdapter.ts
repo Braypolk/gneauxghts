@@ -1,5 +1,5 @@
 import { computeDraftHash } from '$lib/features/notepad/search/draftRef';
-import type { ChatContextNote } from '$lib/features/chat/types';
+import type { ChatContextNote, ChatCitation } from '$lib/features/chat/types';
 import type { ChatPaneBindings } from '$lib/features/notepad/pane/chatPaneBindings';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import {
@@ -43,6 +43,7 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
       focusEditorAfterOpen: true;
     }
   ) => Promise<void>;
+  openRevisionCitation: (paneId: TPaneId, citation: Extract<ChatCitation, { kind: 'note' }>) => Promise<void>;
   openWikilink: (
     paneId: TPaneId,
     rawTarget: string
@@ -161,6 +162,10 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
         },
         selectionActions: deps.coordinator.selectionActions,
         onOpenCitation: async (citation) => {
+          if (citation.revision) {
+            await deps.openRevisionCitation(paneId, citation);
+            return;
+          }
           const editorPaneId = getNearestEditorPaneId(
             deps.getPaneOrder(),
             deps.getPaneKind,

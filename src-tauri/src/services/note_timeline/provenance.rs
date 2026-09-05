@@ -69,13 +69,36 @@ struct AuthoredProjection {
     properties: Vec<ProvenanceLine>,
 }
 
+pub(super) struct CurrentProvenanceRead {
+    _operation: OperationGuard,
+    pub(super) current: CurrentContentProvenance,
+    pub(super) version: CurrentContentVersion,
+    path: PathBuf,
+    canonical: String,
+}
+
+impl CurrentProvenanceRead {
+    pub(super) fn is_current(
+        &self,
+        access: &CurrentContentAccess<'_>,
+    ) -> Result<bool, HistoryError> {
+        Ok(
+            fs::read_to_string(&self.path).ok().as_ref() == Some(&self.canonical)
+                && access.runtime.current_content_is_current(self.version)?
+                && access
+                    .eligibility()?
+                    .allows_note(Some(&self.current.note_id), self.path.to_str()),
+        )
+    }
+}
+
 // Only the current-content capability calls this reader. Eligibility is checked
 // before touching history and again after reconstruction. The canonical bytes
 // are checked on both sides so an uncaptured disk edit cannot expose old prose.
-pub(super) fn read(
+pub(super) fn read_with_version(
     access: &CurrentContentAccess<'_>,
     note_id: &NoteIdentity,
-) -> Result<Option<CurrentContentProvenance>, HistoryError> {
+) -> Result<Option<CurrentProvenanceRead>, HistoryError> {
     let (_operation, _) = access.prepare_read().map_err(history_failure)?;
     if !access
         .eligibility()?
@@ -187,16 +210,22 @@ pub(super) fn read(
     {
         return Ok(None);
     }
-    Ok(Some(CurrentContentProvenance {
-        note_id: note_id.0.clone(),
-        body: projection.body,
-        properties: projection.properties,
-        title: path
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned(),
-        title_provenance,
+    Ok(Some(CurrentProvenanceRead {
+        current: CurrentContentProvenance {
+            note_id: note_id.0.clone(),
+            body: projection.body,
+            properties: projection.properties,
+            title: path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            title_provenance,
+        },
+        version,
+        path: path.clone(),
+        canonical,
+        _operation,
     }))
 }
 
@@ -784,6 +813,146 @@ mod tests {
                     .len(),
                 1
             );
+        });
+    }
+
+    #[test]
+    fn delivery_snapshot_rejects_an_uncaptured_edit_after_projection() {
+        with_vault(|state, _root| {
+            let (id, path) = save(&state, "Snapshot", "text removed during delivery\n", None);
+            let timeline = state.note_timeline();
+            let access = timeline.current_content(AllowedScope::vault());
+            let read = read_with_version(&access, &id).unwrap().unwrap();
+            assert!(read.is_current(&access).unwrap());
+            let canonical = fs::read_to_string(&path).unwrap();
+            fs::write(
+                &path,
+                crate::note::replace_authored_content(&canonical, None, "current text\n").unwrap(),
+            )
+            .unwrap();
+            assert!(!read.is_current(&access).unwrap());
+        });
+    }
+
+    #[test]
+    fn chat_provenance_pages_body_then_properties_with_current_evidence() {
+        with_vault(|state, _root| {
+            let body = (1..=35).map(|i| format!("line {i}\n")).collect::<String>();
+            let (id, _) = save(
+                &state,
+                "Pages",
+                &format!("---\nproject: current\n---\n{body}"),
+                None,
+            );
+            let timeline = state.note_timeline();
+            let access = timeline.current_content(AllowedScope::vault());
+            let (first, _, next) = access.provenance_page(&id, 0).unwrap().unwrap();
+            assert_eq!(first.body.len(), 30);
+            assert!(first.properties.is_empty());
+            let (second, citations, next) =
+                access.provenance_page(&id, next.unwrap()).unwrap().unwrap();
+            assert_eq!(second.body.len(), 5);
+            assert_eq!(second.body[0].text, "line 31\n");
+            assert!(second
+                .properties
+                .iter()
+                .any(|line| line.text.contains("project: current")));
+            assert!(!citations.is_empty());
+            assert_eq!(next, None);
+        });
+    }
+
+    #[test]
+    fn activity_periods_page_current_notes_and_invalidate_cleared_citations() {
+        with_vault(|state, root| {
+            let (id, path) = save(&state, "Period", "obsolete\n", None);
+            save(&state, "Other", "other current\n", None);
+            let canonical = fs::read_to_string(&path).unwrap();
+            fs::write(
+                &path,
+                crate::note::replace_authored_content(&canonical, None, "current\n").unwrap(),
+            )
+            .unwrap();
+            state
+                .note_timeline()
+                .observe(VaultObservation::external_edit(path.clone(), 42, Some(1)))
+                .unwrap();
+            let timeline = state.note_timeline();
+            let access = timeline.current_content(AllowedScope::vault());
+            let period = access.activity(42, 42, 0, 20).unwrap();
+            assert_eq!(period.items.len(), 1);
+            assert_eq!(period.items[0].revision_count, 1);
+            assert_eq!(period.items[0].sources, vec![MutationSource::ExternalEdit]);
+            assert_eq!(period.items[0].first_at_millis, 42);
+            assert_eq!(period.items[0].current_excerpt, "current\n");
+            let evidence = period.items[0].citations.clone();
+            assert_eq!(access.current_citations(&evidence).unwrap().len(), 1);
+            let first = access.activity(0, u64::MAX, 0, 1).unwrap();
+            let second = access
+                .activity(0, u64::MAX, first.next_offset.unwrap(), 1)
+                .unwrap();
+            assert_ne!(first.items[0].note_id, second.items[0].note_id);
+            assert_eq!(second.next_offset, None);
+            timeline.clear_note_history(&id).unwrap();
+            assert!(access.current_citations(&evidence).unwrap().is_empty());
+            let forgotten = crate::state::forgotten_notes_root(root).join("Period.md");
+            fs::create_dir_all(forgotten.parent().unwrap()).unwrap();
+            fs::rename(&path, &forgotten).unwrap();
+            timeline
+                .observe(VaultObservation::moved(path, forgotten.clone(), 100))
+                .unwrap();
+            let remaining = access.activity(0, u64::MAX, 0, 20).unwrap();
+            assert!(remaining
+                .items
+                .iter()
+                .all(|item| item.note_id != id.as_str()));
+            timeline
+                .lifecycle(NoteLifecycleOperation::purged(id.clone(), forgotten, 101))
+                .unwrap();
+            assert!(access
+                .activity(0, u64::MAX, 0, 20)
+                .unwrap()
+                .items
+                .iter()
+                .all(|item| item.note_id != id.as_str()));
+            assert!(access.current_citations(&evidence).unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn activity_returns_revision_counts_and_current_excerpts_without_removed_prose() {
+        with_vault(|state, _root| {
+            let (id, path) = save(&state, "Activity", "removed secret\nkept\n", None);
+            save(&state, "Activity", "kept\n", Some(&path));
+            let timeline = state.note_timeline();
+            let access = timeline.current_content(AllowedScope::vault());
+            let page = access.activity(0, u64::MAX, 0, 20).unwrap();
+            assert_eq!(page.items.len(), 1);
+            let item = &page.items[0];
+            assert_eq!(item.note_id, id.as_str());
+            assert_eq!(item.revision_count, 2);
+            assert_eq!(item.current_excerpt, "kept\n");
+            assert_eq!(item.citations.len(), 2);
+            assert!(!serde_json::to_string(&page)
+                .unwrap()
+                .contains("removed secret"));
+            let at = item.citations[0].at_millis;
+            assert!(access.activity(at + 1, at, 0, 20).is_err());
+            assert!(timeline
+                .current_content(AllowedScope::policy(
+                    Some(&HashSet::from([id.0.clone()])),
+                    &HashSet::from([id.0.clone()])
+                ))
+                .activity(0, u64::MAX, 0, 20)
+                .unwrap()
+                .items
+                .is_empty());
+            fs::remove_file(&path).unwrap();
+            assert!(access
+                .activity(0, u64::MAX, 0, 20)
+                .unwrap()
+                .items
+                .is_empty());
         });
     }
 

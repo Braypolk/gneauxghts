@@ -100,6 +100,36 @@ describe('document and pane state-machine boundaries', () => {
     expect(await editorText()).toBe(betaText);
   });
 
+  it('opens Revision Citations at exact evidence and leaves chat workspace context intact', async () => {
+    await browser.execute(() => window.__GNEAUXGHTS_E2E__?.seedRevisionChat());
+    const openChat = await $('button[aria-label="Open thought partner in this pane"]');
+    await browser.execute((element: HTMLElement) => element.click(), openChat);
+    const picker = await $('button[aria-label="Conversations"]');
+    await picker.waitForClickable();
+    await picker.click();
+    await $('[role="menuitem"]').click();
+    const citation = await $('[data-chat-note-citation-id="revision:note-beta:note-beta-revision-2"]');
+    await citation.waitForClickable();
+    const before = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot());
+    expect(await $('[data-testid="workspace-pane"][data-pane-kind="chat"]').getText()).not.toContain('removed confidential prose');
+    await citation.click();
+    const history = await $('[data-testid="history-mode"]');
+    await history.waitForExist();
+    expect(await history.getText()).toContain('removed confidential prose');
+    const requests = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot().invocations ?? []);
+    expect(requests.some(entry => entry.command === 'get_note_history_diff' && entry.args.noteId === 'note-beta' && entry.args.revisionId === 'note-beta-revision-2')).toBe(true);
+    expect(requests.filter(entry => entry.command === 'get_note_history_page' && entry.args.noteId === 'note-beta').length).toBeGreaterThan(1);
+    const exit = await $('button[aria-label="Back to workspace"]');
+    await exit.click();
+    await history.waitForExist({ reverse: true });
+    expect(await $('[data-testid="workspace-pane"][data-pane-kind="chat"]').isExisting()).toBe(true);
+    const after = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot());
+    expect(after?.activeNoteId).toBe(before?.activeNoteId);
+    expect(after?.notes).toEqual(before?.notes);
+    expect(await citation.isExisting()).toBe(true);
+    expect(await $('[data-testid="workspace-pane"][data-pane-kind="chat"]').getText()).not.toContain('removed confidential prose');
+  });
+
   it('restores editor scroll after a note to chat to note lifecycle', async () => {
     const scroller = await $('[data-testid="note-editor"] .cm-scroller');
     await scroller.waitForDisplayed();

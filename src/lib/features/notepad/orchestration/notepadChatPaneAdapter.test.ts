@@ -94,6 +94,7 @@ function setup(options: {
     copyCurrent: vi.fn(),
     reloadDisk: vi.fn()
   } as unknown as ProposalOrchestration;
+  const openRevisionCitation = vi.fn().mockResolvedValue(undefined);
   const adapter = createNotepadChatPaneAdapter({
     coordinator,
     proposal,
@@ -107,12 +108,14 @@ function setup(options: {
     getPaneSelectedText: (paneId) => `${paneId} selection`,
     getEditorPaneIds: () => options.editorPaneIds ?? ['editor'],
     setActivePane,
+    openRevisionCitation,
     openNote,
     openWikilink,
     flushPendingAutosave,
     getNoteSaveQueue
   });
   return {
+    openRevisionCitation,
     adapter,
     documents,
     setPaneDocument,
@@ -318,4 +321,15 @@ describe('createNotepadChatPaneAdapter', () => {
     expect(touchPaneLocation).toHaveBeenCalledWith('chat');
     expect(setSurfaceHandle).toHaveBeenCalledWith('chat', handle);
   });
+});
+
+
+it('opens revision evidence without navigating or repurposing any pane', async () => {
+  const { adapter, openRevisionCitation, openNote, setActivePane, setPaneDocument } = setup();
+  const citation = { ...noteCitation(), revision: { noteId: 'cited', revisionId: 'old', atMillis: 10, source: 'editor' as const, currentExcerpt: 'current' } };
+  await adapter.getBindings('chat').context.onOpenCitation(citation);
+  expect(openRevisionCitation).toHaveBeenCalledWith('chat', citation);
+  expect(openNote).not.toHaveBeenCalled();
+  expect(setActivePane).not.toHaveBeenCalled();
+  expect(setPaneDocument).not.toHaveBeenCalled();
 });

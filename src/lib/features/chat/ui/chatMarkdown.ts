@@ -68,6 +68,8 @@ function matchingNoteCitation(
     : '';
   return citations.find((citation): citation is Extract<ChatCitation, { kind: 'note' }> => {
     if (citation.kind !== 'note') return false;
+    if (destination?.startsWith('revision:')) return citation.revision?.revisionId === destination.slice('revision:'.length);
+    if (citation.revision) return false;
     const names = noteReferenceNames(citation);
     const destinationMatches = destinationReference && [...names].some((name) =>
       destinationReference === name || destinationReference.endsWith(`/${name}`)

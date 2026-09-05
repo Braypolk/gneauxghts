@@ -272,6 +272,14 @@ session cannot mistake an older restore for the new result.
 event protocol. `ChatService` retains durable run lifecycle and context
 assembly. Provider and runtime-library types do not cross those seams.
 
+Chat exposes `current_note_history` on demand through the current-content
+capability. Activity and paged provenance carry current excerpts and retained
+revision evidence; full revision reconstruction remains private to History Mode.
+Revision Citations are revalidated at delivery, including conversation branches.
+A durable message marker prevents temporal answers from becoming historical
+prose in later model context or compaction. Citation entry binds History Mode to
+the cited Note Identity and revision independently of the invoking pane.
+
 The protocol keeps run identity, structured activity, plans, usage,
 cancellation, bounded guardrails, and transient permission requests under
 product control. Reads obey vault access and exclusions. Note-changing tools

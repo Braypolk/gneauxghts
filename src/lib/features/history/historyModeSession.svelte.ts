@@ -84,10 +84,16 @@ export class HistoryModeSession {
     }
   };
 
-  enter = async (paneId: string): Promise<void> => {
+  enter = async (paneId: string): Promise<void> => this.#enter(paneId);
+
+  enterCitation = async (paneId: string, target: HistoryModeTarget, revisionId: string): Promise<void> => {
+    await this.#enter(paneId, { ...target, citationRevisionId: revisionId }, revisionId);
+  };
+
+  #enter = async (paneId: string, citationTarget?: HistoryModeTarget, revisionId?: string): Promise<void> => {
     if (this.state.phase !== 'inactive') return;
     const workspace = this.#deps.captureWorkspace(paneId);
-    const initialTarget = this.#deps.readTarget(paneId);
+    const initialTarget = citationTarget ?? this.#deps.readTarget(paneId);
     if (!initialTarget) {
       this.#dispatch({
         type: 'entryRejected',
@@ -115,7 +121,7 @@ export class HistoryModeSession {
       return;
     }
 
-    const target = this.#deps.readTarget(paneId);
+    const target = citationTarget ?? this.#deps.readTarget(paneId);
     if (!target) {
       this.#dispatch({
         type: 'entryFailed',
@@ -126,22 +132,33 @@ export class HistoryModeSession {
       return;
     }
 
-    await this.#loadEntry(requestId, target, 'entry', workspace);
+    await this.#loadEntry(requestId, target, 'entry', workspace, revisionId);
   };
 
   #loadEntry = async (
     requestId: number,
     target: HistoryModeTarget,
     origin: 'entry' | 'retry',
-    workspace: HistoryWorkspaceSnapshot
+    workspace: HistoryWorkspaceSnapshot,
+    revisionId?: string
   ): Promise<void> => {
     try {
       const diagnosticsPromise = this.#deps.loadDiagnostics(target.noteId).catch(() => null);
       const page = await this.#deps.loadPage(target.noteId, null);
+      if (revisionId) {
+        while (!page.records.some(record => record.kind === 'revision' && record.revisionId === revisionId) && page.nextCursor) {
+          const older = await this.#deps.loadPage(target.noteId, page.nextCursor);
+          page.records = [...page.records, ...older.records];
+          page.nextCursor = older.nextCursor;
+        }
+        if (!page.records.some(record => record.kind === 'revision' && record.revisionId === revisionId)) {
+          throw new Error('The cited revision is no longer retained.');
+        }
+      }
       const newestRevision = page.records.find(
-        (record) => record.kind === 'revision'
+        (record) => record.kind === 'revision' && (!revisionId || record.revisionId === revisionId)
       );
-      const selectedDiff = newestRevision
+      const selectedDiff = newestRevision?.kind === 'revision'
         ? await this.#deps.loadDiff(target.noteId, newestRevision.revisionId, 'parent')
         : null;
       const diagnostics = await diagnosticsPromise;
@@ -479,7 +496,7 @@ export class HistoryModeSession {
       this.state.phase === 'historyUnavailable' ||
       this.state.phase === 'noteUnavailable'
     ) {
-      const target = this.#deps.readTarget(this.state.workspace.activePaneId);
+      const target = this.state.target.citationRevisionId ? this.state.target : this.#deps.readTarget(this.state.workspace.activePaneId);
       if (!target || target.noteId !== this.state.target.noteId) {
         this.#dispatch({
           type: 'noteUnavailable',
@@ -490,7 +507,7 @@ export class HistoryModeSession {
       const requestId = this.#nextRequestId++;
       const workspace = this.state.workspace;
       this.#dispatch({ type: 'retryStarted', requestId, target });
-      await this.#loadEntry(requestId, target, 'retry', workspace);
+      await this.#loadEntry(requestId, target, 'retry', workspace, target.citationRevisionId);
       return;
     }
     await this.refresh();
@@ -507,6 +524,12 @@ export class HistoryModeSession {
       this.state.phase !== 'historyUnavailable' &&
       this.state.phase !== 'noteUnavailable'
     ) {
+      return;
+    }
+    if (this.state.target.citationRevisionId) {
+      // Citation targets are independent of the invoking pane. Backend reads
+      // reapply eligibility to this Note Identity after a lifecycle transition.
+      if (this.state.phase === 'open') await this.refresh();
       return;
     }
     const target = this.#deps.readTarget(this.state.workspace.activePaneId);

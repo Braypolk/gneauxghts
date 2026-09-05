@@ -95,6 +95,7 @@ export interface HistoricalDiff {
 }
 
 export interface HistoryModeTarget {
+  citationRevisionId?: string;
   noteId: string;
   noteTitle: string;
   notePath: string | null;

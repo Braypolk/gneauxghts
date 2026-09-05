@@ -115,6 +115,7 @@ let missingNotes = [
     }
   }
 ];
+let revisionChatEnabled = false;
 let historyStorage = { allocatedBytes: 16_384, reclaimableBytes: 512 };
 let forgottenNoteRetentionDays = 7;
 
@@ -326,6 +327,9 @@ function historyRecords(note: NoteFixture) {
 }
 
 function historicalRevision(note: NoteFixture, revisionId: string) {
+  if (revisionChatEnabled && revisionId === 'note-beta-revision-2') {
+    return { revisionId, unmanagedFrontmatter: null, body: 'removed confidential prose\nBeta body is independent from Alpha.' };
+  }
   const restore = historyRestores.get(note.noteId);
   if (restore?.revisionId === revisionId) {
     return {
@@ -514,6 +518,28 @@ export function installBrowserE2eBackend() {
       notes.set(saved.noteId, saved);
       activeNote = saved;
       return session(saved);
+    }
+    if (revisionChatEnabled && command === 'chat_get_composer_draft') return '';
+    if (revisionChatEnabled && command === 'chat_get_settings') return {
+      provider: 'openai', model: 'fixture-model', defaultAccess: 'full'
+    };
+    if (revisionChatEnabled && (command === 'chat_list_conversations' || command === 'chat_get_conversation')) {
+      const summary = { id: 'revision-chat', title: 'Current note activity', access: 'full', status: 'active',
+        createdAtMillis: 1_800_000_000_000, updatedAtMillis: 1_800_000_000_000, messageCount: 2, detached: false,
+        provider: 'openai', model: 'fixture-model', reasoningEffort: 'medium' };
+      if (command === 'chat_list_conversations') return [summary];
+      return { ...summary, excerpts: [], messages: [
+        { id: 'revision-question', conversationId: summary.id, ordinal: 1, role: 'user', status: 'complete',
+          content: 'When was the current Beta text introduced?', part: 1, createdAtMillis: summary.createdAtMillis, sources: [] },
+        { id: 'revision-answer', conversationId: summary.id, ordinal: 2, role: 'assistant', status: 'complete',
+          content: 'Current text: Beta body is independent from Alpha. [Beta note](revision:note-beta-revision-2)',
+          part: 1, createdAtMillis: summary.createdAtMillis, sources: [{
+            kind: 'revision', noteId: 'note-beta', notePath: '/e2e/beta.md', title: 'Beta note',
+            excerpt: 'Beta body is independent from Alpha.', anchor: 'note-beta-revision-2',
+            revision: { noteId: 'note-beta', revisionId: 'note-beta-revision-2', atMillis: 1_799_998_020_000,
+              source: 'editor', currentExcerpt: 'Beta body is independent from Alpha.' }
+          }] }
+      ] };
     }
     if (command === 'get_note_history_page') {
       if (nextHistoryPageDelayMillis > 0) {
@@ -748,6 +774,7 @@ export function installBrowserE2eBackend() {
 
   window.__GNEAUXGHTS_E2E__ = {
     invocations,
+    seedRevisionChat() { revisionChatEnabled = true; },
     delayNextHistoryPage(delayMillis = 75) {
       nextHistoryPageDelayMillis = delayMillis;
     },
@@ -766,6 +793,7 @@ declare global {
     __TAURI_INTERNALS__: Record<string, unknown>;
     __GNEAUXGHTS_E2E__?: {
       invocations: InvokeRecord[];
+      seedRevisionChat(): void;
       delayNextHistoryPage(delayMillis?: number): void;
       snapshot(): {
         activeNoteId: string;

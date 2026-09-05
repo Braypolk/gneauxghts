@@ -155,3 +155,17 @@ describe('chat Markdown', () => {
     expect(normalizeCodeLanguage('')).toBe('');
   });
 });
+
+
+it('binds revision links to exact evidence instead of the first citation for a note', () => {
+  const citations = ['old', 'new'].map(revisionId => ({
+    id: `revision:${revisionId}`, kind: 'note' as const, label: 'Plan', noteId: 'plan', notePath: 'Plan.md',
+    sectionLabel: null, startLine: null, excerpt: 'current text',
+    revision: { noteId: 'plan', revisionId, atMillis: 100, source: 'editor' as const, currentExcerpt: 'current text' }
+  }));
+  const html = renderChatMarkdown('[Plan](revision:old) and [Plan](revision:new)', citations);
+  expect(html).toContain('data-chat-note-citation-id="revision:old"');
+  expect(html).toContain('data-chat-note-citation-id="revision:new"');
+  const unbacked = renderChatMarkdown('[Plan](revision:unknown)', citations);
+  expect(unbacked).not.toContain('data-chat-note-citation-id=');
+});

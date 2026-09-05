@@ -278,10 +278,19 @@ export interface ChatNoteCandidate {
   title: string;
 }
 
+export interface RevisionCitation {
+  noteId: string;
+  revisionId: string;
+  atMillis: number;
+  source: import('$lib/features/history/historyModeMachine').HistoryMutationSource;
+  currentExcerpt: string;
+}
+
 export type ChatCitation =
   | {
       id: string;
       kind: 'note';
+      revision?: RevisionCitation;
       label: string;
       noteId: string;
       notePath: string;

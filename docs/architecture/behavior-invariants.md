@@ -266,6 +266,19 @@ lineage. Older restores without a selected-revision reference report unknown
 earlier lineage for returning ranges. Title provenance follows lifecycle
 predecessor order and ignores moves that preserve the filename title.
 
+### Chat activity and citations preserve the current-content boundary
+
+Activity and Current-Content Provenance enter chat only on demand. They reapply
+vault access, explicit turn grants, global exclusions, current eligibility, and
+canonical-byte checks. Activity answers carry current excerpts, revision counts,
+times, and Mutation Sources; removed prose and historical labels stay private.
+Revision Citations retain exact Note and Revision Identity and open that revision
+in global History Mode without navigating the invoking pane. Cleared, purged,
+missing, forgotten, excluded, or no-longer-current citation evidence is withheld
+when results or conversations are delivered, including branches. Earlier temporal
+answers remain visible in their transcript but are omitted from later model
+context and compaction; chat must obtain fresh current evidence.
+
 ### Interrupted runs preserve partial output
 
 A crash or interruption keeps the partial assistant message, marks it

@@ -315,6 +315,7 @@ fn tool_input_summary(name: &str, args: &str) -> Option<String> {
             .filter(|line| *line > 1)
             .map(|line| format!("Continue from line {line}"))
             .or_else(|| Some("From the beginning".to_string())),
+        "current_note_history" => Some("Current excerpts and revision evidence only".to_string()),
         "get_active_note" => Some("Adjacent to this chat".to_string()),
         "propose_note_edits" => value
             .as_ref()
@@ -364,6 +365,7 @@ fn tool_output_summary(name: &str, result: &rig_core::tool::ToolResult) -> Strin
             .unwrap_or_else(|| "Could not complete this action".to_string());
     }
     match (name, output) {
+        ("current_note_history", _) => "Checked current-note history evidence".to_string(),
         ("search_notes", Some(value)) => value
             .get("items")
             .and_then(Value::as_array)
@@ -459,6 +461,7 @@ fn tool_title(
             .and_then(quoted_activity_text)
             .map(|query| format!("Search notes for {query}"))
             .unwrap_or_else(|| "Search notes".to_string()),
+        "current_note_history" => "Check current-note history".to_string(),
         "read_note" => note_title()
             .map(|title| format!("Read {title}"))
             .unwrap_or_else(|| "Read selected note".to_string()),

@@ -1,11 +1,11 @@
 // Canonical ordinary-note mutation, observation, lifecycle, and role-limited
 // history boundary. Storage and post-publication coordination remain private
 // implementation details so callers depend only on the closed domain contract.
+mod activity;
 mod history_store;
 mod post_publication;
-// The on-demand chat consumer ships in the following ticket.
-#[allow(dead_code)]
 mod provenance;
+pub(crate) use activity::RevisionCitation;
 mod runtime;
 
 // Storage, post-publication repair, and runtime coordination are independent
@@ -127,7 +127,7 @@ pub(crate) enum LifecycleEventKind {
     Purged,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum MutationSource {
     Editor,
@@ -2939,12 +2939,62 @@ impl CurrentContentEligibility<'_> {
 }
 
 impl CurrentContentAccess<'_> {
-    #[allow(dead_code)] // Capability implemented before the on-demand chat tool.
+    pub(crate) fn current_citations(
+        &self,
+        citations: &[RevisionCitation],
+    ) -> Result<Vec<RevisionCitation>, HistoryError> {
+        activity::current_citations(self, citations)
+    }
+
+    pub(crate) fn activity(
+        &self,
+        after: u64,
+        before: u64,
+        offset: usize,
+        limit: usize,
+    ) -> Result<activity::ActivityPage, HistoryError> {
+        activity::read(self, after, before, offset, limit)
+    }
+
+    pub(crate) fn provenance_page(
+        &self,
+        note_id: &NoteIdentity,
+        offset: usize,
+    ) -> Result<
+        Option<(
+            provenance::CurrentContentProvenance,
+            Vec<RevisionCitation>,
+            Option<usize>,
+        )>,
+        HistoryError,
+    > {
+        let Some(read) = provenance::read_with_version(self, note_id)? else {
+            return Ok(None);
+        };
+        let mut current = read.current.clone();
+        let total = current.body.len() + current.properties.len();
+        let next = (total > offset.saturating_add(30)).then(|| offset.saturating_add(30));
+        let body_len = current.body.len();
+        current.body = current.body.into_iter().skip(offset).take(30).collect();
+        current.properties = current
+            .properties
+            .into_iter()
+            .skip(offset.saturating_sub(body_len))
+            .take(30 - current.body.len())
+            .collect();
+        let citations = activity::provenance_citations(self, &current)?;
+        if !read.is_current(self)? {
+            return Ok(None);
+        }
+        Ok(Some((current, citations, next)))
+    }
+
+    #[allow(dead_code)] // Unpaged domain projection; chat uses provenance_page.
     pub(crate) fn provenance(
         &self,
         note_id: &NoteIdentity,
     ) -> Result<Option<provenance::CurrentContentProvenance>, HistoryError> {
-        provenance::read(self, note_id)
+        Ok(provenance::read_with_version(self, note_id)?.map(|read| read.current))
     }
 
     fn prepare_read(&self) -> Result<(OperationGuard, CurrentContentVersion), String> {

@@ -868,3 +868,49 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     assert!(architecture.contains("Note Identity follows the logical note"));
     assert!(invariants.contains("Note Identity follows the note"));
 }
+
+#[test]
+fn ordinary_chat_history_is_on_demand_and_cannot_mint_history_mode_access() {
+    let tools = repository_file("src-tauri/src/agent_tools.rs");
+    let history_tool = repository_file("src-tauri/src/agent_tools/current_history.rs");
+    assert_contains_all(&tools, &[".tool(CurrentNoteHistoryTool(self.clone()))"]);
+    assert_contains_all(
+        &history_tool,
+        &[
+            "current_content(scope)",
+            ".provenance_page(",
+            ".activity(",
+            "current_history_scope",
+        ],
+    );
+    for source in [
+        &tools,
+        &history_tool,
+        &repository_file("src-tauri/src/chat.rs"),
+    ] {
+        assert_contains_none(
+            source,
+            &[
+                "open_history_mode(",
+                "HistoryModeGrant",
+                "history_store::",
+                ".reconstruct(",
+            ],
+        );
+    }
+    for function in [
+        "active_note_context",
+        "selected_context_prompt",
+        "explicit_wikilink_context",
+    ] {
+        assert_contains_none(
+            rust_function(&tools, function),
+            &[
+                ".provenance(",
+                ".provenance_page(",
+                "current_history_payload",
+                ".activity(",
+            ],
+        );
+    }
+}

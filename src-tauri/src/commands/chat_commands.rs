@@ -394,30 +394,58 @@ pub(crate) fn chat_list_conversations(
     service.list_conversations()
 }
 
+fn current_conversation(
+    state: &AppState,
+    service: &ChatService,
+    mut conversation: ChatConversation,
+) -> Result<ChatConversation, String> {
+    for message in &mut conversation.messages {
+        crate::agent_tools::filter_revision_sources(
+            state,
+            service,
+            &conversation.summary.access,
+            &HashSet::new(),
+            &mut message.sources,
+        )?;
+    }
+    Ok(conversation)
+}
+
 #[tauri::command]
 pub(crate) fn chat_get_conversation(
+    state: State<'_, AppState>,
     service: State<'_, ChatService>,
     conversation_id: String,
 ) -> Result<ChatConversation, String> {
     service.mark_projection_detached_if_needed(&conversation_id)?;
-    service.get_conversation(&conversation_id)
+    current_conversation(
+        &state,
+        &service,
+        service.get_conversation(&conversation_id)?,
+    )
 }
 
 #[tauri::command]
 pub(crate) fn chat_branch_from_message(
+    state: State<'_, AppState>,
     service: State<'_, ChatService>,
     message_id: String,
 ) -> Result<ChatConversation, String> {
-    service.branch_from_message(&message_id)
+    current_conversation(&state, &service, service.branch_from_message(&message_id)?)
 }
 
 #[tauri::command]
 pub(crate) fn chat_rename_conversation(
+    state: State<'_, AppState>,
     service: State<'_, ChatService>,
     conversation_id: String,
     title: String,
 ) -> Result<ChatConversation, String> {
-    service.rename_conversation(&conversation_id, &title)
+    current_conversation(
+        &state,
+        &service,
+        service.rename_conversation(&conversation_id, &title)?,
+    )
 }
 
 #[tauri::command]
@@ -478,24 +506,34 @@ pub(crate) fn chat_archive_conversation(
 
 #[tauri::command]
 pub(crate) fn chat_update_conversation_policy(
+    state: State<'_, AppState>,
     service: State<'_, ChatService>,
     conversation_id: String,
     access: VaultAccess,
 ) -> Result<ChatConversation, String> {
-    service.update_conversation_policy(&conversation_id, access)
+    current_conversation(
+        &state,
+        &service,
+        service.update_conversation_policy(&conversation_id, access)?,
+    )
 }
 
 #[tauri::command]
 pub(crate) fn chat_update_conversation_provider(
+    state: State<'_, AppState>,
     service: State<'_, ChatService>,
     conversation_id: String,
     request: UpdateConversationProviderRequest,
 ) -> Result<ChatConversation, String> {
-    service.update_conversation_provider(
-        &conversation_id,
-        &request.provider,
-        &request.model,
-        &request.reasoning_effort,
+    current_conversation(
+        &state,
+        &service,
+        service.update_conversation_provider(
+            &conversation_id,
+            &request.provider,
+            &request.model,
+            &request.reasoning_effort,
+        )?,
     )
 }
 

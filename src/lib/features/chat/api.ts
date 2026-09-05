@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   ChatConversation,
+  RevisionCitation,
   ChatConversationSummary,
   ChatEventMap,
   ChatExcerpt,
@@ -58,7 +59,7 @@ interface RawSummary {
 }
 interface RawSource {
   kind: string; noteId?: string | null; notePath?: string | null; title: string; excerpt: string;
-  url?: string | null; anchor?: string | null;
+  url?: string | null; anchor?: string | null; revision?: RevisionCitation | null;
 }
 interface RawMessage {
   id: string; conversationId: string; ordinal: number; role: string; status: string; content: string;
@@ -129,6 +130,7 @@ function normalizeSource(raw: RawSource, index = 0) {
     label: raw.title,
     noteId: raw.noteId ?? '',
     notePath: raw.notePath ?? '',
+    ...(raw.revision ? { revision: raw.revision } : {}),
     sectionLabel: raw.anchor ?? null,
     startLine: null,
     excerpt: raw.excerpt || null

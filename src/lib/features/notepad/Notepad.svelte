@@ -1141,6 +1141,9 @@
     getEditorPaneIds,
     setActivePane: workspaceStore.setActivePaneId,
     openNote: commands.openNotePath,
+    openRevisionCitation: (paneId, citation) => historyMode.enterCitation(paneId, {
+      noteId: citation.noteId, noteTitle: citation.label, notePath: citation.notePath
+    }, citation.revision!.revisionId),
     openWikilink,
     flushPendingAutosave,
     getNoteSaveQueue: (document) => getNoteSaveQueue(document.key),
