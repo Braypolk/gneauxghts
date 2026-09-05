@@ -117,6 +117,7 @@
                 <input
                   class="mt-1"
                   type="checkbox"
+                  aria-label={`Select forgotten item ${note.title}`}
                   checked={selectedForgottenPaths.includes(note.forgottenPath)}
                   onchange={(event) =>
                     toggleForgottenSelection(

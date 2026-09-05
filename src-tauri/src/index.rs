@@ -608,6 +608,20 @@ impl AppState {
         Ok(index.prepare_safe_reattachment(path, note_id))
     }
 
+    pub(crate) fn prepare_missing_note_recovery_identity(
+        &self,
+        path: &Path,
+        previous_path: &Path,
+        note_id: &str,
+    ) -> Result<(), String> {
+        let mut index = self
+            .notes_index
+            .lock()
+            .map_err(|_| "Search index lock poisoned".to_string())?;
+        index.prepare_missing_note_recovery(path, previous_path, note_id);
+        Ok(())
+    }
+
     pub(crate) fn detach_indexed_note_identity(
         &self,
         path: &Path,
@@ -976,6 +990,22 @@ impl NotesIndex {
             expected_canonical_hash,
         );
         Some(previous_path)
+    }
+
+    fn prepare_missing_note_recovery(&mut self, path: &Path, previous_path: &Path, note_id: &str) {
+        let Some(owner) = self.detached_identity_owners.get(note_id) else {
+            return;
+        };
+        if owner.path != previous_path {
+            return;
+        }
+        let expected_canonical_hash = owner.canonical_hash.clone();
+        self.reserve_identity_transfer(
+            path,
+            previous_path,
+            note_id.to_string(),
+            expected_canonical_hash,
+        );
     }
 
     fn remove_entry(&mut self, path: &Path) -> Option<IndexedNote> {

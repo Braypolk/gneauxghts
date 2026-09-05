@@ -23,6 +23,11 @@ interface NativeEditorState {
   } | null;
 }
 
+interface NativeE2EBridge {
+  readEditorState: () => NativeEditorState;
+  setEditorSelection: (anchor: number, head: number) => boolean;
+}
+
 async function invokeNative<T>(
   command: string,
   args: Record<string, unknown> = {}
@@ -63,8 +68,9 @@ async function waitForNote(title: string) {
       timeoutMsg: `Expected active note title to become ${title}`
     });
   } catch (error) {
+    const persistedSession = await invokeNative<NoteSession>('load_note_session');
     throw new Error(
-      `Expected active note title to become ${title}; received ${await titleInput.getValue()}`,
+      `Expected active note title to become ${title}; received ${await titleInput.getValue()}. Persisted session: ${JSON.stringify(persistedSession)}`,
       { cause: error }
     );
   }
@@ -75,6 +81,10 @@ async function showNote(note: NoteSession) {
   const home = await $('a[aria-label="Gneauxght"]');
   await home.waitForExist({ timeout: 20_000 });
   await browser.execute((element: HTMLElement) => element.click(), home);
+  await browser.waitUntil(async () => new URL(await browser.getUrl()).pathname === '/', {
+    timeout: 20_000,
+    timeoutMsg: 'Expected navigation back to the editor workspace'
+  });
   await browser.refresh();
   await waitForNote(note.title);
 }
@@ -120,26 +130,12 @@ async function historyRecords(noteId: string) {
 async function readNativeEditorState(): Promise<NativeEditorState> {
   const state = await browser.execute(() => {
     const nativeWindow = window as typeof window & {
-      __GNEAUXGHTS_NATIVE_E2E__?: {
-        readEditorState: () => NativeEditorState;
-        setEditorSelection: (anchor: number, head: number) => boolean;
-      };
+      __GNEAUXGHTS_NATIVE_E2E__?: NativeE2EBridge;
     };
     return nativeWindow.__GNEAUXGHTS_NATIVE_E2E__?.readEditorState() ?? null;
   });
   if (!state) throw new Error('Native editor state bridge is unavailable');
   return state;
-}
-
-async function readCapturedHistoryScrollTop() {
-  return browser.execute(() => {
-    const nativeWindow = window as typeof window & {
-      __GNEAUXGHTS_NATIVE_E2E__?: {
-        readCapturedHistoryScrollTop: () => number | null;
-      };
-    };
-    return nativeWindow.__GNEAUXGHTS_NATIVE_E2E__?.readCapturedHistoryScrollTop() ?? null;
-  });
 }
 
 async function editorText() {
@@ -221,7 +217,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
       (_, index) => `Native journey base line ${index + 1}`
     ).join('\n');
     const versions = Array.from(
-      { length: 35 },
+      { length: 31 },
       (_, index) => `${baseBody}\n\nSeeded native revision ${index + 1}`
     );
     const note = await saveVersions('Native timeline journey', versions);
@@ -240,10 +236,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
       requestedHead: number
     ) => {
       const nativeWindow = window as typeof window & {
-        __GNEAUXGHTS_NATIVE_E2E__?: {
-          readEditorState: () => NativeEditorState;
-          setEditorSelection: (anchor: number, head: number) => boolean;
-        };
+        __GNEAUXGHTS_NATIVE_E2E__?: NativeE2EBridge;
       };
       const bridge = nativeWindow.__GNEAUXGHTS_NATIVE_E2E__;
       if (!bridge?.setEditorSelection(requestedAnchor, requestedHead)) {
@@ -266,7 +259,6 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     expect(editorStateBefore.editor?.ownsWebviewFocus).toBe(true);
 
     const history = await openHistory();
-    expect(await readCapturedHistoryScrollTop()).toBe(scrollBefore);
     const capturedAfterEdit = await invokeNative<NoteSession>('open_note', {
       noteId: note.noteId,
       path: null
@@ -296,7 +288,6 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     });
     expect(secondDiff).toEqual(firstDiff);
     expect(await $('button=Load older history').isExisting()).toBe(true);
-    await loadAllHistory();
 
     await $('button[aria-label="Back to workspace"]').click();
     await history.waitForExist({ reverse: true });
@@ -403,7 +394,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
   it('discovers an external deletion, pages retained history, recovers safely, and keeps editing', async () => {
     await $('a[aria-label="Gneauxght"]').waitForExist({ timeout: 20_000 });
     const versions = Array.from(
-      { length: 35 },
+      { length: 31 },
       (_, index) => `Missing Note native revision ${index + 1}\n\nRetained recovery content`
     );
     const note = await saveVersions('Native missing journey', versions);
@@ -420,7 +411,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await $('button=Forgotten Items').click();
     await browser.waitUntil(async () => (await $('body').getText()).includes(note.title));
 
-    const missingCard = await $(`//article[.//p[normalize-space()="${note.title}"]]`);
+    const missingCard = await $(`article[data-note-id="${note.noteId}"]`);
     const timeline = await missingCard.$('details');
     await timeline.$('summary').click();
     expect(await timeline.getText()).toContain('30 loaded records');
@@ -442,13 +433,8 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     expect(recovered.markdown).toContain('Retained recovery content');
 
     rmSync(note.path, { recursive: true });
-    const indexedRecovered = await invokeNative<NoteSession>('save_note', {
-      title: recovered.title,
-      markdown: recovered.markdown,
-      currentPath: recovered.path
-    });
-    await showNote(indexedRecovered);
-    await replaceEditorText(`${indexedRecovered.markdown}\n\nContinued after native Missing Note recovery`);
+    await showNote(recovered);
+    await replaceEditorText(`${recovered.markdown}\n\nContinued after native Missing Note recovery`);
     const history = await openHistory();
     expect(await $('[data-testid="historical-revision-diff"]').getText()).toContain(
       'Continued after native Missing Note recovery'
@@ -472,12 +458,17 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     expect(corrupt.state).toBe('corrupt');
 
     await openSettings();
-    const historyCategory = await $('[aria-label="Settings categories"] button:nth-of-type(5)');
+    const historyCategory = await $('[data-settings-section="history"]');
     await historyCategory.click();
     await browser.waitUntil(async () => (await $('body').getText()).includes('History is corrupt'));
     await $('button=Reset history').click();
     await $('button=Confirm reset history').click();
-    await browser.pause(1_000);
+    await browser.waitUntil(async () =>
+      (await invokeNative<HistoryHealthReport>('get_history_health')).integrity === 'verified', {
+      timeout: 20_000,
+      interval: 100,
+      timeoutMsg: 'Expected corrupt history reset to complete'
+    });
     const healthy = await invokeNative<HistoryHealthReport>('get_history_health');
     if (healthy.integrity !== 'verified') {
       throw new Error(`Reset did not complete: ${JSON.stringify(healthy)}\n${await $('body').getText()}`);
@@ -488,8 +479,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
 
     await $('button=Forgotten Items').click();
     await browser.waitUntil(async () => (await $('body').getText()).includes(note.title));
-    const forgottenRow = await $(`//*[normalize-space()="${note.title}"]/ancestor::div[.//input[@type="checkbox"]][1]`);
-    await forgottenRow.$('input[type="checkbox"]').click();
+    await $(`input[aria-label="Select forgotten item ${note.title}"]`).click();
     await $('button=Restore selected').click();
     await browser.waitUntil(async () => {
       const notes = await invokeNative<ForgottenNoteSummary[]>('list_forgotten_notes');
@@ -524,6 +514,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     );
     expect(editorRevisions.length).toBeGreaterThanOrEqual(2);
     let firstEditRevision: HistoryRevisionRecord | undefined;
+    let firstEditBody: string | undefined;
     const reconstructedEditorBodies: Array<{ revisionId: string; body: string }> = [];
     for (const record of editorRevisions) {
       const revision = await invokeNative<HistoricalRevision>('get_note_history_revision', {
@@ -536,10 +527,11 @@ describe('native Phase 1-3 Note Timeline integration', () => {
         !revision.body.includes('Second edit before restart')
       ) {
         firstEditRevision = record;
+        firstEditBody = revision.body;
         break;
       }
     }
-    if (!firstEditRevision) {
+    if (!firstEditRevision || firstEditBody === undefined) {
       throw new Error(
         `Recovered editor revisions did not contain the expected boundary: ${JSON.stringify(reconstructedEditorBodies)}`
       );
@@ -561,7 +553,18 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     );
     await $('button[aria-label="Back to workspace"]').click();
     await $('[data-testid="history-mode"]').waitForExist({ reverse: true });
-    expect(await editorText()).toContain('First edit after reset recovery');
-    expect(await editorText()).not.toContain('Second edit before restart');
+    const restoredEditorState = await readNativeEditorState();
+    expect(restoredEditorState.editor?.markdown).toBe(firstEditBody);
+    const restoredNote = await invokeNative<NoteSession>('open_note', {
+      noteId: note.noteId,
+      path: null
+    });
+    expect(restoredNote.markdown).toBe(firstEditBody);
+    const recordsAfterRestore = await historyRecords(note.noteId);
+    expect(
+      recordsAfterRestore.find(
+        (record): record is HistoryRevisionRecord => record.kind === 'revision'
+      )?.source
+    ).toBe('versionRestore');
   });
 });

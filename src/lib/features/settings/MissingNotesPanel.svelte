@@ -73,7 +73,10 @@
   {:else}
     <div class="mt-4 space-y-3">
       {#each missingNotes as note (note.noteId)}
-        <article class="rounded-2xl border border-border/70 bg-card/70 px-4 py-4">
+        <article
+          class="rounded-2xl border border-border/70 bg-card/70 px-4 py-4"
+          data-note-id={note.noteId}
+        >
           <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">

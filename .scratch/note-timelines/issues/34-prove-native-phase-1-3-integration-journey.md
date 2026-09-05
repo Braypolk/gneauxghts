@@ -14,4 +14,4 @@
 
 ## Comments
 
-The native Phase 1–3 spec owns three integration journeys: live editor capture/paging/diff/restore/state return; external deletion/Missing Note paging/collision-safe recovery/continued editing; and corrupt reset/forgotten recovery/restart/diff/restore. `pnpm test:e2e:native` now runs the shared TypeScript and Rust timeline-contract fixture checks before building and driving the feature-gated native app. The repeatable full gate is recorded in `e2e/README.md`.
+The native Phase 1–3 spec owns three integration journeys: live editor capture/paging/diff/restore/state return; external deletion/Missing Note paging/collision-safe recovery/continued editing; and corrupt reset/forgotten recovery/restart/diff/restore. External deletion enters through a deterministic flush at the same resolved-batch adapter used after native watcher notification and debounce, intentionally excluding platform delivery timing from this integration proof. `pnpm test:e2e:native` now runs the shared TypeScript and Rust timeline-contract fixture checks before building and driving the feature-gated native app. The repeatable full gate is recorded in `e2e/README.md`.

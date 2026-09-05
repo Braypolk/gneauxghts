@@ -47,7 +47,6 @@ Keep this suite focused. Add native cases only for behavior that depends on real
 
 ```bash
 pnpm check
-pnpm test:timeline:contracts
 pnpm test
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm test:e2e:browser

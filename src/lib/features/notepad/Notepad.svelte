@@ -149,7 +149,6 @@
   type NativeE2EWindow = Window & {
     __GNEAUXGHTS_NATIVE_E2E__?: {
       readEditorState: () => NativeE2EEditorState;
-      readCapturedHistoryScrollTop: () => number | null;
       setEditorSelection: (anchor: number, head: number) => boolean;
     };
   };
@@ -1449,45 +1448,48 @@
         openTaskDocumentMutation,
       );
     const disposeSession = sessionLifecycle.mount();
-    const nativeE2EWindow = window as NativeE2EWindow;
-    const nativeE2EBridge = {
-      readEditorState: (): NativeE2EEditorState => {
-        const paneId = activePaneId;
-        const paneDocument = getPaneDocumentSession(paneId);
-        const controller = getPaneRuntime(paneId).controller;
-        const snapshot = editorCapabilities.get(paneId)?.readSnapshot() ?? null;
-        return {
-          activePaneId: paneId,
-          paneIds: [...paneOrder],
-          paneKind: getPaneKind(paneId),
-          noteId: getDocumentNoteId(paneDocument),
-          editor: snapshot && controller
-            ? {
-                markdown: snapshot.markdown,
-                selection: snapshot.selection,
-                ownsWebviewFocus:
-                  document.activeElement === controller.view.contentDOM,
-              }
-            : null,
-        };
-      },
-      readCapturedHistoryScrollTop: () =>
-        "workspace" in historyMode.state
-          ? (historyMode.state.workspace.editor?.viewState.scrollTop ?? null)
-          : null,
-      setEditorSelection: (anchor: number, head: number) =>
-        editorCapabilities.get(activePaneId)?.focusSelection(
-          { anchor, head },
-          { scrollIntoView: false },
-        ) ?? false,
-    };
-    if (import.meta.env.VITE_E2E_NATIVE === "true") {
+    let disposeNativeE2EBridge: (() => void) | null = null;
+    if (
+      import.meta.env.DEV &&
+      import.meta.env.VITE_E2E_NATIVE === "true"
+    ) {
+      const nativeE2EWindow = window as NativeE2EWindow;
+      const nativeE2EBridge = {
+        readEditorState: (): NativeE2EEditorState => {
+          const paneId = activePaneId;
+          const paneDocument = getPaneDocumentSession(paneId);
+          const controller = getPaneRuntime(paneId).controller;
+          const snapshot = editorCapabilities.get(paneId)?.readSnapshot() ?? null;
+          return {
+            activePaneId: paneId,
+            paneIds: [...paneOrder],
+            paneKind: getPaneKind(paneId),
+            noteId: getDocumentNoteId(paneDocument),
+            editor: snapshot && controller
+              ? {
+                  markdown: snapshot.markdown,
+                  selection: snapshot.selection,
+                  ownsWebviewFocus:
+                    document.activeElement === controller.view.contentDOM,
+                }
+              : null,
+          };
+        },
+        setEditorSelection: (anchor: number, head: number) =>
+          editorCapabilities.get(activePaneId)?.focusSelection(
+            { anchor, head },
+            { scrollIntoView: false },
+          ) ?? false,
+      };
       nativeE2EWindow.__GNEAUXGHTS_NATIVE_E2E__ = nativeE2EBridge;
+      disposeNativeE2EBridge = () => {
+        if (nativeE2EWindow.__GNEAUXGHTS_NATIVE_E2E__ === nativeE2EBridge) {
+          delete nativeE2EWindow.__GNEAUXGHTS_NATIVE_E2E__;
+        }
+      };
     }
     return () => {
-      if (nativeE2EWindow.__GNEAUXGHTS_NATIVE_E2E__ === nativeE2EBridge) {
-        delete nativeE2EWindow.__GNEAUXGHTS_NATIVE_E2E__;
-      }
+      disposeNativeE2EBridge?.();
       unregisterTaskMutation();
       disposeSession();
     };

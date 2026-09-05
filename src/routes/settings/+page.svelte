@@ -149,6 +149,7 @@
             {#each generalSectionsNav as item}
               <button
                 type="button"
+                data-settings-section={item.id}
                 class={`shrink-0 rounded-xl border px-3 py-2 text-left transition-colors lg:w-full lg:px-3.5 lg:py-2.5 ${
                   settings.activeGeneralSection === item.id
                     ? 'border-border bg-foreground text-background shadow-sm'

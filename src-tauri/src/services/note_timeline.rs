@@ -4354,6 +4354,15 @@ impl<'a> NoteTimeline<'a> {
                         "App-owned lifecycle publication requires a managed Note Identity"
                             .to_string()
                     })?;
+                if kind == LifecycleEventKind::Recovered {
+                    if let Some(previous_path) = previous_path.as_deref() {
+                        self.state.prepare_missing_note_recovery_identity(
+                            &path,
+                            previous_path,
+                            note_id.as_str(),
+                        )?;
+                    }
+                }
                 history_store::record_observed_lifecycle_event(
                     &note_id,
                     kind,
@@ -9850,6 +9859,14 @@ mod tests {
         assert_eq!(
             crate::note::parse_note(&recovered_markdown).body,
             "Last retained body"
+        );
+        assert_eq!(
+            state
+                .indexed_note_identity(recovery.receipt().path())
+                .unwrap()
+                .as_deref(),
+            Some(note_id.as_str()),
+            "collision-safe recovery must move the original catalog identity to the recovered path"
         );
         assert!(timeline.missing_notes().unwrap().is_empty());
         let access = timeline.open_history_mode(note_id);
