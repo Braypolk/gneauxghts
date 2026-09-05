@@ -76,6 +76,11 @@ also verifies the managed Note Identity in the published file, and records the
 app-owned publication time issued into the durable intent immediately before
 the write rather than filesystem metadata or later reconciliation time.
 
+History Mode entry obtains its page and diff through the mandatory recovered
+read capability. Browsing requests optional per-note and vault health diagnostics
+explicitly instead of repeating an exhaustive scan on entry just to display
+storage statistics. Restore and clear still refresh diagnostics after mutation.
+
 History Mode requires a grant whose constructor remains private to the timeline
 module. The agent-restore capability is intentionally absent until its
 app-owned current-turn proposal path is implemented; ordinary chat can receive
@@ -148,6 +153,13 @@ The same timeline boundary exposes storage-neutral vault and per-note health
 contracts. Vault health verifies store integrity and retained revision
 reconstruction, reports initialization plus allocated and reclaimable bytes,
 and distinguishes retryable warnings from unavailable or corrupt history.
+Exhaustive attestation walks each note's complete revision lineage and verifies
+all payloads and base/result hashes once, holding only the preceding verified
+state during that pass. A prepared publication may retain the canonical authored
+bytes already read for its baseline. Its finalization transaction uses those
+bytes as a delta base only after matching the exact retained base revision's
+hash; mismatches and restart recovery reconstruct from storage. This candidate
+belongs to one opaque intent and never becomes a cross-operation cache.
 Each `AppState` caches that exhaustive integrity attestation for its selected
 vault, while corruption remains latched until an explicit reset replaces the
 store. Prepared writes consult the cached gate in constant time, so routine

@@ -1754,6 +1754,7 @@
       onNameRevision={historyMode.nameRevision}
       onRemoveRevisionName={historyMode.removeRevisionName}
       onClearHistory={historyMode.clearHistory}
+      onCheckHealth={historyMode.checkHealth}
       onLoadMore={historyMode.loadMore}
       onRetry={historyMode.retry}
     />

@@ -124,6 +124,7 @@ describe('HistoryMode', () => {
         onNameRevision: vi.fn(),
         onRemoveRevisionName: vi.fn(),
         onClearHistory: vi.fn(),
+        onCheckHealth: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }
@@ -147,6 +148,7 @@ describe('HistoryMode', () => {
         onNameRevision: vi.fn(),
         onRemoveRevisionName: vi.fn(),
         onClearHistory: vi.fn(),
+        onCheckHealth: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }
@@ -194,6 +196,7 @@ describe('HistoryMode', () => {
         onNameRevision: vi.fn(),
         onRemoveRevisionName: vi.fn(),
         onClearHistory: vi.fn(),
+        onCheckHealth: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }
@@ -222,6 +225,7 @@ describe('HistoryMode', () => {
         onNameRevision: vi.fn(),
         onRemoveRevisionName: vi.fn(),
         onClearHistory: vi.fn(),
+        onCheckHealth: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }
@@ -254,6 +258,7 @@ describe('HistoryMode', () => {
         onNameRevision: vi.fn(),
         onRemoveRevisionName: vi.fn(),
         onClearHistory: vi.fn(),
+        onCheckHealth: vi.fn(),
         onLoadMore: vi.fn(),
         onRetry: vi.fn()
       }

@@ -1072,6 +1072,7 @@ pub(crate) struct ReconstructedNoteRevision {
 
 pub(crate) struct PreparedHistoryIntent {
     value: String,
+    prepared_base: Option<history_store::PreparedRevisionBase>,
     operation: Option<OperationGuard>,
     current_content_mutation: Option<CurrentContentMutationGuard>,
 }
@@ -1098,6 +1099,7 @@ impl PreparedHistoryIntent {
         Self {
             value,
             operation: None,
+            prepared_base: None,
             current_content_mutation: None,
         }
     }
@@ -1134,6 +1136,7 @@ impl PreparedHistoryIntent {
         Self {
             value: value.to_string(),
             operation: None,
+            prepared_base: None,
             current_content_mutation: None,
         }
     }

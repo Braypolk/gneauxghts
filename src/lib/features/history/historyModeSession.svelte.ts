@@ -143,7 +143,6 @@ export class HistoryModeSession {
     revisionId?: string
   ): Promise<void> => {
     try {
-      const diagnosticsPromise = this.#deps.loadDiagnostics(target.noteId).catch(() => null);
       const page = await this.#deps.loadPage(target.noteId, null);
       if (revisionId) {
         while (!page.records.some(record => record.kind === 'revision' && record.revisionId === revisionId) && page.nextCursor) {
@@ -161,7 +160,7 @@ export class HistoryModeSession {
       const selectedDiff = newestRevision?.kind === 'revision'
         ? await this.#deps.loadDiff(target.noteId, newestRevision.revisionId, 'parent')
         : null;
-      const diagnostics = await diagnosticsPromise;
+      const diagnostics = null;
       this.#dispatch({
         type: 'entryLoaded',
         requestId,
@@ -422,6 +421,21 @@ export class HistoryModeSession {
     } finally {
       await this.#runPendingRefresh();
     }
+  };
+
+  checkHealth = async (): Promise<void> => {
+    if (this.state.phase !== 'open' || this.state.request !== null) return;
+    const requestId = this.#nextRequestId++;
+    const noteId = this.state.target.noteId;
+    this.#dispatch({ type: 'diagnosticsStarted', requestId });
+    try {
+      const diagnostics = await this.#deps.loadDiagnostics(noteId);
+      this.#dispatch({ type: 'diagnosticsLoaded', requestId, diagnostics });
+    } catch (error) {
+      this.#dispatch({ type: 'diagnosticsFailed', requestId,
+        error: `History health could not be checked: ${errorMessage(error)}` });
+    }
+    await this.#runPendingRefresh();
   };
 
   loadMore = async (): Promise<void> => {

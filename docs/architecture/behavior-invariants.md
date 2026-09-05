@@ -47,6 +47,11 @@ timeline but cannot enter History Mode or expose timeline records until
 Forgotten-Note Recovery returns it to the active vault.
 An externally deleted note follows the same ordinary-access gate while it is
 Missing, but its retained timeline remains inspectable from recovery UI.
+History Mode entry awaits mandatory prepared-write recovery and integrity
+attestation through its read capability. Optional exhaustive health/storage
+checks during browsing are explicit actions; their absence never means history
+is verified. Restore and clear refresh diagnostics after mutation.
+A health result from an exited session cannot populate a later session.
 History Mode browsing and diff surfaces are read-only. It may add, edit, or
 remove a revision label and may clear retained history only after explicit
 confirmation through `NoteTimeline`; those metadata/history-retention actions
@@ -130,6 +135,13 @@ canonical writers. Once an intent is finalized or abandoned, its full authored
 payload is retired atomically; correlation metadata remains available for
 idempotency and revision references. Schema migration retires existing terminal
 payloads while preserving pending recovery bytes.
+A prepared publication's in-memory base candidate may avoid checkpoint replay
+only when its authored-byte hash matches the exact retained base revision inside
+the append transaction. It cannot substitute a different canonical state as the
+history base. Crash recovery needs no candidate and reconstructs from the store.
+Cold attestation validates every retained payload and its hashes, including
+lineage continuity at checkpoints; previous verified bytes live only within the
+attestation pass.
 Managed metadata changes alone do not create Note Revisions.
 A managed note that predates history receives one Baseline Revision without a
 Markdown write. Its `knownSince` time says only when Gneauxghts first retained

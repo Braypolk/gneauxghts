@@ -201,7 +201,7 @@ Chat can use activity metadata and Current-Content Provenance for content that i
 - History capture is mandatory for every managed ordinary note in the first release. There is no per-note or per-vault disable switch.
 - When history is corrupt or unavailable, keep current Markdown readable and dirty buffers intact, block app-owned canonical mutations, degrade History Mode explicitly, and offer retry, backup, or reset. Never reconstruct from an unverified nearby revision.
 - Expose per-note history usage and health in History Mode. Expose vault-wide initialization progress, integrity state, allocated storage, reclaimable storage, and clear-all controls in Settings.
-- Design for a 1 MB note, 10,000 revisions on one note, and 100,000 revisions across a vault. Ordinary timeline paging and diff display should complete in approximately 250 ms; deep reconstruction and restore preparation should complete in under one second on supported hardware. Write cost should scale primarily with changed content.
+- Design for a 1 MB note, 10,000 revisions on one note, and 100,000 revisions across a vault. Ordinary timeline paging and diff display should complete in approximately 250 ms; deep reconstruction and restore preparation should complete in under one second on supported hardware. Additional history write work should scale primarily with changed content rather than retained history depth. Canonical Markdown publication still processes the full note; measure and report that total-save floor separately with matched content geometry.
 
 ## Implementation Phasing
 

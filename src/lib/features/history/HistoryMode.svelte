@@ -23,6 +23,7 @@
     onNameRevision: (revisionId: string, label: string) => void | Promise<void>;
     onRemoveRevisionName: (revisionId: string) => void | Promise<void>;
     onClearHistory: () => void | Promise<void>;
+    onCheckHealth: () => void | Promise<void>;
     onLoadMore: () => void | Promise<void>;
     onRetry: () => void | Promise<void>;
   }
@@ -38,6 +39,7 @@
     onNameRevision,
     onRemoveRevisionName,
     onClearHistory,
+    onCheckHealth,
     onLoadMore,
     onRetry
   }: Props = $props();
@@ -219,6 +221,11 @@
       </aside>
 
       <main class="min-h-0 overflow-y-auto p-4 sm:p-6 md:p-8" aria-label="Historical revision">
+        <button type="button"
+          class="mb-4 rounded-full border border-border px-4 py-2 text-sm disabled:opacity-50"
+          disabled={historyState.request !== null}
+          onclick={() => void onCheckHealth()}
+        >{historyState.request?.kind === 'diagnostics' ? 'Checking history…' : 'Check history health and storage'}</button>
         {#if historyState.diagnostics}
           <section class="mb-5 rounded-2xl border border-border bg-muted/30 px-4 py-3" aria-label="Note history health and storage">
             <p class="text-sm font-semibold">Note history {historyState.diagnostics.note.state}</p>

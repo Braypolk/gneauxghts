@@ -1,100 +1,117 @@
 # Note Timeline release validation
 
-Issue 23 validates the completed initial feature, including History Mode Version Restore and current-content chat evidence. Chat-requested restore grants/proposals remain deferred under issue 22.
+Issue 23 covers the initial feature, including History Mode Version Restore and current-content chat evidence. Chat-requested restore grants/proposals remain deferred under issue 22. Production availability policy is owned by [ADR 0006](../adr/0006-keep-history-preparation-mandatory-in-production.md). This report owns reproducible methods, observations, and measurement limits; [issue 23](../../.scratch/note-timelines/issues/23-release-scale-availability.md) and [issue 35](../../.scratch/note-timelines/issues/35-close-release-latency-gaps.md) track actionable release status.
 
 ## Reproduce
 
-Run frontend generation before the browser/native suites, and run those suites sequentially. Vite and SvelteKit share generated files: starting another frontend suite or `pnpm check` during a native journey can reload its page.
+Run from the repository root, sequentially. Frontend generation, Vite, native tests, builds, and other suites must not overlap a timed run. Vite/SvelteKit share generated files. Native tests need a desktop session and free test ports 1430 and 4445; the fixture runner refuses an occupied port.
+
+```sh
+pnpm test:timeline:fixture:create
+pnpm test:timeline:fixture:reuse
+pnpm test:timeline:stages
+pnpm test:timeline:native:build
+pnpm test:timeline:native
+```
+
+`create` builds 100,000 durable revisions through the production save command once, cleanly closes the synthetic vault, and seals its vault/app-data pair under the system temporary directory at `gneauxghts-timeline-fixture`. If it already exists, `create` validates and reuses it. Initial creation took roughly 40 minutes on the measured machine; subsequent backend/native runs clone it. `pnpm test:timeline:fixture:reset` removes only a recognized fixture, after which `create` rebuilds it. The cache is disposable test data, not an application backup. An explicit cache location can be supplied with `python3 scripts/timeline_fixture.py create --cache /absolute/test-cache` (use that option for later actions too).
+
+The runner verifies file hashes, SQLite quick/FK checks, exact 100,000 revision / 10,000 hot-note / 1,000 head counts, canonical note identities, matching vault format/generation/store identity and app observations, and absence of unsettled intents/deletions. Every run gets a unique temporary clone; only stored filesystem paths relocate. Authored payloads, hashes, identities, generations, and observation attestations remain unchanged. Destructive clear/compaction runs cannot modify the master, which is checked again after cleanup. Native failures retain logs in a separately printed temporary directory. To audit the master manually, use `python3 scripts/timeline_fixture.py check`. The narrow `import` action adopted the stopped issue 23 synthetic writer through a SQLite backup; manual restoration at original temporary paths is obsolete.
+
+The ignored Rust tests use disabled semantic indexing/events, real Markdown publication, and the production SQLite codec. They never substitute synthetic revision rows. `RELEASE_METRIC` and `RELEASE_NATIVE_METRIC` output sample counts, p50/p95/max and budgets. Null budgets are observations, not proof of a separate performance requirement. Redirect output when retaining another experiment. Historical failures and accepted runs remain in [the measurements JSON](note-timeline-release-measurements.json).
+
+Correctness and isolated rendering checks:
 
 ```sh
 pnpm check
+pnpm test:timeline:fixture:checks
 pnpm test
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm test:e2e:browser
-pnpm test:e2e:native
-pnpm test:timeline:scale
 pnpm test:timeline:scale:render
+pnpm test:e2e:native
 ```
 
-For a shorter optimized large-note diagnosis:
+## Measured scope
 
-```sh
-cargo test --release --manifest-path src-tauri/Cargo.toml release_large_note_latency -- --ignored --nocapture
-```
+The master contains 1,000 managed notes and 100,000 production-written revisions, with 10,000 revisions on a 64 KiB hot note. Backend traversal visits every hot-note revision without duplicate pages. Its disposable clone also exercises a 1 MiB note with 128 small edits and 20 random-ASCII replacements, deep reconstruction, restore preview, preparation failure/retry, clean close, exhaustive restart attestation, clear, and a 256 KiB compaction pass.
 
-The ignored `release_retained_scale_latency` diagnostic can consume a preserved synthetic 100,000-revision fixture through `GNEAUXGHTS_RELEASE_SCALE_VAULT` and `GNEAUXGHTS_RELEASE_SCALE_DATA`. Both paths must be direct children of the canonical temporary directory, with the harness's `gneauxghts-release-scale-vault-` / `gneauxghts-release-scale-data-` prefixes. Stop the creating process before opening them. The diagnostic runs the same read/recovery phase as the full harness, including destructive clear of the synthetic hot note. It is not a backup or portability tool.
+The optimized native test uses a release Rust binary, real Tauri IPC, native WebKit, and a built production frontend served by Vite preview at the dedicated test URL. It measures actual History Mode button actions through ready DOM and two animation frames. It is not a packaged-asset startup benchmark. Cold mandatory attestation settles before warm interaction timing. The test window is shown/focused, and its test-only configuration disables WebKit background throttling to keep paint callbacks scheduled when desktop automation occludes it. Production window configuration is unchanged. Five samples per operation mean p95 equals the maximum; this is a local release check, not a statistical tail-latency guarantee.
 
-Scale tests are explicitly opted into because they make 100,000 durable revisions and assert hardware-dependent budgets. They use temporary vaults and app-data directories, disabled semantic indexing and events, the production save command, real Markdown publication, and the production SQLite codec. They do not substitute the earlier storage spike's synthetic rows. `RELEASE_METRIC` lines report sample count, p50, p95, maximum, and budget; an exceeded budget fails after the remaining measurements are collected. A metric with a null budget has no numerical pass/fail requirement; its `passed` field does not attest the separate changed-content cost requirement. The browser measurement includes fixture response, History Mode rendering, and two animation frames, and excludes Rust execution and IPC transport. Separate backend and rendering budgets do not establish a combined 250 ms response time.
+Native measurements cover a 64 KiB/10,000-revision note at exactly 100,000 vault revisions, then a separately created 1 MiB note with 129 production-written revisions in that vault (100,129 total). **No 1 MiB note with 10,000 revisions was measured.** The changed-line diff is collapsed with expandable context; complete-replacement rendering has no measured release attestation. Browser-only rendering remains useful regression coverage but excludes Rust/IPC and cannot establish the native budget by itself.
 
-## Operating limits and evidence
+Environment: arm64 macOS Darwin 25.6.0, Rust 1.93.1, Node 24.2.0, pnpm 11.21.0, Chrome 152.0.7977.77, native WebKit 605.1.15. Final timed runs had no overlapping compilers/test suites; other desktop activity is not controlled. Results are observations on this machine, not guarantees for every supported machine or combined limit.
 
-The fixture scans 1,000 existing managed notes, records 10,000 revisions on a 64 KiB note in one process, and then reaches exactly 100,000 revisions across the vault. It checks revision totals and traverses every hot-note revision without duplicate pages. A separate 1 MiB note receives 128 small changes plus 20 deterministic random-ASCII complete replacements. It measures deep reconstruction, restore preview, prepared-write failure/retry, clean close, restart integrity attestation, clear, and a 256 KiB compaction pass. Existing recovery tests supply interruption, corruption, store-replacement, clean-copy, purge, and observation-order coverage.
+## Diagnosis and corrections
 
-The 1 MiB, 10,000-per-note, and 100,000-per-vault limits are exercised separately; this is not a claim that a 1 MiB note with 10,000 revisions was tested. The small-edit large note has regular repetitive Markdown lines; complete replacements use deterministic random ASCII with similar line lengths. The earlier [codec spike](note-timeline-storage-spike.md) supplies additional pathological-delta evidence. The browser fixture measures one changed line in a 1 MiB diff; complete-replacement rendering has no measured release attestation here.
+Cold attestation previously reconstructed every revision independently, repeatedly replaying the same checkpoint chains. The exhaustive pass now walks each note's lineage once, retaining only its preceding verified payload within that operation. Every payload/result hash, base hash, UTF-8 structure, and checkpoint lineage is checked. A verified predecessor avoids hashing the same bytes again; neither read optimization introduces a cross-operation cache. Corruption regressions cover disconnected checkpoint lineage and invalid base/result hashes.
 
-Measurements were taken on arm64 macOS (Darwin 25.6.0), Rust 1.93.1, Node 24.2.0, pnpm 11.21.0, Chrome 152.0.7977.77, and native WebKit 605.1.15. Other local work was running; these are observed timings, not claims about every supported machine. Cold startup integrity is measured separately from warm ordinary operations.
+The paired write-stage experiment uses 128 small edits or complete replacements with matching 64 KiB/1 MiB sizes, regular approximately 76-character lines, and repetitive or deterministic random-ASCII content. Content generation is excluded from command timing. Before the fix, 1 MiB small edits spent about 62 ms p50 reconstructing their history base; repeated replay dominated the apparent small-edit penalty. Full replacements often checkpointed and avoided that growing replay shape.
 
-### Defects found and corrected
+An opaque prepared intent now carries the canonical authored bytes already read during that publication. Finalization may use them only after their hash matches the exact stored base revision inside its transaction. A mismatch or recovery without memory reconstructs from durable history. Tests cover mismatches and exactly-once recovery. Durable preparation, publication ownership, schemas, and availability policy are unchanged.
 
-- A 1 MiB diff initially painted in 1,419.8 ms. Rendering every unchanged line created thousands of unnecessary DOM rows. The view now keeps three context lines at each end of long unchanged sections and exposes an explicit expansion action. The final focused browser rerun measured 123.6 ms and verified expansion plus reset on comparison change.
-- A 50-row page of 1 MiB revisions initially measured 8,727.9 ms p95. Each row independently replayed its checkpoint chain. Page summaries now reconstruct oldest first and reuse only the previous verified authored state within the page. The first corrected run measured 176.7 ms p95; byte/hash verification remains in place.
-- Diff preparation reconstructed parent and selected revision independently and loaded the entire revision chain. It now orders and validates the revision headers in linear time and reuses the verified parent payload when applicable. A persisted-checkpoint corruption regression ensures disconnected lineage remains rejected.
-- Native tests loaded an unrelated IPv6 development server through `localhost:1420`. The E2E binary and runner now share a dedicated `127.0.0.1:1430` URL. The normal development server is unaffected.
-- Native WebKit restored scroll but reset the saved selection to zero when the workspace focused CodeMirror's DOM element directly. History return now uses the existing editor focus capability. All four native timeline journeys passed after the correction.
+| Paired 1 MiB workload | Before total p50 / p95 | After total p50 / p95 |
+| --- | ---: | ---: |
+| Repetitive small edits | 91.3 / 142.5 ms | 28.5 / 33.7 ms |
+| Random-ASCII small edits | 93.5 / 147.9 ms | 27.9 / 32.2 ms |
+| Repetitive full replacements | 29.1 / 31.0 ms | 30.7 / 38.0 ms |
+| Random-ASCII full replacements | 33.5 / 36.6 ms | 32.9 / 38.3 ms |
 
-## Availability observations and decision
+Afterward base acquisition costs about 0.48 ms p50 instead of 62 ms. Delta encoding for small edits costs about 0.64–0.77 ms versus 2.59–3.64 ms for full replacements. The remaining command work includes canonical parsing/publication, durable SQLite work, and required projection; it is not an isolated filesystem measurement. History append work responds to changed content and no longer pays repeated history replay on ordinary saves. Total saves still process a full canonical file, so these results do **not** prove literal end-to-end cost primarily proportional to changed bytes. Efficient retained payload size (7,166 bytes for the first 129 large-note revisions) is separate evidence from latency.
 
-The production decision is [ADR 0006](../adr/0006-keep-history-preparation-mandatory-in-production.md): retain mandatory durable preparation, with explicit recovery and no save-without-history bypass.
+History Mode entry previously also awaited optional per-note and whole-vault diagnostics after its mandatory recovered page/diff reads. Browsing now exposes an explicit health/storage check with correlated results; stale replies cannot populate a later session. Restore/clear still refresh diagnostics after mutation. No health success is inferred from skipping that optional display work. The first valid optimized native run still failed the 1 MiB entry budget at 295 ms. Avoiding redundant hashes and owned UTF-8 copies of already verified read payloads closed that remaining interaction cost.
 
-| Failure exercised | Observed contract / evidence | Usability and integrity consequence |
-| --- | --- | --- |
-| Preparation fails before first publication | `history_preparation_failure_publishes_nothing`; frontend `preserves dirty editor content when durable history preparation fails` | No canonical file or revision is invented; draft stays dirty and the error remains actionable. In-memory retention does not protect against a later process crash. |
-| Preparation fails for an existing note at scale | Scale harness compares exact canonical bytes before/after failure, then retries | Existing saved content stays intact; retry saves the requested draft. |
-| Finalization fails after publication | `committed_markdown_survives_finalization_failure_and_recovers_once` | Return committed identity/content with warning; recover exactly once instead of replaying the write. |
-| Startup recovery or canonical read fails | `transient_startup_recovery_failure_can_be_retried`, `canonical_read_failure_keeps_pending_recovery_retryable` | Block new dependent work; retain recoverable intent until authoritative bytes can be read. |
-| Selected store is missing, replaced, malformed, or rolled back | Missing-store, generation, instance, watermark, malformed-store, and corrupt-note tests | Current Markdown remains readable; writes need explicit recovery/reset. Silent acceptance would falsify retained history. |
-| Reset rebuilding fails, or a Missing Note is unreconstructable | `failed_reset_rebuild_keeps_the_replacement_timeline_unavailable_until_retry`, `development_reset_refuses_to_discard_an_unreconstructable_missing_note` | Do not convert a failed recovery into a successful save or discard the only retained recoverable state. |
-| Close or deletion is interrupted | Clean-close retry, pending-intent, interrupted clear/purge, WAL restart, and clean-copy tests | Retry/restart settles durable evidence; physical reclamation cannot redefine logical deletion. |
+Earlier issue 23 corrections remain covered: collapsed unchanged diff context reduced a browser paint from 1,419.8 to 123.6 ms; operation-local page/parent reuse removed repeated reconstruction; linear revision-header ordering preserves disconnected-lineage rejection; dedicated native ports avoid unrelated dev servers; editor-owned focus restores selection correctly. Intermediate native startup, stale-process and suspended-paint failures are preserved in the JSON rather than treated as successful latency samples.
 
-These are controlled failures observed in development tests. They do not estimate incident frequency, MTTR, power-loss behavior of physical hardware, or user success rates. No background telemetry or private note prose was collected. Fail-closed imposes real editing friction, but a bypass would conceal gaps from later timeline and provenance queries. The accepted policy preserves the stronger contract and makes that trade-off explicit.
+## Results
 
-## Release gate status
+### Optimized native interactions
 
-The completed correctness checks are:
+| Native operation | Samples | p50 | p95 / max | Budget |
+| --- | ---: | ---: | ---: | ---: |
+| entry 64k at 100000 | 5 | 102.0 ms | 124.0 ms | 250 ms |
+| page 30 64k at 100000 | 5 | 50.0 ms | 91.0 ms | 250 ms |
+| diff 64k at 100000 | 5 | 29.0 ms | 118.0 ms | 250 ms |
+| entry 1mb at 100129 | 5 | 180.0 ms | 187.0 ms | 250 ms |
+| page 30 1mb at 100129 | 5 | 79.0 ms | 110.0 ms | 250 ms |
+| diff 1mb at 100129 | 5 | 85.0 ms | 86.0 ms | 250 ms |
 
-| Check | Result |
+### Optimized backend and cold recovery
+
+| Backend operation | Samples | p50 | p95 | Budget |
+| --- | ---: | ---: | ---: | ---: |
+| page 50 across 10000 | 200 | 28.1 ms | 45.2 ms | 250 ms |
+| diff 64k | 20 | 14.7 ms | 16.4 ms | 250 ms |
+| reconstruct deep 64k | 20 | 7.2 ms | 8.6 ms | 1000 ms |
+| restore preview 64k | 20 | 7.9 ms | 10.2 ms | 1000 ms |
+| page 50 1mb | 20 | 80.6 ms | 80.9 ms | 250 ms |
+| diff 1mb | 20 | 63.0 ms | 67.1 ms | 250 ms |
+| restore preview 1mb | 20 | 61.2 ms | 65.7 ms | 1000 ms |
+
+Cold first access including exhaustive integrity/recovery took **1.220 seconds**, and restart plus first page took **1.248 seconds**, versus the prior 68.63 / 74.07 seconds. These remain separate startup delays, outside the warm 250 ms target; they were single observations rather than a new cold-start SLO. Mandatory attestation remains synchronous before dependent work is admitted.
+
+At vault scale, 1 MiB small-edit saves measured 32.5 ms p50 / 36.4 ms p95 (maximum 111.3 ms); full replacements measured 36.0 / 39.7 ms. The occasional save outlier remains in the evidence. Injected preparation failure returned in 2.94 ms with exact canonical bytes unchanged, followed by successful retry. Clean close took 12.70 ms. Clear retained exactly one hot-note baseline; compaction stayed within its 256 KiB reclamation budget. See the JSON for maxima and all intermediate runs.
+
+## Failure and regression evidence
+
+Controlled tests cover preparation failure without canonical publication (including exact existing-file byte equality and successful retry at scale), finalization failure returning committed content and recovering exactly once, retryable startup/canonical-read failures, missing/replaced/malformed/rolled-back stores, interrupted clear/purge and close, reset rebuild failure, unreconstructable Missing Notes, WAL restart, and clean-copy portability. Frontend coverage preserves a dirty draft on preparation failure and rejects stale health responses. Architecture checks guard canonical publication ownership, read-only History Mode, bounded chat access, and the private storage seam.
+
+These tests do not estimate incident rates, MTTR, physical power-loss behavior, or user success rates. No background telemetry or private note prose was collected. Availability trade-offs and accepted behavior are specified only in [ADR 0006](../adr/0006-keep-history-preparation-mandatory-in-production.md).
+
+| Final check | Result |
 | --- | --- |
 | `pnpm check` | 0 errors, 0 warnings |
-| `pnpm test` | 778 tests passed in 123 files |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | 465 unit tests and 16 architecture checks passed; scale diagnostics explicitly excluded |
-| `pnpm test:e2e:browser` | 11 browser journeys passed |
-| `pnpm test:e2e:native` | 3 lifecycle and 4 timeline journeys passed, plus the TypeScript/Rust native contract fixture |
+| Fixture unit checks under `python3 -O` | 5 passed; validation remains enabled |
+| `pnpm test` | 781 tests in 123 files passed |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | 467 unit tests and 16 architecture checks passed; 4 opt-in scale diagnostics excluded |
+| `pnpm test:e2e:browser` | 11 journeys passed |
+| `pnpm test:timeline:scale:render` | Passed; 45.9 ms fixture-to-paint, excluding Rust/IPC |
+| `pnpm test:e2e:native` | Shared TypeScript/Rust contracts, 3 lifecycle and 4 timeline journeys passed |
+| Reused optimized backend/native scale runs | All numerical budgets and correctness assertions passed |
+| Independent Standards and Spec review | No remaining findings after regression-tested corrections |
 
-The full Rust run includes temporary-vault persistence, generated codec edits, fault injection, interruption/restart, replacement/corruption, clear/purge, and clean-close portability tests. The architecture suite guards canonical publication ownership, read-only History Mode, bounded chat access, and the private storage seam. Browser coverage includes returning to both editor selections and an exactly focused toolbar control.
+## Release decision
 
-### Final scale results
+**The initial release gate is satisfied for the scope above.** The user delegated interpretation of the write-cost criterion; the spec now applies it to additional history work and requires the full-file canonical publication floor to be reported separately. This is an explicit scope clarification, not evidence of end-to-end changed-byte asymptotics. Small-edit history work no longer repeatedly replays retained history, paired small-edit saves are faster than complete replacements, warm native paging/diff/entry meet 250 ms, and exhaustive cold recovery is about 1.2 seconds.
 
-The 100,000-revision setup completed through the production save command without a publication warning. Its original binary was then stopped before the read measurements. A SQLite backup of the stable synthetic fixture and matching Markdown/app observations was restored at its original temporary paths, after the writer stopped. The corrected binary ran the common read/recovery phase against that fixture. This preserves real write-path evidence while avoiding a second 40-minute write setup; it is not evidence of a live-vault backup feature. An intermediate diagnostic was stopped after its cold measurement because its untimed count assertion redundantly performed 1,000 whole-database health checks; the harness now asserts the total directly in SQLite.
-
-All observed runs, including intermediate failures under concurrent load, are retained in [the measurements JSON](note-timeline-release-measurements.json). The final backend run was performed without other test suites or compilers running during its timed phase.
-
-| Final measurement | Samples | p50 | p95 | Budget |
-| --- | ---: | ---: | ---: | ---: |
-| 50-row pages across all 10,000 hot-note revisions | 200 | 28.3 ms | 43.6 ms | 250 ms |
-| 64 KiB historical diff at vault scale | 20 | 14.8 ms | 18.1 ms | 250 ms |
-| Deep 64 KiB reconstruction | 20 | 7.9 ms | 11.1 ms | 1,000 ms |
-| 64 KiB restore preview | 20 | 9.1 ms | 11.8 ms | 1,000 ms |
-| 50-row page of 1 MiB revisions | 20 | 127.8 ms | 129.2 ms | 250 ms |
-| 1 MiB historical diff | 20 | 105.2 ms | 112.7 ms | 250 ms |
-| 1 MiB restore preview | 20 | 103.2 ms | 110.5 ms | 1,000 ms |
-| 1 MiB browser fixture to painted diff | 1 | 123.6 ms | — | 250 ms; excludes Rust/IPC |
-
-The 1,000-note baseline scan took 5.73 seconds. The 64 KiB save p50 was 17.4 ms early and 15.0 ms at 10,000 revisions; the 1 KiB save p50 at 100,000 revisions was 10.5 ms. This shows no observed increase with retained revision count in this fixture. It does **not** establish changed-content cost: small edits to the 1 MiB note measured 88.5 ms p50 / 132.3 ms p95, while random full replacements measured 29.4 / 34.2 ms. The two workloads also differ in checkpoint/replay shape, so stage-level diagnosis is required. Retaining the 129 large-note revisions used 7,166 payload bytes; efficient retained size alone does not establish efficient save latency.
-
-The injected preparation failure returned in 2.43 ms, preserved exact existing canonical bytes, and the subsequent retry succeeded. Clean close took 10.95 ms. First access on the retained fixture, including integrity/recovery, took 68.63 seconds (an earlier diagnostic took 70.71 seconds).
-
-After clean close, restart plus first-page integrity/recovery took 74.07 seconds. Clearing the hot note left exactly one retained revision. The bounded compaction call took 8.07 ms and reclaimed no more than its 256 KiB budget. The corrected common read/recovery test completed successfully in 243.85 seconds, including both cold integrity passes and all remaining assertions.
-
-### Decision
-
-**Hold the release gate open.** Correctness suites and measured warm backend budgets pass, and ADR 0006 explicitly accepts mandatory history preparation. Release readiness still requires a combined native paging/diff measurement, evidence satisfying the changed-content write-cost requirement, and resolution of the long cold-recovery delay. These findings are tracked in [issue 35](../../.scratch/note-timelines/issues/35-close-release-latency-gaps.md). No save-without-history bypass was added to make the measurements pass.
+Release attestation covers the separately exercised limits and active native window described above. It excludes a combined 1 MiB/10,000-revision note, complete-replacement rendering, packaged startup, cross-platform guarantees, and deferred chat-requested restore. Final correctness status is recorded above; availability policy remains in ADR 0006.

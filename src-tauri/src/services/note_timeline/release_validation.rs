@@ -222,6 +222,25 @@ fn release_scale_and_availability() {
         }
     }
     report("write_1k_at_100000", &mut vault_writes, None);
+    if let Ok(export) = std::env::var("GNEAUXGHTS_RELEASE_FIXTURE_EXPORT") {
+        state.note_timeline().clean_close(notes.path()).unwrap();
+        fn copy_tree(from: &Path, to: &Path) {
+            fs::create_dir_all(to).unwrap();
+            for entry in fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                let target = to.join(entry.file_name());
+                if entry.file_type().unwrap().is_dir() {
+                    copy_tree(&entry.path(), &target);
+                } else {
+                    fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+        copy_tree(notes.path(), &PathBuf::from(&export).join("vault"));
+        copy_tree(app_data.path(), &PathBuf::from(&export).join("data"));
+        crate::state::set_notes_root_override(None).unwrap();
+        return;
+    }
     let passed = measure_scale_reads_and_recovery(state, notes.path());
     crate::state::set_notes_root_override(None).unwrap();
     assert!(
@@ -230,34 +249,19 @@ fn release_scale_and_availability() {
     );
 }
 
-// Reuse a preserved synthetic fixture when diagnosing the read phase. The caller
-// must stop the creating process first; this test consumes the fixture (clear).
+// Only disposable clones from scripts/timeline_fixture.py enter destructive measurements.
 #[test]
-#[ignore = "requires the preserved temporary 100,000-revision release fixture"]
+#[ignore = "requires a verified disposable 100,000-revision fixture clone"]
 fn release_retained_scale_latency() {
     let _guard = crate::test_support::lock_test_env();
-    let temporary_root = std::env::temp_dir().canonicalize().unwrap();
-    let fixture_path = |variable: &str, prefix: &str| {
-        let path = PathBuf::from(std::env::var(variable).expect("missing release fixture path"))
-            .canonicalize()
-            .unwrap();
-        assert_eq!(path.parent(), Some(temporary_root.as_path()));
-        assert!(path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with(prefix));
-        path
-    };
-    let notes = fixture_path(
-        "GNEAUXGHTS_RELEASE_SCALE_VAULT",
-        "gneauxghts-release-scale-vault-",
-    );
-    let data = fixture_path(
-        "GNEAUXGHTS_RELEASE_SCALE_DATA",
-        "gneauxghts-release-scale-data-",
-    );
+    let run = PathBuf::from(std::env::var("GNEAUXGHTS_RELEASE_SCALE_RUN").expect("use scripts/timeline_fixture.py run"))
+        .canonicalize().unwrap();
+    assert_eq!(run.parent(), Some(std::env::temp_dir().canonicalize().unwrap().as_path()));
+    assert!(run.file_name().unwrap().to_str().unwrap().starts_with("gneauxghts-timeline-run-"));
+    let marker: serde_json::Value = serde_json::from_slice(&fs::read(run.join("run.json")).unwrap()).unwrap();
+    assert_eq!(marker["kind"], "gneauxghts-production-scale-v1");
+    let notes = run.join("vault");
+    let data = run.join("data");
     crate::state::initialize_app_data_dir(data).unwrap();
     crate::state::set_notes_root_override(Some(notes.clone())).unwrap();
     let started = Instant::now();
@@ -443,4 +447,61 @@ fn measure_scale_reads_and_recovery(state: AppState, notes: &Path) -> bool {
     report("bounded_compaction_256k", &mut compaction, None);
     restarted.note_timeline().clean_close(notes).unwrap();
     passed
+}
+
+#[test]
+#[ignore = "optimized paired write-stage diagnostic"]
+fn release_write_stages() {
+    let _guard = crate::test_support::lock_test_env();
+    let data = TestDir::new("release-stages-data");
+    let notes = TestDir::new("release-stages-vault");
+    crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+    let state = state();
+    for size in [64 * 1024, 1024 * 1024] {
+        for geometry in ["repetitive", "random"] {
+            for edit in ["small", "full"] {
+                let content = |revision| {
+                    if geometry == "repetitive" {
+                        let mut text = body(size, revision);
+                        if edit == "full" && revision % 2 == 1 {
+                            text = text.replace('e', "z").replace('a', "x");
+                        }
+                        text
+                    } else {
+                        let mut seed = if edit == "full" { revision as u64 + 23 } else { 23 };
+                        let mut text = (0..size).map(|index| {
+                            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                            if index % 76 == 75 { '\n' } else { char::from(b'a' + ((seed >> 32) % 26) as u8) }
+                        }).collect::<String>();
+                        text.replace_range(0..8, &format!("{revision:08}"));
+                        text
+                    }
+                };
+                let title = format!("Stages {size} {geometry} {edit}");
+                let (path, _) = save(&state, &title, content(0), None);
+                let mut stages = std::collections::BTreeMap::<String, Vec<f64>>::new();
+                for revision in 1..=128 {
+                    let markdown = content(revision);
+                    history_store::begin_append_measurement();
+                    let started = Instant::now();
+                    save(&state, &title, markdown, Some(path.clone()));
+                    let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                    let measured = history_store::take_append_measurement();
+                    let other = elapsed - measured.iter().map(|(_, value)| value).sum::<f64>();
+                    for (name, value) in measured {
+                        stages.entry(name.into()).or_default().push(value);
+                    }
+                    stages.entry("other_command_work".into()).or_default().push(other);
+                    stages.entry("total".into()).or_default().push(elapsed);
+                }
+                for (stage, mut samples) in stages {
+                    report(&format!("write_stage_{size}_{geometry}_{edit}_{stage}"), &mut samples, None);
+                }
+            }
+        }
+    }
+    state.note_timeline().clean_close(notes.path()).unwrap();
+    crate::state::set_notes_root_override(None).unwrap();
 }

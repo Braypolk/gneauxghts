@@ -22,7 +22,14 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "node scripts/tauri.mjs",
-    "release:mac": "GNEAUXGHTS_REQUIRE_NOTARIZATION=1 node scripts/tauri.mjs build"
+    "release:mac": "GNEAUXGHTS_REQUIRE_NOTARIZATION=1 node scripts/tauri.mjs build",
+    "test:timeline:fixture:create": "python3 scripts/timeline_fixture.py create",
+    "test:timeline:fixture:reuse": "python3 scripts/timeline_fixture.py run",
+    "test:timeline:fixture:reset": "python3 scripts/timeline_fixture.py reset",
+    "test:timeline:fixture:checks": "python3 -B -m unittest discover -s scripts/tests -v",
+    "test:timeline:stages": "cargo test --release --manifest-path src-tauri/Cargo.toml release_write_stages -- --ignored --nocapture",
+    "test:timeline:native:build": "node e2e/support/buildNative.mjs --release",
+    "test:timeline:native": "python3 scripts/timeline_fixture.py native"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",

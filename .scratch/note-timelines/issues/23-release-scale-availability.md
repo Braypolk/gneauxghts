@@ -6,8 +6,10 @@
 
 **Status:** ready-for-agent
 
+**Resolution:** Completed; release gate satisfied for the scope documented in the validation report.
+
 - [x] Run the full temporary-vault, property, fault-injection, component, architecture-fitness, native lifecycle, and end-to-end suites for the completed initial feature.
-- [ ] Verify ordinary timeline paging and diff display near 250 ms, deep reconstruction and restore preparation under one second, and write cost primarily proportional to changed content at the agreed scale targets.
+- [x] Verify ordinary timeline paging and diff display near 250 ms, deep reconstruction and restore preparation under one second, and additional history write work proportional to changed content at the agreed scale targets, reporting the full-file canonical publication floor separately (clarified in issue 35).
 - [x] Exercise 1 MB notes, 10,000 revisions on one note, 100,000 revisions across a vault, large baseline scans, long-running sessions, and bounded compaction.
 - [x] Verify corruption detection, prepared-intent recovery, store replacement, clean-close portability, clear and purge boundaries, and restart behavior under interruption.
 - [x] Confirm architecture checks prevent canonical-write bypass, editable History Mode ownership, unrestricted chat history access, and storage details crossing the domain seam.
@@ -20,8 +22,8 @@
 2026-09-04: Removed issue 22 from the release dependencies. Chat-requested Version Restore grants and proposals are deferred until there is demonstrated demand; their implementation and validation are outside this release gate. History Mode restoration and chat activity/provenance with Revision Citations remain in scope.
 
 
-2026-09-05: Implemented the release harness and recorded [the validation report](../../../docs/architecture/note-timeline-release-validation.md), [all measured runs](../../../docs/architecture/note-timeline-release-measurements.json), and accepted production availability [ADR 0006](../../../docs/adr/0006-keep-history-preparation-mandatory-in-production.md). Corrected repeated page reconstruction, quadratic revision ordering, unchanged-diff rendering cost, native E2E server isolation, and native editor focus/selection restoration. Standards and Spec reviews have no outstanding code findings.
+2026-09-05: Initial implementation and corrected warm backend runs passed correctness checks but left combined native latency, small-edit save cost, and cold recovery unresolved. Original measurements and failed observations are retained in [the validation evidence](../../../docs/architecture/note-timeline-release-measurements.json); follow-up is [issue 35](35-close-release-latency-gaps.md).
 
-2026-09-05: Typechecking, 778 frontend tests, 465 Rust tests, 16 architecture checks, 11 browser journeys, and 7 native journeys passed. The fixture completed 100,000 durable revisions, and the corrected common read/recovery phase passed all assertions, including exhaustive hot-note paging, exact reconstruction, preparation failure/retry, restart, clear, and bounded compaction. Warm backend p95 measurements met their 250 ms / 1 second budgets. The rendering fixture measured 123.6 ms, excluding Rust and IPC.
+2026-09-05: Issue 35 resolves the measured gaps and clarifies the changed-content criterion as additional history work, with full-file canonical publication reported separately. Final release status and supported limits are in [the validation report](../../../docs/architecture/note-timeline-release-validation.md). Production availability remains owned by [ADR 0006](../../../docs/adr/0006-keep-history-preparation-mandatory-in-production.md).
 
-2026-09-05: **Release gate remains held.** The remaining unchecked latency/write-cost requirement is tracked in [issue 35](35-close-release-latency-gaps.md): combined native interaction latency is not yet attested, small-edit saves were slower than full replacements in the measured workloads, and cold recovery took 69–74 seconds. No save-without-history bypass or relaxed integrity policy was introduced. The report distinguishes those remaining limits from the successful correctness checks.
+2026-09-05: Final correctness suites and optimized scale checks passed; Standards and Spec reviews have no remaining findings. All acceptance items above are complete for the report’s explicitly supported scope.

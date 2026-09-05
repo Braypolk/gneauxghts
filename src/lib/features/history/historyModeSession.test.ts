@@ -4,6 +4,7 @@ import { awaitPendingNoteSave, registerPendingNoteSaveHandler } from '$lib/featu
 import { HistoryModeSession } from './historyModeSession.svelte';
 import type {
   HistoricalDiff,
+  HistoryModeDiagnostics,
   HistoryRestorePreview,
   HistoryModePage,
   HistoryRevisionRecord,
@@ -109,6 +110,13 @@ function setup(overrides: Partial<ConstructorParameters<typeof HistoryModeSessio
 }
 
 describe('HistoryModeSession', () => {
+  it('opens the verified page and diff without repeating exhaustive health diagnostics', async () => {
+    const { session, deps } = setup({ loadDiagnostics: vi.fn(() => new Promise<HistoryModeDiagnostics>(() => {})) });
+    void session.enter('notepad-pane-1');
+    await vi.waitFor(() => expect(session.state.phase).toBe('open'), { timeout: 100 });
+    expect(deps.loadDiagnostics).not.toHaveBeenCalled();
+  });
+
   it('crosses the save barrier before requesting role-limited history', async () => {
     const callOrder: string[] = [];
     const { session } = setup({
@@ -130,6 +138,31 @@ describe('HistoryModeSession', () => {
       selectedComparison: 'parent',
       selectedDiff: revisionDiff
     });
+  });
+
+  it('checks exhaustive health on request and ignores a result from an exited session', async () => {
+    let resolve!: (value: HistoryModeDiagnostics) => void;
+    const { session, deps } = setup();
+    await session.enter('notepad-pane-1');
+    await session.checkHealth();
+    expect(deps.loadDiagnostics).toHaveBeenCalledTimes(1);
+    expect(session.state).toMatchObject({ phase: 'open', diagnostics: { note: { state: 'healthy' } }, request: null });
+    vi.mocked(deps.loadDiagnostics).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const pending = session.checkHealth();
+    expect(session.state).toMatchObject({ request: { kind: 'diagnostics' } });
+    await session.exit();
+    await session.enter('notepad-pane-1');
+    resolve({ note: { noteId: 'note-1', state: 'healthy', revisionCount: 999, lifecycleEventCount: 0, revisionPayloadBytes: 1 }, storage: null });
+    await pending;
+    expect(session.state).toMatchObject({ phase: 'open', diagnostics: null });
+  });
+
+  it('keeps history usable when an explicit health check fails', async () => {
+    const { session } = setup({ loadDiagnostics: vi.fn().mockRejectedValue(new Error('offline')) });
+    await session.enter('notepad-pane-1');
+    await session.checkHealth();
+    expect(session.state).toMatchObject({ phase: 'open', request: null, selectedDiff: revisionDiff,
+      error: 'History health could not be checked: offline' });
   });
 
   it('names, edits, and removes the selected revision without changing its identity', async () => {

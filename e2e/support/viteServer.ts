@@ -16,10 +16,10 @@ async function waitForUrl(url: string, timeoutMs = 30_000) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-export async function startVite(mode: 'browser' | 'native', port: number) {
+export async function startVite(mode: 'browser' | 'native' | 'native-preview', port: number) {
   if (viteProcess) throw new Error('The E2E Vite server is already running.');
   const envName = mode === 'browser' ? 'VITE_E2E_BROWSER' : 'VITE_E2E_NATIVE';
-  viteProcess = spawn('pnpm', ['exec', 'vite', '--host', '127.0.0.1', '--port', String(port)], {
+  viteProcess = spawn('pnpm', ['exec', 'vite', ...(mode === 'native-preview' ? ['preview'] : []), '--strictPort', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: process.cwd(),
     env: { ...process.env, [envName]: 'true' },
     stdio: ['ignore', 'pipe', 'pipe']

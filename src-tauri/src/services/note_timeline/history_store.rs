@@ -522,6 +522,11 @@ impl AuthoredState {
     }
 
     fn decode(encoded: &[u8]) -> Result<Self, String> {
+        let (frontmatter, body) = Self::decode_parts(encoded)?;
+        Ok(Self { unmanaged_frontmatter: frontmatter.map(str::to_owned), body: body.to_owned() })
+    }
+
+    fn decode_parts(encoded: &[u8]) -> Result<(Option<&str>, &str), String> {
         if encoded.len() < 20 || &encoded[..4] != AUTHORED_STATE_MAGIC {
             return Err("Unsupported authored-state payload".to_string());
         }
@@ -539,8 +544,7 @@ impl AuthoredState {
                 .filter(|end| *end <= encoded.len())
                 .ok_or_else(|| "Authored frontmatter payload is truncated".to_string())?;
             let value = std::str::from_utf8(&encoded[cursor..end])
-                .map_err(|error| format!("Authored frontmatter is not UTF-8: {error}"))?
-                .to_string();
+                .map_err(|error| format!("Authored frontmatter is not UTF-8: {error}"))?;
             cursor = end;
             Some(value)
         };
@@ -549,12 +553,8 @@ impl AuthoredState {
             .filter(|end| *end == encoded.len())
             .ok_or_else(|| "Authored body payload length is inconsistent".to_string())?;
         let body = std::str::from_utf8(&encoded[cursor..end])
-            .map_err(|error| format!("Authored body is not UTF-8: {error}"))?
-            .to_string();
-        Ok(Self {
-            unmanaged_frontmatter,
-            body,
-        })
+            .map_err(|error| format!("Authored body is not UTF-8: {error}"))?;
+        Ok((unmanaged_frontmatter, body))
     }
 }
 
@@ -999,7 +999,7 @@ pub(super) fn prepare_publication(
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
-    if let Some(baseline) = baseline {
+    if let Some(baseline) = baseline.as_ref() {
         append_baseline_if_absent(
             &transaction,
             &NoteIdentity::new(note_id.clone()),
@@ -1008,6 +1008,10 @@ pub(super) fn prepare_publication(
             baseline.known_since_millis,
         )?;
     }
+    let prepared_base = baseline.as_ref().map(|baseline| {
+        let payload = AuthoredState::from_canonical(baseline.canonical_markdown).encode();
+        PreparedRevisionBase { payload }
+    });
     let intent_id = crate::note::generate_unique_id();
     let revision_id = RevisionIdentity::issue().0;
     let prepared_at_millis = crate::time::current_time_millis()
@@ -1035,7 +1039,9 @@ pub(super) fn prepare_publication(
         )
         .map_err(|error| format!("Prepare Note Revision: {error}"))?;
     transaction.commit().map_err(|error| error.to_string())?;
-    Ok(PreparedHistoryIntent::from_persisted(intent_id))
+    let mut intent = PreparedHistoryIntent::from_persisted(intent_id);
+    intent.prepared_base = prepared_base;
+    Ok(intent)
 }
 
 pub(super) fn finalize_publication(
@@ -1109,7 +1115,7 @@ pub(super) fn finalize_publication(
         }
         return Err("Committed note does not match its exact durable history intent".to_string());
     }
-    finalize_intent(&mut connection, history_intent.as_str(), &payload)
+    finalize_intent(&mut connection, history_intent.as_str(), &payload, history_intent.prepared_base.as_ref())
 }
 
 pub(super) fn publication_revision_identity(
@@ -1222,6 +1228,7 @@ fn append_baseline_if_absent(
     append_revision(
         transaction,
         RevisionAppend {
+            prepared_base: None,
             revision_id: &RevisionIdentity::issue().0,
             note_id: note_id.as_str(),
             predecessor: head
@@ -1262,6 +1269,7 @@ pub(super) fn record_external_revision(
     append_revision(
         &transaction,
         RevisionAppend {
+            prepared_base: None,
             revision_id: &RevisionIdentity::issue().0,
             note_id: note_id.as_str(),
             predecessor: head
@@ -1497,7 +1505,14 @@ pub(super) fn missing_note(note_id: &NoteIdentity) -> Result<Option<MissingNoteR
         .map_err(|error| format!("Read Missing Note recovery state: {error}"))
 }
 
+// A candidate captured for one prepared publication, never a cross-operation cache.
+// The append transaction verifies its hash against the exact current base revision.
+pub(super) struct PreparedRevisionBase {
+    payload: Vec<u8>,
+}
+
 struct RevisionAppend<'a> {
+    prepared_base: Option<&'a PreparedRevisionBase>,
     revision_id: &'a str,
     note_id: &'a str,
     predecessor: Option<(&'a str, &'a str)>,
@@ -1511,17 +1526,62 @@ struct RevisionAppend<'a> {
     record_count: usize,
 }
 
+#[cfg(test)]
+thread_local! {
+    static APPEND_TIMINGS: std::cell::RefCell<Option<Vec<(&'static str, f64)>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn begin_append_measurement() {
+    APPEND_TIMINGS.with(|samples| *samples.borrow_mut() = Some(Vec::new()));
+}
+
+#[cfg(test)]
+pub(super) fn take_append_measurement() -> Vec<(&'static str, f64)> {
+    APPEND_TIMINGS.with(|samples| samples.borrow_mut().take().unwrap_or_default())
+}
+
+#[cfg(test)]
+fn record_append_stage(name: &'static str, started: Instant) {
+    APPEND_TIMINGS.with(|samples| {
+        if let Some(samples) = samples.borrow_mut().as_mut() {
+            samples.push((name, started.elapsed().as_secs_f64() * 1000.0));
+        }
+    });
+}
+
 fn append_revision(
     transaction: &Transaction<'_>,
     append: RevisionAppend<'_>,
 ) -> Result<(), String> {
     reject_purged_note_identity(transaction, append.note_id)?;
+    #[cfg(test)]
+    let stage = Instant::now();
     let base = append
         .base_revision_id
-        .map(|revision_id| reconstruct_revision(transaction, revision_id))
+        .map(|revision_id| {
+            if let Some(candidate) = append.prepared_base {
+                let expected: String = transaction.query_row(
+                    "SELECT result_hash FROM revisions WHERE revision_id = ?1 AND note_id = ?2",
+                    params![revision_id, append.note_id], |row| row.get(0)
+                ).map_err(|error| error.to_string())?;
+                if hash(&candidate.payload) == expected {
+                    return Ok(candidate.payload.clone());
+                }
+            }
+            reconstruct_revision(transaction, revision_id)
+        })
         .transpose()?
         .unwrap_or_default();
+    #[cfg(test)]
+    record_append_stage("base_reconstruction", stage);
+    #[cfg(test)]
+    let stage = Instant::now();
     let delta = LineDelta::between(&base, append.authored_payload).encode();
+    #[cfg(test)]
+    record_append_stage("delta_encoding", stage);
+    #[cfg(test)]
+    let stage = Instant::now();
     let prior_policy = append
         .base_revision_id
         .map(|revision_id| load_revision_policy(transaction, revision_id))
@@ -1562,6 +1622,8 @@ fn append_revision(
                 DELTA_PAYLOAD_VERSION,
             )
         };
+    #[cfg(test)]
+    record_append_stage("verify_and_compress", stage);
     let (known_since_millis, committed_at_millis, observed_at_millis, modified_at_millis) =
         match append.time_evidence {
             RevisionTimeEvidence::Baseline { known_since_millis } => {
@@ -2214,7 +2276,7 @@ pub(super) fn history_page_revision_counts(
     // authored state. Replaying every revision independently multiplies the
     // checkpoint replay cost by the page size for large notes.
     let mut revision_counts = std::collections::HashMap::new();
-    let mut previous: Option<(String, Vec<u8>)> = None;
+    let mut previous: Option<(String, VerifiedAuthoredPayload)> = None;
     for record in records.iter().rev() {
         if let BoundedTimelineRecord::Revision { header, .. } = record {
             let encoded = reconstruct_revision_after(
@@ -2222,9 +2284,9 @@ pub(super) fn history_page_revision_counts(
                 header.identity.as_str(),
                 previous
                     .as_ref()
-                    .map(|(id, bytes)| (id.as_str(), bytes.as_slice())),
+                    .map(|(id, bytes)| (id.as_str(), bytes)),
             )?;
-            let authored = AuthoredState::decode(&encoded)?;
+            let authored = AuthoredState::decode(&encoded.bytes)?;
             revision_counts.insert(
                 header.identity.clone(),
                 super::authored_content_counts(&ReconstructedNoteRevision {
@@ -2437,7 +2499,7 @@ pub(super) fn reconstruct_comparison(
     let connection = open_store()?;
     let from_bytes = from_id
         .as_ref()
-        .map(|id| reconstruct_revision(&connection, id.as_str()))
+        .map(|id| reconstruct_revision_after(&connection, id.as_str(), None))
         .transpose()?;
     let to_bytes = reconstruct_revision_after(
         &connection,
@@ -2445,17 +2507,17 @@ pub(super) fn reconstruct_comparison(
         from_id
             .as_ref()
             .zip(from_bytes.as_ref())
-            .map(|(id, bytes)| (id.as_str(), bytes.as_slice())),
+            .map(|(id, bytes)| (id.as_str(), bytes)),
     )?;
     let from = from_bytes
         .as_ref()
-        .map(|bytes| AuthoredState::decode(bytes))
+        .map(|bytes| AuthoredState::decode(&bytes.bytes))
         .transpose()?
         .unwrap_or_else(|| AuthoredState {
             unmanaged_frontmatter: None,
             body: String::new(),
         });
-    let to = AuthoredState::decode(&to_bytes)?;
+    let to = AuthoredState::decode(&to_bytes.bytes)?;
     Ok(RevisionComparison {
         from_id,
         to_id,
@@ -3013,34 +3075,35 @@ fn verify_revision_payloads(
     connection: &Connection,
     note_id: Option<&NoteIdentity>,
 ) -> Result<(), String> {
-    let (query, parameter) = match note_id {
-        Some(note_id) => (
-            "SELECT revision_id FROM revisions WHERE note_id = ?1 ORDER BY revision_id",
-            Some(note_id.as_str()),
-        ),
-        None => (
-            "SELECT revision_id FROM revisions ORDER BY revision_id",
-            None,
-        ),
-    };
-    let mut statement = connection
-        .prepare(query)
-        .map_err(|error| format!("Prepare Note Timeline payload verification: {error}"))?;
-    let revision_ids = if let Some(note_id) = parameter {
-        statement
-            .query_map(params![note_id], |row| row.get::<_, String>(0))
-            .map_err(|error| format!("Query Note Timeline payload verification: {error}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Read Note Timeline payload verification: {error}"))?
-    } else {
-        statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| format!("Query Note Timeline payload verification: {error}"))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Read Note Timeline payload verification: {error}"))?
-    };
-    for revision_id in revision_ids {
-        reconstruct_revision(connection, &revision_id)?;
+    // Attest every payload once in lineage order. Only the preceding verified
+    // state survives an iteration; nothing is shared with another operation.
+    let mut statement = connection.prepare(
+        "SELECT note_id, base_revision_id, revision_id, base_hash FROM revisions
+         WHERE ?1 IS NULL OR note_id = ?1"
+    ).map_err(|error| error.to_string())?;
+    let rows = statement.query_map(params![note_id.map(NoteIdentity::as_str)], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+    }).map_err(|error| error.to_string())?;
+    let mut notes = BTreeMap::<String, std::collections::HashMap<Option<String>, (String, Option<String>)>>::new();
+    for row in rows {
+        let (note, base, revision, base_hash) = row.map_err(|error| error.to_string())?;
+        if notes.entry(note).or_default().insert(base, (revision, base_hash)).is_some() {
+            return Err("Note Revision lineage is missing or branched".into());
+        }
+    }
+    for mut children in notes.into_values() {
+        let mut previous: Option<(String, VerifiedAuthoredPayload)> = None;
+        while !children.is_empty() {
+            let base = previous.as_ref().map(|(id, _)| id.clone());
+            let (revision, base_hash) = children.remove(&base)
+                .ok_or_else(|| "Note Revision lineage is missing or branched".to_string())?;
+            if base_hash.as_deref() != previous.as_ref().map(|(_, payload)| payload.result_hash.as_str()) {
+                return Err("Note Revision base hash verification failed".into());
+            }
+            let bytes = reconstruct_revision_after(connection, &revision,
+                previous.as_ref().map(|(id, bytes)| (id.as_str(), bytes)))?;
+            previous = Some((revision, bytes));
+        }
     }
     Ok(())
 }
@@ -4304,7 +4367,7 @@ fn recover_pending_with_connection(connection: &Connection) -> Result<(), String
                     && managed_note_identity(&markdown).as_deref() == Ok(intended_note_id.as_str())
                 {
                     let mut recovered = open_existing_connection(connection)?;
-                    finalize_intent(&mut recovered, &intent_id, &canonical_payload)?;
+                    finalize_intent(&mut recovered, &intent_id, &canonical_payload, None)?;
                 } else {
                     connection
                         .execute(
@@ -4354,6 +4417,7 @@ fn finalize_intent(
     connection: &mut Connection,
     intent_id: &str,
     authored_payload: &[u8],
+    prepared_base: Option<&PreparedRevisionBase>,
 ) -> Result<(), String> {
     let transaction = connection
         .transaction()
@@ -4464,6 +4528,7 @@ fn finalize_intent(
     append_revision(
         &transaction,
         RevisionAppend {
+            prepared_base,
             revision_id: &intent.revision_id,
             note_id: &intent.note_id,
             predecessor: predecessor
@@ -4580,15 +4645,24 @@ fn load_revision_policy(
         .map_err(|error| error.to_string())
 }
 
+// Constructed only after hash and UTF-8/structure validation. A predecessor's
+// verified hash can be compared directly to the next delta's base hash during
+// this reconstruction/page/attestation; no payload escapes into a runtime cache.
+#[derive(Clone)]
+struct VerifiedAuthoredPayload {
+    bytes: Vec<u8>,
+    result_hash: String,
+}
+
 fn reconstruct_revision(connection: &Connection, revision_id: &str) -> Result<Vec<u8>, String> {
-    reconstruct_revision_after(connection, revision_id, None)
+    reconstruct_revision_after(connection, revision_id, None).map(|verified| verified.bytes)
 }
 
 fn reconstruct_revision_after(
     connection: &Connection,
     revision_id: &str,
-    previous: Option<(&str, &[u8])>,
-) -> Result<Vec<u8>, String> {
+    previous: Option<(&str, &VerifiedAuthoredPayload)>,
+) -> Result<VerifiedAuthoredPayload, String> {
     let row = connection
         .query_row(
             "SELECT base_revision_id, payload_version, payload_kind, payload, base_hash, result_hash
@@ -4618,21 +4692,21 @@ fn reconstruct_revision_after(
             let base = match previous.filter(|(id, _)| *id == base_revision_id) {
                 Some((_, bytes)) => std::borrow::Cow::Borrowed(bytes),
                 None => {
-                    std::borrow::Cow::Owned(reconstruct_revision(connection, &base_revision_id)?)
+                    std::borrow::Cow::Owned(reconstruct_revision_after(connection, &base_revision_id, None)?)
                 }
             };
-            if base_hash.as_deref() != Some(hash(&base).as_str()) {
+            if base_hash.as_deref() != Some(base.result_hash.as_str()) {
                 return Err("Note Revision base hash verification failed".to_string());
             }
-            LineDelta::decode(&payload)?.apply(&base)?
+            LineDelta::decode(&payload)?.apply(&base.bytes)?
         }
         _ => return Err("Unsupported Note Revision payload version".to_string()),
     };
     if hash(&result) != result_hash {
         return Err("Note Revision result hash verification failed".to_string());
     }
-    AuthoredState::decode(&result)?;
-    Ok(result)
+    AuthoredState::decode_parts(&result)?;
+    Ok(VerifiedAuthoredPayload { bytes: result, result_hash })
 }
 
 fn parse_record_identity(
@@ -4701,6 +4775,35 @@ fn managed_note_identity(markdown: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verified_predecessor_reuse_still_checks_the_next_base_and_result_hashes() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE revisions (revision_id TEXT PRIMARY KEY,
+            base_revision_id TEXT, payload_version INTEGER, payload_kind TEXT,
+            payload BLOB, base_hash TEXT, result_hash TEXT, note_id TEXT DEFAULT 'note')").unwrap();
+        let base = AuthoredState { unmanaged_frontmatter: None, body: "Original 🌍\n".repeat(100) }.encode();
+        let next = AuthoredState { unmanaged_frontmatter: None, body: "Updated 🌍\n".repeat(100) }.encode();
+        connection.execute("INSERT INTO revisions (revision_id, base_revision_id, payload_version, payload_kind, payload, base_hash, result_hash) VALUES ('base', NULL, 1, 'checkpoint', ?1, NULL, ?2)",
+            params![zstd::stream::encode_all(Cursor::new(&base), 3).unwrap(), hash(&base)]).unwrap();
+        connection.execute("INSERT INTO revisions (revision_id, base_revision_id, payload_version, payload_kind, payload, base_hash, result_hash) VALUES ('next', 'base', 1, 'delta', ?1, 'bad base hash', ?2)",
+            params![LineDelta::between(&base, &next).encode(), hash(&next)]).unwrap();
+        let previous = reconstruct_revision_after(&connection, "base", None).unwrap();
+        assert!(reconstruct_revision_after(&connection, "next", Some(("base", &previous)))
+            .err().unwrap().contains("base hash"));
+        connection.execute("UPDATE revisions SET base_hash = ?1 WHERE revision_id = 'next'", params![hash(&base)]).unwrap();
+        assert_eq!(reconstruct_revision_after(&connection, "next", Some(("base", &previous))).unwrap().bytes, next);
+        connection.execute("UPDATE revisions SET result_hash = 'bad result hash' WHERE revision_id = 'next'", []).unwrap();
+        assert!(reconstruct_revision_after(&connection, "next", Some(("base", &previous)))
+            .err().unwrap().contains("result hash"));
+        connection.execute("UPDATE revisions SET payload_kind = 'checkpoint', payload = ?1, result_hash = ?2, base_hash = 'bad checkpoint base' WHERE revision_id = 'next'",
+            params![zstd::stream::encode_all(Cursor::new(&next), 3).unwrap(), hash(&next)]).unwrap();
+        assert!(verify_revision_payloads(&connection, None).unwrap_err().contains("base hash"));
+        connection.execute("UPDATE revisions SET base_hash = ?1 WHERE revision_id = 'next'", params![hash(&base)]).unwrap();
+        verify_revision_payloads(&connection, None).unwrap();
+        connection.execute("UPDATE revisions SET base_hash = 'unexpected root base' WHERE revision_id = 'base'", []).unwrap();
+        assert!(verify_revision_payloads(&connection, None).unwrap_err().contains("base hash"));
+    }
 
     #[test]
     fn authored_state_and_delta_preserve_utf8_line_endings_and_empty_content() {
@@ -4892,12 +4995,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kind, "checkpoint");
+        assert!(verify_revision_payloads(&connection, None).is_ok());
         connection
             .execute(
                 "UPDATE revisions SET base_revision_id = NULL WHERE revision_id = ?1",
                 params![selected.as_str()],
             )
             .unwrap();
+        assert!(verify_revision_payloads(&connection, None).is_err());
         drop(connection);
         assert_eq!(
             reconstruct(&id, &selected).unwrap().body(),
@@ -4907,6 +5012,43 @@ mod tests {
             reconstruct_comparison(&id, &selected, super::super::HistoryDiffComparison::Parent)
                 .is_err()
         );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn prepared_base_must_match_retained_history_and_recovery_needs_no_memory() {
+        let _guard = crate::test_support::lock_test_env();
+        let data = crate::test_support::TestDir::new("prepared-base-data");
+        let notes = crate::test_support::TestDir::new("prepared-base-notes");
+        crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Candidate.md");
+        let canonical = |body: &str| format!("---\ngneauxghts:\n  id: candidate-note\n  kind: note\n---\n\n{body}");
+        let original = canonical("Retained original\n");
+        let first = prepare_publication(MutationSource::NoteCreation, &path, &original, PublicationIntentKind::Create, None).unwrap();
+        fs::write(&path, &original).unwrap();
+        finalize_publication(&first, MutationSource::NoteCreation, &path, &original).unwrap();
+        // Canonical content captured for preparation may differ from the retained
+        // head (e.g. an external edit). It must never become an unchecked delta base.
+        let external = canonical("Different external bytes\n");
+        let updated = canonical("Retained original\nNew line\n");
+        let second = prepare_publication(MutationSource::Editor, &path, &updated, PublicationIntentKind::Update,
+            Some(BaselineSeed { path: &path, canonical_markdown: &external, known_since_millis: 1 })).unwrap();
+        fs::write(&path, &updated).unwrap();
+        finalize_publication(&second, MutationSource::Editor, &path, &updated).unwrap();
+        let id = NoteIdentity::new("candidate-note");
+        assert_eq!(reconstruct_latest(&id).unwrap().body(), "Retained original\nNew line\n");
+        let final_markdown = canonical("After restart\n");
+        let pending = prepare_publication(MutationSource::Editor, &path, &final_markdown, PublicationIntentKind::Update,
+            Some(BaselineSeed { path: &path, canonical_markdown: &updated, known_since_millis: 1 })).unwrap();
+        fs::write(&path, &final_markdown).unwrap();
+        drop(pending);
+        recover_pending().unwrap();
+        recover_pending().unwrap();
+        assert_eq!(revisions(&id).unwrap().len(), 3);
+        assert_eq!(reconstruct_latest(&id).unwrap().body(), "After restart\n");
+        assert!(verify_revision_payloads(&open_store().unwrap(), None).is_ok());
         crate::state::set_notes_root_override(None).unwrap();
     }
 

@@ -132,7 +132,7 @@ export type HistoryModeState =
       restorePreview?: HistoryRestorePreview | null;
       diagnostics: HistoryModeDiagnostics | null;
       request: {
-        kind: 'page' | 'refresh' | 'diff' | 'restorePreview' | 'restoreCommit';
+        kind: 'page' | 'refresh' | 'diagnostics' | 'diff' | 'restorePreview' | 'restoreCommit';
         requestId: number;
       } | null;
       error: string | null;
@@ -171,6 +171,9 @@ export type HistoryModeEvent =
       selectedDiff: HistoricalDiff | null;
       diagnostics: HistoryModeDiagnostics | null;
     }
+  | { type: 'diagnosticsStarted'; requestId: number }
+  | { type: 'diagnosticsLoaded'; requestId: number; diagnostics: HistoryModeDiagnostics }
+  | { type: 'diagnosticsFailed'; requestId: number; error: string }
   | { type: 'pageStarted'; requestId: number }
   | { type: 'pageLoaded'; requestId: number; page: HistoryModePage }
   | { type: 'pageFailed'; requestId: number; error: string }
@@ -342,13 +345,17 @@ export function transitionHistoryMode(
         error: null
       };
     }
+    case 'diagnosticsLoaded':
+      if (state.phase !== 'open' || state.request?.kind !== 'diagnostics' || state.request.requestId !== event.requestId) return state;
+      return { ...state, diagnostics: event.diagnostics, request: null };
+    case 'diagnosticsStarted':
     case 'pageStarted':
     case 'refreshStarted':
       if (state.phase !== 'open' || state.request !== null) return state;
       return {
         ...state,
         request: {
-          kind: event.type === 'pageStarted' ? 'page' : 'refresh',
+          kind: event.type === 'pageStarted' ? 'page' : event.type === 'diagnosticsStarted' ? 'diagnostics' : 'refresh',
           requestId: event.requestId
         },
         error: null
@@ -513,6 +520,7 @@ export function transitionHistoryMode(
         return state;
       }
       return { ...state, selectedDiff: event.diff, request: null };
+    case 'diagnosticsFailed':
     case 'pageFailed':
     case 'diffFailed':
     case 'restoreFailed':
