@@ -6,6 +6,8 @@ mod history_store;
 mod post_publication;
 mod provenance;
 pub(crate) use activity::RevisionCitation;
+#[cfg(test)]
+mod release_validation;
 mod runtime;
 
 // Storage, post-publication repair, and runtime coordination are independent
@@ -2096,19 +2098,15 @@ impl HistoryModePage {
 }
 
 fn project_bounded_history_record(
-    note_id: &NoteIdentity,
     record: history_store::BoundedTimelineRecord,
     timeline_ordinal: usize,
-    include_counts: bool,
+    revision_counts: &HashMap<RevisionIdentity, (usize, usize)>,
 ) -> Result<HistoryModeRecord, String> {
     Ok(match record {
         history_store::BoundedTimelineRecord::Revision { header, label } => {
-            let counts = if include_counts {
-                let reconstructed = history_store::reconstruct(note_id, &header.identity)?;
-                authored_content_counts(&reconstructed)
-            } else {
-                (0, 0)
-            };
+            let counts = *revision_counts
+                .get(&header.identity)
+                .ok_or_else(|| "History page is missing its verified revision summary".to_string())?;
             project_revision_header(header, label, timeline_ordinal, counts)
         }
         history_store::BoundedTimelineRecord::LifecycleEvent(event) => {
@@ -2150,12 +2148,14 @@ fn retained_history_page(
         Some(_) => return Err(HistoryError::Stale(invalid_cursor.to_string())),
         None => page.total_records.saturating_sub(1),
     };
+    let revision_counts = history_store::history_page_revision_counts(&page.records)
+        .map_err(history_failure)?;
     let record_count = page.records.len();
     let mut records = Vec::with_capacity(record_count);
     for (index, record) in page.records.into_iter().enumerate() {
         let timeline_ordinal = first_ordinal.saturating_sub(index);
         records.push(
-            project_bounded_history_record(note_id, record, timeline_ordinal, true)
+            project_bounded_history_record(record, timeline_ordinal, &revision_counts)
                 .map_err(history_failure)?,
         );
     }
@@ -2803,67 +2803,26 @@ impl HistoryModeAccess<'_> {
     ) -> Result<HistoryModeDiff, HistoryError> {
         let _operation = self.prepare_access()?;
         let revision_id = RevisionIdentity::from_persisted(revision_id);
-        let revisions = history_store::revisions(&self.note_id).map_err(history_failure)?;
-        let selected_index = revisions
-            .iter()
-            .position(|revision| revision.identity() == &revision_id)
-            .ok_or_else(|| {
-                HistoryError::Missing("Selected Note Revision is no longer available".to_string())
-            })?;
-        let selected =
-            history_store::reconstruct(&self.note_id, &revision_id).map_err(history_failure)?;
-        let (from_revision_id, to_revision_id, from, to) = match comparison {
-            HistoryDiffComparison::Parent => {
-                let parent = selected_index
-                    .checked_sub(1)
-                    .map(|index| {
-                        let identity = revisions[index].identity();
-                        history_store::reconstruct(&self.note_id, identity)
-                            .map(|revision| (Some(identity.0.clone()), revision))
-                            .map_err(history_failure)
-                    })
-                    .transpose()?;
-                let (from_revision_id, from) = parent.unwrap_or((
-                    None,
-                    ReconstructedNoteRevision {
-                        unmanaged_frontmatter: None,
-                        body: String::new(),
-                    },
-                ));
-                (
-                    from_revision_id,
-                    revision_id.0.clone(),
-                    from,
-                    selected.clone(),
-                )
-            }
-            HistoryDiffComparison::Current => {
-                let current_id = revisions
-                    .last()
-                    .map(NoteRevisionHeader::identity)
-                    .ok_or_else(|| {
-                        HistoryError::Missing("No current Note Revision is available".to_string())
-                    })?;
-                let current = history_store::reconstruct(&self.note_id, current_id)
-                    .map_err(history_failure)?;
-                (
-                    Some(revision_id.0.clone()),
-                    current_id.0.clone(),
-                    selected.clone(),
-                    current,
-                )
-            }
+        self.require_revision(&revision_id)?;
+        let reconstructed =
+            history_store::reconstruct_comparison(&self.note_id, &revision_id, comparison)
+                .map_err(history_failure)?;
+        let from = reconstructed.from;
+        let to = reconstructed.to;
+        let selected_body = match comparison {
+            HistoryDiffComparison::Parent => &to.body,
+            HistoryDiffComparison::Current => &from.body,
         };
         let old_properties = from.unmanaged_frontmatter.as_deref().unwrap_or_default();
         let new_properties = to.unmanaged_frontmatter.as_deref().unwrap_or_default();
         Ok(HistoryModeDiff {
             revision_id: revision_id.0,
             comparison,
-            from_revision_id,
-            to_revision_id,
+            from_revision_id: reconstructed.from_id.map(|id| id.0),
+            to_revision_id: reconstructed.to_id.0,
             body_lines: diff_lines(&from.body, &to.body),
             properties_lines: diff_lines(old_properties, new_properties),
-            missing_assets: missing_binary_assets(&selected.body).map_err(history_failure)?,
+            missing_assets: missing_binary_assets(selected_body).map_err(history_failure)?,
         })
     }
 }

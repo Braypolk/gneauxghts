@@ -2,6 +2,9 @@ import { spawnSync } from 'node:child_process';
 
 const e2eTauriConfig = {
   identifier: 'com.braypolkinghorne.gneauxghts-e2e',
+  // Match the isolated IPv4 server in wdio.native.conf.ts. `localhost:1420`
+  // can resolve to an unrelated development server listening on IPv6.
+  build: { devUrl: 'http://127.0.0.1:1430' },
   app: {
     withGlobalTauri: true,
     security: {

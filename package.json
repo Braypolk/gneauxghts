@@ -11,6 +11,8 @@
     "test:watch": "vitest",
     "test:e2e": "pnpm test:e2e:browser",
     "test:e2e:browser": "wdio run e2e/wdio.browser.conf.ts",
+    "test:timeline:scale": "cargo test --release --manifest-path src-tauri/Cargo.toml release_scale_and_availability -- --ignored --nocapture",
+    "test:timeline:scale:render": "wdio run e2e/wdio.browser.conf.ts --spec e2e/specs/scale/timeline-scale.spec.ts",
     "test:timeline:contracts:ts": "vitest run src/lib/contracts/timelineContractFixtures.test.ts",
     "test:timeline:contracts:rust": "cargo test --manifest-path src-tauri/Cargo.toml timeline_command_fixture_matches_every_serialized_rust_state",
     "test:timeline:contracts": "pnpm test:timeline:contracts:ts && pnpm test:timeline:contracts:rust",

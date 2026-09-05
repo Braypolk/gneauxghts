@@ -37,6 +37,20 @@ const diff: HistoricalDiff = {
 };
 
 describe('HistoryDiff', () => {
+  it('collapses long unchanged sections while retaining context and every change', () => {
+    const bodyLines: HistoricalDiff['bodyLines'] = Array.from({ length: 100 }, (_, index) => ({
+      kind: 'context', text: `context-${index}\n`, oldLineNumber: index + 1, newLineNumber: index + 1
+    }));
+    bodyLines[50] = { kind: 'added', text: 'changed-line\n', oldLineNumber: null, newLineNumber: 51 };
+    const body = render(HistoryDiff, { props: { diff: { ...diff, bodyLines } } }).body;
+    expect(body).toContain('Show all unchanged lines');
+    expect(body).toContain('changed-line');
+    expect(body).toContain('context-47');
+    expect(body).toContain('context-53');
+    expect(body).not.toContain('context-20');
+    expect(body).not.toContain('context-80');
+  });
+
   it('renders complete authored changes, disclosed properties, and missing assets', () => {
     const body = render(HistoryDiff, { props: { diff } }).body;
 

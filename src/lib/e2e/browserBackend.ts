@@ -116,6 +116,7 @@ let missingNotes = [
   }
 ];
 let revisionChatEnabled = false;
+let largeHistoryEnabled = false;
 let historyStorage = { allocatedBytes: 16_384, reclaimableBytes: 512 };
 let forgottenNoteRetentionDays = 7;
 
@@ -371,6 +372,22 @@ function historicalDiff(
   revisionId: string,
   comparison: 'parent' | 'current'
 ) {
+  if (largeHistoryEnabled) {
+    return {
+      revisionId,
+      comparison,
+      fromRevisionId: `${note.noteId}-revision-34`,
+      toRevisionId: revisionId,
+      bodyLines: Array.from({ length: 16_384 }, (_, index) => ({
+        kind: index === 0 ? 'added' : 'context',
+        text: `${'x'.repeat(63)}\n`,
+        oldLineNumber: index === 0 ? null : index,
+        newLineNumber: index + 1
+      })),
+      propertiesLines: [],
+      missingAssets: []
+    };
+  }
   const restore = historyRestores.get(note.noteId);
   if (restore?.revisionId === revisionId) {
     const previous = historicalRevision(note, `${note.noteId}-revision-35`);
@@ -775,6 +792,7 @@ export function installBrowserE2eBackend() {
   window.__GNEAUXGHTS_E2E__ = {
     invocations,
     seedRevisionChat() { revisionChatEnabled = true; },
+    seedLargeHistory() { largeHistoryEnabled = true; },
     delayNextHistoryPage(delayMillis = 75) {
       nextHistoryPageDelayMillis = delayMillis;
     },
@@ -794,6 +812,7 @@ declare global {
     __GNEAUXGHTS_E2E__?: {
       invocations: InvokeRecord[];
       seedRevisionChat(): void;
+      seedLargeHistory(): void;
       delayNextHistoryPage(delayMillis?: number): void;
       snapshot(): {
         activeNoteId: string;

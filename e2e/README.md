@@ -28,7 +28,7 @@ Run:
 pnpm test:e2e:native
 ```
 
-The command builds the debug binary with the `e2e-wdio` Cargo feature, starts Vite on port 1420 with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The lifecycle and timeline specs run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from normal and release builds.
+The command builds the debug binary with the `e2e-wdio` Cargo feature, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The lifecycle and timeline specs run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from normal and release builds.
 
 Covered checks:
 

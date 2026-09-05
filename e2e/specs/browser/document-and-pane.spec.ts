@@ -3,7 +3,8 @@ import { browser, expect, $ } from '@wdio/globals';
 async function waitForNote(title: string) {
   const input = await $('[data-testid="note-title"]');
   try {
-    await input.waitForDisplayed();
+    // Cold Vite module loading can exceed the ordinary interaction timeout.
+    await input.waitForDisplayed({ timeout: 30_000 });
   } catch (error) {
     const pageText = await browser.execute(() => document.body.innerText);
     throw new Error(`Note editor did not render. Page text: ${pageText}`, {
@@ -98,6 +99,17 @@ describe('document and pane state-machine boundaries', () => {
 
     await openRecentNote('Beta note');
     expect(await editorText()).toBe(betaText);
+  });
+
+  it('returns keyboard focus to the history toolbar control', async () => {
+    const open = await $('button[aria-label="Open note history"]');
+    await browser.execute((element: HTMLElement) => { element.focus(); element.click(); }, open);
+    await $('[data-testid="historical-revision-diff"]').waitForExist();
+    await $('button[aria-label="Back to workspace"]').click();
+    await $('[data-testid="history-mode"]').waitForExist({ reverse: true });
+    await browser.waitUntil(async () => browser.execute(() =>
+      document.activeElement === document.querySelector('button[aria-label="Open note history"]')
+    ));
   });
 
   it('opens Revision Citations at exact evidence and leaves chat workspace context intact', async () => {

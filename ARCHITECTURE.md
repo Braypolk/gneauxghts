@@ -291,6 +291,10 @@ and replacement strategy.
 
 ## Fitness checks
 
+The [release validation report](docs/architecture/note-timeline-release-validation.md)
+records scale measurements, regression gates, and the production availability
+decision in [ADR 0006](docs/adr/0006-keep-history-preparation-mandatory-in-production.md).
+
 Architecture fitness tests protect ownership and routing; behavior tests
 protect outcomes.
 

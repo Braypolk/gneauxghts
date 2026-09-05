@@ -765,6 +765,15 @@
     restoreFocus: async (snapshot) => {
       const paneId = snapshot.activePaneId as PaneId;
       await tick();
+      if (
+        snapshot.focusTarget === "editor" &&
+        snapshot.focusElement === getPaneRuntime(paneId).controller?.view.contentDOM
+      ) {
+        // CodeMirror owns both its DOM selection and focus bookkeeping. Native
+        // WebKit can publish a stale selection when contentDOM.focus() bypasses it.
+        focusPaneEditor(paneId);
+        return;
+      }
       if (snapshot.focusElement?.isConnected) {
         snapshot.focusElement.focus();
         return;

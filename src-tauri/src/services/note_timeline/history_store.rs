@@ -2206,6 +2206,38 @@ pub(super) fn bounded_timeline_page(
     }))
 }
 
+pub(super) fn history_page_revision_counts(
+    records: &[BoundedTimelineRecord],
+) -> Result<std::collections::HashMap<RevisionIdentity, (usize, usize)>, String> {
+    let connection = open_store()?;
+    // Walk the bounded page oldest first, reusing only the previous verified
+    // authored state. Replaying every revision independently multiplies the
+    // checkpoint replay cost by the page size for large notes.
+    let mut revision_counts = std::collections::HashMap::new();
+    let mut previous: Option<(String, Vec<u8>)> = None;
+    for record in records.iter().rev() {
+        if let BoundedTimelineRecord::Revision { header, .. } = record {
+            let encoded = reconstruct_revision_after(
+                &connection,
+                header.identity.as_str(),
+                previous
+                    .as_ref()
+                    .map(|(id, bytes)| (id.as_str(), bytes.as_slice())),
+            )?;
+            let authored = AuthoredState::decode(&encoded)?;
+            revision_counts.insert(
+                header.identity.clone(),
+                super::authored_content_counts(&ReconstructedNoteRevision {
+                    unmanaged_frontmatter: authored.unmanaged_frontmatter,
+                    body: authored.body,
+                }),
+            );
+            previous = Some((header.identity.0.clone(), encoded));
+        }
+    }
+    Ok(revision_counts)
+}
+
 pub(super) fn current_path(note_id: &NoteIdentity) -> Result<Option<PathBuf>, String> {
     let connection = open_store()?;
     connection
@@ -2262,21 +2294,20 @@ pub(super) fn note_identity_for_current_path(path: &Path) -> Result<Option<NoteI
 }
 
 fn order_revision_chain(
-    mut revisions: Vec<(Option<String>, NoteRevisionHeader)>,
+    revisions: Vec<(Option<String>, NoteRevisionHeader)>,
 ) -> Result<Vec<NoteRevisionHeader>, String> {
     let mut ordered = Vec::with_capacity(revisions.len());
-    let mut base_revision_id = None::<String>;
-    while !revisions.is_empty() {
-        let matches = revisions
-            .iter()
-            .enumerate()
-            .filter(|(_, (base, _))| base.as_deref() == base_revision_id.as_deref())
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        if matches.len() != 1 {
+    let mut children = std::collections::HashMap::with_capacity(revisions.len());
+    for (base, revision) in revisions {
+        if children.insert(base, revision).is_some() {
             return Err("Note Revision lineage is missing or branched".to_string());
         }
-        let (_, revision) = revisions.remove(matches[0]);
+    }
+    let mut base_revision_id = None;
+    while !children.is_empty() {
+        let revision = children
+            .remove(&base_revision_id)
+            .ok_or_else(|| "Note Revision lineage is missing or branched".to_string())?;
         base_revision_id = Some(revision.identity.0.clone());
         ordered.push(revision);
     }
@@ -2365,6 +2396,77 @@ pub(super) fn reconstruct_latest(
     Ok(ReconstructedNoteRevision {
         unmanaged_frontmatter: state.unmanaged_frontmatter,
         body: state.body,
+    })
+}
+
+pub(super) struct RevisionComparison {
+    pub(super) from_id: Option<RevisionIdentity>,
+    pub(super) to_id: RevisionIdentity,
+    pub(super) from: ReconstructedNoteRevision,
+    pub(super) to: ReconstructedNoteRevision,
+}
+
+pub(super) fn reconstruct_comparison(
+    note_id: &NoteIdentity,
+    selected_id: &RevisionIdentity,
+    comparison: super::HistoryDiffComparison,
+) -> Result<RevisionComparison, String> {
+    // Preserve exhaustive header/lineage validation. Ordering uses a linear
+    // child lookup rather than rescanning the remaining chain for each revision.
+    let revisions = revisions(note_id)?;
+    let selected_index = revisions
+        .iter()
+        .position(|revision| revision.identity() == selected_id)
+        .ok_or_else(|| "Unknown Note Revision".to_string())?;
+    let (from_id, to_id) = match comparison {
+        super::HistoryDiffComparison::Parent => (
+            selected_index
+                .checked_sub(1)
+                .map(|index| revisions[index].identity().clone()),
+            selected_id.clone(),
+        ),
+        super::HistoryDiffComparison::Current => (
+            Some(selected_id.clone()),
+            revisions
+                .last()
+                .expect("selected revision exists")
+                .identity()
+                .clone(),
+        ),
+    };
+    let connection = open_store()?;
+    let from_bytes = from_id
+        .as_ref()
+        .map(|id| reconstruct_revision(&connection, id.as_str()))
+        .transpose()?;
+    let to_bytes = reconstruct_revision_after(
+        &connection,
+        to_id.as_str(),
+        from_id
+            .as_ref()
+            .zip(from_bytes.as_ref())
+            .map(|(id, bytes)| (id.as_str(), bytes.as_slice())),
+    )?;
+    let from = from_bytes
+        .as_ref()
+        .map(|bytes| AuthoredState::decode(bytes))
+        .transpose()?
+        .unwrap_or_else(|| AuthoredState {
+            unmanaged_frontmatter: None,
+            body: String::new(),
+        });
+    let to = AuthoredState::decode(&to_bytes)?;
+    Ok(RevisionComparison {
+        from_id,
+        to_id,
+        from: ReconstructedNoteRevision {
+            unmanaged_frontmatter: from.unmanaged_frontmatter,
+            body: from.body,
+        },
+        to: ReconstructedNoteRevision {
+            unmanaged_frontmatter: to.unmanaged_frontmatter,
+            body: to.body,
+        },
     })
 }
 
@@ -4479,6 +4581,14 @@ fn load_revision_policy(
 }
 
 fn reconstruct_revision(connection: &Connection, revision_id: &str) -> Result<Vec<u8>, String> {
+    reconstruct_revision_after(connection, revision_id, None)
+}
+
+fn reconstruct_revision_after(
+    connection: &Connection,
+    revision_id: &str,
+    previous: Option<(&str, &[u8])>,
+) -> Result<Vec<u8>, String> {
     let row = connection
         .query_row(
             "SELECT base_revision_id, payload_version, payload_kind, payload, base_hash, result_hash
@@ -4505,7 +4615,12 @@ fn reconstruct_revision(connection: &Connection, revision_id: &str) -> Result<Ve
         "delta" if payload_version == DELTA_PAYLOAD_VERSION => {
             let base_revision_id = base_revision_id
                 .ok_or_else(|| "Delta Note Revision has no base revision".to_string())?;
-            let base = reconstruct_revision(connection, &base_revision_id)?;
+            let base = match previous.filter(|(id, _)| *id == base_revision_id) {
+                Some((_, bytes)) => std::borrow::Cow::Borrowed(bytes),
+                None => {
+                    std::borrow::Cow::Owned(reconstruct_revision(connection, &base_revision_id)?)
+                }
+            };
             if base_hash.as_deref() != Some(hash(&base).as_str()) {
                 return Err("Note Revision base hash verification failed".to_string());
             }
@@ -4626,6 +4741,42 @@ mod tests {
     }
 
     #[test]
+    fn generated_authored_edits_round_trip_through_serialized_deltas() {
+        // Fixed seeds make a failing edit sequence reproducible without an RNG dependency.
+        for initial_seed in [1_u64, 23, 0xdead_beef, u64::MAX] {
+            let mut seed = initial_seed;
+            let mut next = || {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                (seed >> 32) as usize
+            };
+            let tokens = ["a", "é", "🦀", "\r\n", "\n", "---", "\0", "中", " "];
+            let mut chars = Vec::new();
+            let mut base = Vec::new();
+            for step in 0..256 {
+                let position = next() % (chars.len() + 1);
+                match next() % 4 {
+                    0 => chars.truncate(position),
+                    1 if position < chars.len() => {
+                        chars.remove(position);
+                    }
+                    _ => chars.insert(position, tokens[next() % tokens.len()]),
+                }
+                let state = AuthoredState {
+                    unmanaged_frontmatter: (next() % 3 == 0)
+                        .then(|| format!("tag: {}\r\n", tokens[next() % tokens.len()])),
+                    body: chars.concat(),
+                };
+                let encoded = state.encode();
+                let payload = LineDelta::between(&base, &encoded).encode();
+                let rebuilt = LineDelta::decode(&payload).unwrap().apply(&base).unwrap();
+                assert_eq!(rebuilt, encoded, "seed={initial_seed}, step={step}");
+                assert_eq!(AuthoredState::decode(&rebuilt).unwrap(), state);
+                base = rebuilt;
+            }
+        }
+    }
+
+    #[test]
     fn terminal_intent_migration_preserves_pending_recovery_and_revision_foreign_keys() {
         let _guard = crate::test_support::lock_test_env();
         let app_data = crate::test_support::TestDir::new("intent-migration-data");
@@ -4701,6 +4852,60 @@ mod tests {
         assert_eq!(
             reconstruct_latest(&note_id).unwrap().body().trim(),
             "Updated"
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn comparison_rejects_a_checkpoint_with_disconnected_lineage() {
+        let _guard = crate::test_support::lock_test_env();
+        let data = crate::test_support::TestDir::new("comparison-lineage-data");
+        let notes = crate::test_support::TestDir::new("comparison-lineage-notes");
+        crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Lineage.md");
+        for (source, kind, character) in [
+            (
+                MutationSource::NoteCreation,
+                PublicationIntentKind::Create,
+                "a",
+            ),
+            (MutationSource::Editor, PublicationIntentKind::Update, "b"),
+        ] {
+            let markdown = format!(
+                "---\ngneauxghts:\n  id: lineage-note\n  kind: note\n---\n\n{}",
+                character.repeat(2048)
+            );
+            let intent = prepare_publication(source, &path, &markdown, kind, None).unwrap();
+            fs::write(&path, &markdown).unwrap();
+            finalize_publication(&intent, source, &path, &markdown).unwrap();
+        }
+        let id = NoteIdentity::new("lineage-note");
+        let selected = revisions(&id).unwrap().pop().unwrap().identity().clone();
+        let connection = open_store().unwrap();
+        let kind: String = connection
+            .query_row(
+                "SELECT payload_kind FROM revisions WHERE revision_id = ?1",
+                params![selected.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kind, "checkpoint");
+        connection
+            .execute(
+                "UPDATE revisions SET base_revision_id = NULL WHERE revision_id = ?1",
+                params![selected.as_str()],
+            )
+            .unwrap();
+        drop(connection);
+        assert_eq!(
+            reconstruct(&id, &selected).unwrap().body(),
+            "b".repeat(2048)
+        );
+        assert!(
+            reconstruct_comparison(&id, &selected, super::super::HistoryDiffComparison::Parent)
+                .is_err()
         );
         crate::state::set_notes_root_override(None).unwrap();
     }

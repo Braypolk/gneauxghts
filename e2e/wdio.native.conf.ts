@@ -60,7 +60,7 @@ export const config: Options.Testrunner = {
     if (!existsSync(application)) {
       throw new Error(`Native E2E binary is missing: ${application}`);
     }
-    await startVite('native', 1420);
+    await startVite('native', 1430);
   },
   async onComplete() {
     await stopVite();
